@@ -13,6 +13,8 @@ use crate::emulator::Emulator;
 /// Max chunks buffered between the reader thread and the consumer.
 const CHANNEL_CAPACITY: usize = 64;
 const READ_BUFFER_BYTES: usize = 64 * 1024;
+/// Max output fed to the emulator per `drain` call (one UI frame).
+const DRAIN_BUDGET_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug)]
 pub enum PtyEvent {
@@ -103,6 +105,38 @@ impl PtySession {
         }
         Ok(exit)
     }
+
+    /// Non-blocking: feeds all output queued so far into `emulator` (answering its replies).
+    /// Lets a UI coalesce everything that arrived between two frames (SPEC §10).
+    /// Stops after about `DRAIN_BUDGET_BYTES` so a flood cannot starve the UI thread.
+    pub fn drain(&mut self, emulator: &mut Emulator) -> Result<Drained> {
+        let mut drained = Drained::default();
+        let mut bytes_fed = 0;
+        while bytes_fed < DRAIN_BUDGET_BYTES
+            && let Ok(event) = self.events.try_recv()
+        {
+            match event {
+                PtyEvent::Output(bytes) => {
+                    drained.output = true;
+                    bytes_fed += bytes.len();
+                    let reply = emulator.advance(&bytes);
+                    if !reply.is_empty() {
+                        self.write(&reply)?;
+                    }
+                }
+                PtyEvent::Exited(code) => drained.exited = Some(code),
+            }
+        }
+        Ok(drained)
+    }
+}
+
+/// Result of [`PtySession::drain`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Drained {
+    /// Some output was fed to the emulator.
+    pub output: bool,
+    pub exited: Option<u32>,
 }
 
 impl Drop for PtySession {
@@ -154,5 +188,24 @@ mod tests {
             }
         }
         assert!(text.contains("mkrew-pty-ok"), "grid was:\n{text}");
+    }
+
+    #[test]
+    fn drain_collects_output_and_exit_without_blocking() {
+        let mut session = PtySession::spawn(echo_command("mkrew-drain-ok"), 40, 5).unwrap();
+        let mut emu = Emulator::new(40, 5);
+        let mut saw_output = false;
+        let end = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < end {
+            let drained = session.drain(&mut emu).unwrap();
+            saw_output |= drained.output;
+            if drained.exited.is_some() && emu.grid().to_text().contains("mkrew-drain-ok") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(saw_output);
+        let text = emu.grid().to_text();
+        assert!(text.contains("mkrew-drain-ok"), "grid was:\n{text}");
     }
 }

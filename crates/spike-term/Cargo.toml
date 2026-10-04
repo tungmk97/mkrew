@@ -11,6 +11,9 @@ workspace = true
 [dependencies]
 alacritty_terminal = "0.26"
 anyhow = "1.0"
+# gpui snapshot pinned by gpui-component 0.7 (ADR 0001); the platform crate provides `application()`.
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7" }
 portable-pty = "0.9"
 
 [dev-dependencies]

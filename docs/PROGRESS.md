@@ -22,7 +22,6 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ### Task queue
 
-- [ ] T0.5 GPUI window: render the grid (colors, cursor) using tokens from a minimal `theme.rs`, following the §10 performance rules from the start (styled text runs per row, dirty rows only, one present per frame). (spec: §10, §14)
 - [ ] T0.6 Input & resize: key → bytes mapping (printables, Enter, Backspace, arrows, Ctrl+letter, Esc, Tab), bracketed paste, resize propagates to PTY and grid. Unit-test the key mapping. (spec: §10, §13)
 - [ ] T0.7 Launch options: `spike-term -- <command> [args]` to run `claude`/`codex`/`omp` instead of the shell; Windows `PATHEXT` lookup. (spec: §8, §17)
 - [ ] T0.8 Measurements: add a `--flood` mode (prints high-volume colored output) and a small harness/instructions to measure idle RAM, key latency and flood CPU; record numbers in the ADR (automated where possible, otherwise as HUMAN_CHECKS items). (spec: §15)
@@ -30,6 +29,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ### Done (last 10)
 
+- [x] T0.5 GPUI window: render the grid (colors, cursor) using tokens from a minimal `theme.rs`, following the §10 performance rules from the start (styled text runs per row, dirty rows only, one present per frame). (spec: §10, §14) — feat(spike): render terminal grid in a GPUI window
 - [x] T0.4 Snapshot tests: ANSI fixtures in `crates/spike-term/tests/fixtures/` (colors, cursor moves, alternate screen, wide chars/emoji, a recorded TUI frame); `insta` snapshots of the dumped grid. (spec: §16) — test(spike): grid-dump snapshot tests from ANSI fixtures
 - [x] T0.3 Headless terminal core in `spike-term`: spawn a shell via `portable-pty`, feed bytes into `alacritty_terminal`, expose a `Grid` snapshot (chars + fg/bg + cursor); `--dump` flag prints the grid as text. (spec: §8, §10) — feat(spike): headless terminal core with grid dump
 - [x] T0.2 Research spike: use the researcher to confirm current versions/APIs of `gpui` (standalone usage outside Zed, Windows support), `gpui-component`, `portable-pty`, `alacritty_terminal`; write findings to `docs/decisions/0001-ui-framework.md` (draft, "Context" section). (spec: §4, §19) — docs(adr): draft ADR 0001 context from research spike
@@ -37,11 +37,10 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ## Notes for the next session
 
-- Next: T0.5. `spike-term` lib: `emulator::{Emulator, Grid, GridCell{c, zerowidth, fg, bg, flags}, Cursor}`, `pty::PtySession::{spawn, write, pump}`.
-- `Emulator::advance` returns reply bytes (DSR etc.) that MUST be written to the PTY: portable-pty sets ConPTY INHERIT_CURSOR, so ConPTY blocks until it gets a cursor-position reply. Color/size requests (OSC 10/11, CSI 14t) are not answered yet.
-- Snapshot tests: `crates/spike-term/tests/grid_snapshots.rs`; fixtures are escaped text (`tests/fixtures/README.md`). No `cargo-insta` installed and env-var prefixes need approval: accept new snapshots by `mv *.snap.new *.snap` (one file per command).
-- Rendering (T0.5): alacritty keeps `❤️` (VS16) 1 cell wide and splits ZWJ emoji into 2 wide cells; render `c` + `zerowidth` per cell.
-- Next gpui dep: `gpui-pre = "=0.3.7"` renamed to `gpui`. Grid cells expose alacritty `Color`/`Flags` directly (resolve to theme colors in T0.5).
-- T0.8 needs a release build → `fxc.exe` (Windows SDK) or `GPUI_FXC_PATH`; check HUMAN_CHECKS first.
-- Target OS is native Windows (keep paths/commands Windows-safe). Workspace: `members = ["crates/*"]`, edition 2024, shared `[workspace.lints]`; new crates add `[lints] workspace = true`.
-- `unwrap_used`/`expect_used` denied by verify outside tests (`clippy.toml` allows in `#[test]` fns, not integration-test helpers). Headless: no `pwsh`, use `bash scripts/verify.sh`.
+- Next: T0.6. `spike-term` (no args) opens the GPUI window: `view.rs` (TerminalView polls `PtySession::drain` every 16 ms, custom `TerminalElement` paints), `layout.rs` (pure row → segments/runs/backgrounds + `RowCache`, unit-tested), `theme.rs` (tokens). Fixed 80×24; resize/input are T0.6.
+- gpui deps: `gpui = { package = "gpui-pre" }` + `gpui_platform = { package = "gpui-pre-platform" }` (=0.3.7); entry `gpui_platform::application().run(..)`. Element methods take `inspector_id`; `cx.spawn(async move |this, cx| ..)`.
+- `Emulator::advance` reply bytes MUST be written to the PTY (ConPTY waits for the DSR reply); `drain`/`pump` do it. OSC 10/11, CSI 14t not answered yet.
+- Known skews for T0.8: the 16 ms poll timer wakes the UI even when idle (idle CPU) and adds ≤16 ms key latency → switch to wake-on-output if numbers suffer. Dirty rows found by comparing cells, not alacritty damage. Row cache doesn't key on cell width (clear it on font change).
+- Snapshot tests: `crates/spike-term/tests/grid_snapshots.rs`; accept new snapshots by `mv *.snap.new *.snap` (no cargo-insta).
+- T0.8 needs a release build → `fxc.exe` (Windows SDK) or `GPUI_FXC_PATH`; check HUMAN_CHECKS first. GUI smoke: `timeout 6 ./target/debug/spike-term.exe` → exit 124 = ran without panic.
+- Windows-native target; edition 2024, `[lints] workspace = true`. `unwrap/expect` denied outside `#[test]` fns. Headless: no `pwsh`, use `bash scripts/verify.sh`.

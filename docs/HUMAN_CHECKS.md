@@ -23,6 +23,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   frame. Record a real `claude` session (e.g. via `script`/a PTY logger), convert it to the
   escaped fixture format (`tests/fixtures/README.md`), add it as a fixture and accept its
   snapshot. Until then the M0 "recorded agent output" criterion stays unticked.
+- [ ] (T0.5) Run `cargo run -p spike-term` and check the terminal window visually in dark and
+  light OS themes: shell prompt readable, colors (e.g. `dir`/`ls --color`, a TUI like
+  `claude`), accent cursor block, wide chars/emoji aligned on the grid. Optionally save
+  screenshots to `docs/screenshots/m0-terminal-{dark,light}.png` (headless session cannot
+  capture them; it only confirmed the window starts without panicking).
 
 ## Questions with assumed defaults
 
@@ -47,6 +52,10 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - (T0.4) Terminal fixtures are stored as escaped text (`\e`, `\r`, `\xNN`; literal line breaks
   ignored) instead of raw bytes: readable, diffable, immune to git CRLF conversion, and the
   agent's file tools cannot write raw control bytes. Raw recordings must be converted first.
+- (T0.5) Spike design tokens live in `crates/spike-term/src/theme.rs` (no `mkrew-ui` crate
+  yet). The ANSI palette is the agent's own choice harmonized with §14; light-theme "white"
+  ANSI colors are darkened (`#8A8C94`, `#55575F`) so they stay readable on `#FAFAF9`. Cursor is
+  always an accent block (shape/unfocused style later).
 
 ## Done
 
