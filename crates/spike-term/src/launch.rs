@@ -17,13 +17,23 @@ const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
 /// What `spike-term` was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Invocation {
-    /// Run headless and print the screen instead of opening a window.
-    pub dump: bool,
+    pub mode: Mode,
     /// `-- <command> [args]`; `None` runs the default shell.
     pub command: Option<Vec<String>>,
 }
 
-/// Parses `[--dump] [-- <command> [args]]`. Returns `None` on anything else.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Open a window; `stats` prints measurements, `probe_keys` also types synthetic keys.
+    Window { stats: bool, probe_keys: bool },
+    /// Run headless and print the screen instead of opening a window.
+    Dump,
+    /// Print `megabytes` MiB of colored output to stdout and exit (no PTY, no window).
+    Flood { megabytes: u64 },
+}
+
+/// Parses `[--dump | --stats [--probe-keys]] [-- <command> [args]]` or `--flood <MB>`.
+/// Returns `None` on anything else.
 pub fn parse_args(args: &[String]) -> Option<Invocation> {
     let (flags, command) = match args.iter().position(|arg| arg == "--") {
         Some(split) => (&args[..split], Some(args[split + 1..].to_vec())),
@@ -32,12 +42,30 @@ pub fn parse_args(args: &[String]) -> Option<Invocation> {
     if command.as_ref().is_some_and(Vec::is_empty) {
         return None;
     }
-    let dump = match flags {
-        [] => false,
-        [flag] if flag == "--dump" => true,
+    let mode = match flags {
+        [] => Mode::Window {
+            stats: false,
+            probe_keys: false,
+        },
+        [flag] if flag == "--dump" => Mode::Dump,
+        [flag, megabytes] if flag == "--flood" && command.is_none() => Mode::Flood {
+            megabytes: megabytes.parse().ok()?,
+        },
+        [flag] if flag == "--stats" => Mode::Window {
+            stats: true,
+            probe_keys: false,
+        },
+        [a, b]
+            if [a, b] == ["--stats", "--probe-keys"] || [a, b] == ["--probe-keys", "--stats"] =>
+        {
+            Mode::Window {
+                stats: true,
+                probe_keys: true,
+            }
+        }
         _ => return None,
     };
-    Some(Invocation { dump, command })
+    Some(Invocation { mode, command })
 }
 
 /// Builds the PTY command for `argv` (program + args), resolving the program on `PATH`.
@@ -170,36 +198,71 @@ mod tests {
     // Lower case so the expected paths also match on case-sensitive file systems.
     const PATHEXT: &str = ".com;.exe;.bat;.cmd";
 
+    const WINDOW: Mode = Mode::Window {
+        stats: false,
+        probe_keys: false,
+    };
+
     #[test]
     fn parses_shell_dump_and_command_forms() {
         assert_eq!(
             parse_args(&[]),
             Some(Invocation {
-                dump: false,
+                mode: WINDOW,
                 command: None
             })
         );
         assert_eq!(
             parse_args(&strings(&["--dump"])),
             Some(Invocation {
-                dump: true,
+                mode: Mode::Dump,
                 command: None
             })
         );
         assert_eq!(
             parse_args(&strings(&["--", "claude", "--resume", "--"])),
             Some(Invocation {
-                dump: false,
+                mode: WINDOW,
                 command: Some(strings(&["claude", "--resume", "--"]))
             })
         );
         assert_eq!(
             parse_args(&strings(&["--dump", "--", "codex"])),
             Some(Invocation {
-                dump: true,
+                mode: Mode::Dump,
                 command: Some(strings(&["codex"]))
             })
         );
+    }
+
+    #[test]
+    fn parses_measurement_flags() {
+        assert_eq!(
+            parse_args(&strings(&["--flood", "50"])),
+            Some(Invocation {
+                mode: Mode::Flood { megabytes: 50 },
+                command: None
+            })
+        );
+        assert_eq!(
+            parse_args(&strings(&["--stats", "--", "spike-term", "--flood", "5"])),
+            Some(Invocation {
+                mode: Mode::Window {
+                    stats: true,
+                    probe_keys: false
+                },
+                command: Some(strings(&["spike-term", "--flood", "5"]))
+            })
+        );
+        let probing = Some(Invocation {
+            mode: Mode::Window {
+                stats: true,
+                probe_keys: true,
+            },
+            command: None,
+        });
+        assert_eq!(parse_args(&strings(&["--stats", "--probe-keys"])), probing);
+        assert_eq!(parse_args(&strings(&["--probe-keys", "--stats"])), probing);
     }
 
     #[test]
@@ -208,6 +271,12 @@ mod tests {
         assert_eq!(parse_args(&strings(&["--bogus"])), None);
         assert_eq!(parse_args(&strings(&["claude"])), None);
         assert_eq!(parse_args(&strings(&["--dump", "--dump"])), None);
+        assert_eq!(parse_args(&strings(&["--flood"])), None);
+        assert_eq!(parse_args(&strings(&["--flood", "lots"])), None);
+        assert_eq!(parse_args(&strings(&["--flood", "5", "--", "cmd"])), None);
+        assert_eq!(parse_args(&strings(&["--probe-keys"])), None);
+        assert_eq!(parse_args(&strings(&["--stats", "--stats"])), None);
+        assert_eq!(parse_args(&strings(&["--dump", "--stats"])), None);
     }
 
     #[test]

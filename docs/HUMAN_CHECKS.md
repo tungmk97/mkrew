@@ -17,8 +17,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] (T0.1) Run `pwsh scripts/verify.ps1` once. The headless session was not allowed to run
   `pwsh`; `bash scripts/verify.sh` (same fmt/clippy/test steps) passed on Windows.
-- [ ] (T0.2) Before T0.8 (measurements, release build): install the Windows SDK so `fxc.exe`
-  is available, or set `GPUI_FXC_PATH`. Release gpui builds panic without it.
+- [x] (T0.2) Before T0.8 (measurements, release build): install the Windows SDK so `fxc.exe`
+  is available, or set `GPUI_FXC_PATH`. Release gpui builds panic without it. — Resolved:
+  `fxc.exe` is on PATH (`~/msvc/Windows Kits/10/bin/10.0.28000.0/x64`); T0.8 built release.
 - [ ] (T0.4) `crates/spike-term/tests/fixtures/tui_frame.ans` is a hand-made Claude-Code-like
   frame. Record a real `claude` session (e.g. via `script`/a PTY logger), convert it to the
   escaped fixture format (`tests/fixtures/README.md`), add it as a fixture and accept its
@@ -36,6 +37,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   the npm `.cmd`/`.ps1` shim is found via `PATHEXT` and the agent TUI starts in the window.
   Tests only ran fake `.cmd`/`.ps1` shims (no real agents allowed); the Unix exec-bit branch of
   `launch::is_runnable` was not compiled on this Windows host.
+- [ ] (T0.8) Real key-to-glyph latency: the automated number (ADR 0001 "Measurements") uses
+  synthetic keys written to the PTY and stops at paint end, so it misses OS input dispatch and
+  GPU present. Measure once with a high-speed camera / `Typometer`-style tool, or at least
+  type in `cargo run --release -p spike-term -- --stats` and read the `key_p50` lines.
 
 ## Questions with assumed defaults
 
@@ -76,6 +81,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   shim path, or `& | % ^` in args, can break (BatBadBut). Default: fine for the spike; the
   daemon's command lookup (M1) must build `cmd.exe /d /s /c "..."` with cmd-aware escaping.
   `-- <cmd>` starts in the current directory.
+- (T0.8) SPEC §15 "Idle CPU < 1 %" is read as % of one core (stricter); measured ~3 % of one
+  core (~0.25 % of a 16-thread machine). Stats use `sysinfo` 0.31 (already in the tree via gpui)
+  because `unsafe` is denied and `powershell`/`tasklist` are not available to headless sessions.
+  Added T0.8a (wake-on-output + reader coalescing, re-measure) before the T0.9 wrap-up, since
+  idle CPU, key latency and the flood frame gap miss §15 for likely fixable reasons.
 
 ## Done
 

@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
@@ -21,15 +21,31 @@ use crate::emulator::{Emulator, Grid};
 use crate::input::{is_paste_shortcut, key_to_bytes, paste_bytes};
 use crate::layout::{Background, CellStyle, RowCache, grid_size, layout_row};
 use crate::pty::PtySession;
+use crate::stats::{ProcessProbe, Stats};
 use crate::theme::Theme;
 
 /// How often queued PTY output is drained; about one display refresh.
 const FRAME_TICK: Duration = Duration::from_millis(16);
+/// `--stats` report interval.
+const STATS_INTERVAL: Duration = Duration::from_secs(1);
+/// `--probe-keys` interval between synthetic keys.
+const PROBE_INTERVAL: Duration = Duration::from_millis(500);
+/// Probe ticks skipped at startup (2 s).
+const PROBE_WARMUP_TICKS: u32 = 4;
 /// Cell width guess used only to size the initial window, before a font is resolved.
 const CELL_WIDTH_ESTIMATE: f32 = 0.6;
 
+/// Measurement options (SPEC §15), see [`crate::stats`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Measure {
+    /// Print a stats line to stderr every second.
+    pub stats: bool,
+    /// With `stats`: type `x` / Backspace alternately every 500 ms to measure key latency.
+    pub probe_keys: bool,
+}
+
 /// Opens the window and runs the app until the window closes or the child exits.
-pub fn run(session: PtySession, emulator: Emulator) {
+pub fn run(session: PtySession, emulator: Emulator, measure: Measure) {
     gpui_platform::application().run(move |cx: &mut App| {
         let theme = Theme::dark();
         let grid = emulator.grid();
@@ -56,7 +72,7 @@ pub fn run(session: PtySession, emulator: Emulator) {
             ..Default::default()
         };
         let opened = cx.open_window(options, |window, cx| {
-            cx.new(|cx| TerminalView::new(session, emulator, window, cx))
+            cx.new(|cx| TerminalView::new(session, emulator, measure, window, cx))
         });
         if let Err(error) = opened {
             eprintln!("spike-term: cannot open window: {error:#}");
@@ -73,35 +89,78 @@ struct TerminalView {
     theme: Theme,
     rows: Rc<RefCell<RowCache<ShapedRow>>>,
     focus_handle: FocusHandle,
+    /// Set with `--stats`.
+    stats: Option<(Rc<RefCell<Stats>>, ProcessProbe)>,
 }
 
 impl TerminalView {
     fn new(
         session: PtySession,
         emulator: Emulator,
+        measure: Measure,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(FRAME_TICK).await;
-                let alive = this.update(cx, |view, cx| view.drain(cx));
-                if !matches!(alive, Ok(true)) {
-                    break;
+        spawn_every(cx, FRAME_TICK, Self::drain);
+        if measure.stats {
+            spawn_every(cx, STATS_INTERVAL, |view, _| {
+                view.report();
+                true
+            });
+        }
+        if measure.stats && measure.probe_keys {
+            let mut ticks = 0u32;
+            spawn_every(cx, PROBE_INTERVAL, move |view, _| {
+                ticks += 1;
+                // Let the shell print its banner and prompt first, or that output would count
+                // as the echo of the first probe.
+                if ticks > PROBE_WARMUP_TICKS {
+                    view.send(if ticks.is_multiple_of(2) {
+                        b"x"
+                    } else {
+                        b"\x7f"
+                    });
                 }
-            }
-        })
-        .detach();
+                true
+            });
+        }
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
+        let stats = measure.stats.then(|| {
+            let stats = Rc::new(RefCell::new(Stats::new(Instant::now())));
+            (stats, ProcessProbe::new())
+        });
         Self {
             session,
             emulator,
             theme: theme_for(window.appearance()),
             rows: Rc::default(),
             focus_handle,
+            stats,
+        }
+    }
+
+    /// Writes key bytes to the PTY (noted for the `--stats` key latency).
+    fn send(&mut self, bytes: &[u8]) {
+        if let Some((stats, _)) = &self.stats {
+            stats.borrow_mut().key_sent(Instant::now());
+        }
+        if let Err(error) = self.session.write(bytes) {
+            eprintln!("spike-term: pty write failed: {error:#}");
+        }
+    }
+
+    /// Prints the `--stats` line for the interval that just ended, then the run totals so far
+    /// (the run may end by being killed, e.g. by the measurement script's `timeout`).
+    fn report(&mut self) {
+        if let Some((stats, probe)) = &mut self.stats {
+            let (rss, cpu) = probe.sample();
+            let mut stats = stats.borrow_mut();
+            let now = Instant::now();
+            eprintln!("{}", stats.report(now, rss, cpu));
+            eprintln!("{}", stats.summary(now));
         }
     }
 
@@ -117,9 +176,7 @@ impl TerminalView {
         };
         if let Some(bytes) = bytes {
             cx.stop_propagation();
-            if let Err(error) = self.session.write(&bytes) {
-                eprintln!("spike-term: pty write failed: {error:#}");
-            }
+            self.send(&bytes);
         }
     }
 
@@ -149,10 +206,14 @@ impl TerminalView {
     fn drain(&mut self, cx: &mut Context<'_, Self>) -> bool {
         match self.session.drain(&mut self.emulator) {
             Ok(drained) => {
+                if let Some((stats, _)) = &self.stats {
+                    stats.borrow_mut().output(drained.bytes);
+                }
                 if drained.output {
                     cx.notify();
                 }
                 if drained.exited.is_some() {
+                    self.report();
                     cx.quit();
                     return false;
                 }
@@ -165,6 +226,24 @@ impl TerminalView {
             }
         }
     }
+}
+
+/// Runs `tick` on the view every `interval` until it returns false or the view is gone.
+fn spawn_every(
+    cx: &mut Context<'_, TerminalView>,
+    interval: Duration,
+    mut tick: impl FnMut(&mut TerminalView, &mut Context<'_, TerminalView>) -> bool + 'static,
+) {
+    cx.spawn(async move |this, cx| {
+        loop {
+            cx.background_executor().timer(interval).await;
+            let alive = this.update(cx, |view, cx| tick(view, cx));
+            if !matches!(alive, Ok(true)) {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 fn theme_for(appearance: WindowAppearance) -> Theme {
@@ -190,6 +269,7 @@ impl Render for TerminalView {
                 grid: self.emulator.grid(),
                 theme: self.theme.clone(),
                 rows: self.rows.clone(),
+                stats: self.stats.as_ref().map(|(stats, _)| stats.clone()),
             })
     }
 }
@@ -204,6 +284,7 @@ struct TerminalElement {
     grid: Grid,
     theme: Theme,
     rows: Rc<RefCell<RowCache<ShapedRow>>>,
+    stats: Option<Rc<RefCell<Stats>>>,
 }
 
 impl IntoElement for TerminalElement {
@@ -323,6 +404,9 @@ impl Element for TerminalElement {
                 // A failed glyph paint only loses that glyph; keep painting the frame.
                 let _ = line.paint(at, line_height, TextAlign::Left, None, window, cx);
             }
+        }
+        if let Some(stats) = &self.stats {
+            stats.borrow_mut().painted(Instant::now());
         }
     }
 }

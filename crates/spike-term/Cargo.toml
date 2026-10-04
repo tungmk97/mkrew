@@ -15,6 +15,8 @@ anyhow = "1.0"
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7" }
 portable-pty = "0.9"
+# Own RSS/CPU for `--stats`; 0.31 is already in the tree via gpui.
+sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 insta = "1"

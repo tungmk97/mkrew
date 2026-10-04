@@ -132,6 +132,7 @@ impl PtySession {
                 PtyEvent::Output(bytes) => {
                     drained.output = true;
                     bytes_fed += bytes.len();
+                    drained.bytes = bytes_fed;
                     let reply = emulator.advance(&bytes);
                     if !reply.is_empty() {
                         self.write(&reply)?;
@@ -149,6 +150,8 @@ impl PtySession {
 pub struct Drained {
     /// Some output was fed to the emulator.
     pub output: bool,
+    /// Output bytes fed to the emulator.
+    pub bytes: usize,
     pub exited: Option<u32>,
 }
 
@@ -222,6 +225,7 @@ mod tests {
         while Instant::now() < end {
             let drained = session.drain(&mut emu).unwrap();
             saw_output |= drained.output;
+            assert_eq!(drained.output, drained.bytes > 0);
             if drained.exited.is_some() && emu.grid().to_text().contains("mkrew-drain-ok") {
                 break;
             }

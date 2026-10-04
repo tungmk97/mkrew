@@ -4,7 +4,7 @@
 - Status: proposed
 - Milestone: M0
 
-Draft: only Context is written; Options/Decision/Consequences are filled in by T0.9.
+Draft: Context and Measurements are written; Options/Decision/Consequences are filled in by T0.9.
 
 ## Context
 
@@ -94,6 +94,40 @@ the gate. Findings below were checked on 2026-10-05 against crates.io, docs.rs a
   gpui-component's new home `longbridge/gpui-kit`) in the same commit as the ADR decision.
 - Measurements (T0.8) must use a release build, which needs `fxc.exe` (Windows SDK) or
   `GPUI_FXC_PATH`.
+
+## Measurements (T0.8, 2026-10-05)
+
+Harness: `bash scripts/measure-spike.sh [flood-MiB]` builds release and runs three windowed
+runs with `--stats` (own RSS/CPU via `sysinfo`, frames, output rate, key latency printed to
+stderr once a second; logs in `target/measure/`). Headless PTY baseline:
+`cargo test --release -p spike-term --test flood_pty -- --nocapture`.
+Host: native Windows 11 (26100), 16 logical CPUs, release build, one terminal running
+`cmd.exe` at the default 80x24 window size. CPU % is of **one core** (÷16 for whole machine).
+
+| What (SPEC §15 target) | Result | vs target |
+| --- | --- | --- |
+| Idle RAM, one terminal (UI < 150 MB) | 66–101 MB RSS (working set; varies run to run) | OK |
+| Idle CPU (UI + daemon < 1 %) | 1.5–6 %, mean 3.5–4 % of one core (~0.25 % of the machine) | over, if "%" means one core |
+| Key → painted echo (< 16 ms) | p50 22–23 ms, p95 36–37 ms (33–38 synthetic keys/run; one 527 ms outlier) | over |
+| Flood 50 MiB (`--flood 50`) | 5.8 MB/s, 32–35 fps, frame gap max 35–53 ms, UI CPU ~26 % of one core, RSS flat at 61–70 MB, took 8.7 s | RAM/CPU OK; frame gap over 16 ms |
+| PTY flood baseline, no UI (1 MiB) | ~7.7 MB/s | — |
+
+Interpretation:
+
+- Key latency is measured from the PTY write to the end of the first paint after the echo
+  arrived; it excludes OS input dispatch and GPU present (so the real number is higher), and
+  includes the ConPTY + `cmd.exe` echo round trip and up to one 16 ms poll tick. The poll timer
+  is the first suspect for both latency and idle CPU (it wakes the UI 60×/s with nothing to do).
+  Fix: wake the UI on PTY output instead of polling (T0.8a), then re-measure.
+- Flood: RAM stays flat and the UI uses about a quarter of a core while consuming ~75 % of
+  the PTY's own headless rate. But the frame rate is ~34 fps, not 60: the gap between frames
+  (35–53 ms) is the stand-in for input latency during a flood (the flood child does not read
+  stdin, so there is no echo to time), and it misses §15's 16 ms. Suspects: the poll tick
+  stacked on frame time, and the 1 MiB per-frame drain budget (`pty.rs`). Same follow-up.
+  ConPTY itself delivers ~7.7 MB/s here (a 50 MB flood takes ~7 s at best); that ceiling
+  applies to any UI (GPUI or Tauri).
+- Only the UI process is sampled; conhost/OpenConsole and the child are not included.
+- Not measured: real keyboard input (needs a human; HUMAN_CHECKS), several panes (M2+).
 
 ## Options
 
