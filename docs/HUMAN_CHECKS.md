@@ -37,6 +37,9 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `alacritty_terminal` 0.26, not Zed's fork.
 - (T0.2) Release builds of gpui on Windows need `fxc.exe` (Windows SDK) — the spike is built in
   debug mode by verify, so no install is required now.
+- (T0.3) `spike-term` has a lib target but uses `anyhow` (not `thiserror`, SPEC §17) because it
+  is throwaway spike code and `portable-pty` itself returns `anyhow::Error`. Real crates
+  (`mkrew-daemon` etc.) will follow §17.
 
 ## Done
 
