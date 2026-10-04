@@ -1,0 +1,8 @@
+line one\r\nline two\r\nline three
+\e[2;6HTWO
+\e[1;1H\e[2CX
+\e[3;1H\e[KERASED\e[s
+\e[5;10Hfar
+\e[u!\r\n
+overwrite-me\rOVER
+\e[2A\e[3D<

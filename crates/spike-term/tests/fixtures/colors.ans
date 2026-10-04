@@ -1,0 +1,4 @@
+normal \e[31mred\e[0m \e[1;32mbold-green\e[0m \e[44;97mwhite-on-blue\e[0m\r\n
+\e[38;5;208m256-orange\e[0m \e[48;5;22m256-bg\e[0m\r\n
+\e[38;2;255;100;0mtrue-fg\e[0m \e[48;2;10;20;30mtrue-bg\e[0m\r\n
+\e[3mitalic\e[0m \e[4munder\e[0m \e[7minverse\e[0m \e[2mdim\e[0m \e[9mstrike\e[0m\r\n

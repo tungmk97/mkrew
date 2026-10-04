@@ -12,3 +12,6 @@ workspace = true
 alacritty_terminal = "0.26"
 anyhow = "1.0"
 portable-pty = "0.9"
+
+[dev-dependencies]
+insta = "1"

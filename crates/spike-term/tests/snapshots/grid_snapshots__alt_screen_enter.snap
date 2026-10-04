@@ -1,0 +1,19 @@
+---
+source: crates/spike-term/tests/grid_snapshots.rs
+assertion_line: 129
+expression: "snapshot(\"alt_screen_enter\", 30, 10)"
+---
+alt screen title
+
+     menu item
+
+
+
+
+
+
+-- status --
+--- cursor: row 9 col 12 visible
+--- styles
+2:4..15 fg=Named(Foreground) bg=Named(Background) flags=Flags(INVERSE)
+--- wide chars (row: cols)

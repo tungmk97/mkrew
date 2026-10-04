@@ -1,0 +1,43 @@
+---
+source: crates/spike-term/tests/grid_snapshots.rs
+assertion_line: 144
+expression: "snapshot(\"tui_frame\", 60, 16)"
+---
+╭────────────────────╮
+│ ✻ Welcome to Agent!│
+╰────────────────────╯
+
+> fix the failing test
+
+● Read(src/lib.rs)
+  ⎿  Read 42 lines
+
+✶ Thinking… (3s · esc to interrupt)
+
+╭──────────────────────────────╮
+│ >                            │
+╰──────────────────────────────╯
+  ? for shortcuts                           ● auto-accept
+
+--- cursor: row 12 col 4 visible
+--- styles
+0:0..22 fg=Spec(Rgb { r: 215, g: 119, b: 87 }) bg=Named(Background) flags=Flags(0x0)
+1:0..1 fg=Spec(Rgb { r: 215, g: 119, b: 87 }) bg=Named(Background) flags=Flags(0x0)
+1:2..21 fg=Named(Foreground) bg=Named(Background) flags=Flags(BOLD)
+1:21..22 fg=Spec(Rgb { r: 215, g: 119, b: 87 }) bg=Named(Background) flags=Flags(0x0)
+2:0..22 fg=Spec(Rgb { r: 215, g: 119, b: 87 }) bg=Named(Background) flags=Flags(0x0)
+4:0..2 fg=Spec(Rgb { r: 153, g: 153, b: 153 }) bg=Named(Background) flags=Flags(0x0)
+6:0..1 fg=Spec(Rgb { r: 78, g: 186, b: 101 }) bg=Named(Background) flags=Flags(0x0)
+6:2..6 fg=Named(Foreground) bg=Named(Background) flags=Flags(BOLD)
+7:10..12 fg=Named(Foreground) bg=Named(Background) flags=Flags(BOLD)
+9:0..1 fg=Spec(Rgb { r: 215, g: 119, b: 87 }) bg=Named(Background) flags=Flags(0x0)
+9:2..11 fg=Spec(Rgb { r: 215, g: 119, b: 87 }) bg=Named(Background) flags=Flags(0x0)
+9:12..35 fg=Named(Foreground) bg=Named(Background) flags=Flags(DIM)
+11:0..32 fg=Spec(Rgb { r: 136, g: 136, b: 136 }) bg=Named(Background) flags=Flags(0x0)
+12:0..1 fg=Spec(Rgb { r: 136, g: 136, b: 136 }) bg=Named(Background) flags=Flags(0x0)
+12:4..5 fg=Named(Foreground) bg=Named(Background) flags=Flags(INVERSE)
+12:31..32 fg=Spec(Rgb { r: 136, g: 136, b: 136 }) bg=Named(Background) flags=Flags(0x0)
+13:0..32 fg=Spec(Rgb { r: 136, g: 136, b: 136 }) bg=Named(Background) flags=Flags(0x0)
+14:2..17 fg=Named(Foreground) bg=Named(Background) flags=Flags(DIM)
+14:44..57 fg=Spec(Rgb { r: 78, g: 186, b: 101 }) bg=Named(Background) flags=Flags(0x0)
+--- wide chars (row: cols)

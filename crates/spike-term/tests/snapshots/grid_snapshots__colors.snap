@@ -1,0 +1,25 @@
+---
+source: crates/spike-term/tests/grid_snapshots.rs
+assertion_line: 119
+expression: "snapshot(\"colors\", 40, 5)"
+---
+normal red bold-green white-on-blue
+256-orange 256-bg
+true-fg true-bg
+italic under inverse dim strike
+
+--- cursor: row 4 col 0 visible
+--- styles
+0:7..10 fg=Named(Red) bg=Named(Background) flags=Flags(0x0)
+0:11..21 fg=Named(Green) bg=Named(Background) flags=Flags(BOLD)
+0:22..35 fg=Named(BrightWhite) bg=Named(Blue) flags=Flags(0x0)
+1:0..10 fg=Indexed(208) bg=Named(Background) flags=Flags(0x0)
+1:11..17 fg=Named(Foreground) bg=Indexed(22) flags=Flags(0x0)
+2:0..7 fg=Spec(Rgb { r: 255, g: 100, b: 0 }) bg=Named(Background) flags=Flags(0x0)
+2:8..15 fg=Named(Foreground) bg=Spec(Rgb { r: 10, g: 20, b: 30 }) flags=Flags(0x0)
+3:0..6 fg=Named(Foreground) bg=Named(Background) flags=Flags(ITALIC)
+3:7..12 fg=Named(Foreground) bg=Named(Background) flags=Flags(UNDERLINE)
+3:13..20 fg=Named(Foreground) bg=Named(Background) flags=Flags(INVERSE)
+3:21..24 fg=Named(Foreground) bg=Named(Background) flags=Flags(DIM)
+3:25..31 fg=Named(Foreground) bg=Named(Background) flags=Flags(STRIKEOUT)
+--- wide chars (row: cols)

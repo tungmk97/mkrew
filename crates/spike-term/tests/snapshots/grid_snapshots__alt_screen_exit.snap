@@ -1,0 +1,18 @@
+---
+source: crates/spike-term/tests/grid_snapshots.rs
+assertion_line: 134
+expression: "snapshot(\"alt_screen_exit\", 30, 10)"
+---
+primary shell text
+$ back
+
+
+
+
+
+
+
+
+--- cursor: row 1 col 6 visible
+--- styles
+--- wide chars (row: cols)

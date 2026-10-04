@@ -34,6 +34,8 @@ impl EventListener for ReplyListener {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridCell {
     pub c: char,
+    /// Zero-width chars attached to `c` (combining marks, VS16, ZWJ sequences).
+    pub zerowidth: Vec<char>,
     pub fg: Color,
     pub bg: Color,
     pub flags: Flags,
@@ -56,7 +58,8 @@ pub struct Grid {
 }
 
 impl Grid {
-    /// Plain-text dump: one line per row, trailing blanks trimmed, wide-char spacers skipped.
+    /// Plain-text dump: one line per row, trailing blanks trimmed, wide-char spacers skipped,
+    /// zero-width chars kept after their base char.
     pub fn to_text(&self) -> String {
         let mut out = String::new();
         for row in &self.rows {
@@ -67,7 +70,7 @@ impl Grid {
                         .flags
                         .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
                 })
-                .map(|cell| cell.c)
+                .flat_map(|cell| std::iter::once(cell.c).chain(cell.zerowidth.iter().copied()))
                 .collect();
             out.push_str(line.trim_end());
             out.push('\n');
@@ -115,6 +118,7 @@ impl Emulator {
         let cols = self.term.columns();
         let blank = GridCell {
             c: ' ',
+            zerowidth: Vec::new(),
             fg: Color::Named(NamedColor::Foreground),
             bg: Color::Named(NamedColor::Background),
             flags: Flags::empty(),
@@ -128,6 +132,11 @@ impl Emulator {
             if let Some(slot) = rows.get_mut(row).and_then(|r| r.get_mut(col)) {
                 *slot = GridCell {
                     c: indexed.cell.c,
+                    zerowidth: indexed
+                        .cell
+                        .zerowidth()
+                        .map(<[char]>::to_vec)
+                        .unwrap_or_default(),
                     fg: indexed.cell.fg,
                     bg: indexed.cell.bg,
                     flags: indexed.cell.flags,

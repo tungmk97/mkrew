@@ -1,0 +1,14 @@
+---
+source: crates/spike-term/tests/grid_snapshots.rs
+assertion_line: 124
+expression: "snapshot(\"cursor_moves\", 20, 6)"
+---
+liXe one
+l<ne TWO
+ERASED!
+OVERwrite-me
+         far
+
+--- cursor: row 1 col 2 visible
+--- styles
+--- wide chars (row: cols)

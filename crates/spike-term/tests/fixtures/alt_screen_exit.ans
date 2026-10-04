@@ -1,0 +1,4 @@
+primary shell text\r\n$ \e[?1049h\e[H\e[2J
+\e[1;1Halt screen title
+\e[3;5Hmenu
+\e[?1049lback

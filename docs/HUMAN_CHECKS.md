@@ -19,6 +19,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `pwsh`; `bash scripts/verify.sh` (same fmt/clippy/test steps) passed on Windows.
 - [ ] (T0.2) Before T0.8 (measurements, release build): install the Windows SDK so `fxc.exe`
   is available, or set `GPUI_FXC_PATH`. Release gpui builds panic without it.
+- [ ] (T0.4) `crates/spike-term/tests/fixtures/tui_frame.ans` is a hand-made Claude-Code-like
+  frame. Record a real `claude` session (e.g. via `script`/a PTY logger), convert it to the
+  escaped fixture format (`tests/fixtures/README.md`), add it as a fixture and accept its
+  snapshot. Until then the M0 "recorded agent output" criterion stays unticked.
 
 ## Questions with assumed defaults
 
@@ -40,6 +44,9 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - (T0.3) `spike-term` has a lib target but uses `anyhow` (not `thiserror`, SPEC §17) because it
   is throwaway spike code and `portable-pty` itself returns `anyhow::Error`. Real crates
   (`mkrew-daemon` etc.) will follow §17.
+- (T0.4) Terminal fixtures are stored as escaped text (`\e`, `\r`, `\xNN`; literal line breaks
+  ignored) instead of raw bytes: readable, diffable, immune to git CRLF conversion, and the
+  agent's file tools cannot write raw control bytes. Raw recordings must be converted first.
 
 ## Done
 

@@ -1,0 +1,17 @@
+---
+source: crates/spike-term/tests/grid_snapshots.rs
+assertion_line: 139
+expression: "snapshot(\"wide_emoji\", 24, 6)"
+---
+a日本語b
+rocket 🚀 end
+heart ❤️ end
+coder 👩‍💻 end
+café combining
+
+--- cursor: row 5 col 0 visible
+--- styles
+--- wide chars (row: cols)
+0: [1, 3, 5]
+1: [7]
+3: [6, 8]
