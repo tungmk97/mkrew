@@ -4,7 +4,7 @@
 - Status: proposed
 - Milestone: M0
 
-Draft: Context and Measurements are written; Options/Decision/Consequences are filled in by T0.9.
+Recommendation written (T0.9); waiting for the human gate (HUMAN_CHECKS "Waiting (blocking)").
 
 ## Context
 
@@ -165,12 +165,61 @@ gap < 16 ms; both are open inputs for T0.9):
 
 ## Options
 
-_To be written in T0.9 (GPUI vs Tauri + React + xterm.js, with measurements from T0.8)._
+Evidence for GPUI comes from the `spike-term` build (T0.3–T0.8a). Tauri was **not built**; its
+column is from general knowledge of WebView2 + xterm.js and is marked as such.
+
+| Concern | A. GPUI (`gpui-pre` 0.3.7 + `gpui-component` 0.7) | B. Tauri + React + xterm.js |
+| --- | --- | --- |
+| Terminal rendering | Own cell-grid renderer (Zed's approach): styled runs per row, dirty rows, one paint per frame. Snapshot tests on the emulator grid (colors, cursor, alt screen, wide chars, a hand-made TUI frame) pass. Real agent TUIs not yet seen by a human. | xterm.js: mature, used by VS Code; agent TUIs known to render well. Nothing to build. |
+| Key → glyph (< 16 ms) | p95 6.1–6.6 ms (synthetic, PTY write → paint end) | Not measured; adds a Rust → webview IPC hop per output chunk and per key. |
+| Idle RAM (< 150 MB) | 65 MB RSS, one terminal | Not measured; a WebView2 app typically starts around 100–200 MB across its processes. |
+| Idle CPU (< 1 %) | ~3.5 % of one core (~0.25 % of the machine), floor set by GPUI's Windows vsync thread; app does zero work | Not measured; an idle webview is usually near 0 %. |
+| Output flood | ~9 MB/s (above the 6.6–7.7 MB/s headless PTY rate), frames at display refresh (165 Hz), gap max 18–24 ms, ~0.8 core, RAM flat | Not measured; xterm.js WebGL handles floods well, but every byte crosses IPC (base64/JSON or channel). |
+| Windows native | Builds and runs on Windows 11 (DirectX 11, DirectWrite); release needs `fxc.exe` (Windows SDK) | WebView2 is preinstalled on Windows 11; mature. |
+| IME / input | Spike has no `InputHandler`; IME and dead keys need work in M2 | Browser handles IME. |
+| Rest of the app (§10–§12B: dock, lists, markdown, diffs, code view) | `gpui-component` has dock/tabs, virtual list, editor, markdown, tables | Huge React ecosystem. |
+| Architecture fit (§2, §3) | One language, one native binary, shares types with daemon/protocol crates | Two languages + a JS build toolchain; types must be mirrored in TS. |
+| Supply chain / churn | `gpui-pre` is a third-party weekly snapshot of Zed (gpui-component maintainers); API churns; gpui-component pins it exactly | Stable, widely used release process. |
+
+Both options keep the daemon, CLI, protocol and store unchanged (§19): the choice only affects
+`mkrew-ui`.
 
 ## Decision
 
-_Pending (T0.9)._
+**Recommendation: A — GPUI** (`gpui-pre = "=0.3.7"` as `gpui`, `gpui-component` 0.7 via
+`gpui-kit`), **pending the human checks** in `docs/HUMAN_CHECKS.md` → "Waiting (blocking)".
+Status stays *proposed* until the human confirms.
+
+Why: every automated M0 target that GPUI controls is met or nearly met (latency 6.6 ms p95, RAM
+65 MB, flood throughput at the ConPTY ceiling), the renderer is the same design Zed ships, and
+staying in Rust keeps the single-binary, shared-types architecture of §3. The two misses are
+bounded: idle CPU is ~0.25 % of the machine and caused by GPUI itself; flood CPU can be cut with
+a 60 Hz paint cap, while the 18–24 ms flood gap spikes (single slow frames, mean ~6 ms) remain an
+open miss to profile in M2. Neither is a reason to take on a second language and a webview.
+
+Switch to B (Tauri) if any of these turn out true in the human checks:
+
+- a real `claude` / `codex` TUI renders with broken frames, wrong colors or misaligned glyphs
+  that are not a small renderer bug;
+- typing, paste or resize misbehave in ways that point at GPUI rather than spike code;
+- the idle CPU floor (~3.5 % of a core per window) or IME support is judged unacceptable.
 
 ## Consequences
 
-_Pending (T0.9)._
+If GPUI is confirmed:
+
+- SPEC §4 UI row names the actual crates: `gpui-pre` (imported as `gpui`; the spike also uses
+  `gpui-pre-platform` for the entry point until `gpui-kit`'s `application()` replaces it) +
+  `gpui-kit` (gpui-component, now `longbridge/gpui-kit`), pinned. Updated now with the
+  recommendation; reverted if Tauri is chosen.
+- `mkrew-ui` (M2) inherits from the spike: the row renderer and dirty-row cache, wake-on-output
+  draining paced by paint, and the key mapping. It must add: an `InputHandler` for IME/dead
+  keys, an optional 60 Hz paint cap during floods, keeping a finished session's last screen,
+  and PTY writes off the UI thread (the daemon owns them from M1).
+- Release builds on Windows need the Windows SDK (`fxc.exe`) or `GPUI_FXC_PATH`; CI must have it.
+- gpui upgrades follow `gpui-component` releases (exact pin); budget time for API churn.
+- Idle CPU (~3.5 % of a core) stays until upstream gpui stops invalidating idle windows each
+  vsync; §15's "< 1 %" is read as % of the machine for now.
+
+If Tauri is chosen instead: write ADR 0002, replace the §4 UI row, and rebuild only the UI on
+top of the M1 daemon protocol; the spike's measurements above become the baseline to beat.

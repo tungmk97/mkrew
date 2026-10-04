@@ -145,7 +145,7 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | Concern | Crate / tool | Notes |
 | --- | --- | --- |
 | Async runtime | `tokio` | daemon, CLI |
-| UI | `gpui` + `gpui-component` | Fallback: Tauri + React + xterm.js (see §19, decided in M0) |
+| UI | `gpui` + `gpui-component` | crates.io `gpui-pre` (imported as `gpui`) + `gpui-kit` (gpui-component, `longbridge/gpui-kit`), pinned to the gpui version gpui-kit needs (ADR 0001). Fallback: Tauri + React + xterm.js (see §19, decided in M0) |
 | PTY | `portable-pty` | ConPTY on Windows |
 | Terminal emulation | `alacritty_terminal` | UI draws the cell grid itself |
 | IPC | `interprocess` | named pipe / Unix socket |

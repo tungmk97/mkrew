@@ -18,13 +18,13 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 - [ ] Works on native Windows.
 - [ ] Automated: grid-dump snapshot test fed with recorded agent output.
 - [x] Measured on Windows (in the ADR): idle RAM with one terminal, key-to-glyph latency, CPU during an output flood.
-- [ ] ADR `docs/decisions/0001-ui-framework.md` + HUMAN_CHECKS entries; status set to WAITING_HUMAN.
+- [x] ADR `docs/decisions/0001-ui-framework.md` + HUMAN_CHECKS entries; status set to WAITING_HUMAN.
 
 ### Task queue
 
-- [ ] T0.9 Wrap-up: finalize ADR 0001 with recommendation (GPUI vs Tauri) and evidence; add manual checks (real agents, Windows, resize, paste) to HUMAN_CHECKS as "Waiting (blocking)"; run Step 8 of BUILD_LOOP. (spec: §18, §19)
-
 ### Done (last 10)
+
+- [x] T0.9 Wrap-up: finalize ADR 0001 with recommendation (GPUI vs Tauri) and evidence; add manual checks (real agents, Windows, resize, paste) to HUMAN_CHECKS as "Waiting (blocking)"; run Step 8 of BUILD_LOOP. (spec: §18, §19) — docs(adr): recommend GPUI for the M0 gate
 
 - [x] T0.8a Wake-on-output: replace the 16 ms poll in `view.rs` with a wake from the PTY reader thread (reader coalesces chunks; UI drains once per frame when woken), then re-run `scripts/measure-spike.sh` and update the ADR "Measurements" table (targets: idle CPU < 1 % of a core, key p95 < 16 ms, flood frame gap < 16 ms with throughput near the headless `flood_pty` rate). (spec: §10, §15) — perf(spike): wake the UI on PTY output instead of polling
 

@@ -10,6 +10,29 @@ How to answer: write your answer under the item, move it to "Done", and if the l
 
 _Items that stop the loop until you answer._
 
+- [ ] (T0.9) **M0 gate — UI framework.** Read `docs/decisions/0001-ui-framework.md`
+  (recommendation: GPUI; switch criteria listed under "Decision"). Do the manual checks below,
+  then answer here: "GPUI" (ADR → accepted, tick SPEC §19 open question) or "Tauri" (the next
+  session writes ADR 0002 and replans). Then set `status: RUNNING`; the next session plans M1.
+  Note: the automated "grid-dump snapshot fed with recorded agent output" criterion is still
+  open (only a hand-made TUI frame exists, see T0.4 below); answering GPUI accepts M0 without it
+  — or record a real session first.
+- [ ] (T0.9 / T0.7) Real agents: `cargo run -p spike-term -- claude` (and `-- codex`, `-- omp`)
+  on native Windows. The npm `.cmd`/`.ps1` shim is found via `PATHEXT`, the TUI renders with
+  correct colors and no broken frames. Tests only used fake shims.
+- [ ] (T0.9 / T0.6) Input: type in the shell and in `claude` (letters, AltGr chars on your
+  layout, dead keys / IME if you use one — expected to fail, no `InputHandler` yet), Enter,
+  Backspace, arrows/history, Tab, Ctrl+C on a running command, Esc;
+  Ctrl+Shift+V of multi-line text (shell and a bracketed-paste TUI).
+- [ ] (T0.9 / T0.6) Resize: drag the window edges with a shell and with `claude` running; the
+  prompt/TUI reflows to the new size without leftovers.
+- [ ] (T0.9 / T0.5) Visuals on native Windows, dark and light OS themes: prompt readable, `dir`
+  / TUI colors, accent cursor block, wide chars/emoji aligned. Optionally save
+  `docs/screenshots/m0-terminal-{dark,light}.png`.
+- [ ] (T0.9 / T0.8) Perceived latency and idle cost: type in
+  `cargo run --release -p spike-term -- --stats` (read `key_p50` lines) and judge the idle CPU
+  (~3.5 % of one core, GPUI vsync floor) and flood CPU (~0.8 core at 165 Hz) in the ADR.
+
 ## To verify (non-blocking)
 
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
@@ -24,23 +47,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   frame. Record a real `claude` session (e.g. via `script`/a PTY logger), convert it to the
   escaped fixture format (`tests/fixtures/README.md`), add it as a fixture and accept its
   snapshot. Until then the M0 "recorded agent output" criterion stays unticked.
-- [ ] (T0.5) Run `cargo run -p spike-term` and check the terminal window visually in dark and
-  light OS themes: shell prompt readable, colors (e.g. `dir`/`ls --color`, a TUI like
-  `claude`), accent cursor block, wide chars/emoji aligned on the grid. Optionally save
-  screenshots to `docs/screenshots/m0-terminal-{dark,light}.png` (headless session cannot
-  capture them; it only confirmed the window starts without panicking).
-- [ ] (T0.6) In `cargo run -p spike-term`: type in the shell (letters, AltGr chars on your
-  layout), Enter, Backspace, arrows/history, Tab completion, Ctrl+C on a running command,
-  Esc; Ctrl+Shift+V of multi-line text (shell and a bracketed-paste TUI); resize the window
-  and check the prompt/TUI reflows to the new size. Headless session only unit-tested these.
-- [ ] (T0.7) Run `cargo run -p spike-term -- claude` (and `-- codex`, `-- omp`) on Windows:
-  the npm `.cmd`/`.ps1` shim is found via `PATHEXT` and the agent TUI starts in the window.
-  Tests only ran fake `.cmd`/`.ps1` shims (no real agents allowed); the Unix exec-bit branch of
-  `launch::is_runnable` was not compiled on this Windows host.
+- [ ] (T0.5–T0.7) Visual, input, resize and real-agent checks moved to "Waiting (blocking)"
+  (T0.9). Also: the Unix exec-bit branch of `launch::is_runnable` was never compiled here.
 - [ ] (T0.8) Real key-to-glyph latency: the automated number (ADR 0001 "Measurements") uses
   synthetic keys written to the PTY and stops at paint end, so it misses OS input dispatch and
-  GPU present. Measure once with a high-speed camera / `Typometer`-style tool, or at least
-  type in `cargo run --release -p spike-term -- --stats` and read the `key_p50` lines.
+  GPU present. Optionally measure with a high-speed camera / `Typometer`-style tool.
 
 ## Questions with assumed defaults
 
@@ -93,6 +104,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   not fixable without patching gpui. Default: accept both for the spike, weigh them in T0.9.
   The spike still quits on child exit and may drop output ConPTY delivers after the exit; the
   real pane (M2) must keep a finished session's final screen.
+- (T0.9) Tauri was not prototyped; its ADR column is qualitative. SPEC §4 UI row now names
+  `gpui-pre` + `gpui-kit` (matches the recommendation; revert if you choose Tauri). M0 is
+  tagged `m0-done` with five criteria unticked (real agents, input, resize, native Windows,
+  recorded agent fixture); they are covered by the checks above and the T0.4 item.
+- (T0.9) SPEC §15 "Idle CPU < 1 %" is read as % of the **machine** from M2 on (GPUI's Windows
+  vsync floor is ~3.5 % of one core, ~0.25 % of 16 threads); T0.8 had read it per core.
+  Override here if you want the stricter reading (would require patching gpui).
 
 ## Done
 
