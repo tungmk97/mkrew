@@ -86,6 +86,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   because `unsafe` is denied and `powershell`/`tasklist` are not available to headless sessions.
   Added T0.8a (wake-on-output + reader coalescing, re-measure) before the T0.9 wrap-up, since
   idle CPU, key latency and the flood frame gap miss §15 for likely fixable reasons.
+- (T0.8a) Output drains are paced by painted frames (at most one per display refresh, §10), not
+  capped at 60 Hz. On this 165 Hz display a 50 MiB flood costs ~0.8 core of UI CPU (frames
+  track refresh, gap max 18–24 ms); a 60 Hz cap would cut CPU but raise the gap. Idle CPU stays
+  ~3.5 % of a core because GPUI's Windows vsync thread invalidates every window each vsync —
+  not fixable without patching gpui. Default: accept both for the spike, weigh them in T0.9.
+  The spike still quits on child exit and may drop output ConPTY delivers after the exit; the
+  real pane (M2) must keep a finished session's final screen.
 
 ## Done
 

@@ -22,10 +22,11 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ### Task queue
 
-- [ ] T0.8a Wake-on-output: replace the 16 ms poll in `view.rs` with a wake from the PTY reader thread (reader coalesces chunks; UI drains once per frame when woken), then re-run `scripts/measure-spike.sh` and update the ADR "Measurements" table (targets: idle CPU < 1 % of a core, key p95 < 16 ms, flood frame gap < 16 ms with throughput near the headless `flood_pty` rate). (spec: §10, §15)
 - [ ] T0.9 Wrap-up: finalize ADR 0001 with recommendation (GPUI vs Tauri) and evidence; add manual checks (real agents, Windows, resize, paste) to HUMAN_CHECKS as "Waiting (blocking)"; run Step 8 of BUILD_LOOP. (spec: §18, §19)
 
 ### Done (last 10)
+
+- [x] T0.8a Wake-on-output: replace the 16 ms poll in `view.rs` with a wake from the PTY reader thread (reader coalesces chunks; UI drains once per frame when woken), then re-run `scripts/measure-spike.sh` and update the ADR "Measurements" table (targets: idle CPU < 1 % of a core, key p95 < 16 ms, flood frame gap < 16 ms with throughput near the headless `flood_pty` rate). (spec: §10, §15) — perf(spike): wake the UI on PTY output instead of polling
 
 - [x] T0.8 Measurements: add a `--flood` mode (prints high-volume colored output) and a small harness/instructions to measure idle RAM, key latency and flood CPU; record numbers in the ADR (automated where possible, otherwise as HUMAN_CHECKS items). (spec: §15) — feat(spike): flood mode, --stats and measurement harness
 
@@ -40,8 +41,8 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ## Notes for the next session
 
-- Next: T0.8a. CLI: `spike-term [--dump | --stats [--probe-keys]] [-- <cmd>]` / `--flood <MiB>` (`launch::parse_args` → `Mode`). `view.rs`: `spawn_every` timers (16 ms drain, 1 s stats, 500 ms probe); `TerminalView::send` = all PTY key writes; `stats.rs` = `Stats` + `ProcessProbe` (sysinfo). In Git Bash, `/C` args get MSYS-mangled — use `//C`.
-- T0.8 numbers (ADR 0001 "Measurements"): idle ~3.5 % of a core, 65–101 MB; key p50 22 / p95 37 ms; flood 5.8 MB/s UI vs 7.7 MB/s headless (`tests/flood_pty.rs`), ~34 fps, frame gap ≤ 53 ms. Suspects: 16 ms poll tick, 1 MiB drain budget, 64-chunk channel (`pty.rs`).
+- Next: T0.9 (wrap-up, ADR Options/Decision/Consequences). ADR 0001 has T0.8 and T0.8a tables; T0.8a: key p95 6.6 ms (OK), idle ~3.5 % of a core (GPUI vsync `RedrawWindow` floor, unfixable app-side), flood 9 MB/s at 165 fps / ~0.8 core, gap max 18–24 ms. Assumed defaults in HUMAN_CHECKS (T0.8a).
+- `pty.rs`: reader appends to a shared `Inbox` (Mutex+Condvar, 4 MiB backpressure) and signals `PtySession::wake()` (async_channel cap 1); `drain` takes ≤ 1 MiB, re-arms the wake if more remains, reports exit only when empty. `view.rs`: wake loop drains, then awaits the paint signal (`TerminalElement::paint`) or 50 ms. CLI: `spike-term [--dump | --stats [--probe-keys]] [-- <cmd>]` / `--flood <MiB>`. In Git Bash use `//C` not `/C`.
 - Measuring: release build works (`fxc.exe` on PATH). Headless sessions can't run `bash scripts/measure-spike.sh` directly (permission) — run its `timeout N ./target/release/spike-term.exe --stats ... 2>target/measure/X.log` lines one by one; `Read` logs, don't cat them (flood log is long).
 - gpui deps: `gpui = { package = "gpui-pre" }` + `gpui_platform = { package = "gpui-pre-platform" }` (=0.3.7); entry `gpui_platform::application().run(..)`. Windows: `Keystroke.key_char` is None for control keys; AltGr = ctrl+alt with `key_char`.
 - `Emulator::advance` reply bytes MUST be written to the PTY (ConPTY waits for the DSR reply); `drain`/`pump` do it. Dirty rows found by comparing cells; row cache doesn't key on cell width.

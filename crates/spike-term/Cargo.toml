@@ -11,6 +11,10 @@ workspace = true
 [dependencies]
 alacritty_terminal = "0.26"
 anyhow = "1.0"
+# PTY output wake for the UI (awaited on GPUI's executor); 2.x is already in the tree via gpui.
+async-channel = "2"
+# `future::or` for the paint-or-timeout wait; 2.x is already in the tree via gpui.
+futures-lite = "2"
 # gpui snapshot pinned by gpui-component 0.7 (ADR 0001); the platform crate provides `application()`.
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7" }

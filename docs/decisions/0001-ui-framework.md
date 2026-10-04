@@ -129,6 +129,40 @@ Interpretation:
 - Only the UI process is sampled; conhost/OpenConsole and the child are not included.
 - Not measured: real keyboard input (needs a human; HUMAN_CHECKS), several panes (M2+).
 
+### After wake-on-output (T0.8a, 2026-10-05)
+
+Change: the 16 ms poll is gone. The PTY reader thread appends every read to one shared buffer
+(capped at 4 MiB, then it blocks the child) and signals a capacity-1 wake channel; the UI awaits
+it, drains (≤ 1 MiB), and after output waits for that frame's paint (50 ms fallback) before the
+next drain — i.e. at most one drain per display refresh (§10). Same host and harness; this
+host's display refreshes at **165 Hz** (GPUI paints up to ~166 fps).
+
+| What (SPEC §15 target) | T0.8 (poll) | T0.8a (wake) | vs target |
+| --- | --- | --- | --- |
+| Idle RAM (UI < 150 MB) | 66–101 MB | 65 MB | OK |
+| Idle CPU (< 1 %) | mean 3.5–4 % of one core | mean 3.3–3.8 %, 0 frames painted | over (GPUI floor, see below) |
+| Key → painted echo (< 16 ms) | p50 22 / p95 37 ms | p50 3.6–4.4 / p95 6.1–6.6 ms (33 keys/run; one ~508 ms startup outlier) | **OK** |
+| Flood 50 MiB | 5.8 MB/s, ~34 fps, gap max 35–53 ms, CPU ~26 % | 8.9–9.5 MB/s, ~165 fps, gap max 18–24 ms (mean ~6 ms), CPU ~79 %, RSS flat 62–70 MB, 5.7 s | throughput OK; gap max slightly over 16 ms |
+| PTY flood baseline, no UI (1 MiB) | ~7.7 MB/s | ~6.6 MB/s (short run, noisy) | — |
+
+Interpretation (two T0.8a targets are **missed**: idle CPU < 1 % of a core, and flood frame
+gap < 16 ms; both are open inputs for T0.9):
+
+- Key latency is fixed: the echo is drained the moment the reader thread sees it and painted
+  on the next refresh.
+- Idle CPU did not move with the poll gone (the UI now does zero work and paints zero frames
+  while idle). The floor is GPUI's own: on Windows its `VSyncProvider` thread calls
+  `RedrawWindow(RDW_INVALIDATE)` on every window each vsync and checks for device loss
+  (`gpui-pre-windows` 0.3.7 `platform.rs` `begin_vsync_thread`), so an idle window still
+  handles ~165 `WM_PAINT`s/s. Not fixable from the app without patching gpui; §15's < 1 % is
+  met only if read as % of the machine (~0.25 % of 16 cores). Input for T0.9.
+- Flood: throughput now exceeds the old headless figure (the 64-chunk channel was a
+  bottleneck), and frames track the display refresh. The cost is CPU: a fully dirty 80x24 grid
+  is re-shaped ~165×/s (~0.8 core). Tried and rejected: a 16 ms timer between drains (Windows
+  timer granularity made it ~31 ms: 50 fps, gap 35–40 ms, 34 % CPU, 10 MB/s); no pacing at all
+  (~85 % CPU, no better gaps). If CPU matters more than refresh rate, a 60 Hz cap (skip paints
+  closer than ~16 ms) is a small change; the remaining gap spikes (18–24 ms, per-second max) are single slow frames.
+
 ## Options
 
 _To be written in T0.9 (GPUI vs Tauri + React + xterm.js, with measurements from T0.8)._

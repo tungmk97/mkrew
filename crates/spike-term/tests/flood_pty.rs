@@ -14,29 +14,36 @@ fn flood_output_reaches_the_grid_through_the_pty() {
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_spike-term"));
     cmd.args(["--flood", &MIB.to_string()]);
     cmd.cwd(std::env::temp_dir());
-    let mut session = PtySession::spawn(cmd, 80, 24).unwrap();
-    let mut emu = Emulator::new(80, 24);
+    // Drains only when woken, like the UI (more than one drain budget of output, so a capped
+    // drain must re-arm the wake). On a helper thread so a lost wake fails instead of hanging.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut session = PtySession::spawn(cmd, 80, 24).unwrap();
+        let wake = session.wake();
+        let mut emu = Emulator::new(80, 24);
+        let start = Instant::now();
+        let mut bytes = 0usize;
+        let exited = loop {
+            let drained = session.drain(&mut emu).unwrap();
+            bytes += drained.bytes;
+            if let Some(code) = drained.exited {
+                break code;
+            }
+            wake.recv_blocking().unwrap();
+        };
+        let elapsed = start.elapsed();
+        // Output can arrive after the exit event.
+        session
+            .pump(&mut emu, Duration::from_millis(500), Duration::from_secs(5))
+            .unwrap();
+        let _ = done_tx.send((exited, bytes, elapsed, emu.grid().to_text()));
+    });
+    let (exited, bytes, elapsed, text) = done_rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("flood did not finish within 60 s");
 
-    let start = Instant::now();
-    let end = start + Duration::from_secs(60);
-    let mut bytes = 0usize;
-    let mut exited = None;
-    while exited.is_none() && Instant::now() < end {
-        let drained = session.drain(&mut emu).unwrap();
-        bytes += drained.bytes;
-        exited = drained.exited;
-        if !drained.output {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-    let elapsed = start.elapsed();
-    // Output can arrive after the exit event.
-    session
-        .pump(&mut emu, Duration::from_millis(500), Duration::from_secs(5))
-        .unwrap();
-
-    assert_eq!(exited, Some(0), "flood did not finish within 60 s");
-    let text = emu.grid().to_text();
+    assert_eq!(exited, 0);
+    assert!(bytes as u64 >= MIB * 1024 * 1024, "only {bytes} bytes");
     assert!(
         text.contains(" flood  the quick brown fox"),
         "grid was:\n{text}"

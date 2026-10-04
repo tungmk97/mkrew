@@ -2,8 +2,8 @@
 //!
 //! Performance rules: one custom element paints the whole grid; each row is batched into a few
 //! shaped text runs (`layout::layout_row`), shaped rows are cached and rebuilt only when dirty
-//! (`layout::RowCache`), and PTY output is drained once per frame tick so bursts coalesce into a
-//! single repaint.
+//! (`layout::RowCache`), and PTY output is drained when the reader thread wakes the UI, at most
+//! once per frame, so bursts coalesce into a single repaint.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -24,8 +24,8 @@ use crate::pty::PtySession;
 use crate::stats::{ProcessProbe, Stats};
 use crate::theme::Theme;
 
-/// How often queued PTY output is drained; about one display refresh.
-const FRAME_TICK: Duration = Duration::from_millis(16);
+/// Longest wait for the frame showing drained output before draining again anyway.
+const PAINT_TIMEOUT: Duration = Duration::from_millis(50);
 /// `--stats` report interval.
 const STATS_INTERVAL: Duration = Duration::from_secs(1);
 /// `--probe-keys` interval between synthetic keys.
@@ -89,6 +89,8 @@ struct TerminalView {
     theme: Theme,
     rows: Rc<RefCell<RowCache<ShapedRow>>>,
     focus_handle: FocusHandle,
+    /// Signalled after each paint; paces the output drain loop.
+    painted: async_channel::Sender<()>,
     /// Set with `--stats`.
     stats: Option<(Rc<RefCell<Stats>>, ProcessProbe)>,
 }
@@ -103,7 +105,29 @@ impl TerminalView {
     ) -> Self {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
-        spawn_every(cx, FRAME_TICK, Self::drain);
+        let wake = session.wake();
+        let (painted_tx, painted_rx) = async_channel::bounded(1);
+        cx.spawn(async move |this, cx| {
+            // Idle = no wakeups. Woken by the PTY reader, drain at once (low key latency); after
+            // output, wait until that frame is painted so a flood drains once per frame. The
+            // timeout covers frames that are never painted (e.g. a minimized window).
+            while wake.recv().await.is_ok() {
+                // A paint from an earlier frame must not end the wait below.
+                let _ = painted_rx.try_recv();
+                match this.update(cx, |view, cx| view.drain(cx)) {
+                    Ok(Some(true)) => {
+                        let painted = async {
+                            let _ = painted_rx.recv().await;
+                        };
+                        let timeout = cx.background_executor().timer(PAINT_TIMEOUT);
+                        futures_lite::future::or(painted, timeout).await;
+                    }
+                    Ok(Some(false)) => {}
+                    Ok(None) | Err(_) => break,
+                }
+            }
+        })
+        .detach();
         if measure.stats {
             spawn_every(cx, STATS_INTERVAL, |view, _| {
                 view.report();
@@ -138,6 +162,7 @@ impl TerminalView {
             theme: theme_for(window.appearance()),
             rows: Rc::default(),
             focus_handle,
+            painted: painted_tx,
             stats,
         }
     }
@@ -201,9 +226,9 @@ impl TerminalView {
         }
     }
 
-    /// Feeds queued output; one `notify` (= at most one repaint) per tick. Returns false when
-    /// the session is over.
-    fn drain(&mut self, cx: &mut Context<'_, Self>) -> bool {
+    /// Feeds queued output; one `notify` (= at most one repaint) per drain. Returns whether
+    /// output was fed, or `None` when the session is over.
+    fn drain(&mut self, cx: &mut Context<'_, Self>) -> Option<bool> {
         match self.session.drain(&mut self.emulator) {
             Ok(drained) => {
                 if let Some((stats, _)) = &self.stats {
@@ -215,14 +240,14 @@ impl TerminalView {
                 if drained.exited.is_some() {
                     self.report();
                     cx.quit();
-                    return false;
+                    return None;
                 }
-                true
+                Some(drained.output)
             }
             Err(error) => {
                 eprintln!("spike-term: pty error: {error:#}");
                 cx.quit();
-                false
+                None
             }
         }
     }
@@ -269,6 +294,7 @@ impl Render for TerminalView {
                 grid: self.emulator.grid(),
                 theme: self.theme.clone(),
                 rows: self.rows.clone(),
+                painted: self.painted.clone(),
                 stats: self.stats.as_ref().map(|(stats, _)| stats.clone()),
             })
     }
@@ -284,6 +310,7 @@ struct TerminalElement {
     grid: Grid,
     theme: Theme,
     rows: Rc<RefCell<RowCache<ShapedRow>>>,
+    painted: async_channel::Sender<()>,
     stats: Option<Rc<RefCell<Stats>>>,
 }
 
@@ -408,6 +435,8 @@ impl Element for TerminalElement {
         if let Some(stats) = &self.stats {
             stats.borrow_mut().painted(Instant::now());
         }
+        // Full = a signal is already pending, which is just as good.
+        let _ = self.painted.try_send(());
     }
 }
 

@@ -3,7 +3,7 @@
 //!
 //! Key latency = key bytes written to the PTY → end of the first frame painted after new output
 //! arrived (the echo). It excludes OS input dispatch and the GPU present, and includes the
-//! frame tick that drains PTY output.
+//! wake from the PTY reader thread and the drain of its output.
 
 use std::time::{Duration, Instant};
 
