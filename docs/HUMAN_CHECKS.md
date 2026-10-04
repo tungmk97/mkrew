@@ -32,6 +32,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   layout), Enter, Backspace, arrows/history, Tab completion, Ctrl+C on a running command,
   Esc; Ctrl+Shift+V of multi-line text (shell and a bracketed-paste TUI); resize the window
   and check the prompt/TUI reflows to the new size. Headless session only unit-tested these.
+- [ ] (T0.7) Run `cargo run -p spike-term -- claude` (and `-- codex`, `-- omp`) on Windows:
+  the npm `.cmd`/`.ps1` shim is found via `PATHEXT` and the agent TUI starts in the window.
+  Tests only ran fake `.cmd`/`.ps1` shims (no real agents allowed); the Unix exec-bit branch of
+  `launch::is_runnable` was not compiled on this Windows host.
 
 ## Questions with assumed defaults
 
@@ -66,6 +70,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - (T0.6) PTY writes (keys, paste) are blocking writes on the UI thread; a huge paste into a
   child that is not reading could stall the window. Default: acceptable for the spike; the
   daemon (M1) owns PTY writes on its own thread.
+- (T0.7) `spike-term -- <cmd>` resolves the program itself (PATH + `PATHEXT`, then `.ps1`;
+  never the extensionless npm sh shim) and runs `.ps1` via `powershell.exe -File`. `.cmd`/`.bat`
+  go straight to CreateProcessW, so cmd.exe re-parses args: quoted args with a space in the
+  shim path, or `& | % ^` in args, can break (BatBadBut). Default: fine for the spike; the
+  daemon's command lookup (M1) must build `cmd.exe /d /s /c "..."` with cmd-aware escaping.
+  `-- <cmd>` starts in the current directory.
 
 ## Done
 
