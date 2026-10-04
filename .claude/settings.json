@@ -1,0 +1,40 @@
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": false,
+    "ponytail@ponytail": false
+  },
+  "attribution": { "commit": "", "pr": "" },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch", "Task",
+      "Bash(cargo:*)", "Bash(rustup:*)", "Bash(rustc:*)",
+      "Bash(bash scripts/verify.sh:*)", "Bash(bash scripts/status.sh:*)",
+      "Bash(pwsh scripts/verify.ps1:*)", "Bash(pwsh -File scripts/verify.ps1:*)",
+      "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+      "Bash(git add:*)", "Bash(git commit:*)", "Bash(git tag:*)", "Bash(git stash:*)",
+      "Bash(git rev-parse:*)", "Bash(git ls-files:*)", "Bash(git mv:*)", "Bash(git rm:*)",
+      "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)",
+      "Bash(grep:*)", "Bash(rg:*)", "Bash(find:*)", "Bash(sort:*)", "Bash(uniq:*)",
+      "Bash(mkdir:*)", "Bash(mv:*)", "Bash(cp:*)", "Bash(touch:*)", "Bash(echo:*)",
+      "Bash(diff:*)", "Bash(which:*)", "Bash(where:*)", "Bash(timeout:*)",
+      "Bash(./target/debug/:*)", "Bash(./target/release/:*)", "Bash(target/debug/:*)"
+    ],
+    "deny": [
+      "Bash(git push:*)", "Bash(git reset --hard:*)", "Bash(git clean:*)",
+      "Bash(git checkout -- :*)", "Bash(git rebase:*)", "Bash(git commit --amend:*)",
+      "Bash(rm -rf /:*)", "Bash(rm -rf ~:*)", "Bash(sudo:*)",
+      "Read(./.env)", "Read(./.env.*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "bash scripts/hooks/session-context.sh" }
+        ]
+      }
+    ]
+  }
+}

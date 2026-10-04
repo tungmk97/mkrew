@@ -1,0 +1,7 @@
+/target
+/.mkrew-build/
+*.log
+.env
+.DS_Store
+Thumbs.db
+*.pending-snap
