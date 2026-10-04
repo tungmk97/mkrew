@@ -81,6 +81,19 @@ impl PtySession {
         self.writer.flush().context("flush pty")
     }
 
+    /// Tells the child its terminal is now `cols` x `rows` (SIGWINCH / ConPTY resize).
+    pub fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        let master = self.master.as_ref().context("pty already closed")?;
+        master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .context("resize pty")
+    }
+
     /// Feeds output into `emulator` (answering its replies) until no output arrives for
     /// `idle`, the channel closes, or `deadline` passes. Returns the exit code if the child exited.
     pub fn pump(
@@ -188,6 +201,16 @@ mod tests {
             }
         }
         assert!(text.contains("mkrew-pty-ok"), "grid was:\n{text}");
+    }
+
+    #[test]
+    fn resize_reaches_the_pty() {
+        // An interactive shell stays alive (waiting on stdin) until the session is dropped.
+        let mut cmd = CommandBuilder::new(if cfg!(windows) { "cmd.exe" } else { "sh" });
+        cmd.cwd(std::env::temp_dir());
+        let session = PtySession::spawn(cmd, 40, 5).unwrap();
+        session.resize(100, 30).unwrap();
+        session.resize(20, 3).unwrap();
     }
 
     #[test]

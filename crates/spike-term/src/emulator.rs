@@ -5,10 +5,12 @@ use std::sync::{Arc, Mutex};
 use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::term::Config;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::test::TermSize;
+use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, StdSyncHandler};
+
+use crate::input::InputMode;
 
 /// Small scrollback, as the daemon will use (SPEC §8).
 const SCROLLBACK_LINES: usize = 200;
@@ -101,6 +103,11 @@ impl Emulator {
         }
     }
 
+    /// (cols, rows) without building a grid snapshot.
+    pub fn size(&self) -> (usize, usize) {
+        (self.term.columns(), self.term.screen_lines())
+    }
+
     /// Feeds output bytes; returns bytes that must be written back to the PTY.
     pub fn advance(&mut self, bytes: &[u8]) -> Vec<u8> {
         self.parser.advance(&mut self.term, bytes);
@@ -112,6 +119,15 @@ impl Emulator {
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.term.resize(TermSize::new(cols, rows));
+    }
+
+    /// Modes set by the program that change how keys and pastes are encoded.
+    pub fn input_mode(&self) -> InputMode {
+        let mode = self.term.mode();
+        InputMode {
+            app_cursor: mode.contains(TermMode::APP_CURSOR),
+            bracketed_paste: mode.contains(TermMode::BRACKETED_PASTE),
+        }
     }
 
     pub fn grid(&self) -> Grid {
@@ -215,5 +231,22 @@ mod tests {
         emu.resize(20, 3);
         let grid = emu.grid();
         assert_eq!((grid.cols, grid.rows.len()), (20, 3));
+        assert_eq!(emu.size(), (20, 3));
+    }
+
+    #[test]
+    fn input_mode_tracks_decckm_and_bracketed_paste() {
+        let mut emu = Emulator::new(10, 2);
+        assert_eq!(emu.input_mode(), InputMode::default());
+        emu.advance(b"\x1b[?1h\x1b[?2004h");
+        assert_eq!(
+            emu.input_mode(),
+            InputMode {
+                app_cursor: true,
+                bracketed_paste: true
+            }
+        );
+        emu.advance(b"\x1b[?1l\x1b[?2004l");
+        assert_eq!(emu.input_mode(), InputMode::default());
     }
 }

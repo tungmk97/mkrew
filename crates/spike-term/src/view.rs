@@ -11,14 +11,15 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, Element, ElementId, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
-    InspectorElementId, LayoutId, Pixels, ShapedLine, SharedString, Style, TextAlign, TextRun,
-    TitlebarOptions, UnderlineStyle, Window, WindowAppearance, WindowBounds, WindowOptions, fill,
-    font, point, px, relative, rgb, size,
+    App, Bounds, Context, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
+    GlobalElementId, Hsla, InspectorElementId, KeyDownEvent, LayoutId, Pixels, ShapedLine,
+    SharedString, Style, TextAlign, TextRun, TitlebarOptions, UnderlineStyle, Window,
+    WindowAppearance, WindowBounds, WindowOptions, div, fill, font, point, px, relative, rgb, size,
 };
 
 use crate::emulator::{Emulator, Grid};
-use crate::layout::{Background, CellStyle, RowCache, layout_row};
+use crate::input::{is_paste_shortcut, key_to_bytes, paste_bytes};
+use crate::layout::{Background, CellStyle, RowCache, grid_size, layout_row};
 use crate::pty::PtySession;
 use crate::theme::Theme;
 
@@ -71,6 +72,7 @@ struct TerminalView {
     emulator: Emulator,
     theme: Theme,
     rows: Rc<RefCell<RowCache<ShapedRow>>>,
+    focus_handle: FocusHandle,
 }
 
 impl TerminalView {
@@ -92,11 +94,53 @@ impl TerminalView {
             }
         })
         .detach();
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle, cx);
         Self {
             session,
             emulator,
             theme: theme_for(window.appearance()),
             rows: Rc::default(),
+            focus_handle,
+        }
+    }
+
+    /// Keys go to the PTY, except the terminal's own bindings (SPEC §13).
+    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        let mode = self.emulator.input_mode();
+        let bytes = if is_paste_shortcut(&event.keystroke) {
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .map(|text| paste_bytes(&text, mode))
+        } else {
+            key_to_bytes(&event.keystroke, mode)
+        };
+        if let Some(bytes) = bytes {
+            cx.stop_propagation();
+            if let Err(error) = self.session.write(&bytes) {
+                eprintln!("spike-term: pty write failed: {error:#}");
+            }
+        }
+    }
+
+    /// Fits the grid to the window; a changed size goes to both the emulator and the PTY.
+    /// Uses the viewport because the spike's terminal fills the window (panes need own bounds).
+    fn fit_to_window(&mut self, window: &Window) {
+        let (cell_width, line_height) = cell_size(window, &self.theme);
+        let viewport = window.viewport_size();
+        let (cols, rows) = grid_size(
+            f32::from(viewport.width),
+            f32::from(viewport.height),
+            self.theme.terminal_padding,
+            f32::from(cell_width),
+            f32::from(line_height),
+        );
+        if (usize::from(cols), usize::from(rows)) == self.emulator.size() {
+            return;
+        }
+        self.emulator.resize(cols.into(), rows.into());
+        if let Err(error) = self.session.resize(cols, rows) {
+            eprintln!("spike-term: pty resize failed: {error:#}");
         }
     }
 
@@ -131,17 +175,22 @@ fn theme_for(appearance: WindowAppearance) -> Theme {
 }
 
 impl Render for TerminalView {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = theme_for(window.appearance());
         if theme != self.theme {
             self.rows.borrow_mut().clear();
             self.theme = theme;
         }
-        TerminalElement {
-            grid: self.emulator.grid(),
-            theme: self.theme.clone(),
-            rows: self.rows.clone(),
-        }
+        self.fit_to_window(window);
+        div()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::key_down))
+            .child(TerminalElement {
+                grid: self.emulator.grid(),
+                theme: self.theme.clone(),
+                rows: self.rows.clone(),
+            })
     }
 }
 
@@ -218,12 +267,7 @@ impl Element for TerminalElement {
         let text_system = window.text_system().clone();
         let base_font = terminal_font(theme);
         let font_size = px(theme.terminal_font_size);
-        let line_height = font_size * theme.terminal_line_height;
-        // Monospace: one precomputed cell width, no per-cell measurement (SPEC §10).
-        let cell_width = text_system
-            .advance(text_system.resolve_font(&base_font), font_size, 'm')
-            .map(|advance| advance.width)
-            .unwrap_or(font_size * CELL_WIDTH_ESTIMATE);
+        let (cell_width, line_height) = cell_size(window, theme);
         let padding = px(theme.terminal_padding);
         let origin = bounds.origin + point(padding, padding);
 
@@ -281,6 +325,22 @@ impl Element for TerminalElement {
             }
         }
     }
+}
+
+/// Cell width and line height. Monospace: one precomputed cell size, no per-cell measurement
+/// (SPEC §10).
+fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
+    let text_system = window.text_system();
+    let font_size = px(theme.terminal_font_size);
+    let cell_width = text_system
+        .advance(
+            text_system.resolve_font(&terminal_font(theme)),
+            font_size,
+            'm',
+        )
+        .map(|advance| advance.width)
+        .unwrap_or(font_size * CELL_WIDTH_ESTIMATE);
+    (cell_width, font_size * theme.terminal_line_height)
 }
 
 fn terminal_font(theme: &Theme) -> Font {

@@ -28,6 +28,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `claude`), accent cursor block, wide chars/emoji aligned on the grid. Optionally save
   screenshots to `docs/screenshots/m0-terminal-{dark,light}.png` (headless session cannot
   capture them; it only confirmed the window starts without panicking).
+- [ ] (T0.6) In `cargo run -p spike-term`: type in the shell (letters, AltGr chars on your
+  layout), Enter, Backspace, arrows/history, Tab completion, Ctrl+C on a running command,
+  Esc; Ctrl+Shift+V of multi-line text (shell and a bracketed-paste TUI); resize the window
+  and check the prompt/TUI reflows to the new size. Headless session only unit-tested these.
 
 ## Questions with assumed defaults
 
@@ -56,6 +60,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   yet). The ANSI palette is the agent's own choice harmonized with §14; light-theme "white"
   ANSI colors are darkened (`#8A8C94`, `#55575F`) so they stay readable on `#FAFAF9`. Cursor is
   always an accent block (shape/unfocused style later).
+- (T0.6) Spike input has no IME/`InputHandler`: IME composition (Vietnamese Telex, CJK) and
+  dead keys may not reach the PTY. Default: out of scope for M0; the real terminal view
+  registers an input handler. Paste is Ctrl+Shift+V only (§13); Shift+Insert/right-click later.
+- (T0.6) PTY writes (keys, paste) are blocking writes on the UI thread; a huge paste into a
+  child that is not reading could stall the window. Default: acceptable for the spike; the
+  daemon (M1) owns PTY writes on its own thread.
 
 ## Done
 

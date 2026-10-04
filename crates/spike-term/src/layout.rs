@@ -220,6 +220,29 @@ fn blend(color: u32, towards: u32, weight: f32) -> u32 {
     (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
+/// Smallest grid the view will ask for, so a tiny window never yields a 0-sized PTY.
+pub const MIN_COLS: u16 = 2;
+pub const MIN_ROWS: u16 = 1;
+
+/// Grid size (cols, rows) that fits `width` x `height` pixels after `padding` on every side.
+pub fn grid_size(
+    width: f32,
+    height: f32,
+    padding: f32,
+    cell_width: f32,
+    line_height: f32,
+) -> (u16, u16) {
+    let fit = |space: f32, cell: f32, min: u16| {
+        let count = ((space - 2.0 * padding) / cell).floor();
+        // `as` saturates for out-of-range and NaN floats; then clamp to the minimum.
+        (count as u16).max(min)
+    };
+    (
+        fit(width, cell_width, MIN_COLS),
+        fit(height, line_height, MIN_ROWS),
+    )
+}
+
 /// Per-row cache of rendered rows: a row is rebuilt only when its cells or cursor changed
 /// ("re-layout only dirty rows", SPEC §10).
 pub struct RowCache<T> {
@@ -452,5 +475,17 @@ mod tests {
         assert_eq!(get(&mut cache, 1, &a, Some(0)), 4, "cursor moved in");
         cache.clear();
         assert_eq!(get(&mut cache, 0, &a, None), 5);
+    }
+
+    #[test]
+    fn grid_size_fits_cells_inside_padding() {
+        // 8 px padding each side; 10 x 20 px cells.
+        assert_eq!(grid_size(816.0, 496.0, 8.0, 10.0, 20.0), (80, 24));
+        assert_eq!(
+            grid_size(825.0, 515.0, 8.0, 10.0, 20.0),
+            (80, 24),
+            "partial cells drop"
+        );
+        assert_eq!(grid_size(10.0, 10.0, 8.0, 10.0, 20.0), (MIN_COLS, MIN_ROWS));
     }
 }
