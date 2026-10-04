@@ -22,7 +22,6 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ### Task queue
 
-- [ ] T0.2 Research spike: use the researcher to confirm current versions/APIs of `gpui` (standalone usage outside Zed, Windows support), `gpui-component`, `portable-pty`, `alacritty_terminal`; write findings to `docs/decisions/0001-ui-framework.md` (draft, "Context" section). (spec: §4, §19)
 - [ ] T0.3 Headless terminal core in `spike-term`: spawn a shell via `portable-pty`, feed bytes into `alacritty_terminal`, expose a `Grid` snapshot (chars + fg/bg + cursor); `--dump` flag prints the grid as text. (spec: §8, §10)
 - [ ] T0.4 Snapshot tests: ANSI fixtures in `crates/spike-term/tests/fixtures/` (colors, cursor moves, alternate screen, wide chars/emoji, a recorded TUI frame); `insta` snapshots of the dumped grid. (spec: §16)
 - [ ] T0.5 GPUI window: render the grid (colors, cursor) using tokens from a minimal `theme.rs`, following the §10 performance rules from the start (styled text runs per row, dirty rows only, one present per frame). (spec: §10, §14)
@@ -33,12 +32,16 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ### Done (last 10)
 
+- [x] T0.2 Research spike: use the researcher to confirm current versions/APIs of `gpui` (standalone usage outside Zed, Windows support), `gpui-component`, `portable-pty`, `alacritty_terminal`; write findings to `docs/decisions/0001-ui-framework.md` (draft, "Context" section). (spec: §4, §19) — docs(adr): draft ADR 0001 context from research spike
 - [x] T0.1 Cargo workspace skeleton: root `Cargo.toml` (workspace, resolver 2, shared lints), `rust-toolchain.toml` already present, crate `crates/spike-term` (bin) that prints "hello"; `scripts/verify.*` green. (spec: §4, §17) — chore: cargo workspace skeleton with spike-term
 
 ## Notes for the next session
 
-- Next: T0.2 (research spike → ADR 0001 draft Context section).
-- Target OS for the user is native Windows; keep every path/command Windows-safe.
-- Workspace: `members = ["crates/*"]`, edition 2024, shared `[workspace.lints]`; new crates add `[lints] workspace = true`.
+- Next: T0.3 (headless terminal core). Read the Context of `docs/decisions/0001-ui-framework.md` first.
+- Deps: `portable-pty` 0.9, `alacritty_terminal` 0.26 (re-exports `vte` 0.15); later `gpui-pre = "=0.3.7"` renamed to `gpui`.
+- ConPTY: reader never hits EOF on child exit — wait on the child in a thread, then drop the master off the UI thread.
+- Check on docs.rs before coding: `RenderableCursor` fields and `display_iter` item type (UNVERIFIED in ADR).
+- T0.8 needs a release build → `fxc.exe` (Windows SDK) or `GPUI_FXC_PATH`; check HUMAN_CHECKS first.
+- Target OS is native Windows (keep paths/commands Windows-safe). Workspace: `members = ["crates/*"]`, edition 2024, shared `[workspace.lints]`; new crates add `[lints] workspace = true`.
 - `unwrap_used`/`expect_used` are denied by verify outside tests (`clippy.toml` allows in tests).
 - Headless sessions may not be permitted to run `pwsh`; use `bash scripts/verify.sh` (works in Git Bash).
