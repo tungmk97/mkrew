@@ -1,12 +1,12 @@
 //! `mk daemon start | stop | status` (SPEC §8, §9).
 
 use std::io::ErrorKind;
-use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, bail};
 use mkrew_core::Paths;
+use mkrew_daemon::spawn::{daemon_exe, detach};
 use mkrew_daemon::{EXIT_ALREADY_RUNNING, InstanceLock, LockError};
 use mkrew_protocol::{DaemonStatusResult, Request};
 
@@ -118,59 +118,4 @@ pub fn status(paths: &Paths) -> anyhow::Result<ExitCode> {
     println!("  socket:    {}", paths.socket);
     println!("  data dir:  {}", paths.data_dir.display());
     Ok(ExitCode::SUCCESS)
-}
-
-/// `mkrew-daemon` installed next to `mk` (the release layout and `target/<profile>/`),
-/// else whatever `PATH` finds.
-fn daemon_exe() -> anyhow::Result<PathBuf> {
-    let name = format!("mkrew-daemon{}", std::env::consts::EXE_SUFFIX);
-    let exe = std::env::current_exe().context("locate the mk executable")?;
-    let sibling = exe.with_file_name(&name);
-    Ok(if sibling.is_file() {
-        sibling
-    } else {
-        PathBuf::from(name)
-    })
-}
-
-/// No console window and no controlling terminal: the daemon outlives the shell (SPEC §8).
-fn detach(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        disinherit_stdio();
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // New process group: Ctrl+C in the shell that ran `mk` does not reach the daemon.
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // Own process group: terminal job-control signals (Ctrl+C, hangup) skip the daemon.
-        command.process_group(0);
-    }
-}
-
-/// `CreateProcess` passes EVERY inheritable handle to the child, not just its stdio. mk's own
-/// stdio are inheritable when mk runs with redirected output (`mk daemon start | cat`, a test
-/// capturing output), and a daemon holding the write end of that pipe keeps the reader waiting
-/// until the daemon exits. mk spawns nothing else, so clear the flag on all three.
-#[cfg(windows)]
-#[allow(unsafe_code)]
-fn disinherit_stdio() {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
-
-    let handles = [
-        std::io::stdin().as_raw_handle(),
-        std::io::stdout().as_raw_handle(),
-        std::io::stderr().as_raw_handle(),
-    ];
-    for handle in handles {
-        // SAFETY: the handles are mk's live std handles (or null when absent, which the call
-        // rejects harmlessly); only the inherit flag changes. Failure leaves the old behavior.
-        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
-    }
 }

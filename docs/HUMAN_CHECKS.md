@@ -53,6 +53,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] (T1.12) Native Windows: `mk daemon start` from Windows Terminal opens **no** console
   window, and `mk attach` to a session of `agents/shell.toml` and `agents/claude.toml` works
   (see the T1.6 and T1.10 items above for the details to check).
+- [ ] (T2.2) Run `cargo run -p mkrew-ui` with no daemon running: a "Mkrew" window opens
+  ("Connecting to the daemon…" → "Connected." + version), a detached `mkrew-daemon` starts
+  (no console window), and it keeps running after the window closes; a second launch reuses
+  it. Check the shell in dark and light OS themes (§14 design check; running GUI binaries
+  needs approval in headless sessions, so not done automatically).
 
 ## Questions with assumed defaults
 
@@ -213,6 +218,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `default_agent` (agent; `invalid_request` if unset) or `shell` (shell); a named profile sets
   the session kind (a conflicting `kind` is ignored). `project.update` supports `name` and
   `default_agent` only (absent = keep, `null` = clear; must be an agent-kind profile).
+- (T2.2) `mkrew-ui` depends on the `mkrew-daemon` library (like `mk`) for `ipc::name`,
+  `EXIT_ALREADY_RUNNING` and the detached-spawn helpers (moved from the CLI to
+  `mkrew_daemon::spawn`); a small shared client crate is possible later. The UI passes its
+  resolved paths to the daemon it spawns via `MKREW_DATA_DIR/CONFIG_DIR/SOCKET`. A protocol
+  version mismatch is shown as an error; restarting the daemon automatically is left for later.
+- (T2.2) Contrast: §14 light `status-idle` #9A9CA6 is ~2.6:1 on `bg` and the light ANSI bright
+  yellow #D69E2E ~2.3:1 — below 3:1 for icons/terminal text. Kept the spec values; proposal:
+  `status-idle` ≈ #8A8C94, bright yellow ≈ #B8860B (spec change + ADR if you agree).
 
 ## Done
 

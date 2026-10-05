@@ -3494,6 +3494,7 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "widestring",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3529,6 +3530,25 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "ulid",
+]
+
+[[package]]
+name = "mkrew-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "futures-lite",
+ "gpui-pre",
+ "gpui-pre-platform",
+ "interprocess",
+ "mkrew-core",
+ "mkrew-daemon",
+ "mkrew-protocol",
+ "serde",
+ "tempfile",
+ "tokio",
  "ulid",
 ]
 

@@ -30,6 +30,8 @@ ulid = "1"
 [target.'cfg(windows)'.dependencies]
 # SDDL string for the named pipe's security descriptor (`interprocess` takes a `U16CStr`).
 widestring = "1"
+# `SetHandleInformation`: keep a detached daemon from inheriting the client's stdio pipes.
+windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
 
 [target.'cfg(unix)'.dependencies]
 # Safe `kill(pid, SIGKILL)` for forced session kills; 1.x is already in the tree.

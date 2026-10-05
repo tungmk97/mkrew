@@ -25,7 +25,6 @@ serde_json = "1"
 ulid = "1"
 
 [target.'cfg(windows)'.dependencies]
-# `SetHandleInformation`: keep the detached daemon from inheriting mk's stdio pipes.
 # `Get/SetConsoleMode`: VT input/output for `mk attach` (crossterm raw mode sets neither).
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 

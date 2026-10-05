@@ -11,6 +11,7 @@ pub mod lock;
 mod server;
 mod session;
 mod session_log;
+pub mod spawn;
 
 use anyhow::Context;
 use mkrew_core::Paths;
