@@ -105,6 +105,12 @@ pub enum Request {
     HookReport(HookReportParams),
     #[serde(rename = "agent.profiles")]
     AgentProfiles,
+    /// Returns `DocFile[]`, sorted by path.
+    #[serde(rename = "doc.list")]
+    DocList(DocListParams),
+    /// Returns [`DocContent`].
+    #[serde(rename = "doc.read")]
+    DocRead(DocReadParams),
     /// Returns `DocComment[]`: thread roots and replies, oldest first.
     #[serde(rename = "comment.list")]
     CommentList(CommentListParams),
@@ -214,6 +220,10 @@ pub enum Event {
     /// Two or more sessions of a project edited the same file within 60 s (SPEC §7, M5).
     #[serde(rename = "conflict.detected")]
     ConflictDetected(ConflictDetectedEvent),
+    /// A Markdown file of a watched project changed content (SPEC §12); its comments are
+    /// re-anchored and announced with `comment.updated` right after.
+    #[serde(rename = "doc.changed")]
+    DocChanged(DocChangedEvent),
     /// A review comment was created, replied to, re-anchored or changed status (SPEC §12).
     #[serde(rename = "comment.updated")]
     CommentUpdated(Box<DocComment>),
@@ -704,6 +714,18 @@ pub struct HookReportParams {
     pub payload: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocListParams {
+    pub project_id: Ulid,
+}
+
+/// `doc.read`: one file of the project, `file_path` relative to its root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocReadParams {
+    pub project_id: Ulid,
+    pub file_path: String,
+}
+
 /// `comment.list`: the comments of one file, or of every file of the project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommentListParams {
@@ -916,6 +938,38 @@ pub struct ConflictDetectedEvent {
     pub task_ids: Vec<Ulid>,
 }
 
+/// One reviewable Markdown file of a `doc.list` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocFile {
+    /// Relative to the project root, `/` separators.
+    pub file_path: String,
+    /// Thread roots not yet resolved.
+    pub open_comments: u32,
+    /// The session the file watcher last saw it change under, if within the recent window.
+    pub last_session_id: Option<Ulid>,
+    /// Unix ms of that change.
+    pub last_changed_at: Option<i64>,
+}
+
+/// `doc.read` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocContent {
+    pub file_path: String,
+    pub content: String,
+    /// Opaque; changes whenever the content does (same value as in `doc.changed`). Only
+    /// stable within one daemon build: never persist it.
+    pub hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocChangedEvent {
+    pub project_id: Ulid,
+    /// Relative to the project root, `/` separators.
+    pub file_path: String,
+    /// The new content hash; `None` = the file was deleted.
+    pub hash: Option<String>,
+}
+
 mod base64_bytes {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
@@ -1091,6 +1145,11 @@ mod tests {
                 payload: json!({"session_id": "abc"}),
             }),
             Request::AgentProfiles,
+            Request::DocList(DocListParams { project_id: sid() }),
+            Request::DocRead(DocReadParams {
+                project_id: sid(),
+                file_path: "docs/plan.md".into(),
+            }),
             Request::CommentList(CommentListParams {
                 project_id: sid(),
                 file_path: Some("docs/plan.md".into()),
@@ -1413,6 +1472,13 @@ mod tests {
             project_id: sid(),
         })));
         assert_eq!(deleted["event"], "task.deleted");
+        let doc = round_trip(&Message::Event(Event::DocChanged(DocChangedEvent {
+            project_id: sid(),
+            file_path: "docs/plan.md".into(),
+            hash: None,
+        })));
+        assert_eq!(doc["event"], "doc.changed");
+        assert_eq!(doc["data"]["hash"], serde_json::Value::Null);
     }
 
     #[test]

@@ -439,8 +439,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] + parse errors |
-| `doc.list` | `project_id` | md files matching review globs + md files recently changed by agents |
-| `doc.read` | `project_id`, `file_path` | content + hash |
+| `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until the daemon stops |
+| `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched |
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (`list`: `project_id` + `file_path?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines; `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
 | `comment.send_to_agent` | `comment_ids[]`, `session_id` | ok (comments → `sent`) |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
@@ -468,7 +468,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
 | `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |
-| `doc.changed` | a watched md file changed (new hash) |
+| `doc.changed` | a watched md file changed (`project_id`, `file_path`, new `hash`, `null` = deleted); its comments are re-anchored right after (`comment.updated`) |
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |
 | `notification.clicked` | user clicked an OS notification (UI focuses that pane) |
 | `git.changed` | workspace git state changed (debounced, ≤ once per 300 ms) |

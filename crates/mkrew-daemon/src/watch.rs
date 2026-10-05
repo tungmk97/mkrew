@@ -17,7 +17,7 @@ pub const QUIET: Duration = Duration::from_millis(300);
 /// A batch is delivered after this long even while changes keep coming.
 pub const MAX_DELAY: Duration = Duration::from_secs(2);
 /// Directories never reported, whatever `.gitignore` says.
-const ALWAYS_IGNORED: [&str; 3] = [".git", "node_modules", "target"];
+pub const ALWAYS_IGNORED: [&str; 3] = [".git", "node_modules", "target"];
 
 /// Which changed paths of one project are reported.
 pub struct Filter {
@@ -40,6 +40,8 @@ impl Filter {
 
     /// `path` relative to the root with `/` separators, or `None` when it is not reported:
     /// outside the root, the root itself, under an always-ignored directory or git-ignored.
+    /// Markdown files are reported even when git-ignored: `doc.list` lists them (plans often
+    /// live in ignored folders), so `doc.changed` must follow them.
     /// `is_dir` only matters for directory-only patterns (`build/`); `None` = unknown (the path
     /// is gone): ignored if it would be as a file or as a directory.
     pub fn relative(&self, path: &Path, is_dir: Option<bool>) -> Option<String> {
@@ -60,6 +62,10 @@ impl Filter {
         if parts.is_empty() {
             return None;
         }
+        let relative_path = parts.join("/");
+        if is_dir != Some(true) && crate::docs::is_markdown(&relative_path) {
+            return Some(relative_path);
+        }
         // Relative paths: `matched_path_or_any_parents` panics on paths outside its root.
         let ignored = |is_dir| {
             self.gitignore
@@ -73,7 +79,7 @@ impl Filter {
         if ignored {
             return None;
         }
-        Some(parts.join("/"))
+        Some(relative_path)
     }
 }
 
@@ -220,6 +226,16 @@ mod tests {
         assert_eq!(
             filter.relative(&root.join("src/dist/x.js"), Some(false)),
             Some("src/dist/x.js".to_owned())
+        );
+        // Markdown under an ignored directory is reported (reviewable plans), but not under
+        // the always-ignored ones.
+        assert_eq!(
+            filter.relative(&root.join("build/plan.md"), Some(false)),
+            Some("build/plan.md".to_owned())
+        );
+        assert_eq!(
+            filter.relative(&root.join("node_modules/x.md"), Some(false)),
+            None
         );
         // `.gitignore` itself is reported.
         assert_eq!(

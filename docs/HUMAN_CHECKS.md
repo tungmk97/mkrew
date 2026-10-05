@@ -824,6 +824,26 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `whole file` in the prompt (unreachable today: `comment.create` requires lines).
   Review globs: `*`/`?` never cross `/` (`*.md` = root files only), `**` spans directories;
   matching is case-sensitive (`PLAN.MD` does not match `*.md`, also on Windows).
+- (T6.4) **How md files are watched with no live session:** `doc.list` or `doc.read` on a
+  project starts (or marks) its recursive file watcher as "docs", and it then stays until the
+  daemon stops — even after the last session exits (one watcher per project ever opened in
+  the Docs view; no unwatch on client disconnect / archive). `doc.changed` fires for any `.md`
+  file (any case) the watcher reports (`.md` files are reported even when `.gitignore`d, so
+  `files_changed`/conflicts now see ignored Markdown too) or `doc.read` returns, whose content
+  hash differs from the last one this daemon saw — so the first sight after a daemon start
+  fires (and catches up edits made while it was down); a deleted file sends `hash: null`.
+  Files > 2 MiB or not UTF-8 are skipped; they are read on the watcher's tokio task (review
+  SHOULD: move to `spawn_blocking` if large docs ever stall it). Re-anchor
+  rules: a passage that is gone → `outdated` (lines kept); an `outdated` comment whose passage
+  is back → `open` (its earlier status is not remembered); `resolved` comments only follow
+  their passage, never change status. `doc.list`: walks the project for glob matches
+  **including** git-ignored files (plans often live in ignored folders) but never enters `.git`,
+  `node_modules`, `target`; "recently changed" = `files_changed` events of the last **24 h**;
+  files with unresolved comments are listed too; `open_comments` counts every unresolved
+  thread root (open/sent/addressed/outdated). `last_session_id` = the newest event naming the
+  file — a batch is recorded on every live session of the project, so ties go to the most
+  recently started session (not necessarily the editor). Hash = std `DefaultHasher` (stable
+  per daemon build only).
 
 ## Done
 

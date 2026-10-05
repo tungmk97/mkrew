@@ -13,16 +13,16 @@ use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
-    CommentReplyParams, CommentStatus, DaemonStatusResult, DocComment, ErrorCode, Event, Frame,
-    FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
-    Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
-    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
-    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
-    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
-    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
-    encode,
+    CommentReplyParams, CommentStatus, DaemonStatusResult, DocChangedEvent, DocComment, DocContent,
+    DocFile, DocListParams, DocReadParams, ErrorCode, Event, Frame, FrameDecoder, HelloParams,
+    HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
+    ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
+    SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
+    SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult,
+    SessionState, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
+    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams,
+    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -1127,6 +1127,169 @@ fn file_watcher_records_changed_files_of_live_sessions_except_ignored_ones() {
         changed_files(&env, id),
         BTreeSet::from(["src/lib.rs".to_owned()])
     );
+    client.stop();
+}
+
+fn doc_list(client: &mut Client, project: &Project) -> Vec<DocFile> {
+    let params = DocListParams {
+        project_id: project.id,
+    };
+    client.call(Request::DocList(params)).into_result().unwrap()
+}
+
+fn doc_read(project: &Project, file: &str) -> Request {
+    Request::DocRead(DocReadParams {
+        project_id: project.id,
+        file_path: file.into(),
+    })
+}
+
+/// Waits for the `doc.changed` of `file` with `hash`.
+fn wait_doc_changed(client: &mut Client, project: &Project, file: &str, hash: Option<String>) {
+    client.wait_event(&Event::DocChanged(DocChangedEvent {
+        project_id: project.id,
+        file_path: file.into(),
+        hash,
+    }));
+}
+
+/// `doc.list` = review globs + Markdown an agent just wrote (with its session) + open-comment
+/// counts; `doc.read`; after the session exited the docs stay watched, so an external edit
+/// sends `doc.changed` and re-anchors the comments (moved / outdated), and so does deleting.
+#[test]
+fn docs_are_listed_read_and_external_edits_reanchor_comments() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    for dir in ["src", "notes", ".claude/plans"] {
+        std::fs::create_dir_all(repo.join(dir)).unwrap();
+    }
+    std::fs::write(repo.join(".gitignore"), ".claude/\n").unwrap();
+    std::fs::write(repo.join(".claude/plans/p.md"), "# P\n").unwrap();
+    std::fs::write(repo.join("README.md"), "# Readme\n").unwrap();
+    std::fs::write(repo.join("src/inner.md"), "not reviewed\n").unwrap();
+    let plan = "# Plan\n\nUse Redis for caching.\n\nM3: deploy\n";
+    std::fs::write(repo.join("docs/plan.md"), plan).unwrap();
+    let scenario = env.dir.path().join("writer.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"write_file\"\npath = \"notes/todo.md\"\ncontent = \"- [ ] a\"\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "writer",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+
+    let files = doc_list(&mut client, &project);
+    let paths: Vec<&str> = files.iter().map(|f| f.file_path.as_str()).collect();
+    assert_eq!(paths, [".claude/plans/p.md", "README.md", "docs/plan.md"]);
+    let read: DocContent = client
+        .call(doc_read(&project, r"docs\plan.md"))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        (read.file_path.as_str(), read.content.as_str()),
+        ("docs/plan.md", plan)
+    );
+    let missing = client.call(doc_read(&project, "docs/nope.md"));
+    assert_eq!(error_code(missing), ErrorCode::NotFound);
+    for bad in ["../outside.md", "", "/abs.md"] {
+        let outcome = client.call(doc_read(&project, bad));
+        assert_eq!(error_code(outcome), ErrorCode::InvalidRequest, "{bad}");
+    }
+
+    let mut comment = |start_line, quote: &str| {
+        let params = CommentCreateParams {
+            project_id: project.id,
+            file_path: "docs/plan.md".into(),
+            start_line,
+            end_line: start_line,
+            quote: quote.into(),
+            body: "why?".into(),
+        };
+        let created: DocComment = client
+            .call(Request::CommentCreate(params))
+            .into_result()
+            .unwrap();
+        created
+    };
+    let redis = comment(3, "Use Redis");
+    let deploy = comment(5, "M3: deploy");
+
+    // An agent writes a Markdown file outside the globs: listed with its session.
+    let spawned: SessionSpawnResult = client.spawn(&project, "writer").into_result().unwrap();
+    let session = spawned.session_id;
+    client.wait_state(session, SessionState::NeedsInput);
+    let deadline = Instant::now() + TIMEOUT;
+    let todo = loop {
+        let files = doc_list(&mut client, &project);
+        if let Some(todo) = files.iter().find(|f| f.file_path == "notes/todo.md") {
+            break todo.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "notes/todo.md never listed: {files:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(todo.last_session_id, Some(session));
+    assert!(todo.last_changed_at.is_some());
+    let files = doc_list(&mut client, &project);
+    let plan_file = files
+        .iter()
+        .find(|f| f.file_path == "docs/plan.md")
+        .unwrap();
+    assert_eq!(plan_file.open_comments, 2);
+    let kill = SessionKillParams {
+        session_id: session,
+        force: true,
+    };
+    client.call(Request::SessionKill(kill));
+    client.wait_state(session, SessionState::Exited);
+
+    // An external edit (no session live): the passage moved, the other one is gone.
+    client.events.clear();
+    let edited = "# Plan\n\nIntro.\n\nUse Redis for caching.\n";
+    std::fs::write(repo.join("docs/plan.md"), edited).unwrap();
+    let moved = client.wait_event_where(
+        |e| matches!(e, Event::CommentUpdated(c) if c.id == redis.id && c.start_line == Some(5)),
+    );
+    assert!(matches!(moved, Event::CommentUpdated(c) if c.status == CommentStatus::Open));
+    let gone = wait_comment(&mut client, deploy.id, CommentStatus::Outdated);
+    assert_eq!(gone.start_line, Some(5));
+    // The watcher announced the final content (a write may show up in steps first).
+    let read: DocContent = client
+        .call(doc_read(&project, "docs/plan.md"))
+        .into_result()
+        .unwrap();
+    let last_hash = client.events.iter().rev().find_map(|e| match e {
+        Event::DocChanged(c) if c.file_path == "docs/plan.md" => Some(c.hash.clone()),
+        _ => None,
+    });
+    assert_eq!(last_hash, Some(Some(read.hash)));
+    // A git-ignored plan is listed and followed too.
+    std::fs::write(repo.join(".claude/plans/p.md"), "# P\n\nedited\n").unwrap();
+    client.wait_event_where(
+        |e| matches!(e, Event::DocChanged(c) if c.file_path == ".claude/plans/p.md"),
+    );
+
+    // Deleting the file outdates the rest; nothing is deleted.
+    client.events.clear();
+    std::fs::remove_file(repo.join("docs/plan.md")).unwrap();
+    wait_doc_changed(&mut client, &project, "docs/plan.md", None);
+    wait_comment(&mut client, redis.id, CommentStatus::Outdated);
+    let comments: Vec<DocComment> = client
+        .call(Request::CommentList(CommentListParams {
+            project_id: project.id,
+            file_path: None,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(comments.len(), 2);
     client.stop();
 }
 

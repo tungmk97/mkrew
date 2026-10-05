@@ -29,6 +29,7 @@ use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::{backup, session_log, undo};
 
 mod comment;
+mod doc;
 mod resume;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -307,6 +308,8 @@ impl Daemon {
             Request::SessionWait(params) => (self.session_wait(params).await, After::Continue),
             Request::HookReport(params) => (self.hook_report(params).await, After::Continue),
             Request::AgentProfiles => (ok(&self.agent_profiles()), After::Continue),
+            Request::DocList(params) => (self.doc_list(params).await, After::Continue),
+            Request::DocRead(params) => (self.doc_read(params).await, After::Continue),
             Request::CommentList(params) => (self.comment_list(params), After::Continue),
             Request::CommentCreate(params) => (self.comment_create(params), After::Continue),
             Request::CommentReply(params) => (self.comment_reply(params), After::Continue),

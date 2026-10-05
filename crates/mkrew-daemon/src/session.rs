@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
-    ConflictDetectedEvent, Event, HookReportParams, Session, SessionAttachResult,
-    SessionExitedEvent, SessionState, SessionStateEvent, StateSource,
+    ConflictDetectedEvent, DocChangedEvent, DocComment, Event, HookReportParams, Session,
+    SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -23,6 +23,7 @@ use tokio::task::JoinSet;
 use ulid::Ulid;
 
 use crate::attach::Attachment;
+use crate::docs;
 use crate::emulator::Emulator;
 use crate::launch;
 use crate::session_log::SessionLog;
@@ -65,8 +66,12 @@ pub struct Hub {
     pub store: Mutex<Store>,
     pub events: broadcast::Sender<Event>,
     live: Mutex<HashMap<Ulid, Live>>,
-    /// One file watcher per project with live sessions. Lock order: `watches`, then `live`.
-    watches: Mutex<HashMap<Ulid, Watch>>,
+    /// One file watcher per project with live sessions or read docs. Lock order: `watches`,
+    /// then `live`.
+    watches: Mutex<HashMap<Ulid, ProjectWatch>>,
+    /// Last content hash (`None` = deleted) of each Markdown file the watchers reported, by
+    /// project and relative path. Never held with another lock.
+    doc_hashes: Mutex<HashMap<(Ulid, String), Option<String>>>,
     /// Recent file editors per project (SPEC §7 `conflict.detected`). Lock order: `watches`,
     /// then `conflicts`; never held with `live` or `store`.
     conflicts: Mutex<HashMap<Ulid, conflict::Tracker<Ulid>>>,
@@ -155,6 +160,13 @@ fn coalesce(bytes: &mut Vec<u8>, output: &mut mpsc::Receiver<PtyEvent>) -> Optio
     None
 }
 
+/// A project's file watcher. `docs`: a client listed or read its docs, so it stays watched
+/// after its last session exits, until the daemon stops (HUMAN_CHECKS T6.4).
+struct ProjectWatch {
+    _watch: Watch,
+    docs: bool,
+}
+
 /// The channels of one live session.
 struct Live {
     project_id: Ulid,
@@ -227,6 +239,7 @@ impl Hub {
             events: broadcast::channel(256).0,
             live: Mutex::default(),
             watches: Mutex::default(),
+            doc_hashes: Mutex::default(),
             conflicts: Mutex::default(),
             tasks: Mutex::default(),
             stopping: AtomicBool::new(false),
@@ -379,7 +392,7 @@ impl Hub {
             }
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
-        self.watch_project(session.project_id, &cwd);
+        self.watch_project(session.project_id, &cwd, false);
         let (sends, sends_rx) = mpsc::unbounded_channel();
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let mut queue = SendQueue::default();
@@ -434,10 +447,18 @@ impl Hub {
         }
     }
 
-    /// Starts watching `root` for project `project_id` unless it is watched already.
-    fn watch_project(self: &Arc<Self>, project_id: Ulid, root: &Path) {
+    /// Keeps project `project_id` (folder `root`) watched for doc changes until the daemon
+    /// stops, whether or not it has live sessions.
+    pub fn watch_docs(self: &Arc<Self>, project_id: Ulid, root: &Path) {
+        self.watch_project(project_id, root, true);
+    }
+
+    /// Starts watching `root` for project `project_id` unless it is watched already; `docs`
+    /// keeps the watch after the project's last session exits.
+    fn watch_project(self: &Arc<Self>, project_id: Ulid, root: &Path, docs: bool) {
         let mut watches = lock(&self.watches);
-        if watches.contains_key(&project_id) {
+        if let Some(watch) = watches.get_mut(&project_id) {
+            watch.docs |= docs;
             return;
         }
         let hub = Arc::downgrade(self);
@@ -449,22 +470,31 @@ impl Hub {
         match started {
             Ok(watch) => {
                 tracing::debug!(%project_id, root = %root.display(), "watching project files");
+                let watch = ProjectWatch {
+                    _watch: watch,
+                    docs,
+                };
                 watches.insert(project_id, watch);
             }
             Err(e) => tracing::warn!(%project_id, root = %root.display(), "cannot watch: {e}"),
         }
     }
 
-    /// Stops watching project `project_id` once none of its sessions is live.
+    /// Stops watching project `project_id` once none of its sessions is live, unless its docs
+    /// are watched. Its conflict tracker goes either way.
     fn unwatch_idle_project(&self, project_id: Ulid) {
         let mut watches = lock(&self.watches);
         let live = lock(&self.live)
             .values()
             .any(|live| live.project_id == project_id);
-        if !live && watches.remove(&project_id).is_some() {
-            tracing::debug!(%project_id, "stopped watching project files");
-            lock(&self.conflicts).remove(&project_id);
+        if live {
+            return;
         }
+        if watches.get(&project_id).is_some_and(|w| !w.docs) {
+            watches.remove(&project_id);
+            tracing::debug!(%project_id, "stopped watching project files");
+        }
+        lock(&self.conflicts).remove(&project_id);
     }
 
     /// Records a debounced batch of changed files on every live session of the project
@@ -472,6 +502,7 @@ impl Hub {
     /// for conflict detection to the project's session in `working`. With several sessions
     /// working the editor is unknown, so the batch is not attributed (HUMAN_CHECKS T5.6).
     fn files_changed(&self, project_id: Ulid, paths: &[String]) {
+        self.docs_changed(project_id, paths);
         let sessions: Vec<Ulid> = lock(&self.live)
             .iter()
             .filter(|(_, live)| live.project_id == project_id)
@@ -504,6 +535,77 @@ impl Hub {
         };
         if let [editor] = working[..] {
             self.record_edits(project_id, paths, editor, at);
+        }
+    }
+
+    /// [`Hub::doc_seen`] for each changed Markdown file. Files too large or not UTF-8 are
+    /// skipped. The files are small, so they are read right here on the watcher's task.
+    fn docs_changed(&self, project_id: Ulid, paths: &[String]) {
+        let mut docs = paths.iter().filter(|p| docs::is_markdown(p)).peekable();
+        if docs.peek().is_none() {
+            return;
+        }
+        let root = match self.store().get_project(project_id) {
+            Ok(project) => PathBuf::from(project.path),
+            Err(e) => {
+                tracing::warn!(%project_id, "changed docs not checked: {e}");
+                return;
+            }
+        };
+        for path in docs {
+            let content = match docs::read(&root.join(path)) {
+                Ok(content) => Some(content),
+                Err(docs::ReadError::NotFound) => None,
+                Err(e) => {
+                    tracing::debug!(%project_id, %path, "changed doc not read: {e}");
+                    continue;
+                }
+            };
+            self.doc_seen(project_id, path, content.as_deref());
+        }
+    }
+
+    /// Markdown file `path` of the project now holds `content` (`None` = deleted). When its
+    /// hash differs from the last one seen (or it was never seen), announces `doc.changed` and
+    /// re-anchors its comments (`comment.updated` for each one that moved or changed status).
+    /// `doc.read` calls this too, so edits made while the daemon was down are caught up.
+    pub fn doc_seen(&self, project_id: Ulid, path: &str, content: Option<&str>) {
+        let hash = content.map(|c| docs::hash(c.as_bytes()));
+        let key = (project_id, path.to_owned());
+        if lock(&self.doc_hashes).insert(key, hash.clone()) == Some(hash.clone()) {
+            return;
+        }
+        tracing::debug!(%project_id, %path, "doc changed");
+        let _ = self.events.send(Event::DocChanged(DocChangedEvent {
+            project_id,
+            file_path: path.to_owned(),
+            hash,
+        }));
+        self.reanchor_comments(project_id, path, content);
+    }
+
+    fn reanchor_comments(&self, project_id: Ulid, path: &str, content: Option<&str>) {
+        let updated: Vec<DocComment> = {
+            let store = self.store();
+            let comments = match store.list_comments(project_id, Some(path)) {
+                Ok(comments) => comments,
+                Err(e) => {
+                    tracing::warn!(%project_id, %path, "comments not re-anchored: {e}");
+                    return;
+                }
+            };
+            docs::reanchored(&comments, content)
+                .into_iter()
+                .filter_map(|(id, start, end, status)| {
+                    store
+                        .set_comment_anchor(id, start, end, status)
+                        .inspect_err(|e| tracing::warn!(%id, "comment not re-anchored: {e}"))
+                        .ok()
+                })
+                .collect()
+        };
+        for comment in updated {
+            let _ = self.events.send(Event::CommentUpdated(Box::new(comment)));
         }
     }
 

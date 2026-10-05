@@ -600,6 +600,37 @@ impl Store {
         .collect()
     }
 
+    /// Events of `kind` of every session of a project at or after `since` (Unix ms), oldest
+    /// first, with their session id.
+    pub fn project_session_events(
+        &self,
+        project_id: Ulid,
+        kind: &str,
+        since: i64,
+    ) -> Result<Vec<(Ulid, SessionEvent)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.session_id, e.payload, e.at FROM session_event e
+             JOIN session s ON s.id = e.session_id
+             WHERE s.project_id = ?1 AND e.kind = ?2 AND e.at >= ?3
+             ORDER BY e.at, e.id",
+        )?;
+        let rows = stmt.query_map(params![project_id.to_string(), kind, since], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        rows.map(|r| {
+            let (session, payload, at) = r?;
+            let session = parse_ulid("session_event.session_id", session)?;
+            let payload = serde_json::from_str(&payload)
+                .map_err(|_| corrupt("session_event.payload", payload))?;
+            Ok((session, SessionEvent { payload, at }))
+        })
+        .collect()
+    }
+
     /// Review comments of a project, optionally of one file: thread roots and replies in the
     /// order they were written.
     pub fn list_comments(
@@ -693,6 +724,29 @@ impl Store {
             id,
             "UPDATE doc_comment SET status = ?2, updated_at = ?3 WHERE id = ?1",
             params![id.to_string(), comment_status_str(status), now_ms()],
+        )
+    }
+
+    /// Moves a thread root's anchor to lines `start_line..=end_line` (1-based) with `status`
+    /// (re-anchoring after the file changed).
+    pub fn set_comment_anchor(
+        &self,
+        id: CommentId,
+        start_line: u32,
+        end_line: u32,
+        status: CommentStatus,
+    ) -> Result<DocComment> {
+        self.update_comment(
+            id,
+            "UPDATE doc_comment SET start_line = ?2, end_line = ?3, status = ?4, updated_at = ?5
+             WHERE id = ?1",
+            params![
+                id.to_string(),
+                start_line,
+                end_line,
+                comment_status_str(status),
+                now_ms()
+            ],
         )
     }
 

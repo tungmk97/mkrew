@@ -216,6 +216,7 @@ impl Sidebar {
             | Event::SessionSnapshot(_)
             | Event::NotificationClicked(_)
             | Event::ConflictDetected(_)
+            | Event::DocChanged(_)
             | Event::CommentUpdated(_) => Change::None,
         }
     }

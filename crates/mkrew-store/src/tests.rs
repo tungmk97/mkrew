@@ -637,6 +637,54 @@ fn comment_status_and_sent_fields_update() {
         // Status changes keep the send record ("View changes" still works).
         assert_eq!(updated.sent_to, Some(s.id));
     }
+
+    let moved = store
+        .set_comment_anchor(c.id, 5, 6, CommentStatus::Outdated)
+        .unwrap();
+    assert_eq!((moved.start_line, moved.end_line), (Some(5), Some(6)));
+    assert_eq!(moved.status, CommentStatus::Outdated);
+    assert_eq!(moved.quote.as_deref(), Some("x"));
+    assert!(matches!(
+        store.set_comment_anchor(CommentId::new(), 1, 1, CommentStatus::Open),
+        Err(StoreError::CommentNotFound(_))
+    ));
+}
+
+#[test]
+fn project_session_events_span_sessions_since_a_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let other_dir = dir.path().join("other");
+    std::fs::create_dir(&other_dir).unwrap();
+    let other = store.add_project(&other_dir, None).unwrap();
+    let (a, b, c) = (session(p.id, 1), session(p.id, 2), session(other.id, 3));
+    for s in [&a, &b, &c] {
+        store.insert_session(s).unwrap();
+    }
+    let paths = |p: &str| serde_json::json!({ "paths": [p] });
+    store
+        .insert_session_event(a.id, "files_changed", &paths("old.md"), 5)
+        .unwrap();
+    store
+        .insert_session_event(b.id, "files_changed", &paths("b.md"), 20)
+        .unwrap();
+    store
+        .insert_session_event(a.id, "files_changed", &paths("a.md"), 10)
+        .unwrap();
+    store
+        .insert_session_event(a.id, "hook", &paths("hook.md"), 11)
+        .unwrap();
+    store
+        .insert_session_event(c.id, "files_changed", &paths("c.md"), 12)
+        .unwrap();
+
+    let events = store
+        .project_session_events(p.id, "files_changed", 10)
+        .unwrap();
+    let got: Vec<(Ulid, i64)> = events.iter().map(|(s, e)| (*s, e.at)).collect();
+    assert_eq!(got, vec![(a.id, 10), (b.id, 20)]);
+    assert_eq!(events[0].1.payload, paths("a.md"));
 }
 
 #[test]
