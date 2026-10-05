@@ -1062,7 +1062,8 @@ fn store_outcome<T: Serialize>(result: Result<T, StoreError>) -> Outcome {
                 StoreError::SessionNotFound(_)
                 | StoreError::ProjectNotFound(_)
                 | StoreError::TabNotFound(_)
-                | StoreError::TaskNotFound(_) => ErrorCode::NotFound,
+                | StoreError::TaskNotFound(_)
+                | StoreError::CommentNotFound(_) => ErrorCode::NotFound,
                 StoreError::TaskHasLiveSession(_) => ErrorCode::InvalidState,
                 _ => {
                     tracing::error!("store error: {e}");

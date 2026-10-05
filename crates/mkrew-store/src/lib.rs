@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mkrew_protocol::{
-    Project, Session, SessionKind, SessionState, StateSource, Task, TaskStatus, TerminalTab,
+    CommentId, CommentStatus, DocComment, Project, Session, SessionKind, SessionState, StateSource,
+    Task, TaskStatus, TerminalTab,
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use ulid::Ulid;
@@ -18,6 +19,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0002_terminals.sql"),
     include_str!("../migrations/0003_session_state.sql"),
     include_str!("../migrations/0004_checkpoint_at.sql"),
+    include_str!("../migrations/0005_doc_review.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +50,8 @@ pub enum StoreError {
     TaskNotFound(Ulid),
     #[error("task {0} still has a running session; stop it first")]
     TaskHasLiveSession(Ulid),
+    #[error("comment {0} not found")]
+    CommentNotFound(CommentId),
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
@@ -595,6 +599,157 @@ impl Store {
         })
         .collect()
     }
+
+    /// Review comments of a project, optionally of one file: thread roots and replies in the
+    /// order they were written.
+    pub fn list_comments(
+        &self,
+        project_id: Ulid,
+        file_path: Option<&str>,
+    ) -> Result<Vec<DocComment>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COMMENT_COLUMNS} FROM doc_comment
+             WHERE project_id = ?1 AND (?2 IS NULL OR file_path = ?2)
+             ORDER BY created_at, rowid"
+        ))?;
+        let rows = stmt.query_map(
+            params![project_id.to_string(), file_path],
+            RawComment::from_row,
+        )?;
+        rows.map(|r| r?.into_comment()).collect()
+    }
+
+    pub fn get_comment(&self, id: CommentId) -> Result<DocComment> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COMMENT_COLUMNS} FROM doc_comment WHERE id = ?1"
+        ))?;
+        let mut rows = stmt.query_map([id.to_string()], RawComment::from_row)?;
+        match rows.next() {
+            Some(row) => row?.into_comment(),
+            None => Err(StoreError::CommentNotFound(id)),
+        }
+    }
+
+    /// Starts an `open` thread by the user, anchored to lines `start_line..=end_line`
+    /// (1-based) quoting `quote`.
+    pub fn create_comment(
+        &self,
+        project_id: Ulid,
+        file_path: &str,
+        start_line: u32,
+        end_line: u32,
+        quote: &str,
+        body: &str,
+    ) -> Result<DocComment> {
+        self.get_project(project_id)?;
+        let now = now_ms();
+        let comment = DocComment {
+            id: CommentId::new(),
+            project_id,
+            file_path: file_path.to_owned(),
+            parent_id: None,
+            author: DocComment::USER.to_owned(),
+            body: body.to_owned(),
+            start_line: Some(start_line),
+            end_line: Some(end_line),
+            quote: Some(quote.to_owned()),
+            status: CommentStatus::Open,
+            sent_to: None,
+            sent_snapshot: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.insert_comment(&comment)?;
+        Ok(comment)
+    }
+
+    /// Adds a reply by `author` to the thread of `parent` (a reply to a reply joins the same
+    /// thread). Thread statuses are left to the caller.
+    pub fn reply_comment(&self, parent: CommentId, author: &str, body: &str) -> Result<DocComment> {
+        let parent = self.get_comment(parent)?;
+        let now = now_ms();
+        let reply = DocComment {
+            id: CommentId::new(),
+            project_id: parent.project_id,
+            file_path: parent.file_path,
+            parent_id: Some(parent.parent_id.unwrap_or(parent.id)),
+            author: author.to_owned(),
+            body: body.to_owned(),
+            start_line: None,
+            end_line: None,
+            quote: None,
+            status: CommentStatus::Open,
+            sent_to: None,
+            sent_snapshot: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.insert_comment(&reply)?;
+        Ok(reply)
+    }
+
+    pub fn set_comment_status(&self, id: CommentId, status: CommentStatus) -> Result<DocComment> {
+        self.update_comment(
+            id,
+            "UPDATE doc_comment SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id.to_string(), comment_status_str(status), now_ms()],
+        )
+    }
+
+    /// Marks the comment `sent` to `session_id`, keeping the file content at send time.
+    pub fn mark_comment_sent(
+        &self,
+        id: CommentId,
+        session_id: Ulid,
+        snapshot: &str,
+    ) -> Result<DocComment> {
+        self.get_session(session_id)?;
+        self.update_comment(
+            id,
+            "UPDATE doc_comment SET status = 'sent', sent_to = ?2, sent_snapshot = ?3,
+                updated_at = ?4 WHERE id = ?1",
+            params![id.to_string(), session_id.to_string(), snapshot, now_ms()],
+        )
+    }
+
+    fn insert_comment(&self, c: &DocComment) -> Result<()> {
+        self.conn.execute(
+            &format!(
+                "INSERT INTO doc_comment ({COMMENT_COLUMNS})
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+            ),
+            params![
+                c.id.to_string(),
+                c.project_id.to_string(),
+                c.file_path,
+                c.parent_id.map(|id| id.to_string()),
+                c.author,
+                c.body,
+                c.start_line,
+                c.end_line,
+                c.quote,
+                comment_status_str(c.status),
+                c.sent_to.map(|id| id.to_string()),
+                c.sent_snapshot,
+                c.created_at,
+                c.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Runs `sql` (`?1` = comment id), then returns the updated comment.
+    fn update_comment(
+        &self,
+        id: CommentId,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<DocComment> {
+        if self.conn.execute(sql, params)? == 0 {
+            return Err(StoreError::CommentNotFound(id));
+        }
+        self.get_comment(id)
+    }
 }
 
 /// One `session_event` row as read back by [`Store::session_events`].
@@ -712,6 +867,31 @@ fn parse_task_status(s: String) -> Result<TaskStatus> {
         "done" => TaskStatus::Done,
         _ => return Err(corrupt("task.status", s)),
     })
+}
+
+fn comment_status_str(status: CommentStatus) -> &'static str {
+    match status {
+        CommentStatus::Open => "open",
+        CommentStatus::Sent => "sent",
+        CommentStatus::Addressed => "addressed",
+        CommentStatus::Resolved => "resolved",
+        CommentStatus::Outdated => "outdated",
+    }
+}
+
+fn parse_comment_status(s: String) -> Result<CommentStatus> {
+    Ok(match s.as_str() {
+        "open" => CommentStatus::Open,
+        "sent" => CommentStatus::Sent,
+        "addressed" => CommentStatus::Addressed,
+        "resolved" => CommentStatus::Resolved,
+        "outdated" => CommentStatus::Outdated,
+        _ => return Err(corrupt("doc_comment.status", s)),
+    })
+}
+
+fn parse_comment_id(column: &'static str, s: String) -> Result<CommentId> {
+    s.parse().map_err(|_| corrupt(column, s))
 }
 
 fn parse_ulid(column: &'static str, s: String) -> Result<Ulid> {
@@ -909,6 +1089,72 @@ impl RawTask {
             position: self.position,
             checkpoint: self.checkpoint,
             error_flag: self.error_flag,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+const COMMENT_COLUMNS: &str = "id, project_id, file_path, parent_id, author, body, start_line,
+    end_line, quote, status, sent_to, sent_snapshot, created_at, updated_at";
+
+struct RawComment {
+    id: String,
+    project_id: String,
+    file_path: String,
+    parent_id: Option<String>,
+    author: String,
+    body: String,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+    quote: Option<String>,
+    status: String,
+    sent_to: Option<String>,
+    sent_snapshot: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+impl RawComment {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            file_path: row.get(2)?,
+            parent_id: row.get(3)?,
+            author: row.get(4)?,
+            body: row.get(5)?,
+            start_line: row.get(6)?,
+            end_line: row.get(7)?,
+            quote: row.get(8)?,
+            status: row.get(9)?,
+            sent_to: row.get(10)?,
+            sent_snapshot: row.get(11)?,
+            created_at: row.get(12)?,
+            updated_at: row.get(13)?,
+        })
+    }
+
+    fn into_comment(self) -> Result<DocComment> {
+        Ok(DocComment {
+            id: parse_comment_id("doc_comment.id", self.id)?,
+            project_id: parse_ulid("doc_comment.project_id", self.project_id)?,
+            file_path: self.file_path,
+            parent_id: self
+                .parent_id
+                .map(|id| parse_comment_id("doc_comment.parent_id", id))
+                .transpose()?,
+            author: self.author,
+            body: self.body,
+            start_line: self.start_line,
+            end_line: self.end_line,
+            quote: self.quote,
+            status: parse_comment_status(self.status)?,
+            sent_to: self
+                .sent_to
+                .map(|id| parse_ulid("doc_comment.sent_to", id))
+                .transpose()?,
+            sent_snapshot: self.sent_snapshot,
             created_at: self.created_at,
             updated_at: self.updated_at,
         })

@@ -564,6 +564,121 @@ fn delete_task_refuses_live_sessions_and_detaches_exited_ones() {
 }
 
 #[test]
+fn comment_threads_are_created_replied_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let store = open(&dir);
+    let p = store.add_project(&repo, None).unwrap();
+
+    let first = store
+        .create_comment(p.id, "docs/plan.md", 12, 14, "Use Redis", "Why Redis?")
+        .unwrap();
+    assert_eq!(first.author, DocComment::USER);
+    assert_eq!(first.status, CommentStatus::Open);
+    assert_eq!((first.start_line, first.end_line), (Some(12), Some(14)));
+    assert_eq!(first.quote.as_deref(), Some("Use Redis"));
+    let other = store
+        .create_comment(p.id, "README.md", 1, 1, "# Demo", "Rename")
+        .unwrap();
+
+    let reply = store
+        .reply_comment(first.id, "claude", "Dropped it")
+        .unwrap();
+    assert_eq!(reply.parent_id, Some(first.id));
+    assert_eq!(reply.file_path, "docs/plan.md");
+    assert_eq!((reply.start_line, reply.quote.as_deref()), (None, None));
+    // A reply to a reply joins the root's thread.
+    let nested = store.reply_comment(reply.id, "user", "Thanks").unwrap();
+    assert_eq!(nested.parent_id, Some(first.id));
+
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(
+        store.list_comments(p.id, Some("docs/plan.md")).unwrap(),
+        vec![first.clone(), reply, nested]
+    );
+    assert_eq!(store.list_comments(p.id, None).unwrap().len(), 4);
+    assert_eq!(
+        store.list_comments(p.id, Some("README.md")).unwrap(),
+        vec![other]
+    );
+    assert!(store.list_comments(Ulid::new(), None).unwrap().is_empty());
+    assert_eq!(store.get_comment(first.id).unwrap(), first);
+}
+
+#[test]
+fn comment_status_and_sent_fields_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let store = open(&dir);
+    let p = store.add_project(&repo, None).unwrap();
+    let c = store
+        .create_comment(p.id, "plan.md", 3, 3, "x", "fix")
+        .unwrap();
+    let s = session(p.id, 1);
+    store.insert_session(&s).unwrap();
+
+    let sent = store.mark_comment_sent(c.id, s.id, "# Plan\nx\n").unwrap();
+    assert_eq!(sent.status, CommentStatus::Sent);
+    assert_eq!(sent.sent_to, Some(s.id));
+    assert_eq!(sent.sent_snapshot.as_deref(), Some("# Plan\nx\n"));
+    assert!(sent.updated_at >= c.updated_at);
+
+    for status in [
+        CommentStatus::Addressed,
+        CommentStatus::Resolved,
+        CommentStatus::Outdated,
+        CommentStatus::Open,
+    ] {
+        let updated = store.set_comment_status(c.id, status).unwrap();
+        assert_eq!(updated.status, status);
+        // Status changes keep the send record ("View changes" still works).
+        assert_eq!(updated.sent_to, Some(s.id));
+    }
+}
+
+#[test]
+fn comment_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let missing = CommentId::new();
+    assert!(matches!(
+        store.get_comment(missing),
+        Err(StoreError::CommentNotFound(id)) if id == missing
+    ));
+    assert!(matches!(
+        store.reply_comment(missing, "user", "hi"),
+        Err(StoreError::CommentNotFound(_))
+    ));
+    assert!(matches!(
+        store.set_comment_status(missing, CommentStatus::Resolved),
+        Err(StoreError::CommentNotFound(_))
+    ));
+    assert!(matches!(
+        store.create_comment(Ulid::new(), "a.md", 1, 1, "", "x"),
+        Err(StoreError::ProjectNotFound(_))
+    ));
+
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let p = store.add_project(&repo, None).unwrap();
+    let s = session(p.id, 1);
+    store.insert_session(&s).unwrap();
+    assert!(matches!(
+        store.mark_comment_sent(missing, s.id, ""),
+        Err(StoreError::CommentNotFound(_))
+    ));
+    let c = store.create_comment(p.id, "a.md", 1, 1, "", "x").unwrap();
+    assert!(matches!(
+        store.mark_comment_sent(c.id, Ulid::new(), ""),
+        Err(StoreError::SessionNotFound(_))
+    ));
+    assert_eq!(store.get_comment(c.id).unwrap(), c);
+}
+
+#[test]
 fn session_requires_existing_project() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

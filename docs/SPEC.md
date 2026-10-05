@@ -260,12 +260,12 @@ ALTER TABLE session ADD COLUMN state_changed_at INTEGER NOT NULL DEFAULT 0;
 UPDATE session SET state_changed_at = COALESCE(ended_at, started_at);
 CREATE INDEX session_event_session ON session_event(session_id, id);
 
--- migrations/0004_doc_review.sql (M6)
+-- migrations/0005_doc_review.sql (M6; 0004 = checkpoint_at)
 CREATE TABLE doc_comment (
-  id          TEXT PRIMARY KEY,
+  id          TEXT PRIMARY KEY,          -- 'c_' + ULID (shown to agents, §12)
   project_id  TEXT NOT NULL REFERENCES project(id),
   file_path   TEXT NOT NULL,             -- relative to project root
-  parent_id   TEXT REFERENCES doc_comment(id),
+  parent_id   TEXT REFERENCES doc_comment(id), -- thread root of a reply; replies keep status 'open'
   author      TEXT NOT NULL,             -- 'user' or agent profile id
   body        TEXT NOT NULL,
   start_line  INTEGER,
@@ -277,8 +277,9 @@ CREATE TABLE doc_comment (
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
+CREATE INDEX doc_comment_file ON doc_comment(project_id, file_path);
 
--- migrations/0005_files_git.sql (M7)
+-- migrations/0006_files_git.sql (M7)
 ALTER TABLE project ADD COLUMN base_ref TEXT;                          -- NULL = auto-detect
 ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|diff
 ```
@@ -440,7 +441,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `agent.profiles` | – | AgentProfile[] + parse errors |
 | `doc.list` | `project_id` | md files matching review globs + md files recently changed by agents |
 | `doc.read` | `project_id`, `file_path` | content + hash |
-| `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment |
+| `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (`list`: `project_id` + `file_path?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines; `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
 | `comment.send_to_agent` | `comment_ids[]`, `session_id` | ok (comments → `sent`) |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
 | `fs.read` | `project_id`, `path` | content (≤ 2 MB), binary flag, language |

@@ -105,6 +105,21 @@ pub enum Request {
     HookReport(HookReportParams),
     #[serde(rename = "agent.profiles")]
     AgentProfiles,
+    /// Returns `DocComment[]`: thread roots and replies, oldest first.
+    #[serde(rename = "comment.list")]
+    CommentList(CommentListParams),
+    /// Returns the new [`DocComment`] (`open`, authored by the user).
+    #[serde(rename = "comment.create")]
+    CommentCreate(CommentCreateParams),
+    /// Returns the reply [`DocComment`].
+    #[serde(rename = "comment.reply")]
+    CommentReply(CommentReplyParams),
+    /// Returns the updated thread root [`DocComment`].
+    #[serde(rename = "comment.resolve")]
+    CommentResolve(CommentRef),
+    /// Returns the updated thread root [`DocComment`].
+    #[serde(rename = "comment.reopen")]
+    CommentReopen(CommentRef),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -199,6 +214,9 @@ pub enum Event {
     /// Two or more sessions of a project edited the same file within 60 s (SPEC §7, M5).
     #[serde(rename = "conflict.detected")]
     ConflictDetected(ConflictDetectedEvent),
+    /// A review comment was created, replied to, re-anchored or changed status (SPEC §12).
+    #[serde(rename = "comment.updated")]
+    CommentUpdated(Box<DocComment>),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -325,6 +343,102 @@ pub struct Task {
     pub created_at: i64,
     /// Unix ms.
     pub updated_at: i64,
+}
+
+/// Id of a review comment: a ULID written with a `c_` prefix (`c_01JX…`, SPEC §12) so it
+/// stands out in the prompt an agent gets. Parsing accepts it with or without the prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CommentId(pub Ulid);
+
+impl CommentId {
+    pub const PREFIX: &'static str = "c_";
+
+    pub fn new() -> Self {
+        Self(Ulid::new())
+    }
+}
+
+impl Default for CommentId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for CommentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", Self::PREFIX, self.0)
+    }
+}
+
+impl std::str::FromStr for CommentId {
+    type Err = ulid::DecodeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ulid::from_string(s.strip_prefix(Self::PREFIX).unwrap_or(s)).map(Self)
+    }
+}
+
+impl Serialize for CommentId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for CommentId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// Review state of a comment thread (SPEC §5 `doc_comment.status`, §12). Replies keep
+/// `open`; only the thread root's status means anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentStatus {
+    Open,
+    /// Typed into an agent session (`comment.send_to_agent`).
+    Sent,
+    /// The agent answered with `mk comment reply`.
+    Addressed,
+    Resolved,
+    /// The quoted passage is gone from the file; kept visible, never auto-deleted.
+    Outdated,
+}
+
+/// A review comment on a Markdown file (SPEC §5 `doc_comment`): a thread root anchored to
+/// lines, or a reply (`parent_id` set, no anchor).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocComment {
+    pub id: CommentId,
+    pub project_id: Ulid,
+    /// Relative to the project root, `/` separators.
+    pub file_path: String,
+    /// The thread root this reply belongs to; `None` = a thread root.
+    pub parent_id: Option<CommentId>,
+    /// [`DocComment::USER`] or the agent profile id of the replying session.
+    pub author: String,
+    pub body: String,
+    /// First anchored line, 1-based; `None` on replies.
+    pub start_line: Option<u32>,
+    /// Last anchored line, 1-based, inclusive.
+    pub end_line: Option<u32>,
+    /// The selected text the anchor follows when the file changes.
+    pub quote: Option<String>,
+    pub status: CommentStatus,
+    /// The session the comment was last sent to.
+    pub sent_to: Option<Ulid>,
+    /// The file content when it was sent, for "View changes".
+    pub sent_snapshot: Option<String>,
+    /// Unix ms.
+    pub created_at: i64,
+    /// Unix ms.
+    pub updated_at: i64,
+}
+
+impl DocComment {
+    /// `author` of comments written in the UI.
+    pub const USER: &'static str = "user";
 }
 
 // ---- request params ----
@@ -588,6 +702,42 @@ pub struct HookReportParams {
     /// The JSON the agent handed to the hook; stored as is.
     #[serde(default)]
     pub payload: serde_json::Value,
+}
+
+/// `comment.list`: the comments of one file, or of every file of the project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentListParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub file_path: Option<String>,
+}
+
+/// `comment.create`: a new thread anchored to a selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentCreateParams {
+    pub project_id: Ulid,
+    pub file_path: String,
+    /// 1-based, inclusive.
+    pub start_line: u32,
+    pub end_line: u32,
+    pub quote: String,
+    pub body: String,
+}
+
+/// `comment.reply`: a reply to a thread (a reply to a reply joins the same thread).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentReplyParams {
+    pub comment_id: CommentId,
+    pub body: String,
+    /// `MKREW_SESSION_ID` when an agent replies via `mk comment reply`; `None` = the user.
+    #[serde(default)]
+    pub mkrew_session_id: Option<Ulid>,
+}
+
+/// Params of requests that only name a comment (`comment.resolve`, `comment.reopen`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentRef {
+    pub comment_id: CommentId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -941,6 +1091,29 @@ mod tests {
                 payload: json!({"session_id": "abc"}),
             }),
             Request::AgentProfiles,
+            Request::CommentList(CommentListParams {
+                project_id: sid(),
+                file_path: Some("docs/plan.md".into()),
+            }),
+            Request::CommentCreate(CommentCreateParams {
+                project_id: sid(),
+                file_path: "docs/plan.md".into(),
+                start_line: 12,
+                end_line: 14,
+                quote: "Use Redis for caching".into(),
+                body: "Why not in-memory?".into(),
+            }),
+            Request::CommentReply(CommentReplyParams {
+                comment_id: CommentId(sid()),
+                body: "Switched to a HashMap".into(),
+                mkrew_session_id: Some(sid()),
+            }),
+            Request::CommentResolve(CommentRef {
+                comment_id: CommentId(sid()),
+            }),
+            Request::CommentReopen(CommentRef {
+                comment_id: CommentId(sid()),
+            }),
         ];
         for (id, request) in requests.into_iter().enumerate() {
             round_trip(&Message::Request {
@@ -1240,6 +1413,58 @@ mod tests {
             project_id: sid(),
         })));
         assert_eq!(deleted["event"], "task.deleted");
+    }
+
+    #[test]
+    fn comment_ids_carry_the_c_prefix() {
+        let id = CommentId(sid());
+        assert_eq!(id.to_string(), format!("c_{}", sid()));
+        assert_eq!(serde_json::to_value(id).unwrap(), json!(id.to_string()));
+        // Agents may drop the prefix; both forms parse to the same id.
+        assert_eq!(id.to_string().parse::<CommentId>().unwrap(), id);
+        assert_eq!(sid().to_string().parse::<CommentId>().unwrap(), id);
+        assert!("c_nope".parse::<CommentId>().is_err());
+        assert!(serde_json::from_value::<CommentId>(json!("x")).is_err());
+    }
+
+    #[test]
+    fn comment_wire_shapes() {
+        let comment = DocComment {
+            id: CommentId(sid()),
+            project_id: sid(),
+            file_path: "docs/plan.md".into(),
+            parent_id: None,
+            author: DocComment::USER.into(),
+            body: "Add a rollback step.".into(),
+            start_line: Some(40),
+            end_line: Some(40),
+            quote: Some("M3: deploy".into()),
+            status: CommentStatus::Addressed,
+            sent_to: Some(sid()),
+            sent_snapshot: Some("# Plan\n".into()),
+            created_at: 1,
+            updated_at: 2,
+        };
+        let value = round_trip(&Message::Event(Event::CommentUpdated(Box::new(
+            comment.clone(),
+        ))));
+        assert_eq!(value["event"], "comment.updated");
+        assert_eq!(value["data"]["id"], format!("c_{}", sid()));
+        assert_eq!(value["data"]["status"], "addressed");
+        assert_eq!(value["data"]["parent_id"], serde_json::Value::Null);
+        let decoded: Vec<DocComment> = Outcome::ok(&vec![comment.clone()])
+            .unwrap()
+            .into_result()
+            .unwrap();
+        assert_eq!(decoded, vec![comment]);
+
+        let id = sid().to_string();
+        let list: CommentListParams = serde_json::from_value(json!({"project_id": id})).unwrap();
+        assert_eq!(list.file_path, None);
+        let reply: CommentReplyParams =
+            serde_json::from_value(json!({"comment_id": format!("c_{id}"), "body": "ok"})).unwrap();
+        assert_eq!(reply.mkrew_session_id, None);
+        assert_eq!(reply.comment_id, CommentId(sid()));
     }
 
     #[test]
