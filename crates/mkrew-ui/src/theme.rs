@@ -108,6 +108,13 @@ pub const DIALOG_WIDTH: f32 = 520.0;
 /// Height of the prompt field in the task dialog (it scrolls past that).
 pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
 
+/// Width of the "Undo task" dialog (wider: it shows a diff).
+pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
+
+/// Heights of the "Undo task" dialog's file list and diff (each scrolls past that).
+pub const UNDO_FILES_HEIGHT: f32 = 120.0;
+pub const UNDO_DIFF_HEIGHT: f32 = 280.0;
+
 /// The shade behind a modal dialog (RGBA: black at ~35 %), in both appearances.
 pub const DIALOG_SCRIM: u32 = 0x0000_0059;
 

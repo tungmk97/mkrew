@@ -81,6 +81,8 @@ pub struct Card {
     pub agent: String,
     /// The last run exited non-zero.
     pub error_flag: bool,
+    /// A run stored the project's git HEAD (`task.checkpoint`), so it can be undone.
+    pub checkpoint: bool,
     /// The task's newest session, if it ever ran.
     pub session: Option<Session>,
 }
@@ -92,6 +94,11 @@ impl Card {
             TaskStatus::Review => Some(CardAction::Approve),
             TaskStatus::Running | TaskStatus::NeedsInput | TaskStatus::Done => None,
         }
+    }
+
+    /// Whether the card offers "Undo task": a finished (Review / Done) run with a checkpoint.
+    pub fn can_undo(&self) -> bool {
+        self.checkpoint && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
     }
 
     /// The session a click on the card shows: its newest one, except on a Todo card (a card
@@ -242,6 +249,7 @@ impl Board {
                             .unwrap_or(DEFAULT_AGENT_LABEL)
                             .to_owned(),
                         error_flag: task.error_flag,
+                        checkpoint: task.checkpoint.is_some(),
                         session: newest_session(sessions, task.id).cloned(),
                     })
                     .collect(),
@@ -729,6 +737,38 @@ mod tests {
         assert_eq!(board.run_target(Some(todo), Ulid::new()), None);
         assert_eq!(board.run_target(Some(tasks[1].id), api), None);
         assert_eq!(board.run_target(None, api), None);
+    }
+
+    #[test]
+    fn finished_cards_with_a_checkpoint_offer_undo() {
+        let api = Ulid::new();
+        let mut tasks: Vec<Task> = COLUMNS
+            .iter()
+            .map(|&status| task(api, "t", status, 1.0))
+            .collect();
+        let mut without = task(api, "no checkpoint", TaskStatus::Done, 2.0);
+        for task in &mut tasks {
+            task.checkpoint = Some("abc".to_owned());
+        }
+        without.checkpoint = None;
+        tasks.push(without);
+        let mut board = Board::default();
+        board.load(tasks);
+        let undoable: Vec<Vec<bool>> = board
+            .columns(api, None, &[])
+            .iter()
+            .map(|column| column.cards.iter().map(Card::can_undo).collect())
+            .collect();
+        assert_eq!(
+            undoable,
+            [
+                vec![false],
+                vec![false],
+                vec![false],
+                vec![true],
+                vec![true, false]
+            ]
+        );
     }
 
     #[test]

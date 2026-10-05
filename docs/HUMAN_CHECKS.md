@@ -255,6 +255,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - **Board drag feel + §14 design check**: drag preview smoothness, drop line, card density,
     dark + light screenshots of a board with cards in every column (incl. an error row).
 
+- [ ] (T5.4) **Undo task dialog.** In a git repo workspace run a task that edits a tracked file,
+  adds a new file and `git add`s another; once it is in Review (close its terminal), hover the
+  card → "Undo" → the dialog lists the files (M restored / A deleted / ? deleted) and a colored,
+  scrollable diff; with the terminal still open the confirm is disabled with "Close the task's
+  terminal first."; "Discard changes" restores the folder and closes the dialog. Edit a file
+  after opening the dialog, then confirm → refused ("preview again"), the error shows and the
+  preview reloads. A task whose run changed nothing → one sentence + "Close". Check a long diff
+  (> 2000 lines → "cut short" note) scrolls smoothly, long paths ellipsize, Esc closes, and
+  dark + light screenshots for §14 (destructive button legibility, hover).
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -681,6 +691,18 @@ _Decisions the agent made on its own. Override them here if you disagree._
   reverted, and a `task.run` racing an in-flight undo is not locked out. `mk task undo` without `--yes` prints the preview and exits 0. Tests pin
   `core.autocrlf=false`; with a global `autocrlf=true` a restore rewrites LF files with CRLF
   (normal git behaviour).
+- (T5.4) Undo UI: "Undo" is a hover-revealed secondary button on Review/Done cards with a
+  checkpoint (no keyboard path yet — like card Edit; a "Undo selected task" command could act on
+  the selected card). The destructive confirm uses the existing `diff-del-bg`/`diff-del-text`
+  tokens (no danger token in §14; status colors stay for agent states). The UI disables confirm
+  while the preview is empty or any session of the task is live (same rule as the daemon). The
+  diff renders at most 2000 lines as plain divs (rows parsed once per preview); a virtualized
+  `uniform_list` and per-row backgrounds wider than the box on horizontal scroll are left for
+  the M7 Git view. An undo that fails after Esc closed the dialog is only logged (no toasts yet).
+  Open ui-review SHOULDs (left for a later polish task): no keyboard path to Undo / Tab to
+  "Discard changes" (§14.7); buttons have no focus ring; hover-only Undo still reserves a row on
+  Done cards; the diff builds up to 2000 row divs per render (`uniform_list` later). "Discard
+  changes" stays enabled when the diff is cut short (the dialog points at `mk task undo`).
 
 ## Done
 

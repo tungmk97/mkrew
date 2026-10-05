@@ -23,6 +23,7 @@ use mkrew_protocol::{
     SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
     SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
     TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
+    UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
@@ -39,6 +40,7 @@ use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::zed;
 use tracing_subscriber::EnvFilter;
@@ -179,11 +181,13 @@ struct Shell {
     views: HashMap<Ulid, View>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
-    /// Focused while the task dialog is open; its keys edit the draft.
+    /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
+    undo_dialog: Option<UndoDialog>,
+    /// Focused while a dialog is open; the task dialog's keys edit the draft.
     dialog_focus: FocusHandle,
     /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
     prompt_scroll: ScrollHandle,
-    /// Bumped per opened dialog, so a late save/delete reply never closes a newer one.
+    /// Bumped per opened dialog, so a late reply never changes or closes a newer one.
     dialog_serial: u64,
 }
 
@@ -312,6 +316,7 @@ impl Shell {
                 shell.renaming = None;
                 shell.workspace_menu = None;
                 shell.task_dialog = None;
+                shell.undo_dialog = None;
                 shell.follow_up = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
@@ -361,6 +366,7 @@ impl Shell {
             _follow_up_blur: follow_up_blur,
             views: HashMap::new(),
             task_dialog: None,
+            undo_dialog: None,
             dialog_focus: cx.focus_handle(),
             prompt_scroll: ScrollHandle::new(),
             dialog_serial: 0,
@@ -780,8 +786,8 @@ impl Shell {
     }
 
     fn focus_pane(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        // The modal task dialog keeps the keyboard until it closes.
-        if self.task_dialog.is_some() {
+        // A modal dialog keeps the keyboard until it closes.
+        if self.task_dialog.is_some() || self.undo_dialog.is_some() {
             window.focus(&self.dialog_focus, cx);
             return;
         }
@@ -996,6 +1002,7 @@ impl Shell {
             return;
         };
         self.workspace_menu = None;
+        self.undo_dialog = None;
         self.task_dialog = Some(dialog);
         self.dialog_serial += 1;
         let serial = self.dialog_serial;
@@ -1165,6 +1172,121 @@ impl Shell {
                     if let Some(dialog) = shell.open_dialog(serial) {
                         dialog.busy = false;
                         dialog.error = Some(format!("Cannot delete the task: {error}"));
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// "Undo" on a Review / Done card: shows the modal confirmation and asks the daemon what
+    /// undoing would discard (`task.undo_preview`).
+    fn open_undo_dialog(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(task) = self
+            .board
+            .task(task_id)
+            .filter(|_| self.connection.is_some())
+        else {
+            return;
+        };
+        self.workspace_menu = None;
+        self.task_dialog = None;
+        self.undo_dialog = Some(UndoDialog::new(task));
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        self.load_undo_preview(window, cx);
+    }
+
+    /// (Re)reads the open undo dialog's preview.
+    fn load_undo_preview(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(dialog) = self.undo_dialog.as_mut() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        dialog.preview = Preview::Loading;
+        cx.notify();
+        let previewed = connection.call::<UndoPreview>(Request::TaskUndoPreview(TaskRef {
+            task_id: dialog.task_id,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let preview = match previewed.await {
+                Ok(preview) => Preview::loaded(preview),
+                Err(error) => Preview::Failed(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                if let Some(dialog) = shell.open_undo(serial) {
+                    dialog.preview = preview;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The open undo dialog, if it is still the one opened as `serial`.
+    fn open_undo(&mut self, serial: u64) -> Option<&mut UndoDialog> {
+        self.undo_dialog
+            .as_mut()
+            .filter(|_| self.dialog_serial == serial)
+    }
+
+    fn close_undo_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.undo_dialog = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    fn undo_dialog_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        if undo_dialog::cancels(&event.keystroke) {
+            self.close_undo_dialog(window, cx);
+        }
+    }
+
+    /// The destructive confirm: `task.undo` with exactly the previewed files. On failure the
+    /// dialog shows why and the preview is read again (the daemon refuses a stale one).
+    fn confirm_undo(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(dialog) = self.undo_dialog.as_mut() else {
+            return;
+        };
+        let Ok(params) = dialog.confirm_params(self.sidebar.sessions()) else {
+            return;
+        };
+        let task_id = params.task_id;
+        dialog.busy = true;
+        dialog.error = None;
+        cx.notify();
+        let undone = connection.request(Request::TaskUndo(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let failure = match undone.await {
+                Ok(Outcome::Result(_)) => None,
+                Ok(Outcome::Error(body)) => Some(body.message),
+                Err(error) => Some(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| match failure {
+                None => {
+                    if shell.open_undo(serial).is_some() {
+                        shell.close_undo_dialog(window, cx);
+                    }
+                }
+                Some(error) => {
+                    tracing::warn!(%task_id, "task.undo failed: {error}");
+                    if let Some(dialog) = shell.open_undo(serial) {
+                        dialog.undo_failed(&error);
+                        shell.load_undo_preview(window, cx);
                     }
                     cx.notify();
                 }
@@ -1453,9 +1575,9 @@ impl Shell {
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
-        // The task dialog is modal: bound keys go on to its key handler (e.g. Ctrl+Alt+digit
-        // is AltGr on many layouts) instead of acting behind it.
-        if self.task_dialog.is_some() {
+        // The dialogs are modal: bound keys go on to their key handler (e.g. Ctrl+Alt+digit
+        // is AltGr on many layouts) instead of acting behind them.
+        if self.task_dialog.is_some() || self.undo_dialog.is_some() {
             cx.propagate();
             return;
         }
@@ -2442,8 +2564,8 @@ impl Shell {
             }))
     }
 
-    /// The modal new / edit task dialog over a shade that blocks the window behind it (a
-    /// stray click there never throws a draft away; Esc or Cancel does).
+    /// The modal new / edit task dialog (a stray click on its shade never throws a draft
+    /// away; Esc or Cancel does).
     fn render_task_dialog(
         &self,
         dialog: &TaskDialog,
@@ -2626,8 +2748,265 @@ impl Shell {
                             }))
                     }),
             );
+        Self::modal_shade("task-dialog-shade", panel, cx)
+    }
+
+    /// The "Undo task" confirmation: what is discarded (files, then the diff), and a
+    /// destructive confirm that stays disabled until the preview allows it.
+    fn render_undo_dialog(
+        &self,
+        dialog: &UndoDialog,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let label = |text: String| {
+            div()
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        // No border: the raised surface sets the boxes apart inside the dialog (§14).
+        let scroll_box = |id: &'static str, height: f32| {
+            div()
+                .id(id)
+                .max_h(px(height))
+                .flex()
+                .flex_col()
+                .py(px(space::XS))
+                .rounded(px(radius::MEDIUM))
+                .bg(rgb(theme.surface_raised))
+                .overflow_scroll()
+        };
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        let nothing_changed = dialog.nothing_changed();
+        let mut body: Vec<gpui::AnyElement> = Vec::new();
+        let mut intro = format!(
+            "Restores the workspace folder to how it was before “{}” ran",
+            dialog.title
+        );
+        match &dialog.preview {
+            Preview::Loading => body.push(label("Loading the changes…".into()).into_any_element()),
+            Preview::Failed(error) => body.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(
+                        error_row(format!("Cannot list the changes: {error}"))
+                            .flex_1()
+                            .min_w_0(),
+                    )
+                    .child(
+                        button("undo-retry", "Retry", theme, false)
+                            .tooltip(tooltip(theme, "List the changes again", ""))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.load_undo_preview(window, cx);
+                            })),
+                    )
+                    .into_any_element(),
+            ),
+            Preview::Loaded(_) if nothing_changed => {
+                intro = format!("Nothing changed since “{}” ran", dialog.title);
+            }
+            Preview::Loaded(shown) => {
+                let commit: String = shown.preview.checkpoint.chars().take(7).collect();
+                intro = format!("{intro} (commit {commit})");
+                body.push(label(format!("Files ({})", shown.files.len())).into_any_element());
+                body.push(
+                    scroll_box("undo-files", theme::UNDO_FILES_HEIGHT)
+                        .children(shown.files.iter().map(|file| {
+                            let (marker, effect) = file.change.label();
+                            div()
+                                .flex()
+                                .gap(px(space::S))
+                                .px(px(space::S))
+                                .text_size(px(font_size::META))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .font_family(theme.terminal_font_family)
+                                        .text_color(rgb(theme.text_muted))
+                                        .child(marker),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .text_color(rgb(theme.text))
+                                        .child(file.path.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_color(rgb(theme.text_muted))
+                                        .child(effect),
+                                )
+                        }))
+                        .into_any_element(),
+                );
+                body.push(label("Diff".into()).into_any_element());
+                body.push(
+                    scroll_box("undo-diff", theme::UNDO_DIFF_HEIGHT)
+                        // `surface`, so hunk rows (`diff_hunk_header`) show as a band.
+                        .bg(rgb(theme.surface))
+                        .font_family(theme.terminal_font_family)
+                        .text_size(px(font_size::META))
+                        .when(shown.lines.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .px(px(space::S))
+                                    .font_family(theme::UI_FONT)
+                                    .text_color(rgb(theme.text_muted))
+                                    .child("No tracked file changed."),
+                            )
+                        })
+                        .children(shown.lines.iter().map(|line| {
+                            let (bg, fg) = match line.kind {
+                                LineKind::Added => (Some(theme.diff_add_bg), theme.diff_add_text),
+                                LineKind::Removed => (Some(theme.diff_del_bg), theme.diff_del_text),
+                                LineKind::Hunk => (Some(theme.diff_hunk_header), theme.text_muted),
+                                LineKind::Header => (None, theme.text_muted),
+                                LineKind::Context => (None, theme.text),
+                            };
+                            // An empty line still takes a line's height.
+                            let text = if line.text.is_empty() {
+                                " ".to_owned()
+                            } else {
+                                line.text.clone()
+                            };
+                            div()
+                                .px(px(space::S))
+                                .whitespace_nowrap()
+                                .text_color(rgb(fg))
+                                .when_some(bg, |el, bg| el.bg(rgb(bg)))
+                                .child(text)
+                        }))
+                        .into_any_element(),
+                );
+                if shown.cut() {
+                    body.push(
+                        label(format!(
+                            "The diff is cut short here; `mk task undo {}` prints all of it.",
+                            dialog.task_id
+                        ))
+                        .into_any_element(),
+                    );
+                }
+            }
+        }
+        let confirm = dialog.confirm_params(self.sidebar.sessions());
+        // Only the reason the user can act on (a live terminal); loading, failures and
+        // "nothing changed" already show in the body, and "Discarding…" on the button.
+        let hint = confirm.as_ref().err().copied().filter(|_| {
+            matches!(dialog.preview, Preview::Loaded(_)) && !dialog.busy && !nothing_changed
+        });
+        let panel = div()
+            .id("undo-dialog")
+            .w(px(theme::UNDO_DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::undo_dialog_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Undo task?"),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(if nothing_changed {
+                        format!("{intro}: there is nothing to undo.")
+                    } else {
+                        format!("{intro}. The changes below are discarded and cannot be recovered.")
+                    }),
+            )
+            .children(body)
+            .children(dialog.error.clone().map(error_row))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.text_muted))
+                            .children(hint),
+                    )
+                    .when(nothing_changed, |el| {
+                        el.child(
+                            button("undo-close", "Close", theme, true)
+                                .tooltip(tooltip(theme, "Close", "Esc"))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.close_undo_dialog(window, cx);
+                                })),
+                        )
+                    })
+                    .when(!nothing_changed, |el| {
+                        el.child(
+                            button("undo-cancel", "Cancel", theme, false)
+                                .tooltip(tooltip(theme, "Keep the changes", "Esc"))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.close_undo_dialog(window, cx);
+                                })),
+                        )
+                        .child(match confirm {
+                            Ok(_) => danger_button("undo-confirm", "Discard changes", theme)
+                                .tooltip(tooltip(theme, "Discard every change listed above", ""))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.confirm_undo(window, cx);
+                                })),
+                            Err(_) => {
+                                let label = if dialog.busy {
+                                    "Discarding…"
+                                } else {
+                                    "Discard changes"
+                                };
+                                disabled_button("undo-confirm", label, theme, false)
+                                    .bg(rgb(theme.diff_del_bg))
+                                    .text_color(rgb(theme.diff_del_text))
+                            }
+                        })
+                    }),
+            );
+        Self::modal_shade("undo-dialog-shade", panel, cx)
+    }
+
+    /// The shade behind a modal dialog: it blocks the window behind it (a stray click there
+    /// never closes the dialog; Esc or Cancel does) and keeps the keyboard in the dialog.
+    fn modal_shade(
+        id: &'static str,
+        panel: impl IntoElement,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         div()
-            .id("task-dialog-shade")
+            .id(id)
             .absolute()
             .inset_0()
             .flex()
@@ -3108,6 +3487,22 @@ fn disabled_button(
     }
 }
 
+/// A [`button`] that discards work (Undo's confirm): drawn in the diff "deleted" colors, so
+/// it never reads as the accent's safe default.
+fn danger_button(
+    id: &'static str,
+    label: &'static str,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let text = theme.text;
+    button(id, label, theme, false)
+        .bg(rgb(theme.diff_del_bg))
+        .text_color(rgb(theme.diff_del_text))
+        .font_weight(FontWeight(weight::MEDIUM))
+        // Stronger than an opacity change on the faint background.
+        .hover(move |style| style.text_color(rgb(text)))
+}
+
 /// A text input of the task dialog: its lines with a caret at the end while `focused`, or a
 /// muted placeholder when empty. Callers make clicks focus it.
 fn text_field(
@@ -3551,6 +3946,7 @@ fn task_card(
     let run_time = card.run_time(now);
     let shows_error_row = card.shows_error_row();
     let action = card.action();
+    let can_undo = card.can_undo();
     let opens = card.opens_session();
     let follow_up_session = card.follow_up_session();
     let task_id = card.task_id;
@@ -3619,7 +4015,7 @@ fn task_card(
                         .text_size(px(font_size::META))
                         .text_color(rgb(theme.text_muted))
                         .opacity(opacity::HIDDEN)
-                        .group_hover(group, |style| style.opacity(opacity::FULL))
+                        .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
                         // One step above the card's own `surface_raised`.
                         .hover(move |style| style.bg(rgb(edit_hover)))
                         .active(|style| style.opacity(opacity::ACTIVE))
@@ -3700,45 +4096,82 @@ fn task_card(
         .when_some(follow_up_session, |el, session_id| {
             el.child(follow_up_field(task_id, session_id, cards, theme, cx))
         })
-        .when_some(action, |el, action| {
-            // Ctrl+Enter runs only the selected card.
-            let run_keys = if selected {
-                cards.run_keys.clone()
-            } else {
-                String::new()
-            };
-            let (id, label, tip, keys) = match action {
-                CardAction::Run => ("card-run", "Run", "Run this task", run_keys),
-                CardAction::Approve => (
-                    "card-approve",
-                    "Approve",
-                    "Accept the result and move the task to Done",
-                    String::new(),
-                ),
-            };
-            // Accent only on the selected card: a full Todo column stays calm.
-            let primary = action == CardAction::Run && selected;
-            let control = if cards.starting.contains(&task_id) {
-                disabled_button(id, "Starting…", theme, primary)
-            } else {
-                button(id, label, theme, primary)
-                    // A quiet button's surface hover would vanish on the raised card.
-                    .when(!primary, |el| {
-                        el.hover(move |style| style.bg(rgb(edit_hover)))
-                    })
-                    .tooltip(tooltip(theme, tip, keys))
+        .when(action.is_some() || can_undo, |el| {
+            // Secondary: shown on hover, left of the column's action (SPEC §14).
+            let undo = can_undo.then(|| {
+                button("card-undo", "Undo", theme, false)
+                    .opacity(opacity::HIDDEN)
+                    .group_hover(group, |style| style.opacity(opacity::FULL))
+                    .hover(move |style| style.bg(rgb(edit_hover)))
+                    .tooltip(tooltip(
+                        theme,
+                        "Undo task: review and discard its changes",
+                        "",
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         cx.stop_propagation();
                         shell.selected_card = Some(task_id);
-                        match action {
-                            CardAction::Run => shell.run_task(task_id, window, cx),
-                            CardAction::Approve => shell.approve_task(task_id, window, cx),
-                        }
+                        shell.open_undo_dialog(task_id, window, cx);
                     }))
-            };
-            el.child(div().flex().justify_end().child(control))
+            });
+            el.child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .children(undo)
+                    .children(
+                        action
+                            .map(|action| card_action(action, task_id, selected, cards, theme, cx)),
+                    ),
+            )
         })
         .into_any_element()
+}
+
+/// The button of a card's column (Run / Approve); Run is disabled while its run starts.
+fn card_action(
+    action: CardAction,
+    task_id: Ulid,
+    selected: bool,
+    cards: &CardContext<'_>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    // Ctrl+Enter runs only the selected card.
+    let run_keys = if selected {
+        cards.run_keys.clone()
+    } else {
+        String::new()
+    };
+    let (id, label, tip, keys) = match action {
+        CardAction::Run => ("card-run", "Run", "Run this task", run_keys),
+        CardAction::Approve => (
+            "card-approve",
+            "Approve",
+            "Accept the result and move the task to Done",
+            String::new(),
+        ),
+    };
+    // Accent only on the selected card: a full Todo column stays calm.
+    let primary = action == CardAction::Run && selected;
+    if cards.starting.contains(&task_id) {
+        return disabled_button(id, "Starting…", theme, primary);
+    }
+    // One step above the card's own `surface_raised`.
+    let hover = theme.border;
+    button(id, label, theme, primary)
+        // A quiet button's surface hover would vanish on the raised card.
+        .when(!primary, |el| el.hover(move |style| style.bg(rgb(hover))))
+        .tooltip(tooltip(theme, tip, keys))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            cx.stop_propagation();
+            shell.selected_card = Some(task_id);
+            match action {
+                CardAction::Run => shell.run_task(task_id, window, cx),
+                CardAction::Approve => shell.approve_task(task_id, window, cx),
+            }
+        }))
 }
 
 /// The follow-up input of a running / needs-input card: a one-line field that takes the
@@ -3974,6 +4407,11 @@ impl Render for Shell {
                 self.task_dialog
                     .as_ref()
                     .map(|dialog| self.render_task_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.undo_dialog
+                    .as_ref()
+                    .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
             )
     }
 }
