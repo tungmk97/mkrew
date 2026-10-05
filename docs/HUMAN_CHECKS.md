@@ -969,6 +969,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (conflicts are `unstaged` with kind `conflicted`), `base_auto`, `merge_base` (base mode
   only); `git.diff` has `staged` (working mode) and `commit?`; stage/unstage send back the
   whole `Hunk` as shown; `git.log` limit defaults to 50; `fs.find` limit defaults to 50.
+- (T7.2) **Git parsers:** `DiffLine` gained `crlf` (SPEC §7 row updated, no version bump —
+  no client uses `git.diff` yet) so a hunk patch reproduces CRLF lines byte-exactly instead
+  of leaking `\r` into `text`. `parse_diff` assumes `a/`/`b/` prefixes (daemon must pass
+  `--src-prefix=a/ --dst-prefix=b/`), is lenient (combined `diff --cc` hunks are skipped),
+  and a deleted file's `path` is its old path. `hunk_patch` names only the new path (no
+  rename headers) and never writes `new file mode`/`deleted file mode`: per-hunk staging of an
+  untracked file fails, of a deleted file leaves it empty in the index, and unstaging a new
+  file's hunk empties it — T7.4 stages/unstages those by path instead. Status `R`/`C` on
+  either side carries `old_path`; ignored entries dropped.
 
 ## Done
 

@@ -154,6 +154,10 @@ pub struct DiffLine {
     /// Followed by `\ No newline at end of file`.
     #[serde(default)]
     pub no_newline: bool,
+    /// The line ended with `\r\n` (the `\r` is not in `text`); kept so a hunk patch for
+    /// `git apply` reproduces the file exactly.
+    #[serde(default)]
+    pub crlf: bool,
 }
 
 /// `git.stage` / `git.unstage`: whole files (`paths`) or one hunk.
@@ -372,6 +376,7 @@ mod tests {
                     old_line: Some(1),
                     new_line: Some(1),
                     no_newline: false,
+                    crlf: false,
                 },
                 DiffLine {
                     kind: DiffLineKind::Del,
@@ -379,6 +384,7 @@ mod tests {
                     old_line: Some(2),
                     new_line: None,
                     no_newline: false,
+                    crlf: false,
                 },
                 DiffLine {
                     kind: DiffLineKind::Add,
@@ -386,6 +392,7 @@ mod tests {
                     old_line: None,
                     new_line: Some(2),
                     no_newline: true,
+                    crlf: true,
                 },
             ],
         }

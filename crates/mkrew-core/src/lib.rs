@@ -4,6 +4,7 @@
 //! (and looking up the platform directories in [`paths`] and programs on `PATH` in [`lookup`]).
 
 pub mod conflict;
+pub mod git;
 pub mod hook;
 pub mod lookup;
 pub mod paths;
