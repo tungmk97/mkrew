@@ -647,6 +647,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (harmless) moves; pressing in the follow-up field and moving the mouse may start a card
   drag (stopping mouse-down propagation there may also swallow the field's own click —
   untested without a display).
+- (T5.1) Startup resume: Task has no note column, so "session stopped — run again?" is
+  `needs_input` + `error_flag` (the card's error row) plus a daemon log line, not a stored
+  note. "Last session" = the task's newest session by `started_at`; its `agent_profile` (not
+  the task's current one) picks the `resume` template. The resume template is split on
+  whitespace with `"…"`/`'…'` grouping and no escapes (SPEC §6), then `{session_id}` is
+  substituted per word. The resumed session keeps the old title/size, carries the native id
+  over (a second restart before the next hook still resumes), gets no prompt, and replaces
+  the old session id in every tab layout of the project. A resume spawn failure (e.g.
+  command not found) falls back to the error flag.
 
 ## Done
 

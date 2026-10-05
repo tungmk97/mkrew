@@ -79,6 +79,45 @@ impl Default for StateConfig {
 
 const DEFAULT_IDLE_AFTER_MS: u64 = 3000;
 
+impl AgentProfile {
+    /// This profile running its `resume` command for the agent's own session `native_id`
+    /// (SPEC §6, §8); `None` without a usable `resume`. The template is split on whitespace
+    /// (`"…"` / `'…'` group words, no escapes, so Windows paths stay intact), then
+    /// `{session_id}` is replaced inside each word, so an id never splits into two args.
+    pub fn resumed(&self, native_id: &str) -> Option<AgentProfile> {
+        let mut words = split_words(self.resume.as_deref()?)
+            .into_iter()
+            .map(|w| w.replace("{session_id}", native_id));
+        let command = words.next()?;
+        Some(AgentProfile {
+            command,
+            args: words.collect(),
+            ..self.clone()
+        })
+    }
+}
+
+/// Whitespace-separated words; a quote pair groups its content literally.
+fn split_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => word.get_or_insert_default().push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                word.get_or_insert_default();
+            }
+            None if c.is_whitespace() => words.extend(word.take()),
+            None => word.get_or_insert_default().push(c),
+        }
+    }
+    words.extend(word);
+    words
+}
+
 /// A profile file that could not be loaded. Displays as `file[:line[:column]]: message`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{}{}: {message}", file.display(), position(*line, *column))]
@@ -344,6 +383,30 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
     fn empty_resume_means_none() {
         let p = parse("command = \"x\"\nresume = \"\"").unwrap();
         assert_eq!(p.resume, None);
+    }
+
+    #[test]
+    fn resumed_runs_the_resume_command_with_the_native_id() {
+        let src = "command = \"claude\"\nargs = [\"--verbose\"]\nresume = \"claude --resume {session_id}\"";
+        let p = parse(src).unwrap();
+        let r = p.resumed("abc 1").unwrap();
+        assert_eq!(r.command, "claude");
+        assert_eq!(r.args, vec!["--resume", "abc 1"]);
+        assert_eq!((r.id, r.state), (p.id.clone(), p.state.clone()));
+        assert_eq!(parse("command = \"x\"").unwrap().resumed("a"), None);
+
+        let quoted = AgentProfile {
+            resume: Some(r#"'C:\Program Files\a.exe' "--x=y z"  --id={session_id} """#.into()),
+            ..p
+        };
+        let r = quoted.resumed("n").unwrap();
+        assert_eq!(r.command, r"C:\Program Files\a.exe");
+        assert_eq!(r.args, vec!["--x=y z", "--id=n", ""]);
+        let blank = AgentProfile {
+            resume: Some("   ".into()),
+            ..quoted
+        };
+        assert_eq!(blank.resumed("n"), None);
     }
 
     #[test]

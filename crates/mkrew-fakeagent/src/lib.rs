@@ -113,8 +113,11 @@ pub enum Step {
         content: String,
     },
     /// Run `mk hook fake <event>` like an agent hook would (SPEC §6) and wait for it.
+    /// `session_id` is reported as the agent's own id (payload `{"session_id": …}`).
     Hook {
         event: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
     /// Stop the scenario and exit with `code`.
     Exit {
@@ -225,9 +228,9 @@ pub fn run(
                     source,
                 })?;
             }
-            Step::Hook { event } => {
+            Step::Hook { event, session_id } => {
                 out.flush()?;
-                hook(event)?;
+                hook(event, session_id.as_deref())?;
             }
             Step::Exit { code } => {
                 out.flush()?;
@@ -239,12 +242,14 @@ pub fn run(
     Ok(0)
 }
 
-/// Runs `mk hook fake <event>`. Like a real agent, a failing hook does not stop the scenario
-/// (its stderr reaches the terminal); only a missing `mk` does.
-fn hook(event: &str) -> Result<(), Error> {
+/// Runs `mk hook fake <event> [<json>]`. Like a real agent, a failing hook does not stop the
+/// scenario (its stderr reaches the terminal); only a missing `mk` does.
+fn hook(event: &str, session_id: Option<&str>) -> Result<(), Error> {
     let program = mk_program();
+    let payload = session_id.map(|id| serde_json::json!({ "session_id": id }).to_string());
     Command::new(&program)
         .args(["hook", "fake", event])
+        .args(payload)
         // The PTY input belongs to the agent; `mk hook fake` reads no stdin anyway.
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -343,12 +348,16 @@ mod tests {
             action = "hook"
             event = "needs_input"
             [[step]]
+            action = "hook"
+            event = "busy"
+            session_id = "native-1"
+            [[step]]
             action = "exit"
             code = 3
             "#,
         )
         .unwrap();
-        assert_eq!(scenario.steps.len(), 8);
+        assert_eq!(scenario.steps.len(), 9);
         assert_eq!(
             scenario.steps[2],
             Step::Ask {
@@ -358,10 +367,18 @@ mod tests {
         assert_eq!(
             scenario.steps[6],
             Step::Hook {
-                event: "needs_input".into()
+                event: "needs_input".into(),
+                session_id: None
             }
         );
-        assert_eq!(scenario.steps[7], Step::Exit { code: 3 });
+        assert_eq!(
+            scenario.steps[7],
+            Step::Hook {
+                event: "busy".into(),
+                session_id: Some("native-1".into())
+            }
+        );
+        assert_eq!(scenario.steps[8], Step::Exit { code: 3 });
     }
 
     #[test]

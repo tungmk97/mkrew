@@ -1695,7 +1695,8 @@ fn task_run_delivers_the_prompt_per_mode_and_the_card_follows_the_session() {
     assert!(!running.error_flag);
 
     // Stopping the daemon ends the session but is no failure: the card stays running for
-    // the startup resume (SPEC §8).
+    // the startup resume (SPEC §8), which cannot resume a profile without `resume` and asks
+    // the user to run it again.
     client.stop();
     assert!(daemon.wait_exit().success());
     let (_daemon, mut client) = env.start();
@@ -1704,7 +1705,129 @@ fn task_run_delivers_the_prompt_per_mode_and_the_card_follows_the_session() {
     let after = after.iter().find(|t| t.id == silent.id).unwrap();
     assert_eq!(
         (after.status, after.error_flag),
-        (TaskStatus::Running, false)
+        (TaskStatus::NeedsInput, true)
+    );
+    client.stop();
+}
+
+/// SPEC §8 resume: after a daemon restart a task whose agent reported its own session id runs
+/// the profile's `resume` command with that id, in the old session's pane.
+#[test]
+fn restart_resumes_running_tasks_with_their_native_session_id() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("native.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-42\"\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    let fake = built_bin("mkrew-fakeagent");
+    let args = format!("args = ['--scenario', '{}']", scenario.display());
+    env.write_fake_profile_as("resumable", &args["args = ".len()..]);
+    let path = env.dir.path().join("config/agents/resumable.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    // TOML literal string: the quoted word keeps backslashes and spaces. The resumed fake
+    // runs the default scenario (no hook), so its native id can only be carried over.
+    let resume = format!(
+        "resume = '\"{}\" --resume {{session_id}}'\n",
+        fake.display()
+    );
+    let text = text.replace("[state]", &format!("{resume}\n[state]"));
+    std::fs::write(&path, &text).unwrap();
+    // Resumable profile, but the agent never reports its id: nothing to resume.
+    env.write_profile("resumable-silent", &text.replace(&args, "args = []"));
+
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let task: Task = client
+        .call(create_task(&project, "resume me", Some("resumable")))
+        .into_result()
+        .unwrap();
+    let silent: Task = client
+        .call(create_task(&project, "no id", Some("resumable-silent")))
+        .into_result()
+        .unwrap();
+    let silent_run: SessionSpawnResult = client.call(run_task(silent.id)).into_result().unwrap();
+    client.wait_state(silent_run.session_id, SessionState::NeedsInput);
+    let tab: TerminalTab = client
+        .call(create_tab(&project, "agents"))
+        .into_result()
+        .unwrap();
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    let layout = json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": Ulid::new().to_string()}, {"session": run.session_id.to_string()}
+    ]});
+    client
+        .call(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: tab.id,
+            layout: layout.clone(),
+        }))
+        .into_result::<()>()
+        .unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while client.session(run.session_id).native_session_id.is_none() {
+        assert!(Instant::now() < deadline, "no native session id reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    let sessions: Vec<Session> = client
+        .call(Request::SessionList(SessionListParams::default()))
+        .into_result()
+        .unwrap();
+    let resumed = sessions
+        .iter()
+        .find(|s| s.task_id == Some(task.id) && s.id != run.session_id)
+        .expect("the task got a new session")
+        .clone();
+    assert_eq!(
+        (resumed.agent_profile.as_str(), resumed.title.as_deref()),
+        ("resumable", Some("resume me"))
+    );
+    // Carried over: a second restart before the agent's next hook resumes it again.
+    assert_eq!(resumed.native_session_id.as_deref(), Some("native-42"));
+    assert!(
+        !sessions
+            .iter()
+            .any(|s| s.task_id == Some(silent.id) && s.id != silent_run.session_id)
+    );
+    let flagged = list_tasks(&mut client, &project);
+    let flagged = flagged.iter().find(|t| t.id == silent.id).unwrap();
+    assert_eq!(
+        (flagged.status, flagged.error_flag),
+        (TaskStatus::NeedsInput, true)
+    );
+    client.wait_state(resumed.id, SessionState::NeedsInput);
+    let attached: SessionAttachResult = client.attach(resumed.id).into_result().unwrap();
+    let screen = screen_text(&attached.snapshot);
+    assert!(screen.contains("Resumed: native-42"), "{screen}");
+    // The card follows the resumed session like a fresh run.
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let tasks = list_tasks(&mut client, &project);
+        let after = tasks.iter().find(|t| t.id == task.id).unwrap();
+        assert!(!after.error_flag);
+        if after.status == TaskStatus::NeedsInput {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "task stuck in {:?}",
+            after.status
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let tabs = list_tabs(&mut client, &project);
+    let expected = layout
+        .to_string()
+        .replace(&run.session_id.to_string(), &resumed.id.to_string());
+    assert_eq!(
+        tabs[0].layout,
+        serde_json::from_str::<Value>(&expected).unwrap()
     );
     client.stop();
 }

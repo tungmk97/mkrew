@@ -25,6 +25,8 @@ use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 
+mod resume;
+
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// State shared by all connections.
@@ -53,10 +55,11 @@ impl Daemon {
         })
     }
 
-    /// Serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8).
-    /// `notifier` = `None` turns OS notifications off.
+    /// Resumes interrupted tasks, then serves `listener` until `daemon.stop` or Ctrl+C, then
+    /// stops every session (SPEC §8). `notifier` = `None` turns OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let notifications = notifier.map(|n| notify::start(Arc::clone(&self.hub), n));
+        self.resume_tasks();
         Arc::clone(&self).accept(listener).await;
         if let Some(task) = notifications {
             task.abort();
@@ -358,6 +361,7 @@ impl Daemon {
             cols: params.cols,
             rows: params.rows,
             typed: None,
+            native_session_id: None,
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -428,6 +432,7 @@ impl Daemon {
             cols: params.cols,
             rows: params.rows,
             typed,
+            native_session_id: None,
         };
         match self.start_session(start) {
             Ok(session_id) => ok(&SessionSpawnResult { session_id }),
@@ -445,7 +450,7 @@ impl Daemon {
             agent_profile: start.profile.id.clone(),
             kind: session_kind(start.profile.kind),
             title: start.title,
-            native_session_id: None,
+            native_session_id: start.native_session_id,
             state: SessionState::Starting,
             state_source: StateSource::Daemon,
             state_changed_at: started_at,
@@ -844,6 +849,8 @@ struct Start {
     cols: u16,
     rows: u16,
     typed: Option<String>,
+    /// Known up front only for a resumed conversation.
+    native_session_id: Option<String>,
 }
 
 /// Per-connection state kept by the read loop.

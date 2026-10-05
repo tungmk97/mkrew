@@ -325,7 +325,8 @@ args    = []
 prompt_mode = "arg"
 # Optional extra environment variables for this agent
 env = {}
-# Resume command; {session_id} = native_session_id. Empty = no resume.
+# Resume command; {session_id} = native_session_id. Empty = no resume. Split on whitespace,
+# "…" / '…' group words (no escapes); {session_id} is replaced inside each word.
 resume = "claude --resume {session_id}"
 
 [state]
