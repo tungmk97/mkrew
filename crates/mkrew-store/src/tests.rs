@@ -453,6 +453,25 @@ fn run_lifecycle_sets_status_and_error_flag_in_place() {
 }
 
 #[test]
+fn checkpoint_is_set_and_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let task = store.create_task(p.id, "t", "", None, None).unwrap();
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    let set = store.set_task_checkpoint(task.id, Some(head)).unwrap();
+    assert_eq!(set.checkpoint.as_deref(), Some(head));
+    assert_eq!((set.status, set.position), (task.status, task.position));
+    assert_eq!(open(&dir).get_task(task.id).unwrap(), set);
+    let cleared = store.set_task_checkpoint(task.id, None).unwrap();
+    assert_eq!(cleared.checkpoint, None);
+    assert!(matches!(
+        store.set_task_checkpoint(Ulid::new(), None),
+        Err(StoreError::TaskNotFound(_))
+    ));
+}
+
+#[test]
 fn delete_task_refuses_live_sessions_and_detaches_exited_ones() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

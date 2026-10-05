@@ -415,6 +415,18 @@ impl Store {
         self.get_task(id)
     }
 
+    /// Records the git HEAD taken before the latest run (SPEC §5); `None` = no checkpoint.
+    pub fn set_task_checkpoint(&self, id: Ulid, checkpoint: Option<&str>) -> Result<Task> {
+        let changed = self.conn.execute(
+            "UPDATE task SET checkpoint = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id.to_string(), checkpoint, now_ms()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::TaskNotFound(id));
+        }
+        self.get_task(id)
+    }
+
     /// Deletes the task and returns it. Refused while one of its sessions has not exited;
     /// exited sessions are kept (history) and become free terminals (`task_id` = NULL).
     pub fn delete_task(&self, id: Ulid) -> Result<Task> {

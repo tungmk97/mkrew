@@ -5,6 +5,7 @@
 
 mod attach;
 mod emulator;
+mod git;
 pub mod ipc;
 mod launch;
 pub mod lock;

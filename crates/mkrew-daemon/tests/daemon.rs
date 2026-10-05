@@ -1710,6 +1710,89 @@ fn task_run_delivers_the_prompt_per_mode_and_the_card_follows_the_session() {
     client.stop();
 }
 
+/// `git` in `dir` with a throwaway identity; returns trimmed stdout.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?} failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// M5 checkpoint: each run in a git repo stores HEAD in `task.checkpoint`; outside a repo the
+/// task runs without one.
+#[test]
+fn task_run_stores_head_as_checkpoint() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.repo();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "one"]);
+    let first = git(&repo, &["rev-parse", "HEAD"]);
+    let plain = env.dir.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let (mut daemon, mut client) = env.start();
+    let in_repo = client.add_project(&repo);
+    let outside = client.add_project(&plain);
+    let task: Task = client
+        .call(create_task(&in_repo, "t", Some("fake")))
+        .into_result()
+        .unwrap();
+    assert_eq!(task.checkpoint, None);
+    let kill = |session_id| {
+        Request::SessionKill(SessionKillParams {
+            session_id,
+            force: true,
+        })
+    };
+
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    wait_task(&mut client, task.id, |t| {
+        t.checkpoint.as_deref() == Some(first.as_str())
+    });
+    client
+        .call(kill(run.session_id))
+        .into_result::<()>()
+        .unwrap();
+    wait_task(&mut client, task.id, |t| t.error_flag);
+
+    // A later run takes a fresh checkpoint.
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "two"]);
+    let second = git(&repo, &["rev-parse", "HEAD"]);
+    client.events.clear();
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    wait_task(&mut client, task.id, |t| {
+        t.checkpoint.as_deref() == Some(second.as_str())
+    });
+    client
+        .call(kill(run.session_id))
+        .into_result::<()>()
+        .unwrap();
+
+    let other: Task = client
+        .call(create_task(&outside, "t", Some("fake")))
+        .into_result()
+        .unwrap();
+    client.events.clear();
+    client
+        .call(run_task(other.id))
+        .into_result::<SessionSpawnResult>()
+        .unwrap();
+    let running = wait_task(&mut client, other.id, |t| t.status == TaskStatus::Running);
+    assert_eq!(running.checkpoint, None);
+    let listed = list_tasks(&mut client, &outside);
+    assert_eq!(listed[0].checkpoint, None);
+    client.stop();
+    assert!(daemon.wait_exit().success());
+}
+
 /// SPEC §8 resume: after a daemon restart a task whose agent reported its own session id runs
 /// the profile's `resume` command with that id, in the old session's pane.
 #[test]

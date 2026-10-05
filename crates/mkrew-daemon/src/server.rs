@@ -21,6 +21,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use ulid::Ulid;
 
 use crate::attach::{self, Attachment};
+use crate::git::{GitBackend, GitCli};
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
@@ -33,6 +34,7 @@ const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct Daemon {
     hub: Arc<Hub>,
     paths: Paths,
+    git: Arc<dyn GitBackend>,
     started_at: i64,
     shutdown: watch::Sender<bool>,
 }
@@ -50,6 +52,7 @@ impl Daemon {
         Arc::new(Self {
             hub: Arc::new(Hub::new(store)),
             paths,
+            git: Arc::new(GitCli),
             started_at: now_ms(),
             shutdown: watch::channel(false).0,
         })
@@ -231,7 +234,7 @@ impl Daemon {
                 (self.task_updated(task), After::Continue)
             }
             Request::TaskDelete(params) => (self.task_delete(params.task_id), After::Continue),
-            Request::TaskRun(params) => (self.task_run(params), After::Continue),
+            Request::TaskRun(params) => (self.task_run(params).await, After::Continue),
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
@@ -376,8 +379,8 @@ impl Daemon {
 
     /// Runs the task (SPEC §5, §6): its agent, else the project's default, in the project
     /// folder, with the prompt per the profile's `prompt_mode`. Refused while the task already
-    /// has a live session.
-    fn task_run(&self, params: TaskRunParams) -> Outcome {
+    /// has a live session. In a git repo, HEAD before the run becomes `task.checkpoint`.
+    async fn task_run(&self, params: TaskRunParams) -> Outcome {
         if params.cols == 0 || params.rows == 0 {
             return Outcome::error(ErrorCode::InvalidRequest, "cols and rows must be > 0");
         }
@@ -424,6 +427,7 @@ impl Daemon {
                 PromptMode::None => {}
             }
         }
+        let checkpoint = self.head(&project.path).await;
         let start = Start {
             project,
             profile,
@@ -435,8 +439,32 @@ impl Daemon {
             native_session_id: None,
         };
         match self.start_session(start) {
-            Ok(session_id) => ok(&SessionSpawnResult { session_id }),
+            Ok(session_id) => {
+                let task = self
+                    .store()
+                    .set_task_checkpoint(task.id, checkpoint.as_deref());
+                self.task_updated(task);
+                ok(&SessionSpawnResult { session_id })
+            }
             Err(outcome) => outcome,
+        }
+    }
+
+    /// HEAD of the repo holding `dir` (SPEC §12B: no network); `None` outside a repo or when
+    /// git cannot run, which only costs the task its checkpoint.
+    async fn head(&self, dir: &str) -> Option<String> {
+        let git = Arc::clone(&self.git);
+        let dir = std::path::PathBuf::from(dir);
+        match tokio::task::spawn_blocking(move || git.head(&dir)).await {
+            Ok(Ok(head)) => head,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "git rev-parse HEAD failed; no checkpoint");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "git checkpoint task failed");
+                None
+            }
         }
     }
 

@@ -656,6 +656,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   over (a second restart before the next hook still resumes), gets no prompt, and replaces
   the old session id in every tab layout of the project. A resume spawn failure (e.g.
   command not found) falls back to the error flag.
+- (T5.2) Checkpoint: every `task.run` overwrites `task.checkpoint` with HEAD (`git rev-parse
+  --verify HEAD^{commit}` in the project folder, so a subfolder of a repo uses that repo's
+  HEAD); outside a repo, before the first commit, or when git cannot run, it is cleared and the
+  run still starts (warning in the daemon log). Resume after a restart is not a new run and
+  keeps the old checkpoint. HEAD does not capture uncommitted changes made before the run —
+  T5.3's undo must account for that (preview shows everything that differs from HEAD).
 
 ## Done
 
