@@ -298,3 +298,26 @@ fn hook_busy_decays_to_idle_after_the_priority_window() {
     assert_eq!(m.tick(c.at(9_999), BUSY), None);
     assert_eq!(m.tick(c.at(10_000), BUSY), Some(Idle));
 }
+
+#[test]
+fn omp_profile_spinner_redraws_are_working_and_quiet_is_idle() {
+    // The shipped profile: screen mode, no patterns, idle after 3 s (SPEC §6).
+    let src = include_str!("../../../../agents/omp.toml");
+    let profile =
+        crate::profile::parse_profile("omp", std::path::Path::new("omp.toml"), src).unwrap();
+    let mut m = StateMachine::new(&profile.state).unwrap();
+    let c = clock();
+    // A spinner redraws one line in place every 80 ms.
+    let frames = ["⠋ Thinking", "⠙ Thinking", "⠹ Thinking", "⠸ Thinking"];
+    assert_eq!(m.on_output(c.at(0), &[frames[0]]), Some(Working));
+    for (i, frame) in frames.iter().cycle().take(20).enumerate() {
+        let at = c.at(80 * i as u64);
+        assert_eq!(m.on_output(at, &["> explain the build", frame]), None);
+        assert_eq!(m.tick(at, &[frame]), None);
+    }
+    // Last frame at 1520 ms; idle 3 s later. No patterns: a "(y/n)" never means needs_input.
+    let quiet = &["> explain the build", "✔ Thinking", "Proceed? (y/n)"];
+    assert_eq!(m.tick(c.at(4519), quiet), None);
+    assert_eq!(m.tick(c.at(4520), quiet), Some(Idle));
+    assert_eq!(m.on_output(c.at(6000), &["⠋ Editing"]), Some(Working));
+}

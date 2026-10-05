@@ -503,6 +503,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   it). Clicking an entry or a notification = same as clicking the sidebar row (focus its pane, or
   split the focused pane to show it). A notification click for an unlisted session only shows its
   workspace. `Ctrl+Shift+I` (jump to next Inbox item, §13) is not in T3.7 (backlog).
+- (T3.8) `agents/omp.toml` is unchanged (screen, idle 3000 ms, no patterns): there is no real
+  omp recording to refine it from. The fake `omp` scenario (spinner turns + quiet gaps) is only
+  modelled on how omp is assumed to look. If real omp has an approval prompt or a quiet "thinking"
+  phase > 3 s, add a pattern / raise `idle_after_ms` and record its output as a fixture. Screen-only
+  profiles never reach `done` (by design, §6): a finished omp turn shows as `idle`.
 
 ## Done
 

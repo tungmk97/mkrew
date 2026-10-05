@@ -27,6 +27,7 @@ use serde::Deserialize;
 pub const BUILTIN: &[(&str, &str)] = &[
     ("ask", include_str!("../scenarios/ask.toml")),
     ("flood", include_str!("../scenarios/flood.toml")),
+    ("omp", include_str!("../scenarios/omp.toml")),
 ];
 
 /// Scenario used when neither `--scenario` nor `MKREW_FAKE_SCENARIO` is given.
@@ -384,7 +385,7 @@ mod tests {
     #[test]
     fn unknown_scenario_lists_builtins() {
         let err = load("no-such-scenario").unwrap_err().to_string();
-        assert!(err.contains("ask, flood"), "{err}");
+        assert!(err.contains("ask, flood, omp"), "{err}");
     }
 
     #[test]

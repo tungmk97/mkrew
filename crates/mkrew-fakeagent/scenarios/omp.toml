@@ -1,0 +1,30 @@
+# Oh My Pi-like turns for screen detection (`agents/omp.toml`, SPEC §6): omp has no hooks and
+# no approval prompt, so its state is only "spinner redrawing one line" (working) or quiet
+# (idle after `idle_after_ms` = 3000). Two turns, each followed by a quiet gap > 3 s.
+
+[[step]]
+action = "spinner"
+text = "Thinking"
+ms = 1500
+
+[[step]]
+action = "print"
+text = "Answered: the build uses cargo."
+
+[[step]]
+action = "sleep"
+ms = 4500
+
+[[step]]
+action = "spinner"
+text = "Editing src/lib.rs"
+ms = 1500
+
+[[step]]
+action = "print"
+text = "Edited src/lib.rs"
+color = "green"
+
+[[step]]
+action = "sleep"
+ms = 4500

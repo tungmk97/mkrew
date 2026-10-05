@@ -847,8 +847,8 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone.
 
 **`mkrew-fakeagent`** — a scriptable fake agent. Reads a scenario (TOML/JSON) via
 `--scenario <file|name>` or env `MKREW_FAKE_SCENARIO` (an existing file path wins, else a built-in
-name: `ask` (default), `flood`), and can: print colored output and spinners; ask "Do you want to
-proceed? (y/n)" and wait for input; call `mk hook fake <event>` like Claude Code would; write/edit
+name: `ask` (default), `flood`, `omp` (spinner turns + quiet gaps, like Oh My Pi)), and can:
+print colored output and spinners; ask "Do you want to proceed? (y/n)" and wait for input; call `mk hook fake <event>` like Claude Code would; write/edit
 files; run `mk comment reply …`; exit with a given code. Ships `agents/fake.toml` and sample
 scenarios in `crates/mkrew-fakeagent/scenarios/`, including a `flood` scenario that prints
 high-volume colored output as fast as possible (used by the stress test, §15). Almost every acceptance criterion should be

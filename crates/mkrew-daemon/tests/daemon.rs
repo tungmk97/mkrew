@@ -82,13 +82,7 @@ impl Env {
 
     /// Like [`Env::write_fake_profile`], saved as `<id>.toml` with fake-agent `args`.
     fn write_fake_profile_as(&self, id: &str, args: &str) {
-        let fake = Path::new(env!("CARGO_BIN_EXE_mkrew-daemon"))
-            .with_file_name(format!("mkrew-fakeagent{}", std::env::consts::EXE_SUFFIX));
-        assert!(
-            fake.is_file(),
-            "{} is missing; run `cargo build -p mkrew-fakeagent`",
-            fake.display()
-        );
+        let fake = built_bin("mkrew-fakeagent");
         let sample = include_str!("../../../agents/fake.toml");
         let profile = sample
             .replace(
@@ -323,6 +317,18 @@ impl Client {
     fn stop(&mut self) {
         self.call(Request::DaemonStop).into_result::<()>().unwrap();
     }
+}
+
+/// A workspace binary next to `mkrew-daemon` (`cargo test --workspace` builds them all).
+fn built_bin(name: &str) -> PathBuf {
+    let path = Path::new(env!("CARGO_BIN_EXE_mkrew-daemon"))
+        .with_file_name(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        path.is_file(),
+        "{} is missing; run `cargo build --workspace`",
+        path.display()
+    );
+    path
 }
 
 fn error_code(outcome: Outcome) -> ErrorCode {
@@ -654,6 +660,202 @@ fn screen_only_profiles_record_hooks_but_ignore_them() {
         .session_events(id, "hook")
         .unwrap();
     assert_eq!(events.len(), 1);
+    client.stop();
+}
+
+/// Screen mode: the fake agent works, asks, works again, then goes quiet.
+const SCREEN_SCENARIO: &str = r#"
+[[step]]
+action = "print"
+text = "Reading files"
+[[step]]
+action = "spinner"
+text = "Planning"
+ms = 600
+[[step]]
+action = "ask"
+[[step]]
+action = "spinner"
+text = "Applying"
+ms = 600
+[[step]]
+action = "print"
+text = "one"
+[[step]]
+action = "print"
+text = "two"
+[[step]]
+action = "print"
+text = "three"
+[[step]]
+action = "print"
+text = "four"
+[[step]]
+action = "sleep"
+ms = 3500
+"#;
+
+/// Hook+screen mode: `mk hook fake …` drives needs_input/working/done; idle comes from the
+/// screen once the 10 s hook-priority window has passed (SPEC §6).
+const HOOK_SCENARIO: &str = r#"
+[[step]]
+action = "print"
+text = "Reading files"
+[[step]]
+action = "sleep"
+ms = 300
+[[step]]
+action = "hook"
+event = "needs_input"
+[[step]]
+action = "ask"
+text = "Continue?"
+[[step]]
+action = "hook"
+event = "busy"
+[[step]]
+action = "sleep"
+ms = 12000
+[[step]]
+action = "hook"
+event = "done"
+[[step]]
+action = "sleep"
+ms = 300
+"#;
+
+/// Records every `session.state` event of `ids` until all have exited, typing `y⏎` into a
+/// session the first time it needs input.
+fn record_states(
+    client: &mut Client,
+    ids: &[Ulid],
+) -> HashMap<Ulid, Vec<(SessionState, StateSource)>> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut states: HashMap<Ulid, Vec<_>> = ids.iter().map(|id| (*id, Vec::new())).collect();
+    let mut answered = Vec::new();
+    let mut seen = 0;
+    loop {
+        let new = client.events[seen..].to_vec();
+        seen = client.events.len();
+        for event in new {
+            let Event::SessionState(s) = event else {
+                continue;
+            };
+            let Some(list) = states.get_mut(&s.session_id) else {
+                continue;
+            };
+            list.push((s.state, s.source));
+            if s.state == SessionState::NeedsInput && !answered.contains(&s.session_id) {
+                answered.push(s.session_id);
+                client
+                    .input(s.session_id, b"y\r")
+                    .into_result::<()>()
+                    .unwrap();
+            }
+        }
+        let exited = |list: &Vec<(SessionState, StateSource)>| {
+            list.last().is_some_and(|(s, _)| *s == SessionState::Exited)
+        };
+        if states.values().all(exited) {
+            return states;
+        }
+        assert!(Instant::now() < deadline, "sessions still live: {states:?}");
+        std::thread::sleep(Duration::from_millis(20));
+        client.call(Request::DaemonStatus);
+    }
+}
+
+/// The M3 e2e: every state transition, as `session.state` events, for a screen-mode agent,
+/// a hooked agent and an omp-like agent, all running at once in one daemon.
+#[test]
+fn fake_agents_go_through_every_state_transition() {
+    use SessionState::*;
+    use StateSource::{Daemon as D, Hook as H, Screen as S};
+
+    let env = Env::new();
+    // `mk` next to the fake agent: its `hook` steps run `mk hook fake <event>`.
+    built_bin("mk");
+    for (name, scenario) in [("screen", SCREEN_SCENARIO), ("hooks", HOOK_SCENARIO)] {
+        let path = env.dir.path().join(format!("{name}.toml"));
+        std::fs::write(&path, scenario).unwrap();
+        env.write_fake_profile_as(name, &format!("['--scenario', '{}']", path.display()));
+    }
+    let profiles = env.dir.path().join("config").join("agents");
+    // Agent start-up under a loaded test run (and a first `mk hook` run that the virus scanner
+    // holds up for seconds) must not look like a quiet (idle) period.
+    let idle_after = |text: String, ms: &str| {
+        let changed = text.replace("idle_after_ms = 1000", &format!("idle_after_ms = {ms}"));
+        assert_ne!(changed, text);
+        changed
+    };
+    let screen = std::fs::read_to_string(profiles.join("screen.toml")).unwrap();
+    env.write_profile("screen", &idle_after(screen, "2000"));
+    // Idle only shows after the 10 s hook window anyway, so a long quiet period costs nothing.
+    let hooks = std::fs::read_to_string(profiles.join("hooks.toml")).unwrap();
+    let hooks = idle_after(hooks, "8000").replace("mode = \"screen\"", "mode = \"hook+screen\"");
+    assert!(hooks.contains("hook+screen"), "{hooks}");
+    env.write_profile("hooks", &hooks);
+    // The shipped omp profile, running the fake agent's `omp` scenario.
+    let omp = include_str!("../../../agents/omp.toml").replace(
+        "command = \"omp\"",
+        &format!(
+            "command = '{}'\nargs = ['--scenario', 'omp']",
+            built_bin("mkrew-fakeagent").display()
+        ),
+    );
+    assert!(omp.contains("--scenario"), "{omp}");
+    env.write_profile("omp", &omp);
+
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let ids: Vec<Ulid> = ["screen", "hooks", "omp"]
+        .iter()
+        .map(|profile| {
+            let spawned: SessionSpawnResult =
+                client.spawn(&project, profile).into_result().unwrap();
+            spawned.session_id
+        })
+        .collect();
+    // Sessions are created `starting` (no event); `client.events` holds every change since
+    // the spawn, so the first recorded event is the transition out of `starting`.
+    let states = record_states(&mut client, &ids);
+
+    // Screen mode never reports done: only a hook can say a turn finished.
+    assert_eq!(
+        states[&ids[0]],
+        [
+            (Working, S),
+            (NeedsInput, S),
+            (Working, S),
+            (Idle, S),
+            (Exited, D)
+        ]
+    );
+    assert_eq!(
+        states[&ids[1]],
+        [
+            (Working, S),
+            (NeedsInput, H),
+            (Working, H),
+            (Idle, S),
+            (Done, H),
+            (Exited, D)
+        ]
+    );
+    // omp: spinner redraws are working, each quiet gap is idle; no patterns, no hooks.
+    assert_eq!(
+        states[&ids[2]],
+        [
+            (Working, S),
+            (Idle, S),
+            (Working, S),
+            (Idle, S),
+            (Exited, D)
+        ]
+    );
+    for id in &ids {
+        assert_eq!(client.session(*id).exit_code, Some(0));
+    }
     client.stop();
 }
 
