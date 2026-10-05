@@ -716,6 +716,26 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `fs.inotify.max_user_watches` on big repos (Windows ReadDirectoryChangesW is cheap); Windows
   drops events silently on buffer overflow (no rescan). Unwatching after the last session
   exits is not asserted by a test.
+- (T5.6) Conflict attribution heuristic — who "edited" a file: (1) a watcher batch is blamed on
+  the project's session in `working` when the batch lands, but ONLY when exactly one session is
+  working; with two or more working at once the editor is unknown and the batch is not
+  attributed (default chosen to avoid flagging every file while two agents run together; the
+  alternative "blame every working session" would catch more real conflicts but warn on every
+  concurrent edit — your call). Sessions in idle/needs_input/done are never blamed (an agent
+  waiting for input does not write). Your own edits (e.g. in Zed) while exactly one agent is
+  working are blamed on that agent. (2) Hook payloads with `tool_input.file_path` /
+  `tool_input.notebook_path` (Claude `PreToolUse`/`PostToolUse` shape) are attributed to the
+  reporting session exactly, whatever is working (a `tool_name` other than Edit/Write/MultiEdit/
+  NotebookEdit is skipped; `PreToolUse` of a denied edit still counts); Codex `notify` payloads
+  name no files. `hook_edits` does a store read + `metadata()` inside the actor task (cheap, once
+  per hook).
+  `mk integration install claude` does NOT install `PostToolUse` yet (it would run `mk hook`
+  after every tool call) — decide whether to add it with an `Edit|Write|MultiEdit|NotebookEdit`
+  matcher. Hook paths go through the watcher filter (ignored dirs, root `.gitignore`); absolute
+  paths must start with the project path as stored (case-sensitive prefix, so `c:\` vs `C:\`
+  misses). `conflict.detected` fires when a file gets a second (or further) editor within 60 s;
+  repeat edits by the same editors stay quiet; trackers are dropped when a project's last
+  session exits. The event is not persisted: a UI that connects later does not see it.
 
 ## Done
 

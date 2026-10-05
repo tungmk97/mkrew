@@ -190,6 +190,7 @@ impl Sidebar {
                     | Event::TaskDeleted(_)
                     | Event::SessionSnapshot(_)
                     | Event::NotificationClicked(_)
+                    | Event::ConflictDetected(_)
             )
         {
             since_load.push(event.clone());
@@ -212,7 +213,8 @@ impl Sidebar {
             | Event::TaskUpdated(_)
             | Event::TaskDeleted(_)
             | Event::SessionSnapshot(_)
-            | Event::NotificationClicked(_) => Change::None,
+            | Event::NotificationClicked(_)
+            | Event::ConflictDetected(_) => Change::None,
         }
     }
 

@@ -3,6 +3,7 @@
 //! No async runtime, GPUI or SQLite here (SPEC §4); the only I/O is reading profile files
 //! (and looking up the platform directories in [`paths`] and programs on `PATH` in [`lookup`]).
 
+pub mod conflict;
 pub mod hook;
 pub mod lookup;
 pub mod paths;

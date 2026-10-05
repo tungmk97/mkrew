@@ -191,6 +191,9 @@ pub enum Event {
     /// The user clicked the OS notification of a session (SPEC §8); the UI focuses its pane.
     #[serde(rename = "notification.clicked")]
     NotificationClicked(NotificationClickedEvent),
+    /// Two or more sessions of a project edited the same file within 60 s (SPEC §7, M5).
+    #[serde(rename = "conflict.detected")]
+    ConflictDetected(ConflictDetectedEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -738,6 +741,17 @@ pub struct NotificationClickedEvent {
     pub project_id: Ulid,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictDetectedEvent {
+    pub project_id: Ulid,
+    /// Relative to the project root, `/` separators.
+    pub path: String,
+    /// Every session that edited `path` within the window, sorted.
+    pub session_ids: Vec<Ulid>,
+    /// The tasks of those sessions (sessions without a task add none), sorted, no duplicates.
+    pub task_ids: Vec<Ulid>,
+}
+
 mod base64_bytes {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
@@ -1176,6 +1190,20 @@ mod tests {
         )));
         assert_eq!(clicked["event"], "notification.clicked");
         assert_eq!(clicked["data"]["session_id"], sid().to_string());
+        let conflict = round_trip(&Message::Event(Event::ConflictDetected(
+            ConflictDetectedEvent {
+                project_id: sid(),
+                path: "src/a.rs".into(),
+                session_ids: vec![sid(), sid()],
+                task_ids: vec![sid()],
+            },
+        )));
+        assert_eq!(conflict["event"], "conflict.detected");
+        assert_eq!(conflict["data"]["path"], "src/a.rs");
+        assert_eq!(
+            conflict["data"]["session_ids"].as_array().map(Vec::len),
+            Some(2)
+        );
         let task = round_trip(&Message::Event(Event::TaskUpdated(Task {
             id: sid(),
             project_id: sid(),

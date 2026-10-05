@@ -466,7 +466,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.exited` | process exited, with `exit_code` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
-| `conflict.detected` | two sessions edited the same file within 60 s (M5) |
+| `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |
 | `doc.changed` | a watched md file changed (new hash) |
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |
 | `notification.clicked` | user clicked an OS notification (UI focuses that pane) |

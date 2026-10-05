@@ -11,10 +11,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine};
+use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
-    Event, HookReportParams, Session, SessionAttachResult, SessionExitedEvent, SessionState,
-    SessionStateEvent, StateSource,
+    ConflictDetectedEvent, Event, HookReportParams, Session, SessionAttachResult,
+    SessionExitedEvent, SessionState, SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -67,6 +67,9 @@ pub struct Hub {
     live: Mutex<HashMap<Ulid, Live>>,
     /// One file watcher per project with live sessions. Lock order: `watches`, then `live`.
     watches: Mutex<HashMap<Ulid, Watch>>,
+    /// Recent file editors per project (SPEC §7 `conflict.detected`). Lock order: `watches`,
+    /// then `conflicts`; never held with `live` or `store`.
+    conflicts: Mutex<HashMap<Ulid, conflict::Tracker<Ulid>>>,
     tasks: Mutex<JoinSet<()>>,
     /// Set by [`Hub::shutdown`]; refuses new sessions.
     stopping: AtomicBool,
@@ -224,6 +227,7 @@ impl Hub {
             events: broadcast::channel(256).0,
             live: Mutex::default(),
             watches: Mutex::default(),
+            conflicts: Mutex::default(),
             tasks: Mutex::default(),
             stopping: AtomicBool::new(false),
             flood_turn: tokio::sync::Mutex::default(),
@@ -459,24 +463,111 @@ impl Hub {
             .any(|live| live.project_id == project_id);
         if !live && watches.remove(&project_id).is_some() {
             tracing::debug!(%project_id, "stopped watching project files");
+            lock(&self.conflicts).remove(&project_id);
         }
     }
 
     /// Records a debounced batch of changed files on every live session of the project
-    /// (session event `files_changed`, payload `{"paths": [...]}`).
+    /// (session event `files_changed`, payload `{"paths": [...]}`), and attributes the changes
+    /// for conflict detection to the project's session in `working`. With several sessions
+    /// working the editor is unknown, so the batch is not attributed (HUMAN_CHECKS T5.6).
     fn files_changed(&self, project_id: Ulid, paths: &[String]) {
         let sessions: Vec<Ulid> = lock(&self.live)
             .iter()
             .filter(|(_, live)| live.project_id == project_id)
             .map(|(id, _)| *id)
             .collect();
+        // A batch flushed after the last session exited.
+        if sessions.is_empty() {
+            return;
+        }
         let payload = serde_json::json!({ "paths": paths });
         let at = crate::server::now_ms();
-        let store = self.store();
-        for id in sessions {
-            if let Err(e) = store.insert_session_event(id, "files_changed", &payload, at) {
-                tracing::warn!(%id, "files_changed not recorded: {e}");
+        let working: Vec<Ulid> = {
+            let store = self.store();
+            for &id in &sessions {
+                if let Err(e) = store.insert_session_event(id, "files_changed", &payload, at) {
+                    tracing::warn!(%id, "files_changed not recorded: {e}");
+                }
             }
+            match store.list_sessions(Some(project_id)) {
+                Ok(all) => all
+                    .iter()
+                    .filter(|s| s.state == SessionState::Working && sessions.contains(&s.id))
+                    .map(|s| s.id)
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!(%project_id, "cannot attribute changed files: {e}");
+                    Vec::new()
+                }
+            }
+        };
+        if let [editor] = working[..] {
+            self.record_edits(project_id, paths, editor, at);
+        }
+    }
+
+    /// A hook of session `session_id` named files its agent edited (`hook::edited_paths`):
+    /// attributes the ones inside the project and not ignored by the watcher. The project path
+    /// is the watch root too: sessions run with `cwd` = project path (SPEC §8).
+    fn hook_edits(&self, project_id: Ulid, session_id: Ulid, reported: &[String]) {
+        let root = match self.store().get_project(project_id) {
+            Ok(project) => PathBuf::from(project.path),
+            Err(e) => {
+                tracing::warn!(%project_id, "hook edits not attributed: {e}");
+                return;
+            }
+        };
+        let filter = watch::Filter::new(&root);
+        let paths: Vec<String> = reported
+            .iter()
+            .filter_map(|path| {
+                let path = root.join(path);
+                let is_dir = path.metadata().ok().map(|m| m.is_dir());
+                filter.relative(&path, is_dir)
+            })
+            .collect();
+        self.record_edits(project_id, &paths, session_id, crate::server::now_ms());
+    }
+
+    /// Records that `editor` changed `paths` at `at` and announces each new conflict.
+    fn record_edits(&self, project_id: Ulid, paths: &[String], editor: Ulid, at: i64) {
+        let found: Vec<(String, Vec<Ulid>)> = {
+            let mut conflicts = lock(&self.conflicts);
+            let tracker = conflicts.entry(project_id).or_default();
+            tracker.prune(at);
+            paths
+                .iter()
+                .filter_map(|path| Some((path.clone(), tracker.edit(path, &[editor], at)?)))
+                .collect()
+        };
+        if found.is_empty() {
+            return;
+        }
+        let sessions = match self.store().list_sessions(Some(project_id)) {
+            Ok(sessions) => sessions,
+            Err(e) => {
+                tracing::warn!(%project_id, "conflict tasks unknown: {e}");
+                Vec::new()
+            }
+        };
+        for (path, session_ids) in found {
+            let mut task_ids: Vec<Ulid> = sessions
+                .iter()
+                .filter(|s| session_ids.contains(&s.id))
+                .filter_map(|s| s.task_id)
+                .collect();
+            task_ids.sort();
+            task_ids.dedup();
+            tracing::info!(%project_id, %path, sessions = ?session_ids, "conflict detected");
+            let _ = self
+                .events
+                .send(Event::ConflictDetected(ConflictDetectedEvent {
+                    project_id,
+                    path,
+                    session_ids,
+                    task_ids,
+                }));
         }
     }
 
@@ -693,6 +784,11 @@ impl Actor {
             .insert_session_event(self.session.id, "hook", &record, at)
         {
             tracing::error!(id = %self.session.id, "saving hook event failed: {e}");
+        }
+        let edited = mkrew_core::hook::edited_paths(&report.payload);
+        if !edited.is_empty() {
+            self.hub
+                .hook_edits(self.session.project_id, self.session.id, &edited);
         }
         let native_changed = native.is_some() && native != self.session.native_session_id;
         if native_changed {

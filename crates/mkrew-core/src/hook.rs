@@ -59,6 +59,29 @@ impl HookAgent {
     }
 }
 
+/// Files the hook says the agent edited, as reported (absolute or relative to the agent's cwd).
+/// Claude's `PreToolUse`/`PostToolUse` payloads carry `tool_input.file_path` (Edit, Write,
+/// MultiEdit) or `tool_input.notebook_path` (NotebookEdit); Codex `notify` payloads name no
+/// files. Read for any agent, so no per-agent code is needed (SPEC §2). A `tool_name` other
+/// than an editing tool (e.g. `Read`) names no edit; no `tool_name` at all is trusted.
+pub fn edited_paths(payload: &Value) -> Vec<String> {
+    const EDITING_TOOLS: [&str; 4] = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+    let Some(input) = payload.get("tool_input") else {
+        return Vec::new();
+    };
+    if let Some(tool) = payload.get("tool_name").and_then(Value::as_str)
+        && !EDITING_TOOLS.contains(&tool)
+    {
+        return Vec::new();
+    }
+    ["file_path", "notebook_path"]
+        .iter()
+        .filter_map(|key| input.get(key).and_then(Value::as_str))
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Approvals and questions need the user. `idle_prompt` fires ~60 s after `Stop` (already
 /// `done`); the remaining types are informational. No type (older builds) = needs input.
 fn claude_notification(payload: &Value) -> Option<HookEvent> {
@@ -138,6 +161,24 @@ mod tests {
             None
         );
         assert_eq!(HookAgent::Fake.native_session_id(&Value::Null), None);
+    }
+
+    #[test]
+    fn edited_paths_from_tool_input() {
+        let edit = json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "C:\\p\\src\\a.rs", "old_string": "x"}
+        });
+        assert_eq!(edited_paths(&edit), vec!["C:\\p\\src\\a.rs"]);
+        let notebook = json!({"tool_input": {"notebook_path": "n.ipynb"}});
+        assert_eq!(edited_paths(&notebook), vec!["n.ipynb"]);
+        assert!(edited_paths(&json!({"tool_input": {"command": "ls"}})).is_empty());
+        let read = json!({"tool_name": "Read", "tool_input": {"file_path": "a.rs"}});
+        assert!(edited_paths(&read).is_empty());
+        assert!(edited_paths(&json!({"tool_input": {"file_path": ""}})).is_empty());
+        assert!(edited_paths(&json!({"type": "agent-turn-complete"})).is_empty());
+        assert!(edited_paths(&Value::Null).is_empty());
     }
 
     #[test]

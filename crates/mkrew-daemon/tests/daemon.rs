@@ -952,6 +952,66 @@ fn file_watcher_records_changed_files_of_live_sessions_except_ignored_ones() {
 }
 
 #[test]
+fn two_sessions_editing_one_file_raise_a_conflict() {
+    let env = Env::new();
+    let repo = env.repo();
+    // The first spinner lets the project watcher start (it starts after the first spawn); the
+    // second keeps the session `working` until the batch landed (≤ `watch::MAX_DELAY` = 2 s).
+    let scenario = env.dir.path().join("writer.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"spinner\"\ntext = \"reading\"\nms = 500\n\n\
+         [[step]]\naction = \"write_file\"\npath = \"shared.txt\"\ncontent = \"x\"\n\n\
+         [[step]]\naction = \"spinner\"\ntext = \"thinking\"\nms = 3000\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "writer",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let run = |client: &mut Client, title: &str| {
+        let task: Task = client
+            .call(create_task(&project, title, Some("writer")))
+            .into_result()
+            .unwrap();
+        let spawned: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+        client.wait_state(spawned.session_id, SessionState::NeedsInput);
+        (task.id, spawned.session_id)
+    };
+    // One after the other: each change has exactly one `working` session to blame.
+    let (task_a, a) = run(&mut client, "A");
+    let (task_b, b) = run(&mut client, "B");
+
+    let conflict = |path: &'static str| move |e: &Event| matches!(e, Event::ConflictDetected(c) if c.path == path);
+    let Event::ConflictDetected(found) = client.wait_event_where(conflict("shared.txt")) else {
+        unreachable!()
+    };
+    let mut sessions = vec![a, b];
+    sessions.sort();
+    let mut tasks = vec![task_a, task_b];
+    tasks.sort();
+    assert_eq!(found.project_id, project.id);
+    assert_eq!(found.session_ids, sessions);
+    assert_eq!(found.task_ids, tasks);
+
+    // Paths named in hook payloads count too (absolute or relative to the project).
+    let edit = |path: String| json!({"tool_input": {"file_path": path}});
+    let absolute = repo.join("src").join("hooked.rs").display().to_string();
+    let reported = client.hook(a, "fake", "PostToolUse", edit(absolute));
+    reported.into_result::<()>().unwrap();
+    let reported = client.hook(b, "fake", "PostToolUse", edit("src/hooked.rs".into()));
+    reported.into_result::<()>().unwrap();
+    let Event::ConflictDetected(found) = client.wait_event_where(conflict("src/hooked.rs")) else {
+        unreachable!()
+    };
+    assert_eq!(found.session_ids, sessions);
+    client.stop();
+}
+
+#[test]
 fn daemon_stop_terminates_live_sessions() {
     let env = Env::new();
     env.write_fake_profile();
