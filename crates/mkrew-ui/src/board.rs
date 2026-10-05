@@ -1,0 +1,443 @@
+//! Task board view-model (SPEC §10): a workspace's tasks in one column per status, ordered by
+//! position, kept live by `task.updated` / `task.deleted`. Each card shows its newest session's
+//! status (§11) and run time. Pure and tested headlessly; `main.rs` renders it.
+
+use mkrew_protocol::{Event, Session, SessionState, Task, TaskStatus};
+use ulid::Ulid;
+
+use crate::status;
+
+/// What the main area of a workspace shows (SPEC §10; Docs/Files/Git come later).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum View {
+    Board,
+    /// The terminal tabs; the default, so a workspace opens on its sessions.
+    #[default]
+    Terminals,
+}
+
+impl View {
+    pub const ALL: [View; 2] = [View::Board, View::Terminals];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            View::Board => "Board",
+            View::Terminals => "Terminals",
+        }
+    }
+}
+
+/// Board columns, left to right.
+pub const COLUMNS: [TaskStatus; 5] = [
+    TaskStatus::Todo,
+    TaskStatus::Running,
+    TaskStatus::NeedsInput,
+    TaskStatus::Review,
+    TaskStatus::Done,
+];
+
+pub fn column_title(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Todo => "Todo",
+        TaskStatus::Running => "Running",
+        TaskStatus::NeedsInput => "Needs input",
+        TaskStatus::Review => "Review",
+        TaskStatus::Done => "Done",
+    }
+}
+
+/// Shown for a task without its own agent in a workspace without a default agent.
+pub const DEFAULT_AGENT_LABEL: &str = "default agent";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Column {
+    pub status: TaskStatus,
+    pub cards: Vec<Card>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Card {
+    pub task_id: Ulid,
+    pub title: String,
+    /// The task's agent, else the workspace default, else [`DEFAULT_AGENT_LABEL`].
+    pub agent: String,
+    /// The last run exited non-zero.
+    pub error_flag: bool,
+    /// The task's newest session, if it ever ran.
+    pub session: Option<Session>,
+}
+
+impl Card {
+    /// How long the newest session ran (until now while it still runs).
+    pub fn run_time(&self, now_ms: i64) -> Option<String> {
+        let session = self.session.as_ref()?;
+        Some(status::format_duration(
+            run_end(session, now_ms) - session.started_at,
+        ))
+    }
+
+    /// Whether the card adds a "last run failed" line: not when its session's status already
+    /// shows the exit.
+    pub fn shows_error_row(&self) -> bool {
+        self.error_flag
+            && self
+                .session
+                .as_ref()
+                .is_none_or(|session| session.state != SessionState::Exited)
+    }
+}
+
+/// Where a run's clock stops: at exit, or when the agent finished its turn (a `done` agent
+/// still waits at its prompt), else it still runs.
+fn run_end(session: &Session, now_ms: i64) -> i64 {
+    match (session.ended_at, session.state) {
+        (Some(ended_at), _) => ended_at,
+        (None, SessionState::Done) => session.state_changed_at,
+        (None, _) => now_ms,
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Board {
+    /// Every workspace's tasks, as listed and updated by events.
+    tasks: Vec<Task>,
+    /// Set once a `task.list` arrived.
+    loaded: bool,
+    /// Task events applied since [`Board::begin_load`], replayed by [`Board::load`] (events
+    /// arrive on another channel than replies, so the list may predate them).
+    since_load: Option<Vec<Event>>,
+}
+
+impl Board {
+    pub fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// A `task.list` (all workspaces) was just sent.
+    pub fn begin_load(&mut self) {
+        self.since_load = Some(Vec::new());
+    }
+
+    /// The list could not be read: stop recording events.
+    pub fn cancel_load(&mut self) {
+        self.since_load = None;
+    }
+
+    /// Replaces the tasks with a fresh `task.list`, then replays the events applied since
+    /// [`Board::begin_load`].
+    pub fn load(&mut self, tasks: Vec<Task>) {
+        self.tasks = tasks;
+        self.loaded = true;
+        for event in self.since_load.take().unwrap_or_default() {
+            self.apply(&event);
+        }
+    }
+
+    /// Applies a daemon event; returns whether the board changed.
+    pub fn apply(&mut self, event: &Event) -> bool {
+        if let Some(since_load) = &mut self.since_load
+            && matches!(event, Event::TaskUpdated(_) | Event::TaskDeleted(_))
+        {
+            since_load.push(event.clone());
+        }
+        match event {
+            Event::TaskUpdated(task) => match self.tasks.iter_mut().find(|t| t.id == task.id) {
+                // A replayed event older than the listed task does not undo it.
+                Some(existing) if existing.updated_at > task.updated_at => false,
+                Some(existing) => {
+                    *existing = task.clone();
+                    true
+                }
+                None => {
+                    self.tasks.push(task.clone());
+                    true
+                }
+            },
+            Event::TaskDeleted(deleted) => {
+                let before = self.tasks.len();
+                self.tasks.retain(|task| task.id != deleted.task_id);
+                self.tasks.len() != before
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `project_id` has any task.
+    pub fn has_tasks(&self, project_id: Ulid) -> bool {
+        self.tasks.iter().any(|task| task.project_id == project_id)
+    }
+
+    /// The columns of `project_id`'s board: every status in [`COLUMNS`] order, cards by
+    /// ascending position. `default_agent` is the workspace's.
+    pub fn columns(
+        &self,
+        project_id: Ulid,
+        default_agent: Option<&str>,
+        sessions: &[Session],
+    ) -> Vec<Column> {
+        let mut tasks: Vec<&Task> = self
+            .tasks
+            .iter()
+            .filter(|task| task.project_id == project_id)
+            .collect();
+        tasks.sort_by(|a, b| a.position.total_cmp(&b.position).then(a.id.cmp(&b.id)));
+        COLUMNS
+            .iter()
+            .map(|&status| Column {
+                status,
+                cards: tasks
+                    .iter()
+                    .filter(|task| task.status == status)
+                    .map(|task| Card {
+                        task_id: task.id,
+                        title: task.title.clone(),
+                        agent: task
+                            .agent_profile
+                            .as_deref()
+                            .or(default_agent)
+                            .unwrap_or(DEFAULT_AGENT_LABEL)
+                            .to_owned(),
+                        error_flag: task.error_flag,
+                        session: newest_session(sessions, task.id).cloned(),
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    /// Whether a run time on `project_id`'s board reads differently at `now_ms` than at
+    /// `last_ms` (session spinners are covered by [`status::redraw_due`]).
+    pub fn redraw_due(
+        &self,
+        project_id: Ulid,
+        sessions: &[Session],
+        last_ms: i64,
+        now_ms: i64,
+    ) -> bool {
+        self.tasks
+            .iter()
+            .filter(|task| task.project_id == project_id)
+            .filter_map(|task| newest_session(sessions, task.id))
+            .any(|session| {
+                status::format_duration(run_end(session, last_ms) - session.started_at)
+                    != status::format_duration(run_end(session, now_ms) - session.started_at)
+            })
+    }
+}
+
+fn newest_session(sessions: &[Session], task_id: Ulid) -> Option<&Session> {
+    sessions
+        .iter()
+        .filter(|session| session.task_id == Some(task_id))
+        .max_by_key(|session| (session.started_at, session.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use mkrew_protocol::{SessionKind, StateSource, TaskDeletedEvent};
+
+    use super::*;
+
+    fn task(project_id: Ulid, title: &str, status: TaskStatus, position: f64) -> Task {
+        Task {
+            id: Ulid::new(),
+            project_id,
+            title: title.to_owned(),
+            prompt: String::new(),
+            agent_profile: None,
+            status,
+            position,
+            checkpoint: None,
+            error_flag: false,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn session(task: &Task, started_at: i64, ended_at: Option<i64>) -> Session {
+        Session {
+            id: Ulid::new(),
+            task_id: Some(task.id),
+            project_id: task.project_id,
+            agent_profile: "claude".to_owned(),
+            kind: SessionKind::Agent,
+            title: None,
+            native_session_id: None,
+            state: SessionState::Working,
+            state_source: StateSource::Daemon,
+            state_changed_at: started_at,
+            exit_code: None,
+            cols: 80,
+            rows: 24,
+            started_at,
+            ended_at,
+        }
+    }
+
+    fn titles(column: &Column) -> Vec<&str> {
+        column
+            .cards
+            .iter()
+            .map(|card| card.title.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn columns_group_by_status_in_position_order_per_workspace() {
+        let (api, web) = (Ulid::new(), Ulid::new());
+        let mut board = Board::default();
+        assert!(!board.is_loaded());
+        board.load(vec![
+            task(api, "second", TaskStatus::Todo, 2.0),
+            task(api, "first", TaskStatus::Todo, 1.0),
+            task(api, "review me", TaskStatus::Review, 1.0),
+            task(web, "elsewhere", TaskStatus::Todo, 0.5),
+        ]);
+        assert!(board.is_loaded());
+        assert!(board.has_tasks(api) && !board.has_tasks(Ulid::new()));
+
+        let columns = board.columns(api, None, &[]);
+        let statuses: Vec<TaskStatus> = columns.iter().map(|c| c.status).collect();
+        assert_eq!(statuses, COLUMNS);
+        assert_eq!(titles(&columns[0]), ["first", "second"]);
+        assert!(columns[1].cards.is_empty() && columns[2].cards.is_empty());
+        assert_eq!(titles(&columns[3]), ["review me"]);
+        assert_eq!(column_title(TaskStatus::NeedsInput), "Needs input");
+    }
+
+    #[test]
+    fn cards_name_their_agent_and_show_the_newest_session() {
+        let api = Ulid::new();
+        let mut own = task(api, "own agent", TaskStatus::Running, 1.0);
+        own.agent_profile = Some("codex".to_owned());
+        own.error_flag = true;
+        let inherits = task(api, "default", TaskStatus::Todo, 1.0);
+        let mut board = Board::default();
+        board.load(vec![own.clone(), inherits]);
+
+        let old = session(&own, 1_000, Some(5_000));
+        let new = session(&own, 10_000, None);
+        let sessions = [new.clone(), old];
+        let columns = board.columns(api, Some("claude"), &sessions);
+        let card = &columns[1].cards[0];
+        assert_eq!(card.agent, "codex");
+        assert!(card.error_flag);
+        assert_eq!(card.session.as_ref().map(|s| s.id), Some(new.id));
+        assert_eq!(card.run_time(130_000).as_deref(), Some("2m"));
+
+        let todo = &columns[0].cards[0];
+        assert_eq!(todo.agent, "claude");
+        assert_eq!((todo.session.as_ref(), todo.run_time(0)), (None, None));
+        assert_eq!(
+            board.columns(api, None, &sessions)[0].cards[0].agent,
+            DEFAULT_AGENT_LABEL
+        );
+    }
+
+    #[test]
+    fn a_finished_run_shows_its_length() {
+        let api = Ulid::new();
+        let done = task(api, "done", TaskStatus::Review, 1.0);
+        let mut board = Board::default();
+        board.load(vec![done.clone()]);
+        let sessions = [session(&done, 1_000, Some(46_000))];
+        let card = &board.columns(api, None, &sessions)[3].cards[0];
+        assert_eq!(card.run_time(999_999).as_deref(), Some("45s"));
+        // Nothing still runs, so nothing ticks.
+        assert!(!board.redraw_due(api, &sessions, 0, 999_999));
+    }
+
+    #[test]
+    fn a_done_turn_stops_the_clock_and_an_exit_shows_the_failure_once() {
+        let api = Ulid::new();
+        let mut failed = task(api, "failed", TaskStatus::Review, 1.0);
+        failed.error_flag = true;
+        let mut board = Board::default();
+        board.load(vec![failed.clone()]);
+
+        // The agent finished its turn at 21 s but still waits at its prompt.
+        let mut done = session(&failed, 1_000, None);
+        done.state = SessionState::Done;
+        done.state_changed_at = 21_000;
+        let card = &board.columns(api, None, std::slice::from_ref(&done))[3].cards[0];
+        assert_eq!(card.run_time(999_999).as_deref(), Some("20s"));
+        assert!(!board.redraw_due(api, std::slice::from_ref(&done), 30_000, 99_000));
+        assert!(card.shows_error_row());
+
+        let mut exited = done;
+        exited.state = SessionState::Exited;
+        exited.ended_at = Some(31_000);
+        let card = &board.columns(api, None, &[exited])[3].cards[0];
+        assert!(!card.shows_error_row(), "the exited status already says it");
+        let no_session = &board.columns(api, None, &[])[3].cards[0];
+        assert!(no_session.shows_error_row());
+    }
+
+    #[test]
+    fn events_move_add_and_remove_cards() {
+        let api = Ulid::new();
+        let mut card = task(api, "card", TaskStatus::Todo, 1.0);
+        let mut board = Board::default();
+        board.load(vec![card.clone()]);
+
+        card.status = TaskStatus::Running;
+        card.updated_at = 1;
+        assert!(board.apply(&Event::TaskUpdated(card.clone())));
+        assert_eq!(titles(&board.columns(api, None, &[])[1]), ["card"]);
+
+        let added = task(api, "added", TaskStatus::Todo, 1.0);
+        assert!(board.apply(&Event::TaskUpdated(added.clone())));
+        assert_eq!(titles(&board.columns(api, None, &[])[0]), ["added"]);
+
+        let deleted = Event::TaskDeleted(TaskDeletedEvent {
+            task_id: added.id,
+            project_id: api,
+        });
+        assert!(board.apply(&deleted));
+        assert!(!board.apply(&deleted), "already gone");
+        assert!(board.columns(api, None, &[])[0].cards.is_empty());
+    }
+
+    #[test]
+    fn events_newer_than_the_list_survive_a_load_and_older_ones_do_not_undo_it() {
+        let api = Ulid::new();
+        let mut moved = task(api, "moved", TaskStatus::Todo, 1.0);
+        let gone = task(api, "gone", TaskStatus::Todo, 2.0);
+        let mut board = Board::default();
+
+        board.begin_load();
+        // Handled before the reply: the card ran, another one was deleted.
+        let stale = Event::TaskUpdated(moved.clone());
+        moved.status = TaskStatus::Running;
+        moved.updated_at = 5;
+        board.apply(&Event::TaskUpdated(moved.clone()));
+        board.apply(&Event::TaskDeleted(TaskDeletedEvent {
+            task_id: gone.id,
+            project_id: api,
+        }));
+        let mut listed = moved.clone();
+        listed.title = "renamed later".to_owned();
+        listed.updated_at = 9;
+        board.load(vec![listed, gone]);
+
+        let columns = board.columns(api, None, &[]);
+        assert!(columns[0].cards.is_empty(), "the deleted card stays gone");
+        assert_eq!(titles(&columns[1]), ["renamed later"]);
+        assert!(!board.apply(&stale), "an older update is ignored");
+    }
+
+    #[test]
+    fn a_running_card_ticks_when_its_run_time_changes() {
+        let api = Ulid::new();
+        let running = task(api, "running", TaskStatus::NeedsInput, 1.0);
+        let mut board = Board::default();
+        board.load(vec![running.clone()]);
+        let sessions = [session(&running, 0, None)];
+        assert!(board.redraw_due(api, &sessions, 1_000, 2_000));
+        assert!(
+            !board.redraw_due(api, &sessions, 61_000, 62_000),
+            "still 1m"
+        );
+        assert!(!board.redraw_due(Ulid::new(), &sessions, 1_000, 2_000));
+    }
+}

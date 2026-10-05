@@ -22,8 +22,9 @@ use mkrew_protocol::{
     AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
     SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
     SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, TerminalTab,
+    TabSetLayoutParams, Task, TaskListParams, TerminalTab,
 };
+use mkrew_ui::board::{self, Board, Card, View};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{Command, Keymap, Run};
@@ -157,6 +158,12 @@ struct Shell {
     workspace_menu: Option<WorkspaceMenu>,
     /// Done sessions already seen, so they leave the Inbox.
     viewed: Viewed,
+    /// Every workspace's task cards.
+    board: Board,
+    /// Why the last `task.list` failed, shown on the board.
+    board_error: Option<String>,
+    /// The view shown per workspace (Terminals when not set).
+    views: HashMap<Ulid, View>,
 }
 
 impl Shell {
@@ -185,8 +192,12 @@ impl Shell {
                 cx.background_executor().timer(theme::STATUS_TICK).await;
                 let now = status::now_ms();
                 let ticked = this.update_in(cx, |shell, window, cx| {
-                    if window.is_visible()
-                        && status::redraw_due(shell.sidebar.sessions(), last, now)
+                    let sessions = shell.sidebar.sessions();
+                    let board_due = shell.workspace.is_some_and(|project_id| {
+                        shell.view() == View::Board
+                            && shell.board.redraw_due(project_id, sessions, last, now)
+                    });
+                    if window.is_visible() && (board_due || status::redraw_due(sessions, last, now))
                     {
                         cx.notify();
                     }
@@ -308,6 +319,9 @@ impl Shell {
                 }),
             workspace_menu: None,
             viewed: Viewed::default(),
+            board: Board::default(),
+            board_error: None,
+            views: HashMap::new(),
         }
     }
 
@@ -323,16 +337,30 @@ impl Shell {
         }
         self.refreshing = true;
         self.sidebar.begin_load();
+        self.board.begin_load();
         let projects = connection.call::<Vec<Project>>(Request::ProjectList);
         let sessions =
             connection.call::<Vec<Session>>(Request::SessionList(SessionListParams::default()));
+        let tasks = connection.call::<Vec<Task>>(Request::TaskList(TaskListParams::default()));
         cx.spawn_in(window, async move |this, cx| {
             let listed = match (projects.await, sessions.await) {
                 (Ok(projects), Ok(sessions)) => Ok((projects, sessions)),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             };
+            let tasks = tasks.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.refreshing = false;
+                match tasks {
+                    Ok(tasks) => {
+                        shell.board.load(tasks);
+                        shell.board_error = None;
+                    }
+                    Err(error) => {
+                        tracing::warn!("task.list failed: {error:#}");
+                        shell.board.cancel_load();
+                        shell.board_error = Some(format!("{error:#}"));
+                    }
+                }
                 match listed {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
@@ -553,6 +581,7 @@ impl Shell {
         let Some(project_id) = self.project_of(session) else {
             return;
         };
+        self.views.insert(project_id, View::Terminals);
         if self.tabs.contains_key(&project_id) {
             self.place_session(project_id, session, Axis::Vertical, window, cx);
         } else {
@@ -647,18 +676,43 @@ impl Shell {
         self.tabs.get_mut(&self.workspace?)
     }
 
-    /// The pane keyboard input goes to: the focused pane of the active tab.
+    /// The view of the active workspace.
+    fn view(&self) -> View {
+        self.workspace
+            .and_then(|id| self.views.get(&id).copied())
+            .unwrap_or_default()
+    }
+
+    /// Switches the active workspace to `view`; leaving Terminals detaches its panes.
+    fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if self.views.insert(project_id, view) != Some(view) {
+            self.sync_panes(window, cx);
+            cx.notify();
+        }
+    }
+
+    /// The pane keyboard input goes to: the focused pane of the active tab (none while the
+    /// board is shown).
     fn focused_session(&self) -> Option<Ulid> {
+        if self.view() != View::Terminals {
+            return None;
+        }
         let tabs = self.tabs.get(&self.workspace?)?;
         tabs.active()?.focused()
     }
 
     /// Attaches the sessions on screen (live ones, or already attached; none while the window
-    /// is minimized) and detaches all others (SPEC §10), then focuses the focused pane.
+    /// is minimized or the board is shown) and detaches all others (SPEC §10), then focuses
+    /// the focused pane.
     fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let visible = on_screen(
             window.is_visible(),
-            self.workspace.and_then(|id| self.tabs.get(&id)),
+            self.workspace
+                .filter(|_| self.view() == View::Terminals)
+                .and_then(|id| self.tabs.get(&id)),
         );
         for session in self.router.wanted() {
             if visible.contains(&session) {
@@ -939,6 +993,26 @@ impl Shell {
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
+        if self.view() == View::Board {
+            match *command {
+                // Opening or picking a tab or pane shows the terminals.
+                Command::NewShellTab
+                | Command::NewAgentTab
+                | Command::NextTab
+                | Command::PreviousTab
+                | Command::Tab(_)
+                | Command::SplitRight
+                | Command::SplitDown => self.show_view(View::Terminals, window, cx),
+                // The rest act on panes that are not on screen.
+                Command::RenameTab
+                | Command::CloseTab
+                | Command::Focus(_)
+                | Command::Resize(_)
+                | Command::ZoomPane
+                | Command::ClosePane => return,
+                _ => {}
+            }
+        }
         match *command {
             Command::AddWorkspace => self.add_workspace(window, cx),
             Command::Workspace(n) => {
@@ -1014,6 +1088,8 @@ impl Shell {
                     self.open_session(session, window, cx);
                 }
             }
+            Command::ShowBoard => self.show_view(View::Board, window, cx),
+            Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             // Handled by the focused terminal pane.
             Command::Copy
             | Command::Paste
@@ -1276,6 +1352,9 @@ impl Shell {
         let mut layout_changed = false;
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
+                if self.board.apply(event) {
+                    cx.notify();
+                }
                 match self.sidebar.apply(event) {
                     Change::None => {}
                     Change::Redraw => cx.notify(),
@@ -1680,24 +1759,135 @@ impl Shell {
     }
 
     fn render_main(&self, now: i64, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
-        if self.connection.is_some()
-            && let Some(project_id) = self.workspace
-            && let Some(tabs) = self.tabs.get(&project_id)
-        {
-            return div()
+        let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
+            let (sentence, detail) = self.status_line();
+            return message(theme, Some("Mkrew"), sentence, detail)
                 .flex_1()
-                .min_w_0()
                 .h_full()
-                .flex()
-                .flex_col()
-                .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
-                .child(self.render_tab(tabs, now, theme, cx))
                 .into_any_element();
-        }
-        let (sentence, detail) = self.status_line();
-        message(theme, Some("Mkrew"), sentence, detail)
+        };
+        let view = self.view();
+        let main = div()
             .flex_1()
+            .min_w_0()
             .h_full()
+            .flex()
+            .flex_col()
+            .child(self.render_view_bar(view, theme, cx));
+        match (view, self.tabs.get(&project_id)) {
+            (View::Board, _) => main.child(self.render_board(project_id, now, theme)),
+            (View::Terminals, Some(tabs)) => main
+                .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
+                .child(self.render_tab(tabs, now, theme, cx)),
+            (View::Terminals, None) => {
+                let (sentence, detail) = self.status_line();
+                main.child(message(theme, None, sentence, detail).flex_1())
+            }
+        }
+        .into_any_element()
+    }
+
+    /// The workspace's view switcher (SPEC §10): Board / Terminals.
+    fn render_view_bar(&self, shown: View, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
+        let hover = theme.surface_raised;
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .font_family(theme::UI_FONT)
+            .children(View::ALL.into_iter().map(|view| {
+                let active = view == shown;
+                let command = match view {
+                    View::Board => Command::ShowBoard,
+                    View::Terminals => Command::ShowTerminals,
+                };
+                div()
+                    .id(SharedString::from(format!("view-{}", view.title())))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .cursor_pointer()
+                    .text_size(px(font_size::BODY))
+                    .when(active, |el| {
+                        el.bg(rgb(theme.surface_raised))
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text))
+                    })
+                    .when(!active, |el| {
+                        el.text_color(rgb(theme.text_muted))
+                            .hover(move |style| style.bg(rgb(hover)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                    })
+                    .tooltip(tooltip(theme, view.title(), self.keymap.label(command)))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.show_view(view, window, cx);
+                    }))
+                    .child(view.title())
+            }))
+    }
+
+    /// The workspace's task board: one column per status (SPEC §10), read-only for now.
+    fn render_board(&self, project_id: Ulid, now: i64, theme: &Theme) -> gpui::AnyElement {
+        let project = self.sidebar.projects().iter().find(|p| p.id == project_id);
+        let empty = |sentence: &str, detail: Option<String>| {
+            message(
+                theme,
+                None,
+                sentence.to_owned().into(),
+                detail.map(Into::into),
+            )
+            .flex_1()
+            .into_any_element()
+        };
+        if !self.board.is_loaded() {
+            return match &self.board_error {
+                Some(error) => empty("Cannot load the tasks.", Some(error.clone())),
+                None => empty("Loading tasks…", None),
+            };
+        }
+        if !self.board.has_tasks(project_id) {
+            let name = project.map_or_else(|| project_id.to_string(), |p| p.name.clone());
+            return empty(
+                "No tasks yet.",
+                Some(format!("Add one with: mk task add \"{name}\" \"<title>\"")),
+            );
+        }
+        let default_agent = project.and_then(|p| p.default_agent.as_deref());
+        let columns = self
+            .board
+            .columns(project_id, default_agent, self.sidebar.sessions());
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .font_family(theme::UI_FONT)
+            // A later `task.list` failed: the cards may be stale.
+            .children(self.board_error.clone().map(|error| {
+                notice(theme.text, format!("✕ Cannot reload the tasks: {error}"))
+                    .px(px(space::L))
+                    .pt(px(space::S))
+            }))
+            .child(
+                div()
+                    .id("board")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap(px(space::M))
+                    .px(px(space::L))
+                    .pb(px(space::L))
+                    .pt(px(space::S))
+                    .overflow_x_scroll()
+                    .children(
+                        columns
+                            .into_iter()
+                            .map(|column| board_column(column, now, theme)),
+                    ),
+            )
             .into_any_element()
     }
 
@@ -2378,6 +2568,155 @@ fn inbox_row(
                 ))
                 .child(status::text(entry.state, None, entry.state_changed_at, now)),
         )
+        .into_any_element()
+}
+
+/// A board column: its title and card count over the cards, or a quiet "No tasks".
+fn board_column(column: board::Column, now: i64, theme: &Theme) -> gpui::AnyElement {
+    let count = column.cards.len();
+    div()
+        .flex_1()
+        .min_w(px(theme::BOARD_COLUMN_MIN_WIDTH))
+        .flex()
+        .flex_col()
+        .gap(px(space::S))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::XS))
+                .child(
+                    div()
+                        .text_size(px(font_size::BODY))
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text))
+                        .child(board::column_title(column.status)),
+                )
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(count.to_string()),
+                ),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!(
+                    "board-column-{:?}",
+                    column.status
+                )))
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .gap(px(space::S))
+                .p(px(space::S))
+                .rounded(px(radius::MEDIUM))
+                .bg(rgb(theme.surface))
+                .overflow_y_scroll()
+                .when(count == 0, |el| {
+                    el.child(
+                        div()
+                            .p(px(space::S))
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.text_muted))
+                            .child("No tasks"),
+                    )
+                })
+                .children(
+                    column
+                        .cards
+                        .into_iter()
+                        .map(|card| task_card(card, now, theme)),
+                ),
+        )
+        .into_any_element()
+}
+
+/// A task card: title, agent and run time, then its session's status (SPEC §10, §11).
+fn task_card(card: Card, now: i64, theme: &Theme) -> gpui::AnyElement {
+    let run_time = card.run_time(now);
+    let shows_error_row = card.shows_error_row();
+    let task_id = card.task_id;
+    div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .p(px(space::M))
+        .rounded(px(radius::MEDIUM))
+        .bg(rgb(theme.surface_raised))
+        .child(
+            div()
+                .text_size(px(font_size::CARD_TITLE))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text))
+                .child(card.title),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(card.agent),
+                )
+                .children(run_time.map(|time| div().flex_none().child(time))),
+        )
+        .when_some(card.session, |el, session| {
+            el.child(
+                div()
+                    .id(SharedString::from(format!("card-status-{task_id}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .tooltip(status_tooltip(
+                        theme,
+                        session.state,
+                        session.state_source,
+                        session.state_changed_at,
+                    ))
+                    .child(
+                        div()
+                            .text_color(rgb(sidebar::status_color(theme, session.state)))
+                            .child(status::icon(session.state, now)),
+                    )
+                    .child(status::text(
+                        session.state,
+                        session.exit_code,
+                        session.state_changed_at,
+                        now,
+                    )),
+            )
+        })
+        .when(shows_error_row, |el| {
+            let exited = sidebar::status_display(SessionState::Exited);
+            el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child(
+                        div()
+                            .text_color(rgb(theme.status_exited))
+                            .child(exited.icon),
+                    )
+                    .child("Last run failed"),
+            )
+        })
         .into_any_element()
 }
 

@@ -560,6 +560,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   extra args, missing targets, other batch files → old rule (metachar args refused). Ctrl+C no
   longer shows cmd's "Terminate batch job". Check: real `claude.cmd`/`codex.cmd` task with an
   `arg` prompt like `fix "a&b" 100%` (listed with the T4.10 manual checks).
+- (T4.6) Each workspace opens on **Terminals**; the Board / Terminals choice is kept per
+  workspace for the app run (not persisted). On the Board, tab/pane-creating shortcuts (new
+  tab, next/previous/nth tab, split) switch to Terminals first; shortcuts that act on hidden
+  panes (rename/close tab, focus/resize/zoom/close pane) do nothing. A card's session = the
+  task's newest session; run time = its start to its exit, or to its `done` state change while
+  the agent waits at its prompt, else now. "Last run failed" shows only when the card's status
+  is not already `exited (code)`. The Board/Terminals switcher has no keyboard focus or focus
+  ring yet (deferred with the tab/button focus rings above). Ctrl+Shift+1 / 2 (§13) are
+  bound as `ctrl-shift-1/2`; whether Windows reports shifted digits that way is part of the
+  T4.10 manual board check. The empty board names `mk task add` until T4.7 adds the New task
+  action.
 
 ## Done
 

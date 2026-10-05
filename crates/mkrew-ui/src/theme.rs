@@ -89,6 +89,9 @@ pub const FIND_INPUT_WIDTH: f32 = 200.0;
 /// Minimum width of a tab title while it is renamed inline.
 pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 
+/// Narrowest a board column gets; below that the board scrolls sideways.
+pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 
