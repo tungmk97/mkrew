@@ -11,10 +11,24 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 ## Current milestone: M4 — Task board (SPEC §18)
 
 ### Acceptance criteria
-_To be copied from SPEC §18 M4 by the planning session._
+- [ ] Create/edit/delete tasks; drag between columns; order persists.
+- [ ] Run spawns the right agent (task's, else workspace default) in the right folder; prompt delivered per `prompt_mode`.
+- [ ] Task status follows session state (§5 transitions): needs_input, running, review on finish.
+- [ ] Task card opens its session's terminal.
+- [ ] Follow-up input on running cards sends via `session.send`.
+- [ ] `mk task add/list/run` share data with the UI.
 
 ### Task queue
-_Empty: the next session plans M4 (`mkrew-plan-milestone`)._
+- [ ] T4.1 Task CRUD end to end below the UI: protocol `Task`/`TaskStatus` + `task.list/create/update/move/delete` params, `task.updated` (+ deletion signal) event, `PROTOCOL_VERSION = 4`; store CRUD on the existing `task` table (fractional `position`, `updated_at`; delete refuses/ detaches sessions — decide + record); daemon handlers; store + daemon tests. Covers: create/edit/delete, order persists (backend). (spec: §5, §7, §8)
+- [ ] T4.2 Pure task rules in `mkrew-core`: `task::on_session_state(task status, session state, exit_code) → Option<(TaskStatus, error_flag)>` for every §5 row, `position_between(prev, next)` for drops (with renumber when gaps collapse). Unit tests per transition. Covers: status follows session (logic), order persists (logic). (spec: §5, §16)
+- [ ] T4.3 `task.run` in the daemon: agent = task's profile else `default_agent`, cwd = project path, `session.task_id` set, task → running (+ `task.updated`); prompt per `prompt_mode` (`arg` append, `type` once the agent is first ready via the send queue, `none`); daemon applies T4.2 rules on state/exit events of task sessions. Daemon e2e with fake agent for all three modes and the transitions. Covers: run spawns right agent/folder, prompt delivery, status follows session. (spec: §5, §6, §7, §8)
+- [ ] T4.4 Prompt args for `.cmd`/`.bat` shims (HUMAN_CHECKS T1.8): pick vendored `cmdline()` with BatBadBut escaping or npm-shim → `node script.js`; ADR if it deviates; tests with metachar prompts against a `.cmd` fake. Covers: prompt delivered per `prompt_mode` on Windows. (spec: §6, §8, §17)
+- [ ] T4.5 CLI `mk task add <project> "<title>" [--prompt] [--agent]`, `mk task list [--project] [--status]`, `mk task run <id>`; CLI e2e (add → list → run with fake → status reaches review). Covers: `mk task` shares data. (spec: §9, §7)
+- [ ] T4.6 UI view switcher (Board / Terminals tabs per workspace, §10) + read-only Board: pure `board.rs` view-model (columns by status, sorted by position, live from `task.updated`), cards with title, agent, run time, session status (§11 icon), empty states. Covers: board display. (spec: §10, §11, §14)
+- [ ] T4.7 Board editing: new task (Ctrl+Shift+N) / edit / delete dialog (title, prompt, agent picker), Delete confirm; `Command::NewTask`. Covers: create/edit/delete (UI). (spec: §10, §13, §14)
+- [ ] T4.8 Drag & drop cards between and within columns (gpui `on_drag`/`on_drop`, research first) → `task.move` with `position_between`; drop indicator per §14. Covers: drag between columns, order persists. (spec: §10, §14)
+- [ ] T4.9 Card actions: Run on Todo cards (+ Ctrl+Enter on the selected card), card click opens its session's terminal (`open_session`), follow-up input on running/needs_input cards → `session.send`; Approve on Review cards → done. Covers: card opens terminal, follow-up input, run from UI. (spec: §5, §10, §13)
+- [ ] T4.10 Shared-data UI test (`mk`-style client creates/runs a task, UI `board` model sees it via events) + manual checks in HUMAN_CHECKS (board drag feel, real Claude/Codex run with `arg` prompt, §14 design check); milestone wrap-up. Covers: `mk task` shares data with UI, manual criteria. (spec: §16, §18)
 
 M3 left 4 of 6 criteria unticked; all wait on the T3.4–T3.9 manual checks in HUMAN_CHECKS (real
 Claude/omp, OS notification click, §11 design check). If one fails, add a fix task to M4 first.
