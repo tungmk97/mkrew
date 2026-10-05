@@ -17,6 +17,7 @@
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -56,6 +57,8 @@ pub enum Error {
     UnknownScenario { name: String },
     #[error("cannot write {}: {source}", path.display())]
     WriteFile { path: PathBuf, source: io::Error },
+    #[error("cannot run {}: {source}", program.display())]
+    Hook { program: PathBuf, source: io::Error },
     #[error("stdin closed while waiting for an answer")]
     StdinClosed,
     #[error(transparent)]
@@ -107,6 +110,10 @@ pub enum Step {
     WriteFile {
         path: PathBuf,
         content: String,
+    },
+    /// Run `mk hook fake <event>` like an agent hook would (SPEC §6) and wait for it.
+    Hook {
+        event: String,
     },
     /// Stop the scenario and exit with `code`.
     Exit {
@@ -217,6 +224,10 @@ pub fn run(
                     source,
                 })?;
             }
+            Step::Hook { event } => {
+                out.flush()?;
+                hook(event)?;
+            }
             Step::Exit { code } => {
                 out.flush()?;
                 return Ok(*code);
@@ -225,6 +236,30 @@ pub fn run(
         out.flush()?;
     }
     Ok(0)
+}
+
+/// Runs `mk hook fake <event>`. Like a real agent, a failing hook does not stop the scenario
+/// (its stderr reaches the terminal); only a missing `mk` does.
+fn hook(event: &str) -> Result<(), Error> {
+    let program = mk_program();
+    Command::new(&program)
+        .args(["hook", "fake", event])
+        // The PTY input belongs to the agent; `mk hook fake` reads no stdin anyway.
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .map_err(|source| Error::Hook { program, source })?;
+    Ok(())
+}
+
+/// `mk` next to this binary (a cargo target dir or an install), else `mk` on `PATH`.
+fn mk_program() -> PathBuf {
+    let name = format!("mk{}", std::env::consts::EXE_SUFFIX);
+    std::env::current_exe()
+        .ok()
+        .map(|exe| exe.with_file_name(&name))
+        .filter(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("mk"))
 }
 
 fn spinner(out: &mut impl Write, text: &str, duration: Duration) -> io::Result<()> {
@@ -304,19 +339,28 @@ mod tests {
             path = "out.txt"
             content = "x"
             [[step]]
+            action = "hook"
+            event = "needs_input"
+            [[step]]
             action = "exit"
             code = 3
             "#,
         )
         .unwrap();
-        assert_eq!(scenario.steps.len(), 7);
+        assert_eq!(scenario.steps.len(), 8);
         assert_eq!(
             scenario.steps[2],
             Step::Ask {
                 text: DEFAULT_PROMPT.into()
             }
         );
-        assert_eq!(scenario.steps[6], Step::Exit { code: 3 });
+        assert_eq!(
+            scenario.steps[6],
+            Step::Hook {
+                event: "needs_input".into()
+            }
+        );
+        assert_eq!(scenario.steps[7], Step::Exit { code: 3 });
     }
 
     #[test]

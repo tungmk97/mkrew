@@ -68,24 +68,57 @@ impl Env {
 impl Env {
     /// `agents/fake.toml` running the built `mkrew-fakeagent` (default `ask` scenario).
     fn write_fake_profile(&self) {
-        let fake = Path::new(env!("CARGO_BIN_EXE_mk"))
-            .with_file_name(format!("mkrew-fakeagent{}", std::env::consts::EXE_SUFFIX));
-        assert!(
-            fake.is_file(),
-            "{} is missing; run `cargo build -p mkrew-fakeagent`",
-            fake.display()
-        );
-        let sample = include_str!("../../../agents/fake.toml");
-        let profile = sample.replace(
-            "command = \"mkrew-fakeagent\"",
-            &format!("command = '{}'", fake.display()),
-        );
-        assert_ne!(profile, sample);
-        let dir = self.dir.path().join("config").join("agents");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("fake.toml"), profile).unwrap();
+        self.write_profile("fake", &fake_profile());
     }
 
+    fn write_profile(&self, name: &str, profile: &str) {
+        let dir = self.dir.path().join("config").join("agents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{name}.toml")), profile).unwrap();
+    }
+
+    /// Runs `mk hook …` as an agent inside session `id` would, with `stdin` piped in.
+    fn hook(&self, id: &str, args: &[&str], stdin: &str) {
+        let mut args = args.to_vec();
+        args.insert(0, "hook");
+        let mut child = self
+            .command(&args)
+            .env("MKREW_SESSION_ID", id)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "mk {args:?}: {output:?}");
+    }
+}
+
+/// The sample `agents/fake.toml` pointed at the built `mkrew-fakeagent`.
+fn fake_profile() -> String {
+    let fake = Path::new(env!("CARGO_BIN_EXE_mk"))
+        .with_file_name(format!("mkrew-fakeagent{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        fake.is_file(),
+        "{} is missing; run `cargo build -p mkrew-fakeagent`",
+        fake.display()
+    );
+    let sample = include_str!("../../../agents/fake.toml");
+    let profile = sample.replace(
+        "command = \"mkrew-fakeagent\"",
+        &format!("command = '{}'", fake.display()),
+    );
+    assert_ne!(profile, sample);
+    profile
+}
+
+impl Env {
     /// Starts `mk attach <id>` with piped stdio (no terminal: raw mode is skipped).
     fn attach(&self, id: &str) -> Attach {
         let mut child = self
@@ -349,4 +382,113 @@ fn send_answers_the_agent_and_wait_returns_when_it_is_done() {
     env.ok(&["send", other, ""]);
     let waited = env.ok(&["wait", other, "--until", "exited", "--timeout", "30000"]);
     assert_eq!(waited.trim(), "exited (exit code 0)");
+}
+
+/// Outside Mkrew (no `MKREW_SESSION_ID`) a hook does nothing, even without a daemon.
+#[test]
+fn hook_outside_mkrew_exits_silently() {
+    let env = Env::new();
+    for args in [&["hook", "claude", "Stop"][..], &["hook", "codex", "{"]] {
+        let output = env
+            .command(args)
+            .env_remove("MKREW_SESSION_ID")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(
+            output.stdout.is_empty() && output.stderr.is_empty(),
+            "{output:?}"
+        );
+    }
+}
+
+/// The fake agent's `hook` steps drive the session (screen detection would not see the prompt),
+/// and `mk hook` understands Claude's stdin and Codex's argument JSON.
+#[test]
+fn fake_agent_hooks_drive_the_session_state() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("hooks.toml");
+    std::fs::write(
+        &scenario,
+        r#"
+        [[step]]
+        action = "print"
+        text = "Reading files"
+        [[step]]
+        action = "hook"
+        event = "busy"
+        [[step]]
+        action = "hook"
+        event = "needs_input"
+        [[step]]
+        action = "ask"
+        text = "Continue?"
+        [[step]]
+        action = "hook"
+        event = "busy"
+        [[step]]
+        action = "sleep"
+        ms = 3000
+        [[step]]
+        action = "hook"
+        event = "done"
+        [[step]]
+        action = "sleep"
+        ms = 30000
+        "#,
+    )
+    .unwrap();
+    let profile = fake_profile()
+        .replace("mode = \"screen\"", "mode = \"hook+screen\"")
+        .replace(
+            "args = []",
+            &format!("args = ['--scenario', '{}']", scenario.display()),
+        );
+    assert!(profile.contains("hook+screen"), "{profile}");
+    assert!(profile.contains("hooks.toml"), "{profile}");
+    env.write_profile("hooked", &profile);
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+
+    // Agent start-up time is not part of the 2 s budget (measured from the answer on).
+    let id = env.ok(&["session", "spawn", "demo", "--agent", "hooked"]);
+    let id = id.trim();
+    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "10000"]);
+    assert_eq!(waited.trim(), "needs_input");
+
+    // The answer makes the fake agent run `mk hook fake busy`.
+    let answered = Instant::now();
+    env.ok(&["send", id, "y"]);
+    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "2000"]);
+    assert_eq!(waited.trim(), "working");
+    assert!(answered.elapsed() < Duration::from_secs(2));
+    let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "10000"]);
+    assert_eq!(waited.trim(), "done");
+
+    // The agent now sleeps; report as Claude Code and Codex would.
+    let reported = Instant::now();
+    env.hook(
+        id,
+        &["claude", "Notification"],
+        r#"{"session_id": "claude-1", "notification_type": "permission_prompt"}"#,
+    );
+    let waited = env.ok(&["wait", id, "--until", "needs_input", "--timeout", "2000"]);
+    assert_eq!(waited.trim(), "needs_input");
+    assert!(reported.elapsed() < Duration::from_secs(2));
+    env.hook(id, &["claude", "UserPromptSubmit"], "{}");
+    let waited = env.ok(&["wait", id, "--until", "working", "--timeout", "5000"]);
+    assert_eq!(waited.trim(), "working");
+    env.hook(
+        id,
+        &[
+            "codex",
+            r#"{"type": "agent-turn-complete", "thread-id": "t-1"}"#,
+        ],
+        "",
+    );
+    let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "5000"]);
+    assert_eq!(waited.trim(), "done");
 }

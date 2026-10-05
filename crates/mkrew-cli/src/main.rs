@@ -3,6 +3,7 @@
 mod attach;
 mod client;
 mod daemon;
+mod hook;
 mod project;
 mod session;
 
@@ -57,6 +58,14 @@ enum Command {
         /// Give up after this many milliseconds (exit code 1).
         #[arg(long)]
         timeout: Option<u64>,
+    },
+    /// Report an agent hook event to the session (called by agent hooks, not by users).
+    Hook {
+        /// `claude`, `codex` or `fake`.
+        agent: String,
+        /// The event name (`codex`: the notify JSON instead).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -113,6 +122,10 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> anyhow::Result<ExitCode> {
+    // Hooks also run outside Mkrew, where nothing else may be set up.
+    if let Command::Hook { agent, args } = cli.command {
+        return hook::hook(agent, args);
+    }
     let paths = Paths::from_env()?;
     match cli.command {
         Command::Daemon { command } => match command {
@@ -155,5 +168,6 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let mut client = project::connect(&paths)?;
             session::wait(&mut client, session_id, until, timeout).map(|()| ExitCode::SUCCESS)
         }
+        Command::Hook { .. } => unreachable!("handled above"),
     }
 }
