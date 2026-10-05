@@ -36,6 +36,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `process_group` branch was never compiled here.
 - [ ] (T1.8) The Unix branches of `mkrew-daemon/src/session.rs` (SIGHUP via portable-pty,
   `rustix` SIGKILL) were never compiled here; the CI Linux job (T1.12) covers it.
+- [ ] (T1.10) `mk attach` in a real terminal (Windows Terminal + a Unix terminal/SSH): raw
+  keys incl. arrows, Ctrl+C and paste reach the agent, resizing the window resizes the
+  session, `Ctrl+]` detaches and leaves the terminal sane (cursor, no mouse/bracketed-paste
+  leftovers), and re-attach repaints the same screen. Tests only cover the piped (non-tty) path.
 
 ## Questions with assumed defaults
 
@@ -162,6 +166,18 @@ _Decisions the agent made on its own. Override them here if you disagree._
   told about a resize. PTY input writes are still blocking writes in the session task: a big
   paste while the child's stdout is backed up can deadlock that session — queued as T1.9a
   (dedicated PTY writer thread).
+- (T1.10) Sessions are started from the CLI with a separate helper `mk session spawn <project>
+  --agent <profile>` (prints only the id; size = the terminal's, else 120x40), not an
+  `--agent` flag on `mk attach` (added to SPEC §9). Projects are named by id or name. `mk
+  attach` uses two connections (streaming + control for input/resize), polls the terminal size
+  every 250 ms (no resize signal on Windows), and detaches by closing the stream connection.
+  Painting a snapshot clears the screen (and toggles `?1049` to match `alt_screen`); after
+  detach the agent's last screen stays visible (like `tmux detach`). Mouse mode is restored as
+  `?1002` (the snapshot only says "some mode"). Windows: raw mode + `ENABLE_VIRTUAL_TERMINAL_
+  INPUT/PROCESSING` via a second scoped `unsafe` (`Get/SetConsoleMode`); std's console reader
+  swallows a lone **Ctrl+Z** (0-byte read), so Ctrl+Z does not reach the agent. When stdin is
+  not a terminal, raw mode/resizing are skipped and stdin EOF detaches. The session's exit ends
+  attach with `[session … exited with code N]`.
 
 ## Done
 

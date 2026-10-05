@@ -523,6 +523,7 @@ mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>
 mk session list [--project P]
+mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
 mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]

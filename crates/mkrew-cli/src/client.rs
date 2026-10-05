@@ -47,16 +47,23 @@ impl Client {
         self.next_id += 1;
         let frame = Frame::Message(Message::Request { id, request });
         self.stream.write_all(&encode(&frame)?)?;
-        let mut buf = [0u8; 4096];
         loop {
-            while let Some(frame) = self.decoder.next_frame()? {
-                match frame {
-                    Frame::Message(Message::Response { id: got, outcome }) if got == id => {
-                        return Ok(outcome);
-                    }
-                    // Nothing subscribes yet (M1 attach comes later): ignore events/output.
-                    _ => {}
+            match self.next_frame()? {
+                Frame::Message(Message::Response { id: got, outcome }) if got == id => {
+                    return Ok(outcome);
                 }
+                // Events and output frames are only consumed by `mk attach` via `next_frame`.
+                _ => {}
+            }
+        }
+    }
+
+    /// Blocks until the next frame arrives (responses, events or session output).
+    pub fn next_frame(&mut self) -> anyhow::Result<Frame> {
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            if let Some(frame) = self.decoder.next_frame()? {
+                return Ok(frame);
             }
             let n = self.stream.read(&mut buf)?;
             if n == 0 {

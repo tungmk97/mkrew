@@ -6,8 +6,12 @@
 // Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
 #![allow(clippy::unwrap_used)]
 
+use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use ulid::Ulid;
 
@@ -58,6 +62,107 @@ impl Env {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap()
+    }
+}
+
+impl Env {
+    /// `agents/fake.toml` running the built `mkrew-fakeagent` (default `ask` scenario).
+    fn write_fake_profile(&self) {
+        let fake = Path::new(env!("CARGO_BIN_EXE_mk"))
+            .with_file_name(format!("mkrew-fakeagent{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            fake.is_file(),
+            "{} is missing; run `cargo build -p mkrew-fakeagent`",
+            fake.display()
+        );
+        let sample = include_str!("../../../agents/fake.toml");
+        let profile = sample.replace(
+            "command = \"mkrew-fakeagent\"",
+            &format!("command = '{}'", fake.display()),
+        );
+        assert_ne!(profile, sample);
+        let dir = self.dir.path().join("config").join("agents");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("fake.toml"), profile).unwrap();
+    }
+
+    /// Starts `mk attach <id>` with piped stdio (no terminal: raw mode is skipped).
+    fn attach(&self, id: &str) -> Attach {
+        let mut child = self
+            .command(&["attach", id])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&output);
+        let reader = std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n @ 1..) = stdout.read(&mut buf) {
+                sink.lock().unwrap().extend_from_slice(&buf[..n]);
+            }
+        });
+        Attach {
+            child,
+            output,
+            reader,
+        }
+    }
+}
+
+struct Attach {
+    child: Child,
+    output: Arc<Mutex<Vec<u8>>>,
+    reader: JoinHandle<()>,
+}
+
+impl Attach {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.output.lock().unwrap()).into_owned()
+    }
+
+    /// Waits until stdout contains `needle`.
+    fn wait_for(&self, needle: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.text().contains(needle) {
+            assert!(
+                Instant::now() < deadline,
+                "no {needle:?} in attach output:\n{}",
+                self.text()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn type_bytes(&mut self, bytes: &[u8]) {
+        let stdin = self.child.stdin.as_mut().unwrap();
+        stdin.write_all(bytes).unwrap();
+        stdin.flush().unwrap();
+    }
+
+    /// Waits for `mk attach` to exit successfully and returns all of its stdout.
+    fn finish(mut self) -> String {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let status = loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "mk attach did not exit");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let mut stderr = String::new();
+        self.child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut stderr)
+            .unwrap();
+        assert!(status.success(), "mk attach failed: {status}\n{stderr}");
+        // The pipe closes with the process, so the reader has seen everything once it ends.
+        self.reader.join().unwrap();
+        String::from_utf8_lossy(&self.output.lock().unwrap()).into_owned()
     }
 }
 
@@ -155,4 +260,42 @@ fn projects_are_added_listed_and_persisted() {
         "{list}"
     );
     assert!(list.contains("other"), "{list}");
+}
+
+#[test]
+fn attach_detach_and_reattach_restores_the_screen() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    assert!(env.ok(&["session", "list"]).contains("no sessions"));
+
+    let id = env.ok(&["session", "spawn", "demo", "--agent", "fake"]);
+    let id = id.trim();
+    assert!(id.parse::<Ulid>().is_ok(), "{id}");
+
+    // First attach: watch the agent work until it asks, then Ctrl+] detaches.
+    let mut first = env.attach(id);
+    first.wait_for("(y/n)");
+    first.type_bytes(&[0x1d]);
+    let first = first.finish();
+    assert!(first.contains("detached from session"), "{first}");
+
+    // The agent keeps running in the daemon.
+    let list = env.ok(&["session", "list", "--project", "demo"]);
+    let row = list.lines().find(|l| l.starts_with(id)).unwrap();
+    assert!(row.contains("fake") && row.contains("demo"), "{list}");
+    assert!(!row.contains("exited"), "{list}");
+
+    // Re-attach: the snapshot alone (no new output while the agent waits) shows the screen.
+    let mut second = env.attach(id);
+    second.wait_for("Do you want to proceed? (y/n)");
+    assert!(second.text().contains("Plan: edit src/main.rs"));
+    // Stdin is forwarded; the agent finishes and attach ends with it.
+    second.type_bytes(b"y\r");
+    let second = second.finish();
+    assert!(second.contains("Done."), "{second}");
+    assert!(second.contains("exited with code 0"), "{second}");
 }
