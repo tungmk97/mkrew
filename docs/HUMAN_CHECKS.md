@@ -978,6 +978,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   untracked file fails, of a deleted file leaves it empty in the index, and unstaging a new
   file's hunk empties it — T7.4 stages/unstages those by path instead. Status `R`/`C` on
   either side carries `old_path`; ignored entries dropped.
+- (T7.3) **git.status / git.diff:** ADR 0007 — a refresh runs status ∥ base lookup ∥
+  staged/unstaged numstat (not ONE process; SPEC §12B updated). Base is resolved in both
+  modes (header); `merge_base` only in base mode. Base mode also lists untracked files
+  (kind `untracked`, no counts) and clears the staged/unstaged/untracked lists. Untracked files
+  never have +/− counts. Not a repo / no merge-base → `invalid_state`; git failure →
+  `internal`. `git.diff` of an untracked file = `git diff --no-index /dev/null <path>`; a
+  per-file diff does not detect renames (pathspec is the one path). Diff cache key = target +
+  HEAD + file mtime/size + index mtime (staging invalidates it), 256 entries then cleared;
+  commit diffs = `git show --diff-merges=first-parent` (needs git ≥ 2.31). Status uses
+  `--untracked-files=all` and `GIT_OPTIONAL_LOCKS=0`.
 
 ## Done
 

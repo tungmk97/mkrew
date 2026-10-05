@@ -117,6 +117,8 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::*;
+    use crate::git::{Repo, Side};
+    use mkrew_protocol::{ChangedFile, GitStatus};
 
     fn now_ms() -> i64 {
         i64::try_from(
@@ -153,6 +155,33 @@ mod tests {
         }
         fn clean(&self, _: &Path, _: &[String]) -> io::Result<()> {
             Ok(())
+        }
+        fn repo(&self, _: &Path) -> io::Result<Option<Repo>> {
+            unreachable!()
+        }
+        fn status(&self, _: &Path, _: &Repo) -> io::Result<GitStatus> {
+            unreachable!()
+        }
+        fn changes(&self, _: &Path, _: Side<'_>) -> io::Result<Vec<ChangedFile>> {
+            unreachable!()
+        }
+        fn auto_base(&self, _: &Path) -> io::Result<Option<(String, String)>> {
+            unreachable!()
+        }
+        fn commit_of(&self, _: &Path, _: &str) -> io::Result<Option<String>> {
+            unreachable!()
+        }
+        fn merge_base(&self, _: &Path, _: &str, _: &str) -> io::Result<Option<String>> {
+            unreachable!()
+        }
+        fn file_diff(&self, _: &Path, _: &str, _: Side<'_>) -> io::Result<String> {
+            unreachable!()
+        }
+        fn untracked_diff(&self, _: &Path, _: &str) -> io::Result<String> {
+            unreachable!()
+        }
+        fn is_tracked(&self, _: &Path, _: &str) -> io::Result<bool> {
+            unreachable!()
         }
     }
 

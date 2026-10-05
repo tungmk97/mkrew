@@ -23,6 +23,7 @@ use ulid::Ulid;
 
 use crate::attach::{self, Attachment};
 use crate::git::{GitBackend, GitCli};
+use crate::git_view::GitCache;
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
@@ -40,6 +41,7 @@ pub struct Daemon {
     hub: Arc<Hub>,
     paths: Paths,
     git: Arc<dyn GitBackend>,
+    git_cache: Arc<GitCache>,
     started_at: i64,
     shutdown: watch::Sender<bool>,
 }
@@ -68,6 +70,7 @@ impl Daemon {
             hub: Arc::new(Hub::new(store)),
             paths,
             git: Arc::new(GitCli),
+            git_cache: Arc::default(),
             started_at: now_ms(),
             shutdown: watch::channel(false).0,
         })
@@ -326,6 +329,8 @@ impl Daemon {
                 (self.comment_send_to_agent(params).await, After::Continue)
             }
             Request::GitSetBase(params) => (self.git_set_base(params), After::Continue),
+            Request::GitStatus(params) => (self.git_status(params).await, After::Continue),
+            Request::GitDiff(params) => (self.git_diff(params).await, After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

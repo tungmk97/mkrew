@@ -2,8 +2,10 @@
 //! Only local commands; nothing here touches the network.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use mkrew_protocol::{ChangedFile, GitStatus};
 
 pub trait GitBackend: Send + Sync {
     /// The commit HEAD points at for the repo containing `dir`; `None` outside a repo or
@@ -24,6 +26,57 @@ pub trait GitBackend: Send + Sync {
 
     /// Deletes the untracked `paths` (relative to `dir`); tracked paths are left alone.
     fn clean(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
+
+    /// Where the repo containing `dir` keeps its data; `None` outside a repo.
+    fn repo(&self, dir: &Path) -> io::Result<Option<Repo>>;
+
+    /// Branch header and staged/unstaged/untracked files under `dir` (paths relative to it,
+    /// no line counts): one `git status` call.
+    fn status(&self, dir: &Path, repo: &Repo) -> io::Result<GitStatus>;
+
+    /// Files under `dir` changed on `side`, with line counts, relative to `dir`.
+    fn changes(&self, dir: &Path, side: Side<'_>) -> io::Result<Vec<ChangedFile>>;
+
+    /// The auto-detected base (`origin/HEAD` → `main` → `master`): name and commit.
+    fn auto_base(&self, dir: &Path) -> io::Result<Option<(String, String)>>;
+
+    /// The commit `rev` names; `None` if it names none.
+    fn commit_of(&self, dir: &Path, rev: &str) -> io::Result<Option<String>>;
+
+    /// `git merge-base a b`; `None` when the histories are unrelated.
+    fn merge_base(&self, dir: &Path, a: &str, b: &str) -> io::Result<Option<String>>;
+
+    /// Unified diff of `path` (relative to `dir`) on `side`; empty when unchanged or untracked.
+    fn file_diff(&self, dir: &Path, path: &str, side: Side<'_>) -> io::Result<String>;
+
+    /// Unified diff showing the untracked `path` as all-new.
+    fn untracked_diff(&self, dir: &Path, path: &str) -> io::Result<String>;
+
+    /// `path` is in the index.
+    fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool>;
+}
+
+/// A repository as seen from a folder inside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Repo {
+    /// The (worktree's) git dir, holding `index`.
+    pub git_dir: PathBuf,
+    /// The folder relative to the repo root, `/`-separated with a trailing `/`; `""` at the
+    /// root. `git status` paths are repo-relative and lose this prefix.
+    pub prefix: String,
+}
+
+/// Which two trees a diff compares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side<'a> {
+    /// Index → working tree.
+    Unstaged,
+    /// HEAD → index.
+    Staged,
+    /// A commit → working tree.
+    Since(&'a str),
+    /// What a commit introduced (first parent for merges).
+    Commit(&'a str),
 }
 
 /// A tracked file that differs from a commit.
@@ -129,6 +182,167 @@ impl GitBackend for GitCli {
         }
         Ok(())
     }
+
+    fn repo(&self, dir: &Path) -> io::Result<Option<Repo>> {
+        let output = git(dir)
+            .args(["rev-parse", "--absolute-git-dir", "--show-prefix"])
+            .output()?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut lines = text.lines();
+        let git_dir = lines.next().unwrap_or_default().trim();
+        if git_dir.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Repo {
+            git_dir: PathBuf::from(git_dir),
+            prefix: lines.next().unwrap_or_default().trim().to_owned(),
+        }))
+    }
+
+    fn status(&self, dir: &Path, repo: &Repo) -> io::Result<GitStatus> {
+        let mut command = view_git(dir);
+        command.args([
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            ".",
+        ]);
+        let mut status = mkrew_core::git::parse_status(&run(command)?);
+        let strip = |path: &mut String| {
+            if let Some(rest) = path.strip_prefix(&repo.prefix) {
+                *path = rest.to_owned();
+            }
+        };
+        for file in status
+            .staged
+            .iter_mut()
+            .chain(&mut status.unstaged)
+            .chain(&mut status.untracked)
+        {
+            strip(&mut file.path);
+            if let Some(old) = &mut file.old_path {
+                strip(old);
+            }
+        }
+        Ok(status)
+    }
+
+    fn changes(&self, dir: &Path, side: Side<'_>) -> io::Result<Vec<ChangedFile>> {
+        let mut command = diff_command(dir, side);
+        command.args(["--raw", "--numstat", "-z", "--", "."]);
+        Ok(mkrew_core::git::parse_changes(&run(command)?))
+    }
+
+    fn auto_base(&self, dir: &Path) -> io::Result<Option<(String, String)>> {
+        let mut command = view_git(dir);
+        command.args([
+            "for-each-ref",
+            "--format=%(refname)%09%(objectname)%09%(symref)",
+            "refs/remotes/origin/HEAD",
+            "refs/heads/main",
+            "refs/heads/master",
+        ]);
+        let output = run(command)?;
+        Ok(mkrew_core::git::auto_base(&String::from_utf8_lossy(
+            &output,
+        )))
+    }
+
+    fn commit_of(&self, dir: &Path, rev: &str) -> io::Result<Option<String>> {
+        let output = view_git(dir)
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("{rev}^{{commit}}"))
+            .output()?;
+        let commit = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        Ok((output.status.success() && !commit.is_empty()).then_some(commit))
+    }
+
+    fn merge_base(&self, dir: &Path, a: &str, b: &str) -> io::Result<Option<String>> {
+        let output = view_git(dir)
+            .args(["merge-base", a, b])
+            .stderr(Stdio::piped())
+            .output()?;
+        // Exit 1 without output = no common ancestor.
+        let base = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        match output.status.code() {
+            Some(0) if !base.is_empty() => Ok(Some(base)),
+            Some(1) => Ok(None),
+            _ => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(io::Error::other(format!("git failed: {}", stderr.trim())))
+            }
+        }
+    }
+
+    fn file_diff(&self, dir: &Path, path: &str, side: Side<'_>) -> io::Result<String> {
+        let mut command = diff_command(dir, side);
+        command.args(["--src-prefix=a/", "--dst-prefix=b/", "--", path]);
+        Ok(String::from_utf8_lossy(&run(command)?).into_owned())
+    }
+
+    fn untracked_diff(&self, dir: &Path, path: &str) -> io::Result<String> {
+        let mut command = view_git(dir);
+        command
+            .args(["diff", "--no-index", "--no-color", "--no-ext-diff"])
+            .args(["--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"])
+            // Git maps `/dev/null` to "no file" on Windows too.
+            .args(["--", "/dev/null", path]);
+        let output = command.stderr(Stdio::piped()).output()?;
+        // `--no-index` exits 1 when the files differ.
+        if !matches!(output.status.code(), Some(0 | 1)) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(io::Error::other(format!("git failed: {}", stderr.trim())));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool> {
+        let mut command = view_git(dir);
+        command.args(["--literal-pathspecs", "ls-files", "-z", "--", path]);
+        Ok(!run(command)?.is_empty())
+    }
+}
+
+/// `git diff` (or `git show` for [`Side::Commit`]) between the trees of `side`, before the
+/// output options and the pathspec. Renames detected; pathspecs literal.
+fn diff_command(dir: &Path, side: Side<'_>) -> Command {
+    let mut command = view_git(dir);
+    command.arg("--literal-pathspecs");
+    match side {
+        Side::Commit(_) => command.args(["show", "--format=", "--diff-merges=first-parent"]),
+        _ => command.arg("diff"),
+    };
+    command.args([
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--relative",
+        "-M",
+    ]);
+    match side {
+        Side::Unstaged => {}
+        Side::Staged => {
+            command.arg("--cached");
+        }
+        Side::Since(commit) | Side::Commit(commit) => {
+            command.arg(commit);
+        }
+    }
+    command
+}
+
+/// [`git`] for read-only Git view commands: they skip optional locks (e.g. the index refresh
+/// of `git status`) so they never block a user's own git command.
+fn view_git(dir: &Path) -> Command {
+    let mut command = git(dir);
+    command.env("GIT_OPTIONAL_LOCKS", "0");
+    command
 }
 
 /// Runs `command`; a failure becomes an error carrying git's stderr.

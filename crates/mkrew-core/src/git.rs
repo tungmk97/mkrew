@@ -2,6 +2,8 @@
 //!
 //! The daemon runs the commands; everything here only turns bytes into protocol types:
 //! - [`parse_status`]: `git status --porcelain=v2 --branch -z`;
+//! - [`parse_changes`]: `git diff --raw --numstat -z` (changed-file lists with +/− counts);
+//! - [`auto_base`]: the auto-detected Git view base from `git for-each-ref`;
 //! - [`parse_diff`]: `git diff` output with the default `a/`/`b/` prefixes (the daemon passes
 //!   `--src-prefix=a/ --dst-prefix=b/` so a user's `diff.noprefix` cannot change it);
 //! - [`hunk_patch`]: one hunk as a patch. Staging applies it with `git apply --cached`,
@@ -114,6 +116,75 @@ fn file(path: &str, old_path: Option<String>, kind: ChangeKind) -> ChangedFile {
         added: None,
         removed: None,
     }
+}
+
+/// Parses `git diff --raw --numstat -z` into the changed files with their line counts, in
+/// output order. Counts stay `None` for binary files. Git prints every raw record first
+/// (`:mode mode oid oid STATUS\0path\0`, renames/copies `R100\0old\0new\0`), then every
+/// numstat record (`added\tremoved\tpath\0`, renames `added\tremoved\t\0old\0new\0`).
+pub fn parse_changes(output: &[u8]) -> Vec<ChangedFile> {
+    let text = String::from_utf8_lossy(output);
+    let mut tokens = text.split('\0');
+    let mut files: Vec<ChangedFile> = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    while let Some(token) = tokens.next() {
+        if token.is_empty() {
+            continue;
+        }
+        if let Some(raw) = token.strip_prefix(':') {
+            let code = raw.rsplit(' ').next().and_then(|s| s.chars().next());
+            let Some(first) = tokens.next() else { break };
+            let (old_path, path) = match code {
+                Some('R' | 'C') => (Some(first.to_owned()), tokens.next().unwrap_or_default()),
+                _ => (None, first),
+            };
+            let kind = code.and_then(kind).unwrap_or(ChangeKind::Modified);
+            index.insert(path.to_owned(), files.len());
+            files.push(file(path, old_path, kind));
+        } else {
+            let mut parts = token.splitn(3, '\t');
+            let added = parts.next().and_then(|n| n.parse().ok());
+            let removed = parts.next().and_then(|n| n.parse().ok());
+            let mut path = parts.next().unwrap_or_default();
+            if path.is_empty() {
+                tokens.next();
+                path = tokens.next().unwrap_or_default();
+            }
+            if let Some(&i) = index.get(path) {
+                files[i].added = added;
+                files[i].removed = removed;
+            }
+        }
+    }
+    files
+}
+
+/// Picks the auto-detected base (SPEC §12B: `origin/HEAD` → `main` → `master`) from
+/// `git for-each-ref --format=%(refname)%09%(objectname)%09%(symref) refs/remotes/origin/HEAD
+/// refs/heads/main refs/heads/master`. Returns the base name shown to the user (`origin/HEAD`
+/// as its target, e.g. `origin/main`) and its commit.
+pub fn auto_base(output: &str) -> Option<(String, String)> {
+    let refs: Vec<(&str, &str, &str)> = output
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            Some((parts.next()?, parts.next()?, parts.next().unwrap_or("")))
+        })
+        .collect();
+    let find = |name: &str| {
+        refs.iter()
+            .find(|(refname, oid, _)| *refname == name && !oid.is_empty())
+    };
+    if let Some((_, oid, symref)) = find("refs/remotes/origin/HEAD") {
+        let name = symref
+            .strip_prefix("refs/remotes/")
+            .unwrap_or("origin/HEAD");
+        return Some((name.to_owned(), (*oid).to_owned()));
+    }
+    ["main", "master"].into_iter().find_map(|branch| {
+        find(&format!("refs/heads/{branch}"))
+            .map(|(_, oid, _)| (branch.to_owned(), (*oid).to_owned()))
+    })
 }
 
 /// Parses `git diff` output into one [`FileDiff`] per file, in output order. Lenient:
@@ -718,5 +789,55 @@ diff --git \"a/t\\303\\251st\\tx.rs\" \"b/t\\303\\251st\\tx.rs\"
         assert_eq!(quote("a\u{85}"), "\"a\\302\\205\"");
         assert_eq!(unquote(&quote("a\u{85}\t\"")), "a\u{85}\t\"");
         assert_eq!(unquote("\"a\\\\b\\001\""), "a\\b\u{1}");
+    }
+
+    #[test]
+    fn raw_and_numstat_records_merge_into_counted_files() {
+        let z = "0".repeat(7);
+        let output = format!(
+            ":100644 100644 {z} {z} M\0src/a b.rs\0\
+:000000 100644 {z} {z} A\0new.rs\0\
+:100644 100644 {z} {z} R087\0old.rs\0:odd.rs\0\
+:100644 000000 {z} {z} D\0gone.bin\0\
+3\t1\tsrc/a b.rs\0\
+2\t0\tnew.rs\0\
+1\t1\t\0old.rs\0:odd.rs\0\
+-\t-\tgone.bin\0"
+        );
+        let counted =
+            |path: &str, old: Option<&str>, kind, counts: Option<(u32, u32)>| ChangedFile {
+                path: path.into(),
+                old_path: old.map(Into::into),
+                kind,
+                added: counts.map(|c| c.0),
+                removed: counts.map(|c| c.1),
+            };
+        assert_eq!(
+            parse_changes(output.as_bytes()),
+            [
+                counted("src/a b.rs", None, ChangeKind::Modified, Some((3, 1))),
+                counted("new.rs", None, ChangeKind::Added, Some((2, 0))),
+                counted(":odd.rs", Some("old.rs"), ChangeKind::Renamed, Some((1, 1))),
+                counted("gone.bin", None, ChangeKind::Deleted, None),
+            ]
+        );
+        assert_eq!(parse_changes(b""), []);
+    }
+
+    #[test]
+    fn auto_base_prefers_origin_head_then_main_then_master() {
+        let origin = "refs/remotes/origin/HEAD\tc1\trefs/remotes/origin/trunk\n";
+        let main = "refs/heads/main\tc2\t\n";
+        let master = "refs/heads/master\tc3\t\n";
+        let base = |s: &str| auto_base(s).map(|(n, c)| format!("{n}@{c}"));
+        assert_eq!(
+            base(&format!("{main}{master}{origin}")).as_deref(),
+            Some("origin/trunk@c1")
+        );
+        assert_eq!(base(&format!("{master}{main}")).as_deref(), Some("main@c2"));
+        assert_eq!(base(master).as_deref(), Some("master@c3"));
+        // Other refs matched by the patterns' prefixes are ignored.
+        assert_eq!(base("refs/heads/main/x\tc4\t\n"), None);
+        assert_eq!(base(""), None);
     }
 }

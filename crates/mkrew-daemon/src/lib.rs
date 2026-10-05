@@ -8,6 +8,7 @@ mod backup;
 mod docs;
 mod emulator;
 mod git;
+mod git_view;
 pub mod ipc;
 mod launch;
 pub mod lock;

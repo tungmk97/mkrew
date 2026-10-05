@@ -14,16 +14,16 @@ use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
     CommentReplyParams, CommentSendParams, CommentStatus, DaemonStatusResult, DocChangedEvent,
-    DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, Frame,
-    FrameDecoder, GitSetBaseParams, HelloParams, HelloResult, HookReportParams, Message, Outcome,
-    PROTOCOL_VERSION, Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError,
-    ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionInputParams,
-    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionResizeParams,
-    SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
-    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
-    TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams,
-    TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, UndoPreview, encode,
+    DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff,
+    Frame, FrameDecoder, GitDiffParams, GitMode, GitSetBaseParams, GitStatus, GitStatusParams,
+    HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION, Project,
+    ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session,
+    SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind,
+    SessionListParams, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
+    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
+    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
+    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2179,6 +2179,106 @@ fn git_set_base_is_announced_persists_and_null_means_auto() {
     // Blank is the same as `null`: back to auto-detect.
     let _: () = client.call(set_base(Some("  "))).into_result().unwrap();
     client.wait_event(&Event::ProjectUpdated(project.clone()));
+    client.stop();
+}
+
+#[test]
+fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let fork = git(&repo, &["rev-parse", "HEAD"]);
+    git(&repo, &["checkout", "-q", "-b", "feature"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    let plain = env.dir.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let outside = client.add_project(&plain);
+    let status = |project: &Project, mode| {
+        Request::GitStatus(GitStatusParams {
+            project_id: project.id,
+            mode,
+        })
+    };
+    let diff = |path: &str, mode, commit: Option<&str>| {
+        Request::GitDiff(GitDiffParams {
+            project_id: project.id,
+            path: path.into(),
+            mode,
+            staged: false,
+            commit: commit.map(str::to_owned),
+        })
+    };
+
+    let working: GitStatus = client
+        .call(status(&project, GitMode::Working))
+        .into_result()
+        .unwrap();
+    assert_eq!(working.branch.as_deref(), Some("feature"));
+    assert_eq!(working.base_ref.as_deref(), Some("main"));
+    let unstaged: Vec<_> = working
+        .unstaged
+        .iter()
+        .map(|f| (f.path.as_str(), f.added, f.removed))
+        .collect();
+    assert_eq!(unstaged, [("a.txt", Some(1), Some(0))]);
+    let against: GitStatus = client
+        .call(status(&project, GitMode::Base))
+        .into_result()
+        .unwrap();
+    assert_eq!(against.merge_base, Some(fork));
+    assert_eq!(against.against_base.len(), 1);
+    let shown: FileDiff = client
+        .call(diff("a.txt", GitMode::Base, None))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        (shown.path.as_str(), shown.added, shown.hunks.len()),
+        ("a.txt", 1, 1)
+    );
+
+    // A configured base that names nothing: no merge-base, so no base diff.
+    let set_base = Request::GitSetBase(GitSetBaseParams {
+        project_id: project.id,
+        base_ref: Some("develop".into()),
+    });
+    let _: () = client.call(set_base).into_result().unwrap();
+    let against: GitStatus = client
+        .call(status(&project, GitMode::Base))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        (
+            against.base_ref.as_deref(),
+            against.base_auto,
+            against.merge_base
+        ),
+        (Some("develop"), false, None)
+    );
+    assert_eq!(
+        error_code(client.call(diff("a.txt", GitMode::Base, None))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        error_code(client.call(status(&outside, GitMode::Working))),
+        ErrorCode::InvalidState
+    );
+    for bad in [
+        diff("../a.txt", GitMode::Working, None),
+        diff("a.txt", GitMode::Working, Some("--output=x")),
+    ] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+    let missing = Request::GitStatus(GitStatusParams {
+        project_id: Ulid::new(),
+        mode: GitMode::Working,
+    });
+    assert_eq!(error_code(client.call(missing)), ErrorCode::NotFound);
     client.stop();
 }
 

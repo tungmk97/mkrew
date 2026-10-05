@@ -682,8 +682,10 @@ The daemon shells out to `git` (porcelain v2, `-z` output) behind a `GitBackend`
 `gix`-based backend can replace it later without touching callers. Process spawning is slow on
 Windows (tens of ms, worse with antivirus), so:
 
-- One refresh = ONE `git status --porcelain=v2 --branch -z` call (plus `merge-base` only in
-  Against-base mode, cached until HEAD or base moves).
+- One refresh = ONE `git status --porcelain=v2 --branch -z` call, run in parallel with the base
+  lookup and (Working mode) the staged/unstaged `git diff --numstat` for the +/− counts
+  (ADR 0007); Against-base mode adds `merge-base` (cached until HEAD or base moves) and one
+  numstat diff since it.
 - Refresh is triggered by the file watcher (debounced 300 ms) and when the view opens; never polled.
 - Diffs are computed per file on demand and cached by (path, mode, mtime/size, HEAD).
 - Never run git for workspaces whose Git view is not open, except the cheap status used for
