@@ -31,6 +31,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   GPU present. Optionally measure with a high-speed camera / `Typometer`-style tool.
 - [ ] (T1.5) The Unix branch of `mkrew-daemon/src/ipc.rs` (`try_overwrite`, Linux `mode`)
   was never compiled here; the CI Linux job (T1.12) covers it.
+- [ ] (T1.6) `mk daemon start` from a normal terminal: no console window appears, the daemon
+  survives closing that terminal, `mk daemon status`/`stop` work afterwards. The Unix
+  `process_group` branch was never compiled here.
 
 ## Questions with assumed defaults
 
@@ -114,6 +117,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   non-elevated `mk`/UI of the same user may be refused — use the user SID if that matters.
   Unix socket mode 0600 is set on Linux only (macOS rejects it before bind; relies on the
   0700 runtime dir / data dir there).
+- (T1.6) `mk` details: sync (non-tokio) client; `mk daemon start` runs `mkrew-daemon` from
+  next to `mk`, else `PATH`; it is a no-op if a daemon already answers, and `stop` returns
+  once the daemon released its lock. `mk daemon status` exits 1 when not running. Other
+  commands never auto-start the daemon. `mk project add --dev` is not built yet
+  (`ProjectAddParams`/store have no dev field) — added with `mk project update` later.
+  Windows: `CreateProcess` hands every inheritable handle to the child, so a detached daemon
+  kept `mk`'s caller's stdout pipe open (`mk daemon start | cat` hung). `mk` clears the
+  inherit flag on its own stdio with a scoped `#[allow(unsafe_code)]` `SetHandleInformation`
+  (`windows-sys`) — the only `unsafe` in the workspace. Also adds `CREATE_NEW_PROCESS_GROUP`
+  (Ctrl+C in the shell does not reach the daemon); Unix uses its own process group, not
+  `setsid`.
 
 ## Done
 

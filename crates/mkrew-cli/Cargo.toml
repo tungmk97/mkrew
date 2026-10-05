@@ -1,0 +1,30 @@
+[package]
+name = "mkrew-cli"
+description = "Mkrew command-line client `mk` (SPEC §9)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "mk"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+interprocess = "2.4.4"
+mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
+mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
+mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
+serde = "1"
+
+[target.'cfg(windows)'.dependencies]
+# `SetHandleInformation`: keep the detached daemon from inheriting mk's stdio pipes.
+windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+ulid = "1"
