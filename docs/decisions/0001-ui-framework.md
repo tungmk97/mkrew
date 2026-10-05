@@ -1,10 +1,11 @@
 # 0001 — UI framework: GPUI vs Tauri
 
 - Date: 2026-10-05
-- Status: proposed
+- Status: accepted (human gate, 2026-10-05: GPUI)
 - Milestone: M0
 
-Recommendation written (T0.9); waiting for the human gate (HUMAN_CHECKS "Waiting (blocking)").
+Recommendation written (T0.9); accepted by the human at the M0 gate on 2026-10-05 (all manual
+checks passed).
 
 ## Context
 
@@ -188,7 +189,7 @@ Both options keep the daemon, CLI, protocol and store unchanged (§19): the choi
 
 **Recommendation: A — GPUI** (`gpui-pre = "=0.3.7"` as `gpui`, `gpui-component` 0.7 via
 `gpui-kit`), **pending the human checks** in `docs/HUMAN_CHECKS.md` → "Waiting (blocking)".
-Status stays *proposed* until the human confirms.
+Accepted by the human on 2026-10-05: manual checks passed, none of the switch criteria below hit.
 
 Why: every automated M0 target that GPUI controls is met or nearly met (latency 6.6 ms p95, RAM
 65 MB, flood throughput at the ConPTY ceiling), the renderer is the same design Zed ships, and

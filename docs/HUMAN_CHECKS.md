@@ -10,29 +10,6 @@ How to answer: write your answer under the item, move it to "Done", and if the l
 
 _Items that stop the loop until you answer._
 
-- [ ] (T0.9) **M0 gate — UI framework.** Read `docs/decisions/0001-ui-framework.md`
-  (recommendation: GPUI; switch criteria listed under "Decision"). Do the manual checks below,
-  then answer here: "GPUI" (ADR → accepted, tick SPEC §19 open question) or "Tauri" (the next
-  session writes ADR 0002 and replans). Then set `status: RUNNING`; the next session plans M1.
-  Note: the automated "grid-dump snapshot fed with recorded agent output" criterion is still
-  open (only a hand-made TUI frame exists, see T0.4 below); answering GPUI accepts M0 without it
-  — or record a real session first.
-- [ ] (T0.9 / T0.7) Real agents: `cargo run -p spike-term -- claude` (and `-- codex`, `-- omp`)
-  on native Windows. The npm `.cmd`/`.ps1` shim is found via `PATHEXT`, the TUI renders with
-  correct colors and no broken frames. Tests only used fake shims.
-- [ ] (T0.9 / T0.6) Input: type in the shell and in `claude` (letters, AltGr chars on your
-  layout, dead keys / IME if you use one — expected to fail, no `InputHandler` yet), Enter,
-  Backspace, arrows/history, Tab, Ctrl+C on a running command, Esc;
-  Ctrl+Shift+V of multi-line text (shell and a bracketed-paste TUI).
-- [ ] (T0.9 / T0.6) Resize: drag the window edges with a shell and with `claude` running; the
-  prompt/TUI reflows to the new size without leftovers.
-- [ ] (T0.9 / T0.5) Visuals on native Windows, dark and light OS themes: prompt readable, `dir`
-  / TUI colors, accent cursor block, wide chars/emoji aligned. Optionally save
-  `docs/screenshots/m0-terminal-{dark,light}.png`.
-- [ ] (T0.9 / T0.8) Perceived latency and idle cost: type in
-  `cargo run --release -p spike-term -- --stats` (read `key_p50` lines) and judge the idle CPU
-  (~3.5 % of one core, GPUI vsync floor) and flood CPU (~0.8 core at 165 Hz) in the ADR.
-
 ## To verify (non-blocking)
 
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
@@ -111,6 +88,33 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - (T0.9) SPEC §15 "Idle CPU < 1 %" is read as % of the **machine** from M2 on (GPUI's Windows
   vsync floor is ~3.5 % of one core, ~0.25 % of 16 threads); T0.8 had read it per core.
   Override here if you want the stricter reading (would require patching gpui).
+- (M1 plan) Agent hooks (`mk hook`, `hook.report`) belong to M3, so in M1 the E2E "`mk wait`
+  until done" is satisfied by screen detection (`idle` after `idle_after_ms`) or process exit
+  of the fake agent, not by a `done` hook event. `mk attach` uses `crossterm` for raw mode
+  (not listed in SPEC §4; small, cross-platform, Windows-native console API).
 
 ## Done
 
+- [x] (T0.9) **M0 gate — UI framework.** Read `docs/decisions/0001-ui-framework.md`
+  (recommendation: GPUI; switch criteria listed under "Decision"). Do the manual checks below,
+  then answer here: "GPUI" (ADR → accepted, tick SPEC §19 open question) or "Tauri" (the next
+  session writes ADR 0002 and replans). Then set `status: RUNNING`; the next session plans M1.
+  Note: the automated "grid-dump snapshot fed with recorded agent output" criterion is still
+  open (only a hand-made TUI frame exists, see T0.4 below); answering GPUI accepts M0 without it
+  — or record a real session first.
+  **Answer (2026-10-05): GPUI straight away — follow the recommendation; all assumed defaults
+  accepted.** ADR 0001 → accepted, SPEC §19 question ticked, `status: RUNNING`.
+- [x] (T0.9 / T0.7) Real agents: `cargo run -p spike-term -- claude` (and `-- codex`, `-- omp`)
+  on native Windows. The npm `.cmd`/`.ps1` shim is found via `PATHEXT`, the TUI renders with
+  correct colors and no broken frames. Tests only used fake shims.
+- [x] (T0.9 / T0.6) Input: type in the shell and in `claude` (letters, AltGr chars on your
+  layout, dead keys / IME if you use one — expected to fail, no `InputHandler` yet), Enter,
+  Backspace, arrows/history, Tab, Ctrl+C on a running command, Esc;
+  Ctrl+Shift+V of multi-line text (shell and a bracketed-paste TUI). — ok
+- [x] (T0.9 / T0.6) Resize: drag the window edges with a shell and with `claude` running; the
+  prompt/TUI reflows to the new size without leftovers. — ok
+- [x] (T0.9 / T0.5) Visuals on native Windows, dark and light OS themes: prompt readable, `dir`
+  / TUI colors, accent cursor block, wide chars/emoji aligned. — ok
+- [x] (T0.9 / T0.8) Perceived latency and idle cost: type in
+  `cargo run --release -p spike-term -- --stats` (read `key_p50` lines) and judge the idle CPU
+  (~3.5 % of one core, GPUI vsync floor) and flood CPU (~0.8 core at 165 Hz) in the ADR. — ok

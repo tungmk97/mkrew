@@ -980,7 +980,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 **Open questions (owner: user)**
 
 - [x] Name: **Mkrew**, CLI `mk`.
-- [ ] GPUI straight away vs Tauri first — decided at the M0 gate.
+- [x] GPUI straight away vs Tauri first — **GPUI** (M0 gate, ADR 0001).
 - [ ] Optional per-task worktree in a later version?
 - [ ] Comments on unchanged code files (diff-line comments exist since M7)?
 - [ ] License if the repo goes public.
