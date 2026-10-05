@@ -1,0 +1,365 @@
+//! Mkrew persistence: SQLite in WAL mode with hand-written numbered migrations (SPEC §5).
+//!
+//! Rows are returned as the `mkrew-protocol` model types so the daemon can hand them to
+//! clients unchanged.
+
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use mkrew_protocol::{Project, Session, SessionKind, SessionState};
+use rusqlite::{Connection, Row, TransactionBehavior, params};
+use ulid::Ulid;
+
+/// Numbered migrations; `PRAGMA user_version` records how many have run. Append only.
+const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("database error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("cannot resolve project path {path}: {source}")]
+    Path {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("project path is not a directory: {0}")]
+    NotADirectory(PathBuf),
+    #[error("a project already exists at {0}")]
+    DuplicateProject(String),
+    #[error("database schema version {found} is newer than this build supports ({supported})")]
+    SchemaTooNew { found: usize, supported: usize },
+    #[error("corrupt value in column {column}: {value:?}")]
+    Corrupt { column: &'static str, value: String },
+    #[error("no session with id {0}")]
+    SessionNotFound(Ulid),
+}
+
+pub type Result<T, E = StoreError> = std::result::Result<T, E>;
+
+pub struct Store {
+    conn: Connection,
+}
+
+impl Store {
+    /// Opens (creating if needed) the database at `path`, enables WAL and runs migrations.
+    pub fn open(path: &Path) -> Result<Self> {
+        let mut conn = Connection::open(path)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", true)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        migrate(&mut conn)?;
+        Ok(Self { conn })
+    }
+
+    /// Number of migrations applied (`PRAGMA user_version`).
+    pub fn schema_version(&self) -> Result<usize> {
+        user_version(&self.conn)
+    }
+
+    /// Adds a project for the directory at `path` (canonicalized with `dunce`). `name`
+    /// defaults to the directory name.
+    pub fn add_project(&self, path: &Path, name: Option<&str>) -> Result<Project> {
+        // canonicalize returns the on-disk casing, which makes the UNIQUE path column
+        // case-insensitive in effect on Windows (SPEC §17).
+        let canonical = dunce::canonicalize(path).map_err(|source| StoreError::Path {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        if !canonical.is_dir() {
+            return Err(StoreError::NotADirectory(canonical));
+        }
+        let path_str = canonical.to_string_lossy().into_owned();
+        let name = match name {
+            Some(name) => name.to_owned(),
+            None => canonical
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path_str.clone()),
+        };
+        let project = Project {
+            id: Ulid::new(),
+            name,
+            path: path_str,
+            dev_command: None,
+            default_agent: None,
+            review_globs: None,
+            created_at: now_ms(),
+            archived: false,
+        };
+        let inserted = self.conn.execute(
+            "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                project.id.to_string(),
+                project.name,
+                project.path,
+                project.created_at
+            ],
+        );
+        match inserted {
+            Ok(_) => Ok(project),
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                Err(StoreError::DuplicateProject(project.path))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// All projects, oldest first.
+    pub fn list_projects(&self) -> Result<Vec<Project>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived
+             FROM project ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([], RawProject::from_row)?;
+        rows.map(|r| r?.into_project()).collect()
+    }
+
+    pub fn insert_session(&self, session: &Session) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session (id, task_id, project_id, agent_profile, kind, title,
+                native_session_id, state, exit_code, cols, rows, started_at, ended_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                session.id.to_string(),
+                session.task_id.map(|id| id.to_string()),
+                session.project_id.to_string(),
+                session.agent_profile,
+                kind_str(session.kind),
+                session.title,
+                session.native_session_id,
+                state_str(session.state),
+                session.exit_code,
+                session.cols,
+                session.rows,
+                session.started_at,
+                session.ended_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Overwrites the mutable columns of an existing session (everything but ids,
+    /// profile, kind and `started_at`).
+    pub fn update_session(&self, session: &Session) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE session SET title = ?2, native_session_id = ?3, state = ?4, exit_code = ?5,
+                cols = ?6, rows = ?7, ended_at = ?8
+             WHERE id = ?1",
+            params![
+                session.id.to_string(),
+                session.title,
+                session.native_session_id,
+                state_str(session.state),
+                session.exit_code,
+                session.cols,
+                session.rows,
+                session.ended_at,
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::SessionNotFound(session.id));
+        }
+        Ok(())
+    }
+
+    /// Sessions, oldest first, optionally limited to one project.
+    pub fn list_sessions(&self, project_id: Option<Ulid>) -> Result<Vec<Session>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
+                state, exit_code, cols, rows, started_at, ended_at
+             FROM session WHERE ?1 IS NULL OR project_id = ?1
+             ORDER BY started_at, id",
+        )?;
+        let rows = stmt.query_map([project_id.map(|id| id.to_string())], RawSession::from_row)?;
+        rows.map(|r| r?.into_session()).collect()
+    }
+}
+
+fn user_version(conn: &Connection) -> Result<usize> {
+    let v: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    Ok(usize::try_from(v).unwrap_or(0))
+}
+
+/// Runs every migration past `user_version` in one IMMEDIATE transaction, so two processes
+/// opening a fresh database cannot both apply the same migration.
+fn migrate(conn: &mut Connection) -> Result<()> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let current = user_version(&tx)?;
+    if current > MIGRATIONS.len() {
+        return Err(StoreError::SchemaTooNew {
+            found: current,
+            supported: MIGRATIONS.len(),
+        });
+    }
+    for (index, sql) in MIGRATIONS.iter().enumerate().skip(current) {
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", index as i64 + 1)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+fn kind_str(kind: SessionKind) -> &'static str {
+    match kind {
+        SessionKind::Agent => "agent",
+        SessionKind::Shell => "shell",
+    }
+}
+
+fn parse_kind(s: String) -> Result<SessionKind> {
+    match s.as_str() {
+        "agent" => Ok(SessionKind::Agent),
+        "shell" => Ok(SessionKind::Shell),
+        _ => Err(corrupt("session.kind", s)),
+    }
+}
+
+fn state_str(state: SessionState) -> &'static str {
+    match state {
+        SessionState::Starting => "starting",
+        SessionState::Working => "working",
+        SessionState::NeedsInput => "needs_input",
+        SessionState::Idle => "idle",
+        SessionState::Done => "done",
+        SessionState::Exited => "exited",
+        SessionState::Unknown => "unknown",
+    }
+}
+
+fn parse_state(s: String) -> Result<SessionState> {
+    Ok(match s.as_str() {
+        "starting" => SessionState::Starting,
+        "working" => SessionState::Working,
+        "needs_input" => SessionState::NeedsInput,
+        "idle" => SessionState::Idle,
+        "done" => SessionState::Done,
+        "exited" => SessionState::Exited,
+        "unknown" => SessionState::Unknown,
+        _ => return Err(corrupt("session.state", s)),
+    })
+}
+
+fn parse_ulid(column: &'static str, s: String) -> Result<Ulid> {
+    Ulid::from_string(&s).map_err(|_| corrupt(column, s))
+}
+
+fn corrupt(column: &'static str, value: String) -> StoreError {
+    StoreError::Corrupt { column, value }
+}
+
+/// Column values as SQLite stores them; converted to model types outside the rusqlite
+/// row callback so conversion errors stay `StoreError`s.
+struct RawProject {
+    id: String,
+    name: String,
+    path: String,
+    dev_command: Option<String>,
+    default_agent: Option<String>,
+    review_globs: Option<String>,
+    created_at: i64,
+    archived: bool,
+}
+
+impl RawProject {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            path: row.get(2)?,
+            dev_command: row.get(3)?,
+            default_agent: row.get(4)?,
+            review_globs: row.get(5)?,
+            created_at: row.get(6)?,
+            archived: row.get(7)?,
+        })
+    }
+
+    fn into_project(self) -> Result<Project> {
+        let review_globs = match self.review_globs {
+            Some(json) => Some(
+                serde_json::from_str(&json).map_err(|_| corrupt("project.review_globs", json))?,
+            ),
+            None => None,
+        };
+        Ok(Project {
+            id: parse_ulid("project.id", self.id)?,
+            name: self.name,
+            path: self.path,
+            dev_command: self.dev_command,
+            default_agent: self.default_agent,
+            review_globs,
+            created_at: self.created_at,
+            archived: self.archived,
+        })
+    }
+}
+
+struct RawSession {
+    id: String,
+    task_id: Option<String>,
+    project_id: String,
+    agent_profile: String,
+    kind: String,
+    title: Option<String>,
+    native_session_id: Option<String>,
+    state: String,
+    exit_code: Option<i32>,
+    cols: u16,
+    rows: u16,
+    started_at: i64,
+    ended_at: Option<i64>,
+}
+
+impl RawSession {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            task_id: row.get(1)?,
+            project_id: row.get(2)?,
+            agent_profile: row.get(3)?,
+            kind: row.get(4)?,
+            title: row.get(5)?,
+            native_session_id: row.get(6)?,
+            state: row.get(7)?,
+            exit_code: row.get(8)?,
+            cols: row.get(9)?,
+            rows: row.get(10)?,
+            started_at: row.get(11)?,
+            ended_at: row.get(12)?,
+        })
+    }
+
+    fn into_session(self) -> Result<Session> {
+        Ok(Session {
+            id: parse_ulid("session.id", self.id)?,
+            task_id: self
+                .task_id
+                .map(|id| parse_ulid("session.task_id", id))
+                .transpose()?,
+            project_id: parse_ulid("session.project_id", self.project_id)?,
+            agent_profile: self.agent_profile,
+            kind: parse_kind(self.kind)?,
+            title: self.title,
+            native_session_id: self.native_session_id,
+            state: parse_state(self.state)?,
+            exit_code: self.exit_code,
+            cols: self.cols,
+            rows: self.rows,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests;

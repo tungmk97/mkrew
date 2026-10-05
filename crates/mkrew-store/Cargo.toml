@@ -1,0 +1,21 @@
+[package]
+name = "mkrew-store"
+description = "Mkrew persistence: SQLite + numbered migrations (SPEC §5)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+dunce = "1.0.5"
+mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+# Same major as mkrew-protocol so `Ulid` types match.
+ulid = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
