@@ -11,22 +11,42 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 ## Current milestone: M6 — Markdown review (SPEC §18)
 
 ### Acceptance criteria
-_To be copied from SPEC §18 M6 by the planning session._
+- [ ] Docs view lists files by `review_globs` + md files agents just changed; preview renders
+      headings, lists, task lists, tables, code blocks correctly.
+- [ ] Comment on a selection; threads with reply, resolve, reopen; persisted in SQLite.
+- [ ] External edits (e.g. in Zed) refresh the preview and re-anchor comments; deleted passages → `outdated`.
+- [ ] "Send to agent" types the prompt into the right session; queued while working.
+- [ ] Agent runs `mk comment reply` → reply appears in the thread, comment becomes `addressed`.
+- [ ] "View changes" diffs send-time snapshot vs current file.
+- [ ] E2E with the fake agent: plan written, 2 comments sent, both edited and answered.
 
 ### Task queue
-_Empty: the next session plans M6 (`mkrew-plan-milestone`)._
+- [ ] T6.1 Store + protocol for comments: migration `0005_doc_review.sql` (SPEC §5 named it 0004, which T5.3 took — renumber in SPEC), `Store` comment CRUD (create/list by file/reply = child row/set status/sent fields), protocol `DocComment`, `CommentStatus`, `comment.list/create/reply/resolve/reopen` params, `comment.updated` event, bump `PROTOCOL_VERSION`; store unit tests; covers: comments persisted in SQLite. (spec: §5, §7, §12)
+- [ ] T6.2 Daemon `comment.*` handlers (+ `comment.updated` broadcast, user reply on an addressed comment → `open`) and CLI `mk comment list --file` / `mk comment reply <id> "<text>"` (author = profile of `MKREW_SESSION_ID`'s session, comment → `addressed`); CLI e2e; covers: threads reply/resolve/reopen, agent reply → addressed. (spec: §7, §9, §12)
+- [ ] T6.3 Core pure modules: `mkrew_core::review::{reanchor(content, start, end, quote) → Anchor::{Lines(s, e), Outdated}}` (nearest match to the old lines, whitespace-tolerant), `prompt(file, comments)` (exact §12 template, insta snapshot), review-glob matching (default globs from §12); unit tests; covers: re-anchor/outdated, send prompt. (spec: §12, §16)
+- [ ] T6.4 Daemon `doc.list` (globs + md files in recent `files_changed` session events, with open-comment counts and last modifying session) and `doc.read` (content + hash); `doc.changed` when a watched md file's hash changes → re-anchor its comments (`comment.updated`); decide how md files are watched when no session is live (e.g. while a client has read a doc) and record it in HUMAN_CHECKS; daemon e2e; covers: doc list, external edits re-anchor/outdated. (spec: §7, §8, §12)
+- [ ] T6.5 Daemon `comment.send_to_agent`: compose the T6.3 prompt for the open/selected comments, enqueue into the session's `SendQueue` (queued while working), set `sent`/`sent_to`/`sent_snapshot`; daemon e2e with the fake agent (prompt arrives after the session leaves working); covers: send to agent, queued while working. (spec: §7, §12)
+- [ ] T6.6 Fake agent `reply_comments` step (read the typed prompt, edit the file per `[c_…]` id, run `mk comment reply` for each) + e2e: fake writes a plan, 2 comments created, sent, both edited and answered (`addressed`, file changed); covers: E2E criterion. (spec: §12, §16)
+- [ ] T6.7 UI pure Markdown render model `crates/mkrew-ui/src/markdown.rs` (pulldown-cmark → blocks: headings, paragraphs, lists, task lists, tables, code blocks, links, quotes, each with source line range; inline styled runs); insta snapshots; covers: preview renders correctly. (spec: §12, §14, §16)
+- [ ] T6.8 UI Docs view: `View::Docs` (Ctrl+Shift+3), file list from `doc.list` with open-comment counts + empty state, preview from the T6.7 model with theme tokens, source view with line numbers (Ctrl+Shift+E), refresh on `doc.changed`, Open in Zed; covers: Docs view lists files, preview, external edits refresh. (spec: §10, §12, §13, §14)
+- [ ] T6.9 UI comments: select text in preview/source → "Add comment" (Ctrl+Alt+M) anchored by line range + quote, threads in the right margin with reply/resolve/reopen, live via `comment.updated`, `outdated`/`addressed` shown; covers: comment on a selection, threads. (spec: §12, §13, §14)
+- [ ] T6.10 UI "Send to agent" (Ctrl+Shift+S): all open (or selected) comments → session picker defaulting to the file's last modifying session; "View changes" dialog diffing `sent_snapshot` vs current (`similar`); covers: send to agent, view changes. (spec: §12, §13, §14)
+- [ ] T6.11 M6 manual checks in HUMAN_CHECKS (real Claude/Codex review round trip, Zed external edit, §14 design check) + milestone wrap-up. (spec: §18)
+
+### Done (last 10)
+
+_M0–M5 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m5-done`; unticked criteria are in HUMAN_CHECKS)._
+
+### Carried over
 
 M5 left 4 of 6 criteria unticked; all wait on the T5.4, T5.7, T5.9 and T5.11 manual checks in
 HUMAN_CHECKS (real Claude/Codex resume across a daemon restart, Undo dialog, conflict badges,
 history viewer, §14 design check). If one fails, add a fix task to M6 first. M3/M4's unticked
 criteria (T3.4–T3.9, T4.7–T4.10 manual checks) still wait too.
 
-### Done (last 10)
-
-_M0–M5 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m5-done`; unticked criteria are in HUMAN_CHECKS)._
-
 ## Notes for the next session
 
+- M6 planned (T6.1–T6.11). Migration number for doc_comment is 0005 (0004 = checkpoint_at); the M7 `0005_files_git` in SPEC §5 then becomes 0006 — fix both in SPEC §5 in T6.1. Comment ids: SPEC shows `c_01JX…` (prefixed ULID). `pulldown-cmark`/`similar`/glob crates are not deps yet — look up via `researcher`.
 - T5.11: M5 complete (tag `m5-done`); manual M5 checks are HUMAN_CHECKS T5.4/T5.7/T5.9/T5.11. Next: plan M6 (Markdown review) — the T5.5 watcher (`watch.rs`, `files_changed`) is the base for "md files agents just changed" and external-edit refresh.
 - T5.10: `crates/mkrew-daemon/src/backup.rs` (`start(hub, dir)` from `Daemon::serve`, aborted on shutdown; check now + every `EVERY` = 1 h; pure-ish `run(store, dir, now_ms) → Option<created>`, `prune(dir, KEEP = 7)`, `file_name(now_ms)` = UTC `mkrew-YYYY-MM-DD.db`, `.db.partial` → rename). `Store::backup_to(path)` = `VACUUM INTO`; `Paths::backups_dir()`. E2E: `startup_marks_stale_sessions_exited` also waits for the startup backup. Defaults (UTC, hourly check) in HUMAN_CHECKS T5.10. Backups criterion ticked (automated). Next: T5.11 = M5 manual checks + wrap-up.
 - T5.9: `crates/mkrew-ui/src/history.rs` (pure `HistoryDialog{project_id, workspace, listing: Listing::{Loading, Loaded, Failed}, selected, log: Log::{Loading, Shown{cut}, Empty, Failed}}`, `load → newest to read`, `select`, `neighbour`, `finished`, `label/details/failed`, `key → Key::{Close, Move}`, `read_tail(files, TAIL_BYTES = 2 MiB) → Tail{bytes, cut}`). `TerminalPane::replay(&Session, log, ..)` = read-only pane (exited set, session cols/rows). main.rs: "History" button in the tab bar → `show_history` (`session.list{project_id}`), `open_history(serial)`, `select_history`, `load_history_log` (files read on the background executor), `close_history`, `history_key_down`, `render_history`; `Shell.{history, history_pane}`; `focus_pane` focuses the replay pane while open. Theme `HISTORY_DIALOG_FRACTION/HISTORY_LIST_WIDTH`. History criterion waits for the T5.9 manual check. Open review SHOULDs: VTE parse of the 2 MiB tail runs on the UI thread, no Retry on list/log failure, no shortcut/keyboard focus ring on rows, empty state has no primary action. Flaky under load: daemon `big_paste_to_a_child_that_does_not_read_leaves_the_daemon_responsive` ("no Sleeper ready") — passed on rerun.
