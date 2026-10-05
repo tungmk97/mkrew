@@ -10,7 +10,31 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ## Current milestone: M2 — UI: workspaces & terminals (SPEC §18)
 
-_No task queue yet — the next session plans M2 with the `mkrew-plan-milestone` skill._
+### Acceptance criteria
+- [ ] UI spawns the daemon if needed.
+- [ ] Workspace sidebar; add workspace via folder picker.
+- [ ] Many terminal tabs per workspace; split panes vertically/horizontally; agent or shell panes.
+- [ ] Tabs and split layout persist across UI restarts and daemon restarts.
+- [ ] Workspace/tab/pane/copy/paste/search shortcuts from §13 work; unbound keys reach the agent
+      (verify Ctrl+C, Ctrl+R, Esc inside Claude Code).
+- [ ] Close and reopen UI: sessions still alive and re-attached.
+- [ ] "Open in Zed" works.
+- [ ] Design tokens in `theme.rs`; design check from §14 done.
+- [ ] UI idle with 3 workspaces, 6 sessions: < 150 MB RAM.
+- [ ] Terminal rendering follows the §10 performance rules; stress test (fake agent `flood` in
+      6 panes) meets §15 throughput.
+- [ ] Default agent per workspace used for new agent panes.
+
+### Task queue
+- [ ] T2.1 Daemon + store: `tab.list/create/rename/close/move/set_layout`, `project.update` (`default_agent`), `session.spawn` with `kind` shell/agent + `tab_id` (agent profile defaults to the project's `default_agent`); integration tests; covers: layout persists (daemon side), default agent, shell panes. (spec: §5, §7, §6)
+- [ ] T2.2 New crate `mkrew-ui` (bin `mkrew`): `theme.rs` design tokens, empty window shell, background IPC client thread (reuse protocol framing), spawn `mkrew-daemon` detached if `hello` fails; test the connect-or-spawn logic headlessly; covers: UI spawns daemon, design tokens. (spec: §4, §14, §8)
+- [ ] T2.3 Terminal element in `mkrew-ui`: port spike emulator/renderer, feed from `session.attach` snapshot + binary output frames, input → `session.input`, resize → `session.resize`; batched style runs per row, dirty-row cache, ≤ 1 present per frame; snapshot test of grid → runs; covers: §10 perf rules. (spec: §10, §7)
+- [ ] T2.4 Workspace sidebar: project list, expand → sessions with status icon+text (§11), add workspace via folder picker (`prompt_for_paths`) → `project.add`; pure view-model tests; covers: sidebar, folder picker. (spec: §10, §11, §14)
+- [ ] T2.5 Pure split-tree model (split h/v, close, focus neighbour, JSON round-trip matching §5 layout) + tab bar; restore tabs/layout from `tab.list` on start, save via `tab.set_layout`; panes not visible are detached; covers: tabs, splits, persistence, re-attach on reopen. (spec: §5, §10)
+- [ ] T2.6 Pane lifecycle: new agent pane (workspace default agent) or shell pane in project folder; close pane with running agent → kill or hide dialog; hidden sessions reachable from sidebar; warn > 12 running; covers: agent/shell panes, default agent, sessions alive after UI close. (spec: §10, §6)
+- [ ] T2.7 Keyboard: §13 keymap (workspace/tab/pane actions), selection + copy, bracketed paste, scrollback (10k lines) + search; unbound keys → bytes to PTY (unit-test key→bytes for Ctrl+C, Ctrl+R, Esc); covers: shortcuts. (spec: §13, §10)
+- [ ] T2.8 "Open in Zed" in workspace menu (`zed <path>`, PATHEXT lookup, clear error + install hint if missing; testable command builder) + workspace settings for default agent; covers: Open in Zed, default agent UI. (spec: §10, §17)
+- [ ] T2.9 Stress + footprint: integration test running fake agent `flood` in 6 attached sessions through the UI client path, assert §15 throughput; RAM measurement procedure; add visual/manual checks (§14 design check, real Claude keys, RAM < 150 MB, reopen UI) to HUMAN_CHECKS; covers: stress, RAM, design check. (spec: §15, §14, §16)
 
 ### Done (last 10)
 
