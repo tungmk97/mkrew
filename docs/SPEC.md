@@ -277,6 +277,8 @@ ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|d
 ```
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
+`vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
+is the first child's share; every split has exactly two children; `null` = a tab without panes.
 
 ```json
 {"split":"vertical","ratio":0.5,"children":[
