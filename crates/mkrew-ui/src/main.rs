@@ -27,6 +27,7 @@ use mkrew_protocol::{
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
+use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{BOARD_CONTEXT, Command, Keymap, Run};
@@ -166,6 +167,8 @@ struct Shell {
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
     board_error: Option<String>,
+    /// Files edited by several sessions, warned about on their cards and pane headers.
+    conflicts: Conflicts,
     /// Why the last card action (drop, Run, Approve) failed, shown on its workspace's board.
     card_error: Option<(Ulid, String)>,
     /// The card Ctrl+Enter runs (clicked last).
@@ -358,6 +361,7 @@ impl Shell {
             viewed: Viewed::default(),
             board: Board::default(),
             board_error: None,
+            conflicts: Conflicts::default(),
             card_error: None,
             selected_card: None,
             starting: HashSet::new(),
@@ -434,6 +438,10 @@ impl Shell {
                         shell.list_failed(format!("{error:#}"));
                     }
                 }
+                // Tasks or sessions may have moved on while the lists were read.
+                shell
+                    .conflicts
+                    .prune(&shell.board, shell.sidebar.sessions());
                 cx.notify();
                 if std::mem::take(&mut shell.refresh_again) {
                     shell.refresh(window, cx);
@@ -1975,6 +1983,11 @@ impl Shell {
                     // A new session (e.g. spawned by `mk`): re-list.
                     Change::Refresh => self.refresh(window, cx),
                 }
+                // After the board and sidebar, so a task leaving Running clears its warning.
+                let detected = self.conflicts.apply(event);
+                if self.conflicts.prune(&self.board, self.sidebar.sessions()) || detected {
+                    cx.notify();
+                }
                 for tabs in self.tabs.values_mut() {
                     layout_changed |= tabs.apply(event);
                 }
@@ -2501,6 +2514,7 @@ impl Shell {
             follow_up_focus: &self.follow_up_focus,
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
+            conflicts: &self.conflicts,
         };
         div()
             .flex_1()
@@ -3301,7 +3315,19 @@ impl Shell {
                     cx.notify();
                 }),
             )
-            .children(info.map(|info| pane_header(info, now, theme)))
+            .children(info.map(|info| {
+                let paths = self.conflicts.for_session(session);
+                let conflict = (!paths.is_empty()).then(|| {
+                    conflict_badge(
+                        format!("pane-{session}"),
+                        &paths,
+                        theme,
+                        move |shell| shell.conflicts.dismiss_session(session),
+                        cx,
+                    )
+                });
+                pane_header(info, conflict, now, theme)
+            }))
             .child(div().flex_1().min_h_0().child(content))
             .when(several && !is_focused, |el| {
                 el.child(
@@ -3814,6 +3840,7 @@ struct CardContext<'a> {
     follow_up_focused: bool,
     /// Shortcut label of Run on the selected card.
     run_keys: String,
+    conflicts: &'a Conflicts,
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
@@ -3950,6 +3977,7 @@ fn task_card(
     let opens = card.opens_session();
     let follow_up_session = card.follow_up_session();
     let task_id = card.task_id;
+    let conflict_paths = cards.conflicts.for_task(task_id);
     let selected = cards.selected == Some(task_id);
     let group = SharedString::from(format!("card-{task_id}"));
     let edit_hover = theme.border;
@@ -4075,6 +4103,15 @@ fn task_card(
                         now,
                     )),
             )
+        })
+        .when(!conflict_paths.is_empty(), |el| {
+            el.child(conflict_badge(
+                format!("card-{task_id}"),
+                &conflict_paths,
+                theme,
+                move |shell| shell.conflicts.dismiss_task(task_id),
+                cx,
+            ))
         })
         .when(shows_error_row, |el| {
             let exited = sidebar::status_display(SessionState::Exited);
@@ -4229,9 +4266,78 @@ fn follow_up_field(
         }))
 }
 
-/// A pane's header (SPEC §11): status icon, agent name, session title, status text and time;
-/// hovering the status shows its source and last change.
-fn pane_header(session: &Session, now: i64, theme: &Theme) -> gpui::Div {
+/// A conflict warning (SPEC §11, M5): ⚠ and the first file edited by several sessions, every
+/// file on hover; "Dismiss" (shown on hover) clears it on every card and pane showing it.
+fn conflict_badge(
+    id: String,
+    paths: &[&str],
+    theme: &Theme,
+    dismiss: impl Fn(&mut Shell) + 'static,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let group = SharedString::from(format!("conflict-{id}"));
+    let hover = theme.border;
+    div()
+        .id(group.clone())
+        .group(group.clone())
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .min_w_0()
+        .text_size(px(font_size::META))
+        .tooltip(tooltip(theme, &conflicts::hover(paths), ""))
+        .child(
+            div()
+                .flex_none()
+                .text_color(rgb(theme.status_needs_input))
+                .child(conflicts::ICON),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_color(rgb(theme.text))
+                .child(format!("Conflict: {}", conflicts::label(paths))),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("conflict-dismiss-{id}")))
+                .flex_none()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .cursor_pointer()
+                .text_color(rgb(theme.text_muted))
+                .opacity(opacity::HIDDEN)
+                .group_hover(group, |style| style.opacity(opacity::FULL))
+                .hover(move |style| style.bg(rgb(hover)))
+                .active(|style| style.opacity(opacity::ACTIVE))
+                .tooltip(tooltip(
+                    theme,
+                    "Hide this warning on every card and pane",
+                    "",
+                ))
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    // Not a click on the card (which would open its terminal).
+                    cx.stop_propagation();
+                    dismiss(shell);
+                    cx.notify();
+                }))
+                .child("Dismiss"),
+        )
+}
+
+/// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
+/// warning, status text and time; hovering the status shows its source and last change.
+fn pane_header(
+    session: &Session,
+    conflict: Option<gpui::Stateful<gpui::Div>>,
+    now: i64,
+    theme: &Theme,
+) -> gpui::Div {
     let (state, changed_at) = (session.state, session.state_changed_at);
     div()
         .flex_none()
@@ -4265,6 +4371,11 @@ fn pane_header(session: &Session, now: i64, theme: &Theme) -> gpui::Div {
                 .text_color(rgb(theme.text_muted))
                 .children(session.title.clone()),
         )
+        .children(conflict.map(|badge| {
+            badge
+                .flex_none()
+                .max_w(relative(theme::PANE_CONFLICT_MAX_FRACTION))
+        }))
         .child(
             div()
                 .id(SharedString::from(format!("pane-status-{}", session.id)))

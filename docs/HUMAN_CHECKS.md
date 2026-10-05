@@ -265,6 +265,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   (> 2000 lines → "cut short" note) scrolls smoothly, long paths ellipsize, Esc closes, and
   dark + light screenshots for §14 (destructive button legibility, hover).
 
+- [ ] (T5.7) **Conflict badges.** Run two tasks in one workspace whose agents edit the same file
+  within 60 s (e.g. with Claude hooks installed, or one working at a time): both cards on the
+  Board and both pane headers show "⚠ Conflict: <path>", the tooltip names the file(s); hover
+  the badge → "Dismiss" clears it on both cards and panes; without dismissing, approving/moving
+  one card to Review clears that card only. Long paths ellipsize; the ⚠ renders as a monochrome
+  amber glyph (not a color emoji); hovering Dismiss shows its own tooltip; dark + light
+  screenshots §14.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -736,6 +744,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   misses). `conflict.detected` fires when a file gets a second (or further) editor within 60 s;
   repeat edits by the same editors stay quiet; trackers are dropped when a project's last
   session exits. The event is not persisted: a UI that connects later does not see it.
+- (T5.7) Conflict warnings in the UI: each card / pane stops warning on its own — a task when it
+  leaves Running/Needs input (re-running it later does not bring the warning back), a session
+  when it exits or its task stops warning; the other party keeps its warning until it leaves
+  too. "Dismiss" (hover-revealed, on the badge) clears that conflict on every card and pane, not
+  only the clicked one. Several files → "Conflict: <first> +N", tooltip lists all. Warnings live
+  in UI memory only (lost on UI restart, like the event itself). Badge color = the
+  `status-needs-input` amber (no dedicated warning token in §14; add a `warning` token if you
+  want status colors reserved for agent states). Dismiss is mouse-only for now (no focus ring /
+  command), like the card's Edit and Undo — backlog with keyboard card selection. A session
+  whose task is missing from a loaded board stops warning (covers deleted tasks; a task whose
+  first `task.updated` has not arrived yet would lose its pane warning — unlikely race, accepted).
 
 ## Done
 
