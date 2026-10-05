@@ -34,6 +34,20 @@ const OUTPUT_CHANNEL_CHUNKS: usize = 64;
 /// patterns then see the screen once per batch, so a prompt drawn and scrolled away within
 /// one batch can be missed (only under heavy output).
 const COALESCE_BYTES: usize = 256 * 1024;
+/// A session that handled more than [`FLOOD_BYTES`] of output within one [`FLOOD_WINDOW`] is
+/// flooding: its batches wait for [`Hub::flood_turn`], so floods are handled one at a time,
+/// with [`Pacer`] pauses so that work (mostly the emulator) takes at most 2/3 of a core. Six
+/// unthrottled floods then keep the whole daemon under one core (SPEC §15, measured by
+/// `mkrew-ui/tests/stress.rs`). Sessions under that rate (typing, prompts, redraws) never wait
+/// for the turn, and
+/// a waiting session still serves its commands; its PTY reader blocks meanwhile, which
+/// back-pressures the child.
+const FLOOD_WINDOW: Duration = Duration::from_millis(100);
+const FLOOD_BYTES: usize = 64 * 1024;
+/// Pause ⇒ 1/2 of the time spent handling flood batches.
+const PACE_IDLE_DIVISOR: u32 = 2;
+/// Pauses shorter than this are carried over: Windows timers are coarse (~15 ms).
+const PACE_MIN_PAUSE: Duration = Duration::from_millis(16);
 /// Input is queued for the writer thread in chunks of at most this size, so the channel bound
 /// below caps the bytes buffered per session (≈ 256 KiB) whatever the size of one request.
 pub const INPUT_CHUNK_BYTES: usize = 16 * 1024;
@@ -52,6 +66,86 @@ pub struct Hub {
     tasks: Mutex<JoinSet<()>>,
     /// Set by [`Hub::shutdown`]; refuses new sessions.
     stopping: AtomicBool,
+    /// Held by a flooding session task while it handles one output batch; see [`take_turn`].
+    flood_turn: tokio::sync::Mutex<Pacer>,
+}
+
+/// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
+/// time since the previous batch. Once it reaches [`PACE_MIN_PAUSE`] no flood batch starts
+/// before `resume_at`.
+#[derive(Debug, Default)]
+struct Pacer {
+    debt: Duration,
+    last_end: Option<Instant>,
+    resume_at: Option<Instant>,
+}
+
+impl Pacer {
+    /// Records one batch handled from `started` to `ended`.
+    fn after_batch(&mut self, started: Instant, ended: Instant) {
+        let idle = self.last_end.map_or(Duration::MAX, |last| {
+            started.saturating_duration_since(last)
+        });
+        self.debt = self.debt.saturating_sub(idle)
+            + ended.saturating_duration_since(started) / PACE_IDLE_DIVISOR;
+        self.last_end = Some(ended);
+        if self.debt >= PACE_MIN_PAUSE {
+            let resume_at = ended + std::mem::take(&mut self.debt);
+            self.resume_at = Some(resume_at);
+            // The pause is not idle time that pays off later debt.
+            self.last_end = Some(resume_at);
+        }
+    }
+}
+
+/// Waits until no other flood batch is being handled and the pacer's pause is over.
+async fn take_turn(turn: &tokio::sync::Mutex<Pacer>) -> tokio::sync::MutexGuard<'_, Pacer> {
+    loop {
+        let pacer = turn.lock().await;
+        match pacer.resume_at {
+            Some(at) if at > Instant::now() => {
+                drop(pacer);
+                tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
+            }
+            _ => return pacer,
+        }
+    }
+}
+
+/// Output handled by one session in the current [`FLOOD_WINDOW`].
+#[derive(Debug, Default)]
+struct OutputRate {
+    window_start: Option<Instant>,
+    bytes: usize,
+}
+
+impl OutputRate {
+    /// Counts `bytes` handled at `now`; `true` once the session is flooding.
+    fn add(&mut self, now: Instant, bytes: usize) -> bool {
+        if self
+            .window_start
+            .is_none_or(|start| now.saturating_duration_since(start) >= FLOOD_WINDOW)
+        {
+            self.window_start = Some(now);
+            self.bytes = 0;
+        }
+        self.bytes += bytes;
+        self.bytes > FLOOD_BYTES
+    }
+}
+
+/// Appends output chunks already queued, up to [`COALESCE_BYTES`], so the per-output work
+/// (screen lines, state patterns) runs once per batch during a flood (SPEC §15). Returns the
+/// exit if it was queued behind them.
+fn coalesce(bytes: &mut Vec<u8>, output: &mut mpsc::Receiver<PtyEvent>) -> Option<Option<i32>> {
+    while bytes.len() < COALESCE_BYTES {
+        match output.try_recv() {
+            Ok(PtyEvent::Output(more)) => bytes.extend_from_slice(&more),
+            Ok(PtyEvent::Exited(code)) => return Some(code),
+            Err(_) => break,
+        }
+    }
+    None
 }
 
 /// The channels of one live session.
@@ -116,6 +210,7 @@ impl Hub {
             live: Mutex::default(),
             tasks: Mutex::default(),
             stopping: AtomicBool::new(false),
+            flood_turn: tokio::sync::Mutex::default(),
         }
     }
 
@@ -338,26 +433,23 @@ impl Actor {
     ) {
         let mut commands_open = true;
         let mut kill_at: Option<tokio::time::Instant> = None;
+        let hub = Arc::clone(&self.hub);
+        let mut rate = OutputRate::default();
+        // A flooding session's batch waiting for its turn (more output queues up meanwhile).
+        let mut waiting: Option<Vec<u8>> = None;
         let exit_code = loop {
             let tick_at = self
                 .machine
                 .next_deadline()
                 .map(tokio::time::Instant::from_std);
             tokio::select! {
-                event = output.recv() => match event {
+                event = output.recv(), if waiting.is_none() => match event {
                     Some(PtyEvent::Output(mut bytes)) => {
-                        // Merge chunks already queued so the per-output work (screen lines,
-                        // state patterns) runs once per batch during a flood (SPEC §15).
-                        let mut exited = None;
-                        while bytes.len() < COALESCE_BYTES {
-                            match output.try_recv() {
-                                Ok(PtyEvent::Output(more)) => bytes.extend_from_slice(&more),
-                                Ok(PtyEvent::Exited(code)) => {
-                                    exited = Some(code);
-                                    break;
-                                }
-                                Err(_) => break,
-                            }
+                        let exited = coalesce(&mut bytes, &mut output);
+                        let flooding = rate.add(Instant::now(), bytes.len());
+                        if flooding && exited.is_none() {
+                            waiting = Some(bytes);
+                            continue;
                         }
                         self.on_output(&bytes);
                         if let Some(code) = exited {
@@ -371,6 +463,22 @@ impl Actor {
                     }
                     None => break None,
                 },
+                // Rebuilt each pass, so the turn is only roughly FIFO; the tick branch below may
+                // see the screen before a waiting batch (waits are tens of ms, `idle_after` s).
+                mut pacer = take_turn(&hub.flood_turn), if waiting.is_some() => {
+                    let mut bytes = waiting.take().unwrap_or_default();
+                    let queued = bytes.len();
+                    let exited = coalesce(&mut bytes, &mut output);
+                    let started = Instant::now();
+                    rate.add(started, bytes.len() - queued);
+                    self.on_output(&bytes);
+                    pacer.after_batch(started, Instant::now());
+                    drop(pacer);
+                    if let Some(code) = exited {
+                        drain_after_exit(&mut self, &mut output).await;
+                        break code;
+                    }
+                }
                 command = commands.recv(), if commands_open => match command {
                     Some(Command::Kill { force: true }) => self.kill(),
                     Some(Command::Kill { force: false }) => {
@@ -613,5 +721,85 @@ async fn sleep_until(at: Option<tokio::time::Instant>) {
     match at {
         Some(at) => tokio::time::sleep_until(at).await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    #[test]
+    fn back_to_back_batches_pause_half_their_time() {
+        let mut pacer = Pacer::default();
+        let t0 = Instant::now();
+        pacer.after_batch(t0, t0 + ms(10));
+        pacer.after_batch(t0 + ms(10), t0 + ms(20));
+        assert_eq!(pacer.resume_at, None);
+        pacer.after_batch(t0 + ms(20), t0 + ms(32));
+        assert_eq!(pacer.resume_at, Some(t0 + ms(48)));
+        // The pause itself does not pay off the next batch.
+        pacer.after_batch(t0 + ms(48), t0 + ms(58));
+        assert_eq!(pacer.debt, ms(5));
+        assert_eq!(pacer.resume_at, Some(t0 + ms(48)));
+    }
+
+    #[test]
+    fn idle_time_pays_off_the_debt() {
+        let mut pacer = Pacer::default();
+        let t0 = Instant::now();
+        pacer.after_batch(t0, t0 + ms(30));
+        assert_eq!(pacer.debt, ms(15));
+        pacer.after_batch(t0 + ms(40), t0 + ms(44));
+        assert_eq!(pacer.debt, ms(7));
+        // Sporadic flood batches never pause.
+        for i in 1..100 {
+            let start = t0 + ms(44 + i * 10);
+            pacer.after_batch(start, start + ms(2));
+        }
+        assert_eq!(pacer.resume_at, None);
+    }
+
+    #[tokio::test]
+    async fn the_turn_waits_for_the_pause_and_for_the_holder() {
+        let turn = tokio::sync::Mutex::new(Pacer::default());
+        let resume_at = Instant::now() + ms(40);
+        turn.lock().await.resume_at = Some(resume_at);
+        let first = take_turn(&turn).await;
+        assert!(Instant::now() >= resume_at);
+        let mut second = Box::pin(take_turn(&turn));
+        assert!(futures_poll_once(&mut second).await.is_none());
+        drop(first);
+        drop(second.await);
+    }
+
+    /// Polls `future` once.
+    async fn futures_poll_once<F: std::future::Future + Unpin>(
+        future: &mut F,
+    ) -> Option<F::Output> {
+        tokio::select! {
+            biased;
+            output = future => Some(output),
+            () = std::future::ready(()) => None,
+        }
+    }
+
+    #[test]
+    fn a_session_floods_past_the_bytes_of_one_window() {
+        let mut rate = OutputRate::default();
+        let t0 = Instant::now();
+        assert!(!rate.add(t0, FLOOD_BYTES / 2));
+        assert!(!rate.add(t0 + ms(50), FLOOD_BYTES / 2));
+        assert!(rate.add(t0 + ms(99), 1));
+        // A new window starts from zero.
+        assert!(!rate.add(t0 + ms(100), FLOOD_BYTES));
+        assert!(rate.add(t0 + ms(150), 1));
+        // Typing never floods.
+        for i in 1..1000 {
+            assert!(!rate.add(t0 + ms(200 + i), 64));
+        }
     }
 }

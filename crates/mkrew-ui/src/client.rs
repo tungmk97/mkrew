@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, anyhow, bail};
@@ -19,12 +20,15 @@ use mkrew_protocol::{
 };
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use ulid::Ulid;
 
-/// Frames buffered for the UI. When full the IPC thread stops reading, so a stalled UI makes
-/// the daemon drop queued output and send a `session.snapshot` instead (SPEC §7).
+/// Frames and output bytes buffered for the UI. When either is full the IPC thread stops
+/// reading, so a stalled UI makes the daemon drop queued output and send a `session.snapshot`
+/// instead (SPEC §7). One output frame can carry a whole 4 MB attachment queue. At most
+/// `INCOMING_BYTES` of output plus `INCOMING_FRAMES` events wait here (and the OS pipe buffer).
 const INCOMING_FRAMES: usize = 256;
+const INCOMING_BYTES: usize = 16 * 1024 * 1024;
 const READ_BUFFER: usize = 64 * 1024;
 const HELLO_ID: u64 = 1;
 
@@ -39,10 +43,86 @@ pub enum Incoming {
     },
 }
 
+/// Receiving end of [`Connection::incoming`]: a channel bounded by frames and by output bytes.
+#[derive(Clone)]
+pub struct Inbox {
+    frames: async_channel::Receiver<Incoming>,
+    budget: Arc<Budget>,
+}
+
+/// Sending end of an [`Inbox`], used by the IPC thread.
+struct Outbox {
+    frames: async_channel::Sender<Incoming>,
+    budget: Arc<Budget>,
+}
+
+/// Output bytes in the channel, as semaphore permits.
+struct Budget {
+    permits: Semaphore,
+    limit: usize,
+}
+
+impl Budget {
+    /// Clamped to the whole budget, so one oversized frame still fits once the rest drained.
+    fn cost(&self, incoming: &Incoming) -> usize {
+        match incoming {
+            Incoming::Output { data, .. } => data.len().min(self.limit),
+            Incoming::Event(_) => 0,
+        }
+    }
+
+    fn release(&self, incoming: &Incoming) {
+        self.permits.add_permits(self.cost(incoming));
+    }
+}
+
+fn inbox(frames: usize, bytes: usize) -> (Outbox, Inbox) {
+    let (tx, rx) = async_channel::bounded(frames);
+    let budget = Arc::new(Budget {
+        permits: Semaphore::new(bytes),
+        limit: bytes,
+    });
+    let outbox = Outbox {
+        frames: tx,
+        budget: Arc::clone(&budget),
+    };
+    (outbox, Inbox { frames: rx, budget })
+}
+
+impl Inbox {
+    pub async fn recv(&self) -> Result<Incoming, async_channel::RecvError> {
+        let incoming = self.frames.recv().await?;
+        self.budget.release(&incoming);
+        Ok(incoming)
+    }
+
+    pub fn try_recv(&self) -> Result<Incoming, async_channel::TryRecvError> {
+        let incoming = self.frames.try_recv()?;
+        self.budget.release(&incoming);
+        Ok(incoming)
+    }
+}
+
+impl Outbox {
+    /// Waits for room; fails once every [`Inbox`] is gone.
+    async fn send(&self, incoming: Incoming) -> anyhow::Result<()> {
+        let cost = u32::try_from(self.budget.cost(&incoming)).context("output frame too large")?;
+        if cost > 0 {
+            // Never closed; the permits come back as the inbox hands the frame out. Cancelling
+            // before the send below loses them, which only happens when the connection ends.
+            self.budget.permits.acquire_many(cost).await?.forget();
+        }
+        self.frames
+            .send(incoming)
+            .await
+            .map_err(|_| anyhow!("the UI dropped the incoming channel"))
+    }
+}
+
 /// A greeted connection to the daemon. Dropping it closes the connection.
 pub struct Connection {
     requests: mpsc::UnboundedSender<Pending>,
-    incoming: async_channel::Receiver<Incoming>,
+    incoming: Inbox,
     next_id: AtomicU64,
     hello: HelloResult,
 }
@@ -77,7 +157,7 @@ impl Connection {
 
     /// Events and session output, in arrival order. The UI must keep draining it: while it is
     /// full no responses are read either. Closed once the daemon connection is gone.
-    pub fn incoming(&self) -> async_channel::Receiver<Incoming> {
+    pub fn incoming(&self) -> Inbox {
         self.incoming.clone()
     }
 
@@ -151,7 +231,7 @@ fn run(socket: &str, ready: std::sync::mpsc::Sender<Opened>) {
             }
         };
         let (requests, mut outbox) = mpsc::unbounded_channel();
-        let (incoming_tx, incoming) = async_channel::bounded(INCOMING_FRAMES);
+        let (incoming_tx, incoming) = inbox(INCOMING_FRAMES, INCOMING_BYTES);
         let connection = Connection {
             requests,
             incoming,
@@ -217,7 +297,7 @@ async fn read_loop(
     mut rx: RecvHalf,
     mut decoder: FrameDecoder,
     pending: &RefCell<HashMap<u64, oneshot::Sender<Outcome>>>,
-    incoming: async_channel::Sender<Incoming>,
+    incoming: Outbox,
 ) -> anyhow::Result<()> {
     let mut buf = vec![0u8; READ_BUFFER];
     loop {
@@ -235,7 +315,7 @@ async fn read_loop(
                 Frame::Output { session_id, data } => Incoming::Output { session_id, data },
                 Frame::Message(Message::Request { .. }) => bail!("the daemon sent a request"),
             };
-            // Fails only once the `Connection` (which holds a receiver) is gone.
+            // Fails only once the `Connection` (which holds an inbox) is gone.
             incoming.send(push).await?;
         }
         let n = rx.read(&mut buf).await?;
@@ -257,4 +337,73 @@ async fn write_loop(
         tx.write_all(&bytes).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_lite::future::{block_on, poll_once};
+    use mkrew_protocol::SessionExitedEvent;
+
+    fn output(len: usize) -> Incoming {
+        Incoming::Output {
+            session_id: Ulid::nil(),
+            data: vec![b'x'; len],
+        }
+    }
+
+    fn exited() -> Incoming {
+        Incoming::Event(Event::SessionExited(SessionExitedEvent {
+            session_id: Ulid::nil(),
+            exit_code: Some(0),
+        }))
+    }
+
+    #[test]
+    fn output_waits_until_the_inbox_hands_out_enough_bytes() {
+        block_on(async {
+            let (outbox, inbox) = inbox(8, 10);
+            outbox.send(output(6)).await.unwrap();
+            let mut second = Box::pin(outbox.send(output(6)));
+            assert!(poll_once(&mut second).await.is_none(), "16 bytes > 10");
+            assert_eq!(inbox.try_recv().unwrap(), output(6));
+            poll_once(&mut second).await.unwrap().unwrap();
+            assert_eq!(inbox.recv().await.unwrap(), output(6));
+        });
+    }
+
+    #[test]
+    fn events_are_bounded_by_frames_only() {
+        block_on(async {
+            let (outbox, inbox) = inbox(2, 10);
+            outbox.send(output(10)).await.unwrap();
+            outbox.send(exited()).await.unwrap();
+            assert!(poll_once(Box::pin(outbox.send(exited()))).await.is_none());
+            assert_eq!(inbox.recv().await.unwrap(), output(10));
+            assert_eq!(inbox.recv().await.unwrap(), exited());
+        });
+    }
+
+    #[test]
+    fn an_oversized_frame_goes_through_once_the_rest_drained() {
+        block_on(async {
+            let (outbox, inbox) = inbox(8, 10);
+            outbox.send(output(4)).await.unwrap();
+            let mut big = Box::pin(outbox.send(output(25)));
+            assert!(poll_once(&mut big).await.is_none());
+            inbox.recv().await.unwrap();
+            poll_once(&mut big).await.unwrap().unwrap();
+            assert_eq!(inbox.recv().await.unwrap(), output(25));
+            outbox.send(output(10)).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn send_fails_once_the_inbox_is_gone() {
+        block_on(async {
+            let (outbox, inbox) = inbox(8, 10);
+            drop(inbox);
+            assert!(outbox.send(exited()).await.is_err());
+        });
+    }
 }

@@ -122,9 +122,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   attached floods of ~14 MB each through the UI's `Router` + `Emulator`). Here it passed 3/3:
   round trip on the UI connection p50 ≈ 0.23 ms, p95 ≈ 1.3 ms; feeding one drained batch p50
   ≈ 3.7 ms, p95 ≈ 17 ms, max ≈ 23 ms; daemon RSS 33→37 MiB, test-process RSS 128→130 MiB (flat
-  once the six 10k-line scrollbacks are full); **daemon CPU ≈ 1.5 cores** (§15 says < 1 —
-  open, T2.9a). `verify` runs the same test in debug, where only correctness and daemon memory
-  are asserted.
+  once the six 10k-line scrollbacks are full); daemon CPU was ≈ 1.5 cores, after T2.9a's flood
+  pacing (ADR 0002) 66–76 % of a core, now asserted < 100 % in release. `verify` runs the same
+  test in debug, where only correctness and daemon memory are asserted.
 - [ ] (T2.9) **§15 stress, in the real UI**: open 6 panes (3 workspaces) with the fake agent
   flood profile (`agents/fake.toml` copy with `args = ["--scenario", "<file>"]`, the file a
   `flood` step with `lines = 750000` ≈ 50 MB), run them at once in a release build
@@ -409,6 +409,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   16 MiB growth after every scrollback is full. The daemon now merges queued PTY chunks
   (≤ 256 KiB) before its per-output work, which halved its CPU per flood byte. §15 "daemon
   CPU < 1 core" is still missed (~1.5 cores, because the floods are unthrottled) → T2.9a.
+- (T2.9a) Flood pacing (ADR 0002): a session over 64 KiB of output per 100 ms is "flooding";
+  flood batches of all sessions run one at a time and flood work is held to ≤ 2/3 of a core
+  (floods ~20 % slower). Sessions under that rate never wait, so typing in a 7th pane during
+  six floods should stay instant — not measured automatically (covered by the "§15 stress, in
+  the real UI" check above). UI incoming channel: bounded to 16 MiB of output (+ 256 frames).
 
 ## Done
 

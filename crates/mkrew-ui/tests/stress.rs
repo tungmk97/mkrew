@@ -400,12 +400,14 @@ fn six_attached_floods_keep_the_ui_connection_responsive() {
         "daemon memory grew while flooding"
     );
     // Unoptimized emulators parse a flood many times slower than a frame (`verify` runs debug
-    // builds): the client then buffers up to 256 frames of up to 4 MB in its incoming channel
-    // (frame-bounded, not byte-bounded — T2.9a), and overflow snapshots may keep the
-    // scrollbacks from filling. So the §15 timings and the client's memory are asserted on
-    // `cargo test --release`. Daemon CPU is reported only: an unthrottled flood takes whatever
-    // the daemon can process (T2.9a).
+    // builds), so overflow snapshots may keep the scrollbacks from filling, and debug CPU says
+    // nothing about release. So the §15 timings, the client's memory and the daemon's CPU are
+    // asserted on `cargo test --release`.
     if !cfg!(debug_assertions) {
+        assert!(
+            mean_cpu < 100.0,
+            "the daemon used {mean_cpu:.0}% of a core while flooding"
+        );
         assert!(
             memory.len() >= 2,
             "the flood ended before memory was sampled with full scrollbacks"
