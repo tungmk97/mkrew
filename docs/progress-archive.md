@@ -2,6 +2,42 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M2 — UI: workspaces & terminals (tag `m2-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T2.4–T2.9 manual checks in
+HUMAN_CHECKS "To verify"; minimized-window detach (§10) carried over to M3):
+
+- [x] UI spawns the daemon if needed.
+- [ ] Workspace sidebar; add workspace via folder picker.
+- [ ] Many terminal tabs per workspace; split panes vertically/horizontally; agent or shell panes.
+- [ ] Tabs and split layout persist across UI restarts and daemon restarts.
+- [ ] Workspace/tab/pane/copy/paste/search shortcuts from §13 work; unbound keys reach the agent
+      (verify Ctrl+C, Ctrl+R, Esc inside Claude Code).
+- [x] Close and reopen UI: sessions still alive and re-attached.
+- [ ] "Open in Zed" works.
+- [ ] Design tokens in `theme.rs`; design check from §14 done.
+- [ ] UI idle with 3 workspaces, 6 sessions: < 150 MB RAM.
+- [ ] Terminal rendering follows the §10 performance rules; stress test (fake agent `flood` in
+      6 panes) meets §15 throughput.
+- [x] Default agent per workspace used for new agent panes.
+
+Tasks:
+
+- [x] T2.1 Daemon + store: tabs, `project.update`, spawn defaults — feat(daemon,store): terminal tabs, project.update, spawn defaults
+- [x] T2.2 `mkrew-ui` crate, design tokens, IPC client, connect-or-spawn — feat(ui): mkrew-ui crate, design tokens, IPC client, connect-or-spawn
+- [x] T2.3 Terminal pane fed from daemon attach — feat(ui): terminal pane fed from daemon attach
+- [x] T2.4 Workspace sidebar + add-workspace picker — feat(ui): workspace sidebar with session status and add-workspace picker
+- [x] T2.5a Split-tree and tabs models — feat(ui): split-tree and terminal tabs models
+- [x] T2.5b Tabs + split panes, restore, visible-only attach — feat(ui): terminal tabs and split panes with restore and visible-only attach
+- [x] T2.6 Pane lifecycle (agent/shell panes, kill-or-hide, running warning) — feat(ui): new agent/shell panes, close with kill-or-hide dialog, running warning
+- [x] T2.7a §13 keymap — feat(ui): keymap.toml with §13 workspace, tab and pane shortcuts
+- [x] T2.7b Selection, copy, scrollback — feat(ui): terminal selection, copy and scrollback paging
+- [x] T2.7c Find in scrollback — feat(ui): find in terminal scrollback
+- [x] T2.7d Pane resize, zoom, tab rename — feat(ui): pane resize, zoom and inline tab rename
+- [x] T2.8 Open in Zed + default agent menu — feat(ui): workspace menu with Open in Zed and default agent
+- [x] T2.9 Six-pane flood stress test — test(ui): six-pane flood stress test; perf(daemon): coalesce queued PTY output
+- [x] T2.9a Flood pacing, byte-bounded UI inbox — perf(daemon,ui): pace flood output, byte-bound the UI inbox
+
 ## M1 — Daemon & CLI, no UI (tag `m1-done`)
 
 Acceptance criteria at completion (unticked ones are in HUMAN_CHECKS "To verify": T1.10 real

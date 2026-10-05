@@ -151,6 +151,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   UI again: same workspaces, tabs, splits and sizes; every visible pane re-attached showing the
   current screen; hidden sessions still in the sidebar.
 
+- [ ] (M2 wrap-up) M2 tagged `m2-done` with 8 of 11 criteria unticked. All of them wait on the
+  manual T2.4–T2.9 checks above (sidebar/picker, tabs/splits, persistence, §13 shortcuts +
+  Ctrl+C/Ctrl+R/Esc in Claude Code, Open in Zed, §14 design check, RAM < 150 MB, stress in the
+  real UI). One §10 rule is still **not implemented**: detaching panes while the window is
+  minimized. It is carried over to M3 as the first task. If a manual check fails, add a fix task
+  to the M3 queue.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
