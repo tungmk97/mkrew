@@ -542,6 +542,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   with no code (killed) counts as non-zero. Only review cards can be approved. Session `idle`
   does not move a card: screen-only agents such as omp never reach `done`, so their cards stay
   running until the session exits or the user drags them.
+- (T4.3) `task.run`: refused (`invalid_state`) while the task has a non-exited session (checked
+  again under the spawn lock); an empty prompt sends nothing in every mode; the session title is
+  the task title. `type` writes the prompt + Enter through the send queue at the first
+  idle/needs_input/done, unchanged, so a multi-line prompt presses Enter per line (like
+  `session.send`; bracketed paste = backlog). A card moved by the run lifecycle keeps its
+  `position` (it may land mid-column). Sessions ended by daemon shutdown do not move their card
+  (it stays running/needs_input for the §8 startup resume instead of getting `error_flag`).
+  `arg` prompts with cmd metacharacters still fail for `.cmd` shims until T4.4.
 
 ## Done
 

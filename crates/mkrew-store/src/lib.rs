@@ -397,6 +397,24 @@ impl Store {
         self.get_task(id)
     }
 
+    /// Sets the status and error flag from the run lifecycle (SPEC §5); the card keeps its
+    /// position.
+    pub fn set_task_status(&self, id: Ulid, status: TaskStatus, error_flag: bool) -> Result<Task> {
+        let changed = self.conn.execute(
+            "UPDATE task SET status = ?2, error_flag = ?3, updated_at = ?4 WHERE id = ?1",
+            params![
+                id.to_string(),
+                task_status_str(status),
+                error_flag,
+                now_ms()
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::TaskNotFound(id));
+        }
+        self.get_task(id)
+    }
+
     /// Deletes the task and returns it. Refused while one of its sessions has not exited;
     /// exited sessions are kept (history) and become free terminals (`task_id` = NULL).
     pub fn delete_task(&self, id: Ulid) -> Result<Task> {

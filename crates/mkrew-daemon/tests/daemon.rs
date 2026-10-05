@@ -19,8 +19,8 @@ use mkrew_protocol::{
     SessionListParams, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
     SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
     TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
-    TaskUpdateParams, TerminalTab, encode,
+    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
+    TaskRunParams, TaskStatus, TaskUpdateParams, TerminalTab, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -93,6 +93,19 @@ impl Env {
             .replace("args = []", &format!("args = {args}"));
         assert_ne!(profile, sample);
         self.write_profile(id, &profile);
+    }
+
+    /// Like [`Env::write_fake_profile`], saved as `<id>.toml` with `prompt_mode = <mode>`.
+    fn write_fake_profile_with_prompt(&self, id: &str, mode: &str) {
+        self.write_fake_profile_as(id, "[]");
+        let path = self.dir.path().join(format!("config/agents/{id}.toml"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let changed = text.replace(
+            "prompt_mode = \"none\"",
+            &format!("prompt_mode = \"{mode}\""),
+        );
+        assert_ne!(changed, text);
+        std::fs::write(path, changed).unwrap();
     }
 
     fn repo(&self) -> PathBuf {
@@ -1554,6 +1567,145 @@ fn spawn_defaults_to_the_project_agent_or_the_shell_and_fills_an_empty_tab() {
             .unwrap();
         client.wait_state(session_id, SessionState::Exited);
     }
+    client.stop();
+}
+
+fn run_task(task_id: Ulid) -> Request {
+    Request::TaskRun(TaskRunParams {
+        task_id,
+        cols: 80,
+        rows: 24,
+    })
+}
+
+/// Makes calls until a `task.updated` for `id` matches `wanted`; returns that task.
+fn wait_task(client: &mut Client, id: Ulid, wanted: impl Fn(&Task) -> bool) -> Task {
+    let event =
+        client.wait_event_where(|e| matches!(e, Event::TaskUpdated(t) if t.id == id && wanted(t)));
+    let Event::TaskUpdated(task) = event else {
+        unreachable!()
+    };
+    task
+}
+
+#[test]
+fn task_run_delivers_the_prompt_per_mode_and_the_card_follows_the_session() {
+    let env = Env::new();
+    env.write_fake_profile();
+    env.write_fake_profile_with_prompt("fake-arg", "arg");
+    env.write_fake_profile_with_prompt("fake-type", "type");
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let task = |client: &mut Client, title: &str, agent: Option<&str>| -> Task {
+        client
+            .call(create_task(&project, title, agent))
+            .into_result()
+            .unwrap()
+    };
+    let by_default = task(&mut client, "arg", None);
+    let typed = task(&mut client, "type", Some("fake-type"));
+    let silent = task(&mut client, "none", Some("fake"));
+
+    // No task agent and no project default: nothing to run.
+    assert_eq!(
+        error_code(client.call(run_task(by_default.id))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(run_task(Ulid::new()))),
+        ErrorCode::NotFound
+    );
+    let zero = Request::TaskRun(TaskRunParams {
+        task_id: silent.id,
+        cols: 0,
+        rows: 24,
+    });
+    assert_eq!(error_code(client.call(zero)), ErrorCode::InvalidRequest);
+    client
+        .call(set_default_agent(&project, Some("fake-arg")))
+        .into_result::<Project>()
+        .unwrap();
+
+    // `arg`: the default agent gets the prompt as its last argument; the card follows the
+    // session through needs_input back to running and into review on exit 0.
+    let run: SessionSpawnResult = client.call(run_task(by_default.id)).into_result().unwrap();
+    let session = client.session(run.session_id);
+    assert_eq!(session.agent_profile, "fake-arg");
+    assert_eq!(session.task_id, Some(by_default.id));
+    assert_eq!(session.project_id, project.id);
+    assert_eq!(session.title.as_deref(), Some("arg"));
+    wait_task(&mut client, by_default.id, |t| {
+        t.status == TaskStatus::Running
+    });
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+    wait_task(&mut client, by_default.id, |t| {
+        t.status == TaskStatus::NeedsInput
+    });
+    client
+        .call(send(run.session_id, "y"))
+        .into_result::<()>()
+        .unwrap();
+    let done = wait_task(&mut client, by_default.id, |t| {
+        t.status == TaskStatus::Review
+    });
+    assert!(!done.error_flag);
+    assert_eq!(client.session(run.session_id).exit_code, Some(0));
+    let log = session_log(&env, run.session_id);
+    assert!(log.contains("Task: prompt for arg"), "{log}");
+
+    // `type`: the prompt is typed once the agent first waits for input (here it answers the
+    // fake's question), so the run finishes on its own.
+    let run: SessionSpawnResult = client.call(run_task(typed.id)).into_result().unwrap();
+    assert_eq!(client.session(run.session_id).agent_profile, "fake-type");
+    wait_task(&mut client, typed.id, |t| t.status == TaskStatus::Review);
+    let log = session_log(&env, run.session_id);
+    assert!(log.contains("prompt for type"), "{log}");
+    assert!(!log.contains("Task:"), "{log}");
+
+    // `none`: no prompt; a second run or a delete is refused while the session lives.
+    let run: SessionSpawnResult = client.call(run_task(silent.id)).into_result().unwrap();
+    wait_task(&mut client, silent.id, |t| {
+        t.status == TaskStatus::NeedsInput
+    });
+    assert!(!session_log(&env, run.session_id).contains("prompt for none"));
+    assert_eq!(
+        error_code(client.call(run_task(silent.id))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        error_code(client.call(Request::TaskDelete(TaskRef { task_id: silent.id }))),
+        ErrorCode::InvalidState
+    );
+    // Killed (non-zero exit): needs_input with the error flag; running again clears it.
+    let kill = |session_id| {
+        Request::SessionKill(SessionKillParams {
+            session_id,
+            force: true,
+        })
+    };
+    client
+        .call(kill(run.session_id))
+        .into_result::<()>()
+        .unwrap();
+    let failed = wait_task(&mut client, silent.id, |t| t.error_flag);
+    assert_eq!(failed.status, TaskStatus::NeedsInput);
+    client.events.clear();
+    let rerun: SessionSpawnResult = client.call(run_task(silent.id)).into_result().unwrap();
+    let running = wait_task(&mut client, silent.id, |t| t.status == TaskStatus::Running);
+    assert!(!running.error_flag);
+
+    // Stopping the daemon ends the session but is no failure: the card stays running for
+    // the startup resume (SPEC §8).
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    assert_eq!(client.session(rerun.session_id).state, SessionState::Exited);
+    let after = list_tasks(&mut client, &project);
+    let after = after.iter().find(|t| t.id == silent.id).unwrap();
+    assert_eq!(
+        (after.status, after.error_flag),
+        (TaskStatus::Running, false)
+    );
     client.stop();
 }
 

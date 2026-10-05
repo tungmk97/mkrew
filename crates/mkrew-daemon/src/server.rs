@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
-use mkrew_core::{HookAgent, Paths};
+use mkrew_core::{HookAgent, Paths, PromptMode};
 use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, DaemonStatusResult, ErrorCode, Event, Frame,
     FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
-    ProfileErrorInfo, ProjectAddParams, ProjectUpdateParams, Request, Session, SessionKillParams,
-    SessionKind, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
-    SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent, TaskUpdateParams,
-    TerminalTab, encode,
+    ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request, Session,
+    SessionKillParams, SessionKind, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent,
+    TaskRunParams, TaskUpdateParams, TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -228,6 +228,7 @@ impl Daemon {
                 (self.task_updated(task), After::Continue)
             }
             Request::TaskDelete(params) => (self.task_delete(params.task_id), After::Continue),
+            Request::TaskRun(params) => (self.task_run(params), After::Continue),
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
@@ -349,21 +350,108 @@ impl Daemon {
             Ok(profile) => profile,
             Err(outcome) => return outcome,
         };
+        let start = Start {
+            project,
+            profile,
+            task_id: None,
+            title: params.title,
+            cols: params.cols,
+            rows: params.rows,
+            typed: None,
+        };
+        match self.start_session(start) {
+            Ok(session_id) => {
+                if let Some(tab_id) = params.tab_id {
+                    self.place_in_empty_tab(tab_id, session_id);
+                }
+                ok(&SessionSpawnResult { session_id })
+            }
+            Err(outcome) => outcome,
+        }
+    }
+
+    /// Runs the task (SPEC §5, §6): its agent, else the project's default, in the project
+    /// folder, with the prompt per the profile's `prompt_mode`. Refused while the task already
+    /// has a live session.
+    fn task_run(&self, params: TaskRunParams) -> Outcome {
+        if params.cols == 0 || params.rows == 0 {
+            return Outcome::error(ErrorCode::InvalidRequest, "cols and rows must be > 0");
+        }
+        let found = {
+            let store = self.store();
+            store.get_task(params.task_id).and_then(|task| {
+                let project = store.get_project(task.project_id)?;
+                let sessions = store.list_sessions(Some(project.id))?;
+                let live = sessions
+                    .iter()
+                    .any(|s| s.task_id == Some(task.id) && s.state != SessionState::Exited);
+                Ok((task, project, live))
+            })
+        };
+        let (task, project, live) = match found {
+            Ok(found) => found,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        if live {
+            let message = format!("task {} is already running", task.id);
+            return Outcome::error(ErrorCode::InvalidState, message);
+        }
+        let Some(profile_id) = task.agent_profile.or(project.default_agent.clone()) else {
+            let message = format!(
+                "task has no agent and project {} has no default agent",
+                project.name
+            );
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        };
+        let mut profile = match self.load_profile(&profile_id) {
+            Ok(profile) if profile.kind == mkrew_core::ProfileKind::Agent => profile,
+            Ok(_) => {
+                let message = format!("{profile_id} is a shell profile, not an agent");
+                return Outcome::error(ErrorCode::InvalidRequest, message);
+            }
+            Err(outcome) => return outcome,
+        };
+        // An empty prompt starts the agent without one, whatever the mode.
+        let mut typed = None;
+        if !task.prompt.is_empty() {
+            match profile.prompt_mode {
+                PromptMode::Arg => profile.args.push(task.prompt),
+                PromptMode::Type => typed = Some(format!("{}\r", task.prompt)),
+                PromptMode::None => {}
+            }
+        }
+        let start = Start {
+            project,
+            profile,
+            task_id: Some(task.id),
+            title: Some(task.title),
+            cols: params.cols,
+            rows: params.rows,
+            typed,
+        };
+        match self.start_session(start) {
+            Ok(session_id) => ok(&SessionSpawnResult { session_id }),
+            Err(outcome) => outcome,
+        }
+    }
+
+    /// Inserts the session row and starts its PTY; a task's card moves to running.
+    fn start_session(&self, start: Start) -> Result<Ulid, Outcome> {
         let started_at = now_ms();
         let session = Session {
             id: Ulid::new(),
-            task_id: None,
-            project_id: project.id,
-            agent_profile: profile.id.clone(),
-            kind: session_kind(profile.kind),
-            title: params.title,
+            task_id: start.task_id,
+            project_id: start.project.id,
+            agent_profile: start.profile.id.clone(),
+            kind: session_kind(start.profile.kind),
+            title: start.title,
             native_session_id: None,
             state: SessionState::Starting,
             state_source: StateSource::Daemon,
             state_changed_at: started_at,
             exit_code: None,
-            cols: params.cols,
-            rows: params.rows,
+            cols: start.cols,
+            rows: start.rows,
             started_at,
             ended_at: None,
         };
@@ -371,24 +459,25 @@ impl Daemon {
         let spec = SpawnSpec {
             log_file: self.paths.sessions_dir().join(format!("{session_id}.log")),
             session,
-            profile,
-            cwd: project.path.into(),
+            profile: start.profile,
+            cwd: start.project.path.into(),
             socket: self.paths.socket.clone(),
+            typed: start.typed,
         };
         match self.hub.spawn(spec) {
-            Ok(()) => {
-                if let Some(tab_id) = params.tab_id {
-                    self.place_in_empty_tab(tab_id, session_id);
-                }
-                ok(&SessionSpawnResult { session_id })
-            }
+            Ok(()) => Ok(session_id),
             Err(SpawnError::Launch(e @ LaunchError::NotFound { .. })) => {
-                Outcome::error(ErrorCode::NotFound, e.to_string())
+                Err(Outcome::error(ErrorCode::NotFound, e.to_string()))
             }
-            Err(SpawnError::Launch(e)) => Outcome::error(ErrorCode::InvalidRequest, e.to_string()),
+            Err(SpawnError::Launch(e)) => {
+                Err(Outcome::error(ErrorCode::InvalidRequest, e.to_string()))
+            }
+            Err(e @ SpawnError::TaskRunning(_)) => {
+                Err(Outcome::error(ErrorCode::InvalidState, e.to_string()))
+            }
             Err(SpawnError::Other(e)) => {
                 tracing::error!("spawn failed: {e:#}");
-                Outcome::error(ErrorCode::Internal, format!("{e:#}"))
+                Err(Outcome::error(ErrorCode::Internal, format!("{e:#}")))
             }
         }
     }
@@ -744,6 +833,17 @@ impl From<Vec<u8>> for Outgoing {
             written: None,
         }
     }
+}
+
+/// What [`Daemon::start_session`] starts.
+struct Start {
+    project: Project,
+    profile: mkrew_core::AgentProfile,
+    task_id: Option<Ulid>,
+    title: Option<String>,
+    cols: u16,
+    rows: u16,
+    typed: Option<String>,
 }
 
 /// Per-connection state kept by the read loop.

@@ -429,6 +429,30 @@ fn tasks_are_created_edited_moved_and_persist() {
 }
 
 #[test]
+fn run_lifecycle_sets_status_and_error_flag_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let task = store.create_task(p.id, "t", "", None, Some(3.5)).unwrap();
+    let failed = store
+        .set_task_status(task.id, TaskStatus::NeedsInput, true)
+        .unwrap();
+    assert_eq!(
+        (failed.status, failed.error_flag, failed.position),
+        (TaskStatus::NeedsInput, true, 3.5)
+    );
+    let rerun = store
+        .set_task_status(task.id, TaskStatus::Running, false)
+        .unwrap();
+    assert!(!rerun.error_flag);
+    assert_eq!(open(&dir).get_task(task.id).unwrap(), rerun);
+    assert!(matches!(
+        store.set_task_status(Ulid::new(), TaskStatus::Done, false),
+        Err(StoreError::TaskNotFound(_))
+    ));
+}
+
+#[test]
 fn delete_task_refuses_live_sessions_and_detaches_exited_ones() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

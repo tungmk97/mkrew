@@ -69,6 +69,9 @@ pub enum Request {
     TaskMove(TaskMoveParams),
     #[serde(rename = "task.delete")]
     TaskDelete(TaskRef),
+    /// Returns [`SessionSpawnResult`].
+    #[serde(rename = "task.run")]
+    TaskRun(TaskRunParams),
     #[serde(rename = "session.spawn")]
     SessionSpawn(SessionSpawnParams),
     #[serde(rename = "session.list")]
@@ -441,6 +444,14 @@ pub struct TaskMoveParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskRef {
     pub task_id: Ulid,
+}
+
+/// `task.run`: start the task's agent in the project folder with the task's prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskRunParams {
+    pub task_id: Ulid,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -818,6 +829,11 @@ mod tests {
                 position: 2.5,
             }),
             Request::TaskDelete(TaskRef { task_id: sid() }),
+            Request::TaskRun(TaskRunParams {
+                task_id: sid(),
+                cols: 120,
+                rows: 40,
+            }),
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),
             Request::SessionDetach(SessionRef { session_id: sid() }),

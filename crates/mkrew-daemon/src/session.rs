@@ -198,12 +198,17 @@ pub struct SpawnSpec {
     /// `MKREW_SOCKET` inside the PTY.
     pub socket: String,
     pub log_file: PathBuf,
+    /// Text queued like a `session.send` before the session starts (`prompt_mode = "type"`):
+    /// written once the agent is first ready.
+    pub typed: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
     #[error(transparent)]
     Launch(launch::LaunchError),
+    #[error("task {0} is already running")]
+    TaskRunning(Ulid),
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -237,6 +242,7 @@ impl Hub {
             cwd,
             socket,
             log_file,
+            typed,
         } = spec;
         let mut cmd = launch::command(&profile).map_err(SpawnError::Launch)?;
         cmd.cwd(&cwd);
@@ -330,19 +336,45 @@ impl Hub {
             if self.stopping.load(Ordering::SeqCst) {
                 return Err(kill_on_error(anyhow::anyhow!("the daemon is stopping")));
             }
-            self.store()
-                .insert_session(&session)
-                .context("insert session")
-                .map_err(&mut kill_on_error)?;
+            {
+                let store = self.store();
+                // Checked again here: two clients may run the same task at once.
+                if let Some(task_id) = session.task_id {
+                    let sessions = store
+                        .list_sessions(Some(session.project_id))
+                        .context("list sessions")
+                        .map_err(&mut kill_on_error)?;
+                    let busy = sessions
+                        .iter()
+                        .any(|s| s.task_id == Some(task_id) && s.state != SessionState::Exited);
+                    if busy {
+                        // Only for the kill; the caller gets the precise error.
+                        let _ = kill_on_error(anyhow::anyhow!("task already running"));
+                        return Err(SpawnError::TaskRunning(task_id));
+                    }
+                }
+                store
+                    .insert_session(&session)
+                    .context("insert session")
+                    .map_err(&mut kill_on_error)?;
+            }
             let channels = Live {
                 commands: commands_tx.clone(),
                 input: Arc::clone(&shared_input),
             };
             live.insert(session.id, channels);
+            // Before the session task runs, so its own task updates come after this one.
+            if let Some(task_id) = session.task_id {
+                self.follow_task(task_id, SessionState::Starting, None);
+            }
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
         let (sends, sends_rx) = mpsc::unbounded_channel();
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
+        let mut queue = SendQueue::default();
+        if let Some(text) = typed {
+            queue.push(text);
+        }
         let actor = Actor {
             hub: std::sync::Arc::clone(self),
             session,
@@ -354,12 +386,41 @@ impl Hub {
             pid,
             emulator: None,
             machine,
-            queue: SendQueue::default(),
+            queue,
             log,
             attachments: Vec::new(),
         };
         lock(&self.tasks).spawn(actor.run(rx, commands));
         Ok(())
+    }
+
+    /// Moves task `task_id` after its session went to `state` (SPEC §5 rules) and announces
+    /// the change. Read and write share one store lock, so a concurrent drag is not lost.
+    /// Exits caused by daemon shutdown are not failures: the card keeps its status for the
+    /// startup resume (SPEC §8).
+    pub fn follow_task(&self, task_id: Ulid, state: SessionState, exit_code: Option<i32>) {
+        if self.stopping.load(Ordering::SeqCst) {
+            return;
+        }
+        let updated = {
+            let store = self.store();
+            store.get_task(task_id).and_then(|task| {
+                match mkrew_core::task::on_session_state(task.status, state, exit_code) {
+                    Some((status, error_flag)) => {
+                        store.set_task_status(task_id, status, error_flag).map(Some)
+                    }
+                    None => Ok(None),
+                }
+            })
+        };
+        match updated {
+            Ok(Some(task)) => {
+                tracing::debug!(%task_id, status = ?task.status, "task follows its session");
+                let _ = self.events.send(Event::TaskUpdated(task));
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!(%task_id, "task status not updated: {e}"),
+        }
     }
 
     /// Sends `command` to a live session; `false` if it is not running.
@@ -649,6 +710,9 @@ impl Actor {
             source,
             changed_at: self.session.state_changed_at,
         }));
+        if let Some(task_id) = self.session.task_id {
+            self.hub.follow_task(task_id, state, self.session.exit_code);
+        }
     }
 
     fn save(&self) {

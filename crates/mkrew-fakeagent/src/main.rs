@@ -1,14 +1,16 @@
-//! `mkrew-fakeagent [--scenario <file|name>]` — runs a scenario (SPEC §16).
+//! `mkrew-fakeagent [--scenario <file|name>] [<prompt>]` — runs a scenario (SPEC §16).
 //!
 //! The scenario comes from `--scenario`, else `MKREW_FAKE_SCENARIO`, else the built-in `ask`.
+//! A `<prompt>` (a task prompt passed with `prompt_mode = "arg"`) is printed first as
+//! `Task: <prompt>`.
 
-use std::io::{self, BufWriter};
+use std::io::{self, BufWriter, Write};
 use std::process;
 
 use anyhow::{Result, bail};
 use mkrew_fakeagent::{DEFAULT_SCENARIO, SCENARIO_ENV, load, run};
 
-const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>]";
+const USAGE: &str = "usage: mkrew-fakeagent [--scenario <file|name>] [<prompt>]";
 
 fn main() {
     // VT processing for colors when attached to a Windows console; no-op elsewhere.
@@ -23,30 +25,42 @@ fn main() {
 }
 
 fn real_main() -> Result<i32> {
-    let spec = match scenario_arg(std::env::args().skip(1))? {
+    let args = parse_args(std::env::args().skip(1))?;
+    let spec = match args.scenario {
         Some(spec) => spec,
         None => std::env::var(SCENARIO_ENV).unwrap_or_else(|_| DEFAULT_SCENARIO.to_owned()),
     };
     let scenario = load(&spec)?;
     let mut out = BufWriter::new(io::stdout().lock());
+    if let Some(prompt) = args.prompt {
+        writeln!(out, "Task: {prompt}")?;
+    }
     Ok(run(&scenario, &mut io::stdin().lock(), &mut out)?)
 }
 
-fn scenario_arg(mut args: impl Iterator<Item = String>) -> Result<Option<String>> {
-    let mut spec = None;
+#[derive(Debug, Default, PartialEq)]
+struct Args {
+    scenario: Option<String>,
+    prompt: Option<String>,
+}
+
+fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args> {
+    let mut parsed = Args::default();
     while let Some(arg) = args.next() {
         if let Some(value) = arg.strip_prefix("--scenario=") {
-            spec = Some(value.to_owned());
+            parsed.scenario = Some(value.to_owned());
         } else if arg == "--scenario" {
             match args.next() {
-                Some(value) => spec = Some(value),
+                Some(value) => parsed.scenario = Some(value),
                 None => bail!("--scenario needs a value\n{USAGE}"),
             }
-        } else {
+        } else if arg.starts_with("--") || parsed.prompt.is_some() {
             bail!("unexpected argument `{arg}`\n{USAGE}");
+        } else {
+            parsed.prompt = Some(arg);
         }
     }
-    Ok(spec)
+    Ok(parsed)
 }
 
 #[cfg(test)]
@@ -60,22 +74,30 @@ mod tests {
             .into_iter()
     }
 
+    fn scenario_arg(list: &[&str]) -> Option<String> {
+        parse_args(args(list)).unwrap().scenario
+    }
+
     #[test]
     fn scenario_arg_forms() {
-        assert_eq!(scenario_arg(args(&[])).unwrap(), None);
+        assert_eq!(scenario_arg(&[]), None);
         assert_eq!(
-            scenario_arg(args(&["--scenario", "flood"]))
-                .unwrap()
-                .as_deref(),
+            scenario_arg(&["--scenario", "flood"]).as_deref(),
             Some("flood")
         );
         assert_eq!(
-            scenario_arg(args(&["--scenario=a.toml"]))
-                .unwrap()
-                .as_deref(),
+            scenario_arg(&["--scenario=a.toml"]).as_deref(),
             Some("a.toml")
         );
-        assert!(scenario_arg(args(&["--scenario"])).is_err());
-        assert!(scenario_arg(args(&["--bogus"])).is_err());
+        assert!(parse_args(args(&["--scenario"])).is_err());
+        assert!(parse_args(args(&["--bogus"])).is_err());
+    }
+
+    #[test]
+    fn one_positional_arg_is_the_prompt() {
+        let parsed = parse_args(args(&["--scenario", "ask", "fix the bug & ship"])).unwrap();
+        assert_eq!(parsed.prompt.as_deref(), Some("fix the bug & ship"));
+        assert_eq!(parsed.scenario.as_deref(), Some("ask"));
+        assert!(parse_args(args(&["one", "two"])).is_err());
     }
 }
