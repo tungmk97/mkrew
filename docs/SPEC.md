@@ -430,7 +430,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.attach` | `session_id` | screen snapshot (grid + cursor + modes) + subscribe to output |
 | `session.detach` | `session_id` | ok |
 | `session.input` | `session_id`, `data` (base64) | ok |
-| `session.send` | `session_id`, `text`, `submit` (bool) | ok — queued if the session is working |
+| `session.send` | `session_id`, `text`, `submit` (bool) | ok — queued if the session is working; multi-line text goes as a bracketed paste when the program enabled mode 2004 |
 | `session.wait` | `session_id`, `until` (states), `timeout_ms` | final state |
 | `session.resize` | `session_id`, `cols`, `rows` | ok |
 | `session.kill` | `session_id`, `force` | ok |
@@ -442,7 +442,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until the daemon stops |
 | `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched |
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (`list`: `project_id` + `file_path?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines; `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
-| `comment.send_to_agent` | `comment_ids[]`, `session_id` | ok (comments → `sent`) |
+| `comment.send_to_agent` | `comment_ids[]`, `session_id` | the thread roots, now `sent` (`sent_to`, `sent_snapshot` = file content), request order; reply ids stand for their thread; all on one file of the live session's project. The §12 prompt is queued like `session.send` (submit); multi-line sends are wrapped as a bracketed paste when the program enabled mode 2004 |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
 | `fs.read` | `project_id`, `path` | content (≤ 2 MB), binary flag, language |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |

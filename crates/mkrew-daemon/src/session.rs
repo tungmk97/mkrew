@@ -911,6 +911,7 @@ impl Actor {
             return;
         };
         tracing::debug!(id = %self.session.id, pending = self.queue.len(), "delivering a queued send");
+        let text = pasted(text, self.emulator().bracketed_paste());
         if self.sends.send(text).is_ok() {
             self.send_writing = true;
         }
@@ -1056,6 +1057,21 @@ async fn drain_after_exit(actor: &mut Actor, output: &mut mpsc::Receiver<PtyEven
     }
 }
 
+/// A multi-line send typed as is would submit at its first newline. When the program
+/// enabled bracketed paste, wrap the text (without its submitting `\r`) as one paste; an end
+/// marker inside the text is dropped so it cannot end the paste early.
+fn pasted(text: String, bracketed: bool) -> String {
+    let (body, submit) = match text.strip_suffix('\r') {
+        Some(body) => (body, "\r"),
+        None => (text.as_str(), ""),
+    };
+    if !bracketed || !body.contains('\n') {
+        return text;
+    }
+    let body = body.replace("\x1b[201~", "");
+    format!("\x1b[200~{body}\x1b[201~{submit}")
+}
+
 /// Writes delivered `session.send` texts in order through the shared input lock, so a send
 /// never interleaves with another client's `session.input`. Ends with the session task.
 async fn write_sends(
@@ -1089,6 +1105,18 @@ async fn sleep_until(at: Option<tokio::time::Instant>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_line_sends_are_pasted_when_the_program_asks_for_it() {
+        assert_eq!(pasted("a\nb\r".into(), true), "\x1b[200~a\nb\x1b[201~\r");
+        assert_eq!(pasted("a\nb".into(), true), "\x1b[200~a\nb\x1b[201~");
+        assert_eq!(
+            pasted("a\n\x1b[201~b\r".into(), true),
+            "\x1b[200~a\nb\x1b[201~\r"
+        );
+        assert_eq!(pasted("a\nb\r".into(), false), "a\nb\r");
+        assert_eq!(pasted("yes\r".into(), true), "yes\r");
+    }
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)

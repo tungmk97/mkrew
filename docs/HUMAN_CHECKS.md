@@ -844,6 +844,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   file — a batch is recorded on every live session of the project, so ties go to the most
   recently started session (not necessarily the editor). Hash = std `DefaultHasher` (stable
   per daemon build only).
+- (T6.5) **How `comment.send_to_agent` types the prompt:** the §12 prompt + Enter is queued
+  like `session.send` (written once the session is idle/done/needs_input/unknown). It has
+  newlines, so when the agent enabled bracketed paste (mode 2004, as Claude Code/Codex do) the
+  daemon wraps it in `ESC[200~ … ESC[201~` then sends `\r` — this applies to every multi-line
+  `session.send` now. Without mode 2004 the text is typed as is (each `\n` may submit early).
+  To verify with real agents: does ConPTY pass mode 2004 through so the wrap happens, and does
+  Claude/Codex accept the pasted prompt as one message? Other choices: any thread status can be
+  sent (resolved/outdated → `sent`; the UI preselects open ones); all ids must be on one file
+  of the session's project; comments are marked `sent` (snapshot = file content at send time)
+  when queued, not when typed; reply ids stand for their thread; the reply is the sent roots.
 
 ## Done
 

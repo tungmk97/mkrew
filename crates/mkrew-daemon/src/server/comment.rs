@@ -1,13 +1,19 @@
 //! `comment.*` handlers (SPEC §7, §12): review threads on Markdown files. Every change goes
 //! out as `comment.updated`; status changes always land on the thread root.
 
+use std::path::PathBuf;
+
+use mkrew_core::review;
 use mkrew_protocol::{
-    CommentCreateParams, CommentId, CommentListParams, CommentReplyParams, CommentStatus,
-    DocComment, ErrorCode, Event, Outcome,
+    CommentCreateParams, CommentId, CommentListParams, CommentReplyParams, CommentSendParams,
+    CommentStatus, DocComment, ErrorCode, Event, Outcome, Project,
 };
 use mkrew_store::{Store, StoreError};
 
-use super::{Daemon, store_outcome};
+use super::doc::read_error;
+use super::{Daemon, ok, store_outcome};
+use crate::docs;
+use crate::session::Command;
 
 impl Daemon {
     pub(super) fn comment_list(&self, params: CommentListParams) -> Outcome {
@@ -65,16 +71,80 @@ impl Daemon {
         self.comments_updated(changed.map(|c| vec![c]))
     }
 
+    /// Types the review prompt for the threads into the session (queued while it works, like
+    /// `session.send`), then marks them `sent` with the file content as the snapshot.
+    pub(super) async fn comment_send_to_agent(&self, params: CommentSendParams) -> Outcome {
+        let session_id = params.session_id;
+        let sending = {
+            let store = self.store();
+            sending(&store, &params)
+        };
+        let Sending {
+            project,
+            file,
+            comments,
+        } = match sending {
+            Ok(Ok(sending)) => sending,
+            Ok(Err(message)) => return Outcome::error(ErrorCode::InvalidRequest, message),
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let Some(session) = self.hub.sender(session_id) else {
+            return self.not_live(session_id);
+        };
+        let Some((_, relative)) = docs::relative_path(&file) else {
+            let message = format!("comment file {file:?} is not inside the project");
+            return Outcome::error(ErrorCode::InvalidState, message);
+        };
+        let path = PathBuf::from(&project.path).join(relative);
+        let snapshot = match tokio::task::spawn_blocking(move || docs::read(&path)).await {
+            Ok(Ok(content)) => content,
+            Ok(Err(e)) => return read_error(project.id, &file, e),
+            Err(e) => {
+                let message = format!("comment.send_to_agent failed: {e}");
+                return Outcome::error(ErrorCode::Internal, message);
+            }
+        };
+        let mut text = review::prompt(&file, &comments);
+        text.push('\r');
+        if session.send(Command::Send(text)).await.is_err() {
+            return self.not_live(session_id);
+        }
+        let sent = {
+            let store = self.store();
+            comments
+                .iter()
+                .filter(|c| c.parent_id.is_none())
+                .map(|root| store.mark_comment_sent(root.id, session_id, &snapshot))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        match sent {
+            Ok(sent) => {
+                self.announce(sent.clone());
+                ok(&sent)
+            }
+            // Queued before marking on purpose: a prompt without a record beats a record
+            // without a prompt.
+            Err(e) => {
+                tracing::error!(%session_id, "prompt queued but marking comments sent failed: {e}");
+                store_outcome::<()>(Err(e))
+            }
+        }
+    }
+
+    fn announce(&self, changed: Vec<DocComment>) {
+        for comment in changed {
+            let _ = self
+                .hub
+                .events
+                .send(Event::CommentUpdated(Box::new(comment)));
+        }
+    }
+
     /// Announces every changed comment and replies with the first one.
     fn comments_updated(&self, changed: Result<Vec<DocComment>, StoreError>) -> Outcome {
         let first = changed.map(|changed| {
             let first = changed.first().cloned();
-            for comment in changed {
-                let _ = self
-                    .hub
-                    .events
-                    .send(Event::CommentUpdated(Box::new(comment)));
-            }
+            self.announce(changed);
             first
         });
         match first {
@@ -104,6 +174,60 @@ fn reply(store: &Store, params: &CommentReplyParams) -> Result<Vec<DocComment>, 
         changed.push(store.set_comment_status(root.id, status)?);
     }
     Ok(changed)
+}
+
+/// What `comment.send_to_agent` types: the threads' roots in request order, each followed by
+/// its replies.
+struct Sending {
+    project: Project,
+    file: String,
+    comments: Vec<DocComment>,
+}
+
+/// The threads to send, or why the request is invalid (`Ok(Err)`): they must all belong to one
+/// file of the session's project.
+fn sending(
+    store: &Store,
+    params: &CommentSendParams,
+) -> Result<Result<Sending, String>, StoreError> {
+    let mut roots: Vec<DocComment> = Vec::new();
+    for id in &params.comment_ids {
+        let root = thread_root(store, *id)?;
+        if !roots.iter().any(|r| r.id == root.id) {
+            roots.push(root);
+        }
+    }
+    let Some(first) = roots.first() else {
+        return Ok(Err("comment_ids is empty".to_owned()));
+    };
+    let (project_id, file) = (first.project_id, first.file_path.clone());
+    if roots
+        .iter()
+        .any(|r| r.project_id != project_id || r.file_path != file)
+    {
+        return Ok(Err("the comments must all be on one file".to_owned()));
+    }
+    let session = store.get_session(params.session_id)?;
+    if session.project_id != project_id {
+        let message = format!(
+            "session {} belongs to another project than the comments",
+            session.id
+        );
+        return Ok(Err(message));
+    }
+    let project = store.get_project(project_id)?;
+    let all = store.list_comments(project_id, Some(&file))?;
+    let mut comments = Vec::new();
+    for root in roots {
+        let id = root.id;
+        comments.push(root);
+        comments.extend(all.iter().filter(|c| c.parent_id == Some(id)).cloned());
+    }
+    Ok(Ok(Sending {
+        project,
+        file,
+        comments,
+    }))
 }
 
 /// The comment itself, or the thread it replies to.

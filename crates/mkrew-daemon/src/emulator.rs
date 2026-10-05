@@ -88,6 +88,11 @@ impl Emulator {
             .resize(TermSize::new(usize::from(cols), usize::from(rows)));
     }
 
+    /// The program asked for pastes wrapped in `ESC[200~` … `ESC[201~` (mode 2004).
+    pub fn bracketed_paste(&self) -> bool {
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
+
     /// The visible screen, cursor and input modes (`session.attach`, SPEC §7).
     pub fn snapshot(&self) -> ScreenSnapshot {
         let grid = self.term.grid();

@@ -72,16 +72,7 @@ impl Daemon {
                 file_path,
                 content,
             }),
-            Ok(Err(ReadError::NotFound)) => {
-                let message = format!("no file {file_path} in project {}", project.id);
-                Outcome::error(ErrorCode::NotFound, message)
-            }
-            Ok(Err(e @ (ReadError::TooLarge(_) | ReadError::NotUtf8))) => {
-                Outcome::error(ErrorCode::InvalidState, format!("{file_path}: {e}"))
-            }
-            Ok(Err(ReadError::Io(e))) => {
-                Outcome::error(ErrorCode::Internal, format!("read {file_path}: {e}"))
-            }
+            Ok(Err(e)) => read_error(project.id, &file_path, e),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("doc.read failed: {e}")),
         }
     }
@@ -95,5 +86,19 @@ impl Daemon {
         self.hub
             .watch_docs(project.id, &PathBuf::from(&project.path));
         Ok(project)
+    }
+}
+
+/// The error answer for a project file that could not be read.
+pub(super) fn read_error(project_id: ulid::Ulid, file_path: &str, e: ReadError) -> Outcome {
+    match e {
+        ReadError::NotFound => {
+            let message = format!("no file {file_path} in project {project_id}");
+            Outcome::error(ErrorCode::NotFound, message)
+        }
+        ReadError::TooLarge(_) | ReadError::NotUtf8 => {
+            Outcome::error(ErrorCode::InvalidState, format!("{file_path}: {e}"))
+        }
+        ReadError::Io(e) => Outcome::error(ErrorCode::Internal, format!("read {file_path}: {e}")),
     }
 }

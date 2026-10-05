@@ -13,16 +13,17 @@ use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
-    CommentReplyParams, CommentStatus, DaemonStatusResult, DocChangedEvent, DocComment, DocContent,
-    DocFile, DocListParams, DocReadParams, ErrorCode, Event, Frame, FrameDecoder, HelloParams,
-    HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
-    ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
-    SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
-    SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult,
-    SessionState, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
-    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
-    TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams,
-    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    CommentReplyParams, CommentSendParams, CommentStatus, DaemonStatusResult, DocChangedEvent,
+    DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, Frame,
+    FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
+    Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
+    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
+    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
+    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
+    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
+    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
+    encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -1631,6 +1632,103 @@ fn send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish() {
         error_code(client.call(send(id, "y"))),
         ErrorCode::InvalidState
     );
+    client.stop();
+}
+
+fn send_comments(comment_ids: &[CommentId], session_id: Ulid) -> Request {
+    Request::CommentSendToAgent(CommentSendParams {
+        comment_ids: comment_ids.to_vec(),
+        session_id,
+    })
+}
+
+/// Comments sent while the agent works are marked `sent` at once (snapshot = file content)
+/// and typed only once it asks; reply ids stand for their thread; bad targets are refused.
+#[test]
+fn comments_sent_to_a_working_agent_are_typed_once_it_asks() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.repo();
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    let plan = "# Plan\n\nUse Redis for caching.\n\nM3: deploy\n";
+    std::fs::write(repo.join("docs/plan.md"), plan).unwrap();
+    std::fs::write(repo.join("README.md"), "# Readme\n").unwrap();
+    let other_repo = env.dir.path().join("other");
+    std::fs::create_dir_all(&other_repo).unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let other_project = client.add_project(&other_repo);
+
+    let mut create = |file: &str, line, quote: &str, body: &str| {
+        let params = CommentCreateParams {
+            project_id: project.id,
+            file_path: file.into(),
+            start_line: line,
+            end_line: line,
+            quote: quote.into(),
+            body: body.into(),
+        };
+        let created: DocComment = client
+            .call(Request::CommentCreate(params))
+            .into_result()
+            .unwrap();
+        created
+    };
+    let redis = create("docs/plan.md", 3, "Use Redis", "Why not in-memory?");
+    let deploy = create("docs/plan.md", 5, "M3: deploy", "Add a rollback step.");
+    let readme = create("README.md", 1, "# Readme", "Typo");
+    let reply: DocComment = client
+        .call(Request::CommentReply(CommentReplyParams {
+            comment_id: redis.id,
+            body: "Also check TTLs".into(),
+            mkrew_session_id: None,
+        }))
+        .into_result()
+        .unwrap();
+
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    let other: SessionSpawnResult = client.spawn(&other_project, "fake").into_result().unwrap();
+    for bad in [
+        send_comments(&[], id),
+        send_comments(&[redis.id, readme.id], id),
+        send_comments(&[redis.id], other.session_id),
+    ] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+    let unknown = client.call(send_comments(&[CommentId(Ulid::new())], id));
+    assert_eq!(error_code(unknown), ErrorCode::NotFound);
+
+    let working: SessionWaitResult = client
+        .call(wait(id, &[SessionState::Working], Some(15_000)))
+        .into_result()
+        .unwrap();
+    assert_eq!(working.state, SessionState::Working);
+    let sent: Vec<DocComment> = client
+        .call(send_comments(&[reply.id, deploy.id, redis.id], id))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        sent.iter().map(|c| c.id).collect::<Vec<_>>(),
+        [redis.id, deploy.id]
+    );
+    for comment in &sent {
+        assert_eq!(comment.status, CommentStatus::Sent);
+        assert_eq!(comment.sent_to, Some(id));
+        assert_eq!(comment.sent_snapshot.as_deref(), Some(plan));
+    }
+    wait_comment(&mut client, deploy.id, CommentStatus::Sent);
+
+    // Queued while working: the console echoes the prompt's first line after the agent asks.
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    let log = session_log(&env, id);
+    let asked = log.find("(y/n)").unwrap();
+    let typed = log.find("Update docs/plan.md").unwrap();
+    assert!(asked < typed, "{log}");
+
+    let exited = client.call(send_comments(&[deploy.id], id));
+    assert_eq!(error_code(exited), ErrorCode::InvalidState);
     client.stop();
 }
 

@@ -126,6 +126,9 @@ pub enum Request {
     /// Returns the updated thread root [`DocComment`].
     #[serde(rename = "comment.reopen")]
     CommentReopen(CommentRef),
+    /// Returns the updated thread roots (`sent`), as `DocComment[]` in request order.
+    #[serde(rename = "comment.send_to_agent")]
+    CommentSendToAgent(CommentSendParams),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -762,6 +765,14 @@ pub struct CommentRef {
     pub comment_id: CommentId,
 }
 
+/// `comment.send_to_agent`: threads of one file, typed as one prompt into a live session of
+/// the same project (SPEC §12). Reply ids stand for their thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommentSendParams {
+    pub comment_ids: Vec<CommentId>,
+    pub session_id: Ulid,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionKillParams {
     pub session_id: Ulid,
@@ -1172,6 +1183,10 @@ mod tests {
             }),
             Request::CommentReopen(CommentRef {
                 comment_id: CommentId(sid()),
+            }),
+            Request::CommentSendToAgent(CommentSendParams {
+                comment_ids: vec![CommentId(sid())],
+                session_id: sid(),
             }),
         ];
         for (id, request) in requests.into_iter().enumerate() {

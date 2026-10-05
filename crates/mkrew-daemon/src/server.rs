@@ -321,6 +321,9 @@ impl Daemon {
                 self.comment_set_status(params.comment_id, CommentStatus::Open),
                 After::Continue,
             ),
+            Request::CommentSendToAgent(params) => {
+                (self.comment_send_to_agent(params).await, After::Continue)
+            }
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (
