@@ -76,6 +76,9 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 /// Width of the workspace sidebar.
 pub const SIDEBAR_WIDTH: f32 = 240.0;
 
+/// Width of a popover menu (the workspace menu).
+pub const MENU_WIDTH: f32 = 240.0;
+
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
 

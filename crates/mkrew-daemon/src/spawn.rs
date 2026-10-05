@@ -19,6 +19,7 @@ pub fn daemon_exe() -> anyhow::Result<PathBuf> {
 }
 
 /// No console window and no controlling terminal: the daemon outlives the shell (SPEC §8).
+/// The UI also uses it for the short-lived `zed` CLI.
 pub fn detach(command: &mut Command) {
     #[cfg(windows)]
     {
@@ -41,8 +42,8 @@ pub fn detach(command: &mut Command) {
 /// `CreateProcess` passes EVERY inheritable handle to the child, not just its stdio. The
 /// client's own stdio are inheritable when it runs with redirected output (`mk daemon start |
 /// cat`, a test capturing output), and a daemon holding the write end of that pipe keeps the
-/// reader waiting until the daemon exits. Clients spawn nothing else, so clear the flag on all
-/// three.
+/// reader waiting until the daemon exits. Clients only spawn detached children (the daemon,
+/// `zed`) with explicit stdio, so clear the flag on all three.
 #[cfg(windows)]
 #[allow(unsafe_code)]
 fn disinherit_stdio() {

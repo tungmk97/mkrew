@@ -1,8 +1,9 @@
 //! Mkrew core: models, agent profile parsing and the session state machine.
 //!
 //! No async runtime, GPUI or SQLite here (SPEC §4); the only I/O is reading profile files
-//! (and looking up the platform directories in [`paths`]).
+//! (and looking up the platform directories in [`paths`] and programs on `PATH` in [`lookup`]).
 
+pub mod lookup;
 pub mod paths;
 pub mod profile;
 pub mod state;

@@ -112,6 +112,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   ("Pane zoomed" notice), again shows all panes; Ctrl+Shift+R (or double-click a tab) edits its
   title inline — Enter / clicking elsewhere saves, Esc cancels — and the new title survives a
   restart.
+- [ ] (T2.8) Click "⋯" on the active workspace (or right-click a workspace row): the menu
+  drops down below the row. "Open in Zed" (or Ctrl+Shift+Z) opens the folder in Zed; with
+  `zed` off PATH the sidebar shows the "not found … Install Zed" hint instead. Pick another
+  default agent: ✓ moves, and "+ Agent" / Ctrl+Shift+A (new agent tab) now starts that agent; survives a
+  restart.
 
 ## Questions with assumed defaults
 
@@ -353,6 +358,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   focus, splitting or closing the zoomed pane ends the zoom; resize is ignored while zoomed.
   Rename: same minimal input as the find bar (no caret movement/IME); blank or unchanged
   titles are not sent; the title changes when the daemon's `tab.updated` arrives.
+- (T2.8) Workspace menu = "⋯" on the active workspace row or right-click any row; it holds
+  "Open in Zed" (also Ctrl+Shift+Z, opens the workspace folder) and the default-agent list
+  (agent profiles only, from `agent.profiles`). Deferred: keyboard navigation of the menu (it
+  takes no focus; Esc does not close it, click outside does), no "None" choice to clear the
+  default agent, no menu-hover token in `theme.rs` (uses `border` as hover fill), "⋯" does not
+  toggle the menu shut. `zed` is looked up and spawned on the UI thread (fast; a slow network
+  drive on PATH would stall a frame). PATH lookup moved to `mkrew_core::lookup` (shared with
+  the daemon). `.ps1` zed shims run via `powershell.exe -File`.
 
 ## Done
 

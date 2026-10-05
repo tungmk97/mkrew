@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -13,13 +14,15 @@ use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, KeyDownEvent,
     MouseButton, PathPromptOptions, PromptLevel, SharedString, Subscription, TitlebarOptions,
-    Window, WindowAppearance, WindowBounds, WindowOptions, div, px, relative, rgb, size,
+    Window, WindowAppearance, WindowBounds, WindowOptions, anchored, deferred, div, px, relative,
+    rgb, size,
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    Event, Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult,
-    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
-    SessionState, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, TerminalTab,
+    AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
+    SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
+    SessionSpawnResult, SessionState, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
+    TerminalTab,
 };
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::keymap::{Command, Keymap, Run};
@@ -31,6 +34,8 @@ use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, rename_params};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
+use mkrew_ui::zed;
 use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
 
@@ -146,6 +151,8 @@ struct Shell {
     keymap: Keymap,
     /// What was wrong with `keymap.toml` at start (those entries use their defaults).
     keymap_error: Option<String>,
+    /// The open workspace menu (Open in Zed, default agent).
+    workspace_menu: Option<WorkspaceMenu>,
 }
 
 impl Shell {
@@ -229,6 +236,7 @@ impl Shell {
                 shell.panes.clear();
                 shell.attach_errors.clear();
                 shell.renaming = None;
+                shell.workspace_menu = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -265,6 +273,7 @@ impl Shell {
                         n - 1
                     ),
                 }),
+            workspace_menu: None,
         }
     }
 
@@ -740,6 +749,89 @@ impl Shell {
         .detach();
     }
 
+    /// Opens the menu of `project_id` (closing any other) and lists the agent profiles for it.
+    fn open_workspace_menu(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.workspace_menu = Some(WorkspaceMenu::new(project_id));
+        cx.notify();
+        let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
+        cx.spawn_in(window, async move |this, cx| {
+            let agents = match listed.await {
+                Ok(listed) => Agents::Loaded(listed.profiles),
+                Err(error) => Agents::Failed(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                // Unless the menu closed (or moved to another workspace) meanwhile.
+                if let Some(menu) = shell
+                    .workspace_menu
+                    .as_mut()
+                    .filter(|menu| menu.project_id == project_id)
+                {
+                    menu.agents = agents;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Opens the folder of `project_id` in Zed; a failure (e.g. `zed` missing) shows in the
+    /// sidebar.
+    fn open_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        self.workspace_menu = None;
+        let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
+            return;
+        };
+        match zed::open(Path::new(&project.path), None) {
+            Ok(()) => self.sidebar_error = None,
+            Err(error) => {
+                tracing::warn!(%project_id, "open in Zed failed: {error}");
+                self.sidebar_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    /// Makes `agent` the default agent of `project_id` (`project.update`); the sidebar picks
+    /// the change up from `project.updated`.
+    fn set_default_agent(
+        &mut self,
+        project_id: Ulid,
+        agent: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.workspace_menu = None;
+        cx.notify();
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let params = workspace_menu::set_default_agent(project_id, &agent);
+        let updated = connection.call::<Project>(Request::ProjectUpdate(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let updated = updated.await;
+            let _ = this.update(cx, |shell, cx| {
+                match updated {
+                    Ok(_) => shell.sidebar_error = None,
+                    Err(error) => {
+                        tracing::warn!(%project_id, "project.update failed: {error:#}");
+                        shell.sidebar_error =
+                            Some(format!("Cannot change the default agent: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Starts an agent (the workspace's default agent) or a shell in the workspace folder and
     /// shows it next to the focused pane of the active tab, split along `axis`.
     fn new_pane(
@@ -850,6 +942,11 @@ impl Shell {
                 }
             }
             Command::ClosePane => self.close_focused_pane(window, cx),
+            Command::OpenInZed => {
+                if let Some(project_id) = self.workspace {
+                    self.open_in_zed(project_id, cx);
+                }
+            }
             // Handled by the focused terminal pane.
             Command::Copy
             | Command::Paste
@@ -1248,7 +1345,19 @@ impl Shell {
                     match row {
                         Row::Workspace(row) => {
                             let active = self.workspace == Some(row.project_id);
-                            workspace_row(row, active, theme, cx)
+                            let menu = self
+                                .workspace_menu
+                                .as_ref()
+                                .filter(|menu| menu.project_id == row.project_id);
+                            let row = workspace_row(row, active, theme, cx);
+                            match menu {
+                                // The menu drops down from below its row.
+                                Some(menu) => div()
+                                    .child(row)
+                                    .child(self.render_workspace_menu(menu, theme, cx))
+                                    .into_any_element(),
+                                None => row,
+                            }
                         }
                         Row::Session(row) => {
                             let selected = shown == Some(row.session_id);
@@ -1278,6 +1387,148 @@ impl Shell {
             .child(header)
             .children(errors.into_iter().flatten())
             .child(body)
+    }
+
+    /// The workspace menu: "Open in Zed" and the default agent for new agent panes. Floats over
+    /// the sidebar; a click outside closes it.
+    fn render_workspace_menu(
+        &self,
+        menu: &WorkspaceMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let project_id = menu.project_id;
+        let current = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|project| project.id == project_id)
+            .and_then(|project| project.default_agent.as_deref());
+        let muted_line = |text: String| {
+            div()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let agents: Vec<gpui::AnyElement> = match &menu.agents {
+            Agents::Loading => vec![muted_line("Loading agents…".into()).into_any_element()],
+            Agents::Failed(error) => {
+                vec![
+                    div()
+                        .flex()
+                        .pl(px(space::S))
+                        .child(
+                            div()
+                                .py(px(space::XS))
+                                .text_size(px(font_size::META))
+                                .text_color(rgb(theme.status_exited))
+                                .child("✕"),
+                        )
+                        .child(
+                            muted_line(format!("Cannot list the agents: {error}"))
+                                .pl(px(space::XS)),
+                        )
+                        .into_any_element(),
+                ]
+            }
+            Agents::Loaded(profiles) => {
+                let choices = workspace_menu::agent_choices(profiles, current);
+                if choices.is_empty() {
+                    vec![
+                        muted_line("No agent profiles. Add one to the profiles folder.".into())
+                            .into_any_element(),
+                    ]
+                } else {
+                    choices
+                        .into_iter()
+                        .map(|choice| {
+                            let id = SharedString::from(format!("default-agent-{}", choice.id));
+                            let agent = choice.id;
+                            menu_item(id, theme)
+                                .child(
+                                    div()
+                                        .w(px(space::M))
+                                        .text_color(rgb(theme.accent))
+                                        .child(if choice.selected { "✓" } else { "" }),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .when(choice.selected, |el| {
+                                            el.text_color(rgb(theme.text))
+                                                .font_weight(FontWeight(weight::MEDIUM))
+                                        })
+                                        .child(choice.label),
+                                )
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.set_default_agent(project_id, agent.clone(), window, cx);
+                                }))
+                                .into_any_element()
+                        })
+                        .collect()
+                }
+            }
+        };
+        let panel = div()
+            .id("workspace-menu")
+            .w(px(theme::MENU_WIDTH))
+            .flex()
+            .flex_col()
+            .p(px(space::XS))
+            .rounded(px(radius::MEDIUM))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface_raised))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.workspace_menu = None;
+                cx.notify();
+            }))
+            .child(
+                menu_item("open-in-zed".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Open in Zed"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(font_size::META))
+                            .child(self.keymap.label(Command::OpenInZed)),
+                    )
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.open_in_zed(project_id, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .h(px(theme::BORDER_WIDTH))
+                    .my(px(space::XS))
+                    .bg(rgb(theme.border)),
+            )
+            .child(
+                div()
+                    .px(px(space::S))
+                    .pt(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text_muted))
+                    .child("Default agent for new panes"),
+            )
+            .children(agents);
+        deferred(
+            anchored()
+                .snap_to_window_with_margin(px(space::S))
+                .child(div().pt(px(space::XS)).child(panel)),
+        )
+        .into_any_element()
     }
 
     fn render_main(&self, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
@@ -1713,6 +1964,25 @@ fn button(
     }
 }
 
+/// A full-width row of a popover menu; callers add the label (and a shortcut on the right).
+fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    // One step above the menu's own `surface_raised`.
+    let hover = theme.border;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .cursor_pointer()
+        .text_size(px(font_size::BODY))
+        .text_color(rgb(theme.text_muted))
+        .hover(move |style| style.bg(rgb(hover)))
+        .active(|style| style.opacity(opacity::ACTIVE))
+}
+
 fn workspace_row(
     row: WorkspaceRow,
     active: bool,
@@ -1742,6 +2012,12 @@ fn workspace_row(
                 shell.activate_workspace(project_id, window, cx);
             }
         }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |shell, _, window, cx| {
+                shell.open_workspace_menu(project_id, window, cx);
+            }),
+        )
         .child(
             div()
                 .text_size(px(font_size::META))
@@ -1775,6 +2051,23 @@ fn workspace_row(
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.status_needs_input))
                     .child(sidebar::status_display(SessionState::NeedsInput).icon),
+            )
+        })
+        .when(active, |el| {
+            el.child(
+                button("workspace-menu-button", "⋯", theme, false)
+                    .px(px(space::XS))
+                    .py_0()
+                    .tooltip(tooltip(
+                        theme,
+                        "Workspace menu (or right-click the row)",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        // Not a click on the row (which would collapse it).
+                        cx.stop_propagation();
+                        shell.open_workspace_menu(project_id, window, cx);
+                    })),
             )
         })
         .into_any_element()

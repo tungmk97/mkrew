@@ -48,6 +48,8 @@ pub enum Command {
     PageDown,
     /// Terminal only: open (or refocus) the find bar over the scrollback.
     Find,
+    /// Open the active workspace in Zed.
+    OpenInZed,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -93,6 +95,7 @@ impl Command {
             Command::PageUp,
             Command::PageDown,
             Command::Find,
+            Command::OpenInZed,
         ]);
         all
     }
@@ -128,6 +131,7 @@ impl Command {
             Command::PageUp => "page_up".into(),
             Command::PageDown => "page_down".into(),
             Command::Find => "find".into(),
+            Command::OpenInZed => "open_in_zed".into(),
         }
     }
 
@@ -168,6 +172,7 @@ impl Command {
             Command::PageUp => "shift-pageup".into(),
             Command::PageDown => "shift-pagedown".into(),
             Command::Find => "ctrl-shift-f".into(),
+            Command::OpenInZed => "ctrl-shift-z".into(),
         }
     }
 
@@ -435,6 +440,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-f"), Some(Command::Find));
         assert_eq!(bound("ctrl-shift-r"), Some(Command::RenameTab));
         assert_eq!(bound("ctrl-shift-m"), Some(Command::ZoomPane));
+        assert_eq!(bound("ctrl-shift-z"), Some(Command::OpenInZed));
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))
