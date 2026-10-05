@@ -97,18 +97,21 @@ fn spawns_the_daemon_once_then_reuses_it() {
     assert_eq!(block_on(renamed).unwrap().name, "renamed");
     assert_eq!(block_on(listed).unwrap().len(), 1);
     let incoming = second.incoming();
-    let event = block_on(futures_lite::future::or(
-        async { incoming.recv().await.ok() },
-        async {
-            sleep(Duration::from_secs(5)).await;
-            None
-        },
-    ));
-    match event {
-        Some(Incoming::Event(Event::ProjectUpdated(project))) => {
-            assert_eq!(project.name, "renamed");
+    // The add is announced, then the rename.
+    for name in ["proj", "renamed"] {
+        let event = block_on(futures_lite::future::or(
+            async { incoming.recv().await.ok() },
+            async {
+                sleep(Duration::from_secs(5)).await;
+                None
+            },
+        ));
+        match event {
+            Some(Incoming::Event(Event::ProjectUpdated(project))) => {
+                assert_eq!(project.name, name);
+            }
+            other => panic!("expected project.updated, got {other:?}"),
         }
-        other => panic!("expected project.updated, got {other:?}"),
     }
 
     // After `daemon.stop` the connection reports it is gone.

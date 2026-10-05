@@ -953,6 +953,8 @@ fn spawn_defaults_to_the_project_agent_or_the_shell_and_fills_an_empty_tab() {
     env.write_fake_profile();
     let (_daemon, mut client) = env.start();
     let project = client.add_project(&env.repo());
+    // Adding is announced too, so every UI shows the new workspace.
+    client.wait_event(&Event::ProjectUpdated(project.clone()));
 
     // No default agent yet: the client must name one.
     assert_eq!(

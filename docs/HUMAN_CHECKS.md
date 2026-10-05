@@ -65,6 +65,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `mk session list` shows the new cols/rows; minimizing does not shrink the session; `exit`
   shows "✕ Session exited (code 0)." under the pane; a `flood` fake-agent session stays
   responsive. Check dark and light themes.
+- [ ] (T2.4) `cargo run -p mkrew-ui`: the sidebar lists workspaces; with none, "No workspaces
+  yet." + "Add workspace Ctrl+Shift+K". The button, the header "+" and Ctrl+Shift+K (also while
+  a terminal has focus) open the OS folder picker; the picked folder appears expanded ("No
+  sessions yet."); adding the same folder again shows an error under the header. Expand /
+  collapse a workspace; sessions show icon + status text; the workspace row shows the working
+  count and `?` when one needs input (fake agent `ask`). Clicking another session switches the
+  pane. Hover tooltips (path, shortcut). Check dark and light themes.
 
 ## Questions with assumed defaults
 
@@ -238,6 +245,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `session.snapshot` after an overflow therefore resets the pane's UI-side scrollback (the
   dropped output left a gap anyway). Until the sidebar/tabs land (T2.4–T2.6) the window shows
   the most recently started live session full-window.
+- (T2.4) Sidebar lists every session of a workspace, exited ones included (✕ + exit code),
+  newest first; pruning/hiding old exited sessions is left for later. The first load expands
+  workspaces with a live session; the app still opens the newest live session on start.
+  `project.add` now emits `project.updated` (SPEC §7 "entity changed") so every UI shows a
+  workspace added from `mk`. Working uses a static `◐` glyph (animated spinner, the
+  elapsed/idle times and the status-source hover of §11 come later); exited rows are inert
+  until "Run again"/"Resume" exist; sidebar keyboard navigation + focus rings ship with
+  the keymap (T2.7). Ctrl+Shift+K is bound on every OS (§13: only global/tab commands use Cmd).
 
 ## Done
 

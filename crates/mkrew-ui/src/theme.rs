@@ -62,6 +62,16 @@ pub const UI_FONT: &str = ".SystemUIFont";
 pub const WINDOW_WIDTH: f32 = 1200.0;
 pub const WINDOW_HEIGHT: f32 = 760.0;
 
+/// Opacity of a hovered / pressed filled button, and of secondary text inside a button.
+pub mod opacity {
+    pub const HOVER: f32 = 0.9;
+    pub const ACTIVE: f32 = 0.8;
+    pub const SECONDARY: f32 = 0.8;
+}
+
+/// Width of the workspace sidebar.
+pub const SIDEBAR_WIDTH: f32 = 240.0;
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 

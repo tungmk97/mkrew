@@ -614,6 +614,7 @@ impl Daemon {
             .add_project(std::path::Path::new(&params.path), params.name.as_deref());
         if let Ok(project) = &added {
             tracing::info!(id = %project.id, path = %project.path, "project added");
+            let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));
         }
         store_outcome(added)
     }
