@@ -115,6 +115,12 @@ pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
 pub const UNDO_FILES_HEIGHT: f32 = 120.0;
 pub const UNDO_DIFF_HEIGHT: f32 = 280.0;
 
+/// Share of the window's width and height the "History" dialog takes (it replays a terminal).
+pub const HISTORY_DIALOG_FRACTION: f32 = 0.9;
+
+/// Width of the "History" dialog's session list.
+pub const HISTORY_LIST_WIDTH: f32 = 280.0;
+
 /// Widest share of a pane header a conflict warning may take (it ellipsizes past that).
 pub const PANE_CONFLICT_MAX_FRACTION: f32 = 0.5;
 

@@ -20,15 +20,16 @@ use gpui::{
 use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
-    SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
-    SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
-    UndoPreview,
+    SessionAttachResult, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
+    SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams,
+    TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
+    TerminalTab, UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::follow_up::{self, FollowUp};
+use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{BOARD_CONTEXT, Command, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
@@ -186,6 +187,10 @@ struct Shell {
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
     undo_dialog: Option<UndoDialog>,
+    /// The open "History" of a workspace (modal; never open together with another dialog).
+    history: Option<HistoryDialog>,
+    /// The read-only replay of the history's selected session (never attached).
+    history_pane: Option<Entity<TerminalPane>>,
     /// Focused while a dialog is open; the task dialog's keys edit the draft.
     dialog_focus: FocusHandle,
     /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
@@ -320,6 +325,8 @@ impl Shell {
                 shell.workspace_menu = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
+                shell.history = None;
+                shell.history_pane = None;
                 shell.follow_up = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
@@ -371,6 +378,8 @@ impl Shell {
             views: HashMap::new(),
             task_dialog: None,
             undo_dialog: None,
+            history: None,
+            history_pane: None,
             dialog_focus: cx.focus_handle(),
             prompt_scroll: ScrollHandle::new(),
             dialog_serial: 0,
@@ -794,8 +803,15 @@ impl Shell {
     }
 
     fn focus_pane(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        // A modal dialog keeps the keyboard until it closes.
-        if self.task_dialog.is_some() || self.undo_dialog.is_some() {
+        // A modal dialog keeps the keyboard until it closes; the history's replay pane takes it
+        // (copy, find, scrollback), its unbound keys bubble to the dialog.
+        if self.history.is_some()
+            && let Some(pane) = &self.history_pane
+        {
+            pane.update(cx, |pane, cx| pane.focus(window, cx));
+            return;
+        }
+        if self.task_dialog.is_some() || self.undo_dialog.is_some() || self.history.is_some() {
             window.focus(&self.dialog_focus, cx);
             return;
         }
@@ -1303,6 +1319,160 @@ impl Shell {
         .detach();
     }
 
+    /// "History" in the tab bar: lists the workspace's finished sessions (`session.list`) and
+    /// replays the newest one's log.
+    fn show_history(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
+            return;
+        };
+        self.workspace_menu = None;
+        self.task_dialog = None;
+        self.undo_dialog = None;
+        self.history = Some(HistoryDialog::new(project_id, project.name.clone()));
+        self.history_pane = None;
+        self.dialog_serial += 1;
+        let serial = self.dialog_serial;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+        let listed = connection.call::<Vec<Session>>(Request::SessionList(SessionListParams {
+            project_id: Some(project_id),
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let listed = listed.await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let Some(dialog) = shell.open_history(serial) else {
+                    return;
+                };
+                match listed {
+                    Ok(sessions) => {
+                        if let Some(session) = dialog.load(sessions) {
+                            shell.load_history_log(session, window, cx);
+                        }
+                    }
+                    Err(error) => dialog.listing = Listing::Failed(format!("{error:#}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The open history, if it is still the one opened as `serial`.
+    fn open_history(&mut self, serial: u64) -> Option<&mut HistoryDialog> {
+        self.history
+            .as_mut()
+            .filter(|_| self.dialog_serial == serial)
+    }
+
+    /// Selects `session` in the open history and replays the tail of its log
+    /// (`session.history`, files read off the UI thread).
+    fn select_history(&mut self, session: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self
+            .history
+            .as_mut()
+            .is_some_and(|dialog| dialog.select(session))
+        {
+            self.load_history_log(session, window, cx);
+        }
+    }
+
+    /// Reads the selected `session`'s log into a new replay pane.
+    fn load_history_log(&mut self, session: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        self.history_pane = None;
+        // The dialog keeps the keyboard while no pane shows.
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+        let files = connection.call::<SessionHistory>(Request::SessionHistory(SessionRef {
+            session_id: session,
+        }));
+        let background = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let tail = match files.await {
+                Ok(history) => background
+                    .spawn(async move { history::read_tail(&history.files, history::TAIL_BYTES) })
+                    .await
+                    .map_err(|error| format!("Cannot read the log: {error}")),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let Some(dialog) = shell.open_history(serial) else {
+                    return;
+                };
+                let Some(selected) = dialog
+                    .selected_session()
+                    .filter(|selected| selected.id == session)
+                    .cloned()
+                else {
+                    // Another session was picked meanwhile.
+                    return;
+                };
+                match tail {
+                    Ok(tail) if tail.bytes.is_empty() => dialog.log = Log::Empty,
+                    Ok(tail) => {
+                        dialog.log = Log::Shown { cut: tail.cut };
+                        let painted = shell.painted.clone();
+                        let pane = cx.new(|cx| {
+                            TerminalPane::replay(
+                                &selected,
+                                &tail.bytes,
+                                connection,
+                                painted,
+                                window,
+                                cx,
+                            )
+                        });
+                        shell.history_pane = Some(pane);
+                        shell.focus_pane(window, cx);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%session, "session history failed: {error}");
+                        dialog.log = Log::Failed(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn close_history(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.history = None;
+        self.history_pane = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// Esc closes the history, ↑ / ↓ pick another session (also while its pane has the
+    /// keyboard: a finished session's pane passes keys on).
+    fn history_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        match history::key(&event.keystroke) {
+            Some(history::Key::Close) => self.close_history(window, cx),
+            Some(history::Key::Move(offset)) => {
+                let next = self
+                    .history
+                    .as_ref()
+                    .and_then(|dialog| dialog.neighbour(offset));
+                if let Some(session) = next {
+                    self.select_history(session, window, cx);
+                }
+            }
+            None => {}
+        }
+    }
+
     /// A card was dropped into the `status` column right before `before` (`None` = at the
     /// end): `task.move` it (and renumber the column if its gap collapsed). Each reply is
     /// shown at once, without waiting for the `task.updated` echo.
@@ -1585,7 +1755,7 @@ impl Shell {
         self.finish_rename(true, window, cx);
         // The dialogs are modal: bound keys go on to their key handler (e.g. Ctrl+Alt+digit
         // is AltGr on many layouts) instead of acting behind them.
-        if self.task_dialog.is_some() || self.undo_dialog.is_some() {
+        if self.task_dialog.is_some() || self.undo_dialog.is_some() || self.history.is_some() {
             cx.propagate();
             return;
         }
@@ -3012,6 +3182,200 @@ impl Shell {
         Self::modal_shade("undo-dialog-shade", panel, cx)
     }
 
+    /// The workspace's finished sessions (left) and the selected one's log, replayed
+    /// read-only (right).
+    fn render_history(
+        &self,
+        dialog: &HistoryDialog,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let muted = |text: String| {
+            div()
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        let hover = theme.surface_raised;
+        let list: Vec<gpui::AnyElement> = match &dialog.listing {
+            Listing::Loading => vec![muted("Loading the sessions…".into()).into_any_element()],
+            Listing::Failed(error) => {
+                vec![error_row(format!("Cannot list the sessions: {error}")).into_any_element()]
+            }
+            Listing::Loaded(sessions) if sessions.is_empty() => {
+                vec![muted("No finished sessions in this workspace yet.".into()).into_any_element()]
+            }
+            Listing::Loaded(sessions) => sessions
+                .iter()
+                .map(|session| {
+                    let id = session.id;
+                    let selected = dialog.selected == Some(id);
+                    div()
+                        .id(SharedString::from(format!("history-{id}")))
+                        .flex()
+                        .flex_col()
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .cursor_pointer()
+                        .when(selected, |el| el.bg(rgb(theme.surface_raised)))
+                        .when(!selected, |el| {
+                            el.hover(move |style| style.bg(rgb(hover)))
+                                .active(|style| style.opacity(opacity::ACTIVE))
+                        })
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.select_history(id, window, cx);
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(space::XS))
+                                .text_size(px(font_size::BODY))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_color(rgb(if history::failed(session) {
+                                            sidebar::status_color(theme, SessionState::Exited)
+                                        } else {
+                                            theme.text_muted
+                                        }))
+                                        .child(status::icon(SessionState::Exited, now)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .text_color(rgb(theme.text))
+                                        .when(selected, |el| {
+                                            el.font_weight(FontWeight(weight::MEDIUM))
+                                        })
+                                        .child(history::label(session)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .text_size(px(font_size::META))
+                                .text_color(rgb(theme.text_muted))
+                                .child(history::details(session, now)),
+                        )
+                        .into_any_element()
+                })
+                .collect(),
+        };
+        let log: Option<gpui::AnyElement> = match (&dialog.log, dialog.selected_session()) {
+            (_, None) => None,
+            (Log::Loading, Some(_)) => Some(muted("Loading the log…".into()).into_any_element()),
+            (Log::Empty, Some(_)) => Some(muted("No output was logged.".into()).into_any_element()),
+            (Log::Failed(error), Some(_)) => Some(error_row(error.clone()).into_any_element()),
+            (Log::Shown { cut }, Some(session)) => Some(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::S))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .rounded(px(radius::MEDIUM))
+                            .overflow_hidden()
+                            .children(self.history_pane.clone()),
+                    )
+                    .when(*cut, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(font_size::META))
+                                .text_color(rgb(theme.text_muted))
+                                .child(format!(
+                                    "Older output is left out; mk session history {} prints \
+                                     all of it.",
+                                    session.id
+                                )),
+                        )
+                    })
+                    .into_any_element(),
+            ),
+        };
+        let panel = div()
+            .id("history-dialog")
+            .w(relative(theme::HISTORY_DIALOG_FRACTION))
+            .h(relative(theme::HISTORY_DIALOG_FRACTION))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::history_key_down))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_size(px(font_size::CARD_TITLE))
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .text_color(rgb(theme.text))
+                            .child(format!("History · {}", dialog.workspace)),
+                    )
+                    .child(
+                        button("history-close", "Close", theme, false)
+                            .tooltip(tooltip(theme, "Close", "Esc"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.close_history(window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap(px(space::M))
+                    .child(
+                        div()
+                            .id("history-list")
+                            .flex_none()
+                            .w(px(theme::HISTORY_LIST_WIDTH))
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::XS))
+                            .overflow_y_scroll()
+                            .children(list),
+                    )
+                    .child(div().flex_1().min_w_0().flex().flex_col().children(log)),
+            );
+        Self::modal_shade("history-shade", panel, cx)
+    }
+
     /// The shade behind a modal dialog: it blocks the window behind it (a stray click there
     /// never closes the dialog; Esc or Cancel does) and keeps the keyboard in the dialog.
     fn modal_shade(
@@ -3153,6 +3517,17 @@ impl Shell {
             .children(
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
+            )
+            .child(
+                button("history", "History", theme, false)
+                    .tooltip(tooltip(
+                        theme,
+                        "Logs of the workspace's finished sessions",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.show_history(project_id, window, cx);
+                    })),
             )
             .child(new_pane_button(
                 "new-agent-pane",
@@ -4523,6 +4898,11 @@ impl Render for Shell {
                 self.undo_dialog
                     .as_ref()
                     .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.history
+                    .as_ref()
+                    .map(|dialog| self.render_history(dialog, now, &theme, cx)),
             )
     }
 }

@@ -17,7 +17,9 @@ use gpui::{
     ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowAppearance,
     div, fill, font, point, px, relative, rgb, size,
 };
-use mkrew_protocol::{Outcome, Request, ScreenSnapshot, SessionInputParams, SessionResizeParams};
+use mkrew_protocol::{
+    Outcome, Request, ScreenSnapshot, Session, SessionInputParams, SessionResizeParams,
+};
 use ulid::Ulid;
 
 use crate::client::Connection;
@@ -76,18 +78,49 @@ impl TerminalPane {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
+        let emulator = Emulator::from_snapshot(snapshot);
+        Self::with_emulator(session_id, emulator, None, connection, painted, window, cx)
+    }
+
+    /// A read-only pane replaying `log` (output of the finished `session`) on the session's
+    /// screen size: never attached, takes no input and never resizes the session.
+    pub fn replay(
+        session: &Session,
+        log: &[u8],
+        connection: Rc<Connection>,
+        painted: async_channel::Sender<()>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
+        let mut emulator = Emulator::new(session.cols.max(1).into(), session.rows.max(1).into());
+        emulator.advance(log);
+        let exited = Some(session.exit_code);
+        Self::with_emulator(
+            session.id, emulator, exited, connection, painted, window, cx,
+        )
+    }
+
+    fn with_emulator(
+        session_id: Ulid,
+        emulator: Emulator,
+        exited: Option<Option<i32>>,
+        connection: Rc<Connection>,
+        painted: async_channel::Sender<()>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         let focus_handle = cx.focus_handle();
         Self {
             session_id,
             connection,
-            emulator: Emulator::from_snapshot(snapshot),
+            emulator,
             theme: theme_for(window.appearance()),
             rows: Rc::default(),
             focus_handle,
             painted,
-            exited: None,
+            exited,
             geometry: None,
             selecting: false,
             scroll_remainder: 0.0,

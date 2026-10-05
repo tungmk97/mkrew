@@ -273,6 +273,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   amber glyph (not a color emoji); hovering Dismiss shows its own tooltip; dark + light
   screenshots §14.
 
+- [ ] (T5.9) **History viewer.** Run a fake/real agent session to exit, `mk daemon stop`, start
+  the app: Terminals tab bar → "History" opens the dialog listing the workspace's finished
+  sessions newest first (title/agent, "exited (code) · ran … · … ago"); the newest log replays
+  in the right pane (colors, last screen, mouse-wheel scrollback, Ctrl+Shift+F find,
+  Ctrl+Shift+C copy of a selection); ↑ / ↓ and clicks pick other sessions; Esc / Close returns
+  the keyboard to the focused pane. A log > 2 MB shows the "Older output is left out" note.
+  Empty workspace → "No finished sessions in this workspace yet." Dark + light screenshots §14.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -760,6 +768,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   refinement, no ADR). Clients read the files directly (daemon and clients share a machine).
   For a live session it is best effort (unflushed buffer, rotation race). `mk session history`
   prints raw PTY bytes including ANSI escapes (no stripping).
+- (T5.9) History viewer = a modal dialog opened by a "History" button in the Terminals tab bar
+  (the task allowed sidebar or Terminals menu; a dialog needs no layout slot and never touches
+  `terminal_tab`). No keyboard shortcut (SPEC §13 has none; add one there if wanted). The log is
+  replayed into a fresh UI emulator at the session's recorded cols/rows (no resize, no input),
+  newest 2 MiB only, starting after the first line break past the cut; a session that ended on
+  the alternate screen (full-screen TUI) shows that last screen with little scrollback. The list
+  is read once on open (sessions exiting meanwhile appear on the next open). Open review
+  SHOULDs (backlog): parse the tail off the UI thread (a 2 MiB log may stall one frame), a
+  Retry button on list/log failures, focusable rows with a focus ring (↑ / ↓ work), a primary
+  action in the empty state, a clean exit's ✕ is muted (only non-zero codes use the exited color).
 
 ## Done
 
