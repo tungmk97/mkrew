@@ -185,7 +185,11 @@ impl Sidebar {
         if let Some(since_load) = &mut self.since_load
             && !matches!(
                 event,
-                Event::TabUpdated(_) | Event::SessionSnapshot(_) | Event::NotificationClicked(_)
+                Event::TabUpdated(_)
+                    | Event::TaskUpdated(_)
+                    | Event::TaskDeleted(_)
+                    | Event::SessionSnapshot(_)
+                    | Event::NotificationClicked(_)
             )
         {
             since_load.push(event.clone());
@@ -204,9 +208,11 @@ impl Sidebar {
                 self.upsert_project(project.clone());
                 Change::Redraw
             }
-            Event::TabUpdated(_) | Event::SessionSnapshot(_) | Event::NotificationClicked(_) => {
-                Change::None
-            }
+            Event::TabUpdated(_)
+            | Event::TaskUpdated(_)
+            | Event::TaskDeleted(_)
+            | Event::SessionSnapshot(_)
+            | Event::NotificationClicked(_) => Change::None,
         }
     }
 

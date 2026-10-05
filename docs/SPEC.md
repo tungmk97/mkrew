@@ -418,7 +418,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
 | `project.list/add/update/archive` | `path`, `name`, `dev_command`, `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `default_agent` must be an agent profile) |
-| `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task |
+| `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `session.spawn` | `project_id`, `agent_profile?`, `kind`, `tab_id?`, `title?`, `cols`, `rows` | `session_id` — no `agent_profile` = project `default_agent` (agent) or `shell` (shell); a named profile sets the kind; a tab with `null` layout gets the session as its only pane |
 | `session.list` | `project_id?` | Session[] |
@@ -461,6 +461,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.state` | session state changed (`state`, `source` = hook/screen/daemon, `changed_at`) |
 | `session.exited` | process exited, with `exit_code` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
+| `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
 | `conflict.detected` | two sessions edited the same file within 60 s (M5) |
 | `doc.changed` | a watched md file changed (new hash) |
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |

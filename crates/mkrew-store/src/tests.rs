@@ -355,6 +355,117 @@ fn tabs_are_ordered_edited_and_persist() {
 }
 
 #[test]
+fn tasks_are_created_edited_moved_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let a = store.add_project(dir.path(), None).unwrap();
+    let repo_b = dir.path().join("b");
+    std::fs::create_dir(&repo_b).unwrap();
+    let b = store.add_project(&repo_b, None).unwrap();
+
+    let first = store.create_task(a.id, "one", "", None, None).unwrap();
+    let second = store
+        .create_task(a.id, "two", "do it", Some("claude"), None)
+        .unwrap();
+    let other = store.create_task(b.id, "b", "", None, None).unwrap();
+    assert_eq!((first.position, second.position), (0.0, 1.0));
+    assert_eq!(other.position, 0.0);
+    assert_eq!(first.status, TaskStatus::Todo);
+    assert_eq!(first.agent_profile, None);
+    assert_eq!(second.agent_profile.as_deref(), Some("claude"));
+    assert!(!first.error_flag);
+    let front = store
+        .create_task(a.id, "front", "", None, Some(-1.0))
+        .unwrap();
+
+    let titles = |store: &Store, status: Option<TaskStatus>| -> Vec<String> {
+        let tasks = store.list_tasks(Some(a.id), status).unwrap();
+        tasks.into_iter().map(|t| t.title).collect()
+    };
+    assert_eq!(titles(&store, None), ["front", "one", "two"]);
+
+    // Fractional drop between "one" and "two" in another column, then back in Todo.
+    let moved = store.move_task(front.id, TaskStatus::Review, 0.5).unwrap();
+    assert_eq!((moved.status, moved.position), (TaskStatus::Review, 0.5));
+    assert!(moved.updated_at >= front.updated_at);
+    assert_eq!(titles(&store, Some(TaskStatus::Todo)), ["one", "two"]);
+    assert_eq!(titles(&store, Some(TaskStatus::Review)), ["front"]);
+    // A new Todo card goes after the last Todo card, ignoring other columns.
+    let third = store.create_task(a.id, "three", "", None, None).unwrap();
+    assert_eq!(third.position, 2.0);
+
+    let edited = store
+        .update_task(second.id, Some("deux"), None, Some(None))
+        .unwrap();
+    assert_eq!(edited.title, "deux");
+    assert_eq!(edited.prompt, "do it");
+    assert_eq!(edited.agent_profile, None);
+    let edited = store
+        .update_task(second.id, None, Some(""), Some(Some("codex")))
+        .unwrap();
+    assert_eq!(
+        (edited.title.as_str(), edited.prompt.as_str()),
+        ("deux", "")
+    );
+
+    let reopened = open(&dir);
+    assert_eq!(titles(&reopened, None), ["one", "front", "deux", "three"]);
+    assert_eq!(reopened.get_task(second.id).unwrap(), edited);
+    assert_eq!(reopened.list_tasks(Some(b.id), None).unwrap(), vec![other]);
+    assert_eq!(reopened.list_tasks(None, None).unwrap().len(), 5);
+
+    assert!(matches!(
+        store.move_task(Ulid::new(), TaskStatus::Done, 0.0),
+        Err(StoreError::TaskNotFound(_))
+    ));
+    assert!(matches!(
+        store.update_task(Ulid::new(), Some("x"), None, None),
+        Err(StoreError::TaskNotFound(_))
+    ));
+    assert!(matches!(
+        store.create_task(Ulid::new(), "x", "", None, None),
+        Err(StoreError::ProjectNotFound(_))
+    ));
+}
+
+#[test]
+fn delete_task_refuses_live_sessions_and_detaches_exited_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let task = store.create_task(p.id, "t", "", None, None).unwrap();
+    let mut old = session(p.id, 1);
+    old.task_id = Some(task.id);
+    old.state = SessionState::Exited;
+    store.insert_session(&old).unwrap();
+    let mut live = session(p.id, 2);
+    live.task_id = Some(task.id);
+    live.state = SessionState::NeedsInput;
+    store.insert_session(&live).unwrap();
+
+    assert!(matches!(
+        store.delete_task(task.id),
+        Err(StoreError::TaskHasLiveSession(_))
+    ));
+    assert_eq!(store.get_task(task.id).unwrap(), task);
+
+    live.state = SessionState::Exited;
+    store.update_session(&live).unwrap();
+    assert_eq!(store.delete_task(task.id).unwrap(), task);
+    assert!(matches!(
+        store.get_task(task.id),
+        Err(StoreError::TaskNotFound(_))
+    ));
+    let sessions = store.list_sessions(Some(p.id)).unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert!(sessions.iter().all(|s| s.task_id.is_none()));
+    assert!(matches!(
+        store.delete_task(task.id),
+        Err(StoreError::TaskNotFound(_))
+    ));
+}
+
+#[test]
 fn session_requires_existing_project() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

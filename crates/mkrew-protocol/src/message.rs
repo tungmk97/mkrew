@@ -59,6 +59,16 @@ pub enum Request {
     TabMove(TabMoveParams),
     #[serde(rename = "tab.set_layout")]
     TabSetLayout(TabSetLayoutParams),
+    #[serde(rename = "task.list")]
+    TaskList(TaskListParams),
+    #[serde(rename = "task.create")]
+    TaskCreate(TaskCreateParams),
+    #[serde(rename = "task.update")]
+    TaskUpdate(TaskUpdateParams),
+    #[serde(rename = "task.move")]
+    TaskMove(TaskMoveParams),
+    #[serde(rename = "task.delete")]
+    TaskDelete(TaskRef),
     #[serde(rename = "session.spawn")]
     SessionSpawn(SessionSpawnParams),
     #[serde(rename = "session.list")]
@@ -160,6 +170,11 @@ pub enum Event {
     /// A tab was created, renamed, moved or got a new layout.
     #[serde(rename = "tab.updated")]
     TabUpdated(TerminalTab),
+    /// A task was created, edited, moved or changed status.
+    #[serde(rename = "task.updated")]
+    TaskUpdated(Task),
+    #[serde(rename = "task.deleted")]
+    TaskDeleted(TaskDeletedEvent),
     /// Sent only to an attached client whose output queue overflowed: its queued output was
     /// dropped and this screen replaces it; output frames continue from this point (SPEC §7).
     #[serde(rename = "session.snapshot")]
@@ -262,6 +277,39 @@ pub struct TerminalTab {
     pub layout: serde_json::Value,
 }
 
+/// Board column of a task (SPEC §5 `task.status`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Todo,
+    Running,
+    NeedsInput,
+    Review,
+    Done,
+}
+
+/// A task card of a workspace board (SPEC §5 `task`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Task {
+    pub id: Ulid,
+    pub project_id: Ulid,
+    pub title: String,
+    pub prompt: String,
+    /// `None` = the project's `default_agent` when the task runs.
+    pub agent_profile: Option<String>,
+    pub status: TaskStatus,
+    /// Cards of a column are ordered by ascending position.
+    pub position: f64,
+    /// git HEAD before the run (M5).
+    pub checkpoint: Option<String>,
+    /// The last run exited non-zero (SPEC §5).
+    pub error_flag: bool,
+    /// Unix ms.
+    pub created_at: i64,
+    /// Unix ms.
+    pub updated_at: i64,
+}
+
 // ---- request params ----
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -339,6 +387,60 @@ pub struct TabMoveParams {
 pub struct TabSetLayoutParams {
     pub tab_id: Ulid,
     pub layout: serde_json::Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TaskListParams {
+    #[serde(default)]
+    pub project_id: Option<Ulid>,
+    #[serde(default)]
+    pub status: Option<TaskStatus>,
+}
+
+/// `task.create`: a new card in the project's Todo column.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskCreateParams {
+    pub project_id: Ulid,
+    pub title: String,
+    #[serde(default)]
+    pub prompt: String,
+    /// `None` = the project's `default_agent` at run time; else an agent profile.
+    #[serde(default)]
+    pub agent_profile: Option<String>,
+    /// Defaults to after the last Todo card of the project.
+    #[serde(default)]
+    pub position: Option<f64>,
+}
+
+/// `task.update`: fields left out stay unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskUpdateParams {
+    pub task_id: Ulid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// `Some(None)` (JSON `null`) goes back to the project's default agent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub agent_profile: Option<Option<String>>,
+}
+
+/// `task.move`: drop a card into a column at a position (drag & drop, approve).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskMoveParams {
+    pub task_id: Ulid,
+    pub status: TaskStatus,
+    pub position: f64,
+}
+
+/// Params of requests that only name a task (`task.delete`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskRef {
+    pub task_id: Ulid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -571,6 +673,12 @@ pub struct SessionExitedEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDeletedEvent {
+    pub task_id: Ulid,
+    pub project_id: Ulid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotificationClickedEvent {
     pub session_id: Ulid,
     pub project_id: Ulid,
@@ -687,6 +795,29 @@ mod tests {
                     {"session": sid().to_string()}, {"session": sid().to_string()}
                 ]}),
             }),
+            Request::TaskList(TaskListParams {
+                project_id: Some(sid()),
+                status: Some(TaskStatus::NeedsInput),
+            }),
+            Request::TaskCreate(TaskCreateParams {
+                project_id: sid(),
+                title: "Fix login".into(),
+                prompt: "make it work".into(),
+                agent_profile: Some("claude".into()),
+                position: None,
+            }),
+            Request::TaskUpdate(TaskUpdateParams {
+                task_id: sid(),
+                title: None,
+                prompt: Some("".into()),
+                agent_profile: Some(None),
+            }),
+            Request::TaskMove(TaskMoveParams {
+                task_id: sid(),
+                status: TaskStatus::Review,
+                position: 2.5,
+            }),
+            Request::TaskDelete(TaskRef { task_id: sid() }),
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),
             Request::SessionDetach(SessionRef { session_id: sid() }),
@@ -979,5 +1110,49 @@ mod tests {
         )));
         assert_eq!(clicked["event"], "notification.clicked");
         assert_eq!(clicked["data"]["session_id"], sid().to_string());
+        let task = round_trip(&Message::Event(Event::TaskUpdated(Task {
+            id: sid(),
+            project_id: sid(),
+            title: "Fix login".into(),
+            prompt: String::new(),
+            agent_profile: None,
+            status: TaskStatus::NeedsInput,
+            position: 1.5,
+            checkpoint: None,
+            error_flag: true,
+            created_at: 1,
+            updated_at: 2,
+        })));
+        assert_eq!(task["event"], "task.updated");
+        assert_eq!(task["data"]["status"], "needs_input");
+        assert_eq!(task["data"]["agent_profile"], serde_json::Value::Null);
+        let deleted = round_trip(&Message::Event(Event::TaskDeleted(TaskDeletedEvent {
+            task_id: sid(),
+            project_id: sid(),
+        })));
+        assert_eq!(deleted["event"], "task.deleted");
+    }
+
+    #[test]
+    fn task_params_default_and_tell_missing_from_null() {
+        let id = sid().to_string();
+        let create: TaskCreateParams =
+            serde_json::from_value(json!({"project_id": id, "title": "t"})).unwrap();
+        assert_eq!(create.prompt, "");
+        assert_eq!(create.agent_profile, None);
+        assert_eq!(create.position, None);
+        let list: TaskListParams = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(list, TaskListParams::default());
+
+        let parse = |params: serde_json::Value| -> TaskUpdateParams {
+            serde_json::from_value(params).unwrap()
+        };
+        assert_eq!(parse(json!({"task_id": id})).agent_profile, None);
+        assert_eq!(
+            parse(json!({"task_id": id, "agent_profile": null})).agent_profile,
+            Some(None)
+        );
+        let keep = parse(json!({"task_id": id}));
+        assert_eq!(serde_json::to_value(&keep).unwrap(), json!({"task_id": id}));
     }
 }

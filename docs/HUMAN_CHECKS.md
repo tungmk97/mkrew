@@ -220,6 +220,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T4.1, ADR 0004) Tasks without an agent store `agent_profile = ''` = workspace default at run
+  time; deleting a task is refused while one of its sessions is live, exited sessions are kept
+  as free terminals (`task_id` = NULL); new `task.deleted` event. `task.move` accepts any status
+  (the user can drag cards anywhere, SPEC §5).
+
 - (T0.1) Crate license: no `license` field set yet (SPEC §19 leaves it open). Default: decide
   when the repo goes public.
 - (T0.1) Rust edition 2024 for all crates; clippy `unwrap_used`/`expect_used` warn (denied by

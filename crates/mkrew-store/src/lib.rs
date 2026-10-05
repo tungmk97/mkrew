@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mkrew_protocol::{Project, Session, SessionKind, SessionState, StateSource, TerminalTab};
+use mkrew_protocol::{
+    Project, Session, SessionKind, SessionState, StateSource, Task, TaskStatus, TerminalTab,
+};
 use rusqlite::{Connection, Row, TransactionBehavior, params};
 use ulid::Ulid;
 
@@ -41,6 +43,10 @@ pub enum StoreError {
     ProjectNotFound(Ulid),
     #[error("tab {0} not found")]
     TabNotFound(Ulid),
+    #[error("task {0} not found")]
+    TaskNotFound(Ulid),
+    #[error("task {0} still has a running session; stop it first")]
+    TaskHasLiveSession(Ulid),
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
@@ -260,6 +266,159 @@ impl Store {
         self.get_tab(id)
     }
 
+    /// Tasks in board order (ascending position), optionally limited to a project and/or
+    /// a status column.
+    pub fn list_tasks(
+        &self,
+        project_id: Option<Ulid>,
+        status: Option<TaskStatus>,
+    ) -> Result<Vec<Task>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TASK_COLUMNS} FROM task
+             WHERE (?1 IS NULL OR project_id = ?1) AND (?2 IS NULL OR status = ?2)
+             ORDER BY position, id"
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                project_id.map(|id| id.to_string()),
+                status.map(task_status_str)
+            ],
+            RawTask::from_row,
+        )?;
+        rows.map(|r| r?.into_task()).collect()
+    }
+
+    pub fn get_task(&self, id: Ulid) -> Result<Task> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT {TASK_COLUMNS} FROM task WHERE id = ?1"))?;
+        let mut rows = stmt.query_map([id.to_string()], RawTask::from_row)?;
+        match rows.next() {
+            Some(row) => row?.into_task(),
+            None => Err(StoreError::TaskNotFound(id)),
+        }
+    }
+
+    /// Adds a Todo task; `position` defaults to after the project's last Todo task.
+    /// `agent_profile` `None` = the project's default agent at run time.
+    pub fn create_task(
+        &self,
+        project_id: Ulid,
+        title: &str,
+        prompt: &str,
+        agent_profile: Option<&str>,
+        position: Option<f64>,
+    ) -> Result<Task> {
+        self.get_project(project_id)?;
+        let position = match position {
+            Some(position) => position,
+            None => self.conn.query_row(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM task
+                 WHERE project_id = ?1 AND status = 'todo'",
+                [project_id.to_string()],
+                |row| row.get(0),
+            )?,
+        };
+        let now = now_ms();
+        let task = Task {
+            id: Ulid::new(),
+            project_id,
+            title: title.to_owned(),
+            prompt: prompt.to_owned(),
+            agent_profile: agent_profile.map(str::to_owned),
+            status: TaskStatus::Todo,
+            position,
+            checkpoint: None,
+            error_flag: false,
+            created_at: now,
+            updated_at: now,
+        };
+        self.conn.execute(
+            "INSERT INTO task (id, project_id, title, prompt, agent_profile, status, position,
+                error_flag, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
+            params![
+                task.id.to_string(),
+                project_id.to_string(),
+                task.title,
+                task.prompt,
+                agent_profile.unwrap_or(""),
+                task_status_str(task.status),
+                task.position,
+                now,
+            ],
+        )?;
+        Ok(task)
+    }
+
+    /// Sets the given fields; `None` leaves a field unchanged, `Some(None)` resets
+    /// `agent_profile` to the project's default agent.
+    pub fn update_task(
+        &self,
+        id: Ulid,
+        title: Option<&str>,
+        prompt: Option<&str>,
+        agent_profile: Option<Option<&str>>,
+    ) -> Result<Task> {
+        let mut task = self.get_task(id)?;
+        if let Some(title) = title {
+            task.title = title.to_owned();
+        }
+        if let Some(prompt) = prompt {
+            task.prompt = prompt.to_owned();
+        }
+        if let Some(agent_profile) = agent_profile {
+            task.agent_profile = agent_profile.map(str::to_owned);
+        }
+        task.updated_at = now_ms();
+        self.conn.execute(
+            "UPDATE task SET title = ?2, prompt = ?3, agent_profile = ?4, updated_at = ?5
+             WHERE id = ?1",
+            params![
+                id.to_string(),
+                task.title,
+                task.prompt,
+                task.agent_profile.as_deref().unwrap_or(""),
+                task.updated_at
+            ],
+        )?;
+        Ok(task)
+    }
+
+    /// Puts the task into column `status` at `position`.
+    pub fn move_task(&self, id: Ulid, status: TaskStatus, position: f64) -> Result<Task> {
+        let changed = self.conn.execute(
+            "UPDATE task SET status = ?2, position = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id.to_string(), task_status_str(status), position, now_ms()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::TaskNotFound(id));
+        }
+        self.get_task(id)
+    }
+
+    /// Deletes the task and returns it. Refused while one of its sessions has not exited;
+    /// exited sessions are kept (history) and become free terminals (`task_id` = NULL).
+    pub fn delete_task(&self, id: Ulid) -> Result<Task> {
+        let task = self.get_task(id)?;
+        let tx = self.conn.unchecked_transaction()?;
+        let live: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM session WHERE task_id = ?1 AND state <> 'exited'",
+            [id.to_string()],
+            |row| row.get(0),
+        )?;
+        if live > 0 {
+            return Err(StoreError::TaskHasLiveSession(id));
+        }
+        tx.execute(
+            "UPDATE session SET task_id = NULL WHERE task_id = ?1",
+            [id.to_string()],
+        )?;
+        tx.execute("DELETE FROM task WHERE id = ?1", [id.to_string()])?;
+        tx.commit()?;
+        Ok(task)
+    }
+
     pub fn insert_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
             "INSERT INTO session (id, task_id, project_id, agent_profile, kind, title,
@@ -465,6 +624,27 @@ fn parse_source(s: String) -> Result<StateSource> {
     })
 }
 
+fn task_status_str(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Todo => "todo",
+        TaskStatus::Running => "running",
+        TaskStatus::NeedsInput => "needs_input",
+        TaskStatus::Review => "review",
+        TaskStatus::Done => "done",
+    }
+}
+
+fn parse_task_status(s: String) -> Result<TaskStatus> {
+    Ok(match s.as_str() {
+        "todo" => TaskStatus::Todo,
+        "running" => TaskStatus::Running,
+        "needs_input" => TaskStatus::NeedsInput,
+        "review" => TaskStatus::Review,
+        "done" => TaskStatus::Done,
+        _ => return Err(corrupt("task.status", s)),
+    })
+}
+
 fn parse_ulid(column: &'static str, s: String) -> Result<Ulid> {
     Ulid::from_string(&s).map_err(|_| corrupt(column, s))
 }
@@ -610,6 +790,58 @@ impl RawTab {
             position: self.position,
             layout: serde_json::from_str(&self.layout)
                 .map_err(|_| corrupt("terminal_tab.layout", self.layout))?,
+        })
+    }
+}
+
+const TASK_COLUMNS: &str = "id, project_id, title, prompt, agent_profile, status, position,
+    checkpoint, error_flag, created_at, updated_at";
+
+struct RawTask {
+    id: String,
+    project_id: String,
+    title: String,
+    prompt: String,
+    /// `''` = the project's default agent (the column is NOT NULL).
+    agent_profile: String,
+    status: String,
+    position: f64,
+    checkpoint: Option<String>,
+    error_flag: bool,
+    created_at: i64,
+    updated_at: i64,
+}
+
+impl RawTask {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            title: row.get(2)?,
+            prompt: row.get(3)?,
+            agent_profile: row.get(4)?,
+            status: row.get(5)?,
+            position: row.get(6)?,
+            checkpoint: row.get(7)?,
+            error_flag: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
+        })
+    }
+
+    fn into_task(self) -> Result<Task> {
+        Ok(Task {
+            id: parse_ulid("task.id", self.id)?,
+            project_id: parse_ulid("task.project_id", self.project_id)?,
+            title: self.title,
+            prompt: self.prompt,
+            agent_profile: Some(self.agent_profile).filter(|p| !p.is_empty()),
+            status: parse_task_status(self.status)?,
+            position: self.position,
+            checkpoint: self.checkpoint,
+            error_flag: self.error_flag,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         })
     }
 }

@@ -11,7 +11,8 @@ use mkrew_protocol::{
     FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
     ProfileErrorInfo, ProjectAddParams, ProjectUpdateParams, Request, Session, SessionKillParams,
     SessionKind, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
-    SessionWaitResult, StateSource, TerminalTab, encode,
+    SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent, TaskUpdateParams,
+    TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -214,6 +215,19 @@ impl Daemon {
                 let closed = self.store().close_tab(params.tab_id);
                 (store_outcome(closed), After::Continue)
             }
+            Request::TaskList(params) => {
+                let tasks = self.store().list_tasks(params.project_id, params.status);
+                (store_outcome(tasks), After::Continue)
+            }
+            Request::TaskCreate(params) => (self.task_create(params), After::Continue),
+            Request::TaskUpdate(params) => (self.task_update(params), After::Continue),
+            Request::TaskMove(params) => {
+                let task = self
+                    .store()
+                    .move_task(params.task_id, params.status, params.position);
+                (self.task_updated(task), After::Continue)
+            }
+            Request::TaskDelete(params) => (self.task_delete(params.task_id), After::Continue),
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
@@ -427,15 +441,10 @@ impl Daemon {
 
     /// Changes the project; a new `default_agent` must name an agent profile.
     fn project_update(&self, params: ProjectUpdateParams) -> Outcome {
-        if let Some(Some(id)) = &params.default_agent {
-            match self.load_profile(id) {
-                Ok(profile) if profile.kind == mkrew_core::ProfileKind::Agent => {}
-                Ok(_) => {
-                    let message = format!("{id} is a shell profile, not an agent");
-                    return Outcome::error(ErrorCode::InvalidRequest, message);
-                }
-                Err(outcome) => return outcome,
-            }
+        if let Some(Some(id)) = &params.default_agent
+            && let Err(outcome) = self.check_agent_profile(id)
+        {
+            return outcome;
         }
         let updated = self.store().update_project(
             params.project_id,
@@ -446,6 +455,78 @@ impl Daemon {
             let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));
         }
         store_outcome(updated)
+    }
+
+    /// `id` must name an agent profile (not a shell).
+    fn check_agent_profile(&self, id: &str) -> Result<(), Outcome> {
+        match self.load_profile(id)? {
+            profile if profile.kind == mkrew_core::ProfileKind::Agent => Ok(()),
+            _ => {
+                let message = format!("{id} is a shell profile, not an agent");
+                Err(Outcome::error(ErrorCode::InvalidRequest, message))
+            }
+        }
+    }
+
+    fn task_create(&self, params: TaskCreateParams) -> Outcome {
+        if params.title.trim().is_empty() {
+            return Outcome::error(ErrorCode::InvalidRequest, "task title is empty");
+        }
+        if let Some(id) = &params.agent_profile
+            && let Err(outcome) = self.check_agent_profile(id)
+        {
+            return outcome;
+        }
+        let task = self.store().create_task(
+            params.project_id,
+            &params.title,
+            &params.prompt,
+            params.agent_profile.as_deref(),
+            params.position,
+        );
+        self.task_updated(task)
+    }
+
+    fn task_update(&self, params: TaskUpdateParams) -> Outcome {
+        if params.title.as_deref().is_some_and(|t| t.trim().is_empty()) {
+            return Outcome::error(ErrorCode::InvalidRequest, "task title is empty");
+        }
+        if let Some(Some(id)) = &params.agent_profile
+            && let Err(outcome) = self.check_agent_profile(id)
+        {
+            return outcome;
+        }
+        let task = self.store().update_task(
+            params.task_id,
+            params.title.as_deref(),
+            params.prompt.as_deref(),
+            params.agent_profile.as_ref().map(Option::as_deref),
+        );
+        self.task_updated(task)
+    }
+
+    /// Deletes the task (refused while it has a live session) and announces `task.deleted`.
+    fn task_delete(&self, task_id: Ulid) -> Outcome {
+        let deleted = self.store().delete_task(task_id);
+        match deleted {
+            Ok(task) => {
+                let event = TaskDeletedEvent {
+                    task_id,
+                    project_id: task.project_id,
+                };
+                let _ = self.hub.events.send(Event::TaskDeleted(event));
+                ok(&())
+            }
+            Err(e) => store_outcome::<()>(Err(e)),
+        }
+    }
+
+    /// Replies with the task and announces it as `task.updated`.
+    fn task_updated(&self, task: Result<Task, StoreError>) -> Outcome {
+        if let Ok(task) = &task {
+            let _ = self.hub.events.send(Event::TaskUpdated(task.clone()));
+        }
+        store_outcome(task)
     }
 
     /// Replies with the tab and announces it as `tab.updated`.
@@ -735,7 +816,9 @@ fn store_outcome<T: Serialize>(result: Result<T, StoreError>) -> Outcome {
                 StoreError::Path { .. } | StoreError::NotADirectory(_) => ErrorCode::InvalidRequest,
                 StoreError::SessionNotFound(_)
                 | StoreError::ProjectNotFound(_)
-                | StoreError::TabNotFound(_) => ErrorCode::NotFound,
+                | StoreError::TabNotFound(_)
+                | StoreError::TaskNotFound(_) => ErrorCode::NotFound,
+                StoreError::TaskHasLiveSession(_) => ErrorCode::InvalidState,
                 _ => {
                     tracing::error!("store error: {e}");
                     ErrorCode::Internal

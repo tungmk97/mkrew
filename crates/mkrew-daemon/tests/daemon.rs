@@ -19,7 +19,8 @@ use mkrew_protocol::{
     SessionListParams, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
     SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
     TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    TerminalTab, encode,
+    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
+    TaskUpdateParams, TerminalTab, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -1317,6 +1318,155 @@ fn tabs_and_layout_persist_across_daemon_restart() {
     assert!(daemon.wait_exit().success());
     let (_daemon, mut client) = env.start();
     assert_eq!(list_tabs(&mut client, &project), before);
+    client.stop();
+}
+
+fn create_task(project: &Project, title: &str, agent_profile: Option<&str>) -> Request {
+    Request::TaskCreate(TaskCreateParams {
+        project_id: project.id,
+        title: title.into(),
+        prompt: format!("prompt for {title}"),
+        agent_profile: agent_profile.map(Into::into),
+        position: None,
+    })
+}
+
+fn list_tasks(client: &mut Client, project: &Project) -> Vec<Task> {
+    client
+        .call(Request::TaskList(TaskListParams {
+            project_id: Some(project.id),
+            status: None,
+        }))
+        .into_result()
+        .unwrap()
+}
+
+#[test]
+fn tasks_crud_and_order_persist_across_daemon_restart() {
+    let env = Env::new();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+
+    let first: Task = client
+        .call(create_task(&project, "one", None))
+        .into_result()
+        .unwrap();
+    let second: Task = client
+        .call(create_task(&project, "two", Some("claude")))
+        .into_result()
+        .unwrap();
+    let doomed: Task = client
+        .call(create_task(&project, "doomed", None))
+        .into_result()
+        .unwrap();
+    assert_eq!(first.status, TaskStatus::Todo);
+    assert_eq!(first.prompt, "prompt for one");
+    assert_eq!(second.agent_profile.as_deref(), Some("claude"));
+    assert!(first.position < second.position && second.position < doomed.position);
+    client.wait_event(&Event::TaskUpdated(first.clone()));
+
+    let edited: Task = client
+        .call(Request::TaskUpdate(TaskUpdateParams {
+            task_id: second.id,
+            title: Some("deux".into()),
+            prompt: None,
+            agent_profile: Some(None),
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        (edited.title.as_str(), edited.agent_profile.as_deref()),
+        ("deux", None)
+    );
+    assert_eq!(edited.prompt, "prompt for two");
+    client.wait_event(&Event::TaskUpdated(edited.clone()));
+
+    // Drop "one" into Review, then "deux" in front of it.
+    let moved: Task = client
+        .call(Request::TaskMove(TaskMoveParams {
+            task_id: first.id,
+            status: TaskStatus::Review,
+            position: 1.0,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(moved.status, TaskStatus::Review);
+    client.wait_event(&Event::TaskUpdated(moved.clone()));
+    client
+        .call(Request::TaskMove(TaskMoveParams {
+            task_id: second.id,
+            status: TaskStatus::Review,
+            position: 0.5,
+        }))
+        .into_result::<Task>()
+        .unwrap();
+
+    client
+        .call(Request::TaskDelete(TaskRef { task_id: doomed.id }))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_event(&Event::TaskDeleted(TaskDeletedEvent {
+        task_id: doomed.id,
+        project_id: project.id,
+    }));
+    let review: Vec<Task> = client
+        .call(Request::TaskList(TaskListParams {
+            project_id: Some(project.id),
+            status: Some(TaskStatus::Review),
+        }))
+        .into_result()
+        .unwrap();
+    let titles: Vec<&str> = review.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, ["deux", "one"]);
+    let before = list_tasks(&mut client, &project);
+    assert_eq!(before.len(), 2);
+
+    let unknown = || TaskRef {
+        task_id: Ulid::new(),
+    };
+    assert_eq!(
+        error_code(client.call(Request::TaskDelete(unknown()))),
+        ErrorCode::NotFound
+    );
+    let missing_move = Request::TaskMove(TaskMoveParams {
+        task_id: unknown().task_id,
+        status: TaskStatus::Done,
+        position: 0.0,
+    });
+    assert_eq!(error_code(client.call(missing_move)), ErrorCode::NotFound);
+    let orphan = create_task(
+        &Project {
+            id: Ulid::new(),
+            ..project.clone()
+        },
+        "x",
+        None,
+    );
+    assert_eq!(error_code(client.call(orphan)), ErrorCode::NotFound);
+    assert_eq!(
+        error_code(client.call(create_task(&project, "  ", None))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(create_task(&project, "x", Some("shell")))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(create_task(&project, "x", Some("nope")))),
+        ErrorCode::NotFound
+    );
+    let bad_edit = Request::TaskUpdate(TaskUpdateParams {
+        task_id: first.id,
+        title: None,
+        prompt: None,
+        agent_profile: Some(Some("shell".into())),
+    });
+    assert_eq!(error_code(client.call(bad_edit)), ErrorCode::InvalidRequest);
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    assert_eq!(list_tasks(&mut client, &project), before);
     client.stop();
 }
 
