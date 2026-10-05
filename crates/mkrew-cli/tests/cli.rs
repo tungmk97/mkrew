@@ -386,6 +386,83 @@ fn send_answers_the_agent_and_wait_returns_when_it_is_done() {
     assert_eq!(waited.trim(), "exited (exit code 0)");
 }
 
+/// `mk task add → list → run`: the fake agent gets the prompt as an argument, the card follows
+/// its session to Review.
+#[test]
+fn task_add_list_run_reaches_review() {
+    let env = Env::new();
+    let arg_profile = fake_profile().replace("prompt_mode = \"none\"", "prompt_mode = \"arg\"");
+    assert_ne!(arg_profile, fake_profile());
+    env.write_profile("fake-arg", &arg_profile);
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    assert!(env.ok(&["task", "list"]).contains("no tasks"));
+
+    let id = env.ok(&[
+        "task",
+        "add",
+        "demo",
+        "Fix the login bug",
+        "--prompt",
+        "fix login",
+        "--agent",
+        "fake-arg",
+    ]);
+    let id = id.trim();
+    assert!(id.parse::<Ulid>().is_ok(), "{id}");
+    let other = env.ok(&["task", "add", "demo", "Write docs"]);
+    let other = other.trim();
+
+    let list = env.ok(&["task", "list", "--project", "demo"]);
+    let row = |list: &str, id: &str| list.lines().find(|l| l.starts_with(id)).unwrap().to_owned();
+    let added = row(&list, id);
+    assert!(
+        added.contains("todo") && added.contains("fake-arg") && added.contains("Fix the login bug"),
+        "{list}"
+    );
+    assert!(row(&list, other).contains("(default)"), "{list}");
+
+    // No agent and no project default: the daemon refuses, the card stays in Todo.
+    let refused = env.mk(&["task", "run", other]);
+    assert!(!refused.status.success(), "{refused:?}");
+
+    let session = env.ok(&["task", "run", id]);
+    let session = session.trim();
+    assert!(session.parse::<Ulid>().is_ok(), "{session}");
+    let running = env.ok(&["task", "list", "--status", "running"]);
+    assert!(
+        running.contains(id) && !running.contains(other),
+        "{running}"
+    );
+
+    let attach = env.attach(session);
+    attach.wait_for("Task: fix login");
+    attach.wait_for("(y/n)");
+    env.ok(&["send", session, "y"]);
+    attach.finish();
+
+    // The card leaves Running once the session's exit is processed.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let review = env.ok(&["task", "list", "--status", "review"]);
+        if review.contains(id) {
+            assert!(!row(&review, id).contains("review!"), "{review}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "task never reached review");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        env.ok(&["task", "list", "--status", "todo"])
+            .contains(other),
+        "the refused task stays in todo"
+    );
+    let bad = env.mk(&["task", "list", "--status", "doing"]);
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown status"));
+}
+
 /// Outside Mkrew (no `MKREW_SESSION_ID`) a hook does nothing, even without a daemon.
 #[test]
 fn hook_outside_mkrew_exits_silently() {

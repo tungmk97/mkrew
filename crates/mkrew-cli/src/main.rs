@@ -7,13 +7,14 @@ mod hook;
 mod integration;
 mod project;
 mod session;
+mod task;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use mkrew_core::Paths;
-use mkrew_protocol::SessionState;
+use mkrew_protocol::{SessionState, TaskStatus};
 use ulid::Ulid;
 
 #[derive(Parser)]
@@ -34,6 +35,11 @@ enum Command {
     Project {
         #[command(subcommand)]
         command: ProjectCommand,
+    },
+    /// Manage and run board tasks.
+    Task {
+        #[command(subcommand)]
+        command: TaskCommand,
     },
     /// List or start agent sessions.
     Session {
@@ -91,6 +97,33 @@ enum SessionCommand {
         #[arg(long)]
         agent: String,
     },
+}
+
+#[derive(Subcommand)]
+enum TaskCommand {
+    /// Add a card to the project's Todo column and print its id.
+    Add {
+        /// Project id or name.
+        project: String,
+        title: String,
+        /// What the agent is asked to do (delivered per the profile's `prompt_mode`).
+        #[arg(long)]
+        prompt: Option<String>,
+        /// Agent profile id (default: the project's default agent at run time).
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// List tasks.
+    List {
+        /// Only tasks of this project (id or name).
+        #[arg(long)]
+        project: Option<String>,
+        /// Only tasks in this column: todo, running, needs_input, review or done.
+        #[arg(long, value_parser = task::parse_status)]
+        status: Option<TaskStatus>,
+    },
+    /// Start the task's agent in the project folder and print the session id.
+    Run { task_id: Ulid },
 }
 
 #[derive(Subcommand)]
@@ -163,6 +196,20 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             match command {
                 ProjectCommand::Add { path, name } => project::add(&mut client, &path, name),
                 ProjectCommand::List => project::list(&mut client),
+            }
+            .map(|()| ExitCode::SUCCESS)
+        }
+        Command::Task { command } => {
+            let mut client = project::connect(&paths)?;
+            match command {
+                TaskCommand::Add {
+                    project,
+                    title,
+                    prompt,
+                    agent,
+                } => task::add(&mut client, &project, title, prompt, agent),
+                TaskCommand::List { project, status } => task::list(&mut client, project, status),
+                TaskCommand::Run { task_id } => task::run(&mut client, task_id),
             }
             .map(|()| ExitCode::SUCCESS)
         }

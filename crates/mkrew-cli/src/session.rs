@@ -9,10 +9,10 @@ use ulid::Ulid;
 use crate::client::Client;
 
 /// Terminal size for sessions spawned without a terminal to size them after.
-const DEFAULT_SIZE: (u16, u16) = (120, 40);
+pub const DEFAULT_SIZE: (u16, u16) = (120, 40);
 
 /// Finds a project by id or name.
-fn resolve_project(projects: &[Project], key: &str) -> anyhow::Result<Project> {
+pub fn resolve_project(projects: &[Project], key: &str) -> anyhow::Result<Project> {
     projects
         .iter()
         .find(|p| p.id.to_string() == key || p.name == key)
