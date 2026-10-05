@@ -119,6 +119,20 @@ impl Sidebar {
         &self.projects
     }
 
+    /// The workspace `offset` places after `current` in sidebar order, wrapping around; the
+    /// first one if `current` is unknown. `None` without workspaces.
+    pub fn workspace_at_offset(&self, current: Option<Ulid>, offset: isize) -> Option<Ulid> {
+        let len = self.projects.len() as isize;
+        if len == 0 {
+            return None;
+        }
+        let next = match current.and_then(|id| self.projects.iter().position(|p| p.id == id)) {
+            Some(index) => (index as isize + offset).rem_euclid(len) as usize,
+            None => 0,
+        };
+        Some(self.projects[next].id)
+    }
+
     /// Every known session, as last listed and updated by events.
     pub fn sessions(&self) -> &[Session] {
         &self.sessions
@@ -361,6 +375,23 @@ mod tests {
         sidebar.toggle(api.id);
         sidebar.load(vec![api, web], vec![old, new]);
         assert!(!workspace(&sidebar.rows()[0]).expanded);
+    }
+
+    #[test]
+    fn workspaces_cycle_in_sidebar_order() {
+        let mut sidebar = Sidebar::default();
+        assert_eq!(sidebar.workspace_at_offset(None, 1), None);
+        let (a, b, c) = (project("a"), project("b"), project("c"));
+        let ids = [a.id, b.id, c.id];
+        sidebar.load(vec![a, b, c], Vec::new());
+        assert_eq!(sidebar.workspace_at_offset(Some(ids[0]), 1), Some(ids[1]));
+        assert_eq!(sidebar.workspace_at_offset(Some(ids[2]), 1), Some(ids[0]));
+        assert_eq!(sidebar.workspace_at_offset(Some(ids[0]), -1), Some(ids[2]));
+        assert_eq!(sidebar.workspace_at_offset(None, -1), Some(ids[0]));
+        assert_eq!(
+            sidebar.workspace_at_offset(Some(Ulid::new()), 1),
+            Some(ids[0])
+        );
     }
 
     #[test]

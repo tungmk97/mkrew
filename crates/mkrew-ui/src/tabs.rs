@@ -228,6 +228,15 @@ impl Tabs {
         self.active = Some(self.tabs[next].id);
     }
 
+    /// Activates the tab at `index` (0-based); false if there is none.
+    pub fn activate_nth(&mut self, index: usize) -> bool {
+        let Some(tab_id) = self.tabs.get(index).map(|tab| tab.id) else {
+            return false;
+        };
+        self.active = Some(tab_id);
+        true
+    }
+
     /// Sessions shown on screen: the panes of the active tab. All others stay detached.
     pub fn visible(&self) -> Vec<Ulid> {
         self.active().map(Tab::sessions).unwrap_or_default()
@@ -615,6 +624,11 @@ mod tests {
         assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
         assert!(tabs.activate(two.id));
         assert!(!tabs.activate(Ulid::new()));
+        assert!(tabs.activate_nth(2));
+        assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
+        assert!(!tabs.activate_nth(3));
+        assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
+        assert!(tabs.activate_nth(1));
 
         tabs.remove(two.id);
         assert_eq!(tabs.active().map(|t| t.id), Some(three.id));

@@ -14,12 +14,6 @@ pub struct InputMode {
     pub bracketed_paste: bool,
 }
 
-/// Ctrl+Shift+V pastes (SPEC §13); the view handles it instead of sending bytes.
-pub fn is_paste_shortcut(keystroke: &Keystroke) -> bool {
-    let m = keystroke.modifiers;
-    m.control && m.shift && !m.alt && !m.platform && keystroke.key.eq_ignore_ascii_case("v")
-}
-
 /// Bytes a key press sends to the PTY, or `None` if the terminal should ignore it.
 pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode) -> Option<Vec<u8>> {
     let m = keystroke.modifiers;
@@ -289,13 +283,6 @@ mod tests {
         assert_eq!(bytes("win-a", Some("a"), NORMAL), None);
         assert_eq!(bytes("shift", None, NORMAL), None);
         assert_eq!(bytes("ctrl-f13", None, NORMAL), None);
-    }
-
-    #[test]
-    fn paste_shortcut() {
-        assert!(is_paste_shortcut(&key("ctrl-shift-v", None)));
-        assert!(!is_paste_shortcut(&key("ctrl-v", None)));
-        assert!(!is_paste_shortcut(&key("ctrl-alt-shift-v", None)));
     }
 
     #[test]

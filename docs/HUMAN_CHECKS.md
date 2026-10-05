@@ -86,6 +86,17 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   closes it; on a running agent the dialog offers Kill / Hide / Cancel; hidden sessions stay in
   the sidebar and clicking them brings the pane back; close and reopen the UI: still alive.
   With 13+ live sessions the tab bar shows the "⚠ … sessions running" notice.
+- [ ] (T2.7a) `cargo run -p mkrew-ui`, focus a terminal: Alt+1…9 / Ctrl+Alt+↑↓ switch
+  workspaces, Ctrl+Shift+T / Ctrl+Shift+A open a tab with a shell / the default agent,
+  Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+Alt+1…9 switch tabs, Ctrl+Shift+W closes the tab (its sessions
+  stay in the sidebar), **Alt+Shift+= / Alt+Shift+-** split right/down (check that GPUI on
+  Windows reports these as `alt-shift-=` / `alt-shift--` on your layout; rebind in keymap.toml
+  if not; also that Ctrl+Tab is not eaten by the OS), Alt+arrows move focus, Ctrl+Shift+V pastes (bracketed in Claude Code). None of these
+  reach the PTY; **Ctrl+C, Ctrl+R, Esc inside Claude Code** still work. Put
+  `close_pane = "ctrl-shift-q"` and `bogus = "x"` in `%APPDATA%\mkrew\keymap.toml`: Ctrl+Shift+Q
+  closes panes, the sidebar shows "✕ unknown command `bogus` …", the tooltip says Ctrl+Shift+Q.
+  AltGr layouts: Ctrl+Alt+digit is AltGr+digit (e.g. `{` on German) and is intercepted by the
+  tab-jump defaults — rebind if you type those characters.
 
 ## Questions with assumed defaults
 
@@ -288,6 +299,18 @@ _Decisions the agent made on its own. Override them here if you disagree._
   hints wait for the T2.7 keymap. The >12 running warning is a tab-bar notice, not a toast.
   Deferred: disabled/in-flight state on the new-pane buttons (a double click spawns two),
   focus rings on buttons, a per-pane close icon on hover.
+- (T2.7a) Keymap: `keymap.toml` is a flat table `command_name = "gpui-keystroke"` (names in
+  `keymap::Command::name`, e.g. `close_pane`, `workspace_3`, `focus_left`); single keystrokes
+  only, no unbinding yet; key names are not validated beyond GPUI's parser. A bad entry (unknown
+  command, not a string, unparsable, already bound to another command) keeps its default and
+  the first problem is shown in the sidebar (all are logged). Loaded once at start (no live
+  reload). Split right/down starts a session of the **focused pane's kind** (agent → the
+  workspace default agent, shell → shell; nothing focused → shell). Ctrl+Shift+A "pick
+  profile" uses the default agent for now (profile picker later). Close tab does **not** ask
+  and does not kill: its sessions keep running and stay in the sidebar; closing the last tab
+  leaves a fresh empty tab. macOS Cmd mapping not done (Windows first). Only implemented
+  commands are bound; palette, quick open, views, inbox, task, Docs, Zed, Files, Git shortcuts
+  come with their features; copy, find, Shift+PgUp/PgDn, pane resize/zoom, rename tab = T2.7b.
 
 ## Done
 

@@ -19,8 +19,9 @@ use mkrew_protocol::{Outcome, Request, ScreenSnapshot, SessionInputParams, Sessi
 use ulid::Ulid;
 
 use crate::client::Connection;
+use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
-use crate::terminal::input::{is_paste_shortcut, key_to_bytes, paste_bytes};
+use crate::terminal::input::{key_to_bytes, paste_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, grid_size, layout_row};
 use crate::theme::{self, Theme, font_size, space};
 
@@ -124,27 +125,40 @@ impl TerminalPane {
             .detach();
     }
 
-    /// Keys go to the session, except the terminal's own bindings (SPEC §13).
+    /// Keys go to the session. Keystrokes bound in the keymap (SPEC §13) never get here: their
+    /// action handler stops them first.
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.exited.is_some() {
             return;
         }
-        let mode = self.emulator.input_mode();
-        let bytes = if is_paste_shortcut(&event.keystroke) {
-            cx.read_from_clipboard()
-                .and_then(|item| item.text())
-                .map(|text| paste_bytes(&text, mode))
-        } else {
-            key_to_bytes(&event.keystroke, mode)
-        };
-        if let Some(data) = bytes {
+        if let Some(data) = key_to_bytes(&event.keystroke, self.emulator.input_mode()) {
             cx.stop_propagation();
-            let request = Request::SessionInput(SessionInputParams {
-                session_id: self.session_id,
-                data,
-            });
-            self.request(request, "session.input", cx);
+            self.input(data, cx);
         }
+    }
+
+    /// The terminal's own commands; all others go on to the window shell.
+    fn run(&mut self, Run(command): &Run, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        match command {
+            Command::Paste => {
+                let text = cx.read_from_clipboard().and_then(|item| item.text());
+                if let Some(text) = text
+                    && self.exited.is_none()
+                {
+                    let data = paste_bytes(&text, self.emulator.input_mode());
+                    self.input(data, cx);
+                }
+            }
+            _ => cx.propagate(),
+        }
+    }
+
+    fn input(&self, data: Vec<u8>, cx: &mut Context<'_, Self>) {
+        let request = Request::SessionInput(SessionInputParams {
+            session_id: self.session_id,
+            data,
+        });
+        self.request(request, "session.input", cx);
     }
 }
 
@@ -180,8 +194,10 @@ impl Render for TerminalPane {
             .size_full()
             .flex()
             .flex_col()
+            .key_context(TERMINAL_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::key_down))
+            .on_action(cx.listener(Self::run))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|pane, _, window, cx| window.focus(&pane.focus_handle, cx)),

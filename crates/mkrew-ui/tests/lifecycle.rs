@@ -1,6 +1,7 @@
 //! Pane lifecycle against the real daemon (SPEC §10): new agent panes use the workspace's
 //! default agent, a hidden pane's session keeps running after the UI closes and stays in the
-//! sidebar, and killing it ends it. Runs the real `mkrew-daemon` and fake agent in a temp dir.
+//! sidebar, killing it ends it, and closing a tab leaves its sessions running. Runs the real
+//! `mkrew-daemon` and fake agent in a temp dir.
 //!
 //! Needs `target/<profile>/mkrew-daemon` and `mkrew-fakeagent` built (`cargo test --workspace`).
 
@@ -15,7 +16,7 @@ use mkrew_core::Paths;
 use mkrew_protocol::{
     Project, ProjectAddParams, ProjectUpdateParams, Request, Session, SessionKillParams,
     SessionKind, SessionListParams, SessionSpawnResult, SessionState, TabCreateParams,
-    TabListParams, TerminalTab,
+    TabListParams, TabRef, TerminalTab,
 };
 use mkrew_ui::client::Connection;
 use mkrew_ui::connect::{DaemonLauncher, POLL, TIMEOUT, connect_or_spawn};
@@ -180,5 +181,10 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
         std::thread::sleep(Duration::from_millis(100));
     };
     assert_eq!(lifecycle::close_action(Some(&exited)), CloseAction::Remove);
+    assert_ne!(session(&second, a).state, SessionState::Exited);
+
+    // Close tab (Ctrl+Shift+W): the tab goes, its sessions keep running for the sidebar.
+    block_on(second.call::<()>(Request::TabClose(TabRef { tab_id: tab.id }))).unwrap();
+    assert!(list_tabs(&second, project.id).is_empty());
     assert_ne!(session(&second, a).state, SessionState::Exited);
 }

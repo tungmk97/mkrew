@@ -74,6 +74,11 @@ impl Paths {
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")
     }
+
+    /// UI shortcuts (SPEC §13).
+    pub fn keymap_file(&self) -> PathBuf {
+        self.config_dir.join("keymap.toml")
+    }
 }
 
 /// `\\.\pipe\mkrew-<username>`, with anything but ASCII letters and digits in the name
@@ -121,6 +126,7 @@ mod tests {
         assert_eq!(paths.db_file(), Path::new("/tmp/d").join("mkrew.db"));
         assert_eq!(paths.lock_file(), Path::new("/tmp/d").join("mkrew.lock"));
         assert_eq!(paths.agents_dir(), Path::new("/tmp/c").join("agents"));
+        assert_eq!(paths.keymap_file(), Path::new("/tmp/c").join("keymap.toml"));
     }
 
     #[test]

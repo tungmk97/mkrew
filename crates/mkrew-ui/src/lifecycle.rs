@@ -30,6 +30,12 @@ pub fn spawn_params(
     }
 }
 
+/// What a split shortcut starts next to the focused pane: the same kind of session (an agent
+/// next to an agent, a shell next to a shell); a shell if nothing is focused.
+pub fn split_kind(focused: Option<&Session>) -> SessionKind {
+    focused.map_or(SessionKind::Shell, |session| session.kind)
+}
+
 /// What closing the pane of a session does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseAction {
@@ -124,6 +130,16 @@ mod tests {
         assert_eq!(shell.kind, SessionKind::Shell);
         assert_eq!(shell.agent_profile, None);
         assert!(shell.cols > 0 && shell.rows > 0);
+    }
+
+    #[test]
+    fn splits_start_the_focused_kind() {
+        let project = Ulid::new();
+        let agent = session(project, SessionKind::Agent, SessionState::Idle);
+        let shell = session(project, SessionKind::Shell, SessionState::Idle);
+        assert_eq!(split_kind(Some(&agent)), SessionKind::Agent);
+        assert_eq!(split_kind(Some(&shell)), SessionKind::Shell);
+        assert_eq!(split_kind(None), SessionKind::Shell);
     }
 
     #[test]

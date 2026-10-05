@@ -11,17 +11,18 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, FontWeight, KeyBinding, MouseButton,
-    PathPromptOptions, PromptLevel, SharedString, TitlebarOptions, Window, WindowAppearance,
-    WindowBounds, WindowOptions, actions, div, px, relative, rgb, size,
+    AnyView, App, Bounds, Context, Entity, FocusHandle, FontWeight, MouseButton, PathPromptOptions,
+    PromptLevel, SharedString, TitlebarOptions, Window, WindowAppearance, WindowBounds,
+    WindowOptions, div, px, relative, rgb, size,
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
     Event, Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult,
     SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
-    SessionState, TabCreateParams, TabListParams, TabSetLayoutParams, TerminalTab,
+    SessionState, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, TerminalTab,
 };
 use mkrew_ui::client::{Connection, Incoming};
+use mkrew_ui::keymap::{Command, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
@@ -37,14 +38,6 @@ use ulid::Ulid;
 const PAINT_TIMEOUT: Duration = Duration::from_millis(50);
 /// Most incoming frames handled per drain, so one drain never starves painting.
 const DRAIN_BATCH: usize = 256;
-
-actions!(mkrew, [AddWorkspace, ClosePane]);
-
-/// SPEC §13 defaults; the full keymap arrives with T2.7.
-const ADD_WORKSPACE_KEYS: &str = "ctrl-shift-k";
-const ADD_WORKSPACE_LABEL: &str = "Ctrl+Shift+K";
-const CLOSE_PANE_KEYS: &str = "ctrl-shift-x";
-const CLOSE_PANE_LABEL: &str = "Ctrl+Shift+X";
 
 /// Title of a workspace's first tab; later ones are numbered.
 const FIRST_TAB_TITLE: &str = "Terminal";
@@ -62,11 +55,12 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let (keymap, keymap_errors) = Keymap::load(&paths.keymap_file());
+    for error in &keymap_errors {
+        tracing::warn!("{error}; using the default for it");
+    }
     gpui_platform::application().run(move |cx: &mut App| {
-        cx.bind_keys([
-            KeyBinding::new(ADD_WORKSPACE_KEYS, AddWorkspace, None),
-            KeyBinding::new(CLOSE_PANE_KEYS, ClosePane, None),
-        ]);
+        cx.bind_keys(keymap.key_bindings());
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -80,7 +74,7 @@ fn main() {
             ..Default::default()
         };
         let opened = cx.open_window(options, |window, cx| {
-            cx.new(|cx| Shell::new(paths, window, cx))
+            cx.new(|cx| Shell::new(paths, keymap, &keymap_errors, window, cx))
         });
         if let Err(error) = opened {
             eprintln!("mkrew: cannot open window: {error:#}");
@@ -142,10 +136,20 @@ struct Shell {
     painted: async_channel::Sender<()>,
     /// Focused while no pane is, so window-level actions (Add workspace) still dispatch.
     focus_handle: FocusHandle,
+    /// The bound shortcuts, for tooltips and labels.
+    keymap: Keymap,
+    /// What was wrong with `keymap.toml` at start (those entries use their defaults).
+    keymap_error: Option<String>,
 }
 
 impl Shell {
-    fn new(paths: Paths, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+    fn new(
+        paths: Paths,
+        keymap: Keymap,
+        keymap_errors: &[mkrew_ui::keymap::KeymapError],
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         let focus_handle = cx.focus_handle();
@@ -237,6 +241,16 @@ impl Shell {
             attach_errors: HashMap::new(),
             painted,
             focus_handle,
+            keymap,
+            keymap_error: keymap_errors
+                .first()
+                .map(|first| match keymap_errors.len() {
+                    1 => format!("{first}; using the default. Fix keymap.toml and restart."),
+                    n => format!(
+                        "{first} (+{} more); using the defaults. Fix keymap.toml and restart.",
+                        n - 1
+                    ),
+                }),
         }
     }
 
@@ -335,7 +349,7 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await;
             let _ = this.update_in(cx, |shell, window, cx| match listed {
-                Ok(list) if list.is_empty() => shell.create_tab(project_id, window, cx),
+                Ok(list) if list.is_empty() => shell.create_tab(project_id, None, window, cx),
                 Ok(list) => {
                     let mut tabs = Tabs::new(project_id);
                     tabs.load(list);
@@ -357,8 +371,14 @@ impl Shell {
         .detach();
     }
 
-    /// Adds a tab to a workspace and activates it.
-    fn create_tab(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// Adds a tab to a workspace and activates it; `start` then spawns a session into it.
+    fn create_tab(
+        &mut self,
+        project_id: Ulid,
+        start: Option<SessionKind>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -394,6 +414,11 @@ impl Shell {
                             shell.tabs_loaded(project_id, window, cx);
                         } else {
                             shell.sync_panes(window, cx);
+                        }
+                        if let Some(kind) = start
+                            && shell.workspace == Some(project_id)
+                        {
+                            shell.new_pane(kind, Axis::Vertical, window, cx);
                         }
                     }
                     Err(error) => {
@@ -432,7 +457,7 @@ impl Shell {
             && self.project_of(session) == Some(project_id)
         {
             self.reveal = None;
-            self.place_session(project_id, session, window, cx);
+            self.place_session(project_id, session, Axis::Vertical, window, cx);
         }
         self.fill_empty_tab(project_id, window, cx);
         self.sync_panes(window, cx);
@@ -472,18 +497,20 @@ impl Shell {
             return;
         };
         if self.tabs.contains_key(&project_id) {
-            self.place_session(project_id, session, window, cx);
+            self.place_session(project_id, session, Axis::Vertical, window, cx);
         } else {
             self.reveal = Some(session);
         }
         self.activate_workspace(project_id, window, cx);
     }
 
-    /// Focuses the pane of `session` (activating its tab) or splits the focused pane to show it.
+    /// Focuses the pane of `session` (activating its tab) or splits the focused pane along
+    /// `axis` to show it.
     fn place_session(
         &mut self,
         project_id: Ulid,
         session: Ulid,
+        axis: Axis,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -493,7 +520,7 @@ impl Shell {
         if tabs.focus(session) {
             return;
         }
-        if let Some(write) = tabs.split_focused(Axis::Vertical, session) {
+        if let Some(write) = tabs.split_focused(axis, session) {
             self.save_layout(project_id, write, window, cx);
         }
     }
@@ -510,7 +537,7 @@ impl Shell {
             .get(&project_id)
             .and_then(|tabs| newest_unplaced(tabs, self.sidebar.sessions()));
         if let Some(session) = newest {
-            self.place_session(project_id, session, window, cx);
+            self.place_session(project_id, session, Axis::Vertical, window, cx);
         }
     }
 
@@ -647,7 +674,7 @@ impl Shell {
     }
 
     /// Picks a folder and adds it as a workspace (`project.add`).
-    fn add_workspace(&mut self, _: &AddWorkspace, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -700,8 +727,14 @@ impl Shell {
     }
 
     /// Starts an agent (the workspace's default agent) or a shell in the workspace folder and
-    /// shows it next to the focused pane of the active tab.
-    fn new_pane(&mut self, kind: SessionKind, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// shows it next to the focused pane of the active tab, split along `axis`.
+    fn new_pane(
+        &mut self,
+        kind: SessionKind,
+        axis: Axis,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -727,7 +760,7 @@ impl Shell {
                     Ok(spawned) => {
                         // Next to the focused pane of the tab active now (the user may have
                         // switched tabs meanwhile), unless the daemon placed it already.
-                        shell.place_session(project_id, spawned.session_id, window, cx);
+                        shell.place_session(project_id, spawned.session_id, axis, window, cx);
                         shell.sync_panes(window, cx);
                     }
                     Err(error) => {
@@ -745,12 +778,129 @@ impl Shell {
         .detach();
     }
 
-    fn close_focused_pane(
+    /// A shortcut (SPEC §13). Terminal commands (paste) are handled by the focused pane.
+    fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        match *command {
+            Command::AddWorkspace => self.add_workspace(window, cx),
+            Command::Workspace(n) => {
+                let nth = self.sidebar.projects().get(usize::from(n) - 1);
+                if let Some(project_id) = nth.map(|project| project.id) {
+                    self.activate_workspace(project_id, window, cx);
+                }
+            }
+            Command::NextWorkspace => self.cycle_workspace(1, window, cx),
+            Command::PreviousWorkspace => self.cycle_workspace(-1, window, cx),
+            Command::NewShellTab => self.new_tab(SessionKind::Shell, window, cx),
+            Command::NewAgentTab => self.new_tab(SessionKind::Agent, window, cx),
+            Command::NextTab => self.switch_tab(|tabs| tabs.activate_offset(1), window, cx),
+            Command::PreviousTab => self.switch_tab(|tabs| tabs.activate_offset(-1), window, cx),
+            Command::Tab(n) => self.switch_tab(
+                |tabs| {
+                    tabs.activate_nth(usize::from(n) - 1);
+                },
+                window,
+                cx,
+            ),
+            Command::CloseTab => self.close_tab(window, cx),
+            Command::SplitRight => self.split(Axis::Vertical, window, cx),
+            Command::SplitDown => self.split(Axis::Horizontal, window, cx),
+            Command::Focus(direction) => {
+                if self
+                    .active_tabs_mut()
+                    .is_some_and(|tabs| tabs.focus_neighbour(direction))
+                {
+                    self.focus_pane(window, cx);
+                    cx.notify();
+                }
+            }
+            Command::ClosePane => self.close_focused_pane(window, cx),
+            Command::Paste => {}
+        }
+    }
+
+    fn cycle_workspace(&mut self, offset: isize, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(project_id) = self.sidebar.workspace_at_offset(self.workspace, offset) {
+            self.activate_workspace(project_id, window, cx);
+        }
+    }
+
+    /// Changes the active tab of the shown workspace.
+    fn switch_tab(
         &mut self,
-        _: &ClosePane,
+        change: impl FnOnce(&mut Tabs),
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if let Some(tabs) = self.active_tabs_mut() {
+            change(tabs);
+            self.sync_panes(window, cx);
+            cx.notify();
+        }
+    }
+
+    /// A new tab in the shown workspace with an agent or a shell in it.
+    fn new_tab(&mut self, kind: SessionKind, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(project_id) = self.workspace
+            && self.tabs.contains_key(&project_id)
+        {
+            self.create_tab(project_id, Some(kind), window, cx);
+        }
+    }
+
+    /// Splits the focused pane with a new session of the same kind.
+    fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let focused = self
+            .focused_session()
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        let kind = lifecycle::split_kind(focused);
+        self.new_pane(kind, axis, window, cx);
+    }
+
+    /// `tab.close` for the active tab. Its sessions keep running (reachable from the sidebar);
+    /// closing the last tab leaves a fresh empty one.
+    fn close_tab(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let Some(tab_id) = self
+            .tabs
+            .get(&project_id)
+            .and_then(|tabs| tabs.active())
+            .map(|tab| tab.id)
+        else {
+            return;
+        };
+        self.tab_error = None;
+        let closed = connection.call::<()>(Request::TabClose(TabRef { tab_id }));
+        cx.spawn_in(window, async move |this, cx| {
+            let closed = closed.await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                match closed {
+                    Ok(()) => {
+                        let Some(tabs) = shell.tabs.get_mut(&project_id) else {
+                            return;
+                        };
+                        tabs.remove(tab_id);
+                        if tabs.is_empty() {
+                            shell.create_tab(project_id, None, window, cx);
+                        }
+                        shell.sync_panes(window, cx);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%tab_id, "tab.close failed: {error:#}");
+                        shell.tab_error = Some(format!("Cannot close the tab: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if let Some(session) = self.focused_session() {
             self.close_pane(session, window, cx);
         }
@@ -905,6 +1055,7 @@ impl Shell {
     fn render_sidebar(&self, theme: &Theme, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let shown = self.focused_session();
         let connected = self.connection.is_some();
+        let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let header = div()
             .flex()
             .items_center()
@@ -921,19 +1072,21 @@ impl Shell {
             .when(connected, |header| {
                 header.child(
                     button("add-workspace", "+", theme, false)
-                        .tooltip(tooltip(theme, "Add workspace", ADD_WORKSPACE_LABEL))
+                        .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
                         .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.add_workspace(&AddWorkspace, window, cx);
+                            shell.add_workspace(window, cx);
                         })),
                 )
             });
-        let error = self.sidebar_error.clone().map(|error| {
-            div()
-                .px(px(space::M))
-                .pb(px(space::S))
-                .text_size(px(font_size::META))
-                .text_color(rgb(theme.text_muted))
-                .child(format!("✕ {error}"))
+        let errors = [&self.sidebar_error, &self.keymap_error].map(|error| {
+            error.clone().map(|error| {
+                div()
+                    .px(px(space::M))
+                    .pb(px(space::S))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("✕ {error}"))
+            })
         });
         let body = if connected && self.sidebar.is_empty() {
             // Empty state: one sentence plus the primary action with its shortcut.
@@ -955,10 +1108,10 @@ impl Shell {
                             div()
                                 .text_size(px(font_size::META))
                                 .opacity(opacity::SECONDARY)
-                                .child(ADD_WORKSPACE_LABEL),
+                                .child(add_workspace_keys),
                         )
                         .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.add_workspace(&AddWorkspace, window, cx);
+                            shell.add_workspace(window, cx);
                         })),
                 )
                 .into_any_element()
@@ -999,7 +1152,7 @@ impl Shell {
             .bg(rgb(theme.surface))
             .font_family(theme::UI_FONT)
             .child(header)
-            .children(error)
+            .children(errors.into_iter().flatten())
             .child(body)
     }
 
@@ -1077,7 +1230,7 @@ impl Shell {
                 button("new-tab", "+", theme, false)
                     .tooltip(tooltip(theme, "New tab", ""))
                     .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.create_tab(project_id, window, cx);
+                        shell.create_tab(project_id, None, window, cx);
                     })),
             )
             // Pushes the notices and pane actions to the right.
@@ -1108,9 +1261,13 @@ impl Shell {
             .when(self.focused_session().is_some(), |bar| {
                 bar.child(
                     button("close-pane", "Close pane", theme, false)
-                        .tooltip(tooltip(theme, "Close the focused pane", CLOSE_PANE_LABEL))
+                        .tooltip(tooltip(
+                            theme,
+                            "Close the focused pane",
+                            self.keymap.label(Command::ClosePane),
+                        ))
                         .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.close_focused_pane(&ClosePane, window, cx);
+                            shell.close_focused_pane(window, cx);
                         })),
                 )
             })
@@ -1133,7 +1290,7 @@ impl Shell {
                     .child(
                         button("empty-new-agent", "New agent", theme, true).on_click(cx.listener(
                             |shell, _, window, cx| {
-                                shell.new_pane(SessionKind::Agent, window, cx);
+                                shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
                             },
                         )),
                     )
@@ -1316,7 +1473,7 @@ fn new_pane_button(
     button(id, label, theme, false)
         .tooltip(tooltip(theme, tip, ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.new_pane(kind, window, cx);
+            shell.new_pane(kind, Axis::Vertical, window, cx);
         }))
 }
 
@@ -1502,12 +1659,13 @@ fn session_row(
 fn tooltip(
     theme: &Theme,
     text: &str,
-    keys: &'static str,
+    keys: impl Into<SharedString>,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
     let theme = theme.clone();
     let text = SharedString::from(text.to_owned());
+    let keys = keys.into();
     move |_, cx| {
-        let (theme, text) = (theme.clone(), text.clone());
+        let (theme, text, keys) = (theme.clone(), text.clone(), keys.clone());
         cx.new(|_| Tooltip { theme, text, keys }).into()
     }
 }
@@ -1515,7 +1673,7 @@ fn tooltip(
 struct Tooltip {
     theme: Theme,
     text: SharedString,
-    keys: &'static str,
+    keys: SharedString,
 }
 
 impl Render for Tooltip {
@@ -1536,7 +1694,11 @@ impl Render for Tooltip {
             .text_color(rgb(theme.text))
             .child(self.text.clone())
             .when(!self.keys.is_empty(), |el| {
-                el.child(div().text_color(rgb(theme.text_muted)).child(self.keys))
+                el.child(
+                    div()
+                        .text_color(rgb(theme.text_muted))
+                        .child(self.keys.clone()),
+                )
             })
     }
 }
@@ -1553,8 +1715,7 @@ impl Render for Shell {
             .flex()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::add_workspace))
-            .on_action(cx.listener(Self::close_focused_pane))
+            .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(&theme, cx))
             .child(self.render_main(&theme, cx))
     }
