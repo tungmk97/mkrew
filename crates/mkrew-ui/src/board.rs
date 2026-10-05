@@ -2,10 +2,18 @@
 //! position, kept live by `task.updated` / `task.deleted`. Each card shows its newest session's
 //! status (§11) and run time. Pure and tested headlessly; `main.rs` renders it.
 
-use mkrew_protocol::{Event, Session, SessionState, Task, TaskStatus};
+use mkrew_core::task::{self, Placement};
+use mkrew_protocol::{Event, Session, SessionState, Task, TaskMoveParams, TaskStatus};
 use ulid::Ulid;
 
 use crate::status;
+
+/// The value carried while a card is dragged (SPEC §10).
+#[derive(Debug, Clone)]
+pub struct DraggedCard {
+    pub task_id: Ulid,
+    pub title: String,
+}
 
 /// What the main area of a workspace shows (SPEC §10; Docs/Files/Git come later).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -179,12 +187,7 @@ impl Board {
         default_agent: Option<&str>,
         sessions: &[Session],
     ) -> Vec<Column> {
-        let mut tasks: Vec<&Task> = self
-            .tasks
-            .iter()
-            .filter(|task| task.project_id == project_id)
-            .collect();
-        tasks.sort_by(|a, b| a.position.total_cmp(&b.position).then(a.id.cmp(&b.id)));
+        let tasks = self.ordered(project_id);
         COLUMNS
             .iter()
             .map(|&status| Column {
@@ -207,6 +210,73 @@ impl Board {
                     .collect(),
             })
             .collect()
+    }
+
+    /// `project_id`'s tasks in board order: by position, ties by id.
+    fn ordered(&self, project_id: Ulid) -> Vec<&Task> {
+        let mut tasks: Vec<&Task> = self
+            .tasks
+            .iter()
+            .filter(|task| task.project_id == project_id)
+            .collect();
+        tasks.sort_by(|a, b| a.position.total_cmp(&b.position).then(a.id.cmp(&b.id)));
+        tasks
+    }
+
+    /// The `task.move`s that drop `task_id` into the `status` column right before the card
+    /// `before` (`None` = at the end): one for the dropped card, or one per card whose position
+    /// changes when the gap collapsed. Empty when the card would stay where it is. A `before`
+    /// no longer in that column (moved meanwhile) means the end.
+    pub fn drop_moves(
+        &self,
+        task_id: Ulid,
+        status: TaskStatus,
+        before: Option<Ulid>,
+    ) -> Vec<TaskMoveParams> {
+        let Some(dropped) = self.task(task_id) else {
+            return Vec::new();
+        };
+        if before == Some(task_id) {
+            return Vec::new();
+        }
+        let column = self.ordered(dropped.project_id);
+        let others: Vec<&Task> = column
+            .iter()
+            .copied()
+            .filter(|task| task.status == status && task.id != task_id)
+            .collect();
+        let index = before
+            .and_then(|before| others.iter().position(|task| task.id == before))
+            .unwrap_or(others.len());
+        let current = column
+            .iter()
+            .filter(|task| task.status == status)
+            .position(|task| task.id == task_id);
+        if current == Some(index) {
+            return Vec::new();
+        }
+        let positions: Vec<f64> = others.iter().map(|task| task.position).collect();
+        match task::place(&positions, index) {
+            Placement::At(position) => vec![TaskMoveParams {
+                task_id,
+                status,
+                position,
+            }],
+            Placement::Renumber(fresh) => {
+                let mut order = others;
+                order.insert(index, dropped);
+                order
+                    .into_iter()
+                    .zip(fresh)
+                    .filter(|(task, position)| task.id == task_id || task.position != *position)
+                    .map(|(task, position)| TaskMoveParams {
+                        task_id: task.id,
+                        status,
+                        position,
+                    })
+                    .collect()
+            }
+        }
     }
 
     /// Whether a run time on `project_id`'s board reads differently at `now_ms` than at
@@ -428,6 +498,109 @@ mod tests {
         assert!(columns[0].cards.is_empty(), "the deleted card stays gone");
         assert_eq!(titles(&columns[1]), ["renamed later"]);
         assert!(!board.apply(&stale), "an older update is ignored");
+    }
+
+    fn ids(column: &Column) -> Vec<Ulid> {
+        column.cards.iter().map(|card| card.task_id).collect()
+    }
+
+    /// Applies `moves` as the daemon would echo them.
+    fn apply_moves(board: &mut Board, moves: &[TaskMoveParams]) {
+        for moved in moves {
+            let mut task = board.task(moved.task_id).cloned().unwrap();
+            task.status = moved.status;
+            task.position = moved.position;
+            task.updated_at += 1;
+            board.apply(&Event::TaskUpdated(task));
+        }
+    }
+
+    #[test]
+    fn dropping_moves_a_card_between_and_within_columns() {
+        let api = Ulid::new();
+        let (a, b, c) = (
+            task(api, "a", TaskStatus::Todo, 1.0),
+            task(api, "b", TaskStatus::Todo, 2.0),
+            task(api, "c", TaskStatus::Review, 1.0),
+        );
+        let mut board = Board::default();
+        board.load(vec![a.clone(), b.clone(), c.clone()]);
+
+        // Into another column, before its only card.
+        let moves = board.drop_moves(a.id, TaskStatus::Review, Some(c.id));
+        assert_eq!(
+            moves,
+            [TaskMoveParams {
+                task_id: a.id,
+                status: TaskStatus::Review,
+                position: 0.0,
+            }]
+        );
+        apply_moves(&mut board, &moves);
+        let columns = board.columns(api, None, &[]);
+        assert_eq!(ids(&columns[0]), [b.id]);
+        assert_eq!(ids(&columns[3]), [a.id, c.id]);
+
+        // Within the column, to its end; then onto an empty column.
+        let moves = board.drop_moves(a.id, TaskStatus::Review, None);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].position, 2.0);
+        apply_moves(&mut board, &moves);
+        assert_eq!(ids(&board.columns(api, None, &[])[3]), [c.id, a.id]);
+        let moves = board.drop_moves(b.id, TaskStatus::Done, None);
+        apply_moves(&mut board, &moves);
+        let columns = board.columns(api, None, &[]);
+        assert!(columns[0].cards.is_empty());
+        assert_eq!(ids(&columns[4]), [b.id]);
+    }
+
+    #[test]
+    fn dropping_a_card_where_it_already_is_moves_nothing() {
+        let api = Ulid::new();
+        let (a, b) = (
+            task(api, "a", TaskStatus::Todo, 1.0),
+            task(api, "b", TaskStatus::Todo, 2.0),
+        );
+        let mut board = Board::default();
+        board.load(vec![a.clone(), b.clone()]);
+        assert!(
+            board
+                .drop_moves(a.id, TaskStatus::Todo, Some(a.id))
+                .is_empty()
+        );
+        assert!(
+            board
+                .drop_moves(a.id, TaskStatus::Todo, Some(b.id))
+                .is_empty()
+        );
+        assert!(board.drop_moves(b.id, TaskStatus::Todo, None).is_empty());
+        assert!(
+            board
+                .drop_moves(Ulid::new(), TaskStatus::Todo, None)
+                .is_empty()
+        );
+        // The same slot in another column is a move.
+        assert_eq!(board.drop_moves(b.id, TaskStatus::Done, None).len(), 1);
+    }
+
+    #[test]
+    fn a_collapsed_gap_renumbers_the_column_and_the_order_holds() {
+        let api = Ulid::new();
+        let (a, b, c) = (
+            task(api, "a", TaskStatus::Todo, 1.0),
+            task(api, "b", TaskStatus::Todo, 1.0 + f64::EPSILON),
+            task(api, "c", TaskStatus::Running, 0.0),
+        );
+        let mut board = Board::default();
+        board.load(vec![a.clone(), b.clone(), c.clone()]);
+
+        let moves = board.drop_moves(c.id, TaskStatus::Todo, Some(b.id));
+        let moved: Vec<(Ulid, f64)> = moves.iter().map(|m| (m.task_id, m.position)).collect();
+        // No room between `a` and `b`: the column becomes 0, 1, 2.
+        assert_eq!(moved, [(a.id, 0.0), (c.id, 1.0), (b.id, 2.0)]);
+        assert!(moves.iter().all(|m| m.status == TaskStatus::Todo));
+        apply_moves(&mut board, &moves);
+        assert_eq!(ids(&board.columns(api, None, &[])[0]), [a.id, c.id, b.id]);
     }
 
     #[test]

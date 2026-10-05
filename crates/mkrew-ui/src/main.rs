@@ -22,9 +22,9 @@ use mkrew_protocol::{
     AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
     SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
     SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, Task, TaskListParams, TaskRef, TerminalTab,
+    TabSetLayoutParams, Task, TaskListParams, TaskRef, TaskStatus, TerminalTab,
 };
-use mkrew_ui::board::{self, Board, Card, View};
+use mkrew_ui::board::{self, Board, Card, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{Command, Keymap, Run};
@@ -163,6 +163,8 @@ struct Shell {
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
     board_error: Option<String>,
+    /// Why the last dropped card could not move, shown on its workspace's board.
+    move_error: Option<(Ulid, String)>,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
     /// The open new / edit task dialog (modal).
@@ -331,6 +333,7 @@ impl Shell {
             viewed: Viewed::default(),
             board: Board::default(),
             board_error: None,
+            move_error: None,
             views: HashMap::new(),
             task_dialog: None,
             dialog_focus: cx.focus_handle(),
@@ -1141,6 +1144,55 @@ impl Shell {
                     cx.notify();
                 }
             });
+        })
+        .detach();
+    }
+
+    /// A card was dropped into the `status` column right before `before` (`None` = at the
+    /// end): `task.move` it (and renumber the column if its gap collapsed). Each reply is
+    /// shown at once, without waiting for the `task.updated` echo.
+    fn drop_card(
+        &mut self,
+        task_id: Ulid,
+        status: TaskStatus,
+        before: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(project_id) = self.board.task(task_id).map(|task| task.project_id) else {
+            return;
+        };
+        let moves: Vec<_> = self
+            .board
+            .drop_moves(task_id, status, before)
+            .into_iter()
+            .map(|params| connection.call::<Task>(Request::TaskMove(params)))
+            .collect();
+        if moves.is_empty() {
+            return;
+        }
+        // Cleared once per drop: a later move of the same batch must not hide a failure.
+        self.move_error = None;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            for moved in moves {
+                let moved = moved.await;
+                let _ = this.update(cx, |shell, cx| {
+                    match moved {
+                        Ok(task) => {
+                            shell.board.apply(&Event::TaskUpdated(task));
+                        }
+                        Err(error) => {
+                            tracing::warn!(%task_id, "task.move failed: {error:#}");
+                            shell.move_error = Some((project_id, format!("{error:#}")));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
         })
         .detach();
     }
@@ -2058,7 +2110,8 @@ impl Shell {
             )
     }
 
-    /// The workspace's task board: one column per status (SPEC §10), read-only for now.
+    /// The workspace's task board: one column per status (SPEC §10); cards drag between and
+    /// within columns.
     fn render_board(
         &self,
         project_id: Ulid,
@@ -2104,6 +2157,13 @@ impl Shell {
                 notice(theme.text, format!("✕ Cannot reload the tasks: {error}"))
                     .px(px(space::L))
                     .pt(px(space::S))
+            }))
+            .children(self.move_error.as_ref().and_then(|(project, error)| {
+                (*project == project_id).then(|| {
+                    notice(theme.text, format!("✕ Cannot move the card: {error}"))
+                        .px(px(space::L))
+                        .pt(px(space::S))
+                })
             }))
             .child(
                 div()
@@ -3114,7 +3174,8 @@ fn inbox_row(
         .into_any_element()
 }
 
-/// A board column: its title and card count over the cards, or a quiet "No tasks".
+/// A board column: its title and card count over the cards, or a quiet "No tasks". Every
+/// card is a drop slot (land before it), and so is the free space under the last one.
 fn board_column(
     column: board::Column,
     now: i64,
@@ -3122,6 +3183,7 @@ fn board_column(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let count = column.cards.len();
+    let status = column.status;
     div()
         .flex_1()
         .min_w(px(theme::BOARD_COLUMN_MIN_WIDTH))
@@ -3158,8 +3220,9 @@ fn board_column(
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .gap(px(space::S))
-                .p(px(space::S))
+                // The slots' own vertical padding makes the `S` gap between cards.
+                .px(px(space::S))
+                .py(px(space::XS))
                 .rounded(px(radius::MEDIUM))
                 .bg(rgb(theme.surface))
                 .overflow_y_scroll()
@@ -3172,25 +3235,83 @@ fn board_column(
                             .child("No tasks"),
                     )
                 })
-                .children(
-                    column
-                        .cards
-                        .into_iter()
-                        .map(|card| task_card(card, now, theme, cx)),
+                .children(column.cards.into_iter().map(|card| {
+                    let task_id = card.task_id;
+                    drop_slot(status, Some(task_id), theme, cx)
+                        .py(px(space::XS))
+                        .child(task_card(card, now, theme, cx))
+                }))
+                .child(
+                    drop_slot(status, None, theme, cx)
+                        .flex_1()
+                        .min_h(px(space::XL)),
                 ),
         )
         .into_any_element()
 }
 
+/// Where a dragged card lands in the `status` column: right before the card `before`, or at
+/// the end. Hovering it with a card shows an accent line along its top edge (SPEC §14).
+fn drop_slot(
+    status: TaskStatus,
+    before: Option<Ulid>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let name = match before {
+        Some(task_id) => format!("drop-{task_id}"),
+        None => format!("drop-end-{status:?}"),
+    };
+    let group = SharedString::from(name.clone());
+    let accent = theme.accent;
+    div()
+        .id(SharedString::from(name))
+        .group(group.clone())
+        .relative()
+        .flex_none()
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                // Centred on the slot's top edge, i.e. in the gap above the card.
+                .top(px(-theme::DROP_INDICATOR_HEIGHT / 2.0))
+                .h(px(theme::DROP_INDICATOR_HEIGHT))
+                .rounded(px(radius::SMALL))
+                .group_drag_over::<DraggedCard>(group, move |style| style.bg(rgb(accent)))
+                // No-op: gpui applies group drag styles only to elements with a hitbox, and a
+                // drag style gives it one.
+                .drag_over::<DraggedCard>(|style, _, _, _| style),
+        )
+        .on_drop(
+            cx.listener(move |shell, dragged: &DraggedCard, window, cx| {
+                shell.drop_card(dragged.task_id, status, before, window, cx);
+            }),
+        )
+}
+
 /// A task card: title (Edit on hover), agent and run time, then its session's status
-/// (SPEC §10, §11).
+/// (SPEC §10, §11). Dragging it carries a [`DraggedCard`].
 fn task_card(card: Card, now: i64, theme: &Theme, cx: &mut Context<'_, Shell>) -> gpui::AnyElement {
     let run_time = card.run_time(now);
     let shows_error_row = card.shows_error_row();
     let task_id = card.task_id;
     let group = SharedString::from(format!("card-{task_id}"));
     let edit_hover = theme.border;
+    let preview_theme = theme.clone();
     div()
+        .id(group.clone())
+        .on_drag(
+            DraggedCard {
+                task_id,
+                title: card.title.clone(),
+            },
+            move |dragged, _, _, cx| {
+                let theme = preview_theme.clone();
+                let title = dragged.title.clone().into();
+                cx.new(|_| CardPreview { theme, title })
+            },
+        )
         .flex_none()
         .flex()
         .flex_col()
@@ -3388,6 +3509,32 @@ fn tooltip(
     move |_, cx| {
         let (theme, text, keys) = (theme.clone(), text.clone(), keys.clone());
         cx.new(|_| Tooltip { theme, text, keys }).into()
+    }
+}
+
+/// What follows the pointer while a card is dragged: a lifted copy of its title.
+struct CardPreview {
+    theme: Theme,
+    title: SharedString,
+}
+
+impl Render for CardPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        let theme = &self.theme;
+        div()
+            .w(px(theme::BOARD_COLUMN_MIN_WIDTH))
+            .p(px(space::M))
+            .rounded(px(radius::MEDIUM))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface_raised))
+            .shadow_sm()
+            .opacity(opacity::DRAGGING)
+            .font_family(theme::UI_FONT)
+            .text_size(px(font_size::CARD_TITLE))
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text))
+            .child(self.title.clone())
     }
 }
 

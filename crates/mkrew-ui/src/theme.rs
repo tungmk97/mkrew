@@ -76,6 +76,8 @@ pub mod opacity {
     /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
     pub const HIDDEN: f32 = 0.0;
     pub const FULL: f32 = 1.0;
+    /// The lifted copy of a card that follows the pointer while it is dragged.
+    pub const DRAGGING: f32 = 0.9;
 }
 
 /// Half the gap between split panes: each pane is inset by it, so panes sit `space::XS` apart
@@ -96,6 +98,9 @@ pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 
 /// Narrowest a board column gets; below that the board scrolls sideways.
 pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
+
+/// Thickness of the accent line that marks where a dragged card lands.
+pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 
 /// Width of a modal dialog (the task dialog).
 pub const DIALOG_WIDTH: f32 = 520.0;

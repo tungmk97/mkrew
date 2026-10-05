@@ -226,6 +226,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   in the dialog. Esc cancels. Check AltGr characters (e.g. `{ [ ] }` on a German layout) type
   into the fields. Dark + light theme screenshots for the §14 design check.
 
+- [ ] (T4.8) **Board drag & drop.** With 3+ cards in Todo: drag one between two others → the
+  accent line shows in the gap where it will land; drop → order changes. Drag to the end of
+  Todo, into an empty column (free space under "No tasks") and to Review/Done → the card moves
+  and `mk task list` shows the new status. Restart the app → order and columns persist. Check
+  the drag preview follows the pointer smoothly, Edit still opens on click, and nothing moves
+  when dropping a card back on its own place. Dark + light screenshots for §14.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -591,6 +598,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   at the end (no caret movement, selection or IME composition yet — backlog). A daemon
   disconnect drops an open draft (the whole UI resets). Delete confirm text says past sessions
   stay in the sidebar (ADR 0004 detaches them).
+- (T4.8) Drag & drop: a card lands **before** the card under the pointer (the 2 px accent line
+  sits in the gap above it), or at the end when dropped in the free space under the last card.
+  Dropping where the card already is sends nothing. Any status can be dragged to any column
+  (the user may override §5 transitions; a later session event still moves it per §5). No
+  motion yet: the indicator and the drop snap without the §14 120–180 ms ease-out, and the
+  original card stays visible (not dimmed) while its copy is dragged — polish backlog. No
+  keyboard way to move a card (§13 lists none; backlog with the command palette). Two drops
+  in quick succession during a column renumber may compute from stale positions (rare;
+  `task.list` on reconnect fixes the order). A failed move shows a notice on that workspace's
+  board until the next drop.
 
 ## Done
 
