@@ -34,6 +34,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] (T1.6) `mk daemon start` from a normal terminal: no console window appears, the daemon
   survives closing that terminal, `mk daemon status`/`stop` work afterwards. The Unix
   `process_group` branch was never compiled here.
+- [ ] (T1.8) The Unix branches of `mkrew-daemon/src/session.rs` (SIGHUP via portable-pty,
+  `rustix` SIGKILL) were never compiled here; the CI Linux job (T1.12) covers it.
 
 ## Questions with assumed defaults
 
@@ -135,6 +137,18 @@ _Decisions the agent made on its own. Override them here if you disagree._
   checked (`n` behaves like `y`). `write_file` overwrites. The `mk hook fake <event>` and
   `mk comment reply` steps of §16 come with those commands (M3 / comments milestone).
   Colors use `anstyle-query` to enable Windows VT processing (no own `unsafe`).
+- (T1.8) `.cmd`/`.bat` programs: portable-pty 0.9 cannot pass a raw Windows command line, so
+  the planned `cmd.exe /d /s /c "..."` escaping is impossible without vendoring it. Default:
+  args containing `" % & | < > ^ !` or CR/LF/NUL are **refused** for `.cmd`/`.bat` programs
+  (`invalid_request` naming the arg); `.exe`/`.ps1` get any args. This blocks `prompt_mode =
+  "arg"` prompts with such characters for npm shims like `claude.cmd` — M2 (`task.run`) must
+  choose: vendor portable-pty's `cmdline()` with std's BatBadBut escaping, or parse the npm
+  shim and run `node <script.js>` directly. Other T1.8 defaults: the daemon seeds the repo's
+  sample profiles into `<config>/agents` per missing file (never overwrites) and re-reads
+  profiles on every spawn; `session.kill` on an exited session is ok (idempotent); graceful
+  kill = close the pseudo console (Windows) / SIGHUP (Unix), forced after 5 s
+  (`TerminateProcess` / SIGKILL); every greeted connection receives all events (no per-event
+  subscription yet); session state is persisted on every change.
 
 ## Done
 

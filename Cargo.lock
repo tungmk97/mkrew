@@ -3446,11 +3446,14 @@ dependencies = [
 name = "mkrew-daemon"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "interprocess",
  "mkrew-core",
  "mkrew-protocol",
  "mkrew-store",
+ "portable-pty",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

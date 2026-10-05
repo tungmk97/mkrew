@@ -3,9 +3,13 @@
 //! The binary is a thin wrapper around [`run`]; the library also exposes [`ipc::name`] so
 //! clients and tests resolve the endpoint exactly like the daemon does.
 
+mod emulator;
 pub mod ipc;
+mod launch;
 pub mod lock;
 mod server;
+mod session;
+mod session_log;
 
 use anyhow::Context;
 use mkrew_core::Paths;
@@ -39,16 +43,40 @@ fn serve(paths: &Paths) -> anyhow::Result<()> {
     if stale > 0 {
         tracing::info!(stale, "marked sessions from a previous run as exited");
     }
+    seed_profiles(&paths.agents_dir())?;
 
     let runtime = tokio::runtime::Runtime::new().context("start tokio runtime")?;
     runtime.block_on(async {
         let listener =
             ipc::listen(&paths.socket).with_context(|| format!("listen on {}", paths.socket))?;
         tracing::info!(socket = %paths.socket, "listening");
-        server::Daemon::new(store).serve(listener).await;
+        server::Daemon::new(store, paths.clone())
+            .serve(listener)
+            .await;
         anyhow::Ok(())
     })?;
     tracing::info!("daemon stopped");
+    Ok(())
+}
+
+/// The repo's sample profiles (SPEC §6), copied into the config dir when absent.
+const SAMPLE_PROFILES: &[(&str, &str)] = &[
+    ("claude.toml", include_str!("../../../agents/claude.toml")),
+    ("codex.toml", include_str!("../../../agents/codex.toml")),
+    ("fake.toml", include_str!("../../../agents/fake.toml")),
+    ("omp.toml", include_str!("../../../agents/omp.toml")),
+    ("shell.toml", include_str!("../../../agents/shell.toml")),
+];
+
+/// Writes each sample profile that does not exist yet; never overwrites user edits.
+fn seed_profiles(dir: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    for (file, contents) in SAMPLE_PROFILES {
+        let path = dir.join(file);
+        if !path.exists() {
+            std::fs::write(&path, contents).with_context(|| format!("write {}", path.display()))?;
+        }
+    }
     Ok(())
 }
 
