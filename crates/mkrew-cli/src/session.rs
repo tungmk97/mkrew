@@ -1,8 +1,13 @@
-//! `mk session list | spawn`, `mk send`, `mk wait` (SPEC §9).
+//! `mk session list | spawn | history`, `mk send`, `mk wait` (SPEC §9).
 
+use std::fs::File;
+use std::io::Write;
+
+use anyhow::Context;
 use mkrew_protocol::{
-    Project, Request, Session, SessionKind, SessionListParams, SessionSendParams,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
+    Project, Request, Session, SessionHistory, SessionKind, SessionListParams, SessionRef,
+    SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
+    SessionWaitResult,
 };
 use ulid::Ulid;
 
@@ -66,6 +71,25 @@ pub fn spawn(client: &mut Client, project: &str, agent: String) -> anyhow::Resul
         rows,
     }))?;
     println!("{}", spawned.session_id);
+    Ok(())
+}
+
+/// Writes the session's raw output log (all rotated parts, oldest first) to stdout. Works for
+/// exited sessions, including those from before a daemon restart.
+pub fn history(client: &mut Client, session_id: Ulid) -> anyhow::Result<()> {
+    let history: SessionHistory =
+        client.call(Request::SessionHistory(SessionRef { session_id }))?;
+    let mut out = std::io::stdout().lock();
+    for file in &history.files {
+        let mut log = match File::open(file) {
+            Ok(log) => log,
+            // A live session's log can rotate between the reply and here: best effort.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).with_context(|| format!("open {}", file.display())),
+        };
+        std::io::copy(&mut log, &mut out).with_context(|| format!("read {}", file.display()))?;
+    }
+    out.flush()?;
     Ok(())
 }
 

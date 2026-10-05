@@ -10,6 +10,8 @@
 //! Response results are kept as raw JSON: the client knows which method it called and decodes
 //! the matching result type (e.g. [`HelloResult`]) with [`Outcome::into_result`].
 
+use std::path::PathBuf;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -96,6 +98,9 @@ pub enum Request {
     SessionResize(SessionResizeParams),
     #[serde(rename = "session.kill")]
     SessionKill(SessionKillParams),
+    /// Returns [`SessionHistory`]; works for exited sessions too.
+    #[serde(rename = "session.history")]
+    SessionHistory(SessionRef),
     #[serde(rename = "hook.report")]
     HookReport(HookReportParams),
     #[serde(rename = "agent.profiles")]
@@ -530,6 +535,15 @@ pub struct SessionRef {
     pub session_id: Ulid,
 }
 
+/// `session.history` result: the session's output log files on disk (SPEC §8), oldest first
+/// (`<id>.log.1` then `<id>.log`), only those that exist — empty if nothing was ever written.
+/// For a live session this is best effort: its newest output may still sit in the daemon's
+/// write buffer, and the log may rotate before the files are read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionHistory {
+    pub files: Vec<PathBuf>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInputParams {
     pub session_id: Ulid,
@@ -901,6 +915,7 @@ mod tests {
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),
             Request::SessionDetach(SessionRef { session_id: sid() }),
+            Request::SessionHistory(SessionRef { session_id: sid() }),
             Request::SessionInput(SessionInputParams {
                 session_id: sid(),
                 data: vec![0x1b, b'[', b'A', 0, 0xff],

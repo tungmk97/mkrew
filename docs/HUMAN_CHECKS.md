@@ -755,6 +755,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   command), like the card's Edit and Undo — backlog with keyboard card selection. A session
   whose task is missing from a loaded board stops warning (covers deleted tasks; a task whose
   first `task.updated` has not arrived yet would lose its pane warning — unlikely race, accepted).
+- (T5.8) `session.history` returns `files[]` (rotated `.log.1` then `.log`, existing only)
+  instead of SPEC's single "path", so the rotated part is not lost; SPEC §7 updated (a
+  refinement, no ADR). Clients read the files directly (daemon and clients share a machine).
+  For a live session it is best effort (unflushed buffer, rotation race). `mk session history`
+  prints raw PTY bytes including ANSI escapes (no stripping).
 
 ## Done
 

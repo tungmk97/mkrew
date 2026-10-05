@@ -539,6 +539,20 @@ impl Store {
         rows.map(|r| r?.into_session()).collect()
     }
 
+    /// One session, live or exited (exited sessions are kept as history).
+    pub fn get_session(&self, id: Ulid) -> Result<Session> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
+                state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at
+             FROM session WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map([id.to_string()], RawSession::from_row)?;
+        match rows.next() {
+            Some(row) => row?.into_session(),
+            None => Err(StoreError::SessionNotFound(id)),
+        }
+    }
+
     /// Appends a `session_event` row (SPEC §5); `payload` is stored as JSON text.
     pub fn insert_session_event(
         &self,

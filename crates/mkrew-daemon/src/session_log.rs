@@ -7,6 +7,25 @@ use std::path::{Path, PathBuf};
 
 pub const ROTATE_AT_BYTES: u64 = 5 * 1024 * 1024;
 
+/// The log file of session `id` in `sessions_dir`.
+pub fn path(sessions_dir: &Path, id: impl std::fmt::Display) -> PathBuf {
+    sessions_dir.join(format!("{id}.log"))
+}
+
+/// The existing files of the log at `path`, oldest first: the rotated `.log.1`, then `.log`.
+pub fn files(path: &Path) -> Vec<PathBuf> {
+    [rotated(path), path.to_path_buf()]
+        .into_iter()
+        .filter(|p| p.is_file())
+        .collect()
+}
+
+fn rotated(path: &Path) -> PathBuf {
+    let mut old = path.to_path_buf().into_os_string();
+    old.push(".1");
+    old.into()
+}
+
 pub struct SessionLog {
     path: PathBuf,
     file: BufWriter<File>,
@@ -45,10 +64,8 @@ impl SessionLog {
 
     fn rotate(&mut self) -> io::Result<()> {
         self.file.flush()?;
-        let mut old = self.path.clone().into_os_string();
-        old.push(".1");
         // std opens files with FILE_SHARE_DELETE on Windows, so the open file can be renamed.
-        std::fs::rename(&self.path, &old)?;
+        std::fs::rename(&self.path, rotated(&self.path))?;
         self.file = open(&self.path)?.0;
         self.written = 0;
         Ok(())
@@ -82,5 +99,19 @@ mod tests {
         log.flush().unwrap();
         assert_eq!(std::fs::read(&old).unwrap(), b"dddddddddddd");
         assert_eq!(std::fs::read(&path).unwrap(), b"e");
+    }
+
+    #[test]
+    fn files_lists_existing_parts_oldest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = super::path(dir.path(), "s");
+        assert!(files(&path).is_empty());
+        let mut log = SessionLog::with_limit(&path, 4).unwrap();
+        log.write(b"aaaa").unwrap();
+        log.flush().unwrap();
+        assert_eq!(files(&path), std::slice::from_ref(&path));
+        log.write(b"b").unwrap();
+        log.flush().unwrap();
+        assert_eq!(files(&path), [dir.path().join("s.log.1"), path]);
     }
 }

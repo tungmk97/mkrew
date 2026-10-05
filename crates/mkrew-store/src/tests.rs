@@ -203,6 +203,37 @@ fn stale_sessions_are_marked_exited() {
 }
 
 #[test]
+fn exited_sessions_stay_listable_per_project_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a_dir, b_dir) = (dir.path().join("a"), dir.path().join("b"));
+    std::fs::create_dir(&a_dir).unwrap();
+    std::fs::create_dir(&b_dir).unwrap();
+    let store = open(&dir);
+    let a = store.add_project(&a_dir, None).unwrap();
+    let b = store.add_project(&b_dir, None).unwrap();
+    let ran = Session {
+        state: SessionState::Working,
+        ..session(a.id, 1)
+    };
+    store.insert_session(&ran).unwrap();
+    store.insert_session(&session(b.id, 2)).unwrap();
+    store.mark_stale_sessions_exited().unwrap();
+    drop(store);
+
+    let store = open(&dir);
+    let listed = store.list_sessions(Some(a.id)).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, ran.id);
+    assert_eq!(listed[0].state, SessionState::Exited);
+    assert_eq!(store.get_session(ran.id).unwrap(), listed[0]);
+    let unknown = Ulid::new();
+    assert!(matches!(
+        store.get_session(unknown),
+        Err(StoreError::SessionNotFound(id)) if id == unknown
+    ));
+}
+
+#[test]
 fn session_events_are_stored_per_session_and_kind() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

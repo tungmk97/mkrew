@@ -10,9 +10,9 @@ use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, DaemonStatusResult, ErrorCode, Event, Frame,
     FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
     ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request, Session,
-    SessionKillParams, SessionKind, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent,
-    TaskRunParams, TaskUndoParams, TaskUpdateParams, TerminalTab, encode,
+    SessionHistory, SessionKillParams, SessionKind, SessionSpawnParams, SessionSpawnResult,
+    SessionState, SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams,
+    TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams, TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -25,7 +25,7 @@ use crate::git::{GitBackend, GitCli};
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
-use crate::undo;
+use crate::{session_log, undo};
 
 mod resume;
 
@@ -257,6 +257,13 @@ impl Daemon {
                 (store_outcome(sessions), After::Continue)
             }
             Request::SessionKill(params) => (self.session_kill(params), After::Continue),
+            Request::SessionHistory(params) => {
+                let session = self.store().get_session(params.session_id);
+                let history = session.map(|s| SessionHistory {
+                    files: session_log::files(&session_log::path(&self.paths.sessions_dir(), s.id)),
+                });
+                (store_outcome(history), After::Continue)
+            }
             Request::SessionAttach(params) => {
                 let outcome = self.session_attach(conn, params.session_id).await;
                 (outcome, After::Continue)
@@ -590,7 +597,7 @@ impl Daemon {
         };
         let session_id = session.id;
         let spec = SpawnSpec {
-            log_file: self.paths.sessions_dir().join(format!("{session_id}.log")),
+            log_file: session_log::path(&self.paths.sessions_dir(), session_id),
             session,
             profile: start.profile,
             cwd: start.project.path.into(),

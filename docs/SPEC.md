@@ -433,7 +433,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.wait` | `session_id`, `until` (states), `timeout_ms` | final state |
 | `session.resize` | `session_id`, `cols`, `rows` | ok |
 | `session.kill` | `session_id`, `force` | ok |
-| `session.history` | `session_id` | path of the session log file |
+| `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab, its sessions keep running, no event) |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
@@ -541,6 +541,7 @@ mk task list [--project P] [--status S]
 mk task run <task-id>
 mk task undo <task-id> [--yes]         # prints files + diff since the checkpoint; --yes discards
 mk session list [--project P]
+mk session history <session-id>        # prints the session's raw output log (also exited ones)
 mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
 mk send <session-id> "<text>" [--no-submit]

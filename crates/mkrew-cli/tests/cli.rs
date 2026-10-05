@@ -386,6 +386,44 @@ fn send_answers_the_agent_and_wait_returns_when_it_is_done() {
     assert_eq!(waited.trim(), "exited (exit code 0)");
 }
 
+/// Finished sessions — and one still running when the daemon stops — stay listed per project
+/// after a restart, and `mk session history` prints their output logs.
+#[test]
+fn session_history_survives_a_daemon_restart() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let done = env.ok(&["session", "spawn", "demo", "--agent", "fake"]);
+    let done = done.trim();
+    env.ok(&["send", done, "y"]);
+    env.ok(&["wait", done, "--until", "exited", "--timeout", "30000"]);
+    let running = env.ok(&["session", "spawn", "demo", "--agent", "fake"]);
+    let running = running.trim();
+    let asked = ["--until", "needs_input", "--timeout", "30000"];
+    env.ok(&[&["wait", running][..], &asked].concat());
+
+    env.ok(&["daemon", "stop"]);
+    env.ok(&["daemon", "start"]);
+    let list = env.ok(&["session", "list", "--project", "demo"]);
+    for id in [done, running] {
+        let row = list.lines().find(|l| l.starts_with(id));
+        assert!(row.is_some_and(|r| r.contains("exited")), "{list}");
+        let history = env.ok(&["session", "history", id]);
+        assert!(
+            history.contains("Do you want to proceed? (y/n)"),
+            "{history}"
+        );
+    }
+
+    let unknown = env.mk(&["session", "history", &Ulid::new().to_string()]);
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("no session with id"), "{stderr}");
+}
+
 /// `mk task add → list → run`: the fake agent gets the prompt as an argument, the card follows
 /// its session to Review.
 #[test]

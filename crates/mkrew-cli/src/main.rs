@@ -97,6 +97,8 @@ enum SessionCommand {
         #[arg(long)]
         agent: String,
     },
+    /// Print a session's raw output log (also for exited sessions).
+    History { session_id: Ulid },
 }
 
 #[derive(Subcommand)]
@@ -229,6 +231,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 SessionCommand::Spawn { project, agent } => {
                     session::spawn(&mut client, &project, agent)
                 }
+                SessionCommand::History { session_id } => session::history(&mut client, session_id),
             }
             .map(|()| ExitCode::SUCCESS)
         }
