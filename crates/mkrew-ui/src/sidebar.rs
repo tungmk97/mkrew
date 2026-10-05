@@ -114,6 +114,16 @@ impl Sidebar {
         self.projects.is_empty()
     }
 
+    /// Workspaces in `project.list` order (archived ones left out).
+    pub fn projects(&self) -> &[Project] {
+        &self.projects
+    }
+
+    /// Every known session, as last listed and updated by events.
+    pub fn sessions(&self) -> &[Session] {
+        &self.sessions
+    }
+
     /// A `project.list` + `session.list` was just sent.
     pub fn begin_load(&mut self) {
         self.since_load = Some(Vec::new());

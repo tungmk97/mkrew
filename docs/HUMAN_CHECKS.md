@@ -72,6 +72,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   collapse a workspace; sessions show icon + status text; the workspace row shows the working
   count and `?` when one needs input (fake agent `ask`). Clicking another session switches the
   pane. Hover tooltips (path, shortcut). Check dark and light themes.
+- [ ] (T2.5b) `cargo run -p mkrew-ui` with two live sessions in one workspace: a tab bar shows
+  "Terminal"; clicking the second session in the sidebar splits the pane side by side (4 px
+  gaps, rounded frames, focused pane has a faint accent border, the other is slightly dimmed);
+  clicking a pane moves focus and keyboard input. "+" adds "Terminal 2" (empty state), clicking
+  tabs switches panes (hidden ones stop updating). Close the window and reopen: same tabs and
+  split, both panes live. Restart the daemon (`mk daemon stop`): panes show "✕ Session
+  exited", layout kept. Check dark and light themes.
 
 ## Questions with assumed defaults
 
@@ -253,6 +260,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   elapsed/idle times and the status-source hover of §11 come later); exited rows are inert
   until "Run again"/"Resume" exist; sidebar keyboard navigation + focus rings ship with
   the keymap (T2.7). Ctrl+Shift+K is bound on every OS (§13: only global/tab commands use Cmd).
+- (T2.5b) Tabs/panes UI: tabs are loaded per workspace when it is first shown (start = the
+  workspace of the newest live session); a workspace with no tabs gets a "Terminal" tab. Panes
+  of exited or unknown sessions keep their slot in the layout (placeholder "✕ Session exited"
+  / "Cannot attach") so layouts survive daemon restarts — nothing is pruned automatically.
+  Clicking a session in the sidebar that is in no tab splits the focused pane **vertically**
+  (side by side); an empty active tab is filled with the workspace's newest live session not
+  in any tab (keeps the old "opens the newest session" behaviour, also for `mk` spawns).
+  Clicking a workspace row shows it; clicking the shown one expands/collapses it. Deferred:
+  close tab / split / new pane actions (T2.6/T2.7), tab status labels + pane headers (§11),
+  focus ring on tabs, a primary action in the empty-tab state, detaching panes while the
+  window is minimized (§10), not stealing focus back on every layout event.
 
 ## Done
 

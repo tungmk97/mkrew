@@ -69,6 +69,10 @@ pub mod opacity {
     pub const SECONDARY: f32 = 0.8;
 }
 
+/// Half the gap between split panes: each pane is inset by it, so panes sit `space::XS` apart
+/// and `space::XS` from the tab's edges.
+pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
+
 /// Width of the workspace sidebar.
 pub const SIDEBAR_WIDTH: f32 = 240.0;
 
@@ -100,6 +104,8 @@ pub struct Theme {
     pub text_muted: u32,
     /// Selection, primary buttons, focus.
     pub accent: u32,
+    /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
+    pub pane_focus_border: u32,
     pub status_working: u32,
     pub status_needs_input: u32,
     pub status_done: u32,
@@ -142,6 +148,7 @@ impl Theme {
             text: 0xE6E7EB,
             text_muted: 0x9A9CA6,
             accent: 0x7C8CFF,
+            pane_focus_border: 0x49518D,
             status_working: 0x7C8CFF,
             status_needs_input: 0xE3A63E,
             status_done: 0x4CB782,
@@ -169,6 +176,7 @@ impl Theme {
             text: 0x1D1E22,
             text_muted: 0x6B6D76,
             accent: 0x4F5BD5,
+            pane_focus_border: 0xA4AAE7,
             status_working: 0x4F5BD5,
             status_needs_input: 0xB7791F,
             status_done: 0x2F855A,
@@ -197,6 +205,7 @@ impl Theme {
             text: 0,
             text_muted: 0,
             accent: 0,
+            pane_focus_border: 0,
             status_working: 0,
             status_needs_input: 0,
             status_done: 0,

@@ -42,7 +42,8 @@ pub struct TerminalPane {
 }
 
 impl TerminalPane {
-    /// A pane showing `snapshot` (the `session.attach` result) of `session_id`.
+    /// A pane showing `snapshot` (the `session.attach` result) of `session_id`. Not focused;
+    /// the owner calls [`TerminalPane::focus`].
     pub fn new(
         session_id: Ulid,
         snapshot: &ScreenSnapshot,
@@ -54,7 +55,6 @@ impl TerminalPane {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle, cx);
         Self {
             session_id,
             connection,
@@ -69,6 +69,11 @@ impl TerminalPane {
 
     pub fn session_id(&self) -> Ulid {
         self.session_id
+    }
+
+    /// Sends keyboard input to this pane.
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.focus_handle, cx);
     }
 
     /// Feeds output bytes. The caller notifies once per batch (≤ one repaint per frame).

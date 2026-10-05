@@ -5,6 +5,7 @@
 
 pub mod client;
 pub mod connect;
+pub mod router;
 pub mod sidebar;
 pub mod split;
 pub mod tabs;

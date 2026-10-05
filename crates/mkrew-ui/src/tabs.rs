@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use mkrew_protocol::{Event, TabSetLayoutParams, TerminalTab};
+use mkrew_protocol::{Event, Session, SessionState, TabSetLayoutParams, TerminalTab};
 use ulid::Ulid;
 
 use crate::split::{Axis, Direction, Node};
@@ -332,6 +332,23 @@ impl Tabs {
     }
 }
 
+/// The session an empty active tab shows: the newest live session of the workspace that is in
+/// no tab yet. `None` if the active tab has panes (or there is no active tab).
+pub fn newest_unplaced(tabs: &Tabs, sessions: &[Session]) -> Option<Ulid> {
+    if tabs.active().is_none() || !tabs.visible().is_empty() {
+        return None;
+    }
+    sessions
+        .iter()
+        .filter(|s| {
+            s.project_id == tabs.project_id
+                && s.state != SessionState::Exited
+                && tabs.tab_of(s.id).is_none()
+        })
+        .max_by_key(|s| s.started_at)
+        .map(|s| s.id)
+}
+
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible
 /// panes change from `before` to `after`.
 pub fn attach_diff(before: &[Ulid], after: &[Ulid]) -> (Vec<Ulid>, Vec<Ulid>) {
@@ -640,6 +657,55 @@ mod tests {
         assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
         assert_eq!(tabs.tab_of(b).map(|t| t.id), Some(two.id));
         assert!(!tabs.focus(Ulid::new()));
+    }
+
+    fn session(project_id: Ulid, state: SessionState, started_at: i64) -> Session {
+        Session {
+            id: Ulid::new(),
+            task_id: None,
+            project_id,
+            agent_profile: "fake".to_owned(),
+            kind: mkrew_protocol::SessionKind::Agent,
+            title: None,
+            native_session_id: None,
+            state,
+            exit_code: None,
+            cols: 80,
+            rows: 24,
+            started_at,
+            ended_at: None,
+        }
+    }
+
+    #[test]
+    fn empty_tab_takes_the_newest_live_unplaced_session() {
+        let project = Ulid::new();
+        let placed = session(project, SessionState::Working, 50);
+        let older = session(project, SessionState::Idle, 10);
+        let newest = session(project, SessionState::NeedsInput, 30);
+        let exited = session(project, SessionState::Exited, 40);
+        let foreign = session(Ulid::new(), SessionState::Idle, 60);
+        let sessions = [
+            placed.clone(),
+            older.clone(),
+            newest.clone(),
+            exited,
+            foreign,
+        ];
+        let mut tabs = Tabs::new(project);
+        assert_eq!(newest_unplaced(&tabs, &sessions), None, "no active tab");
+        let one = wire(project, "one", 1.0, pane(placed.id));
+        let two = wire(project, "two", 2.0, serde_json::Value::Null);
+        tabs.load(vec![one, two.clone()]);
+        assert_eq!(
+            newest_unplaced(&tabs, &sessions),
+            None,
+            "active tab has panes"
+        );
+        tabs.activate(two.id);
+        assert_eq!(newest_unplaced(&tabs, &sessions), Some(newest.id));
+        tabs.split_focused(Axis::Vertical, newest.id);
+        assert_eq!(newest_unplaced(&tabs, &sessions), None);
     }
 
     #[test]
