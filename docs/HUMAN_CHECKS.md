@@ -241,6 +241,20 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   terminal, that Ctrl+Enter inside a terminal still reaches the agent, and AltGr characters
   type into the follow-up field. Dark + light screenshots for §14.
 
+- [ ] (T4.10) **M4 wrap-up — the unticked M4 criteria.** `mk task` ↔ UI sharing is covered by
+  `crates/mkrew-ui/tests/board_shared.rs`; the rest needs eyes or real agents:
+  - **Create/edit/delete, drag, order persists** (criterion 1): the T4.7 + T4.8 checks above.
+  - **Real agents with `arg` prompts** (criterion 2): give `agents/claude.toml` and
+    `agents/codex.toml` `prompt_mode = "arg"` (or a copy), set each as a task's agent, prompt
+    `fix "a&b" 100%`, Run from the Board → the session starts in the project folder (check
+    `pwd`/the agent's cwd) and the agent receives the prompt verbatim (npm `.cmd` shims on
+    Windows: T4.4). Also run a task with no agent → the workspace's default agent is used, and
+    one with `prompt_mode = "type"` → the prompt is typed once the agent is ready.
+  - **Card opens its terminal / follow-up** (criteria 4, 5): the T4.9 check above, with real
+    Claude (follow-up while it works, answer at a permission prompt from the card).
+  - **Board drag feel + §14 design check**: drag preview smoothness, drop line, card density,
+    dark + light screenshots of a board with cards in every column (incl. an error row).
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._

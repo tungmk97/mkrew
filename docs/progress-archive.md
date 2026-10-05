@@ -2,6 +2,31 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M4 — Task board (tag `m4-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T4.7–T4.10 manual checks in
+HUMAN_CHECKS "To verify"):
+
+- [ ] Create/edit/delete tasks; drag between columns; order persists.
+- [ ] Run spawns the right agent (task's, else workspace default) in the right folder; prompt delivered per `prompt_mode`.
+- [x] Task status follows session state (§5 transitions): needs_input, running, review on finish.
+- [ ] Task card opens its session's terminal.
+- [ ] Follow-up input on running cards sends via `session.send`.
+- [x] `mk task add/list/run` share data with the UI.
+
+Tasks:
+
+- [x] T4.1 Task CRUD below the UI — feat(daemon): task CRUD + task.updated/task.deleted (ADR 0004)
+- [x] T4.2 Pure task rules in core — feat(core): task status rules + drop positions
+- [x] T4.3 `task.run` + prompt modes — feat(daemon): task.run with prompt modes; cards follow their session
+- [x] T4.4 `.cmd` shim prompt args — feat(daemon): run npm .cmd shim targets directly so arg prompts keep metacharacters
+- [x] T4.5 `mk task add/list/run` — feat(cli): mk task add/list/run
+- [x] T4.6 Board view + switcher — feat(ui): board view with live task columns and a Board/Terminals switcher
+- [x] T4.7 Task dialog — feat(ui): task dialog to create, edit and delete board tasks
+- [x] T4.8 Drag & drop — feat(ui): drag cards between and within board columns
+- [x] T4.9 Card actions — feat(ui): card actions — run, open terminal, follow-up, approve
+- [x] T4.10 Shared-data UI test + M4 manual checks — test(ui): mk task changes reach the board; complete M4
+
 ## M3 — Agent state, inbox, notifications (tag `m3-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T3.4–T3.9 manual checks in
