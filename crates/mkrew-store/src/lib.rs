@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mkrew_protocol::{Project, Session, SessionKind, SessionState, TerminalTab};
+use mkrew_protocol::{Project, Session, SessionKind, SessionState, StateSource, TerminalTab};
 use rusqlite::{Connection, Row, TransactionBehavior, params};
 use ulid::Ulid;
 
@@ -14,6 +14,7 @@ use ulid::Ulid;
 const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_terminals.sql"),
+    include_str!("../migrations/0003_session_state.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -262,8 +263,9 @@ impl Store {
     pub fn insert_session(&self, session: &Session) -> Result<()> {
         self.conn.execute(
             "INSERT INTO session (id, task_id, project_id, agent_profile, kind, title,
-                native_session_id, state, exit_code, cols, rows, started_at, ended_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                native_session_id, state, exit_code, cols, rows, started_at, ended_at,
+                state_source, state_changed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 session.id.to_string(),
                 session.task_id.map(|id| id.to_string()),
@@ -278,6 +280,8 @@ impl Store {
                 session.rows,
                 session.started_at,
                 session.ended_at,
+                source_str(session.state_source),
+                session.state_changed_at,
             ],
         )?;
         Ok(())
@@ -288,7 +292,7 @@ impl Store {
     pub fn update_session(&self, session: &Session) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE session SET title = ?2, native_session_id = ?3, state = ?4, exit_code = ?5,
-                cols = ?6, rows = ?7, ended_at = ?8
+                cols = ?6, rows = ?7, ended_at = ?8, state_source = ?9, state_changed_at = ?10
              WHERE id = ?1",
             params![
                 session.id.to_string(),
@@ -299,6 +303,8 @@ impl Store {
                 session.cols,
                 session.rows,
                 session.ended_at,
+                source_str(session.state_source),
+                session.state_changed_at,
             ],
         )?;
         if changed == 0 {
@@ -311,7 +317,8 @@ impl Store {
     /// SPEC §8). Returns how many rows changed.
     pub fn mark_stale_sessions_exited(&self) -> Result<usize> {
         Ok(self.conn.execute(
-            "UPDATE session SET state = 'exited', ended_at = COALESCE(ended_at, ?1)
+            "UPDATE session SET state = 'exited', ended_at = COALESCE(ended_at, ?1),
+                state_source = 'daemon', state_changed_at = ?1
              WHERE state <> 'exited'",
             [now_ms()],
         )?)
@@ -321,13 +328,53 @@ impl Store {
     pub fn list_sessions(&self, project_id: Option<Ulid>) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
-                state, exit_code, cols, rows, started_at, ended_at
+                state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at
              FROM session WHERE ?1 IS NULL OR project_id = ?1
              ORDER BY started_at, id",
         )?;
         let rows = stmt.query_map([project_id.map(|id| id.to_string())], RawSession::from_row)?;
         rows.map(|r| r?.into_session()).collect()
     }
+
+    /// Appends a `session_event` row (SPEC §5); `payload` is stored as JSON text.
+    pub fn insert_session_event(
+        &self,
+        session_id: Ulid,
+        kind: &str,
+        payload: &serde_json::Value,
+        at: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO session_event (session_id, kind, payload, at) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id.to_string(), kind, payload.to_string(), at],
+        )?;
+        Ok(())
+    }
+
+    /// A session's events of `kind`, oldest first.
+    pub fn session_events(&self, session_id: Ulid, kind: &str) -> Result<Vec<SessionEvent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT payload, at FROM session_event WHERE session_id = ?1 AND kind = ?2 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![session_id.to_string(), kind], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        rows.map(|r| {
+            let (payload, at) = r?;
+            let payload = serde_json::from_str(&payload)
+                .map_err(|_| corrupt("session_event.payload", payload))?;
+            Ok(SessionEvent { payload, at })
+        })
+        .collect()
+    }
+}
+
+/// One `session_event` row as read back by [`Store::session_events`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionEvent {
+    pub payload: serde_json::Value,
+    /// Unix ms.
+    pub at: i64,
 }
 
 fn user_version(conn: &Connection) -> Result<usize> {
@@ -401,6 +448,23 @@ fn parse_state(s: String) -> Result<SessionState> {
     })
 }
 
+fn source_str(source: StateSource) -> &'static str {
+    match source {
+        StateSource::Hook => "hook",
+        StateSource::Screen => "screen",
+        StateSource::Daemon => "daemon",
+    }
+}
+
+fn parse_source(s: String) -> Result<StateSource> {
+    Ok(match s.as_str() {
+        "hook" => StateSource::Hook,
+        "screen" => StateSource::Screen,
+        "daemon" => StateSource::Daemon,
+        _ => return Err(corrupt("session.state_source", s)),
+    })
+}
+
 fn parse_ulid(column: &'static str, s: String) -> Result<Ulid> {
     Ulid::from_string(&s).map_err(|_| corrupt(column, s))
 }
@@ -470,6 +534,8 @@ struct RawSession {
     rows: u16,
     started_at: i64,
     ended_at: Option<i64>,
+    state_source: String,
+    state_changed_at: i64,
 }
 
 impl RawSession {
@@ -488,6 +554,8 @@ impl RawSession {
             rows: row.get(10)?,
             started_at: row.get(11)?,
             ended_at: row.get(12)?,
+            state_source: row.get(13)?,
+            state_changed_at: row.get(14)?,
         })
     }
 
@@ -504,6 +572,8 @@ impl RawSession {
             title: self.title,
             native_session_id: self.native_session_id,
             state: parse_state(self.state)?,
+            state_source: parse_source(self.state_source)?,
+            state_changed_at: self.state_changed_at,
             exit_code: self.exit_code,
             cols: self.cols,
             rows: self.rows,

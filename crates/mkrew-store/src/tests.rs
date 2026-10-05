@@ -14,6 +14,8 @@ fn session(project_id: Ulid, started_at: i64) -> Session {
         title: None,
         native_session_id: None,
         state: SessionState::Starting,
+        state_source: StateSource::Daemon,
+        state_changed_at: started_at,
         exit_code: None,
         cols: 120,
         rows: 40,
@@ -129,6 +131,8 @@ fn sessions_insert_update_list() {
     s1.exit_code = Some(3);
     s1.ended_at = Some(10);
     s1.native_session_id = Some("native".into());
+    s1.state_source = StateSource::Hook;
+    s1.state_changed_at = 9;
     s1.cols = 80;
     store.update_session(&s1).unwrap();
 
@@ -192,8 +196,77 @@ fn stale_sessions_are_marked_exited() {
     let listed = store.list_sessions(None).unwrap();
     assert_eq!(listed[0].state, SessionState::Exited);
     assert!(listed[0].ended_at.is_some());
+    assert_eq!(listed[0].state_source, StateSource::Daemon);
+    assert_eq!(listed[0].state_changed_at, listed[0].ended_at.unwrap());
     assert_eq!(listed[1], ended);
     assert_eq!(store.mark_stale_sessions_exited().unwrap(), 0);
+}
+
+#[test]
+fn session_events_are_stored_per_session_and_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let (a, b) = (session(p.id, 1), session(p.id, 2));
+    store.insert_session(&a).unwrap();
+    store.insert_session(&b).unwrap();
+    let first = serde_json::json!({"event": "Notification", "payload": {"session_id": "x"}});
+    let second = serde_json::json!({"event": "Stop"});
+    store.insert_session_event(a.id, "hook", &first, 5).unwrap();
+    store
+        .insert_session_event(b.id, "hook", &second, 6)
+        .unwrap();
+    store
+        .insert_session_event(a.id, "hook", &second, 7)
+        .unwrap();
+    store
+        .insert_session_event(a.id, "state_changed", &second, 8)
+        .unwrap();
+
+    let events = store.session_events(a.id, "hook").unwrap();
+    assert_eq!(
+        events,
+        vec![
+            SessionEvent {
+                payload: first,
+                at: 5
+            },
+            SessionEvent {
+                payload: second,
+                at: 7
+            },
+        ]
+    );
+}
+
+#[test]
+fn state_columns_backfill_existing_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mkrew.db");
+    {
+        // A database at schema 2 with one ended session.
+        let conn = Connection::open(&path).unwrap();
+        for sql in &MIGRATIONS[..2] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 2).unwrap();
+        let project = Ulid::new().to_string();
+        conn.execute(
+            "INSERT INTO project (id, name, path, created_at) VALUES (?1, 'p', '/p', 0)",
+            [&project],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session (id, project_id, agent_profile, state, cols, rows, started_at,
+                ended_at)
+             VALUES (?1, ?2, 'fake', 'exited', 80, 24, 3, 9)",
+            [Ulid::new().to_string(), project],
+        )
+        .unwrap();
+    }
+    let listed = Store::open(&path).unwrap().list_sessions(None).unwrap();
+    assert_eq!(listed[0].state_source, StateSource::Daemon);
+    assert_eq!(listed[0].state_changed_at, 9);
 }
 
 #[test]

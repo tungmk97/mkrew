@@ -188,7 +188,7 @@ impl Router {
 mod tests {
     use mkrew_protocol::{
         CursorSnapshot, SessionExitedEvent, SessionSnapshotEvent, SessionState, SessionStateEvent,
-        TermModes,
+        StateSource, TermModes,
     };
 
     use super::*;
@@ -264,6 +264,8 @@ mod tests {
         let state = Incoming::Event(Event::SessionState(SessionStateEvent {
             session_id: shown,
             state: SessionState::Idle,
+            source: StateSource::Screen,
+            changed_at: 1,
         }));
         assert_eq!(router.route(state), None);
     }

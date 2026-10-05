@@ -77,6 +77,8 @@ pub enum Request {
     SessionResize(SessionResizeParams),
     #[serde(rename = "session.kill")]
     SessionKill(SessionKillParams),
+    #[serde(rename = "hook.report")]
+    HookReport(HookReportParams),
     #[serde(rename = "agent.profiles")]
     AgentProfiles,
 }
@@ -187,6 +189,19 @@ pub enum SessionState {
     Unknown,
 }
 
+/// What decided the current session state (SPEC §6 "Source"; shown on hover, §11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StateSource {
+    /// An agent hook (`hook.report`).
+    Hook,
+    /// Screen detection: output, quiet periods, `needs_input_patterns`.
+    Screen,
+    /// The daemon itself: spawn, exit, restart.
+    #[default]
+    Daemon,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionKind {
@@ -220,6 +235,9 @@ pub struct Session {
     /// The agent's own session id, used for resume (SPEC §6).
     pub native_session_id: Option<String>,
     pub state: SessionState,
+    pub state_source: StateSource,
+    /// Unix ms of the last state change.
+    pub state_changed_at: i64,
     pub exit_code: Option<i32>,
     pub cols: u16,
     pub rows: u16,
@@ -382,6 +400,20 @@ pub struct SessionResizeParams {
     pub rows: u16,
 }
 
+/// `hook.report`, sent by `mk hook` from inside a session's PTY (SPEC §6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookReportParams {
+    /// `MKREW_SESSION_ID` of the PTY; must be a live session.
+    pub mkrew_session_id: Ulid,
+    /// `claude`, `codex` or `fake`.
+    pub agent: String,
+    /// The agent's own event name (e.g. `Notification`, `agent-turn-complete`).
+    pub event: String,
+    /// The JSON the agent handed to the hook; stored as is.
+    #[serde(default)]
+    pub payload: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionKillParams {
     pub session_id: Ulid,
@@ -524,6 +556,9 @@ pub struct ProfileErrorInfo {
 pub struct SessionStateEvent {
     pub session_id: Ulid,
     pub state: SessionState,
+    pub source: StateSource,
+    /// Unix ms.
+    pub changed_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -664,6 +699,12 @@ mod tests {
                 session_id: sid(),
                 force: true,
             }),
+            Request::HookReport(HookReportParams {
+                mkrew_session_id: sid(),
+                agent: "claude".into(),
+                event: "Notification".into(),
+                payload: json!({"session_id": "abc"}),
+            }),
             Request::AgentProfiles,
         ];
         for (id, request) in requests.into_iter().enumerate() {
@@ -736,6 +777,19 @@ mod tests {
             serde_json::to_value(&clear).unwrap(),
             json!({"project_id": id, "default_agent": null})
         );
+    }
+
+    #[test]
+    fn hook_report_payload_defaults_to_null() {
+        let request: Request = serde_json::from_value(json!({
+            "method": "hook.report",
+            "params": {"mkrew_session_id": sid().to_string(), "agent": "fake", "event": "done"}
+        }))
+        .unwrap();
+        let Request::HookReport(params) = request else {
+            panic!("wrong variant: {request:?}");
+        };
+        assert_eq!(params.payload, serde_json::Value::Null);
     }
 
     #[test]
@@ -872,12 +926,17 @@ mod tests {
         let message = Message::Event(Event::SessionState(SessionStateEvent {
             session_id: sid(),
             state: SessionState::NeedsInput,
+            source: StateSource::Hook,
+            changed_at: 5,
         }));
         assert_eq!(
             round_trip(&message),
             json!({
                 "type": "event", "event": "session.state",
-                "data": {"session_id": sid().to_string(), "state": "needs_input"}
+                "data": {
+                    "session_id": sid().to_string(), "state": "needs_input",
+                    "source": "hook", "changed_at": 5
+                }
             })
         );
         round_trip(&Message::Event(Event::SessionExited(SessionExitedEvent {

@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
-use mkrew_core::Paths;
+use mkrew_core::{HookAgent, Paths};
 use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, DaemonStatusResult, ErrorCode, Event, Frame,
-    FrameDecoder, HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, ProfileErrorInfo,
-    ProjectAddParams, ProjectUpdateParams, Request, Session, SessionKillParams, SessionKind,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
-    TerminalTab, encode,
+    FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
+    ProfileErrorInfo, ProjectAddParams, ProjectUpdateParams, Request, Session, SessionKillParams,
+    SessionKind, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
+    SessionWaitResult, StateSource, TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -250,6 +250,7 @@ impl Daemon {
                 (outcome, After::Continue)
             }
             Request::SessionWait(params) => (self.session_wait(params).await, After::Continue),
+            Request::HookReport(params) => (self.hook_report(params).await, After::Continue),
             Request::AgentProfiles => (ok(&self.agent_profiles()), After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
@@ -328,6 +329,7 @@ impl Daemon {
             Ok(profile) => profile,
             Err(outcome) => return outcome,
         };
+        let started_at = now_ms();
         let session = Session {
             id: Ulid::new(),
             task_id: None,
@@ -337,10 +339,12 @@ impl Daemon {
             title: params.title,
             native_session_id: None,
             state: SessionState::Starting,
+            state_source: StateSource::Daemon,
+            state_changed_at: started_at,
             exit_code: None,
             cols: params.cols,
             rows: params.rows,
-            started_at: now_ms(),
+            started_at,
             ended_at: None,
         };
         let session_id = session.id;
@@ -500,6 +504,18 @@ impl Daemon {
             Some(session) if session.send(command).await.is_ok() => ok(&()),
             _ => self.not_live(session_id),
         }
+    }
+
+    /// Hands a hook report to its session. Only a live session may report (SPEC §15): an
+    /// exited or unknown id is rejected like any other session request.
+    async fn hook_report(&self, report: HookReportParams) -> Outcome {
+        let Some(agent) = HookAgent::parse(&report.agent) else {
+            let message = format!("unknown hook agent {:?}", report.agent);
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        };
+        let session_id = report.mkrew_session_id;
+        self.session_command(session_id, Command::Hook { agent, report })
+            .await
     }
 
     /// Queues `data` for the session's PTY writer thread. A child that does not read its

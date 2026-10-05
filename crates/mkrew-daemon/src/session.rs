@@ -11,9 +11,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use mkrew_core::{AgentProfile, SendQueue, StateMachine};
+use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine};
 use mkrew_protocol::{
-    Event, Session, SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent,
+    Event, HookReportParams, Session, SessionAttachResult, SessionExitedEvent, SessionState,
+    SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -176,6 +177,11 @@ pub enum Command {
     Send(String),
     /// The send-writer task has queued a delivered text for the PTY.
     SendWritten,
+    /// `hook.report` from inside the session (SPEC §6); `agent` is `report.agent` parsed.
+    Hook {
+        agent: HookAgent,
+        report: HookReportParams,
+    },
 }
 
 /// What a session task receives from its PTY threads.
@@ -504,13 +510,14 @@ impl Actor {
                         self.deliver();
                     }
                     Some(Command::SendWritten) => self.send_writing = false,
+                    Some(Command::Hook { agent, report }) => self.on_hook(agent, report),
                     None => commands_open = false,
                 },
                 () = sleep_until(tick_at), if tick_at.is_some() => {
                     let lines = self.screen_lines();
                     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
                     if let Some(state) = self.machine.tick(Instant::now(), &lines) {
-                        self.set_state(state);
+                        self.set_state(state, StateSource::Screen);
                     }
                     self.deliver();
                 }
@@ -542,10 +549,41 @@ impl Actor {
         let lines = self.screen_lines();
         let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
         if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
-            self.set_state(state);
+            self.set_state(state, StateSource::Screen);
         }
         if !self.send_writing {
             self.queue.on_output();
+        }
+        self.deliver();
+    }
+
+    /// Records the report as a `hook` session event, takes the agent's session id and lets
+    /// the state machine decide (it ignores hooks for screen-only profiles).
+    fn on_hook(&mut self, agent: HookAgent, report: HookReportParams) {
+        let at = crate::server::now_ms();
+        let native = agent.native_session_id(&report.payload);
+        let event = agent.event(&report.event, &report.payload);
+        tracing::debug!(id = %self.session.id, agent = %report.agent, event = %report.event, "hook");
+        let record = serde_json::json!({
+            "agent": report.agent,
+            "event": report.event,
+            "payload": report.payload,
+        });
+        if let Err(e) = self
+            .hub
+            .store()
+            .insert_session_event(self.session.id, "hook", &record, at)
+        {
+            tracing::error!(id = %self.session.id, "saving hook event failed: {e}");
+        }
+        let native_changed = native.is_some() && native != self.session.native_session_id;
+        if native_changed {
+            self.session.native_session_id = native;
+        }
+        match event.and_then(|e| self.machine.on_hook(Instant::now(), e)) {
+            Some(state) => self.set_state(state, StateSource::Hook),
+            None if native_changed => self.save(),
+            None => {}
         }
         self.deliver();
     }
@@ -599,13 +637,17 @@ impl Actor {
             .unwrap_or_default()
     }
 
-    fn set_state(&mut self, state: SessionState) {
-        tracing::debug!(id = %self.session.id, ?state, "session state");
+    fn set_state(&mut self, state: SessionState, source: StateSource) {
+        tracing::debug!(id = %self.session.id, ?state, ?source, "session state");
         self.session.state = state;
+        self.session.state_source = source;
+        self.session.state_changed_at = crate::server::now_ms();
         self.save();
         let _ = self.hub.events.send(Event::SessionState(SessionStateEvent {
             session_id: self.session.id,
             state,
+            source,
+            changed_at: self.session.state_changed_at,
         }));
     }
 
@@ -669,7 +711,7 @@ impl Actor {
         self.machine.on_exit();
         self.session.exit_code = exit_code;
         self.session.ended_at = Some(crate::server::now_ms());
-        self.set_state(SessionState::Exited);
+        self.set_state(SessionState::Exited, StateSource::Daemon);
         let _ = self
             .hub
             .events

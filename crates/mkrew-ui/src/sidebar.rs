@@ -190,6 +190,8 @@ impl Sidebar {
         match event {
             Event::SessionState(event) => self.update_session(event.session_id, |session| {
                 session.state = event.state;
+                session.state_source = event.source;
+                session.state_changed_at = event.changed_at;
             }),
             Event::SessionExited(event) => self.update_session(event.session_id, |session| {
                 session.state = SessionState::Exited;
@@ -274,7 +276,7 @@ impl Sidebar {
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{SessionExitedEvent, SessionKind, SessionStateEvent};
+    use mkrew_protocol::{SessionExitedEvent, SessionKind, SessionStateEvent, StateSource};
 
     use super::*;
 
@@ -301,6 +303,8 @@ mod tests {
             title: None,
             native_session_id: None,
             state,
+            state_source: StateSource::Daemon,
+            state_changed_at: started_at,
             exit_code: None,
             cols: 80,
             rows: 24,
@@ -408,10 +412,17 @@ mod tests {
         let change = sidebar.apply(&Event::SessionState(SessionStateEvent {
             session_id: c.id,
             state: SessionState::NeedsInput,
+            source: StateSource::Hook,
+            changed_at: 9,
         }));
         assert_eq!(change, Change::Redraw);
         let row = workspace(&sidebar.rows()[0]).clone();
         assert_eq!((row.working, row.needs_input), (2, true));
+        let updated = &sidebar.sessions()[2];
+        assert_eq!(
+            (updated.state_source, updated.state_changed_at),
+            (StateSource::Hook, 9)
+        );
     }
 
     #[test]
@@ -426,6 +437,8 @@ mod tests {
         sidebar.apply(&Event::SessionState(SessionStateEvent {
             session_id: s.id,
             state: SessionState::NeedsInput,
+            source: StateSource::Screen,
+            changed_at: 2,
         }));
         sidebar.load(vec![api], vec![s]);
         assert!(workspace(&sidebar.rows()[0]).needs_input);
@@ -452,6 +465,8 @@ mod tests {
         let spawned = Event::SessionState(SessionStateEvent {
             session_id: Ulid::new(),
             state: SessionState::Starting,
+            source: StateSource::Daemon,
+            changed_at: 1,
         });
         assert_eq!(sidebar.apply(&spawned), Change::Refresh);
     }

@@ -253,7 +253,13 @@ CREATE TABLE terminal_tab (
   layout     TEXT NOT NULL               -- JSON split tree, leaves are session ids
 );
 
--- migrations/0003_doc_review.sql (M6)
+-- migrations/0003_session_state.sql (M3, ADR 0003)
+ALTER TABLE session ADD COLUMN state_source TEXT NOT NULL DEFAULT 'daemon'; -- hook|screen|daemon
+ALTER TABLE session ADD COLUMN state_changed_at INTEGER NOT NULL DEFAULT 0;
+UPDATE session SET state_changed_at = COALESCE(ended_at, started_at);
+CREATE INDEX session_event_session ON session_event(session_id, id);
+
+-- migrations/0004_doc_review.sql (M6)
 CREATE TABLE doc_comment (
   id          TEXT PRIMARY KEY,
   project_id  TEXT NOT NULL REFERENCES project(id),
@@ -271,7 +277,7 @@ CREATE TABLE doc_comment (
   updated_at  INTEGER NOT NULL
 );
 
--- migrations/0004_files_git.sql (M7)
+-- migrations/0005_files_git.sql (M7)
 ALTER TABLE project ADD COLUMN base_ref TEXT;                          -- NULL = auto-detect
 ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|diff
 ```
@@ -387,6 +393,10 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
   idempotent, and have a working uninstall.
 - Before coding this, check the CURRENT hook formats in the official Claude Code and Codex docs.
 - `mk hook` without `MKREW_SESSION_ID` exits 0 silently (agent running outside Mkrew).
+- Event mapping (`mkrew_core::hook`): Claude `UserPromptSubmit` → working, `Notification` with
+  `notification_type` `permission_prompt`/`elicitation_*`/`agent_needs_input` (or none) →
+  needs_input, `Stop` → done, `SessionStart` and other types → recorded only; Codex
+  `agent-turn-complete` → done, `thread-id` = `native_session_id`; fake `busy`/`needs_input`/`done`.
 
 ---
 
@@ -422,7 +432,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.history` | `session_id` | path of the session log file |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab, its sessions keep running, no event) |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
-| `hook.report` | `mkrew_session_id`, `agent`, `event`, `payload` | ok |
+| `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] + parse errors |
 | `doc.list` | `project_id` | md files matching review globs + md files recently changed by agents |
 | `doc.read` | `project_id`, `file_path` | content + hash |
@@ -448,7 +458,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | --- | --- |
 | `session.output` | **binary frame** (see below): raw PTY bytes, only to attached clients, batched ≤ every 16 ms |
 | `session.snapshot` | only to an attached client whose output queue overflowed: fresh screen snapshot replacing the dropped output (backpressure, below) |
-| `session.state` | session state changed |
+| `session.state` | session state changed (`state`, `source` = hook/screen/daemon, `changed_at`) |
 | `session.exited` | process exited, with `exit_code` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `conflict.detected` | two sessions edited the same file within 60 s (M5) |

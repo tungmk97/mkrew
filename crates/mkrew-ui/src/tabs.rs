@@ -882,6 +882,8 @@ mod tests {
             title: None,
             native_session_id: None,
             state,
+            state_source: mkrew_protocol::StateSource::Daemon,
+            state_changed_at: started_at,
             exit_code: None,
             cols: 80,
             rows: 24,

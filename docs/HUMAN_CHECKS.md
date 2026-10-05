@@ -429,6 +429,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   hidden (`IsIconic`/`!IsWindowVisible`); on macOS gpui may also report a fully covered window
   as hidden, which then detaches too (still §10 "not visible"). Restoring re-attaches from
   daemon snapshots; panes lose UI scrollback and an open find bar, like a tab switch.
+- (T3.2) Hook mapping (`mkrew_core::hook`, SPEC §6): Claude `Notification` → needs_input only
+  for `permission_prompt`/`elicitation_*`/`agent_needs_input` or a missing `notification_type`
+  (assumed older builds); `idle_prompt` (~60 s after `Stop`) is recorded only. `SessionStart`
+  only records the native id. Codex `native_session_id` = notify `thread-id` (docs call it the
+  session id; the Codex source has a separate session id — check `codex resume <thread-id>`
+  works for real). A hook that repeats the current state leaves `source` unchanged (hover
+  may say "screen" for a hook-confirmed state). Unknown events of a known agent: stored, ok;
+  unknown agent: `invalid_request`. Schema change → migration 0003 + ADR 0003, protocol v2
+  (restart an old daemon after updating).
 
 ## Done
 

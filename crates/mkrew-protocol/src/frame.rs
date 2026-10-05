@@ -180,6 +180,8 @@ mod tests {
                 crate::SessionStateEvent {
                     session_id: Ulid::from_parts(5, 6),
                     state: SessionState::NeedsInput,
+                    source: crate::StateSource::Screen,
+                    changed_at: 1,
                 },
             ))),
             Frame::Output {

@@ -13,14 +13,16 @@ use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, DaemonStatusResult, ErrorCode, Event, Frame, FrameDecoder,
-    HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
-    ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
-    SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
-    SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult,
-    SessionState, SessionStateEvent, SessionWaitParams, SessionWaitResult, TabCreateParams,
-    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, TerminalTab, encode,
+    HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION, Project,
+    ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session,
+    SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind,
+    SessionListParams, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
+    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
+    TerminalTab, encode,
 };
 use mkrew_store::Store;
+use serde_json::{Value, json};
 use ulid::Ulid;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -241,16 +243,33 @@ impl Client {
 
     /// Makes calls until a pushed event equal to `event` has arrived.
     fn wait_event(&mut self, event: &Event) {
+        self.wait_event_where(|e| e == event);
+    }
+
+    /// Makes calls until a pushed event matching `wanted` has arrived; returns it.
+    fn wait_event_where(&mut self, wanted: impl Fn(&Event) -> bool) -> Event {
         let deadline = Instant::now() + TIMEOUT;
-        while !self.events.contains(event) {
+        loop {
+            if let Some(event) = self.events.iter().find(|e| wanted(e)) {
+                return event.clone();
+            }
             assert!(
                 Instant::now() < deadline,
-                "no {event:?} in {:?}",
+                "no matching event in {:?}",
                 self.events
             );
             std::thread::sleep(Duration::from_millis(20));
             self.call(Request::DaemonStatus);
         }
+    }
+
+    fn hook(&mut self, session_id: Ulid, agent: &str, event: &str, payload: Value) -> Outcome {
+        self.call(Request::HookReport(HookReportParams {
+            mkrew_session_id: session_id,
+            agent: agent.into(),
+            event: event.into(),
+            payload,
+        }))
     }
 
     fn attach(&mut self, session_id: Ulid) -> Outcome {
@@ -394,6 +413,8 @@ fn startup_marks_stale_sessions_exited() {
                 title: None,
                 native_session_id: None,
                 state: SessionState::Working,
+                state_source: StateSource::Screen,
+                state_changed_at: 1,
                 exit_code: None,
                 cols: 80,
                 rows: 24,
@@ -459,10 +480,17 @@ fn fake_agent_session_reaches_needs_input_and_is_killed() {
     // The prompt is only visible on the emulated screen: the PTY works end to end.
     let session = client.wait_state(id, SessionState::NeedsInput);
     assert_eq!((session.cols, session.rows), (80, 24));
-    client.wait_event(&Event::SessionState(SessionStateEvent {
-        session_id: id,
-        state: SessionState::NeedsInput,
-    }));
+    let event = client.wait_event_where(|e| {
+        matches!(e, Event::SessionState(s) if s.session_id == id && s.state == SessionState::NeedsInput)
+    });
+    let Event::SessionState(event) = event else {
+        unreachable!()
+    };
+    // Found by the screen pattern; the event and the stored row agree.
+    assert_eq!(event.source, StateSource::Screen);
+    assert_eq!(session.state_source, StateSource::Screen);
+    assert_eq!(event.changed_at, session.state_changed_at);
+    assert!(event.changed_at >= session.started_at);
     let status: DaemonStatusResult = client.call(Request::DaemonStatus).into_result().unwrap();
     assert_eq!(status.sessions, 1);
 
@@ -483,6 +511,122 @@ fn fake_agent_session_reaches_needs_input_and_is_killed() {
 
     let log = session_log(&env, id);
     assert!(log.contains("Do you want to proceed? (y/n)"), "{log}");
+    client.stop();
+}
+
+#[test]
+fn hook_reports_drive_the_state_of_live_sessions_only() {
+    let env = Env::new();
+    env.write_fake_profile();
+    // The fake profile with hooks enabled.
+    let path = env
+        .dir
+        .path()
+        .join("config")
+        .join("agents")
+        .join("fake.toml");
+    let fake = std::fs::read_to_string(&path).unwrap();
+    let hooked = fake.replace("mode = \"screen\"", "mode = \"hook+screen\"");
+    assert_ne!(hooked, fake);
+    env.write_profile("hooked", &hooked);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "hooked").into_result().unwrap();
+    let id = spawned.session_id;
+    let started = client.session(id);
+    assert_eq!(started.state_source, StateSource::Daemon);
+    assert_eq!(started.state_changed_at, started.started_at);
+
+    // Only a live session may report, and only for a known agent.
+    let unknown = client.hook(Ulid::new(), "fake", "busy", Value::Null);
+    assert_eq!(error_code(unknown), ErrorCode::NotFound);
+    let omp = client.hook(id, "omp", "busy", Value::Null);
+    assert_eq!(error_code(omp), ErrorCode::InvalidRequest);
+
+    // needs_input first: the fake agent's first output may already have made it `working`.
+    let native = json!({"session_id": "native-1"});
+    client
+        .hook(id, "fake", "needs_input", native)
+        .into_result::<()>()
+        .unwrap();
+    let session = client.wait_state(id, SessionState::NeedsInput);
+    assert_eq!(session.state_source, StateSource::Hook);
+    assert_eq!(session.native_session_id.as_deref(), Some("native-1"));
+    client.wait_event_where(|e| {
+        matches!(e, Event::SessionState(s)
+            if s.session_id == id && s.state == SessionState::NeedsInput
+                && s.source == StateSource::Hook && s.changed_at == session.state_changed_at)
+    });
+    client
+        .hook(id, "fake", "busy", Value::Null)
+        .into_result::<()>()
+        .unwrap();
+    let session = client.wait_state(id, SessionState::Working);
+    assert_eq!(session.state_source, StateSource::Hook);
+    // A known agent's unknown event is recorded but changes nothing.
+    client
+        .hook(id, "fake", "thinking", Value::Null)
+        .into_result::<()>()
+        .unwrap();
+    client
+        .hook(id, "fake", "done", Value::Null)
+        .into_result::<()>()
+        .unwrap();
+    let session = client.wait_state(id, SessionState::Done);
+    assert_eq!(session.state_source, StateSource::Hook);
+    // Hook events take priority: the fake agent's own (y/n) prompt does not override `done`.
+    std::thread::sleep(Duration::from_millis(1_500));
+    assert_eq!(client.session(id).state, SessionState::Done);
+
+    let db = env.data_dir().join("mkrew.db");
+    let events = Store::open(&db)
+        .unwrap()
+        .session_events(id, "hook")
+        .unwrap();
+    let names: Vec<&str> = events
+        .iter()
+        .map(|e| e.payload["event"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["needs_input", "busy", "thinking", "done"]);
+    assert_eq!(events[0].payload["agent"], "fake");
+    assert_eq!(events[0].payload["payload"]["session_id"], "native-1");
+
+    // Exited sessions are rejected; the exit itself comes from the daemon.
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.state_source, StateSource::Daemon);
+    assert_eq!(session.native_session_id.as_deref(), Some("native-1"));
+    let late = client.hook(id, "fake", "busy", Value::Null);
+    assert_eq!(error_code(late), ErrorCode::InvalidState);
+    client.stop();
+}
+
+#[test]
+fn screen_only_profiles_record_hooks_but_ignore_them() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client
+        .hook(id, "fake", "done", json!({"session_id": "n"}))
+        .into_result::<()>()
+        .unwrap();
+    // The screen still decides: the fake agent's prompt makes it needs_input, not done.
+    let session = client.wait_state(id, SessionState::NeedsInput);
+    assert_eq!(session.state_source, StateSource::Screen);
+    assert_eq!(session.native_session_id.as_deref(), Some("n"));
+    let db = env.data_dir().join("mkrew.db");
+    let events = Store::open(&db)
+        .unwrap()
+        .session_events(id, "hook")
+        .unwrap();
+    assert_eq!(events.len(), 1);
     client.stop();
 }
 
