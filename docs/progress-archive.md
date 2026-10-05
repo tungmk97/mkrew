@@ -2,6 +2,34 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M6 — Markdown review (tag `m6-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T6.8, T6.9, T6.10 and T6.11 manual
+checks in HUMAN_CHECKS "To verify"):
+
+- [ ] Docs view lists files by `review_globs` + md files agents just changed; preview renders
+      headings, lists, task lists, tables, code blocks correctly.
+- [ ] Comment on a selection; threads with reply, resolve, reopen; persisted in SQLite.
+- [ ] External edits (e.g. in Zed) refresh the preview and re-anchor comments; deleted passages → `outdated`.
+- [ ] "Send to agent" types the prompt into the right session; queued while working.
+- [ ] Agent runs `mk comment reply` → reply appears in the thread, comment becomes `addressed`.
+- [ ] "View changes" diffs send-time snapshot vs current file.
+- [x] E2E with the fake agent: plan written, 2 comments sent, both edited and answered.
+
+Tasks:
+
+- [x] T6.1 Comment store + protocol — feat(store): doc review comments in SQLite and protocol
+- [x] T6.2 Daemon `comment.*` + `mk comment` — feat(daemon): comment threads over IPC and mk comment list/reply
+- [x] T6.3 Core review modules — feat(core): review re-anchoring, agent prompt and review globs
+- [x] T6.4 `doc.list`/`doc.read`/`doc.changed` — feat(daemon): doc list/read and re-anchoring on doc.changed
+- [x] T6.5 `comment.send_to_agent` — feat(daemon): comment.send_to_agent with bracketed-paste delivery
+- [x] T6.6 Fake agent review E2E — test(daemon): fake agent answers sent review comments end to end
+- [x] T6.7 Markdown render model — feat(ui): Markdown render model with source line ranges
+- [x] T6.8 Docs view — feat(ui): Docs view with Markdown preview, source view and live refresh
+- [x] T6.9 Docs comments — feat(ui): Docs review comments with line picking and margin threads
+- [x] T6.10 Send to agent / View changes — feat(ui): Docs send-to-agent picker and view-changes diff
+- [x] T6.11 M6 manual checks + wrap-up — chore(progress): complete M6
+
 ## M5 — Resume, checkpoints, conflicts, history (tag `m5-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T5.4, T5.7, T5.9 and T5.11 manual

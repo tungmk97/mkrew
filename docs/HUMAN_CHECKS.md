@@ -336,6 +336,29 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   No live agent → "No agent is running…" + Close. After the agent edits the file, hover the
   thread → "View changes" shows the diff (−/+ rows, hunk band); unchanged file → "Nothing
   changed…". Dark + light screenshots for §14.
+- [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
+  (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
+  other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
+  `comment_threads_reply_resolve_reopen_and_agent_replies_address_them`,
+  `comments_sent_to_a_working_agent_are_typed_once_it_asks`, `comment_list_and_reply_from_inside_a_session`)
+  and `crates/mkrew-ui/tests/docs_view.rs`; what is left needs eyes or real agents. Restart the
+  daemon first (protocol v11), with `mk` on PATH.
+  - **Docs list + preview** (criterion 1): the T6.8 check above; also have an agent create a
+    `.md` outside the review globs (e.g. `notes/x.md`) → it is listed (recently changed).
+  - **Comment on a selection, threads** (criterion 2): the T6.9 check above; restart the daemon
+    and the app → threads and statuses are still there.
+  - **External edits in Zed** (criterion 3): edit the commented passage in Zed (save) → preview
+    refreshes, a comment above a newly inserted paragraph moves down with its passage, a
+    deleted passage → "⚠ Outdated"; undo in Zed → back to open.
+  - **Real Claude/Codex review round trip** (criteria 4, 5): Claude writes `PLAN.md` from a
+    Board task; add 2 comments; "Send to agent" while Claude is still working → the prompt is
+    typed only once it stops, arrives as ONE pasted message with its line breaks (T6.5/T6.6
+    notes below: bracketed paste through ConPTY), Claude edits the plan and runs
+    `mk comment reply c_… "…"` per comment → replies appear live, threads show "↩ Addressed".
+    Repeat with Codex. If the agent does not know `mk`, note what the §12 prompt is missing.
+  - **View changes** (criterion 6): the T6.10 check above, on the threads Claude just addressed.
+  - **§14 design check**: dark + light screenshots of the Docs view (preview with margin
+    threads, source view), the Send-to-agent picker and the View-changes dialog.
 
 ## Questions with assumed defaults
 
