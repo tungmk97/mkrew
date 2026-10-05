@@ -31,6 +31,8 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 serde = { version = "1", features = ["derive"] }
 # Tab layouts are opaque JSON on the wire (`TerminalTab.layout`).
 serde_json = "1"
+# Docs "View changes": sent snapshot vs current file (SPEC §4, §12).
+similar = "3.2"
 thiserror = "2"
 # The IPC thread runs a single-threaded runtime (SPEC §7 client side).
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros"] }

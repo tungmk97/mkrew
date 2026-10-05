@@ -327,6 +327,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   "⚠ Outdated"; `mk comment reply` from a session → reply shows live with "↩ Addressed".
   On a layout where Ctrl+Alt+M is AltGr+M (e.g. German "µ"), typing in a draft still inserts
   the character. Dark + light screenshots for §14.
+- [ ] (T6.10) **Docs "Send to agent" / "View changes"** (logic covered by `doc_dialog.rs` unit
+  tests; daemon delivery by the T6.5/T6.6 e2e; the dialogs were never seen): with 2 open
+  comments on a plan an agent wrote, the header's "Send to agent" tooltip says "Send 2 open
+  comments"; Ctrl+Shift+S opens the picker with that agent preselected ("edited this file"),
+  ↑ / ↓ move, Enter sends → dialog closes, threads show "↑ Sent", the prompt is typed into
+  the session (queued while it works). Select one thread's lines first → only that one goes.
+  No live agent → "No agent is running…" + Close. After the agent edits the file, hover the
+  thread → "View changes" shows the diff (−/+ rows, hunk band); unchanged file → "Nothing
+  changed…". Dark + light screenshots for §14.
 
 ## Questions with assumed defaults
 
@@ -913,6 +922,20 @@ _Decisions the agent made on its own. Override them here if you disagree._
   profile id as author; the 300 px margin never collapses on narrow windows; A→B→A file
   switches can let a stale `comment.list` answer drop an update in between (narrow window);
   a double click on Resolve sends it twice (harmless).
+- (T6.10) **"Send to agent" picks:** "the selected comments" = open threads whose anchor
+  overlaps the current line selection (there is no per-thread selection); if none overlap,
+  all open threads of the file go. Only `open` roots are sent (sent / addressed / outdated /
+  resolved are not; a user reply on an addressed thread reopens it, so it can be resent).
+  The picker lists the workspace's live agent sessions (shells excluded) newest first; the
+  default is the file's `last_session_id` from `doc.list` when it is still live, else the
+  newest. "View changes" is a per-thread action (shown when the root has a `sent_snapshot`)
+  diffing that snapshot against the doc as currently shown (line endings ignored, 3 lines
+  of context, capped at the undo dialog's 2000 lines); the dialog does not refresh if the
+  file changes while it is open. Open review items: the error row is copy-pasted per dialog
+  and uses `status_exited`; send errors show the whole error chain; titles ellipsize long
+  paths at the end; quiet buttons inside thread cards have no visible hover; "Send to agent"
+  looks enabled while disconnected (does nothing); a dialog left open survives a workspace
+  switch via a notification click (as the other dialogs do).
 
 ## Done
 

@@ -136,6 +136,13 @@ pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
 /// Width of the Docs view's comment margin (right of the preview / source).
 pub const DOC_MARGIN_WIDTH: f32 = 300.0;
 
+/// Height of the "Send to agent" session list (it scrolls past that).
+pub const SEND_SESSIONS_HEIGHT: f32 = 200.0;
+
+/// Height of the Docs "View changes" diff (it scrolls past that); the dialog is as wide as
+/// the undo one.
+pub const CHANGES_DIFF_HEIGHT: f32 = 420.0;
+
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 

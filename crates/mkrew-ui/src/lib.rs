@@ -4,13 +4,15 @@
 //! terminal tabs / split-tree models, the task board and its task, undo and follow-up
 //! controls, conflict warnings, the Inbox, the session history dialog, the pane lifecycle
 //! decisions, the keymap, the workspace menu, the "Open in Zed" command, the Docs view-model
-//! and its review comments, the Markdown render model of the Docs preview and its GPUI elements.
+//! and its review comments (with the "Send to agent" and "View changes" dialogs), the Markdown
+//! render model of the Docs preview and its GPUI elements.
 
 pub mod board;
 pub mod client;
 pub mod comments;
 pub mod conflicts;
 pub mod connect;
+pub mod doc_dialog;
 pub mod docs;
 pub mod follow_up;
 pub mod history;
