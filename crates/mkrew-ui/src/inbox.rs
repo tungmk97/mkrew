@@ -136,6 +136,7 @@ mod tests {
             review_globs: None,
             created_at: 0,
             archived: false,
+            base_ref: None,
         }
     }
 

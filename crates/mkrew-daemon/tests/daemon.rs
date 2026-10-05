@@ -15,15 +15,15 @@ use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
     CommentReplyParams, CommentSendParams, CommentStatus, DaemonStatusResult, DocChangedEvent,
     DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, Frame,
-    FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
-    Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
-    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
-    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
-    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
-    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
-    encode,
+    FrameDecoder, GitSetBaseParams, HelloParams, HelloResult, HookReportParams, Message, Outcome,
+    PROTOCOL_VERSION, Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError,
+    ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionInputParams,
+    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionResizeParams,
+    SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
+    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
+    TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams,
+    TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams,
+    TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2133,6 +2133,52 @@ fn tasks_crud_and_order_persist_across_daemon_restart() {
     assert!(daemon.wait_exit().success());
     let (_daemon, mut client) = env.start();
     assert_eq!(list_tasks(&mut client, &project), before);
+    client.stop();
+}
+
+#[test]
+fn git_set_base_is_announced_persists_and_null_means_auto() {
+    let env = Env::new();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    assert_eq!(project.base_ref, None);
+    let set_base = |base: Option<&str>| {
+        Request::GitSetBase(GitSetBaseParams {
+            project_id: project.id,
+            base_ref: base.map(str::to_owned),
+        })
+    };
+
+    // Returns `null`; the trimmed base comes back through `project.updated`.
+    let _: () = client
+        .call(set_base(Some(" develop ")))
+        .into_result()
+        .unwrap();
+    let with_base = Project {
+        base_ref: Some("develop".into()),
+        ..project.clone()
+    };
+    client.wait_event(&Event::ProjectUpdated(with_base.clone()));
+    for bad in ["--force", "a b"] {
+        assert_eq!(
+            error_code(client.call(set_base(Some(bad)))),
+            ErrorCode::InvalidRequest
+        );
+    }
+    let missing = Request::GitSetBase(GitSetBaseParams {
+        project_id: Ulid::new(),
+        base_ref: None,
+    });
+    assert_eq!(error_code(client.call(missing)), ErrorCode::NotFound);
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
+    assert_eq!(listed, vec![with_base]);
+    // Blank is the same as `null`: back to auto-detect.
+    let _: () = client.call(set_base(Some("  "))).into_result().unwrap();
+    client.wait_event(&Event::ProjectUpdated(project.clone()));
     client.stop();
 }
 

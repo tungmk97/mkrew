@@ -217,7 +217,8 @@ impl Sidebar {
             | Event::NotificationClicked(_)
             | Event::ConflictDetected(_)
             | Event::DocChanged(_)
-            | Event::CommentUpdated(_) => Change::None,
+            | Event::CommentUpdated(_)
+            | Event::GitChanged(_) => Change::None,
         }
     }
 
@@ -308,6 +309,7 @@ mod tests {
             review_globs: None,
             created_at: 0,
             archived: false,
+            base_ref: None,
         }
     }
 

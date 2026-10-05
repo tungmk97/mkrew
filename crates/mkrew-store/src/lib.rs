@@ -20,6 +20,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0003_session_state.sql"),
     include_str!("../migrations/0004_checkpoint_at.sql"),
     include_str!("../migrations/0005_doc_review.sql"),
+    include_str!("../migrations/0006_files_git.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +117,7 @@ impl Store {
             review_globs: None,
             created_at: now_ms(),
             archived: false,
+            base_ref: None,
         };
         let inserted = self.conn.execute(
             "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -140,7 +142,8 @@ impl Store {
     /// All projects, oldest first.
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived
+            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived,
+                    base_ref
              FROM project ORDER BY created_at, id",
         )?;
         let rows = stmt.query_map([], RawProject::from_row)?;
@@ -149,7 +152,8 @@ impl Store {
 
     pub fn get_project(&self, id: Ulid) -> Result<Project> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived
+            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived,
+                    base_ref
              FROM project WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id.to_string()], RawProject::from_row)?;
@@ -177,6 +181,17 @@ impl Store {
         self.conn.execute(
             "UPDATE project SET name = ?2, default_agent = ?3 WHERE id = ?1",
             params![id.to_string(), project.name, project.default_agent],
+        )?;
+        Ok(project)
+    }
+
+    /// Sets the Git view base of a project; `None` = auto-detect (SPEC §12B).
+    pub fn set_project_base(&self, id: Ulid, base_ref: Option<&str>) -> Result<Project> {
+        let mut project = self.get_project(id)?;
+        project.base_ref = base_ref.map(str::to_owned);
+        self.conn.execute(
+            "UPDATE project SET base_ref = ?2 WHERE id = ?1",
+            params![id.to_string(), project.base_ref],
         )?;
         Ok(project)
     }
@@ -967,6 +982,7 @@ struct RawProject {
     review_globs: Option<String>,
     created_at: i64,
     archived: bool,
+    base_ref: Option<String>,
 }
 
 impl RawProject {
@@ -980,6 +996,7 @@ impl RawProject {
             review_globs: row.get(5)?,
             created_at: row.get(6)?,
             archived: row.get(7)?,
+            base_ref: row.get(8)?,
         })
     }
 
@@ -999,6 +1016,7 @@ impl RawProject {
             review_globs,
             created_at: self.created_at,
             archived: self.archived,
+            base_ref: self.base_ref,
         })
     }
 }

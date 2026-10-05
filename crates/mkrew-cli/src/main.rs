@@ -190,6 +190,18 @@ enum ProjectCommand {
     },
     /// List registered projects.
     List,
+    /// Change project settings.
+    #[command(group(clap::ArgGroup::new("change").required(true)))]
+    Update {
+        /// Project id or name.
+        project: String,
+        /// Git view base to compare against, e.g. `develop` or `origin/main`.
+        #[arg(long, group = "change")]
+        base: Option<String>,
+        /// Auto-detect the base again (`origin/HEAD` → `main` → `master`).
+        #[arg(long, group = "change")]
+        auto_base: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -229,6 +241,10 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             match command {
                 ProjectCommand::Add { path, name } => project::add(&mut client, &path, name),
                 ProjectCommand::List => project::list(&mut client),
+                // `--auto-base` is the other member of the required group: `base` is `None`.
+                ProjectCommand::Update { project, base, .. } => {
+                    project::set_base(&mut client, &project, base)
+                }
             }
             .map(|()| ExitCode::SUCCESS)
         }

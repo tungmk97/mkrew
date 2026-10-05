@@ -3,15 +3,17 @@
 //!
 //! No async runtime here: the codec works on byte slices so any transport can drive it.
 
+pub mod files;
 pub mod frame;
 pub mod message;
 pub mod paint;
 
+pub use files::*;
 pub use frame::{Frame, FrameDecoder, KIND_JSON, KIND_OUTPUT, MAX_FRAME_LEN, encode};
 pub use message::*;
 
 /// Bumped on any incompatible change; `hello` with another value gets `version_mismatch`.
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// Errors from encoding or decoding frames.
 #[derive(Debug, thiserror::Error)]

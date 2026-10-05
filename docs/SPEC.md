@@ -446,14 +446,14 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
 | `fs.read` | `project_id`, `path` | content (≤ 2 MB), binary flag, language |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
-| `git.status` | `project_id`, `mode` (`working`/`base`) | branch, upstream, ahead/behind, changed files |
-| `git.diff` | `project_id`, `path`, `mode`, `commit?` | parsed hunks |
+| `git.status` | `project_id`, `mode` (`working`/`base`) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
+| `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?` | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`) |
 | `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
 | `git.discard` | `paths[]`, `confirm: true` | ok (destructive; UI always confirms first) |
 | `git.commit` | `message` | new commit hash |
 | `git.log` | `limit`, `path?` | Commit[] |
 | `git.show` | `commit` | commit info + changed files |
-| `git.set_base` | `project_id`, `base_ref` | ok |
+| `git.set_base` | `project_id`, `base_ref` (`null`/blank = auto-detect; trimmed; refused if it starts with `-` or contains whitespace or control characters) | ok — broadcasts `project.updated` (Project carries `base_ref`) |
 | `git.fetch` / `git.push` | `project_id` | ok (push = current branch to its upstream, never force) |
 | `daemon.status/stop` | – | info / ok |
 
@@ -536,7 +536,7 @@ Rules: on
 mk daemon start | stop | status
 mk project add <path> [--name N] [--dev "npm run dev"]
 mk project list
-mk project update <project> [--base develop] [--dev "..."]
+mk project update <project> [--base develop | --auto-base] [--dev "..."]
 mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>

@@ -16,6 +16,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::files::{
+    FsFindParams, FsListParams, FsReadParams, GitChangedEvent, GitCommitParams, GitDiffParams,
+    GitDiscardParams, GitLogParams, GitSetBaseParams, GitShowParams, GitStageParams,
+    GitStatusParams, ProjectRef,
+};
+
 /// One JSON frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -129,6 +135,44 @@ pub enum Request {
     /// Returns the updated thread roots (`sent`), as `DocComment[]` in request order.
     #[serde(rename = "comment.send_to_agent")]
     CommentSendToAgent(CommentSendParams),
+    /// Returns [`GitStatus`].
+    #[serde(rename = "git.status")]
+    GitStatus(GitStatusParams),
+    /// Returns [`FileDiff`].
+    #[serde(rename = "git.diff")]
+    GitDiff(GitDiffParams),
+    #[serde(rename = "git.stage")]
+    GitStage(GitStageParams),
+    #[serde(rename = "git.unstage")]
+    GitUnstage(GitStageParams),
+    #[serde(rename = "git.discard")]
+    GitDiscard(GitDiscardParams),
+    /// Returns [`GitCommitResult`].
+    #[serde(rename = "git.commit")]
+    GitCommit(GitCommitParams),
+    /// Returns `Commit[]`, newest first.
+    #[serde(rename = "git.log")]
+    GitLog(GitLogParams),
+    /// Returns [`CommitDetail`].
+    #[serde(rename = "git.show")]
+    GitShow(GitShowParams),
+    /// Returns nothing (`null`); broadcasts `project.updated`.
+    #[serde(rename = "git.set_base")]
+    GitSetBase(GitSetBaseParams),
+    #[serde(rename = "git.fetch")]
+    GitFetch(ProjectRef),
+    /// Pushes the current branch to its upstream, never with force.
+    #[serde(rename = "git.push")]
+    GitPush(ProjectRef),
+    /// Returns `FsEntry[]`.
+    #[serde(rename = "fs.list")]
+    FsList(FsListParams),
+    /// Returns [`FsContent`].
+    #[serde(rename = "fs.read")]
+    FsRead(FsReadParams),
+    /// Returns `FsMatch[]`, best first.
+    #[serde(rename = "fs.find")]
+    FsFind(FsFindParams),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -230,6 +274,9 @@ pub enum Event {
     /// A review comment was created, replied to, re-anchored or changed status (SPEC §12).
     #[serde(rename = "comment.updated")]
     CommentUpdated(Box<DocComment>),
+    /// The git state of a workspace changed (debounced, ≤ once per 300 ms; SPEC §12B).
+    #[serde(rename = "git.changed")]
+    GitChanged(GitChangedEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -288,6 +335,9 @@ pub struct Project {
     /// Unix ms.
     pub created_at: i64,
     pub archived: bool,
+    /// Git view base; `None` = auto-detect (SPEC §12B). Set with `git.set_base`.
+    #[serde(default)]
+    pub base_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1434,6 +1484,7 @@ mod tests {
             review_globs: Some(vec!["docs/**/*.md".into()]),
             created_at: 1,
             archived: false,
+            base_ref: Some("develop".into()),
         })));
         let tab = round_trip(&Message::Event(Event::TabUpdated(TerminalTab {
             id: sid(),

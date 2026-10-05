@@ -349,6 +349,43 @@ fn project_update_sets_and_clears_fields() {
 }
 
 #[test]
+fn project_base_is_set_kept_and_cleared_to_auto() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    assert_eq!(p.base_ref, None);
+
+    let set = store.set_project_base(p.id, Some("develop")).unwrap();
+    assert_eq!(set.base_ref.as_deref(), Some("develop"));
+    assert_eq!(open(&dir).get_project(p.id).unwrap(), set);
+    // Other updates keep the base.
+    let renamed = store.update_project(p.id, Some("renamed"), None).unwrap();
+    assert_eq!(renamed.base_ref.as_deref(), Some("develop"));
+
+    let auto = store.set_project_base(p.id, None).unwrap();
+    assert_eq!(auto.base_ref, None);
+    assert_eq!(store.list_projects().unwrap(), vec![auto]);
+
+    let missing = store.set_project_base(Ulid::new(), Some("main"));
+    assert!(matches!(missing, Err(StoreError::ProjectNotFound(_))));
+}
+
+#[test]
+fn doc_comments_default_to_the_doc_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    store
+        .create_comment(p.id, "a.md", 1, 1, "quote", "body")
+        .unwrap();
+    let context: String = store
+        .conn
+        .query_row("SELECT context FROM doc_comment", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(context, "doc");
+}
+
+#[test]
 fn tabs_are_ordered_edited_and_persist() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

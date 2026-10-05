@@ -959,6 +959,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   paths at the end; quiet buttons inside thread cards have no visible hover; "Send to agent"
   looks enabled while disconnected (does nothing); a dialog left open survives a workspace
   switch via a notification click (as the other dialogs do).
+- (T7.1) **Git base setting:** `git.set_base` trims the ref, treats blank like `null`
+  (auto-detect) and refuses refs starting with `-` or containing whitespace; it does NOT
+  check that the ref exists (it may only appear after a fetch — T7.3's status reports a
+  missing base). Returns `null` and broadcasts `project.updated` (Project gained `base_ref`).
+  CLI: `mk project update <p> --base <ref>` or `--auto-base` (one is required); `--dev` from
+  SPEC §9 is still not implemented (no task asks for it). Protocol shapes chosen for
+  T7.3–T7.6: `GitStatus` has separate `staged/unstaged/untracked/against_base` lists
+  (conflicts are `unstaged` with kind `conflicted`), `base_auto`, `merge_base` (base mode
+  only); `git.diff` has `staged` (working mode) and `commit?`; stage/unstage send back the
+  whole `Hunk` as shown; `git.log` limit defaults to 50; `fs.find` limit defaults to 50.
 
 ## Done
 

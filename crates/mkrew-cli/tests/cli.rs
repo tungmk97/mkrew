@@ -298,6 +298,35 @@ fn projects_are_added_listed_and_persisted() {
 }
 
 #[test]
+fn project_update_sets_and_clears_the_git_base() {
+    let env = Env::new();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+
+    let set = env.ok(&["project", "update", "demo", "--base", "develop"]);
+    assert_eq!(set.trim(), "base of demo: develop");
+    let auto = env.ok(&["project", "update", "demo", "--auto-base"]);
+    assert_eq!(auto.trim(), "base of demo: auto-detect");
+
+    // One change is required, and the two conflict.
+    assert!(!env.mk(&["project", "update", "demo"]).status.success());
+    let both = env.mk(&["project", "update", "demo", "--base", "x", "--auto-base"]);
+    assert!(!both.status.success());
+    // The daemon refuses refs git would read as options.
+    let bad = env.mk(&["project", "update", "demo", "--base=--force"]);
+    assert!(!bad.status.success());
+    assert!(
+        String::from_utf8_lossy(&bad.stderr).contains("invalid base ref"),
+        "{bad:?}"
+    );
+    let unknown = env.mk(&["project", "update", "nope", "--base", "main"]);
+    assert!(!unknown.status.success());
+    env.ok(&["daemon", "stop"]);
+}
+
+#[test]
 fn attach_detach_and_reattach_restores_the_screen() {
     let env = Env::new();
     env.write_fake_profile();

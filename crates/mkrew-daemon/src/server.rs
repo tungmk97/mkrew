@@ -30,6 +30,7 @@ use crate::{backup, session_log, undo};
 
 mod comment;
 mod doc;
+mod git;
 mod resume;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -324,6 +325,7 @@ impl Daemon {
             Request::CommentSendToAgent(params) => {
                 (self.comment_send_to_agent(params).await, After::Continue)
             }
+            Request::GitSetBase(params) => (self.git_set_base(params), After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (
