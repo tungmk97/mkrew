@@ -107,6 +107,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Enter / Shift+Enter walk older / newer matches and scroll the view, "No matches" / "✕ Invalid
   pattern" show, Esc or ✕ closes it, clears the highlights and typing goes to the terminal
   again. Clicking the bar of an unfocused split focuses that pane (border moves) and the bar.
+- [ ] (T2.7d) In a tab with splits: Alt+Shift+←/→/↑/↓ moves the divider next to the focused
+  pane and the sizes survive a UI restart; Ctrl+Shift+M fills the tab with the focused pane
+  ("Pane zoomed" notice), again shows all panes; Ctrl+Shift+R (or double-click a tab) edits its
+  title inline — Enter / clicking elsewhere saves, Esc cancels — and the new title survives a
+  restart.
 
 ## Questions with assumed defaults
 
@@ -340,6 +345,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   goes to the agent); close with ✕ or Ctrl+Shift+F → Esc. Matches wrapped across 3+ rows
   starting above the view are not highlighted on its top rows. A match scrolled to the top row
   can sit under the bar.
+- (T2.7d) Resize moves the innermost divider around the focused pane on the arrow's axis
+  (→/↓ = divider right/down, whichever side the pane is on) by 5 % of that split, clamped so
+  each side keeps ≥ 10 %; ratios rounded to 4 decimals. Zoom is UI-only and not persisted;
+  panes hidden by a zoom are **detached** like other invisible panes (§10), so unzooming
+  re-attaches them from the daemon snapshot and their UI-side scrollback restarts. Moving
+  focus, splitting or closing the zoomed pane ends the zoom; resize is ignored while zoomed.
+  Rename: same minimal input as the find bar (no caret movement/IME); blank or unchanged
+  titles are not sent; the title changes when the daemon's `tab.updated` arrives.
 
 ## Done
 

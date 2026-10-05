@@ -70,6 +70,12 @@ pub struct Closed {
 /// Tolerance for comparing summed fractions.
 const EPSILON: f64 = 1e-9;
 
+/// How far one resize shortcut moves a divider (share of the split's area).
+pub const RESIZE_STEP: f64 = 0.05;
+
+/// Resizing never shrinks a split's child below this share, so no pane disappears.
+pub const MIN_RATIO: f64 = 0.1;
+
 impl Node {
     pub fn pane(session: Ulid) -> Self {
         Node::Pane { session }
@@ -217,6 +223,44 @@ impl Node {
                 }
             }
         }
+    }
+
+    /// Moves the divider of the innermost split around `target` whose axis matches
+    /// `direction` (left/right: side-by-side splits, up/down: stacked) by `step` that way,
+    /// keeping both children at least [`MIN_RATIO`]. Returns false if nothing changed.
+    pub fn resize(&mut self, target: Ulid, direction: Direction, step: f64) -> bool {
+        let (axis, delta) = match direction {
+            Direction::Left => (Axis::Vertical, -step),
+            Direction::Right => (Axis::Vertical, step),
+            Direction::Up => (Axis::Horizontal, -step),
+            Direction::Down => (Axis::Horizontal, step),
+        };
+        self.resize_inner(target, axis, delta) == Some(true)
+    }
+
+    /// `None` = no matching split around `target` in this subtree (an outer one may match).
+    fn resize_inner(&mut self, target: Ulid, axis: Axis, delta: f64) -> Option<bool> {
+        let Node::Split {
+            split,
+            ratio,
+            children,
+        } = self
+        else {
+            return None;
+        };
+        let child = children.iter_mut().find(|c| c.contains(target))?;
+        if let Some(done) = child.resize_inner(target, axis, delta) {
+            return Some(done);
+        }
+        if *split != axis {
+            return None;
+        }
+        // Rounded so repeated steps do not drift (0.44999…) and the stored JSON stays short.
+        let next = ((*ratio + delta) * 1e4).round() / 1e4;
+        let next = next.clamp(MIN_RATIO, 1.0 - MIN_RATIO);
+        let changed = (next - *ratio).abs() > EPSILON;
+        *ratio = next;
+        Some(changed)
     }
 
     /// Every pane with its area, in tree order.
@@ -548,6 +592,66 @@ mod tests {
         assert_eq!(node.neighbour(b, Direction::Up), None);
         assert_eq!(node.neighbour(d, Direction::Down), None);
         assert_eq!(node.neighbour(Ulid::new(), Direction::Up), None);
+    }
+
+    fn ratios(node: &Node) -> Vec<f64> {
+        match node {
+            Node::Pane { .. } => Vec::new(),
+            Node::Split {
+                ratio, children, ..
+            } => {
+                let mut out = vec![*ratio];
+                out.extend(children.iter().flat_map(ratios));
+                out
+            }
+        }
+    }
+
+    #[test]
+    fn resize_moves_the_innermost_matching_divider() {
+        // a | (b / c)
+        let [a, b, c] = ids();
+        let mut node = Node::pane(a);
+        node.split(a, Axis::Vertical, b);
+        node.split(b, Axis::Horizontal, c);
+
+        // Left/right from c skips the stacked split and moves the outer divider.
+        assert!(node.resize(c, Direction::Right, 0.1));
+        assert_ratios(&node, &[0.6, 0.5]);
+        assert!(node.resize(a, Direction::Left, 0.2));
+        assert_ratios(&node, &[0.4, 0.5]);
+        // Up/down moves the inner divider, the same way from either pane of it.
+        assert!(node.resize(b, Direction::Down, 0.1));
+        assert!(node.resize(c, Direction::Down, 0.1));
+        assert_ratios(&node, &[0.4, 0.7]);
+        // a has no stacked split around it.
+        assert!(!node.resize(a, Direction::Up, 0.1));
+        assert!(!node.resize(Ulid::new(), Direction::Left, 0.1));
+        assert!(!Node::pane(a).resize(a, Direction::Left, 0.1));
+        assert_ratios(&node, &[0.4, 0.7]);
+    }
+
+    fn assert_ratios(node: &Node, expected: &[f64]) {
+        let actual = ratios(node);
+        assert_eq!(actual.len(), expected.len(), "{actual:?}");
+        for (a, e) in actual.iter().zip(expected) {
+            assert!((a - e).abs() < 1e-9, "{actual:?} != {expected:?}");
+        }
+    }
+
+    #[test]
+    fn resize_stops_at_the_minimum_share() {
+        let [a, b] = ids();
+        let mut node = Node::pane(a);
+        node.split(a, Axis::Vertical, b);
+        assert!(node.resize(a, Direction::Right, 0.45));
+        assert_ratios(&node, &[1.0 - MIN_RATIO]);
+        assert!(!node.resize(b, Direction::Right, RESIZE_STEP));
+        assert!(node.resize(b, Direction::Left, 2.0));
+        assert_ratios(&node, &[MIN_RATIO]);
+        // The clamped layout still round-trips.
+        let stored = Node::to_json(Some(&node));
+        assert_eq!(Node::from_json(&stored).unwrap(), Some(node));
     }
 
     #[test]

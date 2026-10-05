@@ -28,10 +28,16 @@ pub enum Command {
     PreviousTab,
     /// Jump to tab 1–9.
     Tab(u8),
+    /// Edit the active tab's title inline.
+    RenameTab,
     CloseTab,
     SplitRight,
     SplitDown,
     Focus(Direction),
+    /// Move the divider next to the focused pane.
+    Resize(Direction),
+    /// Toggle the focused pane filling the whole tab.
+    ZoomPane,
     ClosePane,
     /// Terminal only: copy the mouse selection.
     Copy,
@@ -68,6 +74,7 @@ impl Command {
         ]);
         all.extend((1..=9).map(Command::Tab));
         all.extend([
+            Command::RenameTab,
             Command::CloseTab,
             Command::SplitRight,
             Command::SplitDown,
@@ -75,6 +82,11 @@ impl Command {
             Command::Focus(Direction::Right),
             Command::Focus(Direction::Up),
             Command::Focus(Direction::Down),
+            Command::Resize(Direction::Left),
+            Command::Resize(Direction::Right),
+            Command::Resize(Direction::Up),
+            Command::Resize(Direction::Down),
+            Command::ZoomPane,
             Command::ClosePane,
             Command::Copy,
             Command::Paste,
@@ -97,6 +109,7 @@ impl Command {
             Command::NextTab => "next_tab".into(),
             Command::PreviousTab => "previous_tab".into(),
             Command::Tab(n) => format!("tab_{n}"),
+            Command::RenameTab => "rename_tab".into(),
             Command::CloseTab => "close_tab".into(),
             Command::SplitRight => "split_right".into(),
             Command::SplitDown => "split_down".into(),
@@ -104,6 +117,11 @@ impl Command {
             Command::Focus(Direction::Right) => "focus_right".into(),
             Command::Focus(Direction::Up) => "focus_up".into(),
             Command::Focus(Direction::Down) => "focus_down".into(),
+            Command::Resize(Direction::Left) => "resize_left".into(),
+            Command::Resize(Direction::Right) => "resize_right".into(),
+            Command::Resize(Direction::Up) => "resize_up".into(),
+            Command::Resize(Direction::Down) => "resize_down".into(),
+            Command::ZoomPane => "zoom_pane".into(),
             Command::ClosePane => "close_pane".into(),
             Command::Copy => "copy".into(),
             Command::Paste => "paste".into(),
@@ -131,6 +149,7 @@ impl Command {
             Command::NextTab => "ctrl-tab".into(),
             Command::PreviousTab => "ctrl-shift-tab".into(),
             Command::Tab(n) => format!("ctrl-alt-{n}"),
+            Command::RenameTab => "ctrl-shift-r".into(),
             Command::CloseTab => "ctrl-shift-w".into(),
             Command::SplitRight => "alt-shift-=".into(),
             Command::SplitDown => "alt-shift--".into(),
@@ -138,6 +157,11 @@ impl Command {
             Command::Focus(Direction::Right) => "alt-right".into(),
             Command::Focus(Direction::Up) => "alt-up".into(),
             Command::Focus(Direction::Down) => "alt-down".into(),
+            Command::Resize(Direction::Left) => "alt-shift-left".into(),
+            Command::Resize(Direction::Right) => "alt-shift-right".into(),
+            Command::Resize(Direction::Up) => "alt-shift-up".into(),
+            Command::Resize(Direction::Down) => "alt-shift-down".into(),
+            Command::ZoomPane => "ctrl-shift-m".into(),
             Command::ClosePane => "ctrl-shift-x".into(),
             Command::Copy => "ctrl-shift-c".into(),
             Command::Paste => "ctrl-shift-v".into(),
@@ -409,6 +433,16 @@ mod tests {
         assert_eq!(bound("shift-pageup"), Some(Command::PageUp));
         assert_eq!(bound("shift-pagedown"), Some(Command::PageDown));
         assert_eq!(bound("ctrl-shift-f"), Some(Command::Find));
+        assert_eq!(bound("ctrl-shift-r"), Some(Command::RenameTab));
+        assert_eq!(bound("ctrl-shift-m"), Some(Command::ZoomPane));
+        assert_eq!(
+            bound("alt-shift-left"),
+            Some(Command::Resize(Direction::Left))
+        );
+        assert_eq!(
+            bound("alt-shift-down"),
+            Some(Command::Resize(Direction::Down))
+        );
         for command in [
             Command::Copy,
             Command::Paste,

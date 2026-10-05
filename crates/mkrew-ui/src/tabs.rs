@@ -4,10 +4,12 @@
 
 use std::collections::VecDeque;
 
-use mkrew_protocol::{Event, Session, SessionState, TabSetLayoutParams, TerminalTab};
+use mkrew_protocol::{
+    Event, Session, SessionState, TabRenameParams, TabSetLayoutParams, TerminalTab,
+};
 use ulid::Ulid;
 
-use crate::split::{Axis, Direction, Node};
+use crate::split::{Axis, Direction, Node, RESIZE_STEP, Rect};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tab {
@@ -18,6 +20,8 @@ pub struct Tab {
     layout: Option<Node>,
     /// Local only (not persisted): the pane keyboard input goes to.
     focused: Option<Ulid>,
+    /// Local only: the pane filling the whole tab (zoom); always the focused pane.
+    zoomed: Option<Ulid>,
     /// Layouts sent with `tab.set_layout`, oldest first, whose `tab.updated` echo has not
     /// arrived yet. While any are pending the local layout is the newest one, so layouts in
     /// other `tab.updated` events (renames, moves, older echoes) are not applied.
@@ -36,6 +40,7 @@ impl Tab {
             position: tab.position,
             layout,
             focused: None,
+            zoomed: None,
             pending: VecDeque::new(),
         };
         tab.fix_focus();
@@ -50,8 +55,37 @@ impl Tab {
         self.focused
     }
 
+    pub fn zoomed(&self) -> Option<Ulid> {
+        self.zoomed
+    }
+
     pub fn sessions(&self) -> Vec<Ulid> {
         self.layout.as_ref().map(Node::sessions).unwrap_or_default()
+    }
+
+    /// Sessions on screen: the zoomed pane alone, else every pane.
+    pub fn shown(&self) -> Vec<Ulid> {
+        match self.zoomed {
+            Some(session) => vec![session],
+            None => self.sessions(),
+        }
+    }
+
+    /// Area of each pane on screen: the zoomed pane fills the tab.
+    pub fn rects(&self) -> Vec<(Ulid, Rect)> {
+        match (self.zoomed, &self.layout) {
+            (Some(session), _) => vec![(
+                session,
+                Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+            )],
+            (None, Some(node)) => node.rects(),
+            (None, None) => Vec::new(),
+        }
     }
 
     pub fn contains(&self, session: Ulid) -> bool {
@@ -60,10 +94,14 @@ impl Tab {
             .is_some_and(|node| node.contains(session))
     }
 
-    /// Keeps the focus on a pane of the tab: the first pane if it was lost.
+    /// Keeps the focus on a pane of the tab: the first pane if it was lost. A zoom ends when
+    /// the focus leaves the zoomed pane.
     fn fix_focus(&mut self) {
         if !self.focused.is_some_and(|id| self.contains(id)) {
             self.focused = self.sessions().first().copied();
+        }
+        if self.zoomed != self.focused {
+            self.zoomed = None;
         }
     }
 
@@ -110,6 +148,7 @@ impl Tabs {
                 let mut tab = Tab::from_wire(wire);
                 if let Some(previous) = old.iter().find(|old| old.id == tab.id) {
                     tab.focused = previous.focused;
+                    tab.zoomed = previous.zoomed;
                     tab.fix_focus();
                 }
                 tab
@@ -237,9 +276,10 @@ impl Tabs {
         true
     }
 
-    /// Sessions shown on screen: the panes of the active tab. All others stay detached.
+    /// Sessions shown on screen: the panes of the active tab (only the zoomed one while a pane
+    /// is zoomed). All others stay detached.
     pub fn visible(&self) -> Vec<Ulid> {
-        self.active().map(Tab::sessions).unwrap_or_default()
+        self.active().map(Tab::shown).unwrap_or_default()
     }
 
     /// Activates the tab holding `session` and focuses its pane; false if no tab holds it.
@@ -250,11 +290,12 @@ impl Tabs {
         self.active = Some(tab_id);
         if let Some(tab) = self.tab_mut(tab_id) {
             tab.focused = Some(session);
+            tab.fix_focus();
         }
         true
     }
 
-    /// Moves the focus in the active tab; false if there is no pane that way.
+    /// Moves the focus in the active tab (ending a zoom); false if there is no pane that way.
     pub fn focus_neighbour(&mut self, direction: Direction) -> bool {
         let Some(tab) = self.active_mut() else {
             return false;
@@ -265,8 +306,40 @@ impl Tabs {
         };
         if next.is_some() {
             tab.focused = next;
+            tab.fix_focus();
         }
         next.is_some()
+    }
+
+    /// Zooms the focused pane of the active tab to fill it, or ends the zoom. UI-only (not
+    /// persisted). False if there is nothing to zoom: no pane, or the only pane.
+    pub fn toggle_zoom(&mut self) -> bool {
+        let Some(tab) = self.active_mut() else {
+            return false;
+        };
+        if tab.zoomed.is_some() {
+            tab.zoomed = None;
+            return true;
+        }
+        if tab.sessions().len() < 2 {
+            return false;
+        }
+        tab.zoomed = tab.focused;
+        tab.zoomed.is_some()
+    }
+
+    /// Moves the divider next to the focused pane of the active tab by one step. `None` (no
+    /// write) if no divider moved, or while a pane is zoomed (the dividers are not shown).
+    pub fn resize_focused(&mut self, direction: Direction) -> Option<TabSetLayoutParams> {
+        let tab = self.active_mut()?;
+        if tab.zoomed.is_some() {
+            return None;
+        }
+        let focused = tab.focused?;
+        if !tab.layout.as_mut()?.resize(focused, direction, RESIZE_STEP) {
+            return None;
+        }
+        Some(tab.write())
     }
 
     /// Places `new` next to the focused pane of the active tab (or as the only pane of an
@@ -288,6 +361,7 @@ impl Tabs {
             (Some(_), None) => return None,
         }
         tab.focused = Some(new);
+        tab.fix_focus();
         Some(tab.write())
     }
 
@@ -356,6 +430,15 @@ pub fn newest_unplaced(tabs: &Tabs, sessions: &[Session]) -> Option<Ulid> {
         })
         .max_by_key(|s| s.started_at)
         .map(|s| s.id)
+}
+
+/// The `tab.rename` for an edited title, trimmed; `None` if it is blank or unchanged.
+pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
+    let title = draft.trim();
+    (!title.is_empty() && title != tab.title).then(|| TabRenameParams {
+        tab_id: tab.id,
+        title: title.to_owned(),
+    })
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible
@@ -488,6 +571,99 @@ mod tests {
         assert_eq!(write.layout, serde_json::Value::Null);
         assert_eq!(tabs.active().and_then(Tab::focused), None);
         assert_eq!(tabs.close_pane(a), None);
+    }
+
+    /// A tab `a | b` (side by side), focused on `b`.
+    fn two_panes() -> (Tabs, Ulid, Ulid) {
+        let project = Ulid::new();
+        let [a, b] = [Ulid::new(), Ulid::new()];
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![wire(project, "main", 1.0, serde_json::Value::Null)]);
+        tabs.split_focused(Axis::Vertical, a).unwrap();
+        tabs.split_focused(Axis::Vertical, b).unwrap();
+        (tabs, a, b)
+    }
+
+    #[test]
+    fn resize_writes_the_moved_divider() {
+        let (mut tabs, a, b) = two_panes();
+        let write = tabs.resize_focused(Direction::Left).unwrap();
+        assert_eq!(
+            write.layout,
+            json!({"split":"vertical","ratio":0.45,"children":[pane(a), pane(b)]})
+        );
+        // No stacked split: nothing moves, nothing is written.
+        assert_eq!(tabs.resize_focused(Direction::Up), None);
+        // The echo of the write keeps the local layout.
+        let echo = TerminalTab {
+            id: write.tab_id,
+            project_id: tabs.project_id(),
+            title: "main".into(),
+            position: 1.0,
+            layout: write.layout.clone(),
+        };
+        tabs.apply(&Event::TabUpdated(echo));
+        let layout = tabs.active().and_then(Tab::layout);
+        assert_eq!(Node::to_json(layout), write.layout);
+    }
+
+    #[test]
+    fn zoom_shows_only_the_focused_pane_until_focus_or_layout_changes() {
+        let (mut tabs, a, b) = two_panes();
+        assert!(tabs.toggle_zoom());
+        assert_eq!(tabs.active().and_then(Tab::zoomed), Some(b));
+        assert_eq!(tabs.visible(), vec![b]);
+        let rects = tabs.active().unwrap().rects();
+        assert_eq!(rects.len(), 1);
+        assert_eq!((rects[0].0, rects[0].1.w, rects[0].1.h), (b, 1.0, 1.0));
+        // Hidden dividers are not resized while zoomed.
+        assert_eq!(tabs.resize_focused(Direction::Left), None);
+        assert!(tabs.toggle_zoom());
+        assert_eq!(tabs.visible(), vec![a, b]);
+
+        // Moving the focus ends the zoom.
+        tabs.toggle_zoom();
+        assert!(tabs.focus_neighbour(Direction::Left));
+        assert_eq!(tabs.active().and_then(Tab::zoomed), None);
+        assert_eq!(tabs.visible(), vec![a, b]);
+
+        // So does a new pane (it must be visible) and closing the zoomed pane.
+        tabs.toggle_zoom();
+        let c = Ulid::new();
+        tabs.split_focused(Axis::Horizontal, c).unwrap();
+        assert_eq!(tabs.visible(), vec![a, c, b]);
+        tabs.toggle_zoom();
+        tabs.close_pane(c).unwrap();
+        assert_eq!(tabs.active().and_then(Tab::zoomed), None);
+        assert_eq!(tabs.visible(), vec![a, b]);
+
+        // Focusing the zoomed pane from the sidebar keeps the zoom; another pane ends it.
+        tabs.toggle_zoom();
+        assert!(tabs.focus(a));
+        assert_eq!(tabs.visible(), vec![a]);
+        assert!(tabs.focus(b));
+        assert_eq!(tabs.visible(), vec![a, b]);
+    }
+
+    #[test]
+    fn a_single_pane_does_not_zoom() {
+        let (mut tabs, a, _) = two_panes();
+        let mut single = Tabs::new(tabs.project_id());
+        assert!(!single.toggle_zoom());
+        tabs.close_pane(a).unwrap();
+        assert!(!tabs.toggle_zoom());
+        assert_eq!(tabs.active().and_then(Tab::zoomed), None);
+    }
+
+    #[test]
+    fn rename_params_trim_and_skip_blank_or_unchanged_titles() {
+        let (tabs, ..) = two_panes();
+        let tab = tabs.active().unwrap();
+        let params = rename_params(tab, "  build  ").unwrap();
+        assert_eq!(params.tab_id, tab.id);
+        assert_eq!(params.title, "build");
+        assert_eq!(rename_params(tab, "   "), None);
+        assert_eq!(rename_params(tab, " main "), None);
     }
 
     #[test]

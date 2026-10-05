@@ -79,6 +79,9 @@ pub const SIDEBAR_WIDTH: f32 = 240.0;
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
 
+/// Minimum width of a tab title while it is renamed inline.
+pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 

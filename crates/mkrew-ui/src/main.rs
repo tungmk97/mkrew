@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, Entity, FocusHandle, FontWeight, MouseButton, PathPromptOptions,
-    PromptLevel, SharedString, TitlebarOptions, Window, WindowAppearance, WindowBounds,
-    WindowOptions, div, px, relative, rgb, size,
+    AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, KeyDownEvent,
+    MouseButton, PathPromptOptions, PromptLevel, SharedString, Subscription, TitlebarOptions,
+    Window, WindowAppearance, WindowBounds, WindowOptions, div, px, relative, rgb, size,
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
@@ -27,7 +27,8 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
-use mkrew_ui::tabs::{Tabs, newest_unplaced};
+use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, rename_params};
+use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
 use tracing_subscriber::EnvFilter;
@@ -136,6 +137,11 @@ struct Shell {
     painted: async_channel::Sender<()>,
     /// Focused while no pane is, so window-level actions (Add workspace) still dispatch.
     focus_handle: FocusHandle,
+    /// The tab whose title is being edited inline, and the draft title.
+    renaming: Option<(Ulid, String)>,
+    /// Focused while renaming; losing it commits the draft.
+    rename_focus: FocusHandle,
+    _rename_blur: Subscription,
     /// The bound shortcuts, for tooltips and labels.
     keymap: Keymap,
     /// What was wrong with `keymap.toml` at start (those entries use their defaults).
@@ -154,6 +160,10 @@ impl Shell {
             .detach();
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
+        let rename_focus = cx.focus_handle();
+        let rename_blur = cx.on_blur(&rename_focus, window, |shell, window, cx| {
+            shell.finish_rename(true, window, cx);
+        });
         let (painted, painted_rx) = async_channel::bounded(1);
         cx.spawn_in(window, async move |this, cx| {
             // Blocking (polls a starting daemon for up to 10 s): off the UI thread.
@@ -218,6 +228,7 @@ impl Shell {
                 shell.router.clear();
                 shell.panes.clear();
                 shell.attach_errors.clear();
+                shell.renaming = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -241,6 +252,9 @@ impl Shell {
             attach_errors: HashMap::new(),
             painted,
             focus_handle,
+            renaming: None,
+            rename_focus,
+            _rename_blur: rename_blur,
             keymap,
             keymap_error: keymap_errors
                 .first()
@@ -780,6 +794,8 @@ impl Shell {
 
     /// A shortcut (SPEC §13). Terminal commands (paste) are handled by the focused pane.
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
+        self.finish_rename(true, window, cx);
         match *command {
             Command::AddWorkspace => self.add_workspace(window, cx),
             Command::Workspace(n) => {
@@ -801,6 +817,7 @@ impl Shell {
                 window,
                 cx,
             ),
+            Command::RenameTab => self.start_rename(window, cx),
             Command::CloseTab => self.close_tab(window, cx),
             Command::SplitRight => self.split(Axis::Vertical, window, cx),
             Command::SplitDown => self.split(Axis::Horizontal, window, cx),
@@ -809,7 +826,26 @@ impl Shell {
                     .active_tabs_mut()
                     .is_some_and(|tabs| tabs.focus_neighbour(direction))
                 {
-                    self.focus_pane(window, cx);
+                    // A focus move ends a zoom: the hidden panes come back (and re-attach).
+                    self.sync_panes(window, cx);
+                    cx.notify();
+                }
+            }
+            Command::Resize(direction) => {
+                let Some(project_id) = self.workspace else {
+                    return;
+                };
+                let write = self
+                    .active_tabs_mut()
+                    .and_then(|tabs| tabs.resize_focused(direction));
+                if let Some(write) = write {
+                    self.save_layout(project_id, write, window, cx);
+                    cx.notify();
+                }
+            }
+            Command::ZoomPane => {
+                if self.active_tabs_mut().is_some_and(Tabs::toggle_zoom) {
+                    self.sync_panes(window, cx);
                     cx.notify();
                 }
             }
@@ -859,6 +895,89 @@ impl Shell {
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let kind = lifecycle::split_kind(focused);
         self.new_pane(kind, axis, window, cx);
+    }
+
+    /// Starts editing the active tab's title inline, starting from the current one.
+    fn start_rename(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(tab) = self
+            .workspace
+            .and_then(|id| self.tabs.get(&id))
+            .and_then(|tabs| tabs.active())
+        else {
+            return;
+        };
+        self.renaming = Some((tab.id, tab.title.clone()));
+        window.focus(&self.rename_focus, cx);
+        cx.notify();
+    }
+
+    /// Ends the inline edit: `commit` sends `tab.rename` (the title updates with the
+    /// `tab.updated` event); blank or unchanged drafts are dropped. Focus goes back to the pane.
+    fn finish_rename(&mut self, commit: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some((tab_id, draft)) = self.renaming.take() else {
+            return;
+        };
+        // Any workspace: switching workspaces mid-edit commits through the blur.
+        let params = self
+            .tabs
+            .values()
+            .find_map(|tabs| tabs.tab(tab_id))
+            .and_then(|tab| rename_params(tab, &draft));
+        if let (true, Some(params), Some(connection)) = (commit, params, self.connection.clone()) {
+            self.tab_error = None;
+            let renamed = connection.call::<TerminalTab>(Request::TabRename(params));
+            cx.spawn_in(window, async move |this, cx| {
+                let renamed = renamed.await;
+                let _ = this.update(cx, |shell, cx| {
+                    match renamed {
+                        // Shown at once, without waiting for the `tab.updated` echo.
+                        Ok(tab) => {
+                            if let Some(tabs) = shell.tabs.get_mut(&tab.project_id) {
+                                tabs.apply(&Event::TabUpdated(tab));
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%tab_id, "tab.rename failed: {error:#}");
+                            shell.tab_error = Some(format!("Cannot rename the tab: {error:#}"));
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        if self.rename_focus.is_focused(window) {
+            self.focus_pane(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Keys typed while renaming edit the draft; Enter commits, Esc cancels.
+    fn rename_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = find_key(&event.keystroke) else {
+            return;
+        };
+        let Some((_, draft)) = self.renaming.as_mut() else {
+            return;
+        };
+        match key {
+            FindKey::Close => self.finish_rename(false, window, cx),
+            FindKey::Older | FindKey::Newer => self.finish_rename(true, window, cx),
+            FindKey::Backspace => {
+                draft.pop();
+                cx.notify();
+            }
+            FindKey::Insert(text) => {
+                draft.push_str(&text);
+                cx.notify();
+            }
+        }
     }
 
     /// `tab.close` for the active tab. Its sessions keep running (reachable from the sidebar);
@@ -1204,11 +1323,17 @@ impl Shell {
             .children(tabs.tabs().iter().map(|tab| {
                 let tab_id = tab.id;
                 let is_active = active == Some(tab_id);
+                if let Some((_, draft)) = self.renaming.as_ref().filter(|(id, _)| *id == tab_id) {
+                    return self.render_rename(draft, theme, cx);
+                }
                 div()
                     .id(SharedString::from(format!("tab-{tab_id}")))
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
+                    // Same box as the rename field, so the bar does not shift while renaming.
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(gpui::transparent_black())
                     .cursor_pointer()
                     .whitespace_nowrap()
                     .text_size(px(font_size::BODY))
@@ -1222,14 +1347,20 @@ impl Shell {
                             .hover(move |style| style.bg(rgb(hover)))
                             .active(|style| style.opacity(opacity::ACTIVE))
                     })
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        if let Some(tabs) = shell.active_tabs_mut() {
-                            tabs.activate(tab_id);
-                        }
-                        shell.sync_panes(window, cx);
-                        cx.notify();
-                    }))
+                    .on_click(
+                        cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+                            if let Some(tabs) = shell.active_tabs_mut() {
+                                tabs.activate(tab_id);
+                            }
+                            shell.sync_panes(window, cx);
+                            if event.click_count() == 2 {
+                                shell.start_rename(window, cx);
+                            }
+                            cx.notify();
+                        }),
+                    )
                     .child(tab.title.clone())
+                    .into_any_element()
             }))
             .child(
                 button("new-tab", "+", theme, false)
@@ -1244,6 +1375,23 @@ impl Shell {
                 self.tab_error
                     .clone()
                     .map(|error| notice(theme.text, format!("✕ {error}"))),
+            )
+            .when(
+                tabs.active().and_then(|tab| tab.zoomed()).is_some(),
+                |bar| {
+                    bar.child(notice(theme.text_muted, "⤢ Pane zoomed".to_owned()))
+                        .child(
+                            button("unzoom", "Show all panes", theme, false)
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Show all panes",
+                                    self.keymap.label(Command::ZoomPane),
+                                ))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.run(&Run(Command::ZoomPane), window, cx);
+                                })),
+                        )
+                },
             )
             .children(
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
@@ -1278,9 +1426,45 @@ impl Shell {
             })
     }
 
+    /// The title being renamed inline: the draft with a caret, in the active tab's place.
+    fn render_rename(
+        &self,
+        draft: &str,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        div()
+            .id("tab-rename")
+            .flex()
+            .items_center()
+            .min_w(px(theme::TAB_RENAME_MIN_WIDTH))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.pane_focus_border))
+            .bg(rgb(theme.surface_raised))
+            .whitespace_nowrap()
+            .text_size(px(font_size::BODY))
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text))
+            .cursor(CursorStyle::IBeam)
+            .track_focus(&self.rename_focus)
+            .on_key_down(cx.listener(Self::rename_key_down))
+            .child(draft.to_owned())
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(theme::BORDER_WIDTH))
+                    .h(px(font_size::BODY))
+                    .bg(rgb(theme.text)),
+            )
+            .into_any_element()
+    }
+
     /// The active tab's split tree: each pane placed at its fraction of the area.
     fn render_tab(&self, tabs: &Tabs, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
-        let Some(layout) = tabs.active().and_then(|tab| tab.layout()) else {
+        if tabs.active().and_then(|tab| tab.layout()).is_none() {
             return message(
                 theme,
                 None,
@@ -1307,9 +1491,9 @@ impl Shell {
                         cx,
                     )),
             );
-        };
+        }
         let focused = tabs.active().and_then(|tab| tab.focused());
-        let rects = layout.rects();
+        let rects = tabs.active().map(Tab::rects).unwrap_or_default();
         let several = rects.len() > 1;
         let half_gap = px(theme::PANE_HALF_GAP);
         div()
