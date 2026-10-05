@@ -22,7 +22,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 - [ ] CI workflow for Windows + Linux.
 
 ### Task queue
-- [ ] T1.1 Create `mkrew-protocol`: frame codec (u32 BE len + kind byte; 0x01 JSON, 0x02 = 16-byte ULID + raw bytes), Request/Response/Event enums for the M1 methods (hello, daemon.*, project.add/list, session.spawn/list/attach/detach/input/send/wait/resize/kill, agent.profiles), error codes incl. `version_mismatch`; round-trip + partial-read unit tests; covers: binary output frames. (spec: §4, §7)
+- [x] T1.1 Create `mkrew-protocol`: frame codec (u32 BE len + kind byte; 0x01 JSON, 0x02 = 16-byte ULID + raw bytes), Request/Response/Event enums for the M1 methods (hello, daemon.*, project.add/list, session.spawn/list/attach/detach/input/send/wait/resize/kill, agent.profiles), error codes incl. `version_mismatch`; round-trip + partial-read unit tests; covers: binary output frames. (spec: §4, §7) — feat(protocol): frame codec and M1 message types
 - [ ] T1.2 Create `mkrew-core` profiles: AgentProfile TOML parsing (prompt_mode, env, resume, [state]), directory loader returning profiles + per-file errors with file and line/column, sample `agents/{claude,codex,omp,shell,fake}.toml`; insta snapshots of parse errors; covers: broken profile TOML, `agents/fake.toml`. (spec: §6, §16)
 - [ ] T1.3 Create `mkrew-store`: rusqlite bundled, WAL, numbered migrations runner + `0001_init.sql`, project add/list (dunce-normalized unique path) and session insert/update/list; tempdir tests; covers: project persist. (spec: §5, §17)
 - [ ] T1.4 `mkrew-core` session state machine (pure): starting/working/idle/needs_input/exited/unknown from output activity, `idle_after_ms`, needs_input patterns over emulated screen lines, process exit; hook-event input stubbed for M3; plus send-queue policy (deliver when idle/done/needs_input); unit tests with a fake clock; covers: groundwork for `mk send`/`mk wait`. (spec: §6, §8)
@@ -41,7 +41,7 @@ _M0 tasks moved to `docs/progress-archive.md`._
 
 ## Notes for the next session
 
-- M1 planned (T1.1–T1.12). Next: T1.1 `mkrew-protocol`. M0 gate answered 2026-10-05: **GPUI** (ADR 0001 accepted).
+- T1.1 done: `mkrew-protocol` = sync `FrameDecoder` (push bytes → `next_frame()`) + `encode()`; `Message::{Request,Response,Event}`. Responses carry raw JSON (`Outcome::ok/error`, client decodes with `Outcome::into_result::<T>()`). Result types for `session.attach` snapshot (T1.9) and `agent.profiles` (T1.2) still to add. `PROTOCOL_VERSION = 1`. Next: T1.2.
 - M1 has no hooks (M3): "until done" in the E2E is reached via screen idle/exit detection (see HUMAN_CHECKS assumption).
 - M0 tagged `m0-done` with 5 criteria left to the human gate (see archive). Spike code: `crates/spike-term` (PTY inbox/wake in `pty.rs`, renderer in `view.rs`, key mapping, `launch.rs` PATHEXT lookup) — reuse in M1 daemon (PTY reader) and M2 UI.
 - `Emulator::advance` reply bytes MUST be written to the PTY (ConPTY waits for the DSR reply). portable-pty on Windows: wait on the child on its own thread; reader never hits EOF.

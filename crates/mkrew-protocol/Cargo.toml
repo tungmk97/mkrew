@@ -1,0 +1,16 @@
+[package]
+name = "mkrew-protocol"
+description = "Mkrew IPC protocol: Request/Response/Event types and the frame codec (SPEC §7)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+ulid = { version = "1", features = ["serde"] }

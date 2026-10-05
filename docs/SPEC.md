@@ -455,7 +455,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 **Framing.** Every frame = `u32` big-endian length + `u8` kind + payload. Kind `0x01` = JSON
 (requests, responses, events). Kind `0x02` = terminal output: 16-byte binary ULID of the session
 followed by raw PTY bytes — no JSON, no base64, because agents and builds can print tens of MB.
-Small inputs (`session.input`) may stay base64-in-JSON.
+The length counts the kind byte plus the payload; frames longer than 16 MiB are rejected as a
+protocol error (the connection is dropped). Small inputs (`session.input`) may stay base64-in-JSON.
 
 **Backpressure.** Each attached client has a bounded output queue (e.g. 4 MB). If it overflows
 (slow or frozen UI), the daemon drops the queued bytes and sends a fresh screen snapshot instead.
