@@ -1,6 +1,6 @@
 //! Live sessions (SPEC §8): one PTY per session, one blocking reader OS thread feeding a
-//! bounded channel, and one tokio task owning the headless emulator, the state machine and
-//! the session log.
+//! bounded channel, one blocking writer OS thread fed by a bounded input channel, and one
+//! tokio task owning the headless emulator, the state machine and the session log.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -30,6 +30,10 @@ const READ_BUFFER_BYTES: usize = 64 * 1024;
 /// Chunks in flight between a reader thread and its session task. When full the reader
 /// blocks, which back-pressures the child instead of buffering without bound.
 const OUTPUT_CHANNEL_CHUNKS: usize = 64;
+/// Input is queued for the writer thread in chunks of at most this size, so the channel bound
+/// below caps the bytes buffered per session (≈ 256 KiB) whatever the size of one request.
+pub const INPUT_CHUNK_BYTES: usize = 16 * 1024;
+const INPUT_CHANNEL_CHUNKS: usize = 16;
 /// Graceful kill: after closing the PTY, wait this long for the exit before killing.
 pub const KILL_GRACE: Duration = Duration::from_secs(5);
 /// ConPTY can deliver output after the exit; keep reading while it trickles in.
@@ -40,10 +44,18 @@ const AFTER_EXIT_MAX: Duration = Duration::from_secs(1);
 pub struct Hub {
     pub store: Mutex<Store>,
     pub events: broadcast::Sender<Event>,
-    live: Mutex<HashMap<Ulid, mpsc::Sender<Command>>>,
+    live: Mutex<HashMap<Ulid, Live>>,
     tasks: Mutex<JoinSet<()>>,
     /// Set by [`Hub::shutdown`]; refuses new sessions.
     stopping: AtomicBool,
+}
+
+/// The channels of one live session.
+struct Live {
+    commands: mpsc::Sender<Command>,
+    /// To the PTY writer thread; chunks of at most [`INPUT_CHUNK_BYTES`]. Held locked while
+    /// one request is sent so two clients' input never interleaves.
+    input: Arc<tokio::sync::Mutex<mpsc::Sender<Vec<u8>>>>,
 }
 
 #[derive(Debug)]
@@ -58,7 +70,6 @@ pub enum Command {
     },
     /// The attachment overflowed: give it a fresh snapshot.
     Resnapshot(Arc<Attachment>),
-    Input(Vec<u8>),
     Resize {
         cols: u16,
         rows: u16,
@@ -136,7 +147,7 @@ impl Hub {
             })
             .context("open pty")?;
         let mut reader = pair.master.try_clone_reader().context("clone pty reader")?;
-        let writer = pair.master.take_writer().context("take pty writer")?;
+        let mut writer = pair.master.take_writer().context("take pty writer")?;
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -185,6 +196,22 @@ impl Hub {
             })
             .context("start pty wait thread")
             .map_err(&mut kill_on_error)?;
+        // Writes block while the child does not read its input, so they get their own thread
+        // too: a big paste then only waits in the connection that sent it.
+        let (input, mut input_rx) = mpsc::channel::<Vec<u8>>(INPUT_CHANNEL_CHUNKS);
+        let writer_id = session.id;
+        thread::Builder::new()
+            .name(format!("pty-write-{}", session.id))
+            .spawn(move || {
+                while let Some(bytes) = input_rx.blocking_recv() {
+                    if let Err(e) = writer.write_all(&bytes).and_then(|()| writer.flush()) {
+                        tracing::debug!(id = %writer_id, "pty write failed: {e}");
+                        break;
+                    }
+                }
+            })
+            .context("start pty writer thread")
+            .map_err(&mut kill_on_error)?;
 
         let (commands_tx, commands) = mpsc::channel(8);
         {
@@ -197,14 +224,18 @@ impl Hub {
                 .insert_session(&session)
                 .context("insert session")
                 .map_err(&mut kill_on_error)?;
-            live.insert(session.id, commands_tx);
+            let channels = Live {
+                commands: commands_tx,
+                input: Arc::new(tokio::sync::Mutex::new(input.clone())),
+            };
+            live.insert(session.id, channels);
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
         let actor = Actor {
             hub: std::sync::Arc::clone(self),
             session,
             master: Some(pair.master),
-            writer,
+            input,
             killer,
             pid,
             emulator: None,
@@ -223,7 +254,15 @@ impl Hub {
 
     /// The command channel of a live session (waits for room instead of failing when full).
     pub fn sender(&self, id: Ulid) -> Option<mpsc::Sender<Command>> {
-        lock(&self.live).get(&id).cloned()
+        lock(&self.live).get(&id).map(|live| live.commands.clone())
+    }
+
+    /// The input channel of a live session's PTY writer; lock it for a whole request and send
+    /// chunks of at most [`INPUT_CHUNK_BYTES`].
+    pub fn input(&self, id: Ulid) -> Option<Arc<tokio::sync::Mutex<mpsc::Sender<Vec<u8>>>>> {
+        lock(&self.live)
+            .get(&id)
+            .map(|live| Arc::clone(&live.input))
     }
 
     /// Daemon shutdown (SPEC §8): asks every session to terminate and waits for all of them
@@ -234,8 +273,8 @@ impl Hub {
             self.stopping.store(true, Ordering::SeqCst);
             live.drain().collect()
         };
-        for (_, sender) in live {
-            let _ = sender.try_send(Command::Kill { force: false });
+        for (_, live) in live {
+            let _ = live.commands.try_send(Command::Kill { force: false });
         }
         let mut tasks = std::mem::take(&mut *lock(&self.tasks));
         let all_done = async { while tasks.join_next().await.is_some() {} };
@@ -257,7 +296,8 @@ struct Actor {
     session: Session,
     /// `None` once closed (graceful kill or exit).
     master: Option<Box<dyn MasterPty + Send>>,
-    writer: Box<dyn Write + Send>,
+    /// To the PTY writer thread (DSR replies).
+    input: mpsc::Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     /// For `SIGKILL` (Unix only; Windows kills through `killer`).
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -311,7 +351,6 @@ impl Actor {
                     Some(Command::Resnapshot(attachment)) => {
                         attachment.resnapshot(self.emulator().snapshot());
                     }
-                    Some(Command::Input(bytes)) => self.write_pty(&bytes),
                     Some(Command::Resize { cols, rows }) => self.resize(cols, rows),
                     None => commands_open = false,
                 },
@@ -337,9 +376,11 @@ impl Actor {
             tracing::warn!(id = %self.session.id, "session log write failed: {e}");
         }
         let reply = self.emulator().advance(bytes);
-        // Small and rare (DSR answers), so a blocking write here is fine.
-        if !reply.is_empty() {
-            self.write_pty(&reply);
+        // Never wait for the writer here: a full input queue means the child is not reading
+        // its input anyway, so dropping this answer is the lesser evil. (It can land between
+        // two chunks of a paste; DSR during a paste is rare enough to accept that.)
+        if !reply.is_empty() && self.input.try_send(reply).is_err() {
+            tracing::debug!(id = %self.session.id, "input queue full or closed; DSR reply dropped");
         }
         self.attachments.retain(|a| !a.is_closed());
         for attachment in &self.attachments {
@@ -356,17 +397,6 @@ impl Actor {
         let (cols, rows) = (self.session.cols, self.session.rows);
         self.emulator
             .get_or_insert_with(|| Emulator::new(cols, rows))
-    }
-
-    /// Blocking, like any PTY write; input is small (keys, pastes) and the child reads it.
-    fn write_pty(&mut self, bytes: &[u8]) {
-        if let Err(e) = self
-            .writer
-            .write_all(bytes)
-            .and_then(|()| self.writer.flush())
-        {
-            tracing::debug!(id = %self.session.id, "pty write failed: {e}");
-        }
     }
 
     fn resize(&mut self, cols: u16, rows: u16) {

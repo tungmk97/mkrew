@@ -655,6 +655,75 @@ fn slow_attached_client_gets_a_snapshot_instead_of_stalling_the_session() {
     slow.stop();
 }
 
+#[test]
+fn big_paste_to_a_child_that_does_not_read_leaves_the_daemon_responsive() {
+    let env = Env::new();
+    // The sleeper prints a line and then never reads its input.
+    let scenario = env.dir.path().join("sleeper.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"print\"\ntext = \"Sleeper ready.\"\n\n\
+         [[step]]\naction = \"sleep\"\nms = 120000\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "sleeper",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let sleeper: SessionSpawnResult = client.spawn(&project, "sleeper").into_result().unwrap();
+    let sleeper = sleeper.session_id;
+    client
+        .attach(sleeper)
+        .into_result::<SessionAttachResult>()
+        .unwrap();
+    client.wait_output(sleeper, "Sleeper ready.");
+
+    // A 4 MiB paste on its own connection; it may wait until the session is killed.
+    let socket = env.socket.clone();
+    let (done_tx, done) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut paster = Client::connect(&socket).unwrap();
+        paster.hello().unwrap();
+        let outcome = paster.input(sleeper, &vec![b'a'; 4 * 1024 * 1024]);
+        let _ = done_tx.send(outcome);
+    });
+    std::thread::sleep(Duration::from_millis(500));
+
+    // Other sessions and the daemon keep working while the paste is pending.
+    let fake: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let fake = fake.session_id;
+    client.wait_state(fake, SessionState::NeedsInput);
+    client.input(fake, b"y\r").into_result::<()>().unwrap();
+    let session = client.wait_state(fake, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    let status: DaemonStatusResult = client.call(Request::DaemonStatus).into_result().unwrap();
+    assert_eq!(status.sessions, 1);
+    // Otherwise the OS absorbed the paste and this test proves nothing.
+    assert!(done.try_recv().is_err(), "the paste is not backed up");
+
+    // The sleeper's own task still handles commands: a kill ends it and the paste.
+    let kill = SessionKillParams {
+        session_id: sleeper,
+        force: true,
+    };
+    client
+        .call(Request::SessionKill(kill))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(sleeper, SessionState::Exited);
+    let outcome = done
+        .recv_timeout(TIMEOUT)
+        .expect("the paste never returned");
+    // Normally cut short by the exit; `ok` if the last chunks were queued just before.
+    if outcome.clone().into_result::<()>().is_err() {
+        assert_eq!(error_code(outcome), ErrorCode::InvalidState);
+    }
+    client.stop();
+}
+
 fn session_log(env: &Env, id: Ulid) -> String {
     let path = env.data_dir().join("sessions").join(format!("{id}.log"));
     String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned()

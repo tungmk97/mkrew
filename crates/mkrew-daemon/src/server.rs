@@ -20,7 +20,7 @@ use ulid::Ulid;
 
 use crate::attach::{self, Attachment};
 use crate::launch::LaunchError;
-use crate::session::{Command, Hub, SpawnError, SpawnSpec};
+use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -190,8 +190,7 @@ impl Daemon {
                 (ok(&()), After::Continue)
             }
             Request::SessionInput(params) => {
-                let command = Command::Input(params.data);
-                let outcome = self.session_command(params.session_id, command).await;
+                let outcome = self.session_input(params.session_id, &params.data).await;
                 (outcome, After::Continue)
             }
             Request::SessionResize(params) if params.cols == 0 || params.rows == 0 => (
@@ -367,6 +366,21 @@ impl Daemon {
             Some(session) if session.send(command).await.is_ok() => ok(&()),
             _ => self.not_live(session_id),
         }
+    }
+
+    /// Queues `data` for the session's PTY writer thread. A child that does not read its
+    /// input makes this wait (in this connection only), never the session task.
+    async fn session_input(&self, session_id: Ulid, data: &[u8]) -> Outcome {
+        let Some(input) = self.hub.input(session_id) else {
+            return self.not_live(session_id);
+        };
+        let input = input.lock().await;
+        for chunk in data.chunks(INPUT_CHUNK_BYTES) {
+            if input.send(chunk.to_vec()).await.is_err() {
+                return self.not_live(session_id);
+            }
+        }
+        ok(&())
     }
 
     /// Error for a session that is not running: exited (`invalid_state`) or unknown.
