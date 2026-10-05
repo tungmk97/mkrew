@@ -63,10 +63,20 @@ pub struct Column {
     pub cards: Vec<Card>,
 }
 
+/// The button a card shows for its column (SPEC §10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardAction {
+    /// Todo: `task.run`.
+    Run,
+    /// Review: move it to Done.
+    Approve,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     pub task_id: Ulid,
     pub title: String,
+    pub status: TaskStatus,
     /// The task's agent, else the workspace default, else [`DEFAULT_AGENT_LABEL`].
     pub agent: String,
     /// The last run exited non-zero.
@@ -76,6 +86,32 @@ pub struct Card {
 }
 
 impl Card {
+    pub fn action(&self) -> Option<CardAction> {
+        match self.status {
+            TaskStatus::Todo => Some(CardAction::Run),
+            TaskStatus::Review => Some(CardAction::Approve),
+            TaskStatus::Running | TaskStatus::NeedsInput | TaskStatus::Done => None,
+        }
+    }
+
+    /// The session a click on the card shows: its newest one, except on a Todo card (a card
+    /// dragged back to Todo is about to run again; clicking it only selects it).
+    pub fn opens_session(&self) -> Option<Ulid> {
+        self.session
+            .as_ref()
+            .filter(|_| self.status != TaskStatus::Todo)
+            .map(|session| session.id)
+    }
+
+    /// The live session a follow-up typed on the card goes to (running / needs-input cards).
+    pub fn follow_up_session(&self) -> Option<Ulid> {
+        self.session
+            .as_ref()
+            .filter(|session| session.state != SessionState::Exited)
+            .filter(|_| matches!(self.status, TaskStatus::Running | TaskStatus::NeedsInput))
+            .map(|session| session.id)
+    }
+
     /// How long the newest session ran (until now while it still runs).
     pub fn run_time(&self, now_ms: i64) -> Option<String> {
         let session = self.session.as_ref()?;
@@ -198,6 +234,7 @@ impl Board {
                     .map(|task| Card {
                         task_id: task.id,
                         title: task.title.clone(),
+                        status: task.status,
                         agent: task
                             .agent_profile
                             .as_deref()
@@ -276,6 +313,46 @@ impl Board {
                     })
                     .collect()
             }
+        }
+    }
+
+    /// Whether `task_id` can run now (it waits in Todo); Ctrl+Enter runs the selected card.
+    pub fn can_run(&self, task_id: Ulid) -> bool {
+        self.task(task_id)
+            .is_some_and(|task| task.status == TaskStatus::Todo)
+    }
+
+    /// The card Ctrl+Enter runs on `project_id`'s board: the selected one, if it is that
+    /// board's and can run.
+    pub fn run_target(&self, selected: Option<Ulid>, project_id: Ulid) -> Option<Ulid> {
+        selected.filter(|&id| {
+            self.can_run(id)
+                && self
+                    .task(id)
+                    .is_some_and(|task| task.project_id == project_id)
+        })
+    }
+
+    /// Whether `task_id`'s card still shows a follow-up field for `session_id` (see
+    /// [`Card::follow_up_session`]).
+    pub fn takes_follow_up(&self, task_id: Ulid, session_id: Ulid, sessions: &[Session]) -> bool {
+        self.task(task_id).is_some_and(|task| {
+            matches!(task.status, TaskStatus::Running | TaskStatus::NeedsInput)
+                && newest_session(sessions, task_id).is_some_and(|session| {
+                    session.id == session_id && session.state != SessionState::Exited
+                })
+        })
+    }
+
+    /// The `task.move`s that approve a Review card: to the end of Done. Empty for any other
+    /// card.
+    pub fn approve_moves(&self, task_id: Ulid) -> Vec<TaskMoveParams> {
+        match self
+            .task(task_id)
+            .and_then(|task| task::approve(task.status))
+        {
+            Some(done) => self.drop_moves(task_id, done, None),
+            None => Vec::new(),
         }
     }
 
@@ -616,5 +693,137 @@ mod tests {
             "still 1m"
         );
         assert!(!board.redraw_due(Ulid::new(), &sessions, 1_000, 2_000));
+    }
+
+    #[test]
+    fn cards_offer_the_action_of_their_column() {
+        let api = Ulid::new();
+        let tasks: Vec<Task> = COLUMNS
+            .iter()
+            .map(|&status| task(api, "t", status, 1.0))
+            .collect();
+        let mut board = Board::default();
+        board.load(tasks.clone());
+        let actions: Vec<Option<CardAction>> = board
+            .columns(api, None, &[])
+            .iter()
+            .map(|column| column.cards[0].action())
+            .collect();
+        assert_eq!(
+            actions,
+            [
+                Some(CardAction::Run),
+                None,
+                None,
+                Some(CardAction::Approve),
+                None
+            ]
+        );
+        let runnable: Vec<bool> = tasks.iter().map(|t| board.can_run(t.id)).collect();
+        assert_eq!(runnable, [true, false, false, false, false]);
+        assert!(!board.can_run(Ulid::new()));
+
+        // Ctrl+Enter: only a selected Todo card of the shown board.
+        let todo = tasks[0].id;
+        assert_eq!(board.run_target(Some(todo), api), Some(todo));
+        assert_eq!(board.run_target(Some(todo), Ulid::new()), None);
+        assert_eq!(board.run_target(Some(tasks[1].id), api), None);
+        assert_eq!(board.run_target(None, api), None);
+    }
+
+    #[test]
+    fn a_follow_up_field_lasts_while_its_session_is_the_live_newest_one() {
+        let api = Ulid::new();
+        let mut running = task(api, "running", TaskStatus::Running, 1.0);
+        let mut board = Board::default();
+        board.load(vec![running.clone()]);
+        let first = session(&running, 0, None);
+        let mut sessions = vec![first.clone()];
+        assert!(board.takes_follow_up(running.id, first.id, &sessions));
+        assert!(!board.takes_follow_up(Ulid::new(), first.id, &sessions));
+
+        // A newer run replaces the session the draft was for.
+        let second = session(&running, 10, None);
+        sessions.push(second.clone());
+        assert!(!board.takes_follow_up(running.id, first.id, &sessions));
+        assert!(board.takes_follow_up(running.id, second.id, &sessions));
+
+        sessions[1].state = SessionState::Exited;
+        assert!(!board.takes_follow_up(running.id, second.id, &sessions));
+        sessions[1].state = SessionState::Working;
+        running.status = TaskStatus::Review;
+        running.updated_at = 1;
+        board.apply(&Event::TaskUpdated(running.clone()));
+        assert!(!board.takes_follow_up(running.id, second.id, &sessions));
+    }
+
+    #[test]
+    fn clicks_open_the_newest_session_and_follow_ups_need_a_live_one() {
+        let api = Ulid::new();
+        let tasks: Vec<Task> = COLUMNS
+            .iter()
+            .map(|&status| task(api, "t", status, 1.0))
+            .collect();
+        let mut sessions: Vec<Session> = tasks.iter().map(|t| session(t, 0, None)).collect();
+        let mut board = Board::default();
+        board.load(tasks.clone());
+        let cards = |sessions: &[Session]| -> Vec<Card> {
+            board
+                .columns(api, None, sessions)
+                .into_iter()
+                .map(|mut column| column.cards.remove(0))
+                .collect()
+        };
+
+        let opens: Vec<bool> = cards(&sessions)
+            .iter()
+            .map(|card| card.opens_session().is_some())
+            .collect();
+        // A Todo card only gets selected.
+        assert_eq!(opens, [false, true, true, true, true]);
+        assert_eq!(cards(&sessions)[3].opens_session(), Some(sessions[3].id));
+        let follows: Vec<bool> = cards(&sessions)
+            .iter()
+            .map(|card| card.follow_up_session().is_some())
+            .collect();
+        assert_eq!(follows, [false, true, true, false, false]);
+        assert_eq!(
+            cards(&sessions)[2].follow_up_session(),
+            Some(sessions[2].id)
+        );
+
+        // An exited session takes no input; a card that never ran has none.
+        sessions[1].state = SessionState::Exited;
+        assert_eq!(cards(&sessions)[1].follow_up_session(), None);
+        assert_eq!(cards(&[])[1].follow_up_session(), None);
+        assert_eq!(cards(&[])[1].opens_session(), None);
+    }
+
+    #[test]
+    fn approving_moves_a_review_card_to_the_end_of_done() {
+        let api = Ulid::new();
+        let (review, done, todo) = (
+            task(api, "review", TaskStatus::Review, 1.0),
+            task(api, "done", TaskStatus::Done, 4.0),
+            task(api, "todo", TaskStatus::Todo, 0.0),
+        );
+        let mut board = Board::default();
+        board.load(vec![review.clone(), done.clone(), todo.clone()]);
+
+        let moves = board.approve_moves(review.id);
+        assert_eq!(
+            moves,
+            [TaskMoveParams {
+                task_id: review.id,
+                status: TaskStatus::Done,
+                position: 5.0,
+            }]
+        );
+        apply_moves(&mut board, &moves);
+        assert_eq!(ids(&board.columns(api, None, &[])[4]), [done.id, review.id]);
+        // Only Review cards are approved.
+        assert!(board.approve_moves(todo.id).is_empty());
+        assert!(board.approve_moves(review.id).is_empty());
+        assert!(board.approve_moves(Ulid::new()).is_empty());
     }
 }

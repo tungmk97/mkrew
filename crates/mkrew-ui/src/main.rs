@@ -22,12 +22,13 @@ use mkrew_protocol::{
     AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
     SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
     SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, Task, TaskListParams, TaskRef, TaskStatus, TerminalTab,
+    TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
 };
-use mkrew_ui::board::{self, Board, Card, DraggedCard, View};
+use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
+use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
-use mkrew_ui::keymap::{Command, Keymap, Run};
+use mkrew_ui::keymap::{BOARD_CONTEXT, Command, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
@@ -163,8 +164,17 @@ struct Shell {
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
     board_error: Option<String>,
-    /// Why the last dropped card could not move, shown on its workspace's board.
-    move_error: Option<(Ulid, String)>,
+    /// Why the last card action (drop, Run, Approve) failed, shown on its workspace's board.
+    card_error: Option<(Ulid, String)>,
+    /// The card Ctrl+Enter runs (clicked last).
+    selected_card: Option<Ulid>,
+    /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
+    starting: HashSet<Ulid>,
+    /// The follow-up draft of one running / needs-input card.
+    follow_up: Option<FollowUp>,
+    /// Focused while the follow-up field takes keys; losing it drops an empty draft.
+    follow_up_focus: FocusHandle,
+    _follow_up_blur: Subscription,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
     /// The open new / edit task dialog (modal).
@@ -225,6 +235,15 @@ impl Shell {
         let rename_focus = cx.focus_handle();
         let rename_blur = cx.on_blur(&rename_focus, window, |shell, window, cx| {
             shell.finish_rename(true, window, cx);
+        });
+        let follow_up_focus = cx.focus_handle();
+        let follow_up_blur = cx.on_blur(&follow_up_focus, window, |shell, _, cx| {
+            // A typed draft (or one being sent) stays on its card without its caret; an empty
+            // one goes.
+            shell
+                .follow_up
+                .take_if(|draft| draft.text.is_empty() && !draft.busy);
+            cx.notify();
         });
         let (painted, painted_rx) = async_channel::bounded(1);
         cx.spawn_in(window, async move |this, cx| {
@@ -293,6 +312,7 @@ impl Shell {
                 shell.renaming = None;
                 shell.workspace_menu = None;
                 shell.task_dialog = None;
+                shell.follow_up = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -333,7 +353,12 @@ impl Shell {
             viewed: Viewed::default(),
             board: Board::default(),
             board_error: None,
-            move_error: None,
+            card_error: None,
+            selected_card: None,
+            starting: HashSet::new(),
+            follow_up: None,
+            follow_up_focus,
+            _follow_up_blur: follow_up_blur,
             views: HashMap::new(),
             task_dialog: None,
             dialog_focus: cx.focus_handle(),
@@ -1159,23 +1184,41 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let moves = self.board.drop_moves(task_id, status, before);
+        self.move_cards(task_id, moves, "Cannot move the card", window, cx);
+    }
+
+    /// Approve on a Review card: it moves to the end of Done.
+    fn approve_task(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let moves = self.board.approve_moves(task_id);
+        self.move_cards(task_id, moves, "Cannot approve the task", window, cx);
+    }
+
+    /// Sends the `task.move`s of one action on `task_id`'s card; a failure shows `what` and
+    /// the error on its board.
+    fn move_cards(
+        &mut self,
+        task_id: Ulid,
+        moves: Vec<TaskMoveParams>,
+        what: &'static str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
         let Some(project_id) = self.board.task(task_id).map(|task| task.project_id) else {
             return;
         };
-        let moves: Vec<_> = self
-            .board
-            .drop_moves(task_id, status, before)
+        let moves: Vec<_> = moves
             .into_iter()
             .map(|params| connection.call::<Task>(Request::TaskMove(params)))
             .collect();
         if moves.is_empty() {
             return;
         }
-        // Cleared once per drop: a later move of the same batch must not hide a failure.
-        self.move_error = None;
+        // Cleared once per action: a later move of the same batch must not hide a failure.
+        self.card_error = None;
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             for moved in moves {
@@ -1187,12 +1230,169 @@ impl Shell {
                         }
                         Err(error) => {
                             tracing::warn!(%task_id, "task.move failed: {error:#}");
-                            shell.move_error = Some((project_id, format!("{error:#}")));
+                            shell.card_error = Some((project_id, format!("{what}: {error:#}")));
                         }
                     }
                     cx.notify();
                 });
             }
+        })
+        .detach();
+    }
+
+    /// Run on a Todo card (or Ctrl+Enter on the selected one): `task.run`. The card follows
+    /// its session through `task.updated`; clicking it opens the terminal.
+    fn run_task(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(project_id) = self
+            .board
+            .task(task_id)
+            .filter(|_| self.board.can_run(task_id) && !self.starting.contains(&task_id))
+            .map(|task| task.project_id)
+        else {
+            return;
+        };
+        self.starting.insert(task_id);
+        self.card_error = None;
+        cx.notify();
+        let ran =
+            connection.call::<SessionSpawnResult>(Request::TaskRun(lifecycle::run_params(task_id)));
+        cx.spawn_in(window, async move |this, cx| {
+            let ran = ran.await;
+            let _ = this.update(cx, |shell, cx| {
+                shell.starting.remove(&task_id);
+                if let Err(error) = ran {
+                    tracing::warn!(%task_id, "task.run failed: {error:#}");
+                    shell.card_error =
+                        Some((project_id, format!("Cannot run the task: {error:#}")));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A click on a card selects it and shows its session's terminal (none for Todo cards).
+    fn card_clicked(
+        &mut self,
+        task_id: Ulid,
+        session: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.selected_card = Some(task_id);
+        // Cards take no focus: leave another card's follow-up field.
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+        if let Some(session) = session {
+            self.open_session(session, window, cx);
+        }
+    }
+
+    /// Gives the follow-up field of `task_id`'s card the keyboard (keeping its draft).
+    fn open_follow_up(
+        &mut self,
+        task_id: Ulid,
+        session_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.selected_card = Some(task_id);
+        if self
+            .follow_up
+            .as_ref()
+            .is_none_or(|draft| draft.task_id != task_id || draft.session_id != session_id)
+        {
+            self.follow_up = Some(FollowUp::new(task_id, session_id));
+        }
+        window.focus(&self.follow_up_focus, cx);
+        cx.notify();
+    }
+
+    /// Whether the follow-up draft's card still shows its field.
+    fn follow_up_shown(&self) -> bool {
+        self.follow_up.as_ref().is_some_and(|draft| {
+            self.board
+                .takes_follow_up(draft.task_id, draft.session_id, self.sidebar.sessions())
+        })
+    }
+
+    fn close_follow_up(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.follow_up = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// Keys typed in the follow-up field: Enter sends, Esc drops the draft.
+    fn follow_up_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == DialogKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(draft) = self.follow_up.as_mut() else {
+            return;
+        };
+        if let Some(text) = paste {
+            draft.insert(&text);
+        }
+        match draft.key(key) {
+            follow_up::Outcome::Edited => cx.notify(),
+            follow_up::Outcome::Cancel => self.close_follow_up(window, cx),
+            follow_up::Outcome::Send => self.send_follow_up(window, cx),
+        }
+    }
+
+    /// `session.send` of the draft (text + Enter); the field empties once it is written.
+    fn send_follow_up(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(draft) = self.follow_up.as_mut() else {
+            return;
+        };
+        let Some(params) = draft.send_params() else {
+            return;
+        };
+        let (task_id, session_id) = (draft.task_id, draft.session_id);
+        draft.busy = true;
+        draft.error = None;
+        cx.notify();
+        let sent = connection.request(Request::SessionSend(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let failure = match sent.await {
+                Ok(Outcome::Result(_)) => None,
+                Ok(Outcome::Error(body)) => Some(body.message),
+                Err(error) => Some(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                // The field was closed or moved to another session meanwhile.
+                let Some(draft) = shell
+                    .follow_up
+                    .as_mut()
+                    .filter(|d| (d.task_id, d.session_id) == (task_id, session_id))
+                else {
+                    return;
+                };
+                draft.busy = false;
+                match failure {
+                    None => draft.text.clear(),
+                    Some(error) => {
+                        tracing::warn!(%session_id, "session.send failed: {error}");
+                        draft.error = Some(format!("Cannot send: {error}"));
+                    }
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -1258,6 +1458,16 @@ impl Shell {
         if self.task_dialog.is_some() {
             cx.propagate();
             return;
+        }
+        // Same for the follow-up field while it has the keyboard, unless its card stopped
+        // showing it (session exited, card moved on): then the shortcut acts as usual.
+        if self.follow_up_focus.is_focused(window) {
+            if self.follow_up_shown() {
+                cx.propagate();
+                return;
+            }
+            self.follow_up = None;
+            window.focus(&self.focus_handle, cx);
         }
         if self.view() == View::Board {
             match *command {
@@ -1361,6 +1571,15 @@ impl Shell {
                     // The new card shows up on the board.
                     self.show_view(View::Board, window, cx);
                     self.open_task_dialog(TaskDialog::new(project_id), window, cx);
+                }
+            }
+            Command::RunTask => {
+                // Only bound while a board is shown; the selection may be another workspace's.
+                let target = self
+                    .workspace
+                    .and_then(|project_id| self.board.run_target(self.selected_card, project_id));
+                if let Some(task_id) = target {
+                    self.run_task(task_id, window, cx);
                 }
             }
             // Handled by the focused terminal pane.
@@ -2031,7 +2250,13 @@ impl Shell {
         .into_any_element()
     }
 
-    fn render_main(&self, now: i64, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
+    fn render_main(
+        &self,
+        now: i64,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
             let (sentence, detail) = self.status_line();
             return message(theme, Some("Mkrew"), sentence, detail)
@@ -2048,7 +2273,7 @@ impl Shell {
             .flex_col()
             .child(self.render_view_bar(view, theme, cx));
         match (view, self.tabs.get(&project_id)) {
-            (View::Board, _) => main.child(self.render_board(project_id, now, theme, cx)),
+            (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
                 .child(self.render_tab(tabs, now, theme, cx)),
@@ -2117,6 +2342,7 @@ impl Shell {
         project_id: Ulid,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let project = self.sidebar.projects().iter().find(|p| p.id == project_id);
@@ -2146,6 +2372,14 @@ impl Shell {
         let columns = self
             .board
             .columns(project_id, default_agent, self.sidebar.sessions());
+        let cards = CardContext {
+            selected: self.selected_card,
+            starting: &self.starting,
+            follow_up: self.follow_up.as_ref(),
+            follow_up_focus: &self.follow_up_focus,
+            follow_up_focused: self.follow_up_focus.is_focused(window),
+            run_keys: self.keymap.label(Command::RunTask),
+        };
         div()
             .flex_1()
             .min_h_0()
@@ -2158,9 +2392,9 @@ impl Shell {
                     .px(px(space::L))
                     .pt(px(space::S))
             }))
-            .children(self.move_error.as_ref().and_then(|(project, error)| {
+            .children(self.card_error.as_ref().and_then(|(project, error)| {
                 (*project == project_id).then(|| {
-                    notice(theme.text, format!("✕ Cannot move the card: {error}"))
+                    notice(theme.text, format!("✕ {error}"))
                         .px(px(space::L))
                         .pt(px(space::S))
                 })
@@ -2179,7 +2413,7 @@ impl Shell {
                     .children(
                         columns
                             .into_iter()
-                            .map(|column| board_column(column, now, theme, cx)),
+                            .map(|column| board_column(column, &cards, now, theme, cx)),
                     ),
             )
             .into_any_element()
@@ -3174,10 +3408,24 @@ fn inbox_row(
         .into_any_element()
 }
 
+/// Shell state the cards of a board render with.
+struct CardContext<'a> {
+    selected: Option<Ulid>,
+    /// Tasks whose run is starting.
+    starting: &'a HashSet<Ulid>,
+    follow_up: Option<&'a FollowUp>,
+    follow_up_focus: &'a FocusHandle,
+    /// The follow-up field has the keyboard (shows its caret).
+    follow_up_focused: bool,
+    /// Shortcut label of Run on the selected card.
+    run_keys: String,
+}
+
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
 /// card is a drop slot (land before it), and so is the free space under the last one.
 fn board_column(
     column: board::Column,
+    cards: &CardContext<'_>,
     now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -3239,7 +3487,7 @@ fn board_column(
                     let task_id = card.task_id;
                     drop_slot(status, Some(task_id), theme, cx)
                         .py(px(space::XS))
-                        .child(task_card(card, now, theme, cx))
+                        .child(task_card(card, cards, now, theme, cx))
                 }))
                 .child(
                     drop_slot(status, None, theme, cx)
@@ -3291,16 +3539,30 @@ fn drop_slot(
 }
 
 /// A task card: title (Edit on hover), agent and run time, then its session's status
-/// (SPEC §10, §11). Dragging it carries a [`DraggedCard`].
-fn task_card(card: Card, now: i64, theme: &Theme, cx: &mut Context<'_, Shell>) -> gpui::AnyElement {
+/// (SPEC §10, §11), then its column's action or a follow-up field. Dragging it carries a
+/// [`DraggedCard`]; clicking it selects it and opens its session's terminal.
+fn task_card(
+    card: Card,
+    cards: &CardContext<'_>,
+    now: i64,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
     let run_time = card.run_time(now);
     let shows_error_row = card.shows_error_row();
+    let action = card.action();
+    let opens = card.opens_session();
+    let follow_up_session = card.follow_up_session();
     let task_id = card.task_id;
+    let selected = cards.selected == Some(task_id);
     let group = SharedString::from(format!("card-{task_id}"));
     let edit_hover = theme.border;
     let preview_theme = theme.clone();
     div()
         .id(group.clone())
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.card_clicked(task_id, opens, window, cx);
+        }))
         .on_drag(
             DraggedCard {
                 task_id,
@@ -3319,6 +3581,17 @@ fn task_card(card: Card, now: i64, theme: &Theme, cx: &mut Context<'_, Shell>) -
         .p(px(space::M))
         .rounded(px(radius::MEDIUM))
         .bg(rgb(theme.surface_raised))
+        // Always bordered, so selecting a card does not shift its content.
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(if selected {
+            theme.pane_focus_border
+        } else {
+            theme.surface_raised
+        }))
+        .when(!selected, |el| {
+            el.hover(move |style| style.border_color(rgb(edit_hover)))
+        })
+        .cursor_pointer()
         .group(group.clone())
         .child(
             div()
@@ -3352,6 +3625,8 @@ fn task_card(card: Card, now: i64, theme: &Theme, cx: &mut Context<'_, Shell>) -
                         .active(|style| style.opacity(opacity::ACTIVE))
                         .tooltip(tooltip(theme, "Edit or delete this task", ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
+                            // Not a click on the card (which would open its terminal).
+                            cx.stop_propagation();
                             if let Some(task) = shell.board.task(task_id).cloned() {
                                 shell.open_task_dialog(TaskDialog::edit(task), window, cx);
                             }
@@ -3422,7 +3697,103 @@ fn task_card(card: Card, now: i64, theme: &Theme, cx: &mut Context<'_, Shell>) -
                     .child("Last run failed"),
             )
         })
+        .when_some(follow_up_session, |el, session_id| {
+            el.child(follow_up_field(task_id, session_id, cards, theme, cx))
+        })
+        .when_some(action, |el, action| {
+            // Ctrl+Enter runs only the selected card.
+            let run_keys = if selected {
+                cards.run_keys.clone()
+            } else {
+                String::new()
+            };
+            let (id, label, tip, keys) = match action {
+                CardAction::Run => ("card-run", "Run", "Run this task", run_keys),
+                CardAction::Approve => (
+                    "card-approve",
+                    "Approve",
+                    "Accept the result and move the task to Done",
+                    String::new(),
+                ),
+            };
+            // Accent only on the selected card: a full Todo column stays calm.
+            let primary = action == CardAction::Run && selected;
+            let control = if cards.starting.contains(&task_id) {
+                disabled_button(id, "Starting…", theme, primary)
+            } else {
+                button(id, label, theme, primary)
+                    // A quiet button's surface hover would vanish on the raised card.
+                    .when(!primary, |el| {
+                        el.hover(move |style| style.bg(rgb(edit_hover)))
+                    })
+                    .tooltip(tooltip(theme, tip, keys))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.selected_card = Some(task_id);
+                        match action {
+                            CardAction::Run => shell.run_task(task_id, window, cx),
+                            CardAction::Approve => shell.approve_task(task_id, window, cx),
+                        }
+                    }))
+            };
+            el.child(div().flex().justify_end().child(control))
+        })
         .into_any_element()
+}
+
+/// The follow-up input of a running / needs-input card: a one-line field that takes the
+/// keyboard when clicked; Enter sends it to the card's session (SPEC §10).
+fn follow_up_field(
+    task_id: Ulid,
+    session_id: Ulid,
+    cards: &CardContext<'_>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Div {
+    let draft = cards
+        .follow_up
+        .filter(|draft| draft.task_id == task_id && draft.session_id == session_id);
+    let text = draft.map_or("", |draft| draft.text.as_str());
+    let focused = draft.is_some() && cards.follow_up_focused;
+    let field = text_field(
+        "card-follow-up",
+        text,
+        "Follow up… (Enter sends)",
+        focused,
+        theme,
+    )
+    .bg(rgb(theme.surface))
+    .on_click(cx.listener(move |shell, _, window, cx| {
+        cx.stop_propagation();
+        shell.open_follow_up(task_id, session_id, window, cx);
+    }))
+    .when(draft.is_some(), |el| {
+        el.track_focus(cards.follow_up_focus)
+            .on_key_down(cx.listener(Shell::follow_up_key_down))
+    });
+    let status = draft.and_then(|draft| {
+        if draft.busy {
+            Some(("↑", theme.text_muted, "Sending…".to_owned()))
+        } else {
+            draft
+                .error
+                .clone()
+                .map(|error| ("✕", theme.status_exited, error))
+        }
+    });
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .child(field)
+        .children(status.map(|(icon, color, text)| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(color)).child(icon))
+                .child(div().text_color(rgb(theme.text)).child(text))
+        }))
 }
 
 /// A pane's header (SPEC §11): status icon, agent name, session title, status text and time;
@@ -3593,9 +3964,12 @@ impl Render for Shell {
             .flex()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
+            .when(self.view() == View::Board, |el| {
+                el.key_context(BOARD_CONTEXT)
+            })
             .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(now, &theme, cx))
-            .child(self.render_main(now, &theme, cx))
+            .child(self.render_main(now, &theme, window, cx))
             .children(
                 self.task_dialog
                     .as_ref()

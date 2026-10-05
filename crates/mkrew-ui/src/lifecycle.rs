@@ -1,7 +1,7 @@
 //! Pane lifecycle decisions (SPEC §10): what a new pane spawns, what closing a pane does to its
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
-use mkrew_protocol::{Session, SessionKind, SessionSpawnParams, SessionState};
+use mkrew_protocol::{Session, SessionKind, SessionSpawnParams, SessionState, TaskRunParams};
 use ulid::Ulid;
 
 /// Above this many running sessions in one workspace the tab bar shows a warning.
@@ -25,6 +25,16 @@ pub fn spawn_params(
         kind,
         tab_id,
         title: None,
+        cols: SPAWN_COLS,
+        rows: SPAWN_ROWS,
+    }
+}
+
+/// `task.run` for a card's Run: the daemon picks the agent and folder; the session starts at
+/// the size of a new pane (its pane resizes it once opened).
+pub fn run_params(task_id: Ulid) -> TaskRunParams {
+    TaskRunParams {
+        task_id,
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
     }
@@ -132,6 +142,11 @@ mod tests {
         assert_eq!(shell.kind, SessionKind::Shell);
         assert_eq!(shell.agent_profile, None);
         assert!(shell.cols > 0 && shell.rows > 0);
+
+        let task = Ulid::new();
+        let run = run_params(task);
+        assert_eq!(run.task_id, task);
+        assert_eq!((run.cols, run.rows), (shell.cols, shell.rows));
     }
 
     #[test]

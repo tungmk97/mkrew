@@ -233,6 +233,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   the drag preview follows the pointer smoothly, Edit still opens on click, and nothing moves
   when dropping a card back on its own place. Dark + light screenshots for §14.
 
+- [ ] (T4.9) **Card actions.** On the Board: Run a Todo card (button, and click + Ctrl+Enter)
+  → it moves to Running with the right agent; click it → the Terminals view shows its pane.
+  Back on the Board, click its follow-up field, type a line, Enter → the agent receives it
+  (check in its pane); Esc empties the field. A needs-input card takes a follow-up too. When
+  it reaches Review, Approve → Done. Check that dragging a card does not also open its
+  terminal, that Ctrl+Enter inside a terminal still reaches the agent, and AltGr characters
+  type into the follow-up field. Dark + light screenshots for §14.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -608,6 +616,23 @@ _Decisions the agent made on its own. Override them here if you disagree._
   in quick succession during a column renumber may compute from stale positions (rare;
   `task.list` on reconnect fixes the order). A failed move shows a notice on that workspace's
   board until the next drop.
+- (T4.9) Card actions: clicking a card selects it (accent border); a non-Todo card with a
+  session also opens its terminal (Todo cards only select — a card dragged back to Todo is
+  about to re-run). Ctrl+Enter (`run_task`) runs the selected Todo card; it is bound in a
+  `Board` key context set on the window root only while a board is shown, so terminals still
+  get Ctrl+Enter. Run keeps the user on the board (the card follows its session; click to
+  watch). Approve = move to the end of Done. Follow-up is a single line (pasted line breaks
+  become spaces), Enter sends text + Enter via `session.send`, Esc drops it; while it has the
+  keyboard every shortcut goes to the field (like the task dialog). A typed draft survives
+  losing focus; an empty one disappears; a draft whose session was replaced (re-run) or
+  ended is dropped. Run shows "Starting…" (disabled) until `task.run` replies. Failed
+  Run/Approve show the board notice. Run is quiet (secondary) on every card and accent only on
+  the selected one, whose tooltip shows Ctrl+Enter. Gaps (backlog): cards can only be
+  selected with the mouse (no arrow-key selection / focus ring yet, so Ctrl+Enter needs a
+  click first); Approve has no shortcut/`Command`; a double-click on Approve sends two
+  (harmless) moves; pressing in the follow-up field and moving the mouse may start a card
+  drag (stopping mouse-down propagation there may also swallow the field's own click —
+  untested without a display).
 
 ## Done
 

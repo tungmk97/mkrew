@@ -58,10 +58,15 @@ pub enum Command {
     ShowTerminals,
     /// Open the new task dialog for the active workspace.
     NewTask,
+    /// Board only: run the selected Todo card.
+    RunTask,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
 pub const TERMINAL_CONTEXT: &str = "Terminal";
+
+/// Key context of the window while a board is shown (so Ctrl+Enter still reaches agents).
+pub const BOARD_CONTEXT: &str = "Board";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
@@ -108,6 +113,7 @@ impl Command {
             Command::ShowBoard,
             Command::ShowTerminals,
             Command::NewTask,
+            Command::RunTask,
         ]);
         all
     }
@@ -148,6 +154,7 @@ impl Command {
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
             Command::NewTask => "new_task".into(),
+            Command::RunTask => "run_task".into(),
         }
     }
 
@@ -193,6 +200,7 @@ impl Command {
             Command::ShowBoard => "ctrl-shift-1".into(),
             Command::ShowTerminals => "ctrl-shift-2".into(),
             Command::NewTask => "ctrl-shift-n".into(),
+            Command::RunTask => "ctrl-enter".into(),
         }
     }
 
@@ -204,6 +212,7 @@ impl Command {
             | Command::PageUp
             | Command::PageDown
             | Command::Find => Some(TERMINAL_CONTEXT),
+            Command::RunTask => Some(BOARD_CONTEXT),
             _ => None,
         }
     }
@@ -465,6 +474,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowBoard));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
+        assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))
@@ -483,6 +493,8 @@ mod tests {
             assert_eq!(command.context(), Some(TERMINAL_CONTEXT), "{command:?}");
         }
         assert_eq!(Command::ClosePane.context(), None);
+        // Ctrl+Enter only runs a card while the board is shown; terminals still get it.
+        assert_eq!(Command::RunTask.context(), Some(BOARD_CONTEXT));
     }
 
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted
