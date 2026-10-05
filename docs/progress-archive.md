@@ -2,6 +2,33 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M5 — Resume, checkpoints, conflicts, history (tag `m5-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T5.4, T5.7, T5.9 and T5.11 manual
+checks in HUMAN_CHECKS "To verify"):
+
+- [ ] Stop and restart the daemon: running Claude/Codex tasks resume the right conversation.
+- [ ] Before Run in a git repo: store HEAD in `task.checkpoint`; "Undo task" shows the diff to be
+      discarded and only runs `git restore`/`git clean` after explicit confirmation.
+- [ ] Two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards.
+- [x] Watcher ignores `.git`, `node_modules`, `target` and respects `.gitignore`.
+- [ ] Per-session output logs; history of finished sessions viewable after a daemon restart.
+- [x] Daily DB backups, keep 7.
+
+Tasks:
+
+- [x] T5.1 Resume on daemon startup — feat(daemon): resume interrupted tasks on startup
+- [x] T5.2 Git checkpoint on Run — feat(daemon): store git HEAD as task checkpoint on run
+- [x] T5.3 Undo backend (ADR 0005) — feat(daemon): task undo preview and confirmed undo
+- [x] T5.4 Undo dialog — feat(ui): undo task dialog with file list and diff
+- [x] T5.5 Project file watcher — feat(daemon): project file watcher records changed files
+- [x] T5.6 Conflict detection — feat(daemon): detect file conflicts between sessions
+- [x] T5.7 Conflict badges — feat(ui): conflict warning badges on cards and pane headers
+- [x] T5.8 Session history backend — feat(daemon): session history logs readable after restart
+- [x] T5.9 History viewer — feat(ui): session history dialog replaying finished logs
+- [x] T5.10 Daily DB backups — feat(daemon): daily database backups keeping the newest 7
+- [x] T5.11 M5 manual checks + wrap-up — chore(progress): complete M5
+
 ## M4 — Task board (tag `m4-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T4.7–T4.10 manual checks in

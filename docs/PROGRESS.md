@@ -2,46 +2,32 @@
 
 <!-- loop-state: machine-readable, keep these exact keys on their own lines -->
 status: RUNNING
-milestone: M5
+milestone: M6
 <!-- /loop-state -->
 
 Status values: `RUNNING` (loop continues) · `WAITING_HUMAN` (see docs/HUMAN_CHECKS.md, then set back to RUNNING) · `BLOCKED` (no task can progress) · `DONE`.
 Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note).
 
-## Current milestone: M5 — Resume, checkpoints, conflicts, history (SPEC §18)
+## Current milestone: M6 — Markdown review (SPEC §18)
 
 ### Acceptance criteria
-- [ ] Stop and restart the daemon: running Claude/Codex tasks resume the right conversation.
-- [ ] Before Run in a git repo: store HEAD in `task.checkpoint`; "Undo task" shows the diff to be
-      discarded and only runs `git restore`/`git clean` after explicit confirmation.
-- [ ] Two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards.
-- [x] Watcher ignores `.git`, `node_modules`, `target` and respects `.gitignore`.
-- [ ] Per-session output logs; history of finished sessions viewable after a daemon restart.
-- [x] Daily DB backups, keep 7.
+_To be copied from SPEC §18 M6 by the planning session._
 
 ### Task queue
-- [x] T5.1 Resume on daemon startup: for each running/needs_input task whose last session has a `native_session_id` and whose profile has `resume`, expand `{session_id}` into argv and spawn it as a new session of the task (same tab slot); otherwise task → needs_input + `error_flag` (note "session stopped — run again?"). Fake agent: hook step reports a native id, `--resume <id>` prints `Resumed: <id>`. Daemon e2e: stop → restart → resumed with the right id; covers: resume. (spec: §3 Lifecycle, §5, §6, §8) — feat(daemon): resume interrupted tasks on startup
-- [x] T5.2 Git checkpoint on Run: minimal daemon `GitBackend` trait + git CLI impl (`rev-parse HEAD`, not-a-repo = None, no network); `task.run` stores HEAD in `task.checkpoint` (store setter, `task.updated`); tests with a temp git repo; covers: checkpoint. (spec: §5, §7, §12B intro) — feat(daemon): store git HEAD as task checkpoint on run
-- [x] T5.3 Undo task backend: `task.undo_preview` (diff + untracked files since checkpoint) and `task.undo{confirm: true}` (`git restore --source=<checkpoint> --staged --worktree .` + `git clean` of files created since; refused without confirm, while a session of the task is live, or with no checkpoint); ADR + SPEC §7 rows; `mk task undo` shows the preview and needs `--yes`; covers: undo confirmation. (spec: §7, §9, §12B) — feat(daemon): task undo preview and confirmed undo
-- [x] T5.4 UI "Undo task" on Review/Done cards: confirmation dialog listing files + scrollable diff from `task.undo_preview`, destructive confirm button, then `task.undo`; pure view-model tests; covers: undo shows diff. (spec: §11, §13, §14) — feat(ui): undo task dialog with file list and diff
-- [x] T5.5 Project file watcher: `notify` watcher per project with live sessions, pure path filter (always ignore `.git`, `node_modules`, `target`; `.gitignore` via `ignore::gitignore`), debounced batches → `files_changed` session events; unit + temp-dir integration tests; covers: watcher ignores. (spec: §4, §8, §16) — feat(daemon): project file watcher records changed files
-- [x] T5.6 Conflict detection: pure `mkrew_core::conflict` tracker (path → last editing sessions, 60 s window); attribution = sessions of the project in `working` when the change lands, plus file paths from Claude/Codex hook payloads when present (record the heuristic in HUMAN_CHECKS); `Event::ConflictDetected{project_id, path, session_ids, task_ids}`, protocol bump; daemon e2e with two fake sessions writing one file; covers: conflict.detected. (spec: §6, §7, §8) — feat(daemon): detect file conflicts between sessions
-- [x] T5.7 UI conflict warning: board cards of both tasks (and their pane headers) show a warning badge with the file path + tooltip until the tasks leave running/needs_input or the user dismisses it; pure tests; covers: UI warns on both cards. (spec: §11, §14) — feat(ui): conflict warning badges on cards and pane headers
-- [x] T5.8 Session history backend: `session.history` → log path(s) (`.log.1` + `.log`), `mk session history <id>` prints the log (works for exited sessions after a daemon restart); store keeps exited sessions listable per project; e2e: run fake, restart daemon, read history; covers: per-session logs, history after restart. (spec: §7, §8, §9) — feat(daemon): session history logs readable after restart
-- [x] T5.9 UI history viewer: "History" list of finished sessions per workspace (sidebar section or Terminals menu), opening one renders its log read-only in a pane through the UI emulator (tail-bounded, no attach); pure tests; covers: history viewable. (spec: §10, §11, §14) — feat(ui): session history dialog replaying finished logs
-- [x] T5.10 Daily DB backups: daemon task copies `mkrew.db` via SQLite online backup / `VACUUM INTO` to `<data>/mkrew/backups/mkrew-YYYY-MM-DD.db` at startup if today's is missing and then every 24 h, prunes to the newest 7; unit tests with injected clock; covers: backups keep 7. (spec: §8, §15) — feat(daemon): daily database backups keeping the newest 7
-- [ ] T5.11 Add M5 manual checks to HUMAN_CHECKS (real Claude/Codex resume across `mk daemon stop`, Undo dialog, conflict badges, history viewer, §14 design check) and tick verified criteria; covers: all remaining. (spec: §18 M5)
+_Empty: the next session plans M6 (`mkrew-plan-milestone`)._
 
-M4 left 4 of 6 criteria unticked; all wait on the T4.7–T4.10 manual checks in HUMAN_CHECKS (task
-dialog, drag & drop, card actions, real Claude/Codex `arg` runs, §14 design check). If one fails,
-add a fix task to M5 first. M3's unticked criteria (T3.4–T3.9 manual checks) still wait too.
+M5 left 4 of 6 criteria unticked; all wait on the T5.4, T5.7, T5.9 and T5.11 manual checks in
+HUMAN_CHECKS (real Claude/Codex resume across a daemon restart, Undo dialog, conflict badges,
+history viewer, §14 design check). If one fails, add a fix task to M6 first. M3/M4's unticked
+criteria (T3.4–T3.9, T4.7–T4.10 manual checks) still wait too.
 
 ### Done (last 10)
 
-_M0–M4 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m4-done`; unticked criteria are in HUMAN_CHECKS)._
+_M0–M5 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m5-done`; unticked criteria are in HUMAN_CHECKS)._
 
 ## Notes for the next session
 
+- T5.11: M5 complete (tag `m5-done`); manual M5 checks are HUMAN_CHECKS T5.4/T5.7/T5.9/T5.11. Next: plan M6 (Markdown review) — the T5.5 watcher (`watch.rs`, `files_changed`) is the base for "md files agents just changed" and external-edit refresh.
 - T5.10: `crates/mkrew-daemon/src/backup.rs` (`start(hub, dir)` from `Daemon::serve`, aborted on shutdown; check now + every `EVERY` = 1 h; pure-ish `run(store, dir, now_ms) → Option<created>`, `prune(dir, KEEP = 7)`, `file_name(now_ms)` = UTC `mkrew-YYYY-MM-DD.db`, `.db.partial` → rename). `Store::backup_to(path)` = `VACUUM INTO`; `Paths::backups_dir()`. E2E: `startup_marks_stale_sessions_exited` also waits for the startup backup. Defaults (UTC, hourly check) in HUMAN_CHECKS T5.10. Backups criterion ticked (automated). Next: T5.11 = M5 manual checks + wrap-up.
 - T5.9: `crates/mkrew-ui/src/history.rs` (pure `HistoryDialog{project_id, workspace, listing: Listing::{Loading, Loaded, Failed}, selected, log: Log::{Loading, Shown{cut}, Empty, Failed}}`, `load → newest to read`, `select`, `neighbour`, `finished`, `label/details/failed`, `key → Key::{Close, Move}`, `read_tail(files, TAIL_BYTES = 2 MiB) → Tail{bytes, cut}`). `TerminalPane::replay(&Session, log, ..)` = read-only pane (exited set, session cols/rows). main.rs: "History" button in the tab bar → `show_history` (`session.list{project_id}`), `open_history(serial)`, `select_history`, `load_history_log` (files read on the background executor), `close_history`, `history_key_down`, `render_history`; `Shell.{history, history_pane}`; `focus_pane` focuses the replay pane while open. Theme `HISTORY_DIALOG_FRACTION/HISTORY_LIST_WIDTH`. History criterion waits for the T5.9 manual check. Open review SHOULDs: VTE parse of the 2 MiB tail runs on the UI thread, no Retry on list/log failure, no shortcut/keyboard focus ring on rows, empty state has no primary action. Flaky under load: daemon `big_paste_to_a_child_that_does_not_read_leaves_the_daemon_responsive` ("no Sleeper ready") — passed on rerun.
 - T5.8: `Request::SessionHistory(SessionRef)` → `SessionHistory{files: Vec<PathBuf>}` (existing parts oldest first; SPEC §7 row refined from "path" to `files[]`), `PROTOCOL_VERSION = 8`. Daemon `session_log::{path(dir, id), files(path)}` (spawn uses `path` too); `Store::get_session(id)` (`SessionNotFound` → `not_found` "no session with id …"). CLI `mk session history <id>` copies the raw files to stdout (skips a part rotated away meanwhile). E2E `session_history_survives_a_daemon_restart` (crates/mkrew-cli/tests/cli.rs). Logs are raw PTY bytes (ANSI) — T5.9 feeds them (tail-bounded) into the UI `Emulator`. History criterion waits for T5.9 + its manual check. Reviewer NITs open: BrokenPipe on `mk session history | head` exits non-zero.

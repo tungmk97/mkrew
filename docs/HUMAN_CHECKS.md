@@ -281,6 +281,32 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   the keyboard to the focused pane. A log > 2 MB shows the "Older output is left out" note.
   Empty workspace → "No finished sessions in this workspace yet." Dark + light screenshots §14.
 
+- [ ] (T5.11) **M5 wrap-up — the unticked M5 criteria.** Watcher ignores and daily backups are
+  ticked (automated: `file_watcher_records_changed_files_of_live_sessions_except_ignored_ones`,
+  backup unit tests + `startup_marks_stale_sessions_exited`). Restart the daemon first
+  (protocol v8), with `mk` on PATH and `mk integration install claude` / `codex` done (the
+  native session id comes from hooks).
+  - **Real Claude/Codex resume across a daemon restart** (criterion 1): run a Board task with
+    `claude` and one with `codex` (`agents/claude.toml` `resume = "claude --resume {session_id}"`,
+    `agents/codex.toml` `resume = "codex resume {session_id}"`); after the first turn, check a
+    hook arrived (the pane header status hover says "from hook"; `mk session list` does not
+    print the native id). `mk daemon stop`
+    while both are running/needs_input, start the app → each task gets a new session in the
+    same tab slot, and the agent shows the SAME conversation (scroll back: the earlier prompt
+    and answer). Send a follow-up → it continues with that context. A task whose agent has no
+    `resume` (e.g. `shell`) → needs input + error row. Also check on Windows that the npm
+    `.cmd` shim launch passes the resume argv (session id) through unchanged, and note if Codex's `resume` subcommand
+    syntax differs in the installed version.
+  - **Undo shows the diff and needs confirmation** (criterion 2): the T5.4 check above (backend
+    already covered by daemon tests + `mk task undo` without `--yes` only previewing).
+  - **UI warns on both cards** (criterion 3): the T5.7 check above, with two real Claude tasks
+    (hooks installed) editing one file within 60 s; also note false positives from the
+    "single working session" watcher heuristic (T5.6 note below).
+  - **History viewable after a restart** (criterion 5): the T5.9 check above, with a real
+    Claude session's log (alternate screen, colors, wide glyphs).
+  - **§14 design check**: dark + light screenshots of the Undo dialog, a conflict badge on a
+    card and a pane header, and the History dialog.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
