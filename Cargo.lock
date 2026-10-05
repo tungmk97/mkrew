@@ -3244,6 +3244,7 @@ name = "mkrew-core"
 version = "0.1.0"
 dependencies = [
  "insta",
+ "mkrew-protocol",
  "regex",
  "serde",
  "tempfile",

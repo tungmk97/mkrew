@@ -97,6 +97,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   unknown keys are errors (catches typos); `prompt_mode` defaults to `none`, `[state]` to
   `mode = "screen"`, `idle_after_ms = 3000`; name defaults to the file stem. A missing
   `command` is reported with the file but no line (no span for an absent key).
+- (T1.4) State machine details SPEC §6/§8 leave open: a `needs_input_patterns` match on the
+  last 4 non-blank screen lines (up to the cursor) gives `needs_input` at once, no idle wait;
+  only `working` decays to `idle`; `done` is never downgraded by the screen; hook-only
+  profiles go `starting` → `unknown` on first output. The send queue also delivers in
+  `unknown` (otherwise a session we cannot read never gets input), one message at a time
+  (the next one waits for PTY output). Tail size needs tuning with recorded agent output.
 
 ## Done
 
