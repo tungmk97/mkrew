@@ -71,6 +71,11 @@ impl Paths {
         self.data_dir.join("sessions")
     }
 
+    /// Daily copies of `mkrew.db` (SPEC §8).
+    pub fn backups_dir(&self) -> PathBuf {
+        self.data_dir.join("backups")
+    }
+
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")
     }

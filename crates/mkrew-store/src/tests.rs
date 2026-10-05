@@ -53,6 +53,21 @@ fn newer_schema_is_rejected() {
 }
 
 #[test]
+fn backup_to_writes_a_readable_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let store = open(&dir);
+    let project = store.add_project(&repo, Some("repo")).unwrap();
+    let copy = dir.path().join("copy.db");
+    store.backup_to(&copy).unwrap();
+    let restored = Store::open(&copy).unwrap();
+    assert_eq!(restored.list_projects().unwrap(), vec![project]);
+    // An existing copy is never overwritten.
+    assert!(store.backup_to(&copy).is_err());
+}
+
+#[test]
 fn projects_persist_across_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("my-repo");

@@ -778,6 +778,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   SHOULDs (backlog): parse the tail off the UI thread (a 2 MiB log may stall one frame), a
   Retry button on list/log failures, focusable rows with a focus ring (↑ / ↓ work), a primary
   action in the empty state, a clean exit's ✕ is muted (only non-zero codes use the exited color).
+- (T5.10) Daily backups are named by the **UTC** date (no time-zone crate; SPEC does not say
+  which), so the "day" flips at local UTC midnight. The daemon checks at startup and then every
+  hour (not every 24 h: monotonic timers pause during suspend) and writes `VACUUM INTO`
+  `mkrew-<date>.db.partial` → rename, then keeps the newest 7 `mkrew-YYYY-MM-DD.db` (other files
+  untouched). Only while the daemon runs: a day it never ran has no backup. The copy runs under
+  the store mutex (requests wait while it runs; fine at today's DB size — review SHOULD: lock
+  only around `backup_to` if the DB grows). No restore command (copy the file over `mkrew.db`
+  with the daemon stopped).
 
 ## Done
 

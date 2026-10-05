@@ -470,6 +470,25 @@ fn startup_marks_stale_sessions_exited() {
     let (mut daemon, mut client) = env.start();
     let status: DaemonStatusResult = client.call(Request::DaemonStatus).into_result().unwrap();
     assert_eq!(status.sessions, 0);
+    // Startup also writes today's DB backup (SPEC §8).
+    let backups = env.data_dir().join("backups");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let backup = loop {
+        let found = std::fs::read_dir(&backups).ok().and_then(|entries| {
+            entries
+                .map(|e| e.unwrap().path())
+                .find(|p| p.extension().is_some_and(|x| x == "db"))
+        });
+        if let Some(path) = found {
+            break path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no backup in {}",
+            backups.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
     client
         .call(Request::DaemonStop)
         .into_result::<()>()
@@ -480,6 +499,8 @@ fn startup_marks_stale_sessions_exited() {
     assert_eq!(sessions[0].id, session_id);
     assert_eq!(sessions[0].state, SessionState::Exited);
     assert!(env.data_dir().join("logs").read_dir().unwrap().count() > 0);
+    let backed_up = Store::open(&backup).unwrap().list_sessions(None).unwrap();
+    assert_eq!(backed_up[0].id, session_id);
 }
 
 #[test]

@@ -72,6 +72,17 @@ impl Store {
         user_version(&self.conn)
     }
 
+    /// Writes a consistent copy of the database to `path` (`VACUUM INTO`, safe while in use).
+    /// SQLite refuses to overwrite an existing non-empty file.
+    pub fn backup_to(&self, path: &Path) -> Result<()> {
+        let target = path.to_str().ok_or_else(|| StoreError::Path {
+            path: path.to_path_buf(),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "path is not UTF-8"),
+        })?;
+        self.conn.execute("VACUUM INTO ?1", [target])?;
+        Ok(())
+    }
+
     /// Adds a project for the directory at `path` (canonicalized with `dunce`). `name`
     /// defaults to the directory name.
     pub fn add_project(&self, path: &Path, name: Option<&str>) -> Result<Project> {

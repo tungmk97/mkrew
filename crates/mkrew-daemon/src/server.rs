@@ -25,7 +25,7 @@ use crate::git::{GitBackend, GitCli};
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
-use crate::{session_log, undo};
+use crate::{backup, session_log, undo};
 
 mod resume;
 
@@ -69,12 +69,15 @@ impl Daemon {
         })
     }
 
-    /// Resumes interrupted tasks, then serves `listener` until `daemon.stop` or Ctrl+C, then
-    /// stops every session (SPEC §8). `notifier` = `None` turns OS notifications off.
+    /// Starts daily DB backups, resumes interrupted tasks, then serves `listener` until
+    /// `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
+    /// OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let notifications = notifier.map(|n| notify::start(Arc::clone(&self.hub), n));
+        let backups = backup::start(Arc::clone(&self.hub), self.paths.backups_dir());
         self.resume_tasks();
         Arc::clone(&self).accept(listener).await;
+        backups.abort();
         if let Some(task) = notifications {
             task.abort();
         }
