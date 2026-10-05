@@ -1709,6 +1709,52 @@ fn task_run_delivers_the_prompt_per_mode_and_the_card_follows_the_session() {
     client.stop();
 }
 
+/// npm installs `claude`/`codex` as `.cmd` shims; an `arg` prompt full of cmd.exe
+/// metacharacters must still reach the agent verbatim (HUMAN_CHECKS T1.8). The `.js` →
+/// node shim form needs a real node, so it is covered by `launch.rs` unit tests (argv) only.
+#[cfg(windows)]
+#[test]
+fn task_run_passes_metacharacter_prompts_through_npm_cmd_shims() {
+    let env = Env::new();
+    let bin = env.dir.path().join("npm");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(built_bin("mkrew-fakeagent"), bin.join("fake-cli.exe")).unwrap();
+    let shim = bin.join("fake-cli.cmd");
+    std::fs::write(&shim, "@ECHO off\r\n\"%dp0%\\fake-cli.exe\"   %*\r\n").unwrap();
+    let sample = include_str!("../../../agents/fake.toml");
+    let profile = sample
+        .replace(
+            "command = \"mkrew-fakeagent\"",
+            &format!("command = '{}'", shim.display()),
+        )
+        .replace("prompt_mode = \"none\"", "prompt_mode = \"arg\"");
+    env.write_profile("shimmed", &profile);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let prompt = "fix \"a&b\" at 100% ^!|<x>";
+    let task: Task = client
+        .call(Request::TaskCreate(TaskCreateParams {
+            project_id: project.id,
+            title: "shim".into(),
+            prompt: prompt.into(),
+            agent_profile: Some("shimmed".into()),
+            position: None,
+        }))
+        .into_result()
+        .unwrap();
+
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+    client
+        .call(send(run.session_id, "y"))
+        .into_result::<()>()
+        .unwrap();
+    wait_task(&mut client, task.id, |t| t.status == TaskStatus::Review);
+    let log = session_log(&env, run.session_id);
+    assert!(log.contains(&format!("Task: {prompt}")), "{log:?}");
+    client.stop();
+}
+
 fn session_log(env: &Env, id: Ulid) -> String {
     let path = env.data_dir().join("sessions").join(format!("{id}.log"));
     String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned()

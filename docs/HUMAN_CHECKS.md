@@ -327,7 +327,8 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (`invalid_request` naming the arg); `.exe`/`.ps1` get any args. This blocks `prompt_mode =
   "arg"` prompts with such characters for npm shims like `claude.cmd` — M2 (`task.run`) must
   choose: vendor portable-pty's `cmdline()` with std's BatBadBut escaping, or parse the npm
-  shim and run `node <script.js>` directly. Other T1.8 defaults: the daemon seeds the repo's
+  shim and run `node <script.js>` directly (**resolved in T4.4**: npm shims are unwrapped, the
+  refusal stays for other batch files). Other T1.8 defaults: the daemon seeds the repo's
   sample profiles into `<config>/agents` per missing file (never overwrites) and re-reads
   profiles on every spawn; `session.kill` on an exited session is ok (idempotent); graceful
   kill = close the pseudo console (Windows) / SIGHUP (Unix), forced after 5 s
@@ -549,7 +550,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `session.send`; bracketed paste = backlog). A card moved by the run lifecycle keeps its
   `position` (it may land mid-column). Sessions ended by daemon shutdown do not move their card
   (it stays running/needs_input for the §8 startup resume instead of getting `error_flag`).
-  `arg` prompts with cmd metacharacters still fail for `.cmd` shims until T4.4.
+  `arg` prompts with cmd metacharacters for `.cmd` shims: see T4.4.
+- (T4.4) `.cmd` prompt args: chose **npm-shim unwrapping** over vendoring portable-pty's
+  `cmdline()` (no fork; SPEC only asks to honor PATHEXT, so no ADR). A `.cmd` whose `%*` line is
+  exactly `<launcher> "%dp0%\<target>" %*` (or `%~dp0`; launcher = nothing, `&`, `"%_prog%"`,
+  `node`, `…\node.exe"`) runs its target directly: `.exe` as is, `.js/.cjs/.mjs` via the shim
+  dir's `node.exe`, else `node.exe` on PATH (a `node.cmd`/`.ps1` wrapper is refused). The
+  shim's `SET`s are skipped (e.g. pnpm's `NODE_PATH`) — fine for claude/codex. Shebang flags,
+  extra args, missing targets, other batch files → old rule (metachar args refused). Ctrl+C no
+  longer shows cmd's "Terminate batch job". Check: real `claude.cmd`/`codex.cmd` task with an
+  `arg` prompt like `fix "a&b" 100%` (listed with the T4.10 manual checks).
 
 ## Done
 
