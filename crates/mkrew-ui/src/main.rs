@@ -998,6 +998,22 @@ impl Shell {
                     self.open_in_zed(project_id, cx);
                 }
             }
+            Command::NextInbox => {
+                let entries = inbox::entries(
+                    self.sidebar.projects(),
+                    self.sidebar.sessions(),
+                    &self.viewed,
+                );
+                let focused = self.focused_session().and_then(|id| {
+                    self.sidebar
+                        .sessions()
+                        .iter()
+                        .find(|session| session.id == id)
+                });
+                if let Some(session) = inbox::next(&entries, focused) {
+                    self.open_session(session, window, cx);
+                }
+            }
             // Handled by the focused terminal pane.
             Command::Copy
             | Command::Paste
@@ -1478,11 +1494,17 @@ impl Shell {
             n => format!("Inbox ({n})"),
         };
         let header = div()
+            .id("inbox-header")
             .px(px(space::M))
             .py(px(space::S))
             .text_size(px(font_size::META))
             .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text_muted))
+            .tooltip(tooltip(
+                theme,
+                "Jump to next item needing attention",
+                self.keymap.label(Command::NextInbox),
+            ))
             .child(title);
         let body = if entries.is_empty() {
             div()

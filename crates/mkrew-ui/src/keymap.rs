@@ -50,6 +50,8 @@ pub enum Command {
     Find,
     /// Open the active workspace in Zed.
     OpenInZed,
+    /// Jump to the next Inbox entry (after the focused session, wrapping).
+    NextInbox,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -96,6 +98,7 @@ impl Command {
             Command::PageDown,
             Command::Find,
             Command::OpenInZed,
+            Command::NextInbox,
         ]);
         all
     }
@@ -132,6 +135,7 @@ impl Command {
             Command::PageDown => "page_down".into(),
             Command::Find => "find".into(),
             Command::OpenInZed => "open_in_zed".into(),
+            Command::NextInbox => "next_inbox".into(),
         }
     }
 
@@ -173,6 +177,7 @@ impl Command {
             Command::PageDown => "shift-pagedown".into(),
             Command::Find => "ctrl-shift-f".into(),
             Command::OpenInZed => "ctrl-shift-z".into(),
+            Command::NextInbox => "ctrl-shift-i".into(),
         }
     }
 
@@ -441,6 +446,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-r"), Some(Command::RenameTab));
         assert_eq!(bound("ctrl-shift-m"), Some(Command::ZoomPane));
         assert_eq!(bound("ctrl-shift-z"), Some(Command::OpenInZed));
+        assert_eq!(bound("ctrl-shift-i"), Some(Command::NextInbox));
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))

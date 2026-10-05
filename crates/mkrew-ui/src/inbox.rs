@@ -71,6 +71,29 @@ pub fn entries(projects: &[Project], sessions: &[Session], viewed: &Viewed) -> V
     entries
 }
 
+/// The session "next Inbox entry" (§13) jumps to: the entry after `focused`, wrapping to the
+/// first. A focused `done` session already left the Inbox once viewed, so it counts from where
+/// it was listed; any other unlisted focus starts at the first (newest) entry. `None` if the
+/// Inbox is empty.
+pub fn next(entries: &[Entry], focused: Option<&Session>) -> Option<Ulid> {
+    let key = |at: i64, id: Ulid| std::cmp::Reverse((at, id));
+    let after = focused.map_or(0, |focused| {
+        let listed = entries.iter().position(|e| e.session_id == focused.id);
+        match listed {
+            Some(index) => index + 1,
+            None if focused.state == SessionState::Done => {
+                let was = key(focused.state_changed_at, focused.id);
+                entries.partition_point(|e| key(e.state_changed_at, e.session_id) < was)
+            }
+            None => 0,
+        }
+    });
+    entries
+        .get(after)
+        .or_else(|| entries.first())
+        .map(|entry| entry.session_id)
+}
+
 /// What a clicked OS notification shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Jump {
@@ -193,6 +216,46 @@ mod tests {
         let mut viewed = Viewed::default();
         viewed.view(&asking);
         assert_eq!(entries(&[api], &[asking], &viewed).len(), 1);
+    }
+
+    #[test]
+    fn next_entry_follows_the_focused_session_and_wraps() {
+        let api = project("api");
+        let sessions: Vec<Session> = (1..=3)
+            .map(|at| session(&api, SessionState::NeedsInput, at))
+            .collect();
+        let entries = entries(std::slice::from_ref(&api), &sessions, &Viewed::default());
+        let [oldest, middle, newest] = [&sessions[0], &sessions[1], &sessions[2]];
+        let working = session(&api, SessionState::Working, 2);
+
+        assert_eq!(next(&entries, None), Some(newest.id));
+        assert_eq!(next(&entries, Some(&working)), Some(newest.id));
+        assert_eq!(next(&entries, Some(newest)), Some(middle.id));
+        assert_eq!(next(&entries, Some(middle)), Some(oldest.id));
+        assert_eq!(next(&entries, Some(oldest)), Some(newest.id));
+        assert_eq!(next(&entries[..1], Some(newest)), Some(newest.id));
+        assert_eq!(next(&[], Some(newest)), None);
+    }
+
+    #[test]
+    fn next_entry_after_a_viewed_done_keeps_its_place() {
+        let api = project("api");
+        let newest = session(&api, SessionState::NeedsInput, 3);
+        let done = session(&api, SessionState::Done, 2);
+        let oldest = session(&api, SessionState::NeedsInput, 1);
+        let mut viewed = Viewed::default();
+        viewed.view(&done);
+        let sessions = [newest.clone(), done.clone(), oldest.clone()];
+        let entries = entries(&[api], &sessions, &viewed);
+        assert_eq!(ids(&entries), vec![newest.id, oldest.id]);
+
+        assert_eq!(next(&entries, Some(&done)), Some(oldest.id));
+        // The oldest done wraps around.
+        let older = Session {
+            state_changed_at: 0,
+            ..done.clone()
+        };
+        assert_eq!(next(&entries, Some(&older)), Some(newest.id));
     }
 
     #[test]
