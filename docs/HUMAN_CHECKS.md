@@ -216,6 +216,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
     omp is still thinking or never leaves working (e.g. a blinking cursor/clock redraws), note
     what the screen shows; the next session tunes `idle_after_ms` / patterns (see the T3.8 note under "Questions with assumed defaults").
 
+- [ ] (T4.7) **Task dialog.** Restart the daemon and app, open a workspace's Board
+  (Ctrl+Shift+1). Empty board → "New task" button; Ctrl+Shift+N opens the dialog from anywhere
+  (also from Terminals, switching to the Board). Type a title, Tab to the prompt, type several
+  lines past the field height (it should scroll with the caret), paste with Ctrl+V, pick an
+  agent chip, Enter in the title or Ctrl+Enter saves → card appears in Todo. Hover a card →
+  "Edit" appears; change fields → Save updates the card; `mk task list` shows the change.
+  Delete → native confirm → card disappears; delete a task whose session still runs → error
+  in the dialog. Esc cancels. Check AltGr characters (e.g. `{ [ ] }` on a German layout) type
+  into the fields. Dark + light theme screenshots for the §14 design check.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -571,6 +581,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   bound as `ctrl-shift-1/2`; whether Windows reports shifted digits that way is part of the
   T4.10 manual board check. The empty board names `mk task add` until T4.7 adds the New task
   action.
+- (T4.7) Task dialog: modal; clicking the shade does **not** cancel (a stray click never throws
+  a draft away; Esc / Cancel do), and shortcuts are ignored while it is open. Enter saves from
+  the title and adds a new line in the prompt; Ctrl/Cmd+Enter saves anywhere; Tab toggles
+  title ↔ prompt. Title and prompt are trimmed; a blank title is refused in the dialog. Edit
+  sends only changed fields, diffed against the board's current task. Edit and delete live in
+  the dialog, opened from a hover-revealed "Edit" on the card (no keyboard path until T4.9
+  adds a selected card; agent chips are mouse-only for now). Text fields only append/backspace
+  at the end (no caret movement, selection or IME composition yet — backlog). A daemon
+  disconnect drops an open draft (the whole UI resets). Delete confirm text says past sessions
+  stay in the sidebar (ADR 0004 detaches them).
 
 ## Done
 

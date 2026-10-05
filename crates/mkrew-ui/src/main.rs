@@ -13,16 +13,16 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, KeyDownEvent,
-    MouseButton, PathPromptOptions, PromptLevel, SharedString, Subscription, TitlebarOptions,
-    Window, WindowAppearance, WindowBounds, WindowOptions, anchored, deferred, div, px, relative,
-    rgb, size,
+    MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, SharedString, Subscription,
+    TitlebarOptions, Window, WindowAppearance, WindowBounds, WindowOptions, anchored, deferred,
+    div, px, relative, rgb, size,
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
     SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
     SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, Task, TaskListParams, TerminalTab,
+    TabSetLayoutParams, Task, TaskListParams, TaskRef, TerminalTab,
 };
 use mkrew_ui::board::{self, Board, Card, View};
 use mkrew_ui::client::{Connection, Incoming};
@@ -34,6 +34,7 @@ use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
 use mkrew_ui::status;
 use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, on_screen, rename_params};
+use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
@@ -164,6 +165,14 @@ struct Shell {
     board_error: Option<String>,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
+    /// The open new / edit task dialog (modal).
+    task_dialog: Option<TaskDialog>,
+    /// Focused while the task dialog is open; its keys edit the draft.
+    dialog_focus: FocusHandle,
+    /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
+    prompt_scroll: ScrollHandle,
+    /// Bumped per opened dialog, so a late save/delete reply never closes a newer one.
+    dialog_serial: u64,
 }
 
 impl Shell {
@@ -281,6 +290,7 @@ impl Shell {
                 shell.attach_errors.clear();
                 shell.renaming = None;
                 shell.workspace_menu = None;
+                shell.task_dialog = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -322,6 +332,10 @@ impl Shell {
             board: Board::default(),
             board_error: None,
             views: HashMap::new(),
+            task_dialog: None,
+            dialog_focus: cx.focus_handle(),
+            prompt_scroll: ScrollHandle::new(),
+            dialog_serial: 0,
         }
     }
 
@@ -738,6 +752,11 @@ impl Shell {
     }
 
     fn focus_pane(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // The modal task dialog keeps the keyboard until it closes.
+        if self.task_dialog.is_some() {
+            window.focus(&self.dialog_focus, cx);
+            return;
+        }
         match self
             .focused_session()
             .and_then(|session| self.panes.get(&session))
@@ -937,6 +956,195 @@ impl Shell {
         .detach();
     }
 
+    /// Shows the modal task dialog (replacing any open one) and lists the agent profiles for
+    /// its picker.
+    fn open_task_dialog(
+        &mut self,
+        dialog: TaskDialog,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.workspace_menu = None;
+        self.task_dialog = Some(dialog);
+        self.dialog_serial += 1;
+        let serial = self.dialog_serial;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+        let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
+        cx.spawn_in(window, async move |this, cx| {
+            let agents = match listed.await {
+                Ok(listed) => Agents::Loaded(listed.profiles),
+                Err(error) => Agents::Failed(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                if let Some(dialog) = shell.open_dialog(serial) {
+                    dialog.agents = agents;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The open task dialog, if it is still the one opened as `serial`.
+    fn open_dialog(&mut self, serial: u64) -> Option<&mut TaskDialog> {
+        self.task_dialog
+            .as_mut()
+            .filter(|_| self.dialog_serial == serial)
+    }
+
+    fn close_task_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.task_dialog = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// Keys typed in the task dialog edit the focused field; Enter (title) or Ctrl+Enter
+    /// saves, Esc cancels.
+    fn task_dialog_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == DialogKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(dialog) = self.task_dialog.as_mut() else {
+            return;
+        };
+        if let Some(text) = paste {
+            dialog.insert(&text);
+        }
+        match dialog.key(key) {
+            task_dialog::Outcome::Edited => {
+                if dialog.field == Field::Prompt {
+                    self.prompt_scroll.scroll_to_bottom();
+                }
+                cx.notify();
+            }
+            task_dialog::Outcome::Cancel => self.close_task_dialog(window, cx),
+            task_dialog::Outcome::Save => self.save_task(window, cx),
+        }
+    }
+
+    /// `task.create` / `task.update` for the dialog's draft; the dialog closes once it is
+    /// saved and shows the error otherwise.
+    fn save_task(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(dialog) = self.task_dialog.as_mut().filter(|dialog| !dialog.busy) else {
+            return;
+        };
+        // Diff against the task as it is now (`mk` or a run may have changed it meanwhile).
+        if let Some(task) = dialog.task_id().and_then(|id| self.board.task(id)) {
+            dialog.mode = task_dialog::Mode::Edit(task.clone());
+        }
+        let request = match dialog.save_request() {
+            Ok(Some(request)) => request,
+            Ok(None) => return self.close_task_dialog(window, cx),
+            Err(invalid) => {
+                dialog.error = Some(invalid.to_owned());
+                cx.notify();
+                return;
+            }
+        };
+        dialog.busy = true;
+        dialog.error = None;
+        cx.notify();
+        let saved = connection.call::<Task>(request);
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = saved.await;
+            let _ = this.update_in(cx, |shell, window, cx| match saved {
+                Ok(task) => {
+                    // Shown at once, without waiting for the `task.updated` echo.
+                    shell.board.apply(&Event::TaskUpdated(task));
+                    if shell.open_dialog(serial).is_some() {
+                        shell.close_task_dialog(window, cx);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!("saving a task failed: {error:#}");
+                    if let Some(dialog) = shell.open_dialog(serial) {
+                        dialog.busy = false;
+                        dialog.error = Some(format!("Cannot save the task: {error:#}"));
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Asks, then `task.delete`s the task being edited. The daemon refuses while its session
+    /// still runs; the dialog shows why.
+    fn delete_task(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(task_id) = self
+            .task_dialog
+            .as_ref()
+            .filter(|dialog| !dialog.busy)
+            .and_then(TaskDialog::task_id)
+        else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Delete this task?",
+            Some("The card and its prompt are removed. Its past sessions stay in the sidebar."),
+            &task_dialog::DELETE_ANSWERS,
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if !task_dialog::confirms_delete(answer.await.ok()) {
+                return;
+            }
+            let deleted = this.update(cx, |shell, cx| {
+                let dialog = shell.open_dialog(serial).filter(|dialog| !dialog.busy)?;
+                dialog.busy = true;
+                dialog.error = None;
+                cx.notify();
+                Some(connection.request(Request::TaskDelete(TaskRef { task_id })))
+            });
+            let Ok(Some(deleted)) = deleted else {
+                return;
+            };
+            let failure = match deleted.await {
+                Ok(Outcome::Result(_)) => None,
+                Ok(Outcome::Error(body)) => Some(body.message),
+                Err(error) => Some(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| match failure {
+                None => {
+                    if shell.open_dialog(serial).is_some() {
+                        shell.close_task_dialog(window, cx);
+                    }
+                }
+                Some(error) => {
+                    tracing::warn!(%task_id, "task.delete failed: {error}");
+                    if let Some(dialog) = shell.open_dialog(serial) {
+                        dialog.busy = false;
+                        dialog.error = Some(format!("Cannot delete the task: {error}"));
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Starts an agent (the workspace's default agent) or a shell in the workspace folder and
     /// shows it next to the focused pane of the active tab, split along `axis`.
     fn new_pane(
@@ -993,6 +1201,12 @@ impl Shell {
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
+        // The task dialog is modal: bound keys go on to its key handler (e.g. Ctrl+Alt+digit
+        // is AltGr on many layouts) instead of acting behind it.
+        if self.task_dialog.is_some() {
+            cx.propagate();
+            return;
+        }
         if self.view() == View::Board {
             match *command {
                 // Opening or picking a tab or pane shows the terminals.
@@ -1090,6 +1304,13 @@ impl Shell {
             }
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
+            Command::NewTask => {
+                if let Some(project_id) = self.workspace {
+                    // The new card shows up on the board.
+                    self.show_view(View::Board, window, cx);
+                    self.open_task_dialog(TaskDialog::new(project_id), window, cx);
+                }
+            }
             // Handled by the focused terminal pane.
             Command::Copy
             | Command::Paste
@@ -1775,7 +1996,7 @@ impl Shell {
             .flex_col()
             .child(self.render_view_bar(view, theme, cx));
         match (view, self.tabs.get(&project_id)) {
-            (View::Board, _) => main.child(self.render_board(project_id, now, theme)),
+            (View::Board, _) => main.child(self.render_board(project_id, now, theme, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
                 .child(self.render_tab(tabs, now, theme, cx)),
@@ -1827,10 +2048,24 @@ impl Shell {
                     }))
                     .child(view.title())
             }))
+            .when_some(
+                self.workspace
+                    .filter(|&id| shown == View::Board && self.board.has_tasks(id)),
+                |el, project_id| {
+                    el.child(div().flex_1())
+                        .child(self.new_task_button(project_id, false, theme, cx))
+                },
+            )
     }
 
     /// The workspace's task board: one column per status (SPEC §10), read-only for now.
-    fn render_board(&self, project_id: Ulid, now: i64, theme: &Theme) -> gpui::AnyElement {
+    fn render_board(
+        &self,
+        project_id: Ulid,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
         let project = self.sidebar.projects().iter().find(|p| p.id == project_id);
         let empty = |sentence: &str, detail: Option<String>| {
             message(
@@ -1849,11 +2084,10 @@ impl Shell {
             };
         }
         if !self.board.has_tasks(project_id) {
-            let name = project.map_or_else(|| project_id.to_string(), |p| p.name.clone());
-            return empty(
-                "No tasks yet.",
-                Some(format!("Add one with: mk task add \"{name}\" \"<title>\"")),
-            );
+            return message(theme, None, "No tasks yet.".into(), None)
+                .flex_1()
+                .child(self.new_task_button(project_id, true, theme, cx))
+                .into_any_element();
         }
         let default_agent = project.and_then(|p| p.default_agent.as_deref());
         let columns = self
@@ -1885,9 +2119,237 @@ impl Shell {
                     .children(
                         columns
                             .into_iter()
-                            .map(|column| board_column(column, now, theme)),
+                            .map(|column| board_column(column, now, theme, cx)),
                     ),
             )
+            .into_any_element()
+    }
+
+    /// "New task" with its shortcut: the primary action of the empty board, else quiet.
+    fn new_task_button(
+        &self,
+        project_id: Ulid,
+        primary: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let keys = self.keymap.label(Command::NewTask);
+        button("new-task", "New task", theme, primary)
+            .flex_none()
+            .tooltip(tooltip(theme, "New task", keys.clone()))
+            .child(
+                div()
+                    .text_size(px(font_size::META))
+                    .opacity(opacity::SECONDARY)
+                    .child(keys),
+            )
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.open_task_dialog(TaskDialog::new(project_id), window, cx);
+            }))
+    }
+
+    /// The modal new / edit task dialog over a shade that blocks the window behind it (a
+    /// stray click there never throws a draft away; Esc or Cancel does).
+    fn render_task_dialog(
+        &self,
+        dialog: &TaskDialog,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let editing = dialog.task_id().is_some();
+        let default_agent = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|project| project.id == dialog.project_id())
+            .and_then(|project| project.default_agent.as_deref());
+        let label = |text: &'static str| {
+            div()
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let field = |id: &'static str, which: Field, text: &str, placeholder: &'static str| {
+            text_field(id, text, placeholder, dialog.field == which, theme).on_click(cx.listener(
+                move |shell, _, _, cx| {
+                    if let Some(dialog) = shell.task_dialog.as_mut() {
+                        dialog.field = which;
+                        cx.notify();
+                    }
+                },
+            ))
+        };
+        let agents = match &dialog.agents {
+            Agents::Loading => vec![label("Loading agents…").into_any_element()],
+            Agents::Failed(error) => vec![
+                notice(theme.text, format!("✕ Cannot list the agents: {error}")).into_any_element(),
+            ],
+            Agents::Loaded(profiles) => dialog
+                .agent_choices(profiles, default_agent)
+                .into_iter()
+                .map(|choice| {
+                    let hover = theme.surface_raised;
+                    let agent = choice.id;
+                    div()
+                        .id(SharedString::from(format!("task-agent-{agent}")))
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .border(px(theme::BORDER_WIDTH))
+                        .cursor_pointer()
+                        .text_size(px(font_size::BODY))
+                        .when(choice.selected, |el| {
+                            el.border_color(rgb(theme.accent))
+                                .text_color(rgb(theme.text))
+                                .font_weight(FontWeight(weight::MEDIUM))
+                                .child(format!("✓ {}", choice.label))
+                        })
+                        .when(!choice.selected, |el| {
+                            el.border_color(rgb(theme.border))
+                                .text_color(rgb(theme.text_muted))
+                                .hover(move |style| style.bg(rgb(hover)))
+                                .active(|style| style.opacity(opacity::ACTIVE))
+                                .child(choice.label)
+                        })
+                        .on_click(cx.listener(move |shell, _, _, cx| {
+                            if let Some(dialog) = shell.task_dialog.as_mut() {
+                                dialog.choose_agent(&agent);
+                                cx.notify();
+                            }
+                        }))
+                        .into_any_element()
+                })
+                .collect(),
+        };
+        let save_label = match (dialog.busy, editing) {
+            (true, _) => "Saving…",
+            (false, true) => "Save",
+            (false, false) => "Create task",
+        };
+        let panel = div()
+            .id("task-dialog")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::task_dialog_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(if editing { "Edit task" } else { "New task" }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .child(label("Title"))
+                    .child(field(
+                        "task-title",
+                        Field::Title,
+                        &dialog.title,
+                        "What should be done?",
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .child(label("Prompt"))
+                    .child(
+                        field(
+                            "task-prompt",
+                            Field::Prompt,
+                            &dialog.prompt,
+                            "Sent to the agent when the task runs.",
+                        )
+                        .h(px(theme::PROMPT_FIELD_HEIGHT))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.prompt_scroll),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .child(label("Agent"))
+                    .child(div().flex().flex_wrap().gap(px(space::XS)).children(agents)),
+            )
+            .children(dialog.error.clone().map(|error| {
+                div()
+                    .flex()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                    .child(div().text_color(rgb(theme.text)).child(error))
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .when(editing && dialog.busy, |el| {
+                        el.child(disabled_button("task-delete", "Delete", theme, false))
+                    })
+                    .when(editing && !dialog.busy, |el| {
+                        el.child(
+                            button("task-delete", "Delete", theme, false)
+                                .tooltip(tooltip(theme, "Delete this task", ""))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.delete_task(window, cx);
+                                })),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .child(
+                        button("task-cancel", "Cancel", theme, false)
+                            .tooltip(tooltip(theme, "Discard changes", "Esc"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.close_task_dialog(window, cx);
+                            })),
+                    )
+                    .child(if dialog.busy {
+                        disabled_button("task-save", save_label, theme, true)
+                    } else {
+                        button("task-save", save_label, theme, true)
+                            .tooltip(tooltip(theme, save_label, "Ctrl+Enter"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.save_task(window, cx);
+                            }))
+                    }),
+            );
+        div()
+            .id("task-dialog-shade")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(theme::DIALOG_SCRIM))
+            .occlude()
+            // The keyboard stays in the dialog.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|shell, _, window, cx| {
+                    cx.stop_propagation();
+                    shell.focus_pane(window, cx);
+                }),
+            )
+            .child(panel)
             .into_any_element()
     }
 
@@ -2328,6 +2790,87 @@ fn button(
     }
 }
 
+/// A [`button`] that cannot be used right now: faded, no hover, no click.
+fn disabled_button(
+    id: &'static str,
+    label: &'static str,
+    theme: &Theme,
+    primary: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let base = div()
+        .id(id)
+        .flex()
+        .items_center()
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .opacity(opacity::DISABLED)
+        .text_size(px(font_size::BODY))
+        .child(label);
+    if primary {
+        base.bg(rgb(theme.accent)).text_color(rgb(theme.surface))
+    } else {
+        base.text_color(rgb(theme.text_muted))
+    }
+}
+
+/// A text input of the task dialog: its lines with a caret at the end while `focused`, or a
+/// muted placeholder when empty. Callers make clicks focus it.
+fn text_field(
+    id: &'static str,
+    text: &str,
+    placeholder: &'static str,
+    focused: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let caret = || {
+        div()
+            .flex_none()
+            .w(px(theme::BORDER_WIDTH))
+            .h(px(font_size::BODY))
+            .bg(rgb(theme.text))
+    };
+    let lines: Vec<&str> = text.split('\n').collect();
+    let last = lines.len() - 1;
+    div()
+        .id(id)
+        .flex()
+        .flex_col()
+        .px(px(space::S))
+        .py(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(if focused {
+            theme.pane_focus_border
+        } else {
+            theme.border
+        }))
+        .bg(rgb(theme.surface_raised))
+        .text_size(px(font_size::BODY))
+        .text_color(rgb(theme.text))
+        .cursor(CursorStyle::IBeam)
+        .when(text.is_empty(), |el| {
+            el.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .when(focused, |row| row.child(caret()))
+                    .child(div().text_color(rgb(theme.text_muted)).child(placeholder)),
+            )
+        })
+        .when(!text.is_empty(), |el| {
+            el.children(lines.into_iter().enumerate().map(|(i, line)| {
+                // An empty line still takes a line's height.
+                let line = if line.is_empty() { " " } else { line };
+                div()
+                    .flex()
+                    .items_center()
+                    .child(div().min_w_0().child(line.to_owned()))
+                    .when(focused && i == last, |row| row.child(caret()))
+            }))
+        })
+}
+
 /// A full-width row of a popover menu; callers add the label (and a shortcut on the right).
 fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     // One step above the menu's own `surface_raised`.
@@ -2572,7 +3115,12 @@ fn inbox_row(
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks".
-fn board_column(column: board::Column, now: i64, theme: &Theme) -> gpui::AnyElement {
+fn board_column(
+    column: board::Column,
+    now: i64,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
     let count = column.cards.len();
     div()
         .flex_1()
@@ -2628,17 +3176,20 @@ fn board_column(column: board::Column, now: i64, theme: &Theme) -> gpui::AnyElem
                     column
                         .cards
                         .into_iter()
-                        .map(|card| task_card(card, now, theme)),
+                        .map(|card| task_card(card, now, theme, cx)),
                 ),
         )
         .into_any_element()
 }
 
-/// A task card: title, agent and run time, then its session's status (SPEC §10, §11).
-fn task_card(card: Card, now: i64, theme: &Theme) -> gpui::AnyElement {
+/// A task card: title (Edit on hover), agent and run time, then its session's status
+/// (SPEC §10, §11).
+fn task_card(card: Card, now: i64, theme: &Theme, cx: &mut Context<'_, Shell>) -> gpui::AnyElement {
     let run_time = card.run_time(now);
     let shows_error_row = card.shows_error_row();
     let task_id = card.task_id;
+    let group = SharedString::from(format!("card-{task_id}"));
+    let edit_hover = theme.border;
     div()
         .flex_none()
         .flex()
@@ -2647,12 +3198,45 @@ fn task_card(card: Card, now: i64, theme: &Theme) -> gpui::AnyElement {
         .p(px(space::M))
         .rounded(px(radius::MEDIUM))
         .bg(rgb(theme.surface_raised))
+        .group(group.clone())
         .child(
             div()
-                .text_size(px(font_size::CARD_TITLE))
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text))
-                .child(card.title),
+                .flex()
+                .items_start()
+                .gap(px(space::S))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(font_size::CARD_TITLE))
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text))
+                        .child(card.title),
+                )
+                // Shown on hover (SPEC §14 progressive disclosure).
+                .child(
+                    div()
+                        .id(SharedString::from(format!("card-edit-{task_id}")))
+                        .flex_none()
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .cursor_pointer()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .opacity(opacity::HIDDEN)
+                        .group_hover(group, |style| style.opacity(opacity::FULL))
+                        // One step above the card's own `surface_raised`.
+                        .hover(move |style| style.bg(rgb(edit_hover)))
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .tooltip(tooltip(theme, "Edit or delete this task", ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if let Some(task) = shell.board.task(task_id).cloned() {
+                                shell.open_task_dialog(TaskDialog::edit(task), window, cx);
+                            }
+                        }))
+                        .child("Edit"),
+                ),
         )
         .child(
             div()
@@ -2865,5 +3449,10 @@ impl Render for Shell {
             .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(now, &theme, cx))
             .child(self.render_main(now, &theme, cx))
+            .children(
+                self.task_dialog
+                    .as_ref()
+                    .map(|dialog| self.render_task_dialog(dialog, &theme, cx)),
+            )
     }
 }

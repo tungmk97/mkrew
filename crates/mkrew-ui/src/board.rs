@@ -162,6 +162,10 @@ impl Board {
         }
     }
 
+    pub fn task(&self, task_id: Ulid) -> Option<&Task> {
+        self.tasks.iter().find(|task| task.id == task_id)
+    }
+
     /// Whether `project_id` has any task.
     pub fn has_tasks(&self, project_id: Ulid) -> bool {
         self.tasks.iter().any(|task| task.project_id == project_id)

@@ -71,6 +71,11 @@ pub mod opacity {
     pub const HOVER: f32 = 0.9;
     pub const ACTIVE: f32 = 0.8;
     pub const SECONDARY: f32 = 0.8;
+    /// A control that cannot be used right now (e.g. Save while saving).
+    pub const DISABLED: f32 = 0.5;
+    /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
+    pub const HIDDEN: f32 = 0.0;
+    pub const FULL: f32 = 1.0;
 }
 
 /// Half the gap between split panes: each pane is inset by it, so panes sit `space::XS` apart
@@ -91,6 +96,15 @@ pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 
 /// Narrowest a board column gets; below that the board scrolls sideways.
 pub const BOARD_COLUMN_MIN_WIDTH: f32 = 200.0;
+
+/// Width of a modal dialog (the task dialog).
+pub const DIALOG_WIDTH: f32 = 520.0;
+
+/// Height of the prompt field in the task dialog (it scrolls past that).
+pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
+
+/// The shade behind a modal dialog (RGBA: black at ~35 %), in both appearances.
+pub const DIALOG_SCRIM: u32 = 0x0000_0059;
 
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;

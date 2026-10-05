@@ -56,6 +56,8 @@ pub enum Command {
     ShowBoard,
     /// Show the active workspace's terminal tabs.
     ShowTerminals,
+    /// Open the new task dialog for the active workspace.
+    NewTask,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -105,6 +107,7 @@ impl Command {
             Command::NextInbox,
             Command::ShowBoard,
             Command::ShowTerminals,
+            Command::NewTask,
         ]);
         all
     }
@@ -144,6 +147,7 @@ impl Command {
             Command::NextInbox => "next_inbox".into(),
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
+            Command::NewTask => "new_task".into(),
         }
     }
 
@@ -188,6 +192,7 @@ impl Command {
             Command::NextInbox => "ctrl-shift-i".into(),
             Command::ShowBoard => "ctrl-shift-1".into(),
             Command::ShowTerminals => "ctrl-shift-2".into(),
+            Command::NewTask => "ctrl-shift-n".into(),
         }
     }
 
@@ -459,6 +464,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-i"), Some(Command::NextInbox));
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowBoard));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
+        assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))
