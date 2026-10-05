@@ -11,10 +11,26 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 ## Current milestone: M5 — Resume, checkpoints, conflicts, history (SPEC §18)
 
 ### Acceptance criteria
-_To be copied from SPEC §18 M5 by the planning session._
+- [ ] Stop and restart the daemon: running Claude/Codex tasks resume the right conversation.
+- [ ] Before Run in a git repo: store HEAD in `task.checkpoint`; "Undo task" shows the diff to be
+      discarded and only runs `git restore`/`git clean` after explicit confirmation.
+- [ ] Two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards.
+- [ ] Watcher ignores `.git`, `node_modules`, `target` and respects `.gitignore`.
+- [ ] Per-session output logs; history of finished sessions viewable after a daemon restart.
+- [ ] Daily DB backups, keep 7.
 
 ### Task queue
-_Empty: the next session plans M5 (`mkrew-plan-milestone`)._
+- [ ] T5.1 Resume on daemon startup: for each running/needs_input task whose last session has a `native_session_id` and whose profile has `resume`, expand `{session_id}` into argv and spawn it as a new session of the task (same tab slot); otherwise task → needs_input + `error_flag` (note "session stopped — run again?"). Fake agent: hook step reports a native id, `--resume <id>` prints `Resumed: <id>`. Daemon e2e: stop → restart → resumed with the right id; covers: resume. (spec: §3 Lifecycle, §5, §6, §8)
+- [ ] T5.2 Git checkpoint on Run: minimal daemon `GitBackend` trait + git CLI impl (`rev-parse HEAD`, not-a-repo = None, no network); `task.run` stores HEAD in `task.checkpoint` (store setter, `task.updated`); tests with a temp git repo; covers: checkpoint. (spec: §5, §7, §12B intro)
+- [ ] T5.3 Undo task backend: `task.undo_preview` (diff + untracked files since checkpoint) and `task.undo{confirm: true}` (`git restore --source=<checkpoint> --staged --worktree .` + `git clean` of files created since; refused without confirm, while a session of the task is live, or with no checkpoint); ADR + SPEC §7 rows; `mk task undo` shows the preview and needs `--yes`; covers: undo confirmation. (spec: §7, §9, §12B)
+- [ ] T5.4 UI "Undo task" on Review/Done cards: confirmation dialog listing files + scrollable diff from `task.undo_preview`, destructive confirm button, then `task.undo`; pure view-model tests; covers: undo shows diff. (spec: §11, §13, §14)
+- [ ] T5.5 Project file watcher: `notify` watcher per project with live sessions, pure path filter (always ignore `.git`, `node_modules`, `target`; `.gitignore` via `ignore::gitignore`), debounced batches → `files_changed` session events; unit + temp-dir integration tests; covers: watcher ignores. (spec: §4, §8, §16)
+- [ ] T5.6 Conflict detection: pure `mkrew_core::conflict` tracker (path → last editing sessions, 60 s window); attribution = sessions of the project in `working` when the change lands, plus file paths from Claude/Codex hook payloads when present (record the heuristic in HUMAN_CHECKS); `Event::ConflictDetected{project_id, path, session_ids, task_ids}`, protocol bump; daemon e2e with two fake sessions writing one file; covers: conflict.detected. (spec: §6, §7, §8)
+- [ ] T5.7 UI conflict warning: board cards of both tasks (and their pane headers) show a warning badge with the file path + tooltip until the tasks leave running/needs_input or the user dismisses it; pure tests; covers: UI warns on both cards. (spec: §11, §14)
+- [ ] T5.8 Session history backend: `session.history` → log path(s) (`.log.1` + `.log`), `mk session history <id>` prints the log (works for exited sessions after a daemon restart); store keeps exited sessions listable per project; e2e: run fake, restart daemon, read history; covers: per-session logs, history after restart. (spec: §7, §8, §9)
+- [ ] T5.9 UI history viewer: "History" list of finished sessions per workspace (sidebar section or Terminals menu), opening one renders its log read-only in a pane through the UI emulator (tail-bounded, no attach); pure tests; covers: history viewable. (spec: §10, §11, §14)
+- [ ] T5.10 Daily DB backups: daemon task copies `mkrew.db` via SQLite online backup / `VACUUM INTO` to `<data>/mkrew/backups/mkrew-YYYY-MM-DD.db` at startup if today's is missing and then every 24 h, prunes to the newest 7; unit tests with injected clock; covers: backups keep 7. (spec: §8, §15)
+- [ ] T5.11 Add M5 manual checks to HUMAN_CHECKS (real Claude/Codex resume across `mk daemon stop`, Undo dialog, conflict badges, history viewer, §14 design check) and tick verified criteria; covers: all remaining. (spec: §18 M5)
 
 M4 left 4 of 6 criteria unticked; all wait on the T4.7–T4.10 manual checks in HUMAN_CHECKS (task
 dialog, drag & drop, card actions, real Claude/Codex `arg` runs, §14 design check). If one fails,
