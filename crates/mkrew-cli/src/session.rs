@@ -58,7 +58,7 @@ pub fn spawn(client: &mut Client, project: &str, agent: String) -> anyhow::Resul
     let (cols, rows) = crate::attach::terminal_size().unwrap_or(DEFAULT_SIZE);
     let spawned: SessionSpawnResult = client.call(Request::SessionSpawn(SessionSpawnParams {
         project_id: project.id,
-        agent_profile: agent,
+        agent_profile: Some(agent),
         kind: SessionKind::Agent,
         tab_id: None,
         title: None,

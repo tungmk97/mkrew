@@ -45,6 +45,20 @@ pub enum Request {
     ProjectAdd(ProjectAddParams),
     #[serde(rename = "project.list")]
     ProjectList,
+    #[serde(rename = "project.update")]
+    ProjectUpdate(ProjectUpdateParams),
+    #[serde(rename = "tab.list")]
+    TabList(TabListParams),
+    #[serde(rename = "tab.create")]
+    TabCreate(TabCreateParams),
+    #[serde(rename = "tab.rename")]
+    TabRename(TabRenameParams),
+    #[serde(rename = "tab.close")]
+    TabClose(TabRef),
+    #[serde(rename = "tab.move")]
+    TabMove(TabMoveParams),
+    #[serde(rename = "tab.set_layout")]
+    TabSetLayout(TabSetLayoutParams),
     #[serde(rename = "session.spawn")]
     SessionSpawn(SessionSpawnParams),
     #[serde(rename = "session.list")]
@@ -141,6 +155,9 @@ pub enum Event {
     SessionExited(SessionExitedEvent),
     #[serde(rename = "project.updated")]
     ProjectUpdated(Project),
+    /// A tab was created, renamed, moved or got a new layout.
+    #[serde(rename = "tab.updated")]
+    TabUpdated(TerminalTab),
     /// Sent only to an attached client whose output queue overflowed: its queued output was
     /// dropped and this screen replaces it; output frames continue from this point (SPEC §7).
     #[serde(rename = "session.snapshot")]
@@ -211,6 +228,19 @@ pub struct Session {
     pub ended_at: Option<i64>,
 }
 
+/// A terminal tab of a workspace (SPEC §5 `terminal_tab`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TerminalTab {
+    pub id: Ulid,
+    pub project_id: Ulid,
+    pub title: String,
+    /// Tabs are ordered by ascending position.
+    pub position: f64,
+    /// Split tree whose leaves are session ids (SPEC §5); opaque to the daemon.
+    /// `null` until the first pane is placed.
+    pub layout: serde_json::Value,
+}
+
 // ---- request params ----
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,12 +257,79 @@ pub struct ProjectAddParams {
     pub name: Option<String>,
 }
 
+/// `project.update`: fields left out stay unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectUpdateParams {
+    pub project_id: Ulid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `Some(None)` (JSON `null`) clears the default agent.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub default_agent: Option<Option<String>>,
+}
+
+/// Deserializes a field that is present (possibly `null`) as `Some`; with
+/// `#[serde(default)]` a missing field stays `None`.
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabListParams {
+    pub project_id: Ulid,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabCreateParams {
+    pub project_id: Ulid,
+    pub title: String,
+    /// Defaults to after the last tab of the project.
+    #[serde(default)]
+    pub position: Option<f64>,
+}
+
+/// Params of requests that only name a tab (`tab.close`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabRef {
+    pub tab_id: Ulid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabRenameParams {
+    pub tab_id: Ulid,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TabMoveParams {
+    pub tab_id: Ulid,
+    pub position: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabSetLayoutParams {
+    pub tab_id: Ulid,
+    pub layout: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSpawnParams {
     pub project_id: Ulid,
-    pub agent_profile: String,
+    /// `None` = the default for `kind`: the project's `default_agent` for an agent, the
+    /// `shell` profile for a shell. A named profile decides the session kind itself.
+    #[serde(default)]
+    pub agent_profile: Option<String>,
     #[serde(default)]
     pub kind: SessionKind,
+    /// The tab the pane goes into; a tab without a layout gets this session as its only pane.
     #[serde(default)]
     pub tab_id: Option<Ulid>,
     #[serde(default)]
@@ -513,12 +610,38 @@ mod tests {
             Request::ProjectList,
             Request::SessionSpawn(SessionSpawnParams {
                 project_id: sid(),
-                agent_profile: "fake".into(),
+                agent_profile: Some("fake".into()),
                 kind: SessionKind::Agent,
-                tab_id: None,
+                tab_id: Some(sid()),
                 title: Some("t".into()),
                 cols: 80,
                 rows: 24,
+            }),
+            Request::ProjectUpdate(ProjectUpdateParams {
+                project_id: sid(),
+                name: Some("demo".into()),
+                default_agent: Some(None),
+            }),
+            Request::TabList(TabListParams { project_id: sid() }),
+            Request::TabCreate(TabCreateParams {
+                project_id: sid(),
+                title: "Agents".into(),
+                position: Some(1.5),
+            }),
+            Request::TabRename(TabRenameParams {
+                tab_id: sid(),
+                title: "Shells".into(),
+            }),
+            Request::TabClose(TabRef { tab_id: sid() }),
+            Request::TabMove(TabMoveParams {
+                tab_id: sid(),
+                position: 0.5,
+            }),
+            Request::TabSetLayout(TabSetLayoutParams {
+                tab_id: sid(),
+                layout: json!({"split": "vertical", "ratio": 0.5, "children": [
+                    {"session": sid().to_string()}, {"session": sid().to_string()}
+                ]}),
             }),
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),
@@ -577,6 +700,42 @@ mod tests {
         };
         assert_eq!(params.kind, SessionKind::Agent);
         assert_eq!(params.title, None);
+        assert_eq!(params.agent_profile.as_deref(), Some("shell"));
+    }
+
+    #[test]
+    fn project_update_tells_missing_from_null() {
+        let parse = |params: serde_json::Value| -> ProjectUpdateParams {
+            serde_json::from_value(params).unwrap()
+        };
+        let id = sid().to_string();
+        assert_eq!(parse(json!({"project_id": id})).default_agent, None);
+        assert_eq!(
+            parse(json!({"project_id": id, "default_agent": null})).default_agent,
+            Some(None)
+        );
+        assert_eq!(
+            parse(json!({"project_id": id, "default_agent": "claude"})).default_agent,
+            Some(Some("claude".into()))
+        );
+        // Unchanged fields are left out on the wire, a cleared one is `null`.
+        let keep = ProjectUpdateParams {
+            project_id: sid(),
+            name: None,
+            default_agent: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&keep).unwrap(),
+            json!({"project_id": id})
+        );
+        let clear = ProjectUpdateParams {
+            default_agent: Some(None),
+            ..keep
+        };
+        assert_eq!(
+            serde_json::to_value(&clear).unwrap(),
+            json!({"project_id": id, "default_agent": null})
+        );
     }
 
     #[test]
@@ -735,5 +894,14 @@ mod tests {
             created_at: 1,
             archived: false,
         })));
+        let tab = round_trip(&Message::Event(Event::TabUpdated(TerminalTab {
+            id: sid(),
+            project_id: sid(),
+            title: "Agents".into(),
+            position: 1.0,
+            layout: serde_json::Value::Null,
+        })));
+        assert_eq!(tab["event"], "tab.updated");
+        assert_eq!(tab["data"]["layout"], serde_json::Value::Null);
     }
 }

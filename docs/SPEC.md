@@ -405,10 +405,10 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Method | Main params | Returns |
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
-| `project.list/add/update/archive` | `path`, `name`, `dev_command`, `review_globs` | Project |
+| `project.list/add/update/archive` | `path`, `name`, `dev_command`, `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `default_agent` must be an agent profile) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
-| `session.spawn` | `project_id`, `agent_profile`, `kind`, `tab_id?`, `title?`, `cols`, `rows` | `session_id` |
+| `session.spawn` | `project_id`, `agent_profile?`, `kind`, `tab_id?`, `title?`, `cols`, `rows` | `session_id` — no `agent_profile` = project `default_agent` (agent) or `shell` (shell); a named profile sets the kind; a tab with `null` layout gets the session as its only pane |
 | `session.list` | `project_id?` | Session[] |
 | `session.attach` | `session_id` | screen snapshot (grid + cursor + modes) + subscribe to output |
 | `session.detach` | `session_id` | ok |
@@ -418,7 +418,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.resize` | `session_id`, `cols`, `rows` | ok |
 | `session.kill` | `session_id`, `force` | ok |
 | `session.history` | `session_id` | path of the session log file |
-| `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab |
+| `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab, its sessions keep running, no event) |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent`, `event`, `payload` | ok |
 | `agent.profiles` | – | AgentProfile[] + parse errors |

@@ -6,12 +6,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mkrew_protocol::{Project, Session, SessionKind, SessionState};
+use mkrew_protocol::{Project, Session, SessionKind, SessionState, TerminalTab};
 use rusqlite::{Connection, Row, TransactionBehavior, params};
 use ulid::Ulid;
 
 /// Numbered migrations; `PRAGMA user_version` records how many have run. Append only.
-const MIGRATIONS: &[&str] = &[include_str!("../migrations/0001_init.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("../migrations/0001_init.sql"),
+    include_str!("../migrations/0002_terminals.sql"),
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -33,6 +36,10 @@ pub enum StoreError {
     Corrupt { column: &'static str, value: String },
     #[error("no session with id {0}")]
     SessionNotFound(Ulid),
+    #[error("project {0} not found")]
+    ProjectNotFound(Ulid),
+    #[error("tab {0} not found")]
+    TabNotFound(Ulid),
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
@@ -115,6 +122,141 @@ impl Store {
         )?;
         let rows = stmt.query_map([], RawProject::from_row)?;
         rows.map(|r| r?.into_project()).collect()
+    }
+
+    pub fn get_project(&self, id: Ulid) -> Result<Project> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived
+             FROM project WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map([id.to_string()], RawProject::from_row)?;
+        match rows.next() {
+            Some(row) => row?.into_project(),
+            None => Err(StoreError::ProjectNotFound(id)),
+        }
+    }
+
+    /// Sets the given fields; `None` leaves a field unchanged, `Some(None)` clears
+    /// `default_agent`.
+    pub fn update_project(
+        &self,
+        id: Ulid,
+        name: Option<&str>,
+        default_agent: Option<Option<&str>>,
+    ) -> Result<Project> {
+        let mut project = self.get_project(id)?;
+        if let Some(name) = name {
+            project.name = name.to_owned();
+        }
+        if let Some(default_agent) = default_agent {
+            project.default_agent = default_agent.map(str::to_owned);
+        }
+        self.conn.execute(
+            "UPDATE project SET name = ?2, default_agent = ?3 WHERE id = ?1",
+            params![id.to_string(), project.name, project.default_agent],
+        )?;
+        Ok(project)
+    }
+
+    /// Tabs of a project in tab-bar order.
+    pub fn list_tabs(&self, project_id: Ulid) -> Result<Vec<TerminalTab>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_id, title, position, layout FROM terminal_tab
+             WHERE project_id = ?1 ORDER BY position, id",
+        )?;
+        let rows = stmt.query_map([project_id.to_string()], RawTab::from_row)?;
+        rows.map(|r| r?.into_tab()).collect()
+    }
+
+    pub fn get_tab(&self, id: Ulid) -> Result<TerminalTab> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_id, title, position, layout FROM terminal_tab WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map([id.to_string()], RawTab::from_row)?;
+        match rows.next() {
+            Some(row) => row?.into_tab(),
+            None => Err(StoreError::TabNotFound(id)),
+        }
+    }
+
+    /// Adds a tab with a `null` layout; `position` defaults to after the project's last tab.
+    pub fn create_tab(
+        &self,
+        project_id: Ulid,
+        title: &str,
+        position: Option<f64>,
+    ) -> Result<TerminalTab> {
+        self.get_project(project_id)?;
+        let position = match position {
+            Some(position) => position,
+            None => self.conn.query_row(
+                "SELECT COALESCE(MAX(position) + 1, 0) FROM terminal_tab WHERE project_id = ?1",
+                [project_id.to_string()],
+                |row| row.get(0),
+            )?,
+        };
+        let tab = TerminalTab {
+            id: Ulid::new(),
+            project_id,
+            title: title.to_owned(),
+            position,
+            layout: serde_json::Value::Null,
+        };
+        self.conn.execute(
+            "INSERT INTO terminal_tab (id, project_id, title, position, layout)
+             VALUES (?1, ?2, ?3, ?4, 'null')",
+            params![
+                tab.id.to_string(),
+                project_id.to_string(),
+                tab.title,
+                tab.position
+            ],
+        )?;
+        Ok(tab)
+    }
+
+    pub fn rename_tab(&self, id: Ulid, title: &str) -> Result<TerminalTab> {
+        self.update_tab(
+            id,
+            "UPDATE terminal_tab SET title = ?2 WHERE id = ?1",
+            title,
+        )
+    }
+
+    pub fn move_tab(&self, id: Ulid, position: f64) -> Result<TerminalTab> {
+        self.update_tab(
+            id,
+            "UPDATE terminal_tab SET position = ?2 WHERE id = ?1",
+            position,
+        )
+    }
+
+    pub fn set_tab_layout(&self, id: Ulid, layout: &serde_json::Value) -> Result<TerminalTab> {
+        let json = layout.to_string();
+        self.update_tab(
+            id,
+            "UPDATE terminal_tab SET layout = ?2 WHERE id = ?1",
+            json,
+        )
+    }
+
+    /// Deletes the tab; its sessions are not touched.
+    pub fn close_tab(&self, id: Ulid) -> Result<()> {
+        let changed = self
+            .conn
+            .execute("DELETE FROM terminal_tab WHERE id = ?1", [id.to_string()])?;
+        if changed == 0 {
+            return Err(StoreError::TabNotFound(id));
+        }
+        Ok(())
+    }
+
+    /// Runs `sql` with `?1` = tab id and `?2` = `value`, then returns the updated tab.
+    fn update_tab(&self, id: Ulid, sql: &str, value: impl rusqlite::ToSql) -> Result<TerminalTab> {
+        if self.conn.execute(sql, params![id.to_string(), value])? == 0 {
+            return Err(StoreError::TabNotFound(id));
+        }
+        self.get_tab(id)
     }
 
     pub fn insert_session(&self, session: &Session) -> Result<()> {
@@ -367,6 +509,37 @@ impl RawSession {
             rows: self.rows,
             started_at: self.started_at,
             ended_at: self.ended_at,
+        })
+    }
+}
+
+struct RawTab {
+    id: String,
+    project_id: String,
+    title: String,
+    position: f64,
+    layout: String,
+}
+
+impl RawTab {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            title: row.get(2)?,
+            position: row.get(3)?,
+            layout: row.get(4)?,
+        })
+    }
+
+    fn into_tab(self) -> Result<TerminalTab> {
+        Ok(TerminalTab {
+            id: parse_ulid("terminal_tab.id", self.id)?,
+            project_id: parse_ulid("terminal_tab.project_id", self.project_id)?,
+            title: self.title,
+            position: self.position,
+            layout: serde_json::from_str(&self.layout)
+                .map_err(|_| corrupt("terminal_tab.layout", self.layout))?,
         })
     }
 }

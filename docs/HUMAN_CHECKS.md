@@ -204,6 +204,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `Swatinem/rust-cache`. Windows checkout forces `core.autocrlf false` (repo is LF; fixtures and
   snapshots depend on it). Added the `x86_64-unknown-linux-gnu` rustup target on this machine
   for cross-checking (only the Rust std component, no system install).
+- (T2.1) Tabs/defaults (written into SPEC §7): the daemon keeps `terminal_tab.layout` as
+  **opaque JSON** (the UI owns the split-tree model, T2.5); new tabs have layout `null`, and
+  `session.spawn` with `tab_id` into a `null`-layout tab makes the session its only pane
+  (`tab.updated`); otherwise the client places panes. `tab.close` deletes the row, leaves its
+  sessions running and sends **no event** (one UI per user; add `tab.closed` if a second
+  client ever needs it). `session.spawn` without `agent_profile` uses the project's
+  `default_agent` (agent; `invalid_request` if unset) or `shell` (shell); a named profile sets
+  the session kind (a conflicting `kind` is ignored). `project.update` supports `name` and
+  `default_agent` only (absent = keep, `null` = clear; must be an agent-kind profile).
 
 ## Done
 

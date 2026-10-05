@@ -9,8 +9,9 @@ use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, DaemonStatusResult, ErrorCode, Event, Frame,
     FrameDecoder, HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, ProfileErrorInfo,
-    ProjectAddParams, Request, Session, SessionKillParams, SessionKind, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, encode,
+    ProjectAddParams, ProjectUpdateParams, Request, Session, SessionKillParams, SessionKind,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
+    TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -174,6 +175,39 @@ impl Daemon {
                 let projects = self.store().list_projects();
                 (store_outcome(projects), After::Continue)
             }
+            Request::ProjectUpdate(params) => (self.project_update(params), After::Continue),
+            Request::TabList(params) => {
+                let tabs = self.store().list_tabs(params.project_id);
+                (store_outcome(tabs), After::Continue)
+            }
+            Request::TabCreate(params) => {
+                let tab =
+                    self.store()
+                        .create_tab(params.project_id, &params.title, params.position);
+                (self.tab_updated(tab), After::Continue)
+            }
+            Request::TabRename(params) => {
+                let tab = self.store().rename_tab(params.tab_id, &params.title);
+                (self.tab_updated(tab), After::Continue)
+            }
+            Request::TabMove(params) => {
+                let tab = self.store().move_tab(params.tab_id, params.position);
+                (self.tab_updated(tab), After::Continue)
+            }
+            Request::TabSetLayout(params) => {
+                let tab = self.store().set_tab_layout(params.tab_id, &params.layout);
+                // SPEC §7: `ok`, the new tab goes out as `tab.updated`.
+                let outcome = match self.tab_updated(tab) {
+                    Outcome::Result(_) => ok(&()),
+                    error => error,
+                };
+                (outcome, After::Continue)
+            }
+            Request::TabClose(params) => {
+                // The tab's sessions keep running; the UI decides about them (SPEC §10).
+                let closed = self.store().close_tab(params.tab_id);
+                (store_outcome(closed), After::Continue)
+            }
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
@@ -262,37 +296,44 @@ impl Daemon {
         if params.cols == 0 || params.rows == 0 {
             return Outcome::error(ErrorCode::InvalidRequest, "cols and rows must be > 0");
         }
-        let project = match self.store().list_projects() {
-            Ok(projects) => projects.into_iter().find(|p| p.id == params.project_id),
+        let project = match self.store().get_project(params.project_id) {
+            Ok(project) => project,
             Err(e) => return store_outcome::<()>(Err(e)),
         };
-        let Some(project) = project else {
-            let message = format!("project {} not found", params.project_id);
-            return Outcome::error(ErrorCode::NotFound, message);
+        if let Some(tab_id) = params.tab_id {
+            match self.store().get_tab(tab_id) {
+                Ok(tab) if tab.project_id == project.id => {}
+                Ok(_) => {
+                    let message = format!("tab {tab_id} belongs to another project");
+                    return Outcome::error(ErrorCode::InvalidRequest, message);
+                }
+                Err(e) => return store_outcome::<()>(Err(e)),
+            }
+        }
+        let profile_id = match (params.agent_profile, params.kind) {
+            (Some(id), _) => id,
+            (None, SessionKind::Shell) => "shell".to_owned(),
+            (None, SessionKind::Agent) => match project.default_agent.clone() {
+                Some(id) => id,
+                None => {
+                    let message = format!(
+                        "project {} has no default agent; name an agent profile",
+                        project.name
+                    );
+                    return Outcome::error(ErrorCode::InvalidRequest, message);
+                }
+            },
         };
-        let profiles = mkrew_core::load_dir(&self.paths.agents_dir());
-        let Some(profile) = profiles.get(&params.agent_profile).cloned() else {
-            let wanted = format!("{}.toml", params.agent_profile);
-            let broken = profiles
-                .errors
-                .iter()
-                .find(|e| e.file.file_name().is_some_and(|f| f == wanted.as_str()));
-            let message = match broken {
-                Some(e) => format!("agent profile {} is broken: {e}", params.agent_profile),
-                None => format!(
-                    "agent profile {} not found in {}",
-                    params.agent_profile,
-                    self.paths.agents_dir().display()
-                ),
-            };
-            return Outcome::error(ErrorCode::NotFound, message);
+        let profile = match self.load_profile(&profile_id) {
+            Ok(profile) => profile,
+            Err(outcome) => return outcome,
         };
         let session = Session {
             id: Ulid::new(),
             task_id: None,
             project_id: project.id,
             agent_profile: profile.id.clone(),
-            kind: params.kind,
+            kind: session_kind(profile.kind),
             title: params.title,
             native_session_id: None,
             state: SessionState::Starting,
@@ -311,7 +352,12 @@ impl Daemon {
             socket: self.paths.socket.clone(),
         };
         match self.hub.spawn(spec) {
-            Ok(()) => ok(&SessionSpawnResult { session_id }),
+            Ok(()) => {
+                if let Some(tab_id) = params.tab_id {
+                    self.place_in_empty_tab(tab_id, session_id);
+                }
+                ok(&SessionSpawnResult { session_id })
+            }
             Err(SpawnError::Launch(e @ LaunchError::NotFound { .. })) => {
                 Outcome::error(ErrorCode::NotFound, e.to_string())
             }
@@ -321,6 +367,83 @@ impl Daemon {
                 Outcome::error(ErrorCode::Internal, format!("{e:#}"))
             }
         }
+    }
+
+    /// Loads profile `id`, naming the parse error if its file is broken.
+    fn load_profile(&self, id: &str) -> Result<mkrew_core::AgentProfile, Outcome> {
+        let profiles = mkrew_core::load_dir(&self.paths.agents_dir());
+        if let Some(profile) = profiles.get(id) {
+            return Ok(profile.clone());
+        }
+        let wanted = format!("{id}.toml");
+        let broken = profiles
+            .errors
+            .iter()
+            .find(|e| e.file.file_name().is_some_and(|f| f == wanted.as_str()));
+        let message = match broken {
+            Some(e) => format!("agent profile {id} is broken: {e}"),
+            None => format!(
+                "agent profile {id} not found in {}",
+                self.paths.agents_dir().display()
+            ),
+        };
+        Err(Outcome::error(ErrorCode::NotFound, message))
+    }
+
+    /// Makes `session_id` the only pane of a tab that has no layout yet. A tab that already
+    /// has panes is left to the client, which knows where the new pane goes.
+    fn place_in_empty_tab(&self, tab_id: Ulid, session_id: Ulid) {
+        let placed = {
+            // One lock for check and set, so a concurrent `tab.set_layout` is not overwritten.
+            let store = self.store();
+            match store.get_tab(tab_id) {
+                Ok(tab) if tab.layout.is_null() => {
+                    let leaf = serde_json::json!({ "session": session_id.to_string() });
+                    store.set_tab_layout(tab_id, &leaf).map(Some)
+                }
+                Ok(_) => Ok(None),
+                Err(e) => Err(e),
+            }
+        };
+        match placed {
+            Ok(Some(tab)) => {
+                let _ = self.hub.events.send(Event::TabUpdated(tab));
+            }
+            Ok(None) => {}
+            // Closed meanwhile; the session still runs and shows in the sidebar.
+            Err(e) => tracing::warn!(%tab_id, "cannot place session {session_id} in tab: {e}"),
+        }
+    }
+
+    /// Changes the project; a new `default_agent` must name an agent profile.
+    fn project_update(&self, params: ProjectUpdateParams) -> Outcome {
+        if let Some(Some(id)) = &params.default_agent {
+            match self.load_profile(id) {
+                Ok(profile) if profile.kind == mkrew_core::ProfileKind::Agent => {}
+                Ok(_) => {
+                    let message = format!("{id} is a shell profile, not an agent");
+                    return Outcome::error(ErrorCode::InvalidRequest, message);
+                }
+                Err(outcome) => return outcome,
+            }
+        }
+        let updated = self.store().update_project(
+            params.project_id,
+            params.name.as_deref(),
+            params.default_agent.as_ref().map(Option::as_deref),
+        );
+        if let Ok(project) = &updated {
+            let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));
+        }
+        store_outcome(updated)
+    }
+
+    /// Replies with the tab and announces it as `tab.updated`.
+    fn tab_updated(&self, tab: Result<TerminalTab, StoreError>) -> Outcome {
+        if let Ok(tab) = &tab {
+            let _ = self.hub.events.send(Event::TabUpdated(tab.clone()));
+        }
+        store_outcome(tab)
     }
 
     /// Killing an already exited session succeeds (idempotent).
@@ -466,10 +589,7 @@ impl Daemon {
             .profiles
             .into_iter()
             .map(|p| AgentProfileInfo {
-                kind: match p.kind {
-                    mkrew_core::ProfileKind::Agent => SessionKind::Agent,
-                    mkrew_core::ProfileKind::Shell => SessionKind::Shell,
-                },
+                kind: session_kind(p.kind),
                 id: p.id,
                 name: p.name,
                 command: p.command,
@@ -590,7 +710,9 @@ fn store_outcome<T: Serialize>(result: Result<T, StoreError>) -> Outcome {
             let code = match e {
                 StoreError::DuplicateProject(_) => ErrorCode::AlreadyExists,
                 StoreError::Path { .. } | StoreError::NotADirectory(_) => ErrorCode::InvalidRequest,
-                StoreError::SessionNotFound(_) => ErrorCode::NotFound,
+                StoreError::SessionNotFound(_)
+                | StoreError::ProjectNotFound(_)
+                | StoreError::TabNotFound(_) => ErrorCode::NotFound,
                 _ => {
                     tracing::error!("store error: {e}");
                     ErrorCode::Internal
@@ -598,6 +720,13 @@ fn store_outcome<T: Serialize>(result: Result<T, StoreError>) -> Outcome {
             };
             Outcome::error(code, e.to_string())
         }
+    }
+}
+
+fn session_kind(kind: mkrew_core::ProfileKind) -> SessionKind {
+    match kind {
+        mkrew_core::ProfileKind::Agent => SessionKind::Agent,
+        mkrew_core::ProfileKind::Shell => SessionKind::Shell,
     }
 }
 

@@ -206,6 +206,82 @@ fn update_unknown_session_errors() {
 }
 
 #[test]
+fn project_update_sets_and_clears_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+
+    let set = store
+        .update_project(p.id, Some("renamed"), Some(Some("claude")))
+        .unwrap();
+    assert_eq!(set.name, "renamed");
+    assert_eq!(set.default_agent.as_deref(), Some("claude"));
+    // Untouched fields stay; the change persists.
+    let kept = store.update_project(p.id, None, None).unwrap();
+    assert_eq!(kept, set);
+    assert_eq!(open(&dir).get_project(p.id).unwrap(), set);
+
+    let cleared = store.update_project(p.id, None, Some(None)).unwrap();
+    assert_eq!(cleared.default_agent, None);
+    assert_eq!(cleared.name, "renamed");
+
+    let missing = store.update_project(Ulid::new(), Some("x"), None);
+    assert!(matches!(missing, Err(StoreError::ProjectNotFound(_))));
+}
+
+#[test]
+fn tabs_are_ordered_edited_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let a = store.add_project(dir.path(), None).unwrap();
+    let repo_b = dir.path().join("b");
+    std::fs::create_dir(&repo_b).unwrap();
+    let b = store.add_project(&repo_b, None).unwrap();
+
+    let first = store.create_tab(a.id, "one", None).unwrap();
+    let second = store.create_tab(a.id, "two", None).unwrap();
+    let other = store.create_tab(b.id, "b", None).unwrap();
+    assert_eq!((first.position, second.position), (0.0, 1.0));
+    assert_eq!(other.position, 0.0);
+    assert_eq!(first.layout, serde_json::Value::Null);
+    let front = store.create_tab(a.id, "front", Some(-1.0)).unwrap();
+
+    let titles = |store: &Store| -> Vec<String> {
+        let tabs = store.list_tabs(a.id).unwrap();
+        tabs.into_iter().map(|t| t.title).collect()
+    };
+    assert_eq!(titles(&store), ["front", "one", "two"]);
+
+    store.move_tab(front.id, 5.0).unwrap();
+    let renamed = store.rename_tab(first.id, "uno").unwrap();
+    assert_eq!(renamed.title, "uno");
+    let layout = serde_json::json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": "01JA"}, {"session": "01JB"}
+    ]});
+    let laid_out = store.set_tab_layout(second.id, &layout).unwrap();
+    assert_eq!(laid_out.layout, layout);
+
+    store.close_tab(renamed.id).unwrap();
+    let reopened = open(&dir);
+    assert_eq!(titles(&reopened), ["two", "front"]);
+    assert_eq!(reopened.get_tab(second.id).unwrap(), laid_out);
+    assert_eq!(reopened.list_tabs(b.id).unwrap(), vec![other]);
+
+    assert!(matches!(
+        store.close_tab(first.id),
+        Err(StoreError::TabNotFound(_))
+    ));
+    assert!(matches!(
+        store.rename_tab(Ulid::new(), "x"),
+        Err(StoreError::TabNotFound(_))
+    ));
+    assert!(matches!(
+        store.create_tab(Ulid::new(), "x", None),
+        Err(StoreError::ProjectNotFound(_))
+    ));
+}
+
+#[test]
 fn session_requires_existing_project() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

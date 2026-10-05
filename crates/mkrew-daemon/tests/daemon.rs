@@ -14,10 +14,11 @@ use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, DaemonStatusResult, ErrorCode, Event, Frame, FrameDecoder,
     HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
-    Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
-    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionRef,
-    SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionStateEvent, SessionWaitParams, SessionWaitResult, encode,
+    ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
+    SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
+    SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult,
+    SessionState, SessionStateEvent, SessionWaitParams, SessionWaitResult, TabCreateParams,
+    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, TerminalTab, encode,
 };
 use mkrew_store::Store;
 use ulid::Ulid;
@@ -204,7 +205,7 @@ impl Client {
     fn spawn(&mut self, project: &Project, profile: &str) -> Outcome {
         self.call(Request::SessionSpawn(SessionSpawnParams {
             project_id: project.id,
-            agent_profile: profile.into(),
+            agent_profile: Some(profile.into()),
             kind: SessionKind::Agent,
             tab_id: None,
             title: None,
@@ -826,6 +827,208 @@ fn wait_times_out_and_rejects_bad_requests() {
         error_code(client.call(send(Ulid::new(), "y"))),
         ErrorCode::NotFound
     );
+    client.stop();
+}
+
+fn spawn_params(project: &Project, kind: SessionKind, tab_id: Option<Ulid>) -> Request {
+    Request::SessionSpawn(SessionSpawnParams {
+        project_id: project.id,
+        agent_profile: None,
+        kind,
+        tab_id,
+        title: None,
+        cols: 80,
+        rows: 24,
+    })
+}
+
+fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
+    Request::ProjectUpdate(ProjectUpdateParams {
+        project_id: project.id,
+        name: None,
+        default_agent: Some(agent.map(str::to_owned)),
+    })
+}
+
+fn create_tab(project: &Project, title: &str) -> Request {
+    Request::TabCreate(TabCreateParams {
+        project_id: project.id,
+        title: title.into(),
+        position: None,
+    })
+}
+
+fn list_tabs(client: &mut Client, project: &Project) -> Vec<TerminalTab> {
+    client
+        .call(Request::TabList(TabListParams {
+            project_id: project.id,
+        }))
+        .into_result()
+        .unwrap()
+}
+
+#[test]
+fn tabs_and_layout_persist_across_daemon_restart() {
+    let env = Env::new();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+
+    let first: TerminalTab = client
+        .call(create_tab(&project, "one"))
+        .into_result()
+        .unwrap();
+    let second: TerminalTab = client
+        .call(create_tab(&project, "two"))
+        .into_result()
+        .unwrap();
+    let doomed: TerminalTab = client
+        .call(create_tab(&project, "doomed"))
+        .into_result()
+        .unwrap();
+    assert_eq!(first.layout, serde_json::Value::Null);
+    assert!(first.position < second.position && second.position < doomed.position);
+    client.wait_event(&Event::TabUpdated(first.clone()));
+
+    let renamed: TerminalTab = client
+        .call(Request::TabRename(TabRenameParams {
+            tab_id: first.id,
+            title: "uno".into(),
+        }))
+        .into_result()
+        .unwrap();
+    client
+        .call(Request::TabMove(TabMoveParams {
+            tab_id: renamed.id,
+            position: second.position + 0.5,
+        }))
+        .into_result::<TerminalTab>()
+        .unwrap();
+    let layout = serde_json::json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": Ulid::new().to_string()},
+        {"split": "horizontal", "ratio": 0.6, "children": [
+            {"session": Ulid::new().to_string()}, {"session": Ulid::new().to_string()}
+        ]}
+    ]});
+    client
+        .call(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: second.id,
+            layout: layout.clone(),
+        }))
+        .into_result::<()>()
+        .unwrap();
+    client
+        .call(Request::TabClose(TabRef { tab_id: doomed.id }))
+        .into_result::<()>()
+        .unwrap();
+    let before = list_tabs(&mut client, &project);
+    let titles: Vec<&str> = before.iter().map(|t| t.title.as_str()).collect();
+    assert_eq!(titles, ["two", "uno"]);
+    assert_eq!(before[0].layout, layout);
+    client.wait_event(&Event::TabUpdated(before[0].clone()));
+
+    let unknown = TabRef {
+        tab_id: Ulid::new(),
+    };
+    assert_eq!(
+        error_code(client.call(Request::TabClose(unknown))),
+        ErrorCode::NotFound
+    );
+    let orphan = Request::TabCreate(TabCreateParams {
+        project_id: Ulid::new(),
+        title: "x".into(),
+        position: None,
+    });
+    assert_eq!(error_code(client.call(orphan)), ErrorCode::NotFound);
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    assert_eq!(list_tabs(&mut client, &project), before);
+    client.stop();
+}
+
+#[test]
+fn spawn_defaults_to_the_project_agent_or_the_shell_and_fills_an_empty_tab() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+
+    // No default agent yet: the client must name one.
+    assert_eq!(
+        error_code(client.call(spawn_params(&project, SessionKind::Agent, None))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(set_default_agent(&project, Some("shell")))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(set_default_agent(&project, Some("nope")))),
+        ErrorCode::NotFound
+    );
+    let updated: Project = client
+        .call(set_default_agent(&project, Some("fake")))
+        .into_result()
+        .unwrap();
+    assert_eq!(updated.default_agent.as_deref(), Some("fake"));
+    client.wait_event(&Event::ProjectUpdated(updated.clone()));
+    let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
+    assert_eq!(listed, vec![updated]);
+
+    // The first pane of a new tab becomes its layout; later panes are the client's job.
+    let tab: TerminalTab = client
+        .call(create_tab(&project, "agents"))
+        .into_result()
+        .unwrap();
+    let agent: SessionSpawnResult = client
+        .call(spawn_params(&project, SessionKind::Agent, Some(tab.id)))
+        .into_result()
+        .unwrap();
+    let session = client.session(agent.session_id);
+    assert_eq!(session.agent_profile, "fake");
+    assert_eq!(session.kind, SessionKind::Agent);
+    let leaf = serde_json::json!({"session": agent.session_id.to_string()});
+    let placed = TerminalTab {
+        layout: leaf.clone(),
+        ..tab.clone()
+    };
+    client.wait_event(&Event::TabUpdated(placed));
+
+    let shell: SessionSpawnResult = client
+        .call(spawn_params(&project, SessionKind::Shell, Some(tab.id)))
+        .into_result()
+        .unwrap();
+    let session = client.session(shell.session_id);
+    assert_eq!(session.agent_profile, "shell");
+    assert_eq!(session.kind, SessionKind::Shell);
+    assert_eq!(list_tabs(&mut client, &project)[0].layout, leaf);
+
+    // A tab of another workspace is refused; clearing the default works.
+    let other_repo = env.dir.path().join("other");
+    std::fs::create_dir(&other_repo).unwrap();
+    let other = client.add_project(&other_repo);
+    assert_eq!(
+        error_code(client.call(spawn_params(&other, SessionKind::Shell, Some(tab.id)))),
+        ErrorCode::InvalidRequest
+    );
+    let cleared: Project = client
+        .call(set_default_agent(&project, None))
+        .into_result()
+        .unwrap();
+    assert_eq!(cleared.default_agent, None);
+
+    for session_id in [agent.session_id, shell.session_id] {
+        let kill = SessionKillParams {
+            session_id,
+            force: true,
+        };
+        client
+            .call(Request::SessionKill(kill))
+            .into_result::<()>()
+            .unwrap();
+        client.wait_state(session_id, SessionState::Exited);
+    }
     client.stop();
 }
 
