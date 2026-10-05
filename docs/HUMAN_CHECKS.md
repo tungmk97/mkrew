@@ -703,6 +703,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   "Discard changes" (§14.7); buttons have no focus ring; hover-only Undo still reserves a row on
   Done cards; the diff builds up to 2000 row divs per render (`uniform_list` later). "Discard
   changes" stays enabled when the diff is cut short (the dialog points at `mk task undo`).
+- (T5.5) File watcher: one recursive `notify` watcher per project while it has a live session,
+  on the project folder (the session cwd). Only the ROOT `.gitignore` is read, once when the
+  watch starts (nested `.gitignore`, `.git/info/exclude`, the global excludes file and edits to
+  `.gitignore` while sessions run are not applied); matching is case-sensitive even on Windows.
+  `.git`, `node_modules`, `target` are always ignored at any depth. Batches = 300 ms quiet, at
+  most 2 s; existing directories are dropped, removed paths are reported (a removed directory
+  looks like a file). Each batch becomes a `files_changed` session event (`{"paths": [...]}`,
+  `/`-separated, relative) on EVERY live session of the project (attribution is T5.6). Review
+  SHOULD left open: on Linux/macOS a recursive inotify/kqueue watch walks the whole tree
+  (including `node_modules`/`target`) synchronously in `Hub::spawn` and can hit
+  `fs.inotify.max_user_watches` on big repos (Windows ReadDirectoryChangesW is cheap); Windows
+  drops events silently on buffer overflow (no rescan). Unwatching after the last session
+  exits is not asserted by a test.
 
 ## Done
 

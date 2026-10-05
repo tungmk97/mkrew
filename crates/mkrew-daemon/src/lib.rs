@@ -15,6 +15,7 @@ mod session;
 mod session_log;
 pub mod spawn;
 mod undo;
+mod watch;
 
 use anyhow::Context;
 use mkrew_core::Paths;

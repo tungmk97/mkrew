@@ -3,7 +3,7 @@
 // Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
 #![allow(clippy::unwrap_used)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -896,6 +896,58 @@ fn session_env_cwd_and_exit_code_reach_the_store() {
     assert!(log.contains("term=xterm-256color"), "{log}");
     let repo_name = repo.file_name().unwrap().to_string_lossy().into_owned();
     assert!(log.contains(&repo_name), "cwd missing: {log}");
+    client.stop();
+}
+
+/// Every path recorded so far in the session's `files_changed` events.
+fn changed_files(env: &Env, id: Ulid) -> BTreeSet<String> {
+    let db = env.data_dir().join("mkrew.db");
+    let events = Store::open(&db)
+        .unwrap()
+        .session_events(id, "files_changed")
+        .unwrap();
+    events
+        .iter()
+        .flat_map(|e| e.payload["paths"].as_array().unwrap().clone())
+        .map(|p| p.as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn file_watcher_records_changed_files_of_live_sessions_except_ignored_ones() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::write(repo.join(".gitignore"), "*.log\n").unwrap();
+    for dir in ["src", "target", "node_modules"] {
+        std::fs::create_dir_all(repo.join(dir)).unwrap();
+    }
+    // Ignored writes first: once `src/lib.rs` is recorded, their batch has been handled too.
+    let scenario = env.dir.path().join("writer.toml");
+    let mut steps = String::new();
+    for path in ["target/a.o", "node_modules/b.js", "debug.log", "src/lib.rs"] {
+        steps +=
+            &format!("[[step]]\naction = \"write_file\"\npath = \"{path}\"\ncontent = \"x\"\n\n");
+    }
+    std::fs::write(&scenario, steps + "[[step]]\naction = \"ask\"\n").unwrap();
+    env.write_fake_profile_as(
+        "writer",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "writer").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !changed_files(&env, id).contains("src/lib.rs") {
+        assert!(Instant::now() < deadline, "src/lib.rs never recorded");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        changed_files(&env, id),
+        BTreeSet::from(["src/lib.rs".to_owned()])
+    );
     client.stop();
 }
 

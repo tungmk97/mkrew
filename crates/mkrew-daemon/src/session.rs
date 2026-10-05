@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -26,6 +26,7 @@ use crate::attach::Attachment;
 use crate::emulator::Emulator;
 use crate::launch;
 use crate::session_log::SessionLog;
+use crate::watch::{self, Watch};
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 /// Chunks in flight between a reader thread and its session task. When full the reader
@@ -64,6 +65,8 @@ pub struct Hub {
     pub store: Mutex<Store>,
     pub events: broadcast::Sender<Event>,
     live: Mutex<HashMap<Ulid, Live>>,
+    /// One file watcher per project with live sessions. Lock order: `watches`, then `live`.
+    watches: Mutex<HashMap<Ulid, Watch>>,
     tasks: Mutex<JoinSet<()>>,
     /// Set by [`Hub::shutdown`]; refuses new sessions.
     stopping: AtomicBool,
@@ -151,6 +154,7 @@ fn coalesce(bytes: &mut Vec<u8>, output: &mut mpsc::Receiver<PtyEvent>) -> Optio
 
 /// The channels of one live session.
 struct Live {
+    project_id: Ulid,
     commands: mpsc::Sender<Command>,
     /// To the PTY writer thread; chunks of at most [`INPUT_CHUNK_BYTES`]. Held locked while
     /// one request is sent so two clients' input never interleaves.
@@ -219,6 +223,7 @@ impl Hub {
             store: Mutex::new(store),
             events: broadcast::channel(256).0,
             live: Mutex::default(),
+            watches: Mutex::default(),
             tasks: Mutex::default(),
             stopping: AtomicBool::new(false),
             flood_turn: tokio::sync::Mutex::default(),
@@ -359,6 +364,7 @@ impl Hub {
                     .map_err(&mut kill_on_error)?;
             }
             let channels = Live {
+                project_id: session.project_id,
                 commands: commands_tx.clone(),
                 input: Arc::clone(&shared_input),
             };
@@ -369,6 +375,7 @@ impl Hub {
             }
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
+        self.watch_project(session.project_id, &cwd);
         let (sends, sends_rx) = mpsc::unbounded_channel();
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let mut queue = SendQueue::default();
@@ -420,6 +427,56 @@ impl Hub {
             }
             Ok(None) => {}
             Err(e) => tracing::warn!(%task_id, "task status not updated: {e}"),
+        }
+    }
+
+    /// Starts watching `root` for project `project_id` unless it is watched already.
+    fn watch_project(self: &Arc<Self>, project_id: Ulid, root: &Path) {
+        let mut watches = lock(&self.watches);
+        if watches.contains_key(&project_id) {
+            return;
+        }
+        let hub = Arc::downgrade(self);
+        let started = watch::watch(root, move |paths| {
+            if let Some(hub) = hub.upgrade() {
+                hub.files_changed(project_id, &paths);
+            }
+        });
+        match started {
+            Ok(watch) => {
+                tracing::debug!(%project_id, root = %root.display(), "watching project files");
+                watches.insert(project_id, watch);
+            }
+            Err(e) => tracing::warn!(%project_id, root = %root.display(), "cannot watch: {e}"),
+        }
+    }
+
+    /// Stops watching project `project_id` once none of its sessions is live.
+    fn unwatch_idle_project(&self, project_id: Ulid) {
+        let mut watches = lock(&self.watches);
+        let live = lock(&self.live)
+            .values()
+            .any(|live| live.project_id == project_id);
+        if !live && watches.remove(&project_id).is_some() {
+            tracing::debug!(%project_id, "stopped watching project files");
+        }
+    }
+
+    /// Records a debounced batch of changed files on every live session of the project
+    /// (session event `files_changed`, payload `{"paths": [...]}`).
+    fn files_changed(&self, project_id: Ulid, paths: &[String]) {
+        let sessions: Vec<Ulid> = lock(&self.live)
+            .iter()
+            .filter(|(_, live)| live.project_id == project_id)
+            .map(|(id, _)| *id)
+            .collect();
+        let payload = serde_json::json!({ "paths": paths });
+        let at = crate::server::now_ms();
+        let store = self.store();
+        for id in sessions {
+            if let Err(e) = store.insert_session_event(id, "files_changed", &payload, at) {
+                tracing::warn!(%id, "files_changed not recorded: {e}");
+            }
         }
     }
 
@@ -763,6 +820,7 @@ impl Actor {
         }
         self.close_master();
         lock(&self.hub.live).remove(&self.session.id);
+        self.hub.unwatch_idle_project(self.session.project_id);
         // No one is left to answer a later `Resnapshot`: hand out the final screen now.
         self.attachments
             .retain(|a| !a.is_closed() && a.is_overflowed());

@@ -12,10 +12,14 @@ workspace = true
 # Headless emulator per session (SPEC §8); same version as the M0 spike.
 alacritty_terminal = "0.26"
 anyhow = "1"
+# `.gitignore` matching for the project file watcher (SPEC §4).
+ignore = "0.4.33"
 interprocess = { version = "2.4.4", features = ["tokio"] }
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
 mkrew-store = { version = "0.1.0", path = "../mkrew-store" }
+# Project file watcher (SPEC §4, §8); the crate's own `notify` module means `::notify` in code.
+notify = "8.2.0"
 # OS notifications on needs_input/done (SPEC §8); default `z` = pure-Rust zbus on Linux.
 notify-rust = "4.18.1"
 portable-pty = "0.9"
@@ -40,4 +44,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation"] }
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
+dunce = "1.0.5"
 tempfile = "3"
+# Paused clock for the watcher's debounce test.
+tokio = { version = "1", features = ["test-util"] }
