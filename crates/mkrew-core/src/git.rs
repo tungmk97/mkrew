@@ -4,12 +4,15 @@
 //! - [`parse_status`]: `git status --porcelain=v2 --branch -z`;
 //! - [`parse_changes`]: `git diff --raw --numstat -z` (changed-file lists with +/− counts);
 //! - [`auto_base`]: the auto-detected Git view base from `git for-each-ref`;
+//! - [`parse_log`]: `git log -z --format=<LOG_FORMAT>` (history);
 //! - [`parse_diff`]: `git diff` output with the default `a/`/`b/` prefixes (the daemon passes
 //!   `--src-prefix=a/ --dst-prefix=b/` so a user's `diff.noprefix` cannot change it);
 //! - [`hunk_patch`]: one hunk as a patch. Staging applies it with `git apply --cached`,
 //!   unstaging applies the same patch (built from the staged diff) with `--cached -R`.
 
-use mkrew_protocol::{ChangeKind, ChangedFile, DiffLine, DiffLineKind, FileDiff, GitStatus, Hunk};
+use mkrew_protocol::{
+    ChangeKind, ChangedFile, Commit, DiffLine, DiffLineKind, FileDiff, GitStatus, Hunk,
+};
 
 /// Parses `git status --porcelain=v2 --branch -z` into the header and the
 /// staged/unstaged/untracked lists of a [`GitStatus`]. Base fields stay at their defaults;
@@ -185,6 +188,39 @@ pub fn auto_base(output: &str) -> Option<(String, String)> {
         find(&format!("refs/heads/{branch}"))
             .map(|(_, oid, _)| (branch.to_owned(), (*oid).to_owned()))
     })
+}
+
+/// The `git log --format` that [`parse_log`] reads (with `-z`): fields split by `0x1f`, the raw
+/// message last so it may hold anything but NUL.
+pub const LOG_FORMAT: &str = "%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%B";
+
+/// Parses `git log -z --format=<LOG_FORMAT>` into commits, in output order. Records with
+/// missing fields are skipped; the summary is the message's first line, the body the rest
+/// without surrounding blank lines.
+pub fn parse_log(output: &[u8]) -> Vec<Commit> {
+    String::from_utf8_lossy(output)
+        .split('\0')
+        .filter_map(|record| {
+            let mut fields = record.trim_start_matches('\n').splitn(6, '\x1f');
+            let hash = fields.next()?.to_owned();
+            let parents = fields.next()?.split(' ').filter(|p| !p.is_empty());
+            let parents = parents.map(str::to_owned).collect();
+            let author_name = fields.next()?.to_owned();
+            let author_email = fields.next()?.to_owned();
+            let seconds: i64 = fields.next()?.parse().ok()?;
+            let message = fields.next()?;
+            let (summary, body) = message.split_once('\n').unwrap_or((message, ""));
+            Some(Commit {
+                hash,
+                parents,
+                author_name,
+                author_email,
+                authored_at: seconds.saturating_mul(1000),
+                summary: summary.trim_end().to_owned(),
+                body: body.trim_matches(['\n', '\r']).trim_end().to_owned(),
+            })
+        })
+        .collect()
 }
 
 /// Parses `git diff` output into one [`FileDiff`] per file, in output order. Lenient:
@@ -513,6 +549,36 @@ mod tests {
 
     fn entry(path: &str, kind: ChangeKind) -> ChangedFile {
         file(path, None, kind)
+    }
+
+    #[test]
+    fn log_records_split_message_into_summary_and_body() {
+        let output = [
+            "aaa\x1fbbb ccc\x1fAn Name\x1fa@x\x1f1700000000\x1fMerge it\n\nWhy:\r\n  because\n\n",
+            "bbb\x1f\x1fB\x1fb@x\x1f1\x1fsubject only\n",
+            "broken\x1fno fields",
+            "",
+        ]
+        .join("\0");
+        let commits = parse_log(output.as_bytes());
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].hash, "aaa");
+        assert_eq!(commits[0].parents, ["bbb", "ccc"]);
+        assert_eq!(
+            (
+                commits[0].author_name.as_str(),
+                commits[0].author_email.as_str()
+            ),
+            ("An Name", "a@x")
+        );
+        assert_eq!(commits[0].authored_at, 1_700_000_000_000);
+        assert_eq!(commits[0].summary, "Merge it");
+        assert_eq!(commits[0].body, "Why:\r\n  because");
+        assert!(commits[1].parents.is_empty());
+        assert_eq!(
+            (commits[1].summary.as_str(), commits[1].body.as_str()),
+            ("subject only", "")
+        );
     }
 
     #[test]

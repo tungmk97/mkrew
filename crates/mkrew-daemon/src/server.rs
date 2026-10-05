@@ -335,6 +335,10 @@ impl Daemon {
             Request::GitUnstage(params) => (self.git_stage(params, true).await, After::Continue),
             Request::GitDiscard(params) => (self.git_discard(params).await, After::Continue),
             Request::GitCommit(params) => (self.git_commit(params).await, After::Continue),
+            Request::GitLog(params) => (self.git_log(params).await, After::Continue),
+            Request::GitShow(params) => (self.git_show(params).await, After::Continue),
+            Request::GitFetch(params) => (self.git_remote(params, false).await, After::Continue),
+            Request::GitPush(params) => (self.git_remote(params, true).await, After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

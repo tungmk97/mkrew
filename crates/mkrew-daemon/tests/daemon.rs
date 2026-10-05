@@ -13,19 +13,19 @@ use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
-    CommentReplyParams, CommentSendParams, CommentStatus, DaemonStatusResult, DocChangedEvent,
-    DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff,
-    Frame, FrameDecoder, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
-    GitDiscardParams, GitMode, GitSetBaseParams, GitStageParams, GitStatus, GitStatusParams,
-    HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION,
-    Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
-    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
-    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
-    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
-    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
-    encode,
+    CommentReplyParams, CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult,
+    DocChangedEvent, DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode,
+    Event, FileDiff, Frame, FrameDecoder, GitChangedEvent, GitCommitParams, GitCommitResult,
+    GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitSetBaseParams, GitShowParams,
+    GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
+    HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef,
+    ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
+    SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
+    SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult,
+    SessionState, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
+    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams,
+    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2439,6 +2439,98 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     ] {
         assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
     }
+    client.stop();
+}
+
+/// T7.5: history and one commit's files; push to the upstream and fetch from it, against a
+/// local bare remote (no network). Both report `git.changed`.
+#[test]
+fn git_log_show_push_and_fetch_with_a_local_remote() {
+    let env = Env::new();
+    let repo = env.repo();
+    let bare = env.dir.path().join("remote.git");
+    git(
+        env.dir.path(),
+        &["init", "-q", "--bare", "-b", "main", "remote.git"],
+    );
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "two\n\nbody"]);
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let log = |path: Option<&str>| {
+        Request::GitLog(GitLogParams {
+            project_id: id,
+            limit: GitLogParams::DEFAULT_LIMIT,
+            path: path.map(str::to_owned),
+        })
+    };
+    let show = |commit: &str| {
+        Request::GitShow(GitShowParams {
+            project_id: id,
+            commit: commit.into(),
+        })
+    };
+    let changed_event = Event::GitChanged(GitChangedEvent { project_id: id });
+
+    let commits: Vec<Commit> = client.call(log(None)).into_result().unwrap();
+    let summaries: Vec<&str> = commits.iter().map(|c| c.summary.as_str()).collect();
+    assert_eq!(summaries, ["two", "one"]);
+    assert_eq!(commits[0].body, "body");
+    let only_a: Vec<Commit> = client.call(log(Some("a.txt"))).into_result().unwrap();
+    assert_eq!(only_a, [commits[1].clone()]);
+    let detail: CommitDetail = client.call(show(&commits[0].hash)).into_result().unwrap();
+    assert_eq!(detail.commit, commits[0]);
+    let files: Vec<&str> = detail.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(files, ["b.txt"]);
+    assert_eq!(error_code(client.call(show("nope"))), ErrorCode::NotFound);
+    for bad in [show("--all"), log(Some("../x"))] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+
+    // Push needs an upstream; then it updates the remote branch.
+    let push = Request::GitPush(ProjectRef { project_id: id });
+    assert_eq!(
+        error_code(client.call(push.clone())),
+        ErrorCode::InvalidState
+    );
+    git(&repo, &["push", "-q", "-u", "origin", "main"]);
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "three"]);
+    client.events.clear();
+    let _: () = client.call(push).into_result().unwrap();
+    client.wait_event(&changed_event);
+    assert_eq!(
+        git(&bare, &["rev-parse", "main"]),
+        git(&repo, &["rev-parse", "HEAD"])
+    );
+
+    // Fetch brings in someone else's commit: the branch is behind by one.
+    let other = env.dir.path().join("other");
+    git(
+        env.dir.path(),
+        &["clone", "-q", bare.to_str().unwrap(), "other"],
+    );
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+    git(&other, &["push", "-q"]);
+    client.events.clear();
+    let fetch = Request::GitFetch(ProjectRef { project_id: id });
+    let _: () = client.call(fetch).into_result().unwrap();
+    client.wait_event(&changed_event);
+    let status: GitStatus = client
+        .call(Request::GitStatus(GitStatusParams {
+            project_id: id,
+            mode: GitMode::Working,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(status.upstream.as_deref(), Some("origin/main"));
+    assert_eq!((status.ahead, status.behind), (0, 1));
     client.stop();
 }
 

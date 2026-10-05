@@ -1,11 +1,11 @@
 //! Git access behind a trait (SPEC §12B), so a `gix` backend can replace the CLI later.
-//! Only local commands; nothing here touches the network.
+//! Only [`GitBackend::fetch`] and [`GitBackend::push`] touch the network.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use mkrew_protocol::{ChangedFile, GitStatus};
+use mkrew_protocol::{ChangedFile, Commit, GitStatus};
 
 pub trait GitBackend: Send + Sync {
     /// The commit HEAD points at for the repo containing `dir`; `None` outside a repo or
@@ -70,6 +70,38 @@ pub trait GitBackend: Send + Sync {
 
     /// Commits the index (never amends); returns the new commit.
     fn commit(&self, dir: &Path, message: &str) -> io::Result<String>;
+
+    /// Up to `limit` commits reachable from HEAD that touch `path` (relative to `dir`; the
+    /// whole folder when `None`), newest first. HEAD must exist.
+    fn log(&self, dir: &Path, limit: u32, path: Option<&str>) -> io::Result<Vec<Commit>>;
+
+    /// The commit `id` (a full commit id) itself.
+    fn commit_info(&self, dir: &Path, id: &str) -> io::Result<Commit>;
+
+    /// The branch HEAD is on (also unborn) and its upstream; `None` on a detached HEAD.
+    fn current_branch(&self, dir: &Path) -> io::Result<Option<Branch>>;
+
+    /// `git fetch` from the default remote (network).
+    fn fetch(&self, dir: &Path) -> io::Result<()>;
+
+    /// Pushes `branch` to `upstream`, fast-forward only (network). Never forces.
+    fn push(&self, dir: &Path, branch: &str, upstream: &Upstream) -> io::Result<()>;
+}
+
+/// A local branch: its full ref name (`refs/heads/…`) and where it pushes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Branch {
+    pub name: String,
+    pub upstream: Option<Upstream>,
+}
+
+/// `branch.<name>.remote` and `branch.<name>.merge`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upstream {
+    /// A remote name or URL; `.` = this repo.
+    pub remote: String,
+    /// The full ref name on the remote.
+    pub merge: String,
 }
 
 /// A repository as seen from a folder inside it.
@@ -365,6 +397,84 @@ impl GitBackend for GitCli {
         self.head(dir)?
             .ok_or_else(|| io::Error::other("git commit left no HEAD"))
     }
+
+    fn log(&self, dir: &Path, limit: u32, path: Option<&str>) -> io::Result<Vec<Commit>> {
+        let mut command = log_command(dir);
+        command
+            .arg(format!("--max-count={limit}"))
+            .args(["HEAD", "--", path.unwrap_or(".")]);
+        Ok(mkrew_core::git::parse_log(&run(command)?))
+    }
+
+    fn commit_info(&self, dir: &Path, id: &str) -> io::Result<Commit> {
+        let mut command = log_command(dir);
+        command.args(["--no-walk", id, "--"]);
+        mkrew_core::git::parse_log(&run(command)?)
+            .into_iter()
+            .next()
+            .ok_or_else(|| io::Error::other(format!("git log showed no commit {id}")))
+    }
+
+    fn current_branch(&self, dir: &Path) -> io::Result<Option<Branch>> {
+        let output = view_git(dir)
+            .args(["symbolic-ref", "-q", "HEAD"])
+            .output()?;
+        let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !output.status.success() || name.is_empty() {
+            return Ok(None);
+        }
+        // Read from the config: `%(upstream:…)` of for-each-ref is empty on an unborn branch.
+        let config = |key: &str| -> io::Result<Option<String>> {
+            let short = name.strip_prefix("refs/heads/").unwrap_or(&name);
+            let output = view_git(dir)
+                .args(["config", "--get"])
+                .arg(format!("branch.{short}.{key}"))
+                .output()?;
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            Ok((output.status.success() && !value.is_empty()).then_some(value))
+        };
+        let upstream = match (config("remote")?, config("merge")?) {
+            (Some(remote), Some(merge)) => Some(Upstream { remote, merge }),
+            _ => None,
+        };
+        Ok(Some(Branch { name, upstream }))
+    }
+
+    fn fetch(&self, dir: &Path) -> io::Result<()> {
+        let mut command = network_git(dir);
+        command.args(["fetch", "--quiet"]);
+        run(command).map(drop)
+    }
+
+    fn push(&self, dir: &Path, branch: &str, upstream: &Upstream) -> io::Result<()> {
+        let mut command = network_git(dir);
+        // An explicit refspec without `+`: only this branch, only fast-forward, whatever the
+        // user's `push.default` or `remote.<name>.push` say.
+        command
+            .args(["push", "--quiet", "--"])
+            .arg(&upstream.remote)
+            .arg(format!("{branch}:{}", upstream.merge));
+        run(command).map(drop)
+    }
+}
+
+/// `git log` printing [`mkrew_core::git::LOG_FORMAT`] records, before the revisions. A user's
+/// `log.showSignature` (extra output) and `log.follow` (renames) are switched off.
+fn log_command(dir: &Path) -> Command {
+    let mut command = view_git(dir);
+    command
+        .args(["--literal-pathspecs", "log", "-z", "--no-color"])
+        .args(["--no-show-signature", "--no-follow"])
+        .arg(format!("--format={}", mkrew_core::git::LOG_FORMAT));
+    command
+}
+
+/// [`git`] for commands talking to a remote: no terminal prompt (stdin is null), so missing
+/// credentials fail instead of hanging.
+fn network_git(dir: &Path) -> Command {
+    let mut command = git(dir);
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    command
 }
 
 /// Runs `command` with `paths` passed NUL-separated on stdin (no command-line length limit).

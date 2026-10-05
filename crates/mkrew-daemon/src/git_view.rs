@@ -1,5 +1,6 @@
-//! The Git view's reads (SPEC §12B, ADR 0007): `git.status` and `git.diff` on top of a
-//! [`GitBackend`], with the caches that keep a refresh cheap. Blocking; the server runs them in
+//! The Git view's reads (SPEC §12B, ADR 0007): `git.status`, `git.diff`, `git.log` and
+//! `git.show` on top of a [`GitBackend`], with the caches that keep a refresh cheap; plus the
+//! checks before `git.push`. Blocking; the server runs them in
 //! `spawn_blocking`.
 
 use std::collections::HashMap;
@@ -9,7 +10,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::{self, ScopedJoinHandle};
 use std::time::SystemTime;
 
-use mkrew_protocol::{ChangedFile, FileDiff, GitDiffParams, GitMode, GitStatus};
+use mkrew_protocol::{
+    ChangedFile, Commit, CommitDetail, FileDiff, GitDiffParams, GitMode, GitStatus,
+};
 
 use crate::git::{GitBackend, Repo, Side};
 
@@ -27,6 +30,10 @@ pub enum ViewError {
     NoMergeBase,
     #[error("{0:?} names no commit")]
     UnknownCommit(String),
+    #[error("HEAD is detached: there is no branch to push")]
+    NoBranch,
+    #[error("branch {0:?} has no upstream to push to")]
+    NoUpstream(String),
     #[error(transparent)]
     Git(#[from] io::Error),
 }
@@ -252,6 +259,58 @@ pub fn diff(
     }
     diffs.insert(key, diff.clone());
     Ok(diff)
+}
+
+/// `git.log`: up to `limit` commits touching `path` (already checked to stay inside `dir`; the
+/// whole folder when `None`), newest first; none before the first commit.
+pub fn log(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    limit: u32,
+    path: Option<&str>,
+) -> Result<Vec<Commit>, ViewError> {
+    cache.repo(git, dir)?;
+    if git.head(dir)?.is_none() {
+        return Ok(Vec::new());
+    }
+    Ok(git.log(dir, limit, path)?)
+}
+
+/// `git.show`: the commit `commit` names and the files under `dir` it changed (first parent
+/// for merges).
+pub fn show(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    commit: &str,
+) -> Result<CommitDetail, ViewError> {
+    cache.repo(git, dir)?;
+    let id = git
+        .commit_of(dir, commit)?
+        .ok_or_else(|| ViewError::UnknownCommit(commit.to_owned()))?;
+    let (info, files) = thread::scope(|s| {
+        let files = s.spawn(|| git.changes(dir, Side::Commit(&id)));
+        (git.commit_info(dir, &id), joined(files))
+    });
+    Ok(CommitDetail {
+        commit: info?,
+        files: files?,
+    })
+}
+
+/// `git.push`: the current branch to its upstream, fast-forward only.
+pub fn push(git: &dyn GitBackend, dir: &Path) -> Result<(), ViewError> {
+    let branch = git.current_branch(dir)?.ok_or(ViewError::NoBranch)?;
+    let short = branch
+        .name
+        .strip_prefix("refs/heads/")
+        .unwrap_or(&branch.name);
+    let upstream = branch
+        .upstream
+        .as_ref()
+        .ok_or_else(|| ViewError::NoUpstream(short.to_owned()))?;
+    Ok(git.push(dir, &branch.name, upstream)?)
 }
 
 /// The diff of one file from git's output; over [`MAX_DIFF_BYTES`] only its counts, taken
@@ -574,6 +633,168 @@ mod tests {
                 matches!(error, Err(ViewError::UnknownCommit(_))),
                 "{error:?}"
             );
+        }
+    }
+
+    #[test]
+    fn log_and_show_cover_the_folder_only() {
+        let (repo, dir) = repo();
+        let root = repo.path();
+        let cache = GitCache::default();
+        let first = git(root, &["rev-parse", "HEAD"]);
+        std::fs::write(root.join("outside.txt"), "b\n").unwrap();
+        git(root, &["commit", "-q", "-am", "outside only"]);
+        let outside = git(root, &["rev-parse", "HEAD"]);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "two\n\nthe body"]);
+        let second = git(root, &["rev-parse", "HEAD"]);
+        // Settings that change `git log`'s output are overridden.
+        git(root, &["config", "log.showSignature", "true"]);
+        git(root, &["config", "log.follow", "true"]);
+
+        let commits = log(&GitCli, &cache, &dir, 50, None).unwrap();
+        let hashes: Vec<&str> = commits.iter().map(|c| c.hash.as_str()).collect();
+        assert_eq!(hashes, [second.as_str(), first.as_str()]);
+        assert_eq!(
+            (commits[0].summary.as_str(), commits[0].body.as_str()),
+            ("two", "the body")
+        );
+        assert_eq!(commits[0].parents, std::slice::from_ref(&outside));
+        assert_eq!(
+            (
+                commits[0].author_name.as_str(),
+                commits[0].author_email.as_str()
+            ),
+            ("t", "t@t")
+        );
+        assert!(commits[0].authored_at > 1_600_000_000_000);
+        assert_eq!(commits[1].summary, "one");
+        let only_c = log(&GitCli, &cache, &dir, 50, Some("c.txt")).unwrap();
+        assert_eq!(only_c.len(), 1);
+        assert_eq!(log(&GitCli, &cache, &dir, 1, None).unwrap().len(), 1);
+
+        let shown = show(&GitCli, &cache, &dir, "HEAD").unwrap();
+        assert_eq!(shown.commit, commits[0]);
+        assert_eq!(
+            summary(&shown.files),
+            ["Modified a.txt +0 -1", "Added c.txt +1 -0"]
+        );
+        let elsewhere = show(&GitCli, &cache, &dir, &outside).unwrap();
+        assert_eq!(elsewhere.commit.summary, "outside only");
+        assert!(elsewhere.files.is_empty());
+        let error = show(&GitCli, &cache, &dir, "nope");
+        assert!(
+            matches!(error, Err(ViewError::UnknownCommit(_))),
+            "{error:?}"
+        );
+
+        // Before the first commit: no history.
+        let fresh = tempfile::tempdir().unwrap();
+        git(fresh.path(), &["init", "-q", "-b", "main"]);
+        assert_eq!(log(&GitCli, &cache, fresh.path(), 50, None).unwrap(), []);
+    }
+
+    /// Push goes to the upstream only, fast-forward only; fetch moves the remote-tracking ref.
+    /// The remote is a local bare repo: no network.
+    #[test]
+    fn push_and_fetch_follow_the_upstream_without_forcing() {
+        let (repo, dir) = repo();
+        let root = repo.path();
+        let remotes = tempfile::tempdir().unwrap();
+        let bare = remotes.path().join("remote.git");
+        git(
+            remotes.path(),
+            &["init", "-q", "--bare", "-b", "main", "remote.git"],
+        );
+        git(root, &["remote", "add", "origin", bare.to_str().unwrap()]);
+
+        // No upstream yet; detached HEAD has no branch at all.
+        let error = push(&GitCli, &dir);
+        assert!(
+            matches!(&error, Err(ViewError::NoUpstream(b)) if b == "main"),
+            "{error:?}"
+        );
+        git(root, &["push", "-q", "-u", "origin", "main"]);
+        git(root, &["checkout", "-q", "--detach"]);
+        assert!(matches!(push(&GitCli, &dir), Err(ViewError::NoBranch)));
+        git(root, &["checkout", "-q", "main"]);
+
+        git(root, &["commit", "-q", "--allow-empty", "-m", "local"]);
+        push(&GitCli, &dir).unwrap();
+        let head = git(root, &["rev-parse", "HEAD"]);
+        assert_eq!(git(&bare, &["rev-parse", "main"]), head);
+
+        // Someone else pushes; fetch brings it in, and a diverged push is refused.
+        let other = remotes.path().join("other");
+        git(
+            remotes.path(),
+            &["clone", "-q", bare.to_str().unwrap(), "other"],
+        );
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+        git(&other, &["push", "-q"]);
+        let theirs = git(&other, &["rev-parse", "HEAD"]);
+        GitCli.fetch(&dir).unwrap();
+        assert_eq!(git(root, &["rev-parse", "origin/main"]), theirs);
+        git(root, &["commit", "-q", "--allow-empty", "-m", "mine"]);
+        let error = push(&GitCli, &dir);
+        assert!(matches!(error, Err(ViewError::Git(_))), "{error:?}");
+        assert_eq!(git(&bare, &["rev-parse", "main"]), theirs);
+    }
+
+    /// SPEC §15: a status refresh of a 10,000-file repo takes < 150 ms. Asserted in release
+    /// builds only; debug builds log the time.
+    #[test]
+    fn status_of_a_10000_file_repo_meets_the_budget() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["config", "core.autocrlf", "false"]);
+        // One `fast-import` pack instead of `git add`'s 10,000 loose objects (minutes on
+        // Windows); a parallel checkout then writes the files and the index.
+        let mut stream = String::from("commit refs/heads/main\ncommitter t <t@t> 0 +0000\n");
+        stream.push_str("data 5\nfiles\n");
+        for d in 0..100 {
+            for f in 0..100 {
+                let content = format!("{d} {f}\n");
+                stream.push_str(&format!("M 100644 inline d{d:02}/f{f:02}.txt\n"));
+                stream.push_str(&format!("data {}\n{content}\n", content.len()));
+            }
+        }
+        let stream_file = root.join(".git").join("stream");
+        std::fs::write(&stream_file, stream).unwrap();
+        let imported = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["fast-import", "--quiet"])
+            .stdin(std::fs::File::open(&stream_file).unwrap())
+            .status()
+            .unwrap();
+        assert!(imported.success());
+        git(root, &["-c", "checkout.workers=0", "reset", "-q", "--hard"]);
+        for d in 0..10 {
+            std::fs::write(root.join(format!("d{d:02}/f00.txt")), "changed\n").unwrap();
+        }
+        std::fs::write(root.join("new.txt"), "new\n").unwrap();
+        // The user's own git keeps the index fresh (here: rehashes the files the checkout left
+        // racily clean); the view itself never writes it.
+        git(root, &["status", "-s"]);
+
+        let cache = GitCache::default();
+        let refresh = || {
+            let started = std::time::Instant::now();
+            let status = working(&cache, root);
+            (started.elapsed(), status)
+        };
+        let (_, status) = refresh();
+        assert_eq!((status.unstaged.len(), status.untracked.len()), (10, 1));
+        let mut times: Vec<_> = (0..5).map(|_| refresh().0).collect();
+        times.sort();
+        let median = times[2];
+        eprintln!("git.status on 10,000 files: median {median:?} of {times:?}");
+        if !cfg!(debug_assertions) {
+            assert!(median < std::time::Duration::from_millis(150), "{median:?}");
         }
     }
 

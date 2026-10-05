@@ -19,7 +19,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
       daemon that survived a killed run) locks `target\debug\mkrew-fakeagent.exe`, so
       `scripts/verify.sh` fails to relink it ("Access is denied"). Please end stray
       `mkrew-fakeagent.exe` / `mkrew-daemon.exe` processes. Also, drive C: has only ~7 GB free,
-      and a second target dir filled it up during T7.4 (LNK1318).
+      and a second target dir filled it up during T7.4 (LNK1318). T7.5: still locked (4.9 GB
+      free); renamed it to `target\debug\mkrew-fakeagent.locked-old.exe` (allowed while it
+      runs) so verify could relink — delete that file once the process is gone.
 
 - [ ] (T0.1) Run `pwsh scripts/verify.ps1` once. The headless session was not allowed to run
   `pwsh`; `bash scripts/verify.sh` (same fmt/clippy/test steps) passed on Windows.
@@ -1008,6 +1010,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `.git` dir outside the project folder (repo subfolder, worktree) only show via working-file
   changes. Open review items: discard runs one `ls-files` per path; paths are `trim()`med
   (`docs::relative_path`).
+- (T7.5) **git.log/show/fetch/push:** `git.log` without `path` covers the project folder only
+  (`-- .`, like status), newest first, `limit` not clamped (0 = none), empty before the first
+  commit; summary = first message line, body = the rest. `git.show` = commit info + files of
+  the folder it changed (first parent for merges). **Fetch** = plain `git fetch` (the current
+  branch's remote, else `origin`), so a configured base on another remote is not refreshed.
+  **Push** = `git push -- <branch.<b>.remote> refs/heads/<b>:<branch.<b>.merge>` (no `+`, so
+  never forced; `push.default`/`remote.*.push` ignored); detached HEAD / no upstream =
+  `invalid_state`, rejected push = `internal` with git's message. Both run hooks and set
+  `GIT_TERMINAL_PROMPT=0`; **no timeout**: a stalled remote or an SSH passphrase/host-key prompt
+  keeps the request waiting (a Git Credential Manager GUI may still pop up — intended). §15 perf
+  test (`status_of_a_10000_file_repo_meets_the_budget`) asserts < 150 ms only under
+  `cargo test --release`; debug run here: median ≈ 87–117 ms. The view's status never writes the
+  index (`GIT_OPTIONAL_LOCKS=0`), so it is slower until the user's own git refreshes it.
 
 ## Done
 

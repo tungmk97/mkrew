@@ -1,13 +1,12 @@
 //! `git.*` handlers (SPEC §7, §12B).
 
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mkrew_protocol::{
     ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
-    GitDiscardParams, GitSetBaseParams, GitStageParams, GitStatusParams, HunkTarget, Outcome,
-    Project,
+    GitDiscardParams, GitLogParams, GitSetBaseParams, GitShowParams, GitStageParams,
+    GitStatusParams, HunkTarget, Outcome, Project, ProjectRef,
 };
 use serde::Serialize;
 use tokio::task::JoinError;
@@ -152,14 +151,72 @@ impl Daemon {
         .await
     }
 
+    /// `git.log`: newest first, the whole folder or one path in it.
+    pub(super) async fn git_log(&self, params: GitLogParams) -> Outcome {
+        let path = match params.path.as_deref().map(docs::relative_path) {
+            None => None,
+            Some(Some((path, _))) => Some(path),
+            Some(None) => {
+                let message = format!(
+                    "path {:?} must be relative to the project root",
+                    params.path.unwrap_or_default()
+                );
+                return Outcome::error(ErrorCode::InvalidRequest, message);
+            }
+        };
+        let project = match self.store().get_project(params.project_id) {
+            Ok(project) => project,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let log = tokio::task::spawn_blocking(move || {
+            let dir = PathBuf::from(project.path);
+            git_view::log(&*git, &cache, &dir, params.limit, path.as_deref())
+        })
+        .await;
+        view_outcome("git.log", log)
+    }
+
+    /// `git.show`: one commit and the files of the project folder it changed.
+    pub(super) async fn git_show(&self, params: GitShowParams) -> Outcome {
+        if let Err(reason) = check_ref(&params.commit) {
+            return Outcome::error(ErrorCode::InvalidRequest, reason);
+        }
+        let project = match self.store().get_project(params.project_id) {
+            Ok(project) => project,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let detail = tokio::task::spawn_blocking(move || {
+            let dir = PathBuf::from(project.path);
+            git_view::show(&*git, &cache, &dir, &params.commit)
+        })
+        .await;
+        view_outcome("git.show", detail)
+    }
+
+    /// `git.fetch` (refreshes the base and ahead/behind) and `git.push` (current branch to
+    /// its upstream, never forced). Both may take long; other requests are not held up.
+    pub(super) async fn git_remote(&self, params: ProjectRef, push: bool) -> Outcome {
+        let method = if push { "git.push" } else { "git.fetch" };
+        self.git_change(method, params.project_id, move |git, dir, _| {
+            if push {
+                git_view::push(git, dir)
+            } else {
+                Ok(git.fetch(dir)?)
+            }
+        })
+        .await
+    }
+
     /// Runs `change` on the project's folder off the async runtime. The index mtime moves, so
     /// cached diffs go stale by themselves. Success broadcasts `git.changed` right away: the
     /// watcher misses a `.git` dir outside the project folder (repo subfolder, worktree).
-    async fn git_change<T: Serialize + Send + 'static>(
+    async fn git_change<T: Serialize + Send + 'static, E: Into<ViewError>>(
         &self,
         method: &str,
         project_id: ulid::Ulid,
-        change: impl FnOnce(&dyn GitBackend, &Path, &Repo) -> io::Result<T> + Send + 'static,
+        change: impl FnOnce(&dyn GitBackend, &Path, &Repo) -> Result<T, E> + Send + 'static,
     ) -> Outcome {
         let project = match self.store().get_project(project_id) {
             Ok(project) => project,
@@ -169,7 +226,7 @@ impl Daemon {
         let result = tokio::task::spawn_blocking(move || {
             let dir = PathBuf::from(project.path);
             let repo = cache.repo(&*git, &dir)?;
-            Ok(change(&*git, &dir, &repo)?)
+            change(&*git, &dir, &repo).map_err(Into::into)
         })
         .await;
         if let Ok(Ok(_)) = &result {
@@ -200,17 +257,20 @@ impl Daemon {
     }
 }
 
-/// Not a repo / no base = `invalid_state`; unknown commit = `not_found`; git failing =
-/// `internal` with its stderr.
+/// Not a repo / no base / nothing to push to = `invalid_state`; unknown commit = `not_found`;
+/// git failing = `internal` with its stderr.
 fn view_outcome<T: Serialize>(
     method: &str,
     result: Result<Result<T, ViewError>, JoinError>,
 ) -> Outcome {
     match result {
         Ok(Ok(value)) => ok(&value),
-        Ok(Err(e @ (ViewError::NotARepo | ViewError::NoMergeBase))) => {
-            Outcome::error(ErrorCode::InvalidState, e.to_string())
-        }
+        Ok(Err(
+            e @ (ViewError::NotARepo
+            | ViewError::NoMergeBase
+            | ViewError::NoBranch
+            | ViewError::NoUpstream(_)),
+        )) => Outcome::error(ErrorCode::InvalidState, e.to_string()),
         Ok(Err(e @ ViewError::UnknownCommit(_))) => {
             Outcome::error(ErrorCode::NotFound, e.to_string())
         }

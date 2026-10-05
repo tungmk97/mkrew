@@ -117,8 +117,8 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::*;
-    use crate::git::{Repo, Side};
-    use mkrew_protocol::{ChangedFile, GitStatus};
+    use crate::git::{Branch, Repo, Side, Upstream};
+    use mkrew_protocol::{ChangedFile, Commit, GitStatus};
 
     fn now_ms() -> i64 {
         i64::try_from(
@@ -196,6 +196,21 @@ mod tests {
             unreachable!()
         }
         fn commit(&self, _: &Path, _: &str) -> io::Result<String> {
+            unreachable!()
+        }
+        fn log(&self, _: &Path, _: u32, _: Option<&str>) -> io::Result<Vec<Commit>> {
+            unreachable!()
+        }
+        fn commit_info(&self, _: &Path, _: &str) -> io::Result<Commit> {
+            unreachable!()
+        }
+        fn current_branch(&self, _: &Path) -> io::Result<Option<Branch>> {
+            unreachable!()
+        }
+        fn fetch(&self, _: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn push(&self, _: &Path, _: &str, _: &Upstream) -> io::Result<()> {
             unreachable!()
         }
     }
