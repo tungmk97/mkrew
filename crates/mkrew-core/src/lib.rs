@@ -8,6 +8,7 @@ pub mod lookup;
 pub mod paths;
 pub mod profile;
 pub mod state;
+pub mod task;
 
 pub use hook::HookAgent;
 pub use paths::Paths;

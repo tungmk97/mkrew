@@ -535,6 +535,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   modelled on how omp is assumed to look. If real omp has an approval prompt or a quiet "thinking"
   phase > 3 s, add a pattern / raise `idle_after_ms` and record its output as a fixture. Screen-only
   profiles never reach `done` (by design, §6): a finished omp turn shows as `idle`.
+- (T4.2) Task status rules (`mkrew_core::task`): session events move a card only while it is
+  `running`/`needs_input`. A card the user dragged to todo/review/done (or one already in review)
+  stays put on later events, so a follow-up typed into a review card's terminal does not move it
+  back to running. A session start (Run) always sets running and clears `error_flag`. An exit
+  with no code (killed) counts as non-zero. Only review cards can be approved. Session `idle`
+  does not move a card: screen-only agents such as omp never reach `done`, so their cards stay
+  running until the session exits or the user drags them.
 
 ## Done
 
