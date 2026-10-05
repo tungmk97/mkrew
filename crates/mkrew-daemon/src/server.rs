@@ -7,12 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use interprocess::local_socket::tokio::{Listener, Stream, prelude::*};
 use mkrew_core::{HookAgent, Paths, PromptMode};
 use mkrew_protocol::{
-    AgentProfileInfo, AgentProfilesResult, DaemonStatusResult, ErrorCode, Event, Frame,
-    FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
-    ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request, Session,
-    SessionHistory, SessionKillParams, SessionKind, SessionSpawnParams, SessionSpawnResult,
-    SessionState, SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams,
-    TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams, TerminalTab, encode,
+    AgentProfileInfo, AgentProfilesResult, CommentStatus, DaemonStatusResult, ErrorCode, Event,
+    Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
+    PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
+    Session, SessionHistory, SessionKillParams, SessionKind, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource, Task,
+    TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
+    TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -27,6 +28,7 @@ use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::{backup, session_log, undo};
 
+mod comment;
 mod resume;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -305,6 +307,17 @@ impl Daemon {
             Request::SessionWait(params) => (self.session_wait(params).await, After::Continue),
             Request::HookReport(params) => (self.hook_report(params).await, After::Continue),
             Request::AgentProfiles => (ok(&self.agent_profiles()), After::Continue),
+            Request::CommentList(params) => (self.comment_list(params), After::Continue),
+            Request::CommentCreate(params) => (self.comment_create(params), After::Continue),
+            Request::CommentReply(params) => (self.comment_reply(params), After::Continue),
+            Request::CommentResolve(params) => (
+                self.comment_set_status(params.comment_id, CommentStatus::Resolved),
+                After::Continue,
+            ),
+            Request::CommentReopen(params) => (
+                self.comment_set_status(params.comment_id, CommentStatus::Open),
+                After::Continue,
+            ),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

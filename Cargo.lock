@@ -3536,6 +3536,7 @@ dependencies = [
  "clap",
  "crossterm",
  "directories",
+ "dunce",
  "interprocess",
  "mkrew-core",
  "mkrew-daemon",

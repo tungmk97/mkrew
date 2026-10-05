@@ -2,6 +2,7 @@
 
 mod attach;
 mod client;
+mod comment;
 mod daemon;
 mod hook;
 mod integration;
@@ -14,7 +15,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use mkrew_core::Paths;
-use mkrew_protocol::{SessionState, TaskStatus};
+use mkrew_protocol::{CommentId, SessionState, TaskStatus};
 use ulid::Ulid;
 
 #[derive(Parser)]
@@ -65,6 +66,11 @@ enum Command {
         /// Give up after this many milliseconds (exit code 1).
         #[arg(long)]
         timeout: Option<u64>,
+    },
+    /// Read and answer Markdown review comments.
+    Comment {
+        #[command(subcommand)]
+        command: CommentCommand,
     },
     /// Install, remove or check the hooks that report an agent's state to Mkrew.
     Integration {
@@ -134,6 +140,23 @@ enum TaskCommand {
         #[arg(long)]
         yes: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum CommentCommand {
+    /// List review threads (default project: the current session's, else the current
+    /// directory's).
+    List {
+        /// Only comments on this file (relative to the current directory or project root).
+        #[arg(long)]
+        file: Option<String>,
+        /// Project id or name.
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Answer a review comment; inside a Mkrew session the reply is the agent's and marks
+    /// the comment addressed.
+    Reply { comment_id: CommentId, text: String },
 }
 
 #[derive(Subcommand)]
@@ -251,6 +274,16 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         } => {
             let mut client = project::connect(&paths)?;
             session::wait(&mut client, session_id, until, timeout).map(|()| ExitCode::SUCCESS)
+        }
+        Command::Comment { command } => {
+            let mut client = project::connect(&paths)?;
+            match command {
+                CommentCommand::List { file, project } => comment::list(&mut client, project, file),
+                CommentCommand::Reply { comment_id, text } => {
+                    comment::reply(&mut client, comment_id, text)
+                }
+            }
+            .map(|()| ExitCode::SUCCESS)
         }
         Command::Hook { .. } | Command::Integration { .. } => unreachable!("handled above"),
     }

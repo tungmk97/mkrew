@@ -550,7 +550,7 @@ mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
 mk integration install|uninstall|status <agent>
 mk hook <agent> <event>                # called by agent hooks, not by users
 mk open <project> [file[:line]]        # opens in Zed
-mk comment list --file <path>
+mk comment list [--file <path>] [--project P]  # default project: MKREW_SESSION_ID's, else cwd's
 mk comment reply <comment-id> "<text>" # used by agents to answer review comments
 ```
 

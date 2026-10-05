@@ -12,15 +12,17 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
-    AgentProfilesResult, ClientKind, DaemonStatusResult, ErrorCode, Event, Frame, FrameDecoder,
-    HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION, Project,
-    ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session,
-    SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind,
-    SessionListParams, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
+    CommentReplyParams, CommentStatus, DaemonStatusResult, DocComment, ErrorCode, Event, Frame,
+    FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION,
+    Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
+    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
+    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
+    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
+    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
+    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
+    encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -435,6 +437,162 @@ fn projects_are_added_and_listed() {
         .call(Request::DaemonStop)
         .into_result::<()>()
         .unwrap();
+}
+
+/// Waits for the `comment.updated` of `id` with `status`; returns it.
+fn wait_comment(client: &mut Client, id: CommentId, status: CommentStatus) -> DocComment {
+    let event = client.wait_event_where(
+        |e| matches!(e, Event::CommentUpdated(c) if c.id == id && c.status == status),
+    );
+    match event {
+        Event::CommentUpdated(c) => *c,
+        _ => unreachable!(),
+    }
+}
+
+/// Threads: create, reply, resolve, reopen; an agent reply (via its session) addresses the
+/// thread, a user reply on an addressed thread reopens it. Every change is broadcast.
+#[test]
+fn comment_threads_reply_resolve_reopen_and_agent_replies_address_them() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let session: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+
+    let create = |file: &str, start_line, end_line, body: &str| {
+        Request::CommentCreate(CommentCreateParams {
+            project_id: project.id,
+            file_path: file.into(),
+            start_line,
+            end_line,
+            quote: "Use Redis".into(),
+            body: body.into(),
+        })
+    };
+    for bad in [
+        create("docs/plan.md", 0, 1, "why?"),
+        create("docs/plan.md", 3, 2, "why?"),
+        create("docs/plan.md", 1, 1, " "),
+        create(" ", 1, 1, "why?"),
+    ] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
+    let root: DocComment = client
+        .call(create(r"docs\plan.md", 12, 14, "Why not in-memory?"))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        (root.file_path.as_str(), root.status, root.author.as_str()),
+        ("docs/plan.md", CommentStatus::Open, DocComment::USER)
+    );
+    wait_comment(&mut client, root.id, CommentStatus::Open);
+    let other: DocComment = client
+        .call(create("README.md", 1, 1, "Typo"))
+        .into_result()
+        .unwrap();
+
+    let reply = |id, body: &str, session| {
+        Request::CommentReply(CommentReplyParams {
+            comment_id: id,
+            body: body.into(),
+            mkrew_session_id: session,
+        })
+    };
+    let user: DocComment = client
+        .call(reply(root.id, "Also check TTLs", None))
+        .into_result()
+        .unwrap();
+    assert_eq!(user.parent_id, Some(root.id));
+    assert_eq!(user.author, DocComment::USER);
+
+    // The agent answers (naming the user reply joins the same thread): addressed.
+    let agent: DocComment = client
+        .call(reply(
+            user.id,
+            "Switched to in-memory",
+            Some(session.session_id),
+        ))
+        .into_result()
+        .unwrap();
+    assert_eq!(agent.parent_id, Some(root.id));
+    assert_eq!(agent.author, "fake");
+    wait_comment(&mut client, root.id, CommentStatus::Addressed);
+
+    let list = |client: &mut Client, file: Option<&str>| -> Vec<DocComment> {
+        client
+            .call(Request::CommentList(CommentListParams {
+                project_id: project.id,
+                file_path: file.map(Into::into),
+            }))
+            .into_result()
+            .unwrap()
+    };
+    // The user answers back: open again.
+    client
+        .call(reply(root.id, "Still too big", None))
+        .into_result::<DocComment>()
+        .unwrap();
+    assert_eq!(list(&mut client, None)[0].status, CommentStatus::Open);
+
+    // Resolve / reopen act on the thread root, also when given a reply id.
+    let resolved: DocComment = client
+        .call(Request::CommentResolve(CommentRef {
+            comment_id: user.id,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        (resolved.id, resolved.status),
+        (root.id, CommentStatus::Resolved)
+    );
+    let reopened: DocComment = client
+        .call(Request::CommentReopen(CommentRef {
+            comment_id: root.id,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(reopened.status, CommentStatus::Open);
+
+    let thread = list(&mut client, Some(r"docs\plan.md"));
+    let bodies: Vec<_> = thread.iter().map(|c| c.body.as_str()).collect();
+    assert_eq!(
+        bodies,
+        [
+            "Why not in-memory?",
+            "Also check TTLs",
+            "Switched to in-memory",
+            "Still too big"
+        ]
+    );
+    assert_eq!(thread[0].status, CommentStatus::Open);
+    assert_eq!(list(&mut client, None).len(), 5);
+    assert!(
+        list(&mut client, Some("README.md"))
+            .iter()
+            .all(|c| c.id == other.id)
+    );
+
+    let missing = CommentId::new();
+    assert_eq!(
+        error_code(client.call(reply(missing, "hi", None))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        error_code(client.call(reply(root.id, "hi", Some(Ulid::new())))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        error_code(client.call(reply(root.id, "", None))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(Request::CommentResolve(CommentRef {
+            comment_id: missing
+        }))),
+        ErrorCode::NotFound
+    );
+    client.stop();
 }
 
 #[test]

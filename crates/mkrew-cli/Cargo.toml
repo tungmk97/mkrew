@@ -18,6 +18,8 @@ clap = { version = "4.6.7", features = ["derive"] }
 crossterm = "0.29.0"
 # Home dir for the agents' config files (`mk integration`); same major as mkrew-core.
 directories = "6"
+# `mk comment`: compares the current directory with the (dunce-canonical) project paths.
+dunce = "1.0.5"
 interprocess = "2.4.4"
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }

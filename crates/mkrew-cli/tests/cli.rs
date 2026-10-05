@@ -727,3 +727,150 @@ fn fake_agent_hooks_drive_the_session_state() {
     let waited = env.ok(&["wait", id, "--until", "done", "--timeout", "5000"]);
     assert_eq!(waited.trim(), "done");
 }
+
+impl Env {
+    /// Creates a review comment as the UI would (there is no `mk` command for it); returns
+    /// its id.
+    fn create_comment(&self, project: &str, file: &str, lines: (u32, u32), body: &str) -> String {
+        use interprocess::local_socket::prelude::*;
+        use mkrew_protocol::{
+            ClientKind, CommentCreateParams, DocComment, Frame, FrameDecoder, HelloParams, Message,
+            Outcome, PROTOCOL_VERSION, Project, Request, encode,
+        };
+        let name = mkrew_daemon::ipc::name(&self.socket).unwrap();
+        let mut stream = interprocess::local_socket::Stream::connect(name).unwrap();
+        let mut decoder = FrameDecoder::new();
+        let mut call = |id: u64, request: Request| -> Outcome {
+            let frame = Frame::Message(Message::Request { id, request });
+            stream.write_all(&encode(&frame).unwrap()).unwrap();
+            let mut buf = [0u8; 4096];
+            loop {
+                while let Some(frame) = decoder.next_frame().unwrap() {
+                    if let Frame::Message(Message::Response { id: got, outcome }) = frame
+                        && got == id
+                    {
+                        return outcome;
+                    }
+                }
+                let n = stream.read(&mut buf).unwrap();
+                assert!(n > 0, "daemon closed the connection");
+                decoder.push(&buf[..n]);
+            }
+        };
+        let hello = HelloParams {
+            client: ClientKind::Cli,
+            protocol_version: PROTOCOL_VERSION,
+        };
+        call(1, Request::Hello(hello))
+            .into_result::<serde_json::Value>()
+            .unwrap();
+        let projects: Vec<Project> = call(2, Request::ProjectList).into_result().unwrap();
+        let project = projects.iter().find(|p| p.name == project).unwrap();
+        let comment: DocComment = call(
+            3,
+            Request::CommentCreate(CommentCreateParams {
+                project_id: project.id,
+                file_path: file.into(),
+                start_line: lines.0,
+                end_line: lines.1,
+                quote: "Use Redis".into(),
+                body: body.into(),
+            }),
+        )
+        .into_result()
+        .unwrap();
+        comment.id.to_string()
+    }
+}
+
+/// An agent inside a session lists its project's review comments and answers them: the reply
+/// is authored by the session's profile and the comment becomes `addressed`.
+#[test]
+fn comment_list_and_reply_from_inside_a_session() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let session = env.ok(&["session", "spawn", "demo", "--agent", "fake"]);
+    let session = session.trim();
+    let first = env.create_comment("demo", "docs/plan.md", (12, 14), "Why not in-memory?");
+    let second = env.create_comment("demo", "docs/plan.md", (40, 40), "Add a rollback step.");
+    env.create_comment("demo", "README.md", (1, 1), "Typo");
+    assert!(first.starts_with("c_"), "{first}");
+
+    // Inside the session: its project, file relative to the current directory.
+    let in_session = |args: &[&str], cwd: &Path| {
+        let output = env
+            .command(args)
+            .env("MKREW_SESSION_ID", session)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "mk {args:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let listed = in_session(
+        &["comment", "list", "--file", "plan.md"],
+        &repo.join("docs"),
+    );
+    assert_eq!(
+        listed,
+        format!(
+            "[{first}] open docs/plan.md, lines 12–14, passage \"Use Redis\"\n\
+             \x20 user: Why not in-memory?\n\
+             [{second}] open docs/plan.md, line 40, passage \"Use Redis\"\n\
+             \x20 user: Add a rollback step.\n"
+        )
+    );
+
+    let replied = in_session(
+        &["comment", "reply", &first, "Switched to in-memory"],
+        &repo,
+    );
+    assert_eq!(replied.trim(), format!("replied to {first}"));
+    // Without the `c_` prefix too.
+    let bare = second.trim_start_matches("c_");
+    in_session(&["comment", "reply", bare, "Added step 5"], &repo);
+
+    // Outside any session: the project of the current directory; all of its files.
+    let outside = |args: &[&str]| {
+        let output = env
+            .command(args)
+            .env_remove("MKREW_SESSION_ID")
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "mk {args:?}: {output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let listed = outside(&["comment", "list"]);
+    for expected in [
+        format!("[{first}] addressed docs/plan.md"),
+        "  fake: Switched to in-memory".to_owned(),
+        format!("[{second}] addressed docs/plan.md"),
+        "  fake: Added step 5".to_owned(),
+        "open README.md, line 1".to_owned(),
+    ] {
+        assert!(listed.contains(&expected), "no {expected:?} in:\n{listed}");
+    }
+
+    // A user reply (no session) reopens the addressed thread.
+    outside(&["comment", "reply", &first, "Still too big"]);
+    let listed = outside(&[
+        "comment",
+        "list",
+        "--project",
+        "demo",
+        "--file",
+        "docs/plan.md",
+    ]);
+    assert!(listed.contains(&format!("[{first}] open")), "{listed}");
+    assert!(listed.contains("  user: Still too big"), "{listed}");
+
+    let unknown = env.mk(&["comment", "reply", &format!("c_{}", Ulid::new()), "hi"]);
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("not found"), "{stderr}");
+}
