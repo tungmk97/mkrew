@@ -162,6 +162,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   (`mk session list` / daemon log: the UI's attachment is gone), let output continue, restore:
   every visible pane is back with the current screen and the focused pane has keyboard focus.
 
+- [ ] (T3.4) **Integration install on the real home**: `mk integration install claude` and
+  `codex`, then `status` (exit 0, no PATH warning); check `~/.claude/settings.json` keeps your
+  settings + a `.bak` exists; start `claude` in a Mkrew pane, submit a prompt → working, finish →
+  done (Claude's `/hooks` lists the 4 `mk hook claude` entries). `uninstall` both → your files
+  as before.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -438,6 +444,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   may say "screen" for a hook-confirmed state). Unknown events of a known agent: stored, ok;
   unknown agent: `invalid_request`. Schema change → migration 0003 + ADR 0003, protocol v2
   (restart an old daemon after updating).
+- (T3.4) `mk integration`: config dirs follow the agents' own overrides (`CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME`, else `~/.claude`, `~/.codex`). Hooks run bare `mk` as SPEC §6 says, so `mk` must
+  be on PATH (`status` warns if not); an absolute path would survive a missing PATH but break on
+  moves. Backup = `<file>.<unix ms>.bak`, only when the file changes. `settings.json` is
+  re-printed (2-space, LF; key order kept), so uninstall restores content, not bytes. Codex
+  allows one `notify`: install refuses to replace a foreign one (status says "not installed").
+  Not used: Codex's newer `[hooks]` system (needs the user to trust hooks via `/hooks`, no
+  Notification event) — revisit if `notify` is deprecated. SPEC §19 "status reports hook
+  version" is not implemented (no version marker in the hooks).
 
 ## Done
 

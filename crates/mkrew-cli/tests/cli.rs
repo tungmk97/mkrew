@@ -403,6 +403,81 @@ fn hook_outside_mkrew_exits_silently() {
     }
 }
 
+/// `mk integration` on temp agent homes: install backs the file up once, repeating is a no-op,
+/// uninstall restores the original content, status follows along.
+#[test]
+fn integration_install_status_uninstall() {
+    let env = Env::new();
+    let claude = env.dir.path().join("claude");
+    let codex = env.dir.path().join("codex");
+    let integration = |args: &[&str]| {
+        env.command(args)
+            .env("CLAUDE_CONFIG_DIR", &claude)
+            .env("CODEX_HOME", &codex)
+            .output()
+            .unwrap()
+    };
+    let backups = |dir: &Path| {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".bak")
+            })
+            .count()
+    };
+    std::fs::create_dir_all(&claude).unwrap();
+    let settings = claude.join("settings.json");
+    let original = "{\n  \"model\": \"opus\"\n}\n";
+    std::fs::write(&settings, original).unwrap();
+
+    for agent in ["claude", "codex"] {
+        let status = integration(&["integration", "status", agent]);
+        assert_eq!(status.status.code(), Some(1), "{status:?}");
+        assert!(String::from_utf8_lossy(&status.stdout).contains("not installed"));
+        for _ in 0..2 {
+            let install = integration(&["integration", "install", agent]);
+            assert!(install.status.success(), "{install:?}");
+        }
+        let status = integration(&["integration", "status", agent]);
+        assert!(status.status.success(), "{status:?}");
+    }
+    assert_eq!(backups(&claude), 1, "one backup, of the first change only");
+    assert_eq!(backups(&codex), 0, "a new file has nothing to back up");
+    let installed = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        installed.contains("mk hook claude Notification"),
+        "{installed}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(codex.join("config.toml")).unwrap(),
+        "notify = [\"mk\", \"hook\", \"codex\"]\n"
+    );
+
+    for agent in ["claude", "codex"] {
+        let uninstall = integration(&["integration", "uninstall", agent]);
+        assert!(uninstall.status.success(), "{uninstall:?}");
+        let status = integration(&["integration", "status", agent]);
+        assert_eq!(status.status.code(), Some(1), "{status:?}");
+    }
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), original);
+    assert_eq!(
+        std::fs::read_to_string(codex.join("config.toml")).unwrap(),
+        ""
+    );
+
+    // Invalid JSON is reported and left untouched.
+    std::fs::write(&settings, "{").unwrap();
+    let install = integration(&["integration", "install", "claude"]);
+    assert!(!install.status.success());
+    assert!(String::from_utf8_lossy(&install.stderr).contains("settings.json"));
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), "{");
+}
+
 /// The fake agent's `hook` steps drive the session (screen detection would not see the prompt),
 /// and `mk hook` understands Claude's stdin and Codex's argument JSON.
 #[test]

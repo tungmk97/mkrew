@@ -16,12 +16,18 @@ path = "src/main.rs"
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 crossterm = "0.29.0"
+# Home dir for the agents' config files (`mk integration`); same major as mkrew-core.
+directories = "6"
 interprocess = "2.4.4"
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
 serde = "1"
-serde_json = "1"
+# `preserve_order`: `mk integration` rewrites `settings.json` without reordering its keys
+# (already on workspace-wide through gpui's tree, so no other crate changes behaviour).
+serde_json = { version = "1", features = ["preserve_order"] }
+# Edits `~/.codex/config.toml` keeping comments and layout; 0.25 is already in the tree.
+toml_edit = "0.25"
 ulid = "1"
 
 [target.'cfg(windows)'.dependencies]

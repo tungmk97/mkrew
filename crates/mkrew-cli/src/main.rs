@@ -4,6 +4,7 @@ mod attach;
 mod client;
 mod daemon;
 mod hook;
+mod integration;
 mod project;
 mod session;
 
@@ -59,6 +60,11 @@ enum Command {
         #[arg(long)]
         timeout: Option<u64>,
     },
+    /// Install, remove or check the hooks that report an agent's state to Mkrew.
+    Integration {
+        #[command(subcommand)]
+        command: IntegrationCommand,
+    },
     /// Report an agent hook event to the session (called by agent hooks, not by users).
     Hook {
         /// `claude`, `codex` or `fake`.
@@ -85,6 +91,16 @@ enum SessionCommand {
         #[arg(long)]
         agent: String,
     },
+}
+
+#[derive(Subcommand)]
+enum IntegrationCommand {
+    /// Add Mkrew's hooks to the agent's config (backs the file up first).
+    Install { agent: integration::Agent },
+    /// Remove Mkrew's hooks from the agent's config, keeping everything else.
+    Uninstall { agent: integration::Agent },
+    /// Show whether the hooks are installed (exit code 1 if not).
+    Status { agent: integration::Agent },
 }
 
 #[derive(Subcommand)]
@@ -125,6 +141,15 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     // Hooks also run outside Mkrew, where nothing else may be set up.
     if let Command::Hook { agent, args } = cli.command {
         return hook::hook(agent, args);
+    }
+    // Only touches the agents' config files.
+    if let Command::Integration { command } = cli.command {
+        let (action, agent) = match command {
+            IntegrationCommand::Install { agent } => (integration::Action::Install, agent),
+            IntegrationCommand::Uninstall { agent } => (integration::Action::Uninstall, agent),
+            IntegrationCommand::Status { agent } => (integration::Action::Status, agent),
+        };
+        return integration::run(action, agent);
     }
     let paths = Paths::from_env()?;
     match cli.command {
@@ -168,6 +193,6 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             let mut client = project::connect(&paths)?;
             session::wait(&mut client, session_id, until, timeout).map(|()| ExitCode::SUCCESS)
         }
-        Command::Hook { .. } => unreachable!("handled above"),
+        Command::Hook { .. } | Command::Integration { .. } => unreachable!("handled above"),
     }
 }

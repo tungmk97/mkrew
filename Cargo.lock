@@ -3447,6 +3447,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "directories",
  "interprocess",
  "mkrew-core",
  "mkrew-daemon",
@@ -3454,6 +3455,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "toml_edit 0.25.15+spec-1.1.0",
  "ulid",
  "windows-sys 0.61.2",
 ]
@@ -6060,6 +6062,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 
