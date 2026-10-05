@@ -3,6 +3,7 @@
 // Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
 #![allow(clippy::unwrap_used)]
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -13,8 +14,9 @@ use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, DaemonStatusResult, ErrorCode, Event, Frame, FrameDecoder,
     HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
-    Request, ResponseError, Session, SessionExitedEvent, SessionKillParams, SessionKind,
-    SessionListParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionStateEvent,
+    Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionRef,
+    SessionResizeParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionStateEvent,
     encode,
 };
 use mkrew_store::Store;
@@ -50,6 +52,11 @@ impl Env {
 
     /// `agents/fake.toml` with the built `mkrew-fakeagent` instead of a PATH lookup.
     fn write_fake_profile(&self) {
+        self.write_fake_profile_as("fake", "[]");
+    }
+
+    /// Like [`Env::write_fake_profile`], saved as `<id>.toml` with fake-agent `args`.
+    fn write_fake_profile_as(&self, id: &str, args: &str) {
         let fake = Path::new(env!("CARGO_BIN_EXE_mkrew-daemon"))
             .with_file_name(format!("mkrew-fakeagent{}", std::env::consts::EXE_SUFFIX));
         assert!(
@@ -58,12 +65,14 @@ impl Env {
             fake.display()
         );
         let sample = include_str!("../../../agents/fake.toml");
-        let profile = sample.replace(
-            "command = \"mkrew-fakeagent\"",
-            &format!("command = '{}'", fake.display()),
-        );
+        let profile = sample
+            .replace(
+                "command = \"mkrew-fakeagent\"",
+                &format!("command = '{}'", fake.display()),
+            )
+            .replace("args = []", &format!("args = {args}"));
         assert_ne!(profile, sample);
-        self.write_profile("fake", &profile);
+        self.write_profile(id, &profile);
     }
 
     fn repo(&self) -> PathBuf {
@@ -133,6 +142,8 @@ struct Client {
     next_id: u64,
     /// Events pushed by the daemon, in arrival order.
     events: Vec<Event>,
+    /// Bytes of binary output frames per session.
+    output: HashMap<Ulid, Vec<u8>>,
 }
 
 impl Client {
@@ -142,6 +153,7 @@ impl Client {
             decoder: FrameDecoder::new(),
             next_id: 1,
             events: Vec::new(),
+            output: HashMap::new(),
         })
     }
 
@@ -160,6 +172,9 @@ impl Client {
                         return outcome;
                     }
                     Frame::Message(Message::Event(event)) => self.events.push(event),
+                    Frame::Output { session_id, data } => {
+                        self.output.entry(session_id).or_default().extend(data);
+                    }
                     other => panic!("unexpected frame {other:?}"),
                 }
             }
@@ -232,6 +247,31 @@ impl Client {
                 "no {event:?} in {:?}",
                 self.events
             );
+            std::thread::sleep(Duration::from_millis(20));
+            self.call(Request::DaemonStatus);
+        }
+    }
+
+    fn attach(&mut self, session_id: Ulid) -> Outcome {
+        self.call(Request::SessionAttach(SessionRef { session_id }))
+    }
+
+    fn input(&mut self, session_id: Ulid, data: &[u8]) -> Outcome {
+        self.call(Request::SessionInput(SessionInputParams {
+            session_id,
+            data: data.to_vec(),
+        }))
+    }
+
+    /// Makes calls until the output frames of `id` contain `text`.
+    fn wait_output(&mut self, id: Ulid, text: &str) {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let output = self.output.get(&id).map(|o| String::from_utf8_lossy(o));
+            if output.as_ref().is_some_and(|o| o.contains(text)) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "no {text:?} in {output:?}");
             std::thread::sleep(Duration::from_millis(20));
             self.call(Request::DaemonStatus);
         }
@@ -495,6 +535,124 @@ fn daemon_stop_terminates_live_sessions() {
         .list_sessions(None)
         .unwrap();
     assert_eq!(sessions[0].state, SessionState::Exited);
+}
+
+fn screen_text(snapshot: &ScreenSnapshot) -> String {
+    snapshot
+        .lines
+        .iter()
+        .map(|runs| runs.iter().map(|r| r.text.as_str()).collect::<String>() + "\n")
+        .collect()
+}
+
+#[test]
+fn attach_streams_output_and_reattach_restores_the_screen() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut first) = env.start();
+    let project = first.add_project(&env.repo());
+    let spawned: SessionSpawnResult = first.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    first.wait_state(id, SessionState::NeedsInput);
+
+    let attached: SessionAttachResult = first.attach(id).into_result().unwrap();
+    assert_eq!(attached.state, SessionState::NeedsInput);
+    assert_eq!((attached.snapshot.cols, attached.snapshot.rows), (80, 24));
+    let screen = screen_text(&attached.snapshot);
+    assert!(screen.contains("Plan: edit src/main.rs"), "{screen}");
+    assert!(screen.contains("Do you want to proceed? (y/n)"), "{screen}");
+
+    let resize = |cols, rows| {
+        Request::SessionResize(SessionResizeParams {
+            session_id: id,
+            cols,
+            rows,
+        })
+    };
+    first.call(resize(100, 30)).into_result::<()>().unwrap();
+    assert_eq!(
+        error_code(first.call(resize(0, 30))),
+        ErrorCode::InvalidRequest
+    );
+    // Applied by the session task right after the reply.
+    let deadline = Instant::now() + TIMEOUT;
+    while (first.session(id).cols, first.session(id).rows) != (100, 30) {
+        assert!(Instant::now() < deadline, "resize not saved");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    first
+        .call(Request::SessionDetach(SessionRef { session_id: id }))
+        .into_result::<()>()
+        .unwrap();
+    // Output queued before the detach reply (e.g. ConPTY repainting after the resize) is fine.
+    let before_detach = first.output.get(&id).map_or(0, Vec::len);
+
+    // Another client re-attaches: the screen comes from the daemon's emulator, at the new size.
+    let mut second = Client::connect(&env.socket).unwrap();
+    second.hello().unwrap();
+    let again: SessionAttachResult = second.attach(id).into_result().unwrap();
+    assert_eq!((again.snapshot.cols, again.snapshot.rows), (100, 30));
+    let screen = screen_text(&again.snapshot);
+    assert!(screen.contains("Do you want to proceed? (y/n)"), "{screen}");
+
+    // Input reaches the agent; its output streams back as binary frames.
+    second.input(id, b"y\r").into_result::<()>().unwrap();
+    second.wait_output(id, "Edited src/main.rs");
+    second.wait_state(id, SessionState::Exited);
+    first.call(Request::DaemonStatus);
+    assert_eq!(
+        first.output.get(&id).map_or(0, Vec::len),
+        before_detach,
+        "detached client got output"
+    );
+
+    assert_eq!(error_code(second.attach(id)), ErrorCode::InvalidState);
+    assert_eq!(error_code(second.input(id, b"x")), ErrorCode::InvalidState);
+    assert_eq!(error_code(second.attach(Ulid::new())), ErrorCode::NotFound);
+    second.stop();
+}
+
+#[test]
+fn slow_attached_client_gets_a_snapshot_instead_of_stalling_the_session() {
+    let env = Env::new();
+    env.write_fake_profile_as("flood", "['--scenario', 'flood']");
+    let (_daemon, mut slow) = env.start();
+    let project = slow.add_project(&env.repo());
+    let spawned: SessionSpawnResult = slow.spawn(&project, "flood").into_result().unwrap();
+    let id = spawned.session_id;
+    slow.attach(id)
+        .into_result::<SessionAttachResult>()
+        .unwrap();
+
+    // `slow` stops reading. The session must keep running and the daemon keep answering.
+    let mut other = Client::connect(&env.socket).unwrap();
+    other.hello().unwrap();
+    let session = other.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+
+    // Its queue overflowed: the dropped output was replaced by a fresh snapshot.
+    let deadline = Instant::now() + TIMEOUT;
+    let snapshot = loop {
+        let found = slow.events.iter().find_map(|e| match e {
+            Event::SessionSnapshot(s) if s.session_id == id => Some(s.snapshot.clone()),
+            _ => None,
+        });
+        if let Some(snapshot) = found {
+            break snapshot;
+        }
+        assert!(Instant::now() < deadline, "no session.snapshot event");
+        slow.call(Request::DaemonStatus);
+    };
+    assert_eq!((snapshot.cols, snapshot.rows), (80, 24));
+    let received = slow.output.get(&id).map_or(0, Vec::len);
+    let log = std::fs::metadata(env.data_dir().join("sessions").join(format!("{id}.log")))
+        .unwrap()
+        .len();
+    assert!(
+        (received as u64) < log,
+        "received {received} of {log} bytes: nothing was dropped"
+    );
+    slow.stop();
 }
 
 fn session_log(env: &Env, id: Ulid) -> String {

@@ -141,6 +141,10 @@ pub enum Event {
     SessionExited(SessionExitedEvent),
     #[serde(rename = "project.updated")]
     ProjectUpdated(Project),
+    /// Sent only to an attached client whose output queue overflowed: its queued output was
+    /// dropped and this screen replaces it; output frames continue from this point (SPEC §7).
+    #[serde(rename = "session.snapshot")]
+    SessionSnapshot(SessionSnapshotEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -309,6 +313,83 @@ pub struct DaemonStatusResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSpawnResult {
     pub session_id: Ulid,
+}
+
+/// `session.attach`: the current screen; output frames that follow continue from it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionAttachResult {
+    pub state: SessionState,
+    pub snapshot: ScreenSnapshot,
+}
+
+/// The visible screen of a session's headless emulator (SPEC §7, §8).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenSnapshot {
+    pub cols: u16,
+    pub rows: u16,
+    /// One entry per visible row, top to bottom. Trailing default blanks are omitted.
+    pub lines: Vec<Vec<CellRun>>,
+    pub cursor: CursorSnapshot,
+    pub modes: TermModes,
+}
+
+/// Adjacent cells of one row with the same style. A run is either all single-width or all
+/// double-width chars ([`CellRun::WIDE`]), so its column count follows from `text` alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CellRun {
+    pub text: String,
+    pub fg: TermColor,
+    pub bg: TermColor,
+    /// Bitset of [`CellRun::BOLD`] etc.
+    pub flags: u16,
+}
+
+impl CellRun {
+    pub const BOLD: u16 = 1;
+    pub const DIM: u16 = 1 << 1;
+    pub const ITALIC: u16 = 1 << 2;
+    pub const UNDERLINE: u16 = 1 << 3;
+    pub const INVERSE: u16 = 1 << 4;
+    pub const HIDDEN: u16 = 1 << 5;
+    pub const STRIKEOUT: u16 = 1 << 6;
+    /// Every char occupies two columns.
+    pub const WIDE: u16 = 1 << 7;
+}
+
+/// Cell color: the terminal default, one of the 256 indexed colors (0–15 = ANSI), or RGB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TermColor {
+    Default,
+    Indexed(u8),
+    Rgb([u8; 3]),
+}
+
+/// Cursor in screen coordinates (row 0 = top visible line).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CursorSnapshot {
+    pub row: u16,
+    pub col: u16,
+    pub visible: bool,
+}
+
+/// Terminal modes a client needs to encode input and pick the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TermModes {
+    pub alt_screen: bool,
+    pub app_cursor: bool,
+    pub app_keypad: bool,
+    pub bracketed_paste: bool,
+    /// Any mouse reporting mode is on.
+    pub mouse: bool,
+    pub sgr_mouse: bool,
+    pub focus_events: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSnapshotEvent {
+    pub session_id: Ulid,
+    pub snapshot: ScreenSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,6 +659,53 @@ mod tests {
         };
         let decoded: AgentProfilesResult = Outcome::ok(&result).unwrap().into_result().unwrap();
         assert_eq!(decoded, result);
+    }
+
+    #[test]
+    fn snapshot_wire_shape() {
+        let snapshot = ScreenSnapshot {
+            cols: 4,
+            rows: 2,
+            lines: vec![
+                vec![CellRun {
+                    text: "ok".into(),
+                    fg: TermColor::Indexed(1),
+                    bg: TermColor::Rgb([1, 2, 3]),
+                    flags: CellRun::BOLD,
+                }],
+                vec![],
+            ],
+            cursor: CursorSnapshot {
+                row: 1,
+                col: 0,
+                visible: true,
+            },
+            modes: TermModes {
+                bracketed_paste: true,
+                ..TermModes::default()
+            },
+        };
+        let value = round_trip(&Message::Event(Event::SessionSnapshot(
+            SessionSnapshotEvent {
+                session_id: sid(),
+                snapshot: snapshot.clone(),
+            },
+        )));
+        assert_eq!(value["event"], "session.snapshot");
+        assert_eq!(
+            value["data"]["snapshot"]["lines"][0][0],
+            json!({"text": "ok", "fg": {"indexed": 1}, "bg": {"rgb": [1, 2, 3]}, "flags": 1})
+        );
+        let attach = SessionAttachResult {
+            state: SessionState::Idle,
+            snapshot,
+        };
+        let decoded: SessionAttachResult = Outcome::ok(&attach).unwrap().into_result().unwrap();
+        assert_eq!(decoded, attach);
+        assert_eq!(
+            serde_json::to_value(TermColor::Default).unwrap(),
+            json!("default")
+        );
     }
 
     #[test]

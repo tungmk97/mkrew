@@ -1,5 +1,6 @@
 //! Accept loop and per-connection request handling (SPEC §7, §8).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,9 +15,10 @@ use mkrew_protocol::{
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use ulid::Ulid;
 
+use crate::attach::{self, Attachment};
 use crate::launch::LaunchError;
 use crate::session::{Command, Hub, SpawnError, SpawnSpec};
 
@@ -90,34 +92,57 @@ impl Daemon {
     /// loses requests on Windows); replies and events reach the socket through one writer task.
     async fn connection(&self, stream: Stream) -> anyhow::Result<()> {
         let (mut rx, mut tx) = stream.split();
-        let (out, mut outbox) = mpsc::channel::<Vec<u8>>(OUTBOX_FRAMES);
+        let (out, mut outbox) = mpsc::channel::<Outgoing>(OUTBOX_FRAMES);
         let writer = tokio::spawn(async move {
-            while let Some(bytes) = outbox.recv().await {
-                tx.write_all(&bytes).await?;
+            while let Some(item) = outbox.recv().await {
+                tx.write_all(&item.bytes).await?;
+                drop(item.written);
             }
             tx.flush().await
         });
         let mut decoder = FrameDecoder::new();
         let mut buf = vec![0u8; 64 * 1024];
-        let mut greeted = false;
+        let mut conn = Conn::default();
         let mut forwarder: Option<AbortOnDrop> = None;
         loop {
             while let Some(frame) = decoder.next_frame()? {
                 let Frame::Message(Message::Request { id, request }) = frame else {
                     anyhow::bail!("client sent a non-request frame");
                 };
-                let (outcome, after) = self.handle(&mut greeted, request);
-                if greeted && forwarder.is_none() {
+                let (outcome, after) = self.handle(&mut conn, request).await;
+                if conn.greeted && forwarder.is_none() {
                     // Subscribed before the hello reply goes out: no event is missed.
                     let events = self.hub.events.subscribe();
                     forwarder = Some(AbortOnDrop(tokio::spawn(forward(events, out.clone()))));
                 }
                 let reply = Frame::Message(Message::Response { id, outcome });
-                out.send(encode(&reply)?).await?;
+                let new_attachment = conn.new_attachment.take();
+                let sent = async { anyhow::Ok(out.send(encode(&reply)?.into()).await?) }.await;
+                if let Err(e) = sent {
+                    // The session already holds it; closing stops it from queueing output.
+                    if let Some(new) = new_attachment {
+                        new.attachment.close();
+                    }
+                    return Err(e);
+                }
+                if let Some(new) = new_attachment {
+                    // Started after the attach reply is queued, so output frames follow it.
+                    let flusher = attach::flush(
+                        new.session_id,
+                        Arc::clone(&new.attachment),
+                        new.session,
+                        out.clone(),
+                    );
+                    let attached = Attached {
+                        attachment: new.attachment,
+                        _flusher: AbortOnDrop(tokio::spawn(flusher)),
+                    };
+                    conn.attachments.insert(new.session_id, attached);
+                }
                 if after == After::Continue {
                     continue;
                 }
-                drop((forwarder, out));
+                drop((forwarder, out, conn));
                 writer.await??;
                 if after == After::Shutdown {
                     self.shutdown.send_replace(true);
@@ -132,10 +157,10 @@ impl Daemon {
         }
     }
 
-    fn handle(&self, greeted: &mut bool, request: Request) -> (Outcome, After) {
+    async fn handle(&self, conn: &mut Conn, request: Request) -> (Outcome, After) {
         let request = match request {
-            Request::Hello(params) => return self.hello(greeted, params),
-            _ if !*greeted => {
+            Request::Hello(params) => return self.hello(&mut conn.greeted, params),
+            _ if !conn.greeted => {
                 let outcome = Outcome::error(ErrorCode::HelloRequired, "send hello first");
                 return (outcome, After::Close);
             }
@@ -155,6 +180,32 @@ impl Daemon {
                 (store_outcome(sessions), After::Continue)
             }
             Request::SessionKill(params) => (self.session_kill(params), After::Continue),
+            Request::SessionAttach(params) => {
+                let outcome = self.session_attach(conn, params.session_id).await;
+                (outcome, After::Continue)
+            }
+            Request::SessionDetach(params) => {
+                // Idempotent: detaching a session that is not attached is fine.
+                conn.attachments.remove(&params.session_id);
+                (ok(&()), After::Continue)
+            }
+            Request::SessionInput(params) => {
+                let command = Command::Input(params.data);
+                let outcome = self.session_command(params.session_id, command).await;
+                (outcome, After::Continue)
+            }
+            Request::SessionResize(params) if params.cols == 0 || params.rows == 0 => (
+                Outcome::error(ErrorCode::InvalidRequest, "cols and rows must be > 0"),
+                After::Continue,
+            ),
+            Request::SessionResize(params) => {
+                let command = Command::Resize {
+                    cols: params.cols,
+                    rows: params.rows,
+                };
+                let outcome = self.session_command(params.session_id, command).await;
+                (outcome, After::Continue)
+            }
             Request::AgentProfiles => (ok(&self.agent_profiles()), After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
@@ -284,6 +335,59 @@ impl Daemon {
         }
     }
 
+    /// Replies with the screen snapshot; the flusher is started once the reply is queued.
+    async fn session_attach(&self, conn: &mut Conn, session_id: Ulid) -> Outcome {
+        let Some(session) = self.hub.sender(session_id) else {
+            return self.not_live(session_id);
+        };
+        let attachment = Arc::new(Attachment::default());
+        let (reply, result) = oneshot::channel();
+        let command = Command::Attach {
+            attachment: Arc::clone(&attachment),
+            reply,
+        };
+        if session.send(command).await.is_err() {
+            return self.not_live(session_id);
+        }
+        // Dropped unanswered when the session exits first.
+        let Ok(result) = result.await else {
+            return self.not_live(session_id);
+        };
+        conn.new_attachment = Some(NewAttachment {
+            session_id,
+            attachment,
+            session,
+        });
+        ok(&result)
+    }
+
+    /// Delivers `command` to a live session, waiting for room in its queue.
+    async fn session_command(&self, session_id: Ulid, command: Command) -> Outcome {
+        match self.hub.sender(session_id) {
+            Some(session) if session.send(command).await.is_ok() => ok(&()),
+            _ => self.not_live(session_id),
+        }
+    }
+
+    /// Error for a session that is not running: exited (`invalid_state`) or unknown.
+    fn not_live(&self, session_id: Ulid) -> Outcome {
+        let known = self
+            .store()
+            .list_sessions(None)
+            .map(|all| all.iter().any(|s| s.id == session_id));
+        match known {
+            Ok(true) => {
+                let message = format!("session {session_id} has exited");
+                Outcome::error(ErrorCode::InvalidState, message)
+            }
+            Ok(false) => {
+                let message = format!("session {session_id} not found");
+                Outcome::error(ErrorCode::NotFound, message)
+            }
+            Err(e) => store_outcome::<()>(Err(e)),
+        }
+    }
+
     fn agent_profiles(&self) -> AgentProfilesResult {
         let set = mkrew_core::load_dir(&self.paths.agents_dir());
         let profiles = set
@@ -330,13 +434,56 @@ impl Daemon {
 /// Frames queued for one client's writer task.
 const OUTBOX_FRAMES: usize = 256;
 
+/// One encoded frame for a connection's writer task.
+pub struct Outgoing {
+    pub bytes: Vec<u8>,
+    /// Dropped once the frame is written, so an output flusher can wait for it.
+    pub written: Option<oneshot::Sender<()>>,
+}
+
+impl From<Vec<u8>> for Outgoing {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            written: None,
+        }
+    }
+}
+
+/// Per-connection state kept by the read loop.
+#[derive(Default)]
+struct Conn {
+    greeted: bool,
+    /// Sessions this client is attached to; dropping an entry detaches it.
+    attachments: HashMap<Ulid, Attached>,
+    /// Set by `session.attach`; its flusher starts after the reply is queued.
+    new_attachment: Option<NewAttachment>,
+}
+
+struct NewAttachment {
+    session_id: Ulid,
+    attachment: Arc<Attachment>,
+    session: mpsc::Sender<Command>,
+}
+
+struct Attached {
+    attachment: Arc<Attachment>,
+    _flusher: AbortOnDrop,
+}
+
+impl Drop for Attached {
+    fn drop(&mut self) {
+        self.attachment.close();
+    }
+}
+
 /// Pushes every event to one client until it disconnects.
-async fn forward(mut events: broadcast::Receiver<Event>, out: mpsc::Sender<Vec<u8>>) {
+async fn forward(mut events: broadcast::Receiver<Event>, out: mpsc::Sender<Outgoing>) {
     loop {
         match events.recv().await {
             Ok(event) => match encode(&Frame::Message(Message::Event(event))) {
                 Ok(bytes) => {
-                    if out.send(bytes).await.is_err() {
+                    if out.send(bytes.into()).await.is_err() {
                         return;
                     }
                 }

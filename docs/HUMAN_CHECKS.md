@@ -149,6 +149,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   kill = close the pseudo console (Windows) / SIGHUP (Unix), forced after 5 s
   (`TerminateProcess` / SIGKILL); every greeted connection receives all events (no per-event
   subscription yet); session state is persisted on every change.
+- (T1.9) Attach details SPEC §7 leaves open: the snapshot is the **visible screen only** (no
+  scrollback) as styled runs per row (trailing default blanks trimmed, wide chars in their own
+  `WIDE` run, ANSI 0–15 + dim variants → indexed, theme colors → `default`) + cursor + input
+  modes; `session.attach` returns `{state, snapshot}`. Overflow of the 4 MB per-client queue
+  sends a new per-client event `session.snapshot` (added to the §7 table), produced by the
+  session task when the client has drained; an exiting session hands its final screen to
+  overflowed clients. Output frames: first byte sent at once, then at most one frame per 16 ms
+  and one frame in flight per client. `session.input/resize/attach` on an exited session →
+  `invalid_state`, unknown → `not_found`; `session.detach` is idempotent; resize replies once
+  queued (applied right after, in order with later commands); other attached clients are not
+  told about a resize. PTY input writes are still blocking writes in the session task: a big
+  paste while the child's stdout is backed up can deadlock that session — queued as T1.9a
+  (dedicated PTY writer thread).
 
 ## Done
 

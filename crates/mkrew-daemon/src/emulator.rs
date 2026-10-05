@@ -1,5 +1,5 @@
-//! Headless terminal emulator per session (SPEC §8): the real screen text for state detection.
-//! Adapted from `spike-term/src/emulator.rs`; attach snapshots (T1.9) build on it.
+//! Headless terminal emulator per session (SPEC §8): the real screen text for state detection
+//! and the screen snapshot sent on attach. Adapted from `spike-term/src/emulator.rs`.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -7,9 +7,11 @@ use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
-use alacritty_terminal::term::Config;
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::test::TermSize;
-use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+use alacritty_terminal::term::{Config, TermMode};
+use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler};
+use mkrew_protocol::{CellRun, CursorSnapshot, ScreenSnapshot, TermColor, TermModes};
 
 /// Small on purpose: long history lives in the session log file (SPEC §8).
 pub const SCROLLBACK_LINES: usize = 200;
@@ -80,6 +82,123 @@ impl Emulator {
             })
             .collect()
     }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.term
+            .resize(TermSize::new(usize::from(cols), usize::from(rows)));
+    }
+
+    /// The visible screen, cursor and input modes (`session.attach`, SPEC §7).
+    pub fn snapshot(&self) -> ScreenSnapshot {
+        let grid = self.term.grid();
+        let lines = (0..self.term.screen_lines())
+            .map(|row| {
+                let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
+                let mut runs: Vec<CellRun> = Vec::new();
+                for col in 0..self.term.columns() {
+                    let cell = &line[Column(col)];
+                    if cell
+                        .flags
+                        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                    {
+                        continue;
+                    }
+                    let (fg, bg, flags) = (color(cell.fg), color(cell.bg), run_flags(cell.flags));
+                    match runs.last_mut() {
+                        Some(run) if (run.fg, run.bg, run.flags) == (fg, bg, flags) => {
+                            run.text.push(cell.c);
+                        }
+                        _ => runs.push(CellRun {
+                            text: cell.c.into(),
+                            fg,
+                            bg,
+                            flags,
+                        }),
+                    }
+                    if let (Some(run), Some(zerowidth)) = (runs.last_mut(), cell.zerowidth()) {
+                        run.text.extend(zerowidth);
+                    }
+                }
+                trim_trailing_blanks(&mut runs);
+                runs
+            })
+            .collect();
+        let point = grid.cursor.point;
+        let mode = self.term.mode();
+        ScreenSnapshot {
+            cols: to_u16(self.term.columns()),
+            rows: to_u16(self.term.screen_lines()),
+            lines,
+            cursor: CursorSnapshot {
+                row: to_u16(usize::try_from(point.line.0).unwrap_or(0)),
+                col: to_u16(point.column.0),
+                visible: mode.contains(TermMode::SHOW_CURSOR),
+            },
+            modes: TermModes {
+                alt_screen: mode.contains(TermMode::ALT_SCREEN),
+                app_cursor: mode.contains(TermMode::APP_CURSOR),
+                app_keypad: mode.contains(TermMode::APP_KEYPAD),
+                bracketed_paste: mode.contains(TermMode::BRACKETED_PASTE),
+                mouse: mode.intersects(TermMode::MOUSE_MODE),
+                sgr_mouse: mode.contains(TermMode::SGR_MOUSE),
+                focus_events: mode.contains(TermMode::FOCUS_IN_OUT),
+            },
+        }
+    }
+}
+
+fn to_u16(n: usize) -> u16 {
+    u16::try_from(n).unwrap_or(u16::MAX)
+}
+
+/// ANSI colors 0–15 (and their dim variants) become indexed; theme colors are `Default`.
+fn color(color: Color) -> TermColor {
+    match color {
+        Color::Spec(rgb) => TermColor::Rgb([rgb.r, rgb.g, rgb.b]),
+        Color::Indexed(i) => TermColor::Indexed(i),
+        Color::Named(named) => {
+            let n = named as usize;
+            let dim_black = NamedColor::DimBlack as usize;
+            let index = match n {
+                0..16 => n,
+                _ if (dim_black..dim_black + 8).contains(&n) => n - dim_black,
+                _ => return TermColor::Default,
+            };
+            u8::try_from(index).map_or(TermColor::Default, TermColor::Indexed)
+        }
+    }
+}
+
+fn run_flags(flags: Flags) -> u16 {
+    [
+        (Flags::BOLD, CellRun::BOLD),
+        (Flags::DIM, CellRun::DIM),
+        (Flags::ITALIC, CellRun::ITALIC),
+        (Flags::ALL_UNDERLINES, CellRun::UNDERLINE),
+        (Flags::INVERSE, CellRun::INVERSE),
+        (Flags::HIDDEN, CellRun::HIDDEN),
+        (Flags::STRIKEOUT, CellRun::STRIKEOUT),
+        (Flags::WIDE_CHAR, CellRun::WIDE),
+    ]
+    .into_iter()
+    .filter(|(cell, _)| flags.intersects(*cell))
+    .fold(0, |acc, (_, bit)| acc | bit)
+}
+
+/// Drops trailing spaces that would render as nothing (default background, no decoration).
+fn trim_trailing_blanks(runs: &mut Vec<CellRun>) {
+    const VISIBLE_ON_BLANK: u16 = CellRun::INVERSE | CellRun::UNDERLINE | CellRun::STRIKEOUT;
+    while let Some(run) = runs.last_mut() {
+        if run.bg != TermColor::Default || run.flags & VISIBLE_ON_BLANK != 0 {
+            return;
+        }
+        let trimmed = run.text.trim_end_matches(' ').len();
+        run.text.truncate(trimmed);
+        if !run.text.is_empty() {
+            return;
+        }
+        runs.pop();
+    }
 }
 
 #[cfg(test)]
@@ -100,6 +219,89 @@ mod tests {
         let mut emu = Emulator::new(10, 5);
         assert_eq!(emu.advance(b"\x1b[2;3H\x1b[6n"), b"\x1b[2;3R");
         assert!(emu.advance(b"x").is_empty());
+    }
+
+    fn run(text: &str, fg: TermColor, bg: TermColor, flags: u16) -> CellRun {
+        CellRun {
+            text: text.into(),
+            fg,
+            bg,
+            flags,
+        }
+    }
+
+    #[test]
+    fn snapshot_groups_styled_runs_and_trims_blanks() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"ab\x1b[1;31mcd\x1b[0m \x1b[44mx \x1b[0m  \r\n\x1b[38;2;1;2;3m\x1b[2mz");
+        let snap = emu.snapshot();
+        assert_eq!((snap.cols, snap.rows), (12, 3));
+        let d = TermColor::Default;
+        assert_eq!(
+            snap.lines[0],
+            [
+                run("ab", d, d, 0),
+                run("cd", TermColor::Indexed(1), d, CellRun::BOLD),
+                run(" ", d, d, 0),
+                run("x ", d, TermColor::Indexed(4), 0),
+            ]
+        );
+        assert_eq!(
+            snap.lines[1],
+            [run("z", TermColor::Rgb([1, 2, 3]), d, CellRun::DIM)]
+        );
+        assert!(snap.lines[2].is_empty());
+        assert_eq!(
+            snap.cursor,
+            CursorSnapshot {
+                row: 1,
+                col: 1,
+                visible: true
+            }
+        );
+    }
+
+    #[test]
+    fn snapshot_wide_chars_get_their_own_run() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance("a日本b".as_bytes());
+        let d = TermColor::Default;
+        assert_eq!(
+            emu.snapshot().lines[0],
+            [
+                run("a", d, d, 0),
+                run("日本", d, d, CellRun::WIDE),
+                run("b", d, d, 0)
+            ]
+        );
+    }
+
+    #[test]
+    fn snapshot_reports_modes_and_hidden_cursor() {
+        let mut emu = Emulator::new(10, 2);
+        assert_eq!(emu.snapshot().modes, TermModes::default());
+        emu.advance(b"\x1b[?1049h\x1b[?1h\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[?25l");
+        let snap = emu.snapshot();
+        assert_eq!(
+            snap.modes,
+            TermModes {
+                alt_screen: true,
+                app_cursor: true,
+                bracketed_paste: true,
+                mouse: true,
+                sgr_mouse: true,
+                ..TermModes::default()
+            }
+        );
+        assert!(!snap.cursor.visible);
+    }
+
+    #[test]
+    fn resize_changes_the_snapshot_size() {
+        let mut emu = Emulator::new(10, 2);
+        emu.resize(30, 7);
+        let snap = emu.snapshot();
+        assert_eq!((snap.cols, snap.rows, snap.lines.len()), (30, 7, 7));
     }
 
     #[test]

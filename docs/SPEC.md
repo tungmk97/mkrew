@@ -445,6 +445,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Event | When |
 | --- | --- |
 | `session.output` | **binary frame** (see below): raw PTY bytes, only to attached clients, batched ≤ every 16 ms |
+| `session.snapshot` | only to an attached client whose output queue overflowed: fresh screen snapshot replacing the dropped output (backpressure, below) |
 | `session.state` | session state changed |
 | `session.exited` | process exited, with `exit_code` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
@@ -463,6 +464,15 @@ protocol error (the connection is dropped). Small inputs (`session.input`) may s
 **Backpressure.** Each attached client has a bounded output queue (e.g. 4 MB). If it overflows
 (slow or frozen UI), the daemon drops the queued bytes and sends a fresh screen snapshot instead.
 The daemon never buffers unboundedly and never blocks a PTY reader on a slow client.
+
+**Screen snapshot.** `session.attach` returns `{state, snapshot}`; `session.snapshot` carries
+the same `snapshot`. A snapshot is the visible screen of the daemon's emulator (no scrollback):
+`cols`, `rows`, `lines` (one array per row of style runs `{text, fg, bg, flags}`, trailing
+default blanks omitted), `cursor` `{row, col, visible}` and `modes` (`alt_screen`, `app_cursor`,
+`app_keypad`, `bracketed_paste`, `mouse`, `sgr_mouse`, `focus_events`). Colors are `"default"`,
+`{"indexed": n}` (0–15 = ANSI) or `{"rgb": [r, g, b]}`. `flags` bits: bold 1, dim 2, italic 4,
+underline 8, inverse 16, hidden 32, strikeout 64, wide 128 — a run is all single-width or all
+double-width (`wide`) chars. Output frames sent after a snapshot continue from it.
 
 Rules: on
 `protocol_version` mismatch the daemon replies `version_mismatch` and the UI asks to restart the daemon.

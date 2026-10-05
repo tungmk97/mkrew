@@ -6,19 +6,22 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use mkrew_core::{AgentProfile, StateMachine};
-use mkrew_protocol::{Event, Session, SessionExitedEvent, SessionState, SessionStateEvent};
+use mkrew_protocol::{
+    Event, Session, SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent,
+};
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinSet;
 use ulid::Ulid;
 
+use crate::attach::Attachment;
 use crate::emulator::Emulator;
 use crate::launch;
 use crate::session_log::SessionLog;
@@ -45,7 +48,21 @@ pub struct Hub {
 
 #[derive(Debug)]
 pub enum Command {
-    Kill { force: bool },
+    Kill {
+        force: bool,
+    },
+    /// Replies with the current screen; output after it goes to `attachment`.
+    Attach {
+        attachment: Arc<Attachment>,
+        reply: oneshot::Sender<SessionAttachResult>,
+    },
+    /// The attachment overflowed: give it a fresh snapshot.
+    Resnapshot(Arc<Attachment>),
+    Input(Vec<u8>),
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
 }
 
 /// What a session task receives from its PTY threads.
@@ -193,6 +210,7 @@ impl Hub {
             emulator: None,
             machine,
             log,
+            attachments: Vec::new(),
         };
         lock(&self.tasks).spawn(actor.run(rx, commands));
         Ok(())
@@ -200,8 +218,12 @@ impl Hub {
 
     /// Sends `command` to a live session; `false` if it is not running.
     pub fn command(&self, id: Ulid, command: Command) -> bool {
-        let sender = lock(&self.live).get(&id).cloned();
-        sender.is_some_and(|s| s.try_send(command).is_ok())
+        self.sender(id).is_some_and(|s| s.try_send(command).is_ok())
+    }
+
+    /// The command channel of a live session (waits for room instead of failing when full).
+    pub fn sender(&self, id: Ulid) -> Option<mpsc::Sender<Command>> {
+        lock(&self.live).get(&id).cloned()
     }
 
     /// Daemon shutdown (SPEC §8): asks every session to terminate and waits for all of them
@@ -244,6 +266,8 @@ struct Actor {
     emulator: Option<Emulator>,
     machine: StateMachine,
     log: SessionLog,
+    /// Attached clients; closed ones are dropped on the next output.
+    attachments: Vec<Arc<Attachment>>,
 }
 
 impl Actor {
@@ -275,6 +299,20 @@ impl Actor {
                         self.terminate();
                         kill_at.get_or_insert(tokio::time::Instant::now() + KILL_GRACE);
                     }
+                    Some(Command::Attach { attachment, reply }) => {
+                        let result = SessionAttachResult {
+                            state: self.session.state,
+                            snapshot: self.emulator().snapshot(),
+                        };
+                        if reply.send(result).is_ok() {
+                            self.attachments.push(attachment);
+                        }
+                    }
+                    Some(Command::Resnapshot(attachment)) => {
+                        attachment.resnapshot(self.emulator().snapshot());
+                    }
+                    Some(Command::Input(bytes)) => self.write_pty(&bytes),
+                    Some(Command::Resize { cols, rows }) => self.resize(cols, rows),
                     None => commands_open = false,
                 },
                 () = sleep_until(tick_at), if tick_at.is_some() => {
@@ -298,25 +336,61 @@ impl Actor {
         if let Err(e) = self.log.write(bytes) {
             tracing::warn!(id = %self.session.id, "session log write failed: {e}");
         }
-        let (cols, rows) = (self.session.cols, self.session.rows);
-        let emulator = self
-            .emulator
-            .get_or_insert_with(|| Emulator::new(cols, rows));
-        let reply = emulator.advance(bytes);
+        let reply = self.emulator().advance(bytes);
         // Small and rare (DSR answers), so a blocking write here is fine.
-        if !reply.is_empty()
-            && let Err(e) = self
-                .writer
-                .write_all(&reply)
-                .and_then(|()| self.writer.flush())
-        {
-            tracing::debug!(id = %self.session.id, "pty reply write failed: {e}");
+        if !reply.is_empty() {
+            self.write_pty(&reply);
         }
-        let lines = emulator.lines_to_cursor();
+        self.attachments.retain(|a| !a.is_closed());
+        for attachment in &self.attachments {
+            attachment.push(bytes);
+        }
+        let lines = self.screen_lines();
         let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
         if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
             self.set_state(state);
         }
+    }
+
+    fn emulator(&mut self) -> &mut Emulator {
+        let (cols, rows) = (self.session.cols, self.session.rows);
+        self.emulator
+            .get_or_insert_with(|| Emulator::new(cols, rows))
+    }
+
+    /// Blocking, like any PTY write; input is small (keys, pastes) and the child reads it.
+    fn write_pty(&mut self, bytes: &[u8]) {
+        if let Err(e) = self
+            .writer
+            .write_all(bytes)
+            .and_then(|()| self.writer.flush())
+        {
+            tracing::debug!(id = %self.session.id, "pty write failed: {e}");
+        }
+    }
+
+    fn resize(&mut self, cols: u16, rows: u16) {
+        if (cols, rows) == (self.session.cols, self.session.rows) {
+            return;
+        }
+        if let Some(master) = &self.master {
+            let size = PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            };
+            if let Err(e) = master.resize(size) {
+                tracing::warn!(id = %self.session.id, "pty resize failed: {e}");
+                return;
+            }
+        }
+        if let Some(emulator) = &mut self.emulator {
+            emulator.resize(cols, rows);
+        }
+        self.session.cols = cols;
+        self.session.rows = rows;
+        self.save();
     }
 
     fn screen_lines(&self) -> Vec<String> {
@@ -384,6 +458,15 @@ impl Actor {
         }
         self.close_master();
         lock(&self.hub.live).remove(&self.session.id);
+        // No one is left to answer a later `Resnapshot`: hand out the final screen now.
+        self.attachments
+            .retain(|a| !a.is_closed() && a.is_overflowed());
+        if !self.attachments.is_empty() {
+            let snapshot = self.emulator().snapshot();
+            for attachment in &self.attachments {
+                attachment.resnapshot(snapshot.clone());
+            }
+        }
         self.machine.on_exit();
         self.session.exit_code = exit_code;
         self.session.ended_at = Some(crate::server::now_ms());

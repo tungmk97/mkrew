@@ -3,6 +3,7 @@
 //! The binary is a thin wrapper around [`run`]; the library also exposes [`ipc::name`] so
 //! clients and tests resolve the endpoint exactly like the daemon does.
 
+mod attach;
 mod emulator;
 pub mod ipc;
 mod launch;
