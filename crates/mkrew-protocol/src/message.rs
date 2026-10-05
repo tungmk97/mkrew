@@ -72,6 +72,12 @@ pub enum Request {
     /// Returns [`SessionSpawnResult`].
     #[serde(rename = "task.run")]
     TaskRun(TaskRunParams),
+    /// Returns [`UndoPreview`].
+    #[serde(rename = "task.undo_preview")]
+    TaskUndoPreview(TaskRef),
+    /// Returns nothing (`null`).
+    #[serde(rename = "task.undo")]
+    TaskUndo(TaskUndoParams),
     #[serde(rename = "session.spawn")]
     SessionSpawn(SessionSpawnParams),
     #[serde(rename = "session.list")]
@@ -454,6 +460,43 @@ pub struct TaskRunParams {
     pub rows: u16,
 }
 
+/// `task.undo`: discard everything since the task's checkpoint. Refused unless `confirm`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskUndoParams {
+    pub task_id: Ulid,
+    #[serde(default)]
+    pub confirm: bool,
+    /// The previewed [`UndoPreview::created`]: only these untracked files are deleted, so a
+    /// file that appeared after the preview was shown survives.
+    #[serde(default)]
+    pub created: Vec<String>,
+    /// The previewed [`UndoPreview::fingerprint`]: refused (`invalid_state`) when the tracked
+    /// changes no longer match it, so nothing unseen is restored away.
+    #[serde(default)]
+    pub fingerprint: String,
+}
+
+/// `task.undo_preview` result: what `task.undo` would discard (ADR 0005). Paths are
+/// project-relative with `/` separators.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UndoPreview {
+    pub checkpoint: String,
+    /// Opaque hash of the tracked changes (`changed`, `added` and the whole diff).
+    pub fingerprint: String,
+    /// Tracked files that differ from the checkpoint; restored to it.
+    pub changed: Vec<String>,
+    /// Files tracked since the checkpoint (absent from it); deleted.
+    pub added: Vec<String>,
+    /// Untracked, non-ignored files created since the checkpoint; deleted.
+    pub created: Vec<String>,
+    /// `git diff <checkpoint>` of the tracked files, cut at [`UNDO_DIFF_LIMIT`] bytes.
+    pub diff: String,
+    pub diff_truncated: bool,
+}
+
+/// Largest diff carried by an [`UndoPreview`] (SPEC §12B: bigger diffs show a summary).
+pub const UNDO_DIFF_LIMIT: usize = 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSpawnParams {
     pub project_id: Ulid,
@@ -834,6 +877,13 @@ mod tests {
                 cols: 120,
                 rows: 40,
             }),
+            Request::TaskUndoPreview(TaskRef { task_id: sid() }),
+            Request::TaskUndo(TaskUndoParams {
+                task_id: sid(),
+                confirm: true,
+                created: vec!["new.txt".into()],
+                fingerprint: "00ff".into(),
+            }),
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),
             Request::SessionDetach(SessionRef { session_id: sid() }),
@@ -1170,5 +1220,10 @@ mod tests {
         );
         let keep = parse(json!({"task_id": id}));
         assert_eq!(serde_json::to_value(&keep).unwrap(), json!({"task_id": id}));
+
+        // Undo is refused unless the client says otherwise.
+        let undo: TaskUndoParams = serde_json::from_value(json!({"task_id": id})).unwrap();
+        assert!(!undo.confirm);
+        assert!(undo.created.is_empty() && undo.fingerprint.is_empty());
     }
 }

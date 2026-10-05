@@ -12,7 +12,7 @@ use mkrew_protocol::{
     ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request, Session,
     SessionKillParams, SessionKind, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent,
-    TaskRunParams, TaskUpdateParams, TerminalTab, encode,
+    TaskRunParams, TaskUndoParams, TaskUpdateParams, TerminalTab, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -25,6 +25,7 @@ use crate::git::{GitBackend, GitCli};
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
+use crate::undo;
 
 mod resume;
 
@@ -37,6 +38,16 @@ pub struct Daemon {
     git: Arc<dyn GitBackend>,
     started_at: i64,
     shutdown: watch::Sender<bool>,
+}
+
+/// Where and to what `task.undo` resets (ADR 0005).
+struct UndoTarget {
+    dir: std::path::PathBuf,
+    checkpoint: String,
+    /// Unix ms the checkpoint was taken.
+    since: i64,
+    /// A session of the task has not exited.
+    live: bool,
 }
 
 /// What the connection does after replying.
@@ -235,6 +246,11 @@ impl Daemon {
             }
             Request::TaskDelete(params) => (self.task_delete(params.task_id), After::Continue),
             Request::TaskRun(params) => (self.task_run(params).await, After::Continue),
+            Request::TaskUndoPreview(params) => (
+                self.task_undo_preview(params.task_id).await,
+                After::Continue,
+            ),
+            Request::TaskUndo(params) => (self.task_undo(params).await, After::Continue),
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
@@ -427,6 +443,8 @@ impl Daemon {
                 PromptMode::None => {}
             }
         }
+        // Taken before HEAD is read, so every file the run creates is newer (undo).
+        let checkpoint_at = now_ms();
         let checkpoint = self.head(&project.path).await;
         let start = Start {
             project,
@@ -440,14 +458,96 @@ impl Daemon {
         };
         match self.start_session(start) {
             Ok(session_id) => {
-                let task = self
-                    .store()
-                    .set_task_checkpoint(task.id, checkpoint.as_deref());
+                let task =
+                    self.store()
+                        .set_task_checkpoint(task.id, checkpoint.as_deref(), checkpoint_at);
                 self.task_updated(task);
                 ok(&SessionSpawnResult { session_id })
             }
             Err(outcome) => outcome,
         }
+    }
+
+    /// What `task.undo` would discard (ADR 0005).
+    async fn task_undo_preview(&self, task_id: Ulid) -> Outcome {
+        let target = match self.undo_target(task_id) {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let git = Arc::clone(&self.git);
+        let previewed = tokio::task::spawn_blocking(move || {
+            undo::preview(&*git, &target.dir, &target.checkpoint, target.since)
+        })
+        .await;
+        match previewed {
+            Ok(Ok(preview)) => ok(&preview),
+            Ok(Err(e)) => Outcome::error(ErrorCode::Internal, e.to_string()),
+            Err(e) => Outcome::error(ErrorCode::Internal, format!("undo preview failed: {e}")),
+        }
+    }
+
+    /// Discards everything since the task's checkpoint (ADR 0005): only with `confirm` and
+    /// while no session of the task is live.
+    async fn task_undo(&self, params: TaskUndoParams) -> Outcome {
+        if !params.confirm {
+            let message = "task.undo discards changes; it needs confirm: true";
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        }
+        let target = match self.undo_target(params.task_id) {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        if target.live {
+            let message = format!("task {} is running; stop it before undoing", params.task_id);
+            return Outcome::error(ErrorCode::InvalidState, message);
+        }
+        let git = Arc::clone(&self.git);
+        let undone = tokio::task::spawn_blocking(move || {
+            let (dir, checkpoint) = (&target.dir, &target.checkpoint);
+            let (previewed, created) = (&params.fingerprint, &params.created);
+            undo::undo(&*git, dir, checkpoint, target.since, previewed, created)
+        })
+        .await;
+        match undone {
+            Ok(Ok(undo::Undone::Done)) => {
+                tracing::info!(task = %params.task_id, "task undone");
+                ok(&())
+            }
+            Ok(Ok(undo::Undone::Stale)) => {
+                let message = "the changes differ from the preview; preview again";
+                Outcome::error(ErrorCode::InvalidState, message)
+            }
+            Ok(Err(e)) => Outcome::error(ErrorCode::Internal, e.to_string()),
+            Err(e) => Outcome::error(ErrorCode::Internal, format!("undo failed: {e}")),
+        }
+    }
+
+    /// The task's project folder and checkpoint; `invalid_state` without a checkpoint.
+    fn undo_target(&self, task_id: Ulid) -> Result<UndoTarget, Outcome> {
+        let found = {
+            let store = self.store();
+            store.get_task(task_id).and_then(|task| {
+                let project = store.get_project(task.project_id)?;
+                let live = store
+                    .list_sessions(Some(project.id))?
+                    .iter()
+                    .any(|s| s.task_id == Some(task.id) && s.state != SessionState::Exited);
+                let since = store.task_checkpoint_at(task.id)?;
+                Ok((task, project, live, since))
+            })
+        };
+        let (task, project, live, since) = found.map_err(|e| store_outcome::<()>(Err(e)))?;
+        let Some(checkpoint) = task.checkpoint.filter(|c| undo::is_commit_id(c)) else {
+            let message = format!("task {task_id} has no checkpoint; run it in a git repo first");
+            return Err(Outcome::error(ErrorCode::InvalidState, message));
+        };
+        Ok(UndoTarget {
+            dir: std::path::PathBuf::from(project.path),
+            checkpoint,
+            // A checkpoint from before `checkpoint_at` existed: delete no untracked file.
+            since: since.unwrap_or(i64::MAX),
+            live,
+        })
     }
 
     /// HEAD of the repo holding `dir` (SPEC §12B: no network); `None` outside a repo or when

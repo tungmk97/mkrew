@@ -396,6 +396,26 @@ fn task_add_list_run_reaches_review() {
     env.write_profile("fake-arg", &arg_profile);
     let repo = env.dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    for args in [
+        &["init", "-q"][..],
+        // Byte-exact restores whatever the machine's global autocrlf says.
+        &["config", "core.autocrlf", "false"],
+        &["add", "."],
+        &["commit", "-q", "-m", "one"],
+    ] {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
     env.ok(&["daemon", "start"]);
     env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
     assert!(env.ok(&["task", "list"]).contains("no tasks"));
@@ -461,6 +481,29 @@ fn task_add_list_run_reaches_review() {
     );
     let bad = env.mk(&["task", "list", "--status", "doing"]);
     assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown status"));
+
+    // Undo (ADR 0005): without `--yes` only the preview; with it the run's changes go away.
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    std::fs::write(repo.join("made.txt"), "x\n").unwrap();
+    let shown = env.ok(&["task", "undo", id]);
+    assert!(
+        shown.contains("restore  a.txt")
+            && shown.contains("delete   made.txt")
+            && shown.contains("+two")
+            && shown.contains("--yes"),
+        "{shown}"
+    );
+    assert!(repo.join("made.txt").exists());
+    let done = env.ok(&["task", "undo", id, "--yes"]);
+    assert!(done.contains("undone"), "{done}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "one\n"
+    );
+    assert!(!repo.join("made.txt").exists());
+    assert!(env.ok(&["task", "undo", id]).contains("no changes"));
+    // A task that never ran has no checkpoint.
+    assert!(!env.mk(&["task", "undo", other]).status.success());
 }
 
 /// Outside Mkrew (no `MKREW_SESSION_ID`) a hook does nothing, even without a daemon.

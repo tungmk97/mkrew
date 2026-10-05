@@ -1,8 +1,8 @@
-//! `mk task add | list | run` (SPEC §9).
+//! `mk task add | list | run | undo` (SPEC §9).
 
 use mkrew_protocol::{
-    Project, Request, SessionSpawnResult, Task, TaskCreateParams, TaskListParams, TaskRunParams,
-    TaskStatus,
+    Project, Request, SessionSpawnResult, Task, TaskCreateParams, TaskListParams, TaskRef,
+    TaskRunParams, TaskStatus, TaskUndoParams, UndoPreview,
 };
 use ulid::Ulid;
 
@@ -85,6 +85,61 @@ pub fn run(client: &mut Client, task_id: Ulid) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Prints what undoing the task discards; only `yes` actually discards it (ADR 0005).
+pub fn undo(client: &mut Client, task_id: Ulid, yes: bool) -> anyhow::Result<()> {
+    let preview: UndoPreview = client.call(Request::TaskUndoPreview(TaskRef { task_id }))?;
+    print!("{}", render_preview(&preview));
+    if is_empty(&preview) {
+        return Ok(());
+    }
+    if !yes {
+        println!("nothing discarded; run again with --yes to discard these changes");
+        return Ok(());
+    }
+    let checkpoint = short(&preview.checkpoint).to_owned();
+    client.call::<()>(Request::TaskUndo(TaskUndoParams {
+        task_id,
+        confirm: true,
+        created: preview.created,
+        fingerprint: preview.fingerprint,
+    }))?;
+    println!("undone: files restored to {checkpoint}");
+    Ok(())
+}
+
+fn is_empty(preview: &UndoPreview) -> bool {
+    preview.changed.is_empty() && preview.added.is_empty() && preview.created.is_empty()
+}
+
+fn render_preview(preview: &UndoPreview) -> String {
+    let checkpoint = short(&preview.checkpoint);
+    if is_empty(preview) {
+        return format!("no changes since checkpoint {checkpoint}\n");
+    }
+    let mut out = format!("changes since checkpoint {checkpoint}:\n");
+    for path in &preview.changed {
+        out.push_str(&format!("  restore  {path}\n"));
+    }
+    for path in preview.added.iter().chain(&preview.created) {
+        out.push_str(&format!("  delete   {path}\n"));
+    }
+    if !preview.diff.is_empty() {
+        out.push('\n');
+        out.push_str(&preview.diff);
+        if !preview.diff.ends_with('\n') {
+            out.push('\n');
+        }
+        if preview.diff_truncated {
+            out.push_str("… diff cut (too large)\n");
+        }
+    }
+    out
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..12).unwrap_or(commit)
+}
+
 /// Parses a wire status name (`needs_input`, …) for `--status`.
 pub fn parse_status(name: &str) -> Result<TaskStatus, String> {
     serde_json::from_value(serde_json::Value::String(name.to_owned())).map_err(|_| {
@@ -112,6 +167,34 @@ mod tests {
             parse_status("NeedsInput")
                 .unwrap_err()
                 .contains("expected todo")
+        );
+    }
+
+    #[test]
+    fn undo_preview_lists_files_then_the_diff() {
+        let mut preview = UndoPreview {
+            checkpoint: "0123456789abcdef0123456789abcdef01234567".into(),
+            fingerprint: String::new(),
+            changed: vec![],
+            added: vec![],
+            created: vec![],
+            diff: String::new(),
+            diff_truncated: false,
+        };
+        assert_eq!(
+            render_preview(&preview),
+            "no changes since checkpoint 0123456789ab\n"
+        );
+        preview.changed = vec!["src/a.rs".into()];
+        preview.added = vec!["staged.txt".into()];
+        preview.created = vec!["new.txt".into()];
+        preview.diff = "-old\n+new".into();
+        preview.diff_truncated = true;
+        assert_eq!(
+            render_preview(&preview),
+            "changes since checkpoint 0123456789ab:\n  restore  src/a.rs\n  delete   staged.txt\n\
+             \x20 delete   new.txt\n\
+             \n-old\n+new\n… diff cut (too large)\n"
         );
     }
 }

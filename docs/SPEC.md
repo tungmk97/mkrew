@@ -215,6 +215,7 @@ CREATE TABLE task (
   status        TEXT NOT NULL,           -- todo|running|needs_input|review|done
   position      REAL NOT NULL,
   checkpoint    TEXT,                    -- git HEAD before run (M5)
+  checkpoint_at INTEGER,                 -- Unix ms the checkpoint was taken (undo, ADR 0005)
   error_flag    INTEGER NOT NULL DEFAULT 0,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
@@ -421,6 +422,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `project.list/add/update/archive` | `path`, `name`, `dev_command`, `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `default_agent` must be an agent profile) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
+| `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
+| `task.undo` | `task_id`, `confirm: true`, `created[]` + `fingerprint` (from the preview) | ok — restores the project folder to the checkpoint and deletes the previewed `created` files that are still new; `invalid_request` without `confirm`, `invalid_state` while a session of the task is live, without a checkpoint, or when the tracked changes no longer match `fingerprint` |
 | `session.spawn` | `project_id`, `agent_profile?`, `kind`, `tab_id?`, `title?`, `cols`, `rows` | `session_id` — no `agent_profile` = project `default_agent` (agent) or `shell` (shell); a named profile sets the kind; a tab with `null` layout gets the session as its only pane |
 | `session.list` | `project_id?` | Session[] |
 | `session.attach` | `session_id` | screen snapshot (grid + cursor + modes) + subscribe to output |
@@ -536,6 +539,7 @@ mk project update <project> [--base develop] [--dev "..."]
 mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>
+mk task undo <task-id> [--yes]         # prints files + diff since the checkpoint; --yes discards
 mk session list [--project P]
 mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]

@@ -459,14 +459,23 @@ fn checkpoint_is_set_and_cleared() {
     let p = store.add_project(dir.path(), None).unwrap();
     let task = store.create_task(p.id, "t", "", None, None).unwrap();
     let head = "0123456789abcdef0123456789abcdef01234567";
-    let set = store.set_task_checkpoint(task.id, Some(head)).unwrap();
+    assert_eq!(store.task_checkpoint_at(task.id).unwrap(), None);
+    let set = store
+        .set_task_checkpoint(task.id, Some(head), 1_234)
+        .unwrap();
     assert_eq!(set.checkpoint.as_deref(), Some(head));
     assert_eq!((set.status, set.position), (task.status, task.position));
     assert_eq!(open(&dir).get_task(task.id).unwrap(), set);
-    let cleared = store.set_task_checkpoint(task.id, None).unwrap();
+    assert_eq!(store.task_checkpoint_at(task.id).unwrap(), Some(1_234));
+    let cleared = store.set_task_checkpoint(task.id, None, 5_678).unwrap();
     assert_eq!(cleared.checkpoint, None);
+    assert_eq!(store.task_checkpoint_at(task.id).unwrap(), None);
     assert!(matches!(
-        store.set_task_checkpoint(Ulid::new(), None),
+        store.set_task_checkpoint(Ulid::new(), None, 0),
+        Err(StoreError::TaskNotFound(_))
+    ));
+    assert!(matches!(
+        store.task_checkpoint_at(Ulid::new()),
         Err(StoreError::TaskNotFound(_))
     ));
 }

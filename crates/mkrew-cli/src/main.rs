@@ -124,6 +124,14 @@ enum TaskCommand {
     },
     /// Start the task's agent in the project folder and print the session id.
     Run { task_id: Ulid },
+    /// Show what undoing the task discards (files + diff since its checkpoint); `--yes`
+    /// restores the files and deletes the ones it created.
+    Undo {
+        task_id: Ulid,
+        /// Really discard the changes.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -210,6 +218,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                 } => task::add(&mut client, &project, title, prompt, agent),
                 TaskCommand::List { project, status } => task::list(&mut client, project, status),
                 TaskCommand::Run { task_id } => task::run(&mut client, task_id),
+                TaskCommand::Undo { task_id, yes } => task::undo(&mut client, task_id, yes),
             }
             .map(|()| ExitCode::SUCCESS)
         }

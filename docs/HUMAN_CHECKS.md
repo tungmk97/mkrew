@@ -662,6 +662,25 @@ _Decisions the agent made on its own. Override them here if you disagree._
   run still starts (warning in the daemon log). Resume after a restart is not a new run and
   keeps the old checkpoint. HEAD does not capture uncommitted changes made before the run —
   T5.3's undo must account for that (preview shows everything that differs from HEAD).
+- (T5.3, ADR 0005) Undo: tracked files go back to the checkpoint commit, so uncommitted edits
+  the user had BEFORE the run are discarded too (they appear in the preview diff; there is no
+  record of them). "Created since" untracked files = untracked, non-ignored files with mtime ≥
+  `task.checkpoint_at` (taken just before HEAD is read in `task.run`); a pre-existing untracked
+  file the run edited is deleted, an untouched one is kept, ignored files never. HEAD/commits
+  are left alone (agent commits stay, their changes are reverted in the working tree). Empty
+  directories left by deleted files stay. Files tracked since the checkpoint (e.g. an agent's
+  `git add -A` of the user's old untracked notes) are deleted by the restore; the preview
+  lists them under `added` ("delete"). Undo only deletes created files the client confirmed
+  (previewed `created` list) and refuses when the tracked changes differ from the previewed
+  `fingerprint` (std `DefaultHasher`, fixed keys: stable per daemon build; a daemon upgrade
+  between preview and confirm only refuses). Review SHOULDs left open: `added` files are
+  deleted whatever their age (could unstage old ones instead), `git diff` output is read
+  whole before the 1 MiB cut, nested repos show as `sub/` in `created` but `git clean -f`
+  keeps them. The preview is allowed while the task runs; undo is not — but
+  only the task's OWN sessions block it: another agent live in the same folder gets its edits
+  reverted, and a `task.run` racing an in-flight undo is not locked out. `mk task undo` without `--yes` prints the preview and exits 0. Tests pin
+  `core.autocrlf=false`; with a global `autocrlf=true` a restore rewrites LF files with CRLF
+  (normal git behaviour).
 
 ## Done
 

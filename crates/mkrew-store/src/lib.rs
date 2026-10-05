@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mkrew_protocol::{
     Project, Session, SessionKind, SessionState, StateSource, Task, TaskStatus, TerminalTab,
 };
-use rusqlite::{Connection, Row, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use ulid::Ulid;
 
 /// Numbered migrations; `PRAGMA user_version` records how many have run. Append only.
@@ -17,6 +17,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0001_init.sql"),
     include_str!("../migrations/0002_terminals.sql"),
     include_str!("../migrations/0003_session_state.sql"),
+    include_str!("../migrations/0004_checkpoint_at.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -415,16 +416,29 @@ impl Store {
         self.get_task(id)
     }
 
-    /// Records the git HEAD taken before the latest run (SPEC §5); `None` = no checkpoint.
-    pub fn set_task_checkpoint(&self, id: Ulid, checkpoint: Option<&str>) -> Result<Task> {
+    /// Records the git HEAD taken before the latest run (SPEC §5) and when it was taken (Unix
+    /// ms); `None` = no checkpoint.
+    pub fn set_task_checkpoint(&self, id: Ulid, checkpoint: Option<&str>, at: i64) -> Result<Task> {
         let changed = self.conn.execute(
-            "UPDATE task SET checkpoint = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id.to_string(), checkpoint, now_ms()],
+            "UPDATE task SET checkpoint = ?2, checkpoint_at = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id.to_string(), checkpoint, checkpoint.map(|_| at), now_ms()],
         )?;
         if changed == 0 {
             return Err(StoreError::TaskNotFound(id));
         }
         self.get_task(id)
+    }
+
+    /// When the task's checkpoint was taken (Unix ms); `None` without a checkpoint.
+    pub fn task_checkpoint_at(&self, id: Ulid) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT checkpoint_at FROM task WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::TaskNotFound(id))
     }
 
     /// Deletes the task and returns it. Refused while one of its sessions has not exited;

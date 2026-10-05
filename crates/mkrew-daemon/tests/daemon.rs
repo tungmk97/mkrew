@@ -20,7 +20,7 @@ use mkrew_protocol::{
     SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
     TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
     Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUpdateParams, TerminalTab, encode,
+    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -1789,6 +1789,142 @@ fn task_run_stores_head_as_checkpoint() {
     assert_eq!(running.checkpoint, None);
     let listed = list_tasks(&mut client, &outside);
     assert_eq!(listed[0].checkpoint, None);
+    client.stop();
+    assert!(daemon.wait_exit().success());
+}
+
+/// M5 undo (ADR 0005): the preview lists what the run changed and created; `task.undo` needs
+/// `confirm`, a stopped task and a checkpoint, then restores tracked files and deletes only
+/// the untracked files created since the checkpoint.
+#[test]
+fn task_undo_previews_then_discards_changes_since_the_checkpoint() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.repo();
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["init", "-q"]);
+    // Byte-exact restores whatever the machine's global autocrlf says.
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let old = repo.join("old.txt");
+    std::fs::write(&old, "mine\n").unwrap();
+    let file = std::fs::File::options().write(true).open(&old).unwrap();
+    file.set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    drop(file);
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let task: Task = client
+        .call(create_task(&project, "t", Some("fake")))
+        .into_result()
+        .unwrap();
+    let preview = |task_id| Request::TaskUndoPreview(TaskRef { task_id });
+    let undo = |task_id, confirm| {
+        Request::TaskUndo(TaskUndoParams {
+            task_id,
+            confirm,
+            created: Vec::new(),
+            fingerprint: String::new(),
+        })
+    };
+
+    assert_eq!(
+        error_code(client.call(preview(task.id))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        error_code(client.call(undo(task.id, true))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        error_code(client.call(preview(Ulid::new()))),
+        ErrorCode::NotFound
+    );
+
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    wait_task(&mut client, task.id, |t| t.checkpoint.is_some());
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    std::fs::create_dir(repo.join("new")).unwrap();
+    std::fs::write(repo.join("new").join("b.txt"), "b\n").unwrap();
+    // Staged by the run (e.g. an agent's `git add -A`): not in the checkpoint, so undo
+    // deletes it whatever its mtime, and the preview lists it as `added`.
+    let notes = repo.join("notes.md");
+    std::fs::write(&notes, "notes\n").unwrap();
+    git(&repo, &["add", "notes.md"]);
+
+    // Refused while the task's session is live, and without confirm.
+    assert_eq!(
+        error_code(client.call(undo(task.id, true))),
+        ErrorCode::InvalidState
+    );
+    client
+        .call(Request::SessionKill(SessionKillParams {
+            session_id: run.session_id,
+            force: true,
+        }))
+        .into_result::<()>()
+        .unwrap();
+    wait_task(&mut client, task.id, |t| t.error_flag);
+    assert_eq!(
+        error_code(client.call(undo(task.id, false))),
+        ErrorCode::InvalidRequest
+    );
+
+    let shown: UndoPreview = client.call(preview(task.id)).into_result().unwrap();
+    assert_eq!(shown.changed, ["a.txt"]);
+    assert_eq!(shown.added, ["notes.md"]);
+    assert_eq!(shown.created, ["new/b.txt"]);
+    assert!(shown.diff.contains("-one\n+two"), "{}", shown.diff);
+    assert!(!shown.diff_truncated);
+    // Nothing is touched by the preview or the refusals.
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "two\n"
+    );
+
+    // Staged after the preview was shown: the tracked changes no longer match it, so the undo
+    // is refused and touches nothing.
+    let staged = repo.join("staged.txt");
+    std::fs::write(&staged, "staged\n").unwrap();
+    git(&repo, &["add", "staged.txt"]);
+    let confirmed = |shown: &UndoPreview| {
+        Request::TaskUndo(TaskUndoParams {
+            task_id: task.id,
+            confirm: true,
+            created: shown.created.clone(),
+            fingerprint: shown.fingerprint.clone(),
+        })
+    };
+    assert_eq!(
+        error_code(client.call(confirmed(&shown))),
+        ErrorCode::InvalidState
+    );
+    assert!(staged.exists());
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "two\n"
+    );
+    git(&repo, &["rm", "-q", "--cached", "staged.txt"]);
+    std::fs::remove_file(&staged).unwrap();
+
+    // Created after the preview was shown: untracked, not confirmed, so kept.
+    let late = repo.join("late.txt");
+    std::fs::write(&late, "late\n").unwrap();
+    client.call(confirmed(&shown)).into_result::<()>().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "one\n"
+    );
+    assert!(!repo.join("new").join("b.txt").exists());
+    assert!(!notes.exists());
+    assert_eq!(std::fs::read_to_string(&old).unwrap(), "mine\n");
+    assert!(late.exists());
+    let after: UndoPreview = client.call(preview(task.id)).into_result().unwrap();
+    assert!(
+        after.changed.is_empty() && after.added.is_empty() && after.created == ["late.txt"],
+        "{after:?}"
+    );
     client.stop();
     assert!(daemon.wait_exit().success());
 }
