@@ -3,12 +3,15 @@
 //! The daemon owns the session and already answers terminal queries (DSR etc.), so this
 //! emulator never writes back to the PTY.
 
+use std::cell::RefCell;
+
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, StdSyncHandler};
@@ -19,6 +22,9 @@ use crate::terminal::input::InputMode;
 
 /// UI-side scrollback for attached panes (SPEC §10).
 const SCROLLBACK_LINES: usize = 10_000;
+
+/// How far back a find-bar query edit looks (Enter searches the whole history).
+const INCREMENTAL_SEARCH_LINES: usize = 1_000;
 
 /// One cell of a [`Grid`] snapshot.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +37,19 @@ pub struct GridCell {
     pub flags: Flags,
     /// Inside the mouse selection.
     pub selected: bool,
+    /// Part of a find-bar match.
+    pub found: Found,
+}
+
+/// Find-bar highlight of a cell.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Found {
+    #[default]
+    No,
+    /// Any match on screen.
+    Match,
+    /// The match Enter / Shift+Enter moved to.
+    Current,
 }
 
 /// Cursor position in screen coordinates (row 0 = top visible line).
@@ -75,6 +94,11 @@ impl Grid {
 pub struct Emulator {
     term: Term<VoidListener>,
     parser: Processor<StdSyncHandler>,
+    /// Active find-bar pattern. A `RefCell` because the regex's lazy DFA caches mutate while
+    /// [`Emulator::grid`] (`&self`) highlights matches.
+    search: Option<RefCell<RegexSearch>>,
+    /// Match the last [`Emulator::search_next`] moved to.
+    current_match: Option<Match>,
 }
 
 impl Emulator {
@@ -86,6 +110,8 @@ impl Emulator {
         Self {
             term: Term::new(config, &TermSize::new(cols, rows), VoidListener),
             parser: Processor::new(),
+            search: None,
+            current_match: None,
         }
     }
 
@@ -107,10 +133,107 @@ impl Emulator {
 
     pub fn advance(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
+        self.recheck_current_match();
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.term.resize(TermSize::new(cols, rows));
+        self.recheck_current_match();
+    }
+
+    /// Sets the find-bar pattern: a regex, case-insensitive unless it has an uppercase letter.
+    /// Empty clears the search. Returns `false` (and highlights nothing) if the pattern is not
+    /// a valid regex.
+    pub fn set_search(&mut self, pattern: &str) -> bool {
+        self.current_match = None;
+        if pattern.is_empty() {
+            self.search = None;
+            return true;
+        }
+        self.search = RegexSearch::new(pattern).ok().map(RefCell::new);
+        self.search.is_some()
+    }
+
+    /// Moves to the next match towards older output (`older`) or newer output, wrapping around
+    /// the history, and scrolls the view to it. The first move starts from the edge of the
+    /// view. Returns `false` if nothing matches.
+    pub fn search_next(&mut self, older: bool) -> bool {
+        self.search_from_view(older, None)
+    }
+
+    /// Like `search_next(true)`, but only looks [`INCREMENTAL_SEARCH_LINES`] back and never
+    /// wraps: runs on every query edit, so a miss must not scan the whole history.
+    pub fn search_nearby(&mut self) -> bool {
+        self.search_from_view(true, Some(INCREMENTAL_SEARCH_LINES))
+    }
+
+    fn search_from_view(&mut self, older: bool, max_lines: Option<usize>) -> bool {
+        let (top, bottom) = self.view_lines();
+        let Some(search) = self.search.as_mut() else {
+            return false;
+        };
+        // Left: the next match starts before `origin`; right: it starts at or after it.
+        let (direction, origin) = match (older, &self.current_match) {
+            (true, Some(current)) => (
+                Direction::Left,
+                current.start().sub(&self.term, Boundary::None, 1),
+            ),
+            (false, Some(current)) => (
+                Direction::Right,
+                current.start().add(&self.term, Boundary::None, 1),
+            ),
+            (true, None) => (Direction::Left, Point::new(bottom, self.term.last_column())),
+            (false, None) => (Direction::Right, Point::new(top, Column(0))),
+        };
+        let found =
+            self.term
+                .search_next(search.get_mut(), origin, direction, Side::Left, max_lines);
+        if let Some(found) = &found {
+            self.term.scroll_to_point(*found.end());
+            self.term.scroll_to_point(*found.start());
+        }
+        self.current_match = found;
+        self.current_match.is_some()
+    }
+
+    /// The current match no longer holds the matched text (output scrolled it away, a resize
+    /// reflowed it): forget it, so the next move starts from the view again.
+    fn recheck_current_match(&mut self) {
+        let (Some(search), Some(current)) = (self.search.as_mut(), self.current_match.clone())
+        else {
+            return;
+        };
+        let topmost = self.term.topmost_line();
+        let bottommost = self.term.bottommost_line();
+        let in_grid = |point: &Point| point.line >= topmost && point.line <= bottommost;
+        let still = in_grid(current.start())
+            && in_grid(current.end())
+            && self
+                .term
+                .regex_search_right(search.get_mut(), *current.start(), *current.end())
+                == Some(current);
+        if !still {
+            self.current_match = None;
+        }
+    }
+
+    /// Grid lines of the top and bottom visible rows.
+    fn view_lines(&self) -> (Line, Line) {
+        let top = self.view_point(0, 0).line;
+        (top, top + (self.term.screen_lines() as i32 - 1))
+    }
+
+    /// Matches touching the visible rows, in order.
+    fn visible_matches(&self) -> Vec<Match> {
+        let Some(search) = &self.search else {
+            return Vec::new();
+        };
+        let (top, bottom) = self.view_lines();
+        // Start one line above the view so a match wrapped onto the top row still shows.
+        let start = Point::new(top - 1, Column(0)).grid_clamp(&self.term, Boundary::Grid);
+        let end = Point::new(bottom, self.term.last_column());
+        let mut regex = search.borrow_mut();
+        RegexIter::new(start, end, Direction::Right, &self.term, &mut regex).collect()
     }
 
     /// Modes set by the program that change how keys and pastes are encoded.
@@ -194,6 +317,7 @@ impl Emulator {
             bg: Color::Named(NamedColor::Background),
             flags: Flags::empty(),
             selected: false,
+            found: Found::No,
         };
         let mut rows = vec![vec![blank; cols]; self.term.screen_lines()];
         let content = self.term.renderable_content();
@@ -205,6 +329,7 @@ impl Emulator {
             if let Some(slot) = rows.get_mut(row).and_then(|r| r.get_mut(col)) {
                 *slot = GridCell {
                     selected: selection.is_some_and(|range| range.contains(indexed.point)),
+                    found: Found::No,
                     c: indexed.cell.c,
                     zerowidth: indexed
                         .cell
@@ -222,7 +347,45 @@ impl Emulator {
             col: content.cursor.point.column.0,
             visible: content.cursor.shape != CursorShape::Hidden,
         };
+        // One pass over the matched cells (the current match last, so it wins), not a lookup
+        // per cell: a one-letter query can match thousands of times on screen.
+        for found in self.visible_matches() {
+            mark(&mut rows, &found, offset, Found::Match);
+        }
+        if let Some(current) = &self.current_match {
+            mark(&mut rows, current, offset, Found::Current);
+        }
         Grid { cols, rows, cursor }
+    }
+}
+
+/// Sets `found` on the visible cells of `range` (grid lines; `offset` = display offset).
+fn mark(rows: &mut [Vec<GridCell>], range: &Match, offset: i32, found: Found) {
+    let (start, end) = (*range.start(), *range.end());
+    for line in start.line.0..=end.line.0 {
+        let Some(cells) = usize::try_from(line + offset)
+            .ok()
+            .and_then(|row| rows.get_mut(row))
+        else {
+            continue;
+        };
+        let first = if line == start.line.0 {
+            start.column.0
+        } else {
+            0
+        };
+        let last = if line == end.line.0 {
+            end.column.0
+        } else {
+            usize::MAX
+        };
+        for cell in cells
+            .iter_mut()
+            .skip(first)
+            .take(last.saturating_sub(first).saturating_add(1))
+        {
+            cell.found = found;
+        }
     }
 }
 
@@ -360,6 +523,121 @@ mod tests {
         assert!(!emu.wheel_sends_arrows(), "program reads the mouse");
         emu.advance(b"\x1b[?1000l\x1b[?1007l");
         assert!(!emu.wheel_sends_arrows(), "alternate scroll off");
+    }
+
+    fn found_cols(emu: &Emulator, row: usize) -> Vec<(usize, Found)> {
+        emu.grid().rows[row]
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| cell.found != Found::No)
+            .map(|(col, cell)| (col, cell.found))
+            .collect()
+    }
+
+    #[test]
+    fn search_walks_the_history_and_scrolls_to_each_match() {
+        let mut emu = Emulator::new(10, 3);
+        numbered_lines(&mut emu, 10);
+        assert!(emu.set_search("line[27]"));
+        // Older from the bottom of the view: line7, then line2, then wrap to line7.
+        assert!(emu.search_next(true));
+        assert_eq!(emu.grid().to_text(), "line7\nline8\nline9\n");
+        assert_eq!(
+            found_cols(&emu, 0),
+            (0..5).map(|col| (col, Found::Current)).collect::<Vec<_>>()
+        );
+        assert!(emu.search_next(true));
+        assert_eq!(emu.grid().to_text().lines().next(), Some("line2"));
+        assert!(emu.search_next(true));
+        assert_eq!(emu.grid().to_text(), "line5\nline6\nline7\n");
+        // Newer from line7 wraps to line2; both are on screen then.
+        emu.scroll_page(true);
+        assert_eq!(emu.grid().to_text(), "line2\nline3\nline4\n");
+        assert!(emu.search_next(false));
+        assert_eq!(emu.grid().to_text().lines().next(), Some("line2"));
+        assert_eq!(found_cols(&emu, 0)[0], (0, Found::Current));
+    }
+
+    #[test]
+    fn search_highlights_every_visible_match() {
+        let mut emu = Emulator::new(12, 2);
+        emu.advance(b"foo bar foo\r\nFOO");
+        assert!(emu.set_search("foo"));
+        let match_at =
+            |cols: std::ops::Range<usize>| cols.map(|col| (col, Found::Match)).collect::<Vec<_>>();
+        let mut both = match_at(0..3);
+        both.extend(match_at(8..11));
+        assert_eq!(found_cols(&emu, 0), both);
+        // Lowercase pattern = case-insensitive.
+        assert_eq!(found_cols(&emu, 1), match_at(0..3));
+        // An uppercase letter makes it case-sensitive.
+        assert!(emu.set_search("FOO"));
+        assert!(found_cols(&emu, 0).is_empty());
+        assert_eq!(found_cols(&emu, 1), match_at(0..3));
+    }
+
+    #[test]
+    fn nearby_search_stops_short_of_old_history() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"needle\r\n");
+        numbered_lines(&mut emu, INCREMENTAL_SEARCH_LINES + 10);
+        assert!(emu.set_search("needle"));
+        assert!(!emu.search_nearby());
+        assert_eq!(emu.display_offset(), 0);
+        assert!(emu.search_next(true), "Enter searches the whole history");
+        assert_eq!(emu.grid().to_text().lines().next(), Some("needle"));
+    }
+
+    #[test]
+    fn a_screen_full_of_matches_is_marked_cell_by_cell() {
+        let (cols, rows) = (200, 60);
+        let mut emu = Emulator::new(cols, rows);
+        numbered_lines(&mut emu, SCROLLBACK_LINES);
+        let line = "e".repeat(cols);
+        for _ in 0..rows {
+            emu.advance(line.as_bytes());
+        }
+        assert!(emu.set_search("e"));
+        assert!(emu.search_next(true));
+        let grid = emu.grid();
+        let count = |kind| {
+            grid.rows
+                .iter()
+                .flatten()
+                .filter(|cell| cell.found == kind)
+                .count()
+        };
+        assert_eq!(count(Found::Current), 1);
+        assert_eq!(count(Found::Match), cols * rows - 1);
+    }
+
+    #[test]
+    fn invalid_or_empty_pattern_clears_the_search() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"a(b");
+        assert!(emu.set_search("a"));
+        assert!(emu.search_next(true));
+        assert!(!emu.set_search("a("));
+        assert!(!emu.search_next(true));
+        assert!(found_cols(&emu, 0).is_empty());
+        assert!(emu.set_search(""));
+        assert!(!emu.search_next(false));
+        assert!(emu.set_search("x"));
+        assert!(!emu.search_next(true), "no match");
+    }
+
+    #[test]
+    fn current_match_is_dropped_when_its_text_changes() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"abc");
+        assert!(emu.set_search("abc"));
+        assert!(emu.search_next(true));
+        assert_eq!(found_cols(&emu, 0)[0], (0, Found::Current));
+        // Overwrite the matched text in place.
+        emu.advance(b"\rxyz");
+        assert!(found_cols(&emu, 0).is_empty());
+        emu.advance(b"\r\nabc");
+        assert_eq!(found_cols(&emu, 1)[0], (0, Found::Match));
     }
 
     #[test]

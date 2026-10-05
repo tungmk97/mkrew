@@ -23,9 +23,10 @@ use ulid::Ulid;
 use crate::client::Connection;
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
+use crate::terminal::find::{FindBar, FindStatus, find_key};
 use crate::terminal::input::{key_to_bytes, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
-use crate::theme::{self, Theme, font_size, space};
+use crate::theme::{self, Theme, font_size, radius, space};
 
 /// Cell width guess used only until the terminal font is resolved.
 const CELL_WIDTH_ESTIMATE: f32 = 0.6;
@@ -48,6 +49,12 @@ pub struct TerminalPane {
     selecting: bool,
     /// Wheel movement below one line, carried to the next event.
     scroll_remainder: f32,
+    /// The open find bar (Ctrl+Shift+F) and its keyboard focus.
+    find: Option<FindBar>,
+    find_focus: FocusHandle,
+    /// The mouse-down being dispatched hit the find bar: the terminal must not take focus or
+    /// start a selection (the event still bubbles so the shell focuses this pane).
+    find_clicked: bool,
 }
 
 /// Window position of the grid's top-left cell and the cell size.
@@ -84,6 +91,9 @@ impl TerminalPane {
             geometry: None,
             selecting: false,
             scroll_remainder: 0.0,
+            find: None,
+            find_focus: cx.focus_handle(),
+            find_clicked: false,
         }
     }
 
@@ -91,9 +101,12 @@ impl TerminalPane {
         self.session_id
     }
 
-    /// Sends keyboard input to this pane.
+    /// Sends keyboard input to this pane; keeps it where it is if the pane (terminal or its
+    /// find bar) already has it.
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        window.focus(&self.focus_handle, cx);
+        if !self.focus_handle.contains_focused(window, cx) {
+            window.focus(&self.focus_handle, cx);
+        }
     }
 
     /// Feeds output bytes. The caller notifies once per batch (≤ one repaint per frame).
@@ -105,6 +118,9 @@ impl TerminalPane {
     /// queue overflowed). The caller notifies.
     pub fn load_snapshot(&mut self, snapshot: &ScreenSnapshot) {
         self.emulator = Emulator::from_snapshot(snapshot);
+        if let Some(find) = &self.find {
+            find.reapply(&mut self.emulator);
+        }
     }
 
     /// The session's process exited: keep the last screen, stop sending input, say so.
@@ -175,6 +191,9 @@ impl TerminalPane {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if std::mem::take(&mut self.find_clicked) {
+            return;
+        }
         window.focus(&self.focus_handle, cx);
         if let Some((row, col, side)) = self.cell_at(event.position) {
             self.emulator.start_selection(row, col, side);
@@ -239,8 +258,20 @@ impl TerminalPane {
     }
 
     /// The terminal's own commands; all others go on to the window shell.
-    fn run(&mut self, Run(command): &Run, _window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
         match command {
+            Command::Find => {
+                self.find.get_or_insert_default();
+                window.focus(&self.find_focus, cx);
+                cx.notify();
+            }
+            Command::Paste if self.find.is_some() && self.find_focus.is_focused(window) => {
+                let text = cx.read_from_clipboard().and_then(|item| item.text());
+                if let (Some(find), Some(text)) = (self.find.as_mut(), text) {
+                    find.insert(&text, &mut self.emulator);
+                    cx.notify();
+                }
+            }
             Command::Copy => {
                 if let Some(text) = self.emulator.selection_text() {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -263,6 +294,129 @@ impl TerminalPane {
             }
             _ => cx.propagate(),
         }
+    }
+
+    /// Keys typed into the find bar edit the query or move between matches; none reach the
+    /// session.
+    fn find_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let (Some(find), Some(key)) = (self.find.as_mut(), find_key(&event.keystroke)) else {
+            return;
+        };
+        if find.key(key, &mut self.emulator) {
+            cx.notify();
+        } else {
+            self.close_find(window, cx);
+        }
+    }
+
+    /// Closes the find bar, clears the highlights and gives the terminal the keyboard.
+    fn close_find(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.find = None;
+        self.emulator.set_search("");
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// A click on the find bar focuses it instead of starting a terminal selection.
+    fn find_mouse_down(
+        &mut self,
+        _event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.find_clicked = true;
+        window.focus(&self.find_focus, cx);
+        cx.notify();
+    }
+
+    fn render_find_bar(&self, window: &Window, cx: &mut Context<'_, Self>) -> Option<gpui::Div> {
+        let find = self.find.as_ref()?;
+        let theme = &self.theme;
+        let focused = self.find_focus.is_focused(window);
+        let (text, color) = if find.query().is_empty() {
+            ("Find (regex)".to_owned(), theme.text_muted)
+        } else {
+            (find.query().to_owned(), theme.text)
+        };
+        let caret = div()
+            .flex_none()
+            .w(px(theme::BORDER_WIDTH))
+            .h(px(font_size::BODY))
+            .bg(rgb(theme.text));
+        // While typing, the caret sits after the query; the placeholder comes after the caret.
+        let query = div()
+            .flex()
+            .items_center()
+            .child(div().text_color(rgb(color)).child(text));
+        let query = if !focused {
+            query
+        } else if find.query().is_empty() {
+            div().flex().items_center().child(caret).child(query)
+        } else {
+            query.child(caret)
+        };
+        let status = match find.status() {
+            FindStatus::Invalid => format!("✕ {}", find.status().label()),
+            status => status.label().to_owned(),
+        };
+        let hover = theme.border;
+        let close = div()
+            .id("find-close")
+            .px(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .text_size(px(font_size::META))
+            .text_color(rgb(theme.text_muted))
+            .hover(move |style| style.bg(rgb(hover)))
+            .active(|style| style.opacity(theme::opacity::ACTIVE))
+            .on_click(cx.listener(|pane, _, window, cx| pane.close_find(window, cx)))
+            .child("✕");
+        Some(
+            div()
+                .absolute()
+                .top(px(space::S))
+                .right(px(space::L))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::MEDIUM))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(if focused {
+                    theme.pane_focus_border
+                } else {
+                    theme.border
+                }))
+                .bg(rgb(theme.surface_raised))
+                .shadow_sm()
+                .font_family(theme::UI_FONT)
+                .text_size(px(font_size::BODY))
+                .cursor(CursorStyle::IBeam)
+                .track_focus(&self.find_focus)
+                .on_key_down(cx.listener(Self::find_key_down))
+                .on_mouse_down(MouseButton::Left, cx.listener(Self::find_mouse_down))
+                .child(
+                    div()
+                        .w(px(theme::FIND_INPUT_WIDTH))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(query),
+                )
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(status),
+                )
+                .child(close),
+        )
     }
 
     /// Sends typed or pasted bytes; a scrolled-back view returns to the live screen first.
@@ -307,8 +461,10 @@ impl Render for TerminalPane {
                 .text_color(rgb(self.theme.text_muted))
                 .child(text)
         });
+        let find_bar = self.render_find_bar(window, cx);
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .key_context(TERMINAL_CONTEXT)
@@ -328,6 +484,7 @@ impl Render for TerminalPane {
                 painted: self.painted.clone(),
             })
             .children(exited)
+            .children(find_bar)
     }
 }
 

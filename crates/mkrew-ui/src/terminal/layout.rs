@@ -5,7 +5,7 @@ use alacritty_terminal::index::Side;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, NamedColor};
 
-use crate::terminal::emulator::GridCell;
+use crate::terminal::emulator::{Found, GridCell};
 use crate::theme::Theme;
 
 /// Resolved style of one cell. Colors are `0xRRGGBB`.
@@ -147,9 +147,21 @@ pub fn cell_style(cell: &GridCell, is_cursor: bool, theme: &Theme) -> CellStyle 
         fg = bg;
     }
     // Program colors (inverse bars, muted text) can vanish on the selection: use body text.
-    if cell.selected {
-        fg = theme.text;
-        bg = theme.terminal_selection_bg;
+    // Same for find matches; the selection wins over a match.
+    match cell.found {
+        _ if cell.selected => {
+            fg = theme.text;
+            bg = theme.terminal_selection_bg;
+        }
+        Found::Current => {
+            fg = theme.text;
+            bg = theme.terminal_match_current_bg;
+        }
+        Found::Match => {
+            fg = theme.text;
+            bg = theme.terminal_match_bg;
+        }
+        Found::No => {}
     }
     if is_cursor {
         fg = theme.bg;
@@ -529,6 +541,40 @@ mod tests {
         assert_eq!(layout.segments[0].runs[1].style.fg, theme.text);
         // The cursor block wins over the selection.
         assert_eq!(cell_style(&cells[1], true, &theme).bg, theme.accent);
+    }
+
+    #[test]
+    fn find_matches_get_match_backgrounds() {
+        let theme = Theme::dark();
+        let mut emu = Emulator::new(12, 1);
+        emu.advance(b"ab ab \x1b[7mab\x1b[0m");
+        assert!(emu.set_search("ab"));
+        assert!(emu.search_next(true));
+        let cells = emu.grid().rows.remove(0);
+        let layout = layout_row(&cells, None, &theme);
+        let bg = |start_col, color| Background {
+            start_col,
+            cols: 2,
+            color,
+        };
+        assert_eq!(
+            layout.backgrounds,
+            vec![
+                bg(0, theme.terminal_match_bg),
+                bg(3, theme.terminal_match_bg),
+                bg(6, theme.terminal_match_current_bg),
+            ]
+        );
+        // The inverse match reads as body text too.
+        assert_eq!(cell_style(&cells[6], false, &theme).fg, theme.text);
+        // The selection wins over a match.
+        emu.start_selection(0, 0, Side::Left);
+        emu.update_selection(0, 0, Side::Right);
+        let cells = emu.grid().rows.remove(0);
+        assert_eq!(
+            cell_style(&cells[0], false, &theme).bg,
+            theme.terminal_selection_bg
+        );
     }
 
     #[test]

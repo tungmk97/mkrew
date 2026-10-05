@@ -815,7 +815,11 @@ impl Shell {
             }
             Command::ClosePane => self.close_focused_pane(window, cx),
             // Handled by the focused terminal pane.
-            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {}
+            Command::Copy
+            | Command::Paste
+            | Command::PageUp
+            | Command::PageDown
+            | Command::Find => {}
         }
     }
 

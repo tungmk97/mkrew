@@ -102,6 +102,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   (paste elsewhere matches; the highlight clears), Shift+PgUp/PgDn and the wheel page through
   the history, typing returns to the live screen. In Claude Code (full-screen): the wheel
   scrolls its view (arrow keys), selection + copy still work. Ctrl+Shift+C is not sent to the PTY.
+- [ ] (T2.7c) In a pane with long output press Ctrl+Shift+F: the find bar appears top-right
+  (light + dark), typing highlights matches (amber, readable) and jumps to the nearest one,
+  Enter / Shift+Enter walk older / newer matches and scroll the view, "No matches" / "✕ Invalid
+  pattern" show, Esc or ✕ closes it, clears the highlights and typing goes to the terminal
+  again. Clicking the bar of an unfocused split focuses that pane (border moves) and the bar.
 
 ## Questions with assumed defaults
 
@@ -324,6 +329,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   history; in the alternate screen with alternate-scroll on and no mouse mode it sends Up/Down
   arrows; programs that enable mouse reporting get **no** mouse events yet (selection wins) —
   forwarding mouse/wheel to such programs is backlog. No "scrolled back" indicator yet.
+- (T2.7c) Find bar: Enter = next match towards **older** output (up the history, the usual
+  direction when the newest output is at the bottom), Shift+Enter = towards newer; both wrap
+  around the 10k-line history. Pattern = regex (alacritty `RegexSearch`): case-insensitive
+  unless it contains an uppercase letter; an invalid regex shows "✕ Invalid pattern". Each
+  query edit jumps to the nearest match up to 1,000 lines above the view's bottom (Enter then
+  searches everything). Minimal hand-rolled input: type, Backspace, Ctrl+Shift+V pastes the
+  first line; no caret movement, selection or IME, and a query longer than the field is
+  clipped at its end. No "n of m" count. Clicking the terminal keeps the bar open (Esc then
+  goes to the agent); close with ✕ or Ctrl+Shift+F → Esc. Matches wrapped across 3+ rows
+  starting above the view are not highlighted on its top rows. A match scrolled to the top row
+  can sit under the bar.
 
 ## Done
 

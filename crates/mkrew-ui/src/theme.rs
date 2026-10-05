@@ -76,6 +76,9 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 /// Width of the workspace sidebar.
 pub const SIDEBAR_WIDTH: f32 = 240.0;
 
+/// Width of the query field in a terminal's find bar.
+pub const FIND_INPUT_WIDTH: f32 = 200.0;
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 
@@ -108,6 +111,10 @@ pub struct Theme {
     pub pane_focus_border: u32,
     /// Background of selected terminal cells (accent mixed into `bg`, text stays readable).
     pub terminal_selection_bg: u32,
+    /// Background of find-bar matches (needs-input amber mixed into `bg`).
+    pub terminal_match_bg: u32,
+    /// Background of the current find-bar match (stronger amber).
+    pub terminal_match_current_bg: u32,
     pub status_working: u32,
     pub status_needs_input: u32,
     pub status_done: u32,
@@ -152,6 +159,8 @@ impl Theme {
             accent: 0x7C8CFF,
             pane_focus_border: 0x49518D,
             terminal_selection_bg: 0x3A406B,
+            terminal_match_bg: 0x3F3524,
+            terminal_match_current_bg: 0x7A5A1F,
             status_working: 0x7C8CFF,
             status_needs_input: 0xE3A63E,
             status_done: 0x4CB782,
@@ -181,6 +190,8 @@ impl Theme {
             accent: 0x4F5BD5,
             pane_focus_border: 0xA4AAE7,
             terminal_selection_bg: 0xCFD2F0,
+            terminal_match_bg: 0xF6EBCF,
+            terminal_match_current_bg: 0xE9C46A,
             status_working: 0x4F5BD5,
             status_needs_input: 0xB7791F,
             status_done: 0x2F855A,
@@ -211,6 +222,8 @@ impl Theme {
             accent: 0,
             pane_focus_border: 0,
             terminal_selection_bg: 0,
+            terminal_match_bg: 0,
+            terminal_match_current_bg: 0,
             status_working: 0,
             status_needs_input: 0,
             status_done: 0,
@@ -270,8 +283,14 @@ mod tests {
     #[test]
     fn selected_text_stays_readable() {
         for theme in [Theme::dark(), Theme::light()] {
-            let ratio = contrast(theme.text, theme.terminal_selection_bg);
-            assert!(ratio >= 4.5, "{ratio:.2}");
+            for bg in [
+                theme.terminal_selection_bg,
+                theme.terminal_match_bg,
+                theme.terminal_match_current_bg,
+            ] {
+                let ratio = contrast(theme.text, bg);
+                assert!(ratio >= 4.5, "{bg:06X}: {ratio:.2}");
+            }
         }
     }
 

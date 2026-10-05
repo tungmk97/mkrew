@@ -796,6 +796,8 @@ The terminal is the hero; everything else steps back.
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
+  Find matches (`status-needs-input` amber mixed into `bg`, text drawn in `text`):
+  `terminal-match-bg` #3F3524 / #F6EBCF; `terminal-match-current-bg` #7A5A1F / #E9C46A.
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
 - Theme follows OS light/dark.
 

@@ -40,6 +40,8 @@ pub enum Command {
     /// Terminal only: one screen back into / forward through the UI-side scrollback.
     PageUp,
     PageDown,
+    /// Terminal only: open (or refocus) the find bar over the scrollback.
+    Find,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -78,6 +80,7 @@ impl Command {
             Command::Paste,
             Command::PageUp,
             Command::PageDown,
+            Command::Find,
         ]);
         all
     }
@@ -106,6 +109,7 @@ impl Command {
             Command::Paste => "paste".into(),
             Command::PageUp => "page_up".into(),
             Command::PageDown => "page_down".into(),
+            Command::Find => "find".into(),
         }
     }
 
@@ -139,15 +143,18 @@ impl Command {
             Command::Paste => "ctrl-shift-v".into(),
             Command::PageUp => "shift-pageup".into(),
             Command::PageDown => "shift-pagedown".into(),
+            Command::Find => "ctrl-shift-f".into(),
         }
     }
 
     /// Key context the binding is limited to; `None` = anywhere in the window.
     pub fn context(self) -> Option<&'static str> {
         match self {
-            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
-                Some(TERMINAL_CONTEXT)
-            }
+            Command::Copy
+            | Command::Paste
+            | Command::PageUp
+            | Command::PageDown
+            | Command::Find => Some(TERMINAL_CONTEXT),
             _ => None,
         }
     }
@@ -401,11 +408,13 @@ mod tests {
         assert_eq!(bound("ctrl-shift-c"), Some(Command::Copy));
         assert_eq!(bound("shift-pageup"), Some(Command::PageUp));
         assert_eq!(bound("shift-pagedown"), Some(Command::PageDown));
+        assert_eq!(bound("ctrl-shift-f"), Some(Command::Find));
         for command in [
             Command::Copy,
             Command::Paste,
             Command::PageUp,
             Command::PageDown,
+            Command::Find,
         ] {
             assert_eq!(command.context(), Some(TERMINAL_CONTEXT), "{command:?}");
         }
