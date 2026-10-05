@@ -33,8 +33,13 @@ pub enum Command {
     SplitDown,
     Focus(Direction),
     ClosePane,
+    /// Terminal only: copy the mouse selection.
+    Copy,
     /// Terminal only: paste the clipboard (bracketed when the program asked for it).
     Paste,
+    /// Terminal only: one screen back into / forward through the UI-side scrollback.
+    PageUp,
+    PageDown,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -69,7 +74,10 @@ impl Command {
             Command::Focus(Direction::Up),
             Command::Focus(Direction::Down),
             Command::ClosePane,
+            Command::Copy,
             Command::Paste,
+            Command::PageUp,
+            Command::PageDown,
         ]);
         all
     }
@@ -94,7 +102,10 @@ impl Command {
             Command::Focus(Direction::Up) => "focus_up".into(),
             Command::Focus(Direction::Down) => "focus_down".into(),
             Command::ClosePane => "close_pane".into(),
+            Command::Copy => "copy".into(),
             Command::Paste => "paste".into(),
+            Command::PageUp => "page_up".into(),
+            Command::PageDown => "page_down".into(),
         }
     }
 
@@ -124,14 +135,19 @@ impl Command {
             Command::Focus(Direction::Up) => "alt-up".into(),
             Command::Focus(Direction::Down) => "alt-down".into(),
             Command::ClosePane => "ctrl-shift-x".into(),
+            Command::Copy => "ctrl-shift-c".into(),
             Command::Paste => "ctrl-shift-v".into(),
+            Command::PageUp => "shift-pageup".into(),
+            Command::PageDown => "shift-pagedown".into(),
         }
     }
 
     /// Key context the binding is limited to; `None` = anywhere in the window.
     pub fn context(self) -> Option<&'static str> {
         match self {
-            Command::Paste => Some(TERMINAL_CONTEXT),
+            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
+                Some(TERMINAL_CONTEXT)
+            }
             _ => None,
         }
     }
@@ -382,7 +398,17 @@ mod tests {
         assert_eq!(bound("alt-left"), Some(Command::Focus(Direction::Left)));
         assert_eq!(bound("alt-shift--"), Some(Command::SplitDown));
         assert_eq!(bound("ctrl-shift-x"), Some(Command::ClosePane));
-        assert_eq!(Command::Paste.context(), Some(TERMINAL_CONTEXT));
+        assert_eq!(bound("ctrl-shift-c"), Some(Command::Copy));
+        assert_eq!(bound("shift-pageup"), Some(Command::PageUp));
+        assert_eq!(bound("shift-pagedown"), Some(Command::PageDown));
+        for command in [
+            Command::Copy,
+            Command::Paste,
+            Command::PageUp,
+            Command::PageDown,
+        ] {
+            assert_eq!(command.context(), Some(TERMINAL_CONTEXT), "{command:?}");
+        }
         assert_eq!(Command::ClosePane.context(), None);
     }
 
@@ -508,5 +534,6 @@ mod tests {
         assert_eq!(keymap.label(Command::Focus(Direction::Up)), "Alt+↑");
         assert_eq!(keymap.label(Command::NextTab), "Ctrl+Tab");
         assert_eq!(keymap.label(Command::SplitRight), "Alt+Shift+=");
+        assert_eq!(keymap.label(Command::PageUp), "Shift+PgUp");
     }
 }

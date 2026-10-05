@@ -1,6 +1,7 @@
 //! Grid rows → styled text segments and background rects (SPEC §10). Pure (no gpui types) so
 //! the batching and color rules are unit-tested; `view` only shapes and paints the result.
 
+use alacritty_terminal::index::Side;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color, NamedColor};
 
@@ -145,6 +146,11 @@ pub fn cell_style(cell: &GridCell, is_cursor: bool, theme: &Theme) -> CellStyle 
     if cell.flags.contains(Flags::HIDDEN) {
         fg = bg;
     }
+    // Program colors (inverse bars, muted text) can vanish on the selection: use body text.
+    if cell.selected {
+        fg = theme.text;
+        bg = theme.terminal_selection_bg;
+    }
     if is_cursor {
         fg = theme.bg;
         bg = theme.accent;
@@ -241,6 +247,29 @@ pub fn grid_size(
         fit(width, cell_width, MIN_COLS),
         fit(height, line_height, MIN_ROWS),
     )
+}
+
+/// The visible cell (row, col) under a point `x`, `y` pixels from the grid's top-left corner
+/// (inside the padding), and which half of it was hit. Points outside clamp to the edge cells.
+pub fn cell_at(
+    x: f32,
+    y: f32,
+    cell_width: f32,
+    line_height: f32,
+    (cols, rows): (usize, usize),
+) -> (usize, usize, Side) {
+    let col_f = (x / cell_width).max(0.0);
+    // `as` saturates NaN/huge floats; then clamp to the grid.
+    let col = (col_f as usize).min(cols.saturating_sub(1));
+    let side = if x >= cell_width * cols as f32 {
+        Side::Right
+    } else if col_f.fract() < 0.5 {
+        Side::Left
+    } else {
+        Side::Right
+    };
+    let row = ((y / line_height).max(0.0) as usize).min(rows.saturating_sub(1));
+    (row, col, side)
 }
 
 /// Per-row cache of rendered rows: a row is rebuilt only when its cells or cursor changed
@@ -475,6 +504,45 @@ mod tests {
         assert_eq!(get(&mut cache, 1, &a, Some(0)), 4, "cursor moved in");
         cache.clear();
         assert_eq!(get(&mut cache, 0, &a, None), 5);
+    }
+
+    #[test]
+    fn selected_cells_get_the_selection_background() {
+        let theme = Theme::dark();
+        let mut emu = Emulator::new(10, 1);
+        emu.advance(b"a\x1b[7mb\x1b[0;90mc\x1b[0md");
+        emu.start_selection(0, 1, Side::Left);
+        emu.update_selection(0, 2, Side::Right);
+        let cells = emu.grid().rows.remove(0);
+        let layout = layout_row(&cells, None, &theme);
+        assert_eq!(
+            layout.backgrounds,
+            vec![Background {
+                start_col: 1,
+                cols: 2,
+                color: theme.terminal_selection_bg
+            }]
+        );
+        // An inverse cell and a muted cell both read as body text on the selection.
+        assert_eq!(layout.segments[0].runs.len(), 3);
+        assert_eq!(layout.segments[0].runs[1].len, 2);
+        assert_eq!(layout.segments[0].runs[1].style.fg, theme.text);
+        // The cursor block wins over the selection.
+        assert_eq!(cell_style(&cells[1], true, &theme).bg, theme.accent);
+    }
+
+    #[test]
+    fn cell_at_maps_pixels_to_cells_and_sides() {
+        let dims = (80, 24);
+        assert_eq!(cell_at(0.0, 0.0, 10.0, 20.0, dims), (0, 0, Side::Left));
+        assert_eq!(cell_at(14.0, 39.0, 10.0, 20.0, dims), (1, 1, Side::Left));
+        assert_eq!(cell_at(16.0, 41.0, 10.0, 20.0, dims), (2, 1, Side::Right));
+        // Outside the grid: clamp to the edge cells.
+        assert_eq!(cell_at(-5.0, -5.0, 10.0, 20.0, dims), (0, 0, Side::Left));
+        assert_eq!(
+            cell_at(5000.0, 5000.0, 10.0, 20.0, dims),
+            (23, 79, Side::Right)
+        );
     }
 
     #[test]

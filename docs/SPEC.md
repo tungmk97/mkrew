@@ -794,6 +794,8 @@ The terminal is the hero; everything else steps back.
   configurable. ANSI palette harmonized with the theme.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
+- Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
+  `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
 - Theme follows OS light/dark.
 

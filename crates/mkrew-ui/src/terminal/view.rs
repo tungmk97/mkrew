@@ -8,10 +8,12 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use alacritty_terminal::index::Side;
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, Context, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, KeyDownEvent, LayoutId, MouseButton, Pixels,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, Entity, FocusHandle,
+    Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, KeyDownEvent, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
     ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowAppearance,
     div, fill, font, point, px, relative, rgb, size,
 };
@@ -21,8 +23,8 @@ use ulid::Ulid;
 use crate::client::Connection;
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
-use crate::terminal::input::{key_to_bytes, paste_bytes};
-use crate::terminal::layout::{Background, CellStyle, RowCache, grid_size, layout_row};
+use crate::terminal::input::{key_to_bytes, paste_bytes, wheel_bytes};
+use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::theme::{self, Theme, font_size, space};
 
 /// Cell width guess used only until the terminal font is resolved.
@@ -40,6 +42,20 @@ pub struct TerminalPane {
     painted: async_channel::Sender<()>,
     /// `Some(exit_code)` once the session's process exited.
     exited: Option<Option<i32>>,
+    /// Where the grid was last painted, to map mouse positions to cells.
+    geometry: Option<Geometry>,
+    /// A left-button drag is extending the selection.
+    selecting: bool,
+    /// Wheel movement below one line, carried to the next event.
+    scroll_remainder: f32,
+}
+
+/// Window position of the grid's top-left cell and the cell size.
+#[derive(Clone, Copy)]
+struct Geometry {
+    origin: Point<Pixels>,
+    cell_width: Pixels,
+    line_height: Pixels,
 }
 
 impl TerminalPane {
@@ -65,6 +81,9 @@ impl TerminalPane {
             focus_handle,
             painted,
             exited: None,
+            geometry: None,
+            selecting: false,
+            scroll_remainder: 0.0,
         }
     }
 
@@ -137,9 +156,102 @@ impl TerminalPane {
         }
     }
 
+    /// The visible cell under a window position, once the grid has been painted.
+    fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize, Side)> {
+        let geometry = self.geometry?;
+        let at = position - geometry.origin;
+        Some(cell_at(
+            f32::from(at.x),
+            f32::from(at.y),
+            f32::from(geometry.cell_width),
+            f32::from(geometry.line_height),
+            self.emulator.size(),
+        ))
+    }
+
+    fn mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.focus_handle, cx);
+        if let Some((row, col, side)) = self.cell_at(event.position) {
+            self.emulator.start_selection(row, col, side);
+            self.selecting = true;
+            cx.notify();
+        }
+    }
+
+    fn mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
+            return;
+        }
+        if let Some((row, col, side)) = self.cell_at(event.position) {
+            self.emulator.update_selection(row, col, side);
+            cx.notify();
+        }
+    }
+
+    fn mouse_up(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        _cx: &mut Context<'_, Self>,
+    ) {
+        self.selecting = false;
+    }
+
+    /// The wheel scrolls the UI-side history (wheel up = back in time); full-screen programs
+    /// that asked for alternate scroll get arrow keys instead.
+    fn scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(geometry) = self.geometry else {
+            return;
+        };
+        let lines = f32::from(event.delta.pixel_delta(geometry.line_height).y)
+            / f32::from(geometry.line_height)
+            + self.scroll_remainder;
+        self.scroll_remainder = lines.fract();
+        // Whole lines of one wheel event: far inside i32.
+        let whole = lines.trunc() as i32;
+        if whole == 0 {
+            return;
+        }
+        if self.emulator.wheel_sends_arrows() {
+            if self.exited.is_none() {
+                let data = wheel_bytes(whole, self.emulator.input_mode());
+                self.input(data, cx);
+            }
+        } else {
+            self.emulator.scroll_lines(whole);
+            cx.notify();
+        }
+    }
+
     /// The terminal's own commands; all others go on to the window shell.
     fn run(&mut self, Run(command): &Run, _window: &mut Window, cx: &mut Context<'_, Self>) {
         match command {
+            Command::Copy => {
+                if let Some(text) = self.emulator.selection_text() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    self.emulator.clear_selection();
+                    cx.notify();
+                }
+            }
+            Command::PageUp | Command::PageDown => {
+                self.emulator.scroll_page(*command == Command::PageUp);
+                cx.notify();
+            }
             Command::Paste => {
                 let text = cx.read_from_clipboard().and_then(|item| item.text());
                 if let Some(text) = text
@@ -153,7 +265,12 @@ impl TerminalPane {
         }
     }
 
-    fn input(&self, data: Vec<u8>, cx: &mut Context<'_, Self>) {
+    /// Sends typed or pasted bytes; a scrolled-back view returns to the live screen first.
+    fn input(&mut self, data: Vec<u8>, cx: &mut Context<'_, Self>) {
+        if self.emulator.display_offset() > 0 {
+            self.emulator.scroll_to_bottom();
+            cx.notify();
+        }
         let request = Request::SessionInput(SessionInputParams {
             session_id: self.session_id,
             data,
@@ -198,10 +315,12 @@ impl Render for TerminalPane {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::key_down))
             .on_action(cx.listener(Self::run))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|pane, _, window, cx| window.focus(&pane.focus_handle, cx)),
-            )
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+            .on_mouse_move(cx.listener(Self::mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::mouse_up))
+            .cursor(CursorStyle::IBeam)
+            .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .child(TerminalElement {
                 pane: cx.entity(),
                 theme: self.theme.clone(),
@@ -279,6 +398,17 @@ impl Element for TerminalElement {
     ) -> Prepainted {
         let (cell_width, line_height) = cell_size(window, &self.theme);
         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let geometry = Geometry {
+            origin: bounds.origin
+                + point(
+                    px(self.theme.terminal_padding),
+                    px(self.theme.terminal_padding),
+                ),
+            cell_width,
+            line_height,
+        };
+        self.pane
+            .update(cx, |pane, _| pane.geometry = Some(geometry));
         let padding = 2.0 * self.theme.terminal_padding;
         // No room for even one cell (minimized window, collapsed layout): keep the session's
         // size instead of shrinking a live agent to the minimum grid.

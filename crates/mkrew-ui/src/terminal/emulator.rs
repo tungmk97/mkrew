@@ -5,7 +5,9 @@
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, TermMode};
@@ -27,6 +29,8 @@ pub struct GridCell {
     pub fg: Color,
     pub bg: Color,
     pub flags: Flags,
+    /// Inside the mouse selection.
+    pub selected: bool,
 }
 
 /// Cursor position in screen coordinates (row 0 = top visible line).
@@ -118,6 +122,69 @@ impl Emulator {
         }
     }
 
+    /// A full-screen program (alternate screen, no history) asked for the wheel as arrow keys
+    /// and does not read the mouse itself.
+    pub fn wheel_sends_arrows(&self) -> bool {
+        let mode = self.term.mode();
+        mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+            && !mode.intersects(TermMode::MOUSE_MODE)
+    }
+
+    /// Lines scrolled back into the history; 0 = following the live screen.
+    pub fn display_offset(&self) -> usize {
+        self.term.grid().display_offset()
+    }
+
+    /// Scrolls the view one screen into the history (`up`) or back towards the live screen.
+    pub fn scroll_page(&mut self, up: bool) {
+        self.term
+            .scroll_display(if up { Scroll::PageUp } else { Scroll::PageDown });
+    }
+
+    /// Scrolls the view by `lines` (positive = into the history).
+    pub fn scroll_lines(&mut self, lines: i32) {
+        self.term.scroll_display(Scroll::Delta(lines));
+    }
+
+    /// Back to the live screen (typing does this).
+    pub fn scroll_to_bottom(&mut self) {
+        self.term.scroll_display(Scroll::Bottom);
+    }
+
+    /// Starts a selection at a visible cell (row 0 = top of the view). `side` = which half of
+    /// the cell was hit, so a click between cells selects nothing.
+    pub fn start_selection(&mut self, row: usize, col: usize, side: Side) {
+        let point = self.view_point(row, col);
+        self.term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+    }
+
+    /// Moves the end of the current selection; no-op without one.
+    pub fn update_selection(&mut self, row: usize, col: usize, side: Side) {
+        let point = self.view_point(row, col);
+        if let Some(selection) = self.term.selection.as_mut() {
+            selection.update(point, side);
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.term.selection = None;
+    }
+
+    /// Selected text (lines joined with `\n`, trailing blanks trimmed); `None` if nothing is
+    /// selected.
+    pub fn selection_text(&self) -> Option<String> {
+        self.term
+            .selection_to_string()
+            .filter(|text| !text.is_empty())
+    }
+
+    /// Grid point of a visible cell, accounting for the scrolled-back view.
+    fn view_point(&self, row: usize, col: usize) -> Point {
+        // Screen sizes are u16 and the history 10k lines, so these fit in i32.
+        let line = row as i32 - self.display_offset() as i32;
+        Point::new(Line(line), Column(col))
+    }
+
     pub fn grid(&self) -> Grid {
         let cols = self.term.columns();
         let blank = GridCell {
@@ -126,15 +193,18 @@ impl Emulator {
             fg: Color::Named(NamedColor::Foreground),
             bg: Color::Named(NamedColor::Background),
             flags: Flags::empty(),
+            selected: false,
         };
         let mut rows = vec![vec![blank; cols]; self.term.screen_lines()];
         let content = self.term.renderable_content();
         let offset = content.display_offset as i32;
+        let selection = content.selection;
         for indexed in content.display_iter {
             let row = (indexed.point.line.0 + offset) as usize;
             let col = indexed.point.column.0;
             if let Some(slot) = rows.get_mut(row).and_then(|r| r.get_mut(col)) {
                 *slot = GridCell {
+                    selected: selection.is_some_and(|range| range.contains(indexed.point)),
                     c: indexed.cell.c,
                     zerowidth: indexed
                         .cell
@@ -213,6 +283,91 @@ mod tests {
         let grid = emu.grid();
         assert_eq!((grid.cols, grid.rows.len()), (20, 3));
         assert_eq!(emu.size(), (20, 3));
+    }
+
+    fn numbered_lines(emu: &mut Emulator, count: usize) {
+        for n in 0..count {
+            emu.advance(format!("line{n}\r\n").as_bytes());
+        }
+    }
+
+    #[test]
+    fn selection_marks_cells_and_copies_text() {
+        let mut emu = Emulator::new(10, 3);
+        emu.advance(b"hello\r\nworld");
+        assert_eq!(emu.selection_text(), None);
+        emu.start_selection(0, 1, Side::Left);
+        emu.update_selection(1, 2, Side::Right);
+        assert_eq!(emu.selection_text().as_deref(), Some("ello\nwor"));
+        let grid = emu.grid();
+        assert!(!grid.rows[0][0].selected);
+        assert!(grid.rows[0][1].selected && grid.rows[0][9].selected);
+        assert!(grid.rows[1][2].selected && !grid.rows[1][3].selected);
+        emu.clear_selection();
+        assert_eq!(emu.selection_text(), None);
+        assert!(!emu.grid().rows[0][1].selected);
+    }
+
+    #[test]
+    fn click_without_drag_selects_nothing() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"hello");
+        emu.start_selection(0, 2, Side::Left);
+        emu.update_selection(0, 2, Side::Left);
+        assert_eq!(emu.selection_text(), None);
+    }
+
+    #[test]
+    fn scrollback_pages_through_history() {
+        let mut emu = Emulator::new(10, 3);
+        numbered_lines(&mut emu, 10);
+        assert_eq!(emu.grid().to_text(), "line8\nline9\n\n");
+        emu.scroll_page(true);
+        assert_eq!(emu.display_offset(), 3);
+        assert_eq!(emu.grid().to_text(), "line5\nline6\nline7\n");
+        emu.scroll_lines(-1);
+        assert_eq!(emu.grid().to_text(), "line6\nline7\nline8\n");
+        emu.scroll_page(false);
+        assert_eq!(emu.display_offset(), 0);
+        emu.scroll_page(true);
+        emu.scroll_to_bottom();
+        assert_eq!(emu.grid().to_text(), "line8\nline9\n\n");
+    }
+
+    #[test]
+    fn selection_in_scrolled_view_uses_history_lines() {
+        let mut emu = Emulator::new(10, 3);
+        numbered_lines(&mut emu, 10);
+        emu.scroll_page(true);
+        emu.start_selection(0, 0, Side::Left);
+        emu.update_selection(0, 4, Side::Right);
+        assert_eq!(emu.selection_text().as_deref(), Some("line5"));
+        assert!(emu.grid().rows[0][0].selected);
+        // The selection stays on its text when the view moves.
+        emu.scroll_to_bottom();
+        assert_eq!(emu.selection_text().as_deref(), Some("line5"));
+        assert!(!emu.grid().rows[0][0].selected);
+    }
+
+    #[test]
+    fn wheel_becomes_arrows_only_in_alt_screen_without_mouse_mode() {
+        let mut emu = Emulator::new(10, 3);
+        // ALTERNATE_SCROLL is on by default; the main screen scrolls the history.
+        assert!(!emu.wheel_sends_arrows());
+        emu.advance(b"\x1b[?1049h");
+        assert!(emu.wheel_sends_arrows());
+        emu.advance(b"\x1b[?1000h");
+        assert!(!emu.wheel_sends_arrows(), "program reads the mouse");
+        emu.advance(b"\x1b[?1000l\x1b[?1007l");
+        assert!(!emu.wheel_sends_arrows(), "alternate scroll off");
+    }
+
+    #[test]
+    fn history_is_capped_at_the_scrollback_limit() {
+        let mut emu = Emulator::new(10, 2);
+        numbered_lines(&mut emu, SCROLLBACK_LINES + 50);
+        emu.scroll_lines(1_000_000);
+        assert_eq!(emu.display_offset(), SCROLLBACK_LINES);
     }
 
     #[test]

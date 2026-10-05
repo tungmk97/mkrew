@@ -106,6 +106,8 @@ pub struct Theme {
     pub accent: u32,
     /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
     pub pane_focus_border: u32,
+    /// Background of selected terminal cells (accent mixed into `bg`, text stays readable).
+    pub terminal_selection_bg: u32,
     pub status_working: u32,
     pub status_needs_input: u32,
     pub status_done: u32,
@@ -149,6 +151,7 @@ impl Theme {
             text_muted: 0x9A9CA6,
             accent: 0x7C8CFF,
             pane_focus_border: 0x49518D,
+            terminal_selection_bg: 0x3A406B,
             status_working: 0x7C8CFF,
             status_needs_input: 0xE3A63E,
             status_done: 0x4CB782,
@@ -177,6 +180,7 @@ impl Theme {
             text_muted: 0x6B6D76,
             accent: 0x4F5BD5,
             pane_focus_border: 0xA4AAE7,
+            terminal_selection_bg: 0xCFD2F0,
             status_working: 0x4F5BD5,
             status_needs_input: 0xB7791F,
             status_done: 0x2F855A,
@@ -206,6 +210,7 @@ impl Theme {
             text_muted: 0,
             accent: 0,
             pane_focus_border: 0,
+            terminal_selection_bg: 0,
             status_working: 0,
             status_needs_input: 0,
             status_done: 0,
@@ -259,6 +264,14 @@ mod tests {
                     assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn selected_text_stays_readable() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let ratio = contrast(theme.text, theme.terminal_selection_bg);
+            assert!(ratio >= 4.5, "{ratio:.2}");
         }
     }
 

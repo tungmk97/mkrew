@@ -97,6 +97,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   closes panes, the sidebar shows "✕ unknown command `bogus` …", the tooltip says Ctrl+Shift+Q.
   AltGr layouts: Ctrl+Alt+digit is AltGr+digit (e.g. `{` on German) and is intercepted by the
   tab-jump defaults — rebind if you type those characters.
+- [ ] (T2.7b) `cargo run -p mkrew-ui`, in a shell pane run a command with long output (`dir /s`):
+  mouse-drag selects text (accent-tinted, readable, I-beam pointer), Ctrl+Shift+C copies it
+  (paste elsewhere matches; the highlight clears), Shift+PgUp/PgDn and the wheel page through
+  the history, typing returns to the live screen. In Claude Code (full-screen): the wheel
+  scrolls its view (arrow keys), selection + copy still work. Ctrl+Shift+C is not sent to the PTY.
 
 ## Questions with assumed defaults
 
@@ -311,6 +316,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   leaves a fresh empty tab. macOS Cmd mapping not done (Windows first). Only implemented
   commands are bound; palette, quick open, views, inbox, task, Docs, Zed, Files, Git shortcuts
   come with their features; copy, find, Shift+PgUp/PgDn, pane resize/zoom, rename tab = T2.7b.
+- (T2.7b) Selection/scrollback: plain drag = character selection only (no double-click word,
+  triple-click line, block selection or drag-past-edge auto-scroll; the drag stops at the pane
+  edge because GPUI only reports moves over the pane). Copy clears the highlight (like Windows
+  Terminal). Selected cells use `text` on `terminal-selection-bg` (program colors dropped for
+  readability). Typing/paste scrolls back to the live screen; the selection stays. Wheel = UI
+  history; in the alternate screen with alternate-scroll on and no mouse mode it sends Up/Down
+  arrows; programs that enable mouse reporting get **no** mouse events yet (selection wins) —
+  forwarding mouse/wheel to such programs is backlog. No "scrolled back" indicator yet.
 
 ## Done
 

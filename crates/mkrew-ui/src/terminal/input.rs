@@ -54,6 +54,17 @@ pub fn paste_bytes(text: &str, mode: InputMode) -> Vec<u8> {
     }
 }
 
+/// Alternate scroll: `lines` wheel lines (positive = up) as that many Up/Down arrow presses.
+pub fn wheel_bytes(lines: i32, mode: InputMode) -> Vec<u8> {
+    let arrow: &[u8] = match (lines > 0, mode.app_cursor) {
+        (true, false) => b"\x1b[A",
+        (true, true) => b"\x1bOA",
+        (false, false) => b"\x1b[B",
+        (false, true) => b"\x1bOB",
+    };
+    arrow.repeat(lines.unsigned_abs() as usize)
+}
+
 /// Keys whose encoding already carries the modifiers (no extra ESC prefix for Alt).
 fn is_csi(key: &str) -> bool {
     matches!(
@@ -246,6 +257,13 @@ mod tests {
         assert_eq!(bytes("ctrl-right", None, APP), Some(b"\x1b[1;5C".to_vec()));
         assert_eq!(bytes("shift-up", None, NORMAL), Some(b"\x1b[1;2A".to_vec()));
         assert_eq!(bytes("alt-left", None, NORMAL), Some(b"\x1b[1;3D".to_vec()));
+    }
+
+    #[test]
+    fn wheel_lines_become_arrow_presses() {
+        assert_eq!(wheel_bytes(2, NORMAL), b"\x1b[A\x1b[A".to_vec());
+        assert_eq!(wheel_bytes(-1, NORMAL), b"\x1b[B".to_vec());
+        assert_eq!(wheel_bytes(-2, APP), b"\x1bOB\x1bOB".to_vec());
     }
 
     #[test]
