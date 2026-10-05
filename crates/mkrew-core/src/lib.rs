@@ -8,6 +8,7 @@ pub mod hook;
 pub mod lookup;
 pub mod paths;
 pub mod profile;
+pub mod review;
 pub mod state;
 pub mod task;
 

@@ -1,0 +1,12 @@
+---
+source: crates/mkrew-core/src/review.rs
+expression: "prompt(\"docs/plan.md\", &comments)"
+---
+Update docs/plan.md according to the review comments below.
+Only edit this file. When done, for EACH comment run:
+  mk comment reply <id> "<what you changed, or why you did not>"
+
+[c_01JX0000000000000000000001] lines 12–14, passage "Use Redis for caching":
+  Why not an in-memory cache first? Is Redis overkill?
+[c_01JX0000000000000000000002] line 40, passage "M3: deploy":
+  Add a rollback step.

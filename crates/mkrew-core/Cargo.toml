@@ -12,6 +12,7 @@ workspace = true
 # Shares `SessionState` with the wire format (no tokio/GPUI/SQLite there either, SPEC §4).
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
 directories = "6"
+globset = "0.4.20"
 regex = "1.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"

@@ -1,0 +1,16 @@
+---
+source: crates/mkrew-core/src/review.rs
+expression: "prompt(\"docs/plan.md\", &comments)"
+---
+Update docs/plan.md according to the review comments below.
+Only edit this file. When done, for EACH comment run:
+  mk comment reply <id> "<what you changed, or why you did not>"
+
+[c_01JX0000000000000000000001] lines 3–4, passage "Use Redis for caching":
+  Two points:
+
+  - cost
+  - ops
+  claude replied: Kept Redis, see §2.
+  user replied: Then add a fallback:
+    an in-memory LRU.

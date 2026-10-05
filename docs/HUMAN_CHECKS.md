@@ -812,6 +812,18 @@ _Decisions the agent made on its own. Override them here if you disagree._
   the store mutex (requests wait while it runs; fine at today's DB size — review SHOULD: lock
   only around `backup_to` if the DB grows). No restore command (copy the file over `mkrew.db`
   with the daemon stopped).
+- (T6.3) Review prompt (`mkrew_core::review::prompt`): besides the §12 template, a resent
+  thread carries its replies as `  <author> replied: <body>` lines under the comment (later
+  reply lines indented by four), so the agent sees the follow-up; quotes are not escaped
+  (a `"` inside stays as is); a multi-line quote is collapsed to one line (whitespace runs →
+  one space), a body keeps its lines (indented by two), no trailing newline. Re-anchoring
+  ignores whitespace differences, picks the match whose first line is nearest the old start
+  (tie → earlier) and does not strip Markdown markup — the UI (T6.9) must store the quote as
+  source text, not rendered text. A comment without a quote keeps its lines while they exist.
+  A quote may match inside a word (plain substring). A comment without lines is labelled
+  `whole file` in the prompt (unreachable today: `comment.create` requires lines).
+  Review globs: `*`/`?` never cross `/` (`*.md` = root files only), `**` spans directories;
+  matching is case-sensitive (`PLAN.MD` does not match `*.md`, also on Windows).
 
 ## Done
 
