@@ -3,7 +3,8 @@
 //! terminal emulator/layout (plus the terminal pane view), the sidebar view-model and the
 //! terminal tabs / split-tree models, the task board and its task, undo and follow-up
 //! controls, conflict warnings, the Inbox, the session history dialog, the pane lifecycle
-//! decisions, the keymap, the workspace menu and the "Open in Zed" command.
+//! decisions, the keymap, the workspace menu, the "Open in Zed" command and the Markdown
+//! render model of the Docs preview.
 
 pub mod board;
 pub mod client;
@@ -14,6 +15,7 @@ pub mod history;
 pub mod inbox;
 pub mod keymap;
 pub mod lifecycle;
+pub mod markdown;
 pub mod router;
 pub mod sidebar;
 pub mod split;

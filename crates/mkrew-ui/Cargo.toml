@@ -26,6 +26,8 @@ interprocess = { version = "2.4.4", features = ["tokio"] }
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
+# Docs preview render model (SPEC §12); no html renderer / CLI needed.
+pulldown-cmark = { version = "0.13.4", default-features = false }
 serde = { version = "1", features = ["derive"] }
 # Tab layouts are opaque JSON on the wire (`TerminalTab.layout`).
 serde_json = "1"
