@@ -25,6 +25,7 @@ use mkrew_protocol::{
     TabSetLayoutParams, TerminalTab,
 };
 use mkrew_ui::client::{Connection, Incoming};
+use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{Command, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::router::{Delivery, Router};
@@ -154,6 +155,8 @@ struct Shell {
     keymap_error: Option<String>,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
+    /// Done sessions already seen, so they leave the Inbox.
+    viewed: Viewed,
 }
 
 impl Shell {
@@ -172,6 +175,9 @@ impl Shell {
             cx.notify();
         })
         .detach();
+        // Coming back to the window views the focused pane (a done session leaves the Inbox).
+        cx.observe_window_activation(window, |_, _, cx| cx.notify())
+            .detach();
         // Spinner and elapsed/idle times move on their own (§11).
         cx.spawn_in(window, async move |this, cx| {
             let mut last = status::now_ms();
@@ -301,6 +307,7 @@ impl Shell {
                     ),
                 }),
             workspace_menu: None,
+            viewed: Viewed::default(),
         }
     }
 
@@ -552,6 +559,24 @@ impl Shell {
             self.reveal = Some(session);
         }
         self.activate_workspace(project_id, window, cx);
+    }
+
+    /// An OS notification was clicked (§7): raises the window (restoring it if minimized) and
+    /// shows the session's pane, or at least its workspace if the session is not listed yet.
+    fn notification_clicked(
+        &mut self,
+        session: Ulid,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.activate_window();
+        let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
+        match inbox::jump(projects, sessions, session, project_id) {
+            Some(Jump::Session(session)) => self.open_session(session, window, cx),
+            Some(Jump::Workspace(project_id)) => self.activate_workspace(project_id, window, cx),
+            None => {}
+        }
     }
 
     /// Focuses the pane of `session` (activating its tab) or splits the focused pane along
@@ -1249,6 +1274,9 @@ impl Shell {
                 {
                     self.early_tab_events.push(event.clone());
                 }
+                if let Event::NotificationClicked(clicked) = event {
+                    self.notification_clicked(clicked.session_id, clicked.project_id, window, cx);
+                }
             }
             let Some(delivery) = self.router.route(incoming) else {
                 continue;
@@ -1405,18 +1433,85 @@ impl Shell {
                 }))
                 .into_any_element()
         };
+        let inbox = (connected && !self.sidebar.is_empty()).then(|| {
+            let entries = inbox::entries(
+                self.sidebar.projects(),
+                self.sidebar.sessions(),
+                &self.viewed,
+            );
+            self.render_inbox(entries, now, theme, cx)
+        });
+        // The workspace list scrolls; the Inbox stays in view below it.
         div()
-            .id("sidebar")
             .flex_none()
             .w(px(theme::SIDEBAR_WIDTH))
             .h_full()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
             .bg(rgb(theme.surface))
             .font_family(theme::UI_FONT)
+            .child(
+                div()
+                    .id("sidebar")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .overflow_y_scroll()
+                    .child(header)
+                    .children(errors.into_iter().flatten())
+                    .child(body),
+            )
+            .children(inbox)
+    }
+
+    /// The Inbox below the workspaces (§10): sessions needing input or freshly done.
+    fn render_inbox(
+        &self,
+        entries: Vec<Entry>,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let title = match entries.len() {
+            0 => "Inbox".to_owned(),
+            n => format!("Inbox ({n})"),
+        };
+        let header = div()
+            .px(px(space::M))
+            .py(px(space::S))
+            .text_size(px(font_size::META))
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text_muted))
+            .child(title);
+        let body = if entries.is_empty() {
+            div()
+                .px(px(space::M))
+                .pb(px(space::S))
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child("Nothing needs you right now.")
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .px(px(space::XS))
+                .pb(px(space::S))
+                .children(
+                    entries
+                        .into_iter()
+                        .map(|entry| inbox_row(entry, now, theme, cx)),
+                )
+        };
+        // At most half the sidebar; a long Inbox scrolls on its own.
+        div()
+            .id("inbox")
+            .flex_none()
+            .max_h(relative(0.5))
+            .overflow_y_scroll()
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
             .child(header)
-            .children(errors.into_iter().flatten())
             .child(body)
     }
 
@@ -2201,6 +2296,69 @@ fn session_row(
         .into_any_element()
 }
 
+/// One Inbox line: status icon, `workspace: agent · title` and the status; a click shows the
+/// pane.
+fn inbox_row(
+    entry: Entry,
+    now: i64,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let session_id = entry.session_id;
+    let name = match &entry.title {
+        Some(title) => format!("{}: {} · {title}", entry.workspace, entry.agent),
+        None => format!("{}: {}", entry.workspace, entry.agent),
+    };
+    let hover = theme.surface_raised;
+    div()
+        .id(SharedString::from(format!("inbox-{session_id}")))
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .cursor_pointer()
+        .hover(move |style| style.bg(rgb(hover)))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.open_session(session_id, window, cx);
+        }))
+        .child(
+            div()
+                .flex_none()
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(sidebar::status_color(theme, entry.state)))
+                .child(status::icon(entry.state, now)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(theme.text))
+                .child(name),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("inbox-status-{session_id}")))
+                .flex_none()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .tooltip(status_tooltip(
+                    theme,
+                    entry.state,
+                    entry.state_source,
+                    entry.state_changed_at,
+                ))
+                .child(status::text(entry.state, None, entry.state_changed_at, now)),
+        )
+        .into_any_element()
+}
+
 /// A pane's header (SPEC §11): status icon, agent name, session title, status text and time;
 /// hovering the status shows its source and last change.
 fn pane_header(session: &Session, now: i64, theme: &Theme) -> gpui::Div {
@@ -2330,6 +2488,14 @@ impl Render for Shell {
         let theme = Theme::for_appearance(dark);
         // One clock reading per frame, so every spinner and time agrees.
         let now = status::now_ms();
+        // Rendering is what marks the focused pane of the active window viewed (its done leaves
+        // the Inbox): every state change and window activation re-renders.
+        if window.is_window_active()
+            && let Some(id) = self.focused_session()
+            && let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)
+        {
+            self.viewed.view(session);
+        }
         div()
             .size_full()
             .flex()

@@ -184,6 +184,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   exited session shows `exited (code)`. Check contrast and that the header does not crowd the
   terminal.
 
+- [ ] (T3.7) **Inbox and notification click** (§10, §11): with two workspaces, let the fake
+  agent ask in workspace A while B is shown → the Inbox lists `A: fake` with `?  needs input`;
+  click it → A is shown with that pane focused. Answer and let it finish while B is shown →
+  `✓ done` entry stays until you focus that pane, then leaves. With nothing pending the Inbox
+  reads "Nothing needs you right now.". Minimize Mkrew, trigger needs_input, click the OS
+  notification → the window is restored, in front, on that pane. Windows: check it really comes
+  to the front and not only flashes in the taskbar (the click reaches the daemon, a background
+  process; if it only flashes, the daemon should call `AllowSetForegroundWindow` for the UI
+  process before sending `notification.clicked`).
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -485,6 +495,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `1h 5m`. Tab label ranks starting/unknown below exited. Pane header = icon, agent profile id,
   title, status text; it takes one row from the terminal. "Run again" / "Resume" on exited
   sessions are not in T3.6 (still backlog; not yet in a task).
+- (T3.7) Inbox: "viewed" = the done session is the focused pane of the shown tab while the
+  Mkrew window is active (checked on every render; coming back to the window counts). Viewed
+  state is in memory only (a restarted UI lists done sessions again) and keyed by the state
+  change time, so a later `done` re-lists it. needs_input stays listed while looked at. Sessions
+  of archived workspaces are left out. The Inbox sits under the workspace list (scrolls with
+  it). Clicking an entry or a notification = same as clicking the sidebar row (focus its pane, or
+  split the focused pane to show it). A notification click for an unlisted session only shows its
+  workspace. `Ctrl+Shift+I` (jump to next Inbox item, §13) is not in T3.7 (backlog).
 
 ## Done
 
