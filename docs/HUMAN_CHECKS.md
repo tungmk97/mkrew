@@ -178,6 +178,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   swallows a lone **Ctrl+Z** (0-byte read), so Ctrl+Z does not reach the agent. When stdin is
   not a terminal, raw mode/resizing are skipped and stdin EOF detaches. The session's exit ends
   attach with `[session … exited with code N]`.
+- (T1.11) `session.send` with `submit` appends `\r` to the text in ONE write (an agent that
+  treats fast input as a paste might not submit; check with `claude` in M2). Queued texts go out
+  one at a time: the next waits for PTY output that arrives after the previous one was written
+  (echo counts). `session.wait` also returns when the session **exits**, whatever `until` says
+  (the state can never change again); `mk wait` prints the state (`exited (exit code N)`) and
+  exits 0, a timeout exits 1 — scripts tell "reached" from "exited" by the printed state. A
+  `session.wait` without a timeout blocks its connection; if the client vanishes, the daemon
+  keeps that wait until the session reaches the state or exits (no default timeout, as SPEC §9).
 
 ## Done
 

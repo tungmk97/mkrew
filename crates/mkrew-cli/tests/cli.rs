@@ -299,3 +299,54 @@ fn attach_detach_and_reattach_restores_the_screen() {
     assert!(second.contains("Done."), "{second}");
     assert!(second.contains("exited with code 0"), "{second}");
 }
+
+/// The M1 E2E: a scripted answer reaches the fake agent and `mk wait` sees it finish.
+#[test]
+fn send_answers_the_agent_and_wait_returns_when_it_is_done() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let id = env.ok(&["session", "spawn", "demo", "--agent", "fake"]);
+    let id = id.trim();
+
+    // Sent before the agent asks: the daemon holds it until the prompt shows.
+    env.ok(&["send", id, "y"]);
+    let waited = env.ok(&["wait", id, "--until", "idle,done", "--timeout", "30000"]);
+    // The fake agent exits right after its work, which also ends the wait.
+    assert!(
+        waited.trim() == "idle" || waited.trim() == "exited (exit code 0)",
+        "{waited}"
+    );
+    let waited = env.ok(&["wait", id, "--until", "exited", "--timeout", "30000"]);
+    assert_eq!(waited.trim(), "exited (exit code 0)");
+
+    // Timeouts and unknown states fail with a message.
+    let other = env.ok(&["session", "spawn", "demo", "--agent", "fake"]);
+    let other = other.trim();
+    env.ok(&[
+        "wait",
+        other,
+        "--until",
+        "needs_input",
+        "--timeout",
+        "30000",
+    ]);
+    let timed_out = env.mk(&["wait", other, "--until", "done", "--timeout", "200"]);
+    assert!(!timed_out.status.success());
+    assert!(
+        String::from_utf8_lossy(&timed_out.stderr).contains("within 200 ms"),
+        "{timed_out:?}"
+    );
+    let bad = env.mk(&["wait", other, "--until", "sleeping"]);
+    assert!(!bad.status.success());
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("unknown state"));
+    // `--no-submit` types without Enter; the Enter then answers the prompt. The second send
+    // waits for output after the first one: here the console's echo of the "y".
+    env.ok(&["send", other, "y", "--no-submit"]);
+    env.ok(&["send", other, ""]);
+    let waited = env.ok(&["wait", other, "--until", "exited", "--timeout", "30000"]);
+    assert_eq!(waited.trim(), "exited (exit code 0)");
+}

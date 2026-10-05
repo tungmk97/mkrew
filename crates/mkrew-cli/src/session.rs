@@ -1,9 +1,10 @@
-//! `mk session list | spawn` (SPEC §9).
+//! `mk session list | spawn`, `mk send`, `mk wait` (SPEC §9).
 
 use mkrew_protocol::{
-    Project, Request, Session, SessionKind, SessionListParams, SessionSpawnParams,
-    SessionSpawnResult, SessionState,
+    Project, Request, Session, SessionKind, SessionListParams, SessionSendParams,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
 };
+use ulid::Ulid;
 
 use crate::client::Client;
 
@@ -66,6 +67,50 @@ pub fn spawn(client: &mut Client, project: &str, agent: String) -> anyhow::Resul
     }))?;
     println!("{}", spawned.session_id);
     Ok(())
+}
+
+/// Types `text` into the session (plus Enter unless `no_submit`); the daemon queues it while
+/// the agent is working.
+pub fn send(
+    client: &mut Client,
+    session_id: Ulid,
+    text: String,
+    no_submit: bool,
+) -> anyhow::Result<()> {
+    client.call::<()>(Request::SessionSend(SessionSendParams {
+        session_id,
+        text,
+        submit: !no_submit,
+    }))
+}
+
+/// Blocks until the session reaches one of `until` (or exits) and prints the state, plus the
+/// exit code once exited.
+pub fn wait(
+    client: &mut Client,
+    session_id: Ulid,
+    until: Vec<SessionState>,
+    timeout_ms: Option<u64>,
+) -> anyhow::Result<()> {
+    let result: SessionWaitResult = client.call(Request::SessionWait(SessionWaitParams {
+        session_id,
+        until,
+        timeout_ms,
+    }))?;
+    match result.exit_code {
+        Some(code) => println!("{} (exit code {code})", state_name(result.state)),
+        None => println!("{}", state_name(result.state)),
+    }
+    Ok(())
+}
+
+/// Parses a wire state name (`needs_input`, …) for `--until`.
+pub fn parse_state(name: &str) -> Result<SessionState, String> {
+    serde_json::from_value(serde_json::Value::String(name.to_owned())).map_err(|_| {
+        format!(
+            "unknown state {name:?}; expected starting, working, needs_input, idle, done, exited or unknown"
+        )
+    })
 }
 
 /// The wire name (`needs_input`, …).

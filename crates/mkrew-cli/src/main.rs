@@ -12,6 +12,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use mkrew_core::Paths;
+use mkrew_protocol::SessionState;
 use ulid::Ulid;
 
 #[derive(Parser)]
@@ -40,6 +41,24 @@ enum Command {
     },
     /// Attach this terminal to a session; detach with Ctrl+] (the agent keeps running).
     Attach { session_id: Ulid },
+    /// Type text into a session; queued while the agent is working.
+    Send {
+        session_id: Ulid,
+        text: String,
+        /// Do not press Enter after the text.
+        #[arg(long)]
+        no_submit: bool,
+    },
+    /// Wait until a session reaches one of the given states (or exits) and print it.
+    Wait {
+        session_id: Ulid,
+        /// Comma-separated states, e.g. `idle,needs_input,done`.
+        #[arg(long, required = true, value_delimiter = ',', value_parser = session::parse_state)]
+        until: Vec<SessionState>,
+        /// Give up after this many milliseconds (exit code 1).
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -121,5 +140,21 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             .map(|()| ExitCode::SUCCESS)
         }
         Command::Attach { session_id } => attach::attach(&paths, session_id),
+        Command::Send {
+            session_id,
+            text,
+            no_submit,
+        } => {
+            let mut client = project::connect(&paths)?;
+            session::send(&mut client, session_id, text, no_submit).map(|()| ExitCode::SUCCESS)
+        }
+        Command::Wait {
+            session_id,
+            until,
+            timeout,
+        } => {
+            let mut client = project::connect(&paths)?;
+            session::wait(&mut client, session_id, until, timeout).map(|()| ExitCode::SUCCESS)
+        }
     }
 }

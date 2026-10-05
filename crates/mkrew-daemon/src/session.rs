@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use mkrew_core::{AgentProfile, StateMachine};
+use mkrew_core::{AgentProfile, SendQueue, StateMachine};
 use mkrew_protocol::{
     Event, Session, SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent,
 };
@@ -74,6 +74,10 @@ pub enum Command {
         cols: u16,
         rows: u16,
     },
+    /// `session.send`: queued until the state allows delivery (SPEC §8).
+    Send(String),
+    /// The send-writer task has queued a delivered text for the PTY.
+    SendWritten,
 }
 
 /// What a session task receives from its PTY threads.
@@ -214,6 +218,7 @@ impl Hub {
             .map_err(&mut kill_on_error)?;
 
         let (commands_tx, commands) = mpsc::channel(8);
+        let shared_input = Arc::new(tokio::sync::Mutex::new(input.clone()));
         {
             // Checked under the `live` lock that `shutdown` drains, so no session slips past it.
             let mut live = lock(&self.live);
@@ -225,21 +230,26 @@ impl Hub {
                 .context("insert session")
                 .map_err(&mut kill_on_error)?;
             let channels = Live {
-                commands: commands_tx,
-                input: Arc::new(tokio::sync::Mutex::new(input.clone())),
+                commands: commands_tx.clone(),
+                input: Arc::clone(&shared_input),
             };
             live.insert(session.id, channels);
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
+        let (sends, sends_rx) = mpsc::unbounded_channel();
+        tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let actor = Actor {
             hub: std::sync::Arc::clone(self),
             session,
             master: Some(pair.master),
             input,
+            sends,
+            send_writing: false,
             killer,
             pid,
             emulator: None,
             machine,
+            queue: SendQueue::default(),
             log,
             attachments: Vec::new(),
         };
@@ -298,6 +308,10 @@ struct Actor {
     master: Option<Box<dyn MasterPty + Send>>,
     /// To the PTY writer thread (DSR replies).
     input: mpsc::Sender<Vec<u8>>,
+    /// Delivered `session.send` texts, written in order by [`write_sends`].
+    sends: mpsc::UnboundedSender<String>,
+    /// A delivered text is not written yet: output until then is not the agent reacting.
+    send_writing: bool,
     killer: Box<dyn ChildKiller + Send + Sync>,
     /// For `SIGKILL` (Unix only; Windows kills through `killer`).
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -305,6 +319,8 @@ struct Actor {
     /// Created lazily so a session that never prints costs no grid memory.
     emulator: Option<Emulator>,
     machine: StateMachine,
+    /// `session.send` texts waiting for the session to be ready.
+    queue: SendQueue,
     log: SessionLog,
     /// Attached clients; closed ones are dropped on the next output.
     attachments: Vec<Arc<Attachment>>,
@@ -352,6 +368,11 @@ impl Actor {
                         attachment.resnapshot(self.emulator().snapshot());
                     }
                     Some(Command::Resize { cols, rows }) => self.resize(cols, rows),
+                    Some(Command::Send(text)) => {
+                        self.queue.push(text);
+                        self.deliver();
+                    }
+                    Some(Command::SendWritten) => self.send_writing = false,
                     None => commands_open = false,
                 },
                 () = sleep_until(tick_at), if tick_at.is_some() => {
@@ -360,6 +381,7 @@ impl Actor {
                     if let Some(state) = self.machine.tick(Instant::now(), &lines) {
                         self.set_state(state);
                     }
+                    self.deliver();
                 }
                 () = sleep_until(kill_at), if kill_at.is_some() => {
                     tracing::warn!(id = %self.session.id, "no exit after closing the pty; killing");
@@ -390,6 +412,22 @@ impl Actor {
         let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
         if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
             self.set_state(state);
+        }
+        if !self.send_writing {
+            self.queue.on_output();
+        }
+        self.deliver();
+    }
+
+    /// Hands the next queued `session.send` text to [`write_sends`] if the state allows it;
+    /// the session task never waits for the PTY writer.
+    fn deliver(&mut self) {
+        let Some(text) = self.queue.pop(self.session.state) else {
+            return;
+        };
+        tracing::debug!(id = %self.session.id, pending = self.queue.len(), "delivering a queued send");
+        if self.sends.send(text).is_ok() {
+            self.send_writing = true;
         }
     }
 
@@ -522,6 +560,29 @@ async fn drain_after_exit(actor: &mut Actor, output: &mut mpsc::Receiver<PtyEven
     .await
     {
         actor.on_output(&bytes);
+    }
+}
+
+/// Writes delivered `session.send` texts in order through the shared input lock, so a send
+/// never interleaves with another client's `session.input`. Ends with the session task.
+async fn write_sends(
+    id: Ulid,
+    mut sends: mpsc::UnboundedReceiver<String>,
+    input: Arc<tokio::sync::Mutex<mpsc::Sender<Vec<u8>>>>,
+    commands: mpsc::Sender<Command>,
+) {
+    while let Some(text) = sends.recv().await {
+        let input = input.lock().await;
+        for chunk in text.as_bytes().chunks(INPUT_CHUNK_BYTES) {
+            if input.send(chunk.to_vec()).await.is_err() {
+                tracing::debug!(%id, "session ended before a send was written");
+                return;
+            }
+        }
+        drop(input);
+        if commands.send(Command::SendWritten).await.is_err() {
+            return;
+        }
     }
 }
 

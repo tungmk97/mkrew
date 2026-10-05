@@ -16,8 +16,8 @@ use mkrew_protocol::{
     HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
     Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
     SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionRef,
-    SessionResizeParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionStateEvent,
-    encode,
+    SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionStateEvent, SessionWaitParams, SessionWaitResult, encode,
 };
 use mkrew_store::Store;
 use ulid::Ulid;
@@ -721,6 +721,111 @@ fn big_paste_to_a_child_that_does_not_read_leaves_the_daemon_responsive() {
     if outcome.clone().into_result::<()>().is_err() {
         assert_eq!(error_code(outcome), ErrorCode::InvalidState);
     }
+    client.stop();
+}
+
+fn wait(session_id: Ulid, until: &[SessionState], timeout_ms: Option<u64>) -> Request {
+    Request::SessionWait(SessionWaitParams {
+        session_id,
+        until: until.to_vec(),
+        timeout_ms,
+    })
+}
+
+fn send(session_id: Ulid, text: &str) -> Request {
+    Request::SessionSend(SessionSendParams {
+        session_id,
+        text: text.into(),
+        submit: true,
+    })
+}
+
+#[test]
+fn send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+
+    let working: SessionWaitResult = client
+        .call(wait(id, &[SessionState::Working], Some(15_000)))
+        .into_result()
+        .unwrap();
+    assert_eq!(working.state, SessionState::Working);
+    // Queued while working, delivered once the prompt shows; the agent then finishes.
+    client.call(send(id, "y")).into_result::<()>().unwrap();
+    let done: SessionWaitResult = client
+        .call(wait(
+            id,
+            &[SessionState::Idle, SessionState::Done],
+            Some(30_000),
+        ))
+        .into_result()
+        .unwrap();
+    // The agent exits right after answering: exit ends every wait.
+    assert!(
+        matches!(done.state, SessionState::Idle | SessionState::Exited),
+        "{done:?}"
+    );
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    assert!(session_log(&env, id).contains("Done."));
+
+    // An exited session answers at once; sending to it is refused.
+    let exited: SessionWaitResult = client
+        .call(wait(id, &[SessionState::NeedsInput], None))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        exited,
+        SessionWaitResult {
+            state: SessionState::Exited,
+            exit_code: Some(0)
+        }
+    );
+    assert_eq!(
+        error_code(client.call(send(id, "y"))),
+        ErrorCode::InvalidState
+    );
+    client.stop();
+}
+
+#[test]
+fn wait_times_out_and_rejects_bad_requests() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+
+    // Nothing answers the prompt, so the session never gets done.
+    let started = Instant::now();
+    let outcome = client.call(wait(id, &[SessionState::Done], Some(300)));
+    assert_eq!(error_code(outcome), ErrorCode::Timeout);
+    assert!(started.elapsed() < Duration::from_secs(5));
+    // Already there: answers at once.
+    let now: SessionWaitResult = client
+        .call(wait(id, &[SessionState::NeedsInput], Some(300)))
+        .into_result()
+        .unwrap();
+    assert_eq!(now.state, SessionState::NeedsInput);
+
+    assert_eq!(
+        error_code(client.call(wait(id, &[], None))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(wait(Ulid::new(), &[SessionState::Idle], None))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        error_code(client.call(send(Ulid::new(), "y"))),
+        ErrorCode::NotFound
+    );
     client.stop();
 }
 

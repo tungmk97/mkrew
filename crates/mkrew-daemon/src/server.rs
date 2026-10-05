@@ -10,7 +10,7 @@ use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, DaemonStatusResult, ErrorCode, Event, Frame,
     FrameDecoder, HelloParams, HelloResult, Message, Outcome, PROTOCOL_VERSION, ProfileErrorInfo,
     ProjectAddParams, Request, Session, SessionKillParams, SessionKind, SessionSpawnParams,
-    SessionSpawnResult, SessionState, encode,
+    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, encode,
 };
 use mkrew_store::{Store, StoreError};
 use serde::Serialize;
@@ -205,6 +205,17 @@ impl Daemon {
                 let outcome = self.session_command(params.session_id, command).await;
                 (outcome, After::Continue)
             }
+            Request::SessionSend(params) => {
+                let mut text = params.text;
+                if params.submit {
+                    text.push('\r');
+                }
+                let outcome = self
+                    .session_command(params.session_id, Command::Send(text))
+                    .await;
+                (outcome, After::Continue)
+            }
+            Request::SessionWait(params) => (self.session_wait(params).await, After::Continue),
             Request::AgentProfiles => (ok(&self.agent_profiles()), After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
@@ -381,6 +392,53 @@ impl Daemon {
             }
         }
         ok(&())
+    }
+
+    /// Answers once the session is in one of `until` or has exited (nothing changes after
+    /// that). Blocks this connection's later requests meanwhile, like any request.
+    async fn session_wait(&self, params: SessionWaitParams) -> Outcome {
+        if params.until.is_empty() {
+            return Outcome::error(ErrorCode::InvalidRequest, "until must name a state");
+        }
+        let id = params.session_id;
+        // Subscribed before reading the state, so no change in between is missed.
+        let mut events = self.hub.events.subscribe();
+        let wait = async {
+            loop {
+                let session = match self.store().list_sessions(None) {
+                    Ok(all) => all.into_iter().find(|s| s.id == id),
+                    Err(e) => return store_outcome::<()>(Err(e)),
+                };
+                let Some(session) = session else {
+                    return Outcome::error(ErrorCode::NotFound, format!("session {id} not found"));
+                };
+                if params.until.contains(&session.state) || session.state == SessionState::Exited {
+                    return ok(&SessionWaitResult {
+                        state: session.state,
+                        exit_code: session.exit_code,
+                    });
+                }
+                // The session task saves the state before announcing it: re-read on change.
+                loop {
+                    match events.recv().await {
+                        Ok(Event::SessionState(e)) if e.session_id == id => break,
+                        Ok(_) => {}
+                        Err(broadcast::error::RecvError::Lagged(_)) => break,
+                        Err(broadcast::error::RecvError::Closed) => {
+                            return Outcome::error(ErrorCode::Internal, "daemon is stopping");
+                        }
+                    }
+                }
+            }
+        };
+        let Some(timeout_ms) = params.timeout_ms else {
+            return wait.await;
+        };
+        let limit = std::time::Duration::from_millis(timeout_ms);
+        tokio::time::timeout(limit, wait).await.unwrap_or_else(|_| {
+            let message = format!("session {id} did not reach the state within {timeout_ms} ms");
+            Outcome::error(ErrorCode::Timeout, message)
+        })
     }
 
     /// Error for a session that is not running: exited (`invalid_state`) or unknown.
