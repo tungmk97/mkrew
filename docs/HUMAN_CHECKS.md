@@ -158,6 +158,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   minimized. It is carried over to M3 as the first task. If a manual check fails, add a fix task
   to the M3 queue.
 
+- [ ] (T3.1) **Minimize detaches**: with a busy agent pane visible, minimize the window
+  (`mk session list` / daemon log: the UI's attachment is gone), let output continue, restore:
+  every visible pane is back with the current screen and the focused pane has keyboard focus.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -421,6 +425,10 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (floods ~20 % slower). Sessions under that rate never wait, so typing in a 7th pane during
   six floods should stay instant — not measured automatically (covered by the "§15 stress, in
   the real UI" check above). UI incoming channel: bounded to 16 MiB of output (+ 256 frames).
+- (T3.1) "Minimized" = gpui `Window::is_visible()` is false. On Windows that is minimized or
+  hidden (`IsIconic`/`!IsWindowVisible`); on macOS gpui may also report a fully covered window
+  as hidden, which then detaches too (still §10 "not visible"). Restoring re-attaches from
+  daemon snapshots; panes lose UI scrollback and an open find bar, like a tab switch.
 
 ## Done
 

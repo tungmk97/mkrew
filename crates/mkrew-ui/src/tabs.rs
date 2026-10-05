@@ -432,6 +432,15 @@ pub fn newest_unplaced(tabs: &Tabs, sessions: &[Session]) -> Option<Ulid> {
         .map(|s| s.id)
 }
 
+/// The sessions on screen (SPEC §10): the visible panes of the active workspace's tabs, and
+/// none while the window is hidden (minimized), so every pane is detached until it is restored.
+pub fn on_screen(window_visible: bool, workspace: Option<&Tabs>) -> Vec<Ulid> {
+    match workspace {
+        Some(tabs) if window_visible => tabs.visible(),
+        _ => Vec::new(),
+    }
+}
+
 /// The `tab.rename` for an edited title, trimmed; `None` if it is blank or unchanged.
 pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
     let title = draft.trim();
@@ -513,6 +522,20 @@ mod tests {
         tabs.load(vec![one, two.clone()]);
         assert_eq!(tabs.active().map(|t| t.id), Some(two.id));
         assert_eq!(tabs.active().and_then(Tab::focused), Some(c));
+    }
+
+    #[test]
+    fn hidden_window_shows_no_session() {
+        let project = Ulid::new();
+        let [a, b] = [Ulid::new(), Ulid::new()];
+        let split = json!({"split":"vertical","ratio":0.5,"children":[pane(a), pane(b)]});
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![wire(project, "main", 1.0, split)]);
+
+        assert_eq!(on_screen(true, Some(&tabs)), vec![a, b]);
+        assert!(on_screen(false, Some(&tabs)).is_empty());
+        assert!(on_screen(true, None).is_empty());
+        assert!(on_screen(false, None).is_empty());
     }
 
     #[test]

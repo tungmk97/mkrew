@@ -30,7 +30,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
-use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, rename_params};
+use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, on_screen, rename_params};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
@@ -165,6 +165,12 @@ impl Shell {
     ) -> Self {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
+        // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
+        cx.observe_window_visibility(window, |shell, _, window, cx| {
+            shell.sync_panes(window, cx);
+            cx.notify();
+        })
+        .detach();
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let rename_focus = cx.focus_handle();
@@ -601,14 +607,13 @@ impl Shell {
         tabs.active()?.focused()
     }
 
-    /// Attaches the sessions on screen (live ones, or already attached) and detaches all
-    /// others (SPEC §10), then focuses the focused pane.
+    /// Attaches the sessions on screen (live ones, or already attached; none while the window
+    /// is minimized) and detaches all others (SPEC §10), then focuses the focused pane.
     fn sync_panes(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let visible = self
-            .workspace
-            .and_then(|id| self.tabs.get(&id))
-            .map(Tabs::visible)
-            .unwrap_or_default();
+        let visible = on_screen(
+            window.is_visible(),
+            self.workspace.and_then(|id| self.tabs.get(&id)),
+        );
         for session in self.router.wanted() {
             if visible.contains(&session) {
                 continue;
