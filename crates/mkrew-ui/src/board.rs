@@ -15,22 +15,25 @@ pub struct DraggedCard {
     pub title: String,
 }
 
-/// What the main area of a workspace shows (SPEC §10; Docs/Files/Git come later).
+/// What the main area of a workspace shows (SPEC §10; Files/Git come later).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
     Board,
     /// The terminal tabs; the default, so a workspace opens on its sessions.
     #[default]
     Terminals,
+    /// The Markdown review (SPEC §12).
+    Docs,
 }
 
 impl View {
-    pub const ALL: [View; 2] = [View::Board, View::Terminals];
+    pub const ALL: [View; 3] = [View::Board, View::Terminals, View::Docs];
 
     pub fn title(self) -> &'static str {
         match self {
             View::Board => "Board",
             View::Terminals => "Terminals",
+            View::Docs => "Docs",
         }
     }
 }

@@ -124,6 +124,18 @@ pub const HISTORY_LIST_WIDTH: f32 = 280.0;
 /// Widest share of a pane header a conflict warning may take (it ellipsizes past that).
 pub const PANE_CONFLICT_MAX_FRACTION: f32 = 0.5;
 
+/// Width of the Docs view's file list.
+pub const DOC_LIST_WIDTH: f32 = 240.0;
+
+/// Max width of the rendered Markdown preview, so lines stay readable.
+pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
+
+/// Width of the bar left of a Markdown quote.
+pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
+
+/// Side of a task list item's check box.
+pub const DOC_TASK_BOX_SIZE: f32 = space::M;
+
 /// The shade behind a modal dialog (RGBA: black at ~35 %), in both appearances.
 pub const DIALOG_SCRIM: u32 = 0x0000_0059;
 

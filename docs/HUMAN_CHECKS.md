@@ -306,6 +306,18 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
     Claude session's log (alternate screen, colors, wide glyphs).
   - **§14 design check**: dark + light screenshots of the Undo dialog, a conflict badge on a
     card and a pane header, and the History dialog.
+- [ ] (T6.8) **Docs view** (logic covered by `docs.rs` unit tests + `tests/docs_view.rs`
+  against the real daemon; rendering never seen): add a workspace with a `PLAN.md` using
+  headings, nested lists, `- [ ]`/`- [x]` items, a table with `:-:`/`--:` columns, a fenced
+  code block, a quote, a link, inline `code`, **bold**/_italic_/~~strike~~ and a rule.
+  Ctrl+Shift+3 (or the "Docs" tab) → files listed (root `*.md`, `docs/**`), folder shown
+  under the name, "N open" badge after creating a comment (`mk comment` has no create — use
+  T6.9 or raw IPC). Check every block renders legibly in dark + light; Ctrl+Shift+E and the
+  Preview/Source toggle switch to numbered source lines (long lines are not wrapped — check
+  they stay readable; scroll a 5,000-line file smoothly). Edit the file in Zed → preview
+  updates within ~1 s; delete it → "This file was deleted."; "Open in Zed" / Ctrl+Shift+Z
+  opens the file (without `zed` installed → the install hint shows under the header). Empty
+  workspace → "No Markdown files to review yet." + "Show terminals". Screenshots for §14.
 
 ## Questions with assumed defaults
 
@@ -861,6 +873,20 @@ _Decisions the agent made on its own. Override them here if you disagree._
   mode 2004 this should not matter, but check during the T6.5 real-agent round trip that
   Claude/Codex see the prompt with its line breaks. If not, a fix task could type `\r\n` or
   Shift+Enter-style newlines instead.
+- (T6.8) **Docs view choices:** a workspace opens Docs on its first listed file (sorted by
+  path); the list is re-read when the view is shown, on `doc.changed` and on `comment.updated`
+  — only for the workspace on screen (hidden ones catch up when shown again). The empty
+  state's primary action is "Show terminals" (agents write the docs). Ctrl+Shift+E is bound
+  only while Docs are shown (`Docs` key context), so terminals still get it; Ctrl+Shift+Z in
+  Docs opens the shown file (no line yet; T6.9 may pass the selected line). Code spans keep
+  the UI font on a raised background (gpui highlights cannot switch fonts); code blocks use
+  the terminal font. The whole preview is laid out each frame (no virtualization; the source
+  view is a `uniform_list`) — fine for plans, revisit if 2 MiB docs feel slow. Links are
+  styled, not clickable yet. Open review SHOULDs: no keyboard navigation / focus ring in the
+  file list; source lines neither wrap nor scroll sideways (long lines are cut); links look
+  interactive but do nothing; the selected row / active Preview-Source segment use
+  `surface_raised` (same as hover) instead of an accent tint; `docs` entries of removed
+  workspaces are never pruned.
 
 ## Done
 

@@ -6,7 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -19,20 +19,22 @@ use gpui::{
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
-    SessionAttachResult, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
-    SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams,
-    TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
-    TerminalTab, UndoPreview,
+    AgentProfilesResult, DocContent, DocFile, DocListParams, DocReadParams, Event, Outcome,
+    Project, ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory,
+    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
+    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
+    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::conflicts::{self, Conflicts};
+use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
-use mkrew_ui::keymap::{BOARD_CONTEXT, Command, Keymap, Run};
+use mkrew_ui::keymap::{BOARD_CONTEXT, Command, DOCS_CONTEXT, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
+use mkrew_ui::preview;
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
@@ -183,6 +185,8 @@ struct Shell {
     _follow_up_blur: Subscription,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
+    /// The Docs view of every workspace it was shown for.
+    docs: HashMap<Ulid, Docs>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
@@ -328,6 +332,7 @@ impl Shell {
                 shell.history = None;
                 shell.history_pane = None;
                 shell.follow_up = None;
+                shell.docs.clear();
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -376,6 +381,7 @@ impl Shell {
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
             views: HashMap::new(),
+            docs: HashMap::new(),
             task_dialog: None,
             undo_dialog: None,
             history: None,
@@ -478,9 +484,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let switched = self.workspace != Some(project_id);
         self.workspace = Some(project_id);
         if !self.tabs.contains_key(&project_id) {
             self.load_tabs(project_id, window, cx);
+        }
+        if switched && self.view() == View::Docs {
+            self.load_docs(project_id, window, cx);
         }
         self.sync_panes(window, cx);
         cx.notify();
@@ -748,15 +758,150 @@ impl Shell {
             .unwrap_or_default()
     }
 
-    /// Switches the active workspace to `view`; leaving Terminals detaches its panes.
+    /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
+    /// Docs re-lists its files (agents may have written new ones).
     fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(project_id) = self.workspace else {
             return;
         };
-        if self.views.insert(project_id, view) != Some(view) {
+        let shown = self.views.insert(project_id, view).unwrap_or_default();
+        if view == View::Docs && shown != View::Docs {
+            self.load_docs(project_id, window, cx);
+        }
+        if shown != view {
             self.sync_panes(window, cx);
             cx.notify();
         }
+    }
+
+    /// `doc.list` for the Docs view of `project_id` (also keeps the daemon watching its docs);
+    /// the first listing shows its first file.
+    fn load_docs(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let docs = self
+            .docs
+            .entry(project_id)
+            .or_insert_with(|| Docs::new(project_id));
+        if !docs.begin_list() {
+            return;
+        }
+        let listed =
+            connection.call::<Vec<DocFile>>(Request::DocList(DocListParams { project_id }));
+        cx.spawn_in(window, async move |this, cx| {
+            let listed = listed.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &listed {
+                    tracing::warn!(%project_id, "doc.list failed: {error}");
+                }
+                let Some(docs) = shell.docs.get_mut(&project_id) else {
+                    return;
+                };
+                let (read, again) = docs.listed(listed);
+                if let Some(file_path) = read {
+                    shell.read_doc(project_id, file_path, window, cx);
+                }
+                if again {
+                    shell.load_docs(project_id, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Shows `file_path` in the Docs view of `project_id`, reading it if needed.
+    fn select_doc(
+        &mut self,
+        project_id: Ulid,
+        file_path: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let read = self
+            .docs
+            .get_mut(&project_id)
+            .and_then(|docs| docs.select(file_path));
+        if let Some(file_path) = read {
+            self.read_doc(project_id, file_path, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// `doc.read`; the answer is dropped if another file got selected meanwhile.
+    fn read_doc(
+        &mut self,
+        project_id: Ulid,
+        file_path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let read = connection.call::<DocContent>(Request::DocRead(DocReadParams {
+            project_id,
+            file_path: file_path.clone(),
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let read = read.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update(cx, |shell, cx| {
+                if let Err(error) = &read {
+                    tracing::warn!(%project_id, file_path, "doc.read failed: {error}");
+                }
+                if let Some(docs) = shell.docs.get_mut(&project_id) {
+                    docs.read(&file_path, read);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Follows `doc.changed` / `comment.updated`: re-reads a shown file that changed and
+    /// re-lists the Docs view on screen (hidden ones re-list when shown again).
+    fn doc_event(&mut self, event: &Event, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let shown = self.workspace.filter(|_| self.view() == View::Docs);
+        let reactions: Vec<_> = self
+            .docs
+            .values_mut()
+            .map(|docs| (docs.project_id, docs.apply(event)))
+            .collect();
+        for (project_id, reaction) in reactions {
+            if let Some(file_path) = reaction.reread {
+                self.read_doc(project_id, file_path, window, cx);
+                cx.notify();
+            }
+            if reaction.relist && shown == Some(project_id) {
+                self.load_docs(project_id, window, cx);
+            }
+        }
+    }
+
+    /// Opens the shown doc of `project_id` in Zed; a failure shows in the Docs header.
+    fn open_doc_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
+            return;
+        };
+        let Some(docs) = self.docs.get_mut(&project_id) else {
+            return;
+        };
+        let Some(file_path) = docs.selected.as_deref() else {
+            return;
+        };
+        // Native separators (`file_path` uses `/`), as Zed gets the path verbatim.
+        let path = file_path
+            .split('/')
+            .fold(PathBuf::from(&project.path), |path, part| path.join(part));
+        docs.zed_error = match zed::open(&path, None) {
+            Ok(()) => None,
+            Err(error) => {
+                tracing::warn!(%project_id, file_path, "open in Zed failed: {error}");
+                Some(error.to_string())
+            }
+        };
+        cx.notify();
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
@@ -1769,7 +1914,7 @@ impl Shell {
             self.follow_up = None;
             window.focus(&self.focus_handle, cx);
         }
-        if self.view() == View::Board {
+        if self.view() != View::Terminals {
             match *command {
                 // Opening or picking a tab or pane shows the terminals.
                 Command::NewShellTab
@@ -1843,11 +1988,20 @@ impl Shell {
                 }
             }
             Command::ClosePane => self.close_focused_pane(window, cx),
-            Command::OpenInZed => {
-                if let Some(project_id) = self.workspace {
-                    self.open_in_zed(project_id, cx);
+            Command::OpenInZed => match self.workspace {
+                // Docs open the shown file (SPEC §13 "workspace or current file").
+                Some(project_id)
+                    if self.view() == View::Docs
+                        && self
+                            .docs
+                            .get(&project_id)
+                            .is_some_and(|docs| docs.selected.is_some()) =>
+                {
+                    self.open_doc_in_zed(project_id, cx);
                 }
-            }
+                Some(project_id) => self.open_in_zed(project_id, cx),
+                None => {}
+            },
             Command::NextInbox => {
                 let entries = inbox::entries(
                     self.sidebar.projects(),
@@ -1866,6 +2020,14 @@ impl Shell {
             }
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
+            Command::ShowDocs => self.show_view(View::Docs, window, cx),
+            Command::ToggleDocSource => {
+                // Only bound while Docs are shown.
+                if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
+                    docs.toggle_mode();
+                    cx.notify();
+                }
+            }
             Command::NewTask => {
                 if let Some(project_id) = self.workspace {
                     // The new card shows up on the board.
@@ -2168,6 +2330,9 @@ impl Shell {
                 }
                 if let Event::NotificationClicked(clicked) = event {
                     self.notification_clicked(clicked.session_id, clicked.project_id, window, cx);
+                }
+                if matches!(event, Event::DocChanged(_) | Event::CommentUpdated(_)) {
+                    self.doc_event(event, window, cx);
                 }
             }
             let Some(delivery) = self.router.route(incoming) else {
@@ -2579,6 +2744,7 @@ impl Shell {
             .child(self.render_view_bar(view, theme, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
+            (View::Docs, _) => main.child(self.render_docs(project_id, theme, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
                 .child(self.render_tab(tabs, now, theme, cx)),
@@ -2590,7 +2756,7 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The workspace's view switcher (SPEC §10): Board / Terminals.
+    /// The workspace's view switcher (SPEC §10): Board / Terminals / Docs.
     fn render_view_bar(&self, shown: View, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
         let hover = theme.surface_raised;
         div()
@@ -2606,6 +2772,7 @@ impl Shell {
                 let command = match view {
                     View::Board => Command::ShowBoard,
                     View::Terminals => Command::ShowTerminals,
+                    View::Docs => Command::ShowDocs,
                 };
                 div()
                     .id(SharedString::from(format!("view-{}", view.title())))
@@ -2723,6 +2890,255 @@ impl Shell {
                     ),
             )
             .into_any_element()
+    }
+
+    /// The workspace's Markdown docs (SPEC §12): the file list with open-comment counts, and
+    /// the selected file rendered or as source with line numbers.
+    fn render_docs(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let empty = |sentence: &str, detail: Option<String>| {
+            message(
+                theme,
+                None,
+                sentence.to_owned().into(),
+                detail.map(Into::into),
+            )
+            .flex_1()
+        };
+        let Some(docs) = self.docs.get(&project_id) else {
+            return empty("Loading docs…", None).into_any_element();
+        };
+        let files = match &docs.files {
+            Files::Loading => return empty("Loading docs…", None).into_any_element(),
+            Files::Failed(error) => {
+                return empty("Cannot list the docs.", Some(error.clone()))
+                    .child(
+                        button("docs-retry", "Retry", theme, true).on_click(cx.listener(
+                            move |shell, _, window, cx| shell.load_docs(project_id, window, cx),
+                        )),
+                    )
+                    .into_any_element();
+            }
+            Files::Loaded(files) if files.is_empty() => {
+                let keys = self.keymap.label(Command::ShowTerminals);
+                return empty(
+                    "No Markdown files to review yet.",
+                    Some("Plans and docs written by agents show up here.".into()),
+                )
+                .child(
+                    button("docs-terminals", "Show terminals", theme, true)
+                        .tooltip(tooltip(theme, "Show terminals", keys.clone()))
+                        .child(
+                            div()
+                                .text_size(px(font_size::META))
+                                .opacity(opacity::SECONDARY)
+                                .child(keys),
+                        )
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.show_view(View::Terminals, window, cx);
+                        })),
+                )
+                .into_any_element();
+            }
+            Files::Loaded(files) => files,
+        };
+        let selected = docs.selected.as_deref();
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .font_family(theme::UI_FONT)
+            .child(
+                div()
+                    .id("doc-list")
+                    .flex_none()
+                    .w(px(theme::DOC_LIST_WIDTH))
+                    .h_full()
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .px(px(space::S))
+                    .pb(px(space::S))
+                    .children(files.iter().map(|file| {
+                        let shown = selected == Some(file.file_path.as_str());
+                        doc_row(project_id, file, shown, theme, cx)
+                    })),
+            )
+            .child(self.render_doc(project_id, docs, theme, cx))
+            .into_any_element()
+    }
+
+    /// The selected doc: its path, Preview / Source and Open in Zed, then its content.
+    fn render_doc(
+        &self,
+        project_id: Ulid,
+        docs: &Docs,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let panel = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .mr(px(space::S))
+            .mb(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .overflow_hidden()
+            .bg(rgb(theme.surface));
+        let Some(file_path) = docs.selected.clone() else {
+            return panel
+                .child(message(theme, None, "Select a file to read it.".into(), None).flex_1());
+        };
+        let zed_keys = self.keymap.label(Command::OpenInZed);
+        let header = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::L))
+            .py(px(space::S))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(file_path.clone()),
+            )
+            .child(self.doc_mode_toggle(project_id, docs.mode, theme, cx))
+            .child(
+                button("doc-zed", "Open in Zed", theme, false)
+                    .flex_none()
+                    .tooltip(tooltip(theme, "Open this file in Zed", zed_keys))
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.open_doc_in_zed(project_id, cx);
+                    })),
+            );
+        let body = match &docs.doc {
+            Doc::None | Doc::Loading => message(theme, None, "Loading…".into(), None)
+                .flex_1()
+                .into_any_element(),
+            Doc::Failed(error) => message(
+                theme,
+                None,
+                "Cannot read this file.".into(),
+                Some(error.clone().into()),
+            )
+            .flex_1()
+            .child(
+                button("doc-retry", "Retry", theme, true).on_click(cx.listener(
+                    move |shell, _, window, cx| {
+                        shell.select_doc(project_id, &file_path, window, cx);
+                    },
+                )),
+            )
+            .into_any_element(),
+            Doc::Deleted => message(
+                theme,
+                None,
+                "This file was deleted.".into(),
+                Some("It shows again here if it is written back.".into()),
+            )
+            .flex_1()
+            .into_any_element(),
+            Doc::Shown(shown) => match docs.mode {
+                mode if shown.lines.is_empty()
+                    || (mode == Mode::Preview && shown.blocks.is_empty()) =>
+                {
+                    message(theme, None, "This file is empty.".into(), None)
+                        .flex_1()
+                        .into_any_element()
+                }
+                Mode::Source => preview::source("doc-source", Rc::clone(shown), theme)
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(space::L))
+                    .pb(px(space::L))
+                    .into_any_element(),
+                Mode::Preview => div()
+                    .id("doc-preview")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(space::XL))
+                    .pb(px(space::XL))
+                    .child(
+                        div()
+                            .max_w(px(theme::DOC_PREVIEW_MAX_WIDTH))
+                            .flex()
+                            .flex_col()
+                            .gap(px(space::M))
+                            .text_size(px(font_size::BODY))
+                            .children(preview::blocks(&shown.blocks, theme)),
+                    )
+                    .into_any_element(),
+            },
+        };
+        panel
+            .child(header)
+            .children(docs.zed_error.clone().map(|error| {
+                notice(theme.text, format!("✕ {error}"))
+                    .px(px(space::L))
+                    .pb(px(space::S))
+            }))
+            .child(body)
+    }
+
+    /// Preview / Source segments; the inactive one switches (as Ctrl+Shift+E does).
+    fn doc_mode_toggle(
+        &self,
+        project_id: Ulid,
+        mode: Mode,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let keys = self.keymap.label(Command::ToggleDocSource);
+        let hover = theme.surface_raised;
+        div().flex_none().flex().gap(px(space::XS)).children(
+            [
+                (Mode::Preview, "doc-mode-preview", "Preview"),
+                (Mode::Source, "doc-mode-source", "Source"),
+            ]
+            .map(|(target, id, label)| {
+                let active = target == mode;
+                div()
+                    .id(id)
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(px(font_size::BODY))
+                    .tooltip(tooltip(theme, "Toggle preview / source", keys.clone()))
+                    .when(active, |el| {
+                        el.bg(rgb(theme.surface_raised))
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text))
+                    })
+                    .when(!active, |el| {
+                        el.cursor_pointer()
+                            .text_color(rgb(theme.text_muted))
+                            .hover(move |style| style.bg(rgb(hover)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .on_click(cx.listener(move |shell, _, _, cx| {
+                                if let Some(docs) = shell.docs.get_mut(&project_id) {
+                                    docs.toggle_mode();
+                                    cx.notify();
+                                }
+                            }))
+                    })
+                    .child(label)
+            }),
+        )
     }
 
     /// "New task" with its shortcut: the primary action of the empty board, else quiet.
@@ -3961,6 +4377,77 @@ fn text_field(
         })
 }
 
+/// A file of the Docs list: its name, its folder below, and its open-comment count.
+fn doc_row(
+    project_id: Ulid,
+    file: &DocFile,
+    selected: bool,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let (folder, name) = match file.file_path.rsplit_once('/') {
+        Some((folder, name)) => (Some(folder), name),
+        None => (None, file.file_path.as_str()),
+    };
+    let hover = theme.surface_raised;
+    let file_path = file.file_path.clone();
+    let line = |el: gpui::Div| el.overflow_hidden().text_ellipsis().whitespace_nowrap();
+    div()
+        .id(SharedString::from(format!("doc-{}", file.file_path)))
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .cursor_pointer()
+        .when(selected, |el| el.bg(rgb(theme.surface_raised)))
+        .when(!selected, |el| el.hover(move |style| style.bg(rgb(hover))))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(line(
+                    div()
+                        .text_size(px(font_size::BODY))
+                        .text_color(rgb(theme.text))
+                        .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                        .child(name.to_owned()),
+                ))
+                .children(folder.map(|folder| {
+                    line(
+                        div()
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.text_muted))
+                            .child(folder.to_owned()),
+                    )
+                })),
+        )
+        .when(file.open_comments > 0, |el| {
+            el.child(
+                div()
+                    .flex_none()
+                    .px(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    // Stands out on the selected row's raised background too.
+                    .bg(rgb(if selected {
+                        theme.bg
+                    } else {
+                        theme.surface_raised
+                    }))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("{} open", file.open_comments)),
+            )
+        })
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.select_doc(project_id, &file_path, window, cx);
+        }))
+}
+
 /// A full-width row of a popover menu; callers add the label (and a shortcut on the right).
 fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     // One step above the menu's own `surface_raised`.
@@ -4886,6 +5373,7 @@ impl Render for Shell {
             .when(self.view() == View::Board, |el| {
                 el.key_context(BOARD_CONTEXT)
             })
+            .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
             .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(now, &theme, cx))
             .child(self.render_main(now, &theme, window, cx))

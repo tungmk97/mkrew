@@ -56,6 +56,10 @@ pub enum Command {
     ShowBoard,
     /// Show the active workspace's terminal tabs.
     ShowTerminals,
+    /// Show the active workspace's Markdown docs.
+    ShowDocs,
+    /// Docs only: switch between the rendered preview and the source with line numbers.
+    ToggleDocSource,
     /// Open the new task dialog for the active workspace.
     NewTask,
     /// Board only: run the selected Todo card.
@@ -67,6 +71,9 @@ pub const TERMINAL_CONTEXT: &str = "Terminal";
 
 /// Key context of the window while a board is shown (so Ctrl+Enter still reaches agents).
 pub const BOARD_CONTEXT: &str = "Board";
+
+/// Key context of the window while a Docs view is shown.
+pub const DOCS_CONTEXT: &str = "Docs";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
@@ -112,6 +119,8 @@ impl Command {
             Command::NextInbox,
             Command::ShowBoard,
             Command::ShowTerminals,
+            Command::ShowDocs,
+            Command::ToggleDocSource,
             Command::NewTask,
             Command::RunTask,
         ]);
@@ -153,6 +162,8 @@ impl Command {
             Command::NextInbox => "next_inbox".into(),
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
+            Command::ShowDocs => "show_docs".into(),
+            Command::ToggleDocSource => "toggle_doc_source".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
         }
@@ -199,6 +210,8 @@ impl Command {
             Command::NextInbox => "ctrl-shift-i".into(),
             Command::ShowBoard => "ctrl-shift-1".into(),
             Command::ShowTerminals => "ctrl-shift-2".into(),
+            Command::ShowDocs => "ctrl-shift-3".into(),
+            Command::ToggleDocSource => "ctrl-shift-e".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
         }
@@ -213,6 +226,7 @@ impl Command {
             | Command::PageDown
             | Command::Find => Some(TERMINAL_CONTEXT),
             Command::RunTask => Some(BOARD_CONTEXT),
+            Command::ToggleDocSource => Some(DOCS_CONTEXT),
             _ => None,
         }
     }
@@ -473,6 +487,8 @@ mod tests {
         assert_eq!(bound("ctrl-shift-i"), Some(Command::NextInbox));
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowBoard));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
+        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowDocs));
+        assert_eq!(bound("ctrl-shift-e"), Some(Command::ToggleDocSource));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(
@@ -495,6 +511,8 @@ mod tests {
         assert_eq!(Command::ClosePane.context(), None);
         // Ctrl+Enter only runs a card while the board is shown; terminals still get it.
         assert_eq!(Command::RunTask.context(), Some(BOARD_CONTEXT));
+        // Ctrl+Shift+E only toggles while Docs are shown; terminals still get it.
+        assert_eq!(Command::ToggleDocSource.context(), Some(DOCS_CONTEXT));
     }
 
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted
