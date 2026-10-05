@@ -79,6 +79,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   tabs switches panes (hidden ones stop updating). Close the window and reopen: same tabs and
   split, both panes live. Restart the daemon (`mk daemon stop`): panes show "✕ Session
   exited", layout kept. Check dark and light themes.
+- [ ] (T2.6) `cargo run -p mkrew-ui` with a workspace whose default agent is set (`mk` /
+  `project.update`): "+ Agent" and "+ Shell" open panes in the project folder next to the focused
+  one (shell = cmd/pwsh, `cd` shows the project path); an empty tab offers "New agent" / "New
+  shell". Ctrl+Shift+X (also while the terminal has focus — must not reach the PTY) on a shell
+  closes it; on a running agent the dialog offers Kill / Hide / Cancel; hidden sessions stay in
+  the sidebar and clicking them brings the pane back; close and reopen the UI: still alive.
+  With 13+ live sessions the tab bar shows the "⚠ … sessions running" notice.
 
 ## Questions with assumed defaults
 
@@ -271,6 +278,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   close tab / split / new pane actions (T2.6/T2.7), tab status labels + pane headers (§11),
   focus ring on tabs, a primary action in the empty-tab state, detaching panes while the
   window is minimized (§10), not stealing focus back on every layout event.
+- (T2.6) Pane lifecycle: closing a **live shell** pane kills the shell without asking (§10 only
+  asks for a running agent) — change `lifecycle::close_action` if shells running a dev server
+  should ask too. A session the UI has not listed yet (just spawned) asks. The close dialog is
+  the native `window.prompt` (Kill session / Hide pane / Cancel; dismiss = cancel). New panes
+  split the focused pane **vertically** (Alt+Shift+= / Alt+Shift+- split right/down arrive with
+  T2.7); "+ Agent" fails with the daemon's "no default agent" error until the workspace has one
+  (settings UI = T2.8). Close pane is bound to Ctrl+Shift+X now; "New agent/shell" shortcut
+  hints wait for the T2.7 keymap. The >12 running warning is a tab-bar notice, not a toast.
+  Deferred: disabled/in-flight state on the new-pane buttons (a double click spawns two),
+  focus rings on buttons, a per-pane close icon on hover.
 
 ## Done
 
