@@ -21,8 +21,8 @@ use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfilesResult, Event, Outcome, Project, ProjectAddParams, Request, Session,
     SessionAttachResult, SessionKillParams, SessionKind, SessionListParams, SessionRef,
-    SessionSpawnResult, SessionState, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
-    TerminalTab,
+    SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
+    TabSetLayoutParams, TerminalTab,
 };
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::keymap::{Command, Keymap, Run};
@@ -30,6 +30,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
+use mkrew_ui::status;
 use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, on_screen, rename_params};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
@@ -169,6 +170,26 @@ impl Shell {
         cx.observe_window_visibility(window, |shell, _, window, cx| {
             shell.sync_panes(window, cx);
             cx.notify();
+        })
+        .detach();
+        // Spinner and elapsed/idle times move on their own (§11).
+        cx.spawn_in(window, async move |this, cx| {
+            let mut last = status::now_ms();
+            loop {
+                cx.background_executor().timer(theme::STATUS_TICK).await;
+                let now = status::now_ms();
+                let ticked = this.update_in(cx, |shell, window, cx| {
+                    if window.is_visible()
+                        && status::redraw_due(shell.sidebar.sessions(), last, now)
+                    {
+                        cx.notify();
+                    }
+                });
+                last = now;
+                if ticked.is_err() {
+                    return;
+                }
+            }
         })
         .detach();
         let focus_handle = cx.focus_handle();
@@ -1278,7 +1299,12 @@ impl Shell {
         }
     }
 
-    fn render_sidebar(&self, theme: &Theme, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_sidebar(
+        &self,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
         let shown = self.focused_session();
         let connected = self.connection.is_some();
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
@@ -1366,7 +1392,7 @@ impl Shell {
                         }
                         Row::Session(row) => {
                             let selected = shown == Some(row.session_id);
-                            session_row(row, selected, theme, cx)
+                            session_row(row, selected, now, theme, cx)
                         }
                         Row::NoSessions { .. } => div()
                             .pl(px(space::XL))
@@ -1536,7 +1562,7 @@ impl Shell {
         .into_any_element()
     }
 
-    fn render_main(&self, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
+    fn render_main(&self, now: i64, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::AnyElement {
         if self.connection.is_some()
             && let Some(project_id) = self.workspace
             && let Some(tabs) = self.tabs.get(&project_id)
@@ -1547,8 +1573,8 @@ impl Shell {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(self.render_tab_bar(project_id, tabs, theme, cx))
-                .child(self.render_tab(tabs, theme, cx))
+                .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
+                .child(self.render_tab(tabs, now, theme, cx))
                 .into_any_element();
         }
         let (sentence, detail) = self.status_line();
@@ -1562,6 +1588,7 @@ impl Shell {
         &self,
         project_id: Ulid,
         tabs: &Tabs,
+        now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
@@ -1582,8 +1609,13 @@ impl Shell {
                 if let Some((_, draft)) = self.renaming.as_ref().filter(|(id, _)| *id == tab_id) {
                     return self.render_rename(draft, theme, cx);
                 }
+                // The most urgent state among the tab's panes (SPEC §11).
+                let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
                 div()
                     .id(SharedString::from(format!("tab-{tab_id}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
@@ -1615,6 +1647,19 @@ impl Shell {
                             cx.notify();
                         }),
                     )
+                    .when_some(urgent, |el, session| {
+                        el.tooltip(status_tooltip(
+                            theme,
+                            session.state,
+                            session.state_source,
+                            session.state_changed_at,
+                        ))
+                        .child(
+                            div()
+                                .text_color(rgb(sidebar::status_color(theme, session.state)))
+                                .child(status::icon(session.state, now)),
+                        )
+                    })
                     .child(tab.title.clone())
                     .into_any_element()
             }))
@@ -1719,7 +1764,13 @@ impl Shell {
     }
 
     /// The active tab's split tree: each pane placed at its fraction of the area.
-    fn render_tab(&self, tabs: &Tabs, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
+    fn render_tab(
+        &self,
+        tabs: &Tabs,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
         if tabs.active().and_then(|tab| tab.layout()).is_none() {
             return message(
                 theme,
@@ -1766,7 +1817,7 @@ impl Shell {
                         .w(relative(rect.w as f32))
                         .h(relative(rect.h as f32))
                         .p(half_gap)
-                        .child(self.pane_frame(session, several, is_focused, theme, cx))
+                        .child(self.pane_frame(session, several, is_focused, now, theme, cx))
                 },
             )))
     }
@@ -1777,6 +1828,7 @@ impl Shell {
         session: Ulid,
         several: bool,
         is_focused: bool,
+        now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
@@ -1789,14 +1841,13 @@ impl Shell {
                     .into_any_element()
             }
         };
-        let border = if several && is_focused {
-            theme.pane_focus_border
-        } else {
-            theme.border
-        };
+        let info = self.sidebar.sessions().iter().find(|s| s.id == session);
+        let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
         div()
             .relative()
             .size_full()
+            .flex()
+            .flex_col()
             .bg(rgb(theme.bg))
             .on_mouse_down(
                 MouseButton::Left,
@@ -1808,7 +1859,8 @@ impl Shell {
                     cx.notify();
                 }),
             )
-            .child(content)
+            .children(info.map(|info| pane_header(info, now, theme)))
+            .child(div().flex_1().min_h_0().child(content))
             .when(several && !is_focused, |el| {
                 el.child(
                     div()
@@ -2081,12 +2133,12 @@ fn workspace_row(
 fn session_row(
     row: SessionRow,
     selected: bool,
+    now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
-    let status = sidebar::status_display(row.state);
-    let status_text = row.status_text();
+    let status_text = row.status_text(now);
     let name = match &row.title {
         Some(title) => format!("{} · {title}", row.agent),
         None => row.agent.clone(),
@@ -2115,7 +2167,7 @@ fn session_row(
             div()
                 .text_size(px(font_size::BODY))
                 .text_color(rgb(sidebar::status_color(theme, row.state)))
-                .child(status.icon),
+                .child(status::icon(row.state, now)),
         )
         .child(
             div()
@@ -2134,12 +2186,91 @@ fn session_row(
         )
         .child(
             div()
+                .id(SharedString::from(format!("session-status-{session_id}")))
                 .flex_none()
                 .text_size(px(font_size::META))
                 .text_color(rgb(theme.text_muted))
+                .tooltip(status_tooltip(
+                    theme,
+                    row.state,
+                    row.state_source,
+                    row.state_changed_at,
+                ))
                 .child(status_text),
         )
         .into_any_element()
+}
+
+/// A pane's header (SPEC §11): status icon, agent name, session title, status text and time;
+/// hovering the status shows its source and last change.
+fn pane_header(session: &Session, now: i64, theme: &Theme) -> gpui::Div {
+    let (state, changed_at) = (session.state, session.state_changed_at);
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .font_family(theme::UI_FONT)
+        .text_size(px(font_size::META))
+        .child(
+            div()
+                .flex_none()
+                .text_color(rgb(sidebar::status_color(theme, state)))
+                .child(status::icon(state, now)),
+        )
+        .child(
+            div()
+                .flex_none()
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text))
+                .child(session.agent_profile.clone()),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_color(rgb(theme.text_muted))
+                .children(session.title.clone()),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("pane-status-{}", session.id)))
+                .flex_none()
+                .text_color(rgb(theme.text_muted))
+                .tooltip(status_tooltip(
+                    theme,
+                    state,
+                    session.state_source,
+                    changed_at,
+                ))
+                .child(status::text(state, session.exit_code, changed_at, now)),
+        )
+}
+
+/// Tooltip of a status: its source and how long ago it changed, aged when it opens (a
+/// done or needs-input status is not redrawn while it sits there).
+fn status_tooltip(
+    theme: &Theme,
+    state: SessionState,
+    source: StateSource,
+    changed_at: i64,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let theme = theme.clone();
+    move |_, cx| {
+        let text = status::hover(state, source, changed_at, status::now_ms()).into();
+        let theme = theme.clone();
+        cx.new(|_| Tooltip {
+            theme,
+            text,
+            keys: SharedString::default(),
+        })
+        .into()
+    }
 }
 
 /// Builds a tooltip showing `text` and, if any, its keyboard shortcut.
@@ -2197,13 +2328,15 @@ impl Render for Shell {
             WindowAppearance::Dark | WindowAppearance::VibrantDark
         );
         let theme = Theme::for_appearance(dark);
+        // One clock reading per frame, so every spinner and time agrees.
+        let now = status::now_ms();
         div()
             .size_full()
             .flex()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::run))
-            .child(self.render_sidebar(&theme, cx))
-            .child(self.render_main(&theme, cx))
+            .child(self.render_sidebar(now, &theme, cx))
+            .child(self.render_main(now, &theme, cx))
     }
 }

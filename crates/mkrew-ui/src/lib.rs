@@ -11,6 +11,7 @@ pub mod lifecycle;
 pub mod router;
 pub mod sidebar;
 pub mod split;
+pub mod status;
 pub mod tabs;
 pub mod terminal;
 pub mod theme;

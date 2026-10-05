@@ -3,9 +3,10 @@
 
 use std::collections::HashSet;
 
-use mkrew_protocol::{Event, Project, Session, SessionState};
+use mkrew_protocol::{Event, Project, Session, SessionState, StateSource};
 use ulid::Ulid;
 
+use crate::status;
 use crate::theme::Theme;
 
 /// How a session state is shown: always icon + text, never color alone (SPEC §11).
@@ -71,17 +72,16 @@ pub struct SessionRow {
     pub agent: String,
     pub title: Option<String>,
     pub state: SessionState,
+    pub state_source: StateSource,
+    /// Unix ms of the last state change.
+    pub state_changed_at: i64,
     pub exit_code: Option<i32>,
 }
 
 impl SessionRow {
-    /// The status text, e.g. `needs input` or `exited (1)`.
-    pub fn status_text(&self) -> String {
-        let label = status_display(self.state).label;
-        match (self.state, self.exit_code) {
-            (SessionState::Exited, Some(code)) => format!("{label} ({code})"),
-            _ => label.to_owned(),
-        }
+    /// The status text at `now_ms`, e.g. `working · 2m`, `needs input` or `exited (1)`.
+    pub fn status_text(&self, now_ms: i64) -> String {
+        status::text(self.state, self.exit_code, self.state_changed_at, now_ms)
     }
 }
 
@@ -249,6 +249,8 @@ impl Sidebar {
                     agent: session.agent_profile.clone(),
                     title: session.title.clone(),
                     state: session.state,
+                    state_source: session.state_source,
+                    state_changed_at: session.state_changed_at,
                     exit_code: session.exit_code,
                 })
             }));
@@ -281,7 +283,7 @@ impl Sidebar {
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{SessionExitedEvent, SessionKind, SessionStateEvent, StateSource};
+    use mkrew_protocol::{SessionExitedEvent, SessionKind, SessionStateEvent};
 
     use super::*;
 
@@ -428,6 +430,14 @@ mod tests {
             (updated.state_source, updated.state_changed_at),
             (StateSource::Hook, 9)
         );
+        // The row carries what its status hover shows.
+        let shown = sidebar.rows().iter().find_map(|row| match row {
+            Row::Session(row) if row.session_id == c.id => {
+                Some((row.state_source, row.state_changed_at))
+            }
+            _ => None,
+        });
+        assert_eq!(shown, Some((StateSource::Hook, 9)));
     }
 
     #[test]
@@ -465,7 +475,7 @@ mod tests {
         let Row::Session(row) = &sidebar.rows()[1] else {
             panic!("expected a session row");
         };
-        assert_eq!(row.status_text(), "exited (1)");
+        assert_eq!(row.status_text(1_000), "exited (1)");
 
         let spawned = Event::SessionState(SessionStateEvent {
             session_id: Ulid::new(),

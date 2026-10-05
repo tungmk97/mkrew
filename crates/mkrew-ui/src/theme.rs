@@ -52,6 +52,10 @@ pub mod motion {
 /// In-app toasts auto-hide after this long.
 pub const TOAST_DURATION: Duration = Duration::from_secs(4);
 
+/// Status refresh period: one spinner frame (a small, slow spinner) and the elapsed/idle
+/// time update (SPEC §11, §14).
+pub const STATUS_TICK: Duration = Duration::from_millis(500);
+
 /// Borders are 1 px and faint.
 pub const BORDER_WIDTH: f32 = 1.0;
 

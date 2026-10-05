@@ -175,6 +175,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   or the UI receives `notification.clicked` (the UI handles it from T3.7). Linux: same with
   your notification server.
 
+- [ ] (T3.6) **Per-session status, dark and light** (§11, §14): spawn the fake agent and a
+  shell in split panes. Each pane header shows icon, agent, title and `working · Ns` with a
+  slowly turning spinner, then `needs input` with an amber pane border; the tab label shows the
+  most urgent state's icon (needs input over done over working); the sidebar row text matches;
+  the workspace row shows the working count and `?`. Hover the status in a pane header and in
+  the sidebar → "<state> · from hook|screen|daemon · Ns ago". Idle shows `idle · Nm`; an
+  exited session shows `exited (code)`. Check contrast and that the header does not crowd the
+  terminal.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -467,6 +476,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   notification keeps it until the daemon exits). macOS: no click reporting (the daemon has no
   main run loop). A click with no UI connected is dropped (the UI is not launched). New
   `notification.clicked` event → protocol v3 (restart an old daemon after updating).
+- (T3.6) Status display: a 500 ms check (`theme::STATUS_TICK`) redraws only while the window
+  is visible and something shown changed: every tick while a session works (4-frame spinner),
+  for idle only when its time text changes (each second, then each minute). Hover ages are
+  computed when the tooltip opens. gpui has no
+  reduce-motion query, so the spinner always turns (slow enough to pass; revisit if gpui adds
+  one). Time = since the last state change (working → elapsed, idle → idle time), `12s` / `4m` /
+  `1h 5m`. Tab label ranks starting/unknown below exited. Pane header = icon, agent profile id,
+  title, status text; it takes one row from the terminal. "Run again" / "Resume" on exited
+  sessions are not in T3.6 (still backlog; not yet in a task).
 
 ## Done
 
