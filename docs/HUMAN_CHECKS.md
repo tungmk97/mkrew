@@ -854,6 +854,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   sent (resolved/outdated → `sent`; the UI preselects open ones); all ids must be on one file
   of the session's project; comments are marked `sent` (snapshot = file content at send time)
   when queued, not when typed; reply ids stand for their thread; the reply is the sent roots.
+- (T6.6) **Observed: without mode 2004, ConPTY drops the `\n`s of a typed multi-line text.**
+  The fake agent (cooked console, no bracketed paste) receives the whole review prompt as ONE
+  line (lines glued, only the final `\r` submits). The fake parses that form; the e2e
+  `fake_agent_addresses_sent_comments_and_replies_to_each` passes. For real agents that enable
+  mode 2004 this should not matter, but check during the T6.5 real-agent round trip that
+  Claude/Codex see the prompt with its line breaks. If not, a fix task could type `\r\n` or
+  Shift+Enter-style newlines instead.
 
 ## Done
 

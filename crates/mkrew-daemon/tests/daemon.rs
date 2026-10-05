@@ -1732,6 +1732,107 @@ fn comments_sent_to_a_working_agent_are_typed_once_it_asks() {
     client.stop();
 }
 
+/// The review round trip (M6 E2E): the fake writes a plan, two comments are sent to it, it
+/// edits the file for each and answers each with `mk comment reply` → both `addressed`.
+#[test]
+fn fake_agent_addresses_sent_comments_and_replies_to_each() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    let plan = "# Plan\n\nUse Redis for caching.\n\nM3: deploy\n";
+    // The spinner keeps the fake working while the comments are sent, so the prompt is
+    // usually queued until it asks (either way it must arrive whole).
+    let scenario = env.dir.path().join("reviewer.toml");
+    std::fs::write(
+        &scenario,
+        format!(
+            "[[step]]\naction = \"write_file\"\npath = \"docs/plan.md\"\ncontent = '''{plan}'''\n\n\
+             [[step]]\naction = \"spinner\"\ntext = \"planning\"\nms = 600\n\n\
+             [[step]]\naction = \"reply_comments\"\ncomments = 2\n\n\
+             [[step]]\naction = \"print\"\ntext = \"Edited docs/plan.md\"\n\n\
+             [[step]]\naction = \"print\"\ntext = \"Replied to 2 comments\"\n\n\
+             [[step]]\naction = \"print\"\ntext = \"All done\"\n\n\
+             [[step]]\naction = \"print\"\ntext = \"Done.\"\n"
+        ),
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "reviewer",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "reviewer").into_result().unwrap();
+    let id = spawned.session_id;
+    let deadline = Instant::now() + TIMEOUT;
+    while std::fs::read_to_string(repo.join("docs/plan.md"))
+        .ok()
+        .as_deref()
+        != Some(plan)
+    {
+        assert!(Instant::now() < deadline, "the fake never wrote the plan");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let mut create = |line, quote: &str, body: &str| {
+        let params = CommentCreateParams {
+            project_id: project.id,
+            file_path: "docs/plan.md".into(),
+            start_line: line,
+            end_line: line,
+            quote: quote.into(),
+            body: body.into(),
+        };
+        let created: DocComment = client
+            .call(Request::CommentCreate(params))
+            .into_result()
+            .unwrap();
+        created
+    };
+    let redis = create(3, "Use Redis", "Why not in-memory?");
+    let deploy = create(5, "M3: deploy", "Add a rollback step.");
+    let sent: Vec<DocComment> = client
+        .call(send_comments(&[redis.id, deploy.id], id))
+        .into_result()
+        .unwrap();
+    assert_eq!(sent.len(), 2);
+
+    for comment in [&redis, &deploy] {
+        wait_comment(&mut client, comment.id, CommentStatus::Addressed);
+    }
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    assert_eq!(
+        std::fs::read_to_string(repo.join("docs/plan.md")).unwrap(),
+        format!(
+            "{plan}Addressed {}: Why not in-memory?\nAddressed {}: Add a rollback step.\n",
+            redis.id, deploy.id
+        )
+    );
+
+    let comments: Vec<DocComment> = client
+        .call(Request::CommentList(CommentListParams {
+            project_id: project.id,
+            file_path: Some("docs/plan.md".into()),
+        }))
+        .into_result()
+        .unwrap();
+    for (root, body) in [
+        (&redis, "Addressed: Why not in-memory?"),
+        (&deploy, "Addressed: Add a rollback step."),
+    ] {
+        let stored = comments.iter().find(|c| c.id == root.id).unwrap();
+        assert_eq!(stored.status, CommentStatus::Addressed);
+        let replies: Vec<_> = comments
+            .iter()
+            .filter(|c| c.parent_id == Some(root.id))
+            .map(|c| (c.author.as_str(), c.body.as_str()))
+            .collect();
+        assert_eq!(replies, [("reviewer", body)]);
+    }
+    client.stop();
+}
+
 #[test]
 fn wait_times_out_and_rejects_bad_requests() {
     let env = Env::new();

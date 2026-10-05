@@ -59,7 +59,9 @@ pub enum Error {
     #[error("cannot write {}: {source}", path.display())]
     WriteFile { path: PathBuf, source: io::Error },
     #[error("cannot run {}: {source}", program.display())]
-    Hook { program: PathBuf, source: io::Error },
+    Mk { program: PathBuf, source: io::Error },
+    #[error("cannot edit {}: {source}", path.display())]
+    EditFile { path: PathBuf, source: io::Error },
     #[error("stdin closed while waiting for an answer")]
     StdinClosed,
     #[error(transparent)]
@@ -118,6 +120,15 @@ pub enum Step {
         event: String,
         #[serde(default)]
         session_id: Option<String>,
+    },
+    /// Print the prompt like `ask`, then read a review prompt typed by `comment.send_to_agent`
+    /// (SPEC §12) holding `comments` comments: append `Addressed <id>: <body>` per comment to
+    /// the named file and run `mk comment reply <id> …` for each. Only each comment's first
+    /// body line is read.
+    ReplyComments {
+        comments: usize,
+        #[serde(default = "default_prompt")]
+        text: String,
     },
     /// Stop the scenario and exit with `code`.
     Exit {
@@ -232,6 +243,16 @@ pub fn run(
                 out.flush()?;
                 hook(event, session_id.as_deref())?;
             }
+            Step::ReplyComments { comments, text } => {
+                write!(out, "{text} ")?;
+                out.flush()?;
+                let review = read_review(input, *comments)?;
+                address(&review)?;
+                for (id, body) in &review.comments {
+                    mk(&["comment", "reply", id, &format!("Addressed: {body}")])?;
+                }
+                writeln!(out)?;
+            }
             Step::Exit { code } => {
                 out.flush()?;
                 return Ok(*code);
@@ -242,19 +263,102 @@ pub fn run(
     Ok(0)
 }
 
-/// Runs `mk hook fake <event> [<json>]`. Like a real agent, a failing hook does not stop the
-/// scenario (its stderr reaches the terminal); only a missing `mk` does.
+/// The parts of a typed review prompt (SPEC §12 template) the fake acts on.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Review {
+    pub file: PathBuf,
+    /// `(id, first body line)` per comment, in prompt order.
+    pub comments: Vec<(String, String)>,
+}
+
+/// Reads lines until the `Update <file> according to …` line, `count` comment headers
+/// (`[c_…] lines …:`) and the last one's body have arrived. A Windows console drops the `\n`s
+/// between the typed lines, so the prompt is parsed as one text, not line by line.
+pub fn read_review(input: &mut impl BufRead, count: usize) -> Result<Review, Error> {
+    let mut typed = String::new();
+    loop {
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            return Err(Error::StdinClosed);
+        }
+        typed.push_str(line.trim_end_matches(['\r', '\n']));
+        typed.push('\n');
+        if let Some(review) = parse_review(&typed, count) {
+            return Ok(review);
+        }
+    }
+}
+
+/// `None` until `typed` holds the whole review. A body ends at a line break, two spaces (the
+/// indent of a reply glued on by a Windows console, so a body with a double space is cut),
+/// an escape (paste end marker) or the next header.
+fn parse_review(typed: &str, count: usize) -> Option<Review> {
+    // `find`, not `strip_prefix`: paste markers or other noise may come first.
+    let start = typed.find("Update ")? + "Update ".len();
+    let (file, mut rest) = typed[start..].split_once(" according to")?;
+    let mut comments = Vec::new();
+    while comments.len() < count {
+        let at = rest.find("[c_")?;
+        let (id, header) = rest[at + 1..].split_once(']')?;
+        let colon = header.find(':')?;
+        // A quoted passage may hold colons: then the header ends at `":`.
+        let body_at = match header.find(", passage \"").filter(|&p| p < colon) {
+            Some(p) => p + header[p..].find("\":")? + 2,
+            None => colon + 1,
+        };
+        let body = header[body_at..].trim_start();
+        let end = ["\n", "  ", "\x1b", "[c_"]
+            .iter()
+            .filter_map(|stop| body.find(stop))
+            .min()
+            .unwrap_or(body.len());
+        comments.push((id.to_owned(), body[..end].trim().to_owned()));
+        rest = &body[end..];
+    }
+    // The last body arrives on the line after its header unless the console glued them.
+    let complete = comments.last().is_none_or(|(_, body)| !body.is_empty());
+    complete.then(|| Review {
+        file: PathBuf::from(file),
+        comments,
+    })
+}
+
+/// Appends `Addressed <id>: <body>` per comment to the review's file.
+fn address(review: &Review) -> Result<(), Error> {
+    let path = &review.file;
+    let edit_error = |source| Error::EditFile {
+        path: path.clone(),
+        source,
+    };
+    let mut content = fs::read_to_string(path).map_err(edit_error)?;
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    for (id, body) in &review.comments {
+        content.push_str(&format!("Addressed {id}: {body}\n"));
+    }
+    fs::write(path, content).map_err(edit_error)
+}
+
+/// Runs `mk hook fake <event> [<json>]`.
 fn hook(event: &str, session_id: Option<&str>) -> Result<(), Error> {
-    let program = mk_program();
     let payload = session_id.map(|id| serde_json::json!({ "session_id": id }).to_string());
+    let mut args = vec!["hook", "fake", event];
+    args.extend(payload.as_deref());
+    mk(&args)
+}
+
+/// Runs `mk <args>` and waits for it. Like a real agent, a failing command does not stop the
+/// scenario (its stderr reaches the terminal); only a missing `mk` does.
+fn mk(args: &[&str]) -> Result<(), Error> {
+    let program = mk_program();
     Command::new(&program)
-        .args(["hook", "fake", event])
-        .args(payload)
-        // The PTY input belongs to the agent; `mk hook fake` reads no stdin anyway.
+        .args(args)
+        // The PTY input belongs to the agent; these `mk` commands read no stdin anyway.
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .status()
-        .map_err(|source| Error::Hook { program, source })?;
+        .map_err(|source| Error::Mk { program, source })?;
     Ok(())
 }
 
@@ -440,6 +544,92 @@ mod tests {
             "plain\n\x1b[31mred\x1b[0m\nDo you want to proceed? (y/n) "
         );
         assert_eq!(fs::read_to_string(file).unwrap(), "written");
+    }
+
+    #[test]
+    fn reply_comments_parses() {
+        let scenario = parse(
+            "test",
+            "[[step]]\naction = \"reply_comments\"\ncomments = 2\n",
+        )
+        .unwrap();
+        assert_eq!(
+            scenario.steps,
+            [Step::ReplyComments {
+                comments: 2,
+                text: DEFAULT_PROMPT.into()
+            }]
+        );
+    }
+
+    /// The prompt as `comment.send_to_agent` types it through a PTY: `\n` between lines, `\r`
+    /// at the end, a reply after the first comment, bracketed-paste markers around it.
+    const TYPED_REVIEW: &str = "\x1b[200~Update docs/plan.md according to the review comments below.\n\
+        Only edit this file. When done, for EACH comment run:\n  \
+        mk comment reply <id> \"<what you changed, or why you did not>\"\n\n\
+        [c_01JX] lines 12–14, passage \"Use Redis for caching\":\n  \
+        Why not an in-memory cache first?\n    \
+        user replied: Also check TTLs\n\
+        [c_01JY] line 40, passage \"M3: deploy\":\n  \
+        Add a rollback step.\x1b[201~\r";
+
+    #[test]
+    fn read_review_takes_the_file_and_each_comment_header_and_body() {
+        let expected = Review {
+            file: "docs/plan.md".into(),
+            comments: vec![
+                ("c_01JX".into(), "Why not an in-memory cache first?".into()),
+                ("c_01JY".into(), "Add a rollback step.".into()),
+            ],
+        };
+        assert_eq!(
+            read_review(&mut TYPED_REVIEW.as_bytes(), 2).unwrap(),
+            expected
+        );
+        // A Windows console delivers it as one line: the `\n`s are dropped.
+        let glued = TYPED_REVIEW.replace('\n', "") + "\n";
+        assert_eq!(read_review(&mut glued.as_bytes(), 2).unwrap(), expected);
+        // Fewer comments than expected: the agent would wait for more input.
+        assert!(matches!(
+            read_review(&mut TYPED_REVIEW.as_bytes(), 3),
+            Err(Error::StdinClosed)
+        ));
+    }
+
+    #[test]
+    fn read_review_waits_for_the_last_body_and_skips_colons_in_passages() {
+        let header_only = "Update a.md according to the review comments below.\n\
+            [c_1] line 2, passage \"a: b\":\n";
+        assert!(matches!(
+            read_review(&mut header_only.as_bytes(), 1),
+            Err(Error::StdinClosed)
+        ));
+        let review = read_review(&mut format!("{header_only}  Keep it\n").as_bytes(), 1).unwrap();
+        assert_eq!(review.comments, [("c_1".into(), "Keep it".into())]);
+    }
+
+    #[test]
+    fn address_appends_one_line_per_comment() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("plan.md");
+        fs::write(&file, "# Plan").unwrap();
+        let review = Review {
+            file: file.clone(),
+            comments: vec![
+                ("c_1".into(), "Fix A".into()),
+                ("c_2".into(), "Fix B".into()),
+            ],
+        };
+        address(&review).unwrap();
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "# Plan\nAddressed c_1: Fix A\nAddressed c_2: Fix B\n"
+        );
+        let missing = Review {
+            file: dir.path().join("missing.md"),
+            comments: vec![],
+        };
+        assert!(matches!(address(&missing), Err(Error::EditFile { .. })));
     }
 
     #[test]
