@@ -1,0 +1,10 @@
+# Codex (SPEC §6).
+name = "Codex"
+command = "codex"
+prompt_mode = "arg"
+resume = "codex resume {session_id}"
+
+[state]
+mode = "hook+screen"
+idle_after_ms = 3000
+needs_input_patterns = ['(?i)allow command', '(?i)approve']

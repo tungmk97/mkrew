@@ -317,6 +317,31 @@ pub struct SessionWaitResult {
     pub exit_code: Option<i32>,
 }
 
+/// `agent.profiles`: loaded profiles plus one entry per broken profile file (SPEC §6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfilesResult {
+    pub profiles: Vec<AgentProfileInfo>,
+    pub errors: Vec<ProfileErrorInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentProfileInfo {
+    /// File stem, used as `agent_profile` in `session.spawn`.
+    pub id: String,
+    pub name: String,
+    pub kind: SessionKind,
+    /// Empty for a shell profile using the OS default shell.
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileErrorInfo {
+    pub file: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionStateEvent {
     pub session_id: Ulid,
@@ -533,6 +558,26 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn agent_profiles_result_round_trips() {
+        let result = AgentProfilesResult {
+            profiles: vec![AgentProfileInfo {
+                id: "fake".into(),
+                name: "Fake agent".into(),
+                kind: SessionKind::Agent,
+                command: "mkrew-fakeagent".into(),
+            }],
+            errors: vec![ProfileErrorInfo {
+                file: "agents/broken.toml".into(),
+                line: Some(2),
+                column: Some(1),
+                message: "unknown field `promt_mode`".into(),
+            }],
+        };
+        let decoded: AgentProfilesResult = Outcome::ok(&result).unwrap().into_result().unwrap();
+        assert_eq!(decoded, result);
     }
 
     #[test]

@@ -350,7 +350,9 @@ needs_input_patterns = []
 ```
 
 `agents/shell.toml` (kind shell, command = OS default shell) and `agents/fake.toml`
-(command = `mkrew-fakeagent`, see §16) also ship.
+(command = `mkrew-fakeagent`, see §16) also ship. Optional key `kind = "agent" | "shell"`
+(default `agent`); a shell profile may omit `command` to use the OS default shell
+(`%COMSPEC%` / `$SHELL`). Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
 
 Patterns above are starting points only. They must be refined by recording real agent output
 (add the recordings as test fixtures under `crates/mkrew-core/tests/fixtures/`).

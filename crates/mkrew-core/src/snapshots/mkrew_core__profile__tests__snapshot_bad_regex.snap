@@ -1,0 +1,8 @@
+---
+source: crates/mkrew-core/src/profile.rs
+expression: "parse_err(\"command = \\\"c\\\"\\n[state]\\nneeds_input_patterns = ['ok', '(unclosed']\\n\")"
+---
+agents/broken.toml:3:31: invalid needs_input_patterns regex `(unclosed`: regex parse error:
+    (unclosed
+    ^
+error: unclosed group

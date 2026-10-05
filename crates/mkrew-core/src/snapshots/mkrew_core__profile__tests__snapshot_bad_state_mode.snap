@@ -1,0 +1,5 @@
+---
+source: crates/mkrew-core/src/profile.rs
+expression: "parse_err(\"command = \\\"c\\\"\\n[state]\\nmode = \\\"hooks\\\"\\n\")"
+---
+agents/broken.toml:3:8: unknown variant `hooks`, expected one of `hook`, `screen`, `hook+screen`

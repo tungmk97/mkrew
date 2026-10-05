@@ -1,0 +1,9 @@
+# Oh My Pi (SPEC §6).
+name = "Oh My Pi"
+command = "omp"
+prompt_mode = "type"
+
+[state]
+mode = "screen"
+idle_after_ms = 3000
+needs_input_patterns = []

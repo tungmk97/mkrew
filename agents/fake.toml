@@ -1,0 +1,11 @@
+# Scriptable fake agent used by tests and demos (SPEC §16).
+# The scenario is chosen per run (see crates/mkrew-fakeagent, T1.7).
+name = "Fake agent"
+command = "mkrew-fakeagent"
+args = []
+prompt_mode = "none"
+
+[state]
+mode = "screen"
+idle_after_ms = 1000
+needs_input_patterns = ['(?i)do you want to proceed\? \(y/n\)']

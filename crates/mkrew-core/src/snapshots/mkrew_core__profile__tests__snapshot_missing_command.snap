@@ -1,0 +1,5 @@
+---
+source: crates/mkrew-core/src/profile.rs
+expression: "parse_err(\"name = \\\"Claude\\\"\\n\")"
+---
+agents/broken.toml: `command` is required and must not be empty for an agent profile

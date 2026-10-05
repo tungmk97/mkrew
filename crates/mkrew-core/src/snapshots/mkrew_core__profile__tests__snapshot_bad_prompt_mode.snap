@@ -1,0 +1,5 @@
+---
+source: crates/mkrew-core/src/profile.rs
+expression: "parse_err(\"command = \\\"claude\\\"\\nprompt_mode = \\\"paste\\\"\\n\")"
+---
+agents/broken.toml:2:15: unknown variant `paste`, expected one of `arg`, `type`, `none`

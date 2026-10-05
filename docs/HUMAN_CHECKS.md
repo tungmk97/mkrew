@@ -92,6 +92,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   until done" is satisfied by screen detection (`idle` after `idle_after_ms`) or process exit
   of the fake agent, not by a `done` hook event. `mk attach` uses `crossterm` for raw mode
   (not listed in SPEC §4; small, cross-platform, Windows-native console API).
+- (T1.2) Profile schema details not fixed by SPEC §6, now written into §6: optional
+  `kind = "agent"|"shell"`; shell may omit `command` (daemon picks `%COMSPEC%`/`$SHELL`);
+  unknown keys are errors (catches typos); `prompt_mode` defaults to `none`, `[state]` to
+  `mode = "screen"`, `idle_after_ms = 3000`; name defaults to the file stem. A missing
+  `command` is reported with the file but no line (no span for an absent key).
 
 ## Done
 

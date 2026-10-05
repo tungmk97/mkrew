@@ -1,0 +1,5 @@
+---
+source: crates/mkrew-core/src/profile.rs
+expression: "parse_err(\"name = \\\"Claude\\ncommand = \\\"claude\\\"\\n\")"
+---
+agents/broken.toml:1:15: invalid basic string, expected `"`
