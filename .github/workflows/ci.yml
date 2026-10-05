@@ -1,0 +1,42 @@
+# SPEC §17: fmt check, clippy -D warnings and all tests on Windows + Linux.
+# Same steps as `scripts/verify.sh`, which is what local sessions run.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  verify:
+    name: verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    # Cold Windows builds of gpui + bundled SQLite are slow.
+    timeout-minutes: 60
+    steps:
+      # Windows runners default to autocrlf=true; the repo and its fixtures/snapshots are LF.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      # Runs in Git Bash on Windows. Tests need the daemon + fakeagent bins, which
+      # `cargo test --workspace` builds.
+      - run: bash scripts/verify.sh
+        shell: bash

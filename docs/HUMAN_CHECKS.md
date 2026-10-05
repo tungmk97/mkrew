@@ -40,6 +40,19 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   keys incl. arrows, Ctrl+C and paste reach the agent, resizing the window resizes the
   session, `Ctrl+]` detaches and leaves the terminal sane (cursor, no mouse/bracketed-paste
   leftovers), and re-attach repaints the same screen. Tests only cover the piped (non-tty) path.
+- [ ] (T1.12) Push the repo to GitHub and check that `.github/workflows/ci.yml` runs green on
+  both `windows-latest` and `ubuntu-latest`. Never run here (no push allowed). Not compiled
+  locally for Linux: anything depending on bundled SQLite (`mkrew-store`, `mkrew-daemon`,
+  `mkrew-cli` incl. the Unix branches from T1.5/T1.6/T1.8) — no Linux C compiler on this machine.
+  `mkrew-core/protocol/fakeagent` and `spike-term` pass `cargo clippy --target
+  x86_64-unknown-linux-gnu -D warnings`. The Linux job installs no apt packages (gpui-pre's
+  `x11`/`wayland` features are off, so no xkbcommon/wayland/fontconfig; the cross-check never
+  linked, so a link error would show only in the test step); if linking fails, add
+  `sudo apt-get install -y libxkbcommon-dev libwayland-dev libfontconfig-dev libfreetype-dev`.
+  Watch for timing-sensitive daemon/CLI tests on slower runners.
+- [ ] (T1.12) Native Windows: `mk daemon start` from Windows Terminal opens **no** console
+  window, and `mk attach` to a session of `agents/shell.toml` and `agents/claude.toml` works
+  (see the T1.6 and T1.10 items above for the details to check).
 
 ## Questions with assumed defaults
 
@@ -186,6 +199,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   exits 0, a timeout exits 1 — scripts tell "reached" from "exited" by the printed state. A
   `session.wait` without a timeout blocks its connection; if the client vanishes, the daemon
   keeps that wait until the session reaches the state or exits (no default timeout, as SPEC §9).
+- (T1.12) CI = one job per OS running `bash scripts/verify.sh` (one source of truth with local
+  sessions), on pushes to `main`/`master` and on pull requests, `fail-fast: false`, cached with
+  `Swatinem/rust-cache`. Windows checkout forces `core.autocrlf false` (repo is LF; fixtures and
+  snapshots depend on it). Added the `x86_64-unknown-linux-gnu` rustup target on this machine
+  for cross-checking (only the Rust std component, no system install).
 
 ## Done
 
