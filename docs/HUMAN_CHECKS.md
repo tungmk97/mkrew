@@ -117,6 +117,39 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `zed` off PATH the sidebar shows the "not found … Install Zed" hint instead. Pick another
   default agent: ✓ moves, and "+ Agent" / Ctrl+Shift+A (new agent tab) now starts that agent; survives a
   restart.
+- [ ] (T2.9) **§15 stress, automated part**: `cargo build --release -p mkrew-daemon -p
+  mkrew-fakeagent` then `cargo test --release -p mkrew-ui --test stress -- --nocapture` (6
+  attached floods of ~14 MB each through the UI's `Router` + `Emulator`). Here it passed 3/3:
+  round trip on the UI connection p50 ≈ 0.23 ms, p95 ≈ 1.3 ms; feeding one drained batch p50
+  ≈ 3.7 ms, p95 ≈ 17 ms, max ≈ 23 ms; daemon RSS 33→37 MiB, test-process RSS 128→130 MiB (flat
+  once the six 10k-line scrollbacks are full); **daemon CPU ≈ 1.5 cores** (§15 says < 1 —
+  open, T2.9a). `verify` runs the same test in debug, where only correctness and daemon memory
+  are asserted.
+- [ ] (T2.9) **§15 stress, in the real UI**: open 6 panes (3 workspaces) with the fake agent
+  flood profile (`agents/fake.toml` copy with `args = ["--scenario", "<file>"]`, the file a
+  `flood` step with `lines = 750000` ≈ 50 MB), run them at once in a release build
+  (`cargo run --release -p mkrew-ui`): typing in a 7th shell pane stays instant, the window
+  repaints smoothly, every pane ends on "Flood done.", and memory (below) stays flat.
+- [ ] (T2.9) **RAM < 150 MB** (§15, M2 criterion), procedure: release build, the daemon started
+  by the UI, 3 workspaces, 6 live sessions (shell + fake agent; no flood), all panes shown once,
+  then idle 1 min. Read "Memory (private working set)" of `mkrew.exe` and `mkrew-daemon.exe` in
+  Task Manager → Details (or `Get-Process mkrew,mkrew-daemon | Select Name,WS,PM`). Expected:
+  UI < 150 MB, daemon < 50 MB. Then repeat after the 6-pane flood above: the UI keeps a 10k-line
+  scrollback per attached pane (≈ 100 MB for six full ones in the headless test process alone),
+  so the UI may exceed 150 MB after floods — note the numbers here if it does.
+- [ ] (T2.9) **§14 design check for M2** (no automatic screenshot capture): in light and dark OS
+  theme take screenshots into `docs/screenshots/` of: empty window (no workspaces), sidebar with
+  workspaces + sessions in every status, a tab bar with 2 tabs, a 3-pane split (focused border,
+  dimmed others), an empty tab, the find bar with matches, the inline tab rename, the workspace
+  menu, the kill/hide dialog, the "⚠ … sessions running" notice, an exited pane. Self-review per
+  §14: no hard-coded colors/spacing (all in `theme.rs`), hover/focus/disabled states, empty
+  states with one action + shortcut, body text contrast ≥ 4.5:1, status never by color alone.
+- [ ] (T2.9) **Real Claude Code** in a UI pane (`agents/claude.toml`, your keys/login): Ctrl+C,
+  Ctrl+R, Esc, arrows, Shift+Tab and bracketed paste reach it; full-screen redraws are clean;
+  its status in the sidebar follows working → needs input → idle.
+- [ ] (T2.9) **Reopen UI**: with 6 live sessions in split tabs, close the window and start the
+  UI again: same workspaces, tabs, splits and sizes; every visible pane re-attached showing the
+  current screen; hidden sessions still in the sidebar.
 
 ## Questions with assumed defaults
 
@@ -366,6 +399,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   toggle the menu shut. `zed` is looked up and spawned on the UI thread (fast; a slow network
   drive on PATH would stall a frame). PATH lookup moved to `mkrew_core::lookup` (shared with
   the daemon). `.ps1` zed shims run via `powershell.exe -File`.
+- (T2.9) The automated §15 stress test (`crates/mkrew-ui/tests/stress.rs`) stands in for the
+  window. "Input latency" there means the `daemon.status` round trip on the UI's own
+  connection (behind six attached floods), plus the time to feed one drained batch (≤ 256
+  frames, as the window does per frame). Gpui paint and real key dispatch are not covered.
+  Floods are ~14 MB per pane in release and ~2 MB in debug (not 50 MB), so the test stays
+  quick. Timings and client memory
+  are asserted only in release builds (`verify` is debug). "RAM stays flat" means at most
+  16 MiB growth after every scrollback is full. The daemon now merges queued PTY chunks
+  (≤ 256 KiB) before its per-output work, which halved its CPU per flood byte. §15 "daemon
+  CPU < 1 core" is still missed (~1.5 cores, because the floods are unthrottled) → T2.9a.
 
 ## Done
 

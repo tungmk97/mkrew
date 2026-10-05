@@ -41,4 +41,6 @@ ulid = { version = "1", features = ["serde"] }
 
 [dev-dependencies]
 insta = "1"
+# Stress test memory/CPU probes; same version as spike-term (already in the tree via gpui).
+sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 tempfile = "3"

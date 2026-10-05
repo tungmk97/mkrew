@@ -30,6 +30,10 @@ const READ_BUFFER_BYTES: usize = 64 * 1024;
 /// Chunks in flight between a reader thread and its session task. When full the reader
 /// blocks, which back-pressures the child instead of buffering without bound.
 const OUTPUT_CHANNEL_CHUNKS: usize = 64;
+/// The session task merges queued output chunks up to this size before handling them. State
+/// patterns then see the screen once per batch, so a prompt drawn and scrolled away within
+/// one batch can be missed (only under heavy output).
+const COALESCE_BYTES: usize = 256 * 1024;
 /// Input is queued for the writer thread in chunks of at most this size, so the channel bound
 /// below caps the bytes buffered per session (≈ 256 KiB) whatever the size of one request.
 pub const INPUT_CHUNK_BYTES: usize = 16 * 1024;
@@ -341,7 +345,26 @@ impl Actor {
                 .map(tokio::time::Instant::from_std);
             tokio::select! {
                 event = output.recv() => match event {
-                    Some(PtyEvent::Output(bytes)) => self.on_output(&bytes),
+                    Some(PtyEvent::Output(mut bytes)) => {
+                        // Merge chunks already queued so the per-output work (screen lines,
+                        // state patterns) runs once per batch during a flood (SPEC §15).
+                        let mut exited = None;
+                        while bytes.len() < COALESCE_BYTES {
+                            match output.try_recv() {
+                                Ok(PtyEvent::Output(more)) => bytes.extend_from_slice(&more),
+                                Ok(PtyEvent::Exited(code)) => {
+                                    exited = Some(code);
+                                    break;
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        self.on_output(&bytes);
+                        if let Some(code) = exited {
+                            drain_after_exit(&mut self, &mut output).await;
+                            break code;
+                        }
+                    }
                     Some(PtyEvent::Exited(code)) => {
                         drain_after_exit(&mut self, &mut output).await;
                         break code;
