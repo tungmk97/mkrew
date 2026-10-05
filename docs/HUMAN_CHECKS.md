@@ -194,6 +194,28 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   process; if it only flashes, the daemon should call `AllowSetForegroundWindow` for the UI
   process before sending `notification.clicked`).
 
+- [ ] (T3.9) **M3 criteria that need real agents and eyes.** Do these after the T3.4–T3.7 checks
+  above; tick the M3 criterion in `docs/PROGRESS.md` (or §18) once its check passes, else add a fix
+  task. Restart the daemon first (protocol v3) with `mk` on PATH and `mk integration install
+  claude` done.
+  - **Claude approval → needs_input in ≤ 2 s** (criterion 2): in a Mkrew pane run `claude` and ask
+    for something that needs a tool approval (e.g. "create a file hello.txt"). From the moment
+    the approval prompt appears: within 2 s the pane header shows `? needs input` (hover: "from
+    hook" or "from screen" — the screen pattern may win the race; note which, both pass), the
+    sidebar Inbox lists the session, and one OS toast appears. Approve → `working` (from screen:
+    no hook fires on approval), turn ends → `done` (from hook). If it takes longer, note the time and whether the first `mk hook` run
+    was the slow part (first run can take seconds).
+  - **Notification click focuses the pane** (criterion 3): the T3.7 click check, but with a real
+    Claude approval toast and Mkrew minimized behind another app.
+  - **Status on header, tab and sidebar** (criterion 4): the T3.6 check with real Claude in one
+    pane and a shell in another, dark and light OS theme (§11, §14 design check); also
+    `Ctrl+Shift+I` cycles through Inbox entries (T3.7a).
+  - **Real omp working ↔ idle** (criterion 5): run `omp` in a Mkrew pane (`agents/omp.toml`,
+    screen mode), send a prompt → `working` (hover: "from screen") while it streams, `idle`
+    ≈ 3 s after output stops; send another prompt → `working` again. If it flips to idle while
+    omp is still thinking or never leaves working (e.g. a blinking cursor/clock redraws), note
+    what the screen shows; the next session tunes `idle_after_ms` / patterns (see the T3.8 note under "Questions with assumed defaults").
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._

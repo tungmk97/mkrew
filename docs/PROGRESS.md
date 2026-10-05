@@ -2,39 +2,26 @@
 
 <!-- loop-state: machine-readable, keep these exact keys on their own lines -->
 status: RUNNING
-milestone: M3
+milestone: M4
 <!-- /loop-state -->
 
 Status values: `RUNNING` (loop continues) · `WAITING_HUMAN` (see docs/HUMAN_CHECKS.md, then set back to RUNNING) · `BLOCKED` (no task can progress) · `DONE`.
 Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note).
 
-## Current milestone: M3 — Agent state, inbox, notifications (SPEC §18)
-
-After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer).
+## Current milestone: M4 — Task board (SPEC §18)
 
 ### Acceptance criteria
-- [x] `mk integration install claude` and `codex` work: backup, idempotent, uninstall.
-- [ ] Claude Code asks for approval → within 2 s the session is needs_input, Inbox has an entry, OS notification fires.
-- [ ] Clicking the OS notification brings the app up focused on that pane.
-- [ ] Per-session status correct on pane header, tab label and sidebar (§11); hover shows source.
-- [ ] omp (screen detection) transitions correctly between working and idle.
-- [x] Unit tests for the state machine; e2e tests with the fake agent for every transition.
+_To be copied from SPEC §18 M4 by the planning session._
 
 ### Task queue
-- [x] T3.1 M2 carry-over: detach every pane while the window is minimized and re-attach (daemon snapshot) on restore, via `Shell::sync_panes`; test the visibility decision as a pure fn. (spec: §10) — feat(ui): detach panes while the window is minimized
-- [x] T3.2 `hook.report` in protocol + daemon: reject unless the id is a live session, map `agent`/`event` → `HookEvent` (claude: SessionStart/UserPromptSubmit/Notification/Stop; codex notify; fake), store `session_event` (kind `hook`), take `native_session_id`; add state `source` (hook/screen/daemon) + `changed_at` to `Session` and `session.state`; daemon integration tests; covers: needs_input via hook, hover source. (spec: §5, §6, §7, §8, §15) — feat(daemon): hook.report drives session state
-- [x] T3.3 `mk hook <agent> <event>` (claude: JSON on stdin; codex: JSON as argument; no `MKREW_SESSION_ID` → exit 0 silently) + fake agent `hook` step that runs `mk hook fake <event>`; e2e: fake-agent hook → session needs_input within 2 s, then working/done. (spec: §6, §9, §16) — feat(cli): mk hook + fake agent hook step
-- [x] T3.4 `mk integration install|uninstall|status claude|codex`: research CURRENT Claude Code hook and Codex `notify` formats first; merge into `~/.claude/settings.json` / `~/.codex/config.toml` (home overridable for tests), timestamped `.bak`, idempotent, clean uninstall; tests on temp dirs; covers: integration install. (spec: §6, §9) — feat(cli): mk integration install/uninstall/status
-- [x] T3.5 Daemon OS notifications on needs_input/done (`notify-rust`, ≤ 1 per session per 30 s, behind a `Notifier` trait faked in tests); click → `notification.clicked` event with session/project ids; covers: OS notification fires, click event. (spec: §7, §8) — feat(daemon): OS notifications on needs_input/done
-- [x] T3.6 UI per-session status (§11): icon + text everywhere, spinner, elapsed/idle time, exit code; pane headers; tab label = most urgent pane state; workspace row = working count + `?`; needs_input pane border; hover tooltip shows source + last change; pure helpers unit-tested; covers: per-session status. (spec: §11, §14) — feat(ui): per-session status in pane headers, tabs and sidebar
-- [x] T3.7 UI Inbox in the sidebar (needs_input or done-until-viewed, newest first, click jumps to the pane, empty state) + handle `notification.clicked` (raise/restore window, switch workspace/tab, focus pane); covers: Inbox entry, click focuses pane. (spec: §10, §11, §14) — feat(ui): sidebar Inbox and notification click focuses the pane
-- [x] T3.7a `Command::NextInbox` (Ctrl+Shift+I, §13): jump to the next Inbox entry (pure `inbox` helper picking the entry after the focused session, wrapping), shortcut hint in the Inbox empty state/header tooltip. (spec: §11, §13) — feat(ui): Ctrl+Shift+I jumps to the next Inbox entry
-- [x] T3.8 State e2e + omp: fake-agent e2e test per transition (starting→working→needs_input→working→idle→done→exited, hook and screen modes), omp-like screen-mode scenario/fixture (spinner redraw → working, quiet → idle); refine `agents/omp.toml` if needed; covers: omp transitions, e2e every transition. (spec: §6, §16) — test(daemon): e2e every state transition + omp scenario
-- [ ] T3.9 Add manual checks to HUMAN_CHECKS: real Claude approval → needs_input + Inbox + notification within 2 s, notification click focuses pane, real omp working↔idle, integration install on the real home, §11 status design check. (spec: §18)
+_Empty: the next session plans M4 (`mkrew-plan-milestone`)._
+
+M3 left 4 of 6 criteria unticked; all wait on the T3.4–T3.9 manual checks in HUMAN_CHECKS (real
+Claude/omp, OS notification click, §11 design check). If one fails, add a fix task to M4 first.
 
 ### Done (last 10)
 
-_M0, M1 and M2 tasks moved to `docs/progress-archive.md` (tags `m1-done`, `m2-done`; unticked criteria are in HUMAN_CHECKS)._
+_M0–M3 tasks moved to `docs/progress-archive.md` (tags `m1-done`, `m2-done`, `m3-done`; unticked criteria are in HUMAN_CHECKS)._
 
 ## Notes for the next session
 

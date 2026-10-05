@@ -2,6 +2,31 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M3 — Agent state, inbox, notifications (tag `m3-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T3.4–T3.9 manual checks in
+HUMAN_CHECKS "To verify"):
+
+- [x] `mk integration install claude` and `codex` work: backup, idempotent, uninstall.
+- [ ] Claude Code asks for approval → within 2 s the session is needs_input, Inbox has an entry, OS notification fires.
+- [ ] Clicking the OS notification brings the app up focused on that pane.
+- [ ] Per-session status correct on pane header, tab label and sidebar (§11); hover shows source.
+- [ ] omp (screen detection) transitions correctly between working and idle.
+- [x] Unit tests for the state machine; e2e tests with the fake agent for every transition.
+
+Tasks:
+
+- [x] T3.1 Detach panes while minimized — feat(ui): detach panes while the window is minimized
+- [x] T3.2 `hook.report` + state source — feat(daemon): hook.report drives session state
+- [x] T3.3 `mk hook` + fake agent hook step — feat(cli): mk hook + fake agent hook step
+- [x] T3.4 `mk integration` — feat(cli): mk integration install/uninstall/status
+- [x] T3.5 OS notifications — feat(daemon): OS notifications on needs_input/done
+- [x] T3.6 UI per-session status — feat(ui): per-session status in pane headers, tabs and sidebar
+- [x] T3.7 Inbox + notification click — feat(ui): sidebar Inbox and notification click focuses the pane
+- [x] T3.7a Ctrl+Shift+I next Inbox entry — feat(ui): Ctrl+Shift+I jumps to the next Inbox entry
+- [x] T3.8 State e2e + omp scenario — test(daemon): e2e every state transition + omp scenario
+- [x] T3.9 M3 manual checks in HUMAN_CHECKS — chore(progress): complete M3
+
 ## M2 — UI: workspaces & terminals (tag `m2-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T2.4–T2.9 manual checks in
