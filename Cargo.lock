@@ -3537,11 +3537,13 @@ dependencies = [
 name = "mkrew-ui"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anyhow",
  "async-channel",
  "futures-lite",
  "gpui-pre",
  "gpui-pre-platform",
+ "insta",
  "interprocess",
  "mkrew-core",
  "mkrew-daemon",
@@ -3549,6 +3551,8 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "ulid",
 ]
 

@@ -3,7 +3,6 @@
 mod attach;
 mod client;
 mod daemon;
-mod paint;
 mod project;
 mod session;
 

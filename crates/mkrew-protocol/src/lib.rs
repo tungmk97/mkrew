@@ -5,6 +5,7 @@
 
 pub mod frame;
 pub mod message;
+pub mod paint;
 
 pub use frame::{Frame, FrameDecoder, KIND_JSON, KIND_OUTPUT, MAX_FRAME_LEN, encode};
 pub use message::*;

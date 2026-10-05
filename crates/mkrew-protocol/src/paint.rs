@@ -1,9 +1,10 @@
-//! Turns a daemon [`ScreenSnapshot`] (SPEC §7) into ANSI escape sequences for the user's
-//! terminal, so `mk attach` shows the current screen before raw output frames continue from it.
+//! Turns a daemon [`ScreenSnapshot`] (SPEC §7) into ANSI escape sequences, so a client terminal
+//! (`mk attach`, or the UI's own emulator) shows the current screen before raw output frames
+//! continue from it.
 
 use std::fmt::Write;
 
-use mkrew_protocol::{CellRun, ScreenSnapshot, TermColor};
+use crate::{CellRun, ScreenSnapshot, TermColor};
 
 /// Escape sequences that redraw `snapshot` from scratch and apply its cursor and modes.
 pub fn paint(snapshot: &ScreenSnapshot) -> String {
@@ -85,7 +86,7 @@ fn color(out: &mut String, color: TermColor, base: u8, bright: u8, extended: u8)
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{CursorSnapshot, TermModes};
+    use crate::{CursorSnapshot, TermModes};
 
     use super::*;
 

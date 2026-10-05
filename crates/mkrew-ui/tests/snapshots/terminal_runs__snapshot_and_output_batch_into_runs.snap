@@ -1,0 +1,23 @@
+---
+source: crates/mkrew-ui/tests/terminal_runs.rs
+expression: "dump(&emulator, &Theme::dark())"
+---
+row 0
+  @0 "✔ build ok"
+    4 bytes fg=4CB782 bg=16171B bold
+    8 bytes fg=E6E7EB bg=16171B
+row 1
+  @0 "日" (free)
+    3 bytes fg=E6E7EB bg=16171B
+  @2 "本" (free)
+    3 bytes fg=E6E7EB bg=16171B
+  @4 " warn"
+    1 bytes fg=E6E7EB bg=16171B
+    4 bytes fg=010203 bg=E3A63E underline
+  bg @5+4 E3A63E
+row 2
+  @0 "> ls"
+    2 bytes fg=939498 bg=16171B
+    2 bytes fg=16171B bg=E6E7EB
+  bg @2+2 E6E7EB
+  bg @4+1 7C8CFF

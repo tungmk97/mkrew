@@ -176,7 +176,7 @@ mkrew/
 ├── agents/                   # sample profiles: claude.toml codex.toml omp.toml shell.toml fake.toml
 └── crates/
     ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files.
-    ├── mkrew-protocol/       # Request/Response/Event types, frame codec
+    ├── mkrew-protocol/       # Request/Response/Event types, frame codec, snapshot → ANSI
     ├── mkrew-store/          # SQLite + migrations
     ├── mkrew-daemon/         # bin: PTYs, sessions, detectors, watchers, notifications
     ├── mkrew-cli/            # bin `mk`

@@ -13,7 +13,10 @@ name = "mkrew"
 path = "src/main.rs"
 
 [dependencies]
+alacritty_terminal = "0.26"
 anyhow = "1"
+# `future::or` for the paint-or-timeout wait; 2.x is already in the tree via gpui.
+futures-lite = "2"
 # Incoming events/output for the GPUI side; 2.x is already in the tree via gpui.
 async-channel = "2"
 # gpui snapshot pinned by gpui-component 0.7 (ADR 0001); the platform crate provides `application()`.
@@ -26,10 +29,11 @@ mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
 serde = "1"
 # The IPC thread runs a single-threaded runtime (SPEC §7 client side).
 tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Same major as mkrew-protocol so `Ulid` types match.
 ulid = "1"
 
 [dev-dependencies]
-# `block_on` for awaiting IPC responses in tests; 2.x is already in the tree via gpui.
-futures-lite = "2"
+insta = "1"
 tempfile = "3"

@@ -16,6 +16,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use mkrew_core::Paths;
+use mkrew_protocol::paint::{RESET, paint};
 use mkrew_protocol::{
     Event, Frame, Message, Request, SessionAttachResult, SessionInputParams, SessionRef,
     SessionResizeParams,
@@ -23,7 +24,6 @@ use mkrew_protocol::{
 use ulid::Ulid;
 
 use crate::client::Client;
-use crate::paint::{RESET, paint};
 
 /// `Ctrl+]` (GS), as in telnet.
 const DETACH: u8 = 0x1d;

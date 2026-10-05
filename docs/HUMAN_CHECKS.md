@@ -58,6 +58,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   (no console window), and it keeps running after the window closes; a second launch reuses
   it. Check the shell in dark and light OS themes (§14 design check; running GUI binaries
   needs approval in headless sessions, so not done automatically).
+  (T2.3: with no live session the line now reads "No running sessions."; the version is logged.)
+- [ ] (T2.3) Start a session (`mk session spawn <project> --agent shell`), then `cargo run -p
+  mkrew-ui`: the window shows it in a terminal pane (colors, cursor block, wide chars); typing,
+  Ctrl+C, arrows and Ctrl+Shift+V paste reach the shell; resizing the window reflows and
+  `mk session list` shows the new cols/rows; minimizing does not shrink the session; `exit`
+  shows "✕ Session exited (code 0)." under the pane; a `flood` fake-agent session stays
+  responsive. Check dark and light themes.
 
 ## Questions with assumed defaults
 
@@ -226,6 +233,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
 - (T2.2) Contrast: §14 light `status-idle` #9A9CA6 is ~2.6:1 on `bg` and the light ANSI bright
   yellow #D69E2E ~2.3:1 — below 3:1 for icons/terminal text. Kept the spec values; proposal:
   `status-idle` ≈ #8A8C94, bright yellow ≈ #B8860B (spec change + ADR if you agree).
+- (T2.3) The UI emulator is rebuilt from a daemon snapshot by replaying it as ANSI (the
+  `paint` module moved from `mk` to `mkrew_protocol::paint`, shared by CLI and UI). A
+  `session.snapshot` after an overflow therefore resets the pane's UI-side scrollback (the
+  dropped output left a gap anyway). Until the sidebar/tabs land (T2.4–T2.6) the window shows
+  the most recently started live session full-window.
 
 ## Done
 
