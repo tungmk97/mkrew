@@ -1,0 +1,32 @@
+[package]
+name = "mkrew-daemon"
+description = "Mkrew daemon: owns state, SQLite and agent PTYs; serves the local socket (SPEC §8)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1"
+interprocess = { version = "2.4.4", features = ["tokio"] }
+mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
+mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
+mkrew-store = { version = "0.1.0", path = "../mkrew-store" }
+serde = "1"
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sync", "signal"] }
+tracing = "0.1"
+tracing-appender = "0.2.5"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[target.'cfg(windows)'.dependencies]
+# SDDL string for the named pipe's security descriptor (`interprocess` takes a `U16CStr`).
+widestring = "1"
+
+[dev-dependencies]
+tempfile = "3"
+# Same major as mkrew-protocol so `Ulid` types match.
+ulid = "1"

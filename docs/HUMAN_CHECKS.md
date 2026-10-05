@@ -29,6 +29,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] (T0.8) Real key-to-glyph latency: the automated number (ADR 0001 "Measurements") uses
   synthetic keys written to the PTY and stops at paint end, so it misses OS input dispatch and
   GPU present. Optionally measure with a high-speed camera / `Typometer`-style tool.
+- [ ] (T1.5) The Unix branch of `mkrew-daemon/src/ipc.rs` (`try_overwrite`, Linux `mode`)
+  was never compiled here; the CI Linux job (T1.12) covers it.
 
 ## Questions with assumed defaults
 
@@ -103,6 +105,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   profiles go `starting` → `unknown` on first output. The send queue also delivers in
   `unknown` (otherwise a session we cannot read never gets input), one message at a time
   (the next one waits for PTY output). Tail size needs tuning with recorded agent output.
+- (T1.5) Daemon details: env overrides `MKREW_DATA_DIR` / `MKREW_CONFIG_DIR` (the `mkrew` dir
+  itself) and `MKREW_SOCKET` (endpoint; same var the PTYs get). A second daemon exits with code
+  2. Startup marks **every** non-`exited` session exited (incl. starting/done/unknown — no PTY
+  survives a restart), wider than SPEC §8's "working/needs_input/idle". Methods not built yet
+  answer `invalid_request`. Windows pipe DACL is `D:P(A;;GA;;;SY)(A;;GA;;;OW)` (SYSTEM + pipe
+  owner): a daemon started from an **elevated** shell is owned by Administrators, so a
+  non-elevated `mk`/UI of the same user may be refused — use the user SID if that matters.
+  Unix socket mode 0600 is set on Linux only (macOS rejects it before bind; relies on the
+  0700 runtime dir / data dir there).
 
 ## Done
 

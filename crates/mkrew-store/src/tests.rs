@@ -171,6 +171,32 @@ fn every_session_state_round_trips() {
 }
 
 #[test]
+fn stale_sessions_are_marked_exited() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let live = Session {
+        state: SessionState::Working,
+        ..session(p.id, 1)
+    };
+    let ended = Session {
+        state: SessionState::Exited,
+        exit_code: Some(0),
+        ended_at: Some(5),
+        ..session(p.id, 2)
+    };
+    store.insert_session(&live).unwrap();
+    store.insert_session(&ended).unwrap();
+
+    assert_eq!(store.mark_stale_sessions_exited().unwrap(), 1);
+    let listed = store.list_sessions(None).unwrap();
+    assert_eq!(listed[0].state, SessionState::Exited);
+    assert!(listed[0].ended_at.is_some());
+    assert_eq!(listed[1], ended);
+    assert_eq!(store.mark_stale_sessions_exited().unwrap(), 0);
+}
+
+#[test]
 fn update_unknown_session_errors() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

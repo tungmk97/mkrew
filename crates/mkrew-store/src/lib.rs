@@ -165,6 +165,16 @@ impl Store {
         Ok(())
     }
 
+    /// Marks every session not yet `exited` as exited (no PTY survives a daemon restart,
+    /// SPEC §8). Returns how many rows changed.
+    pub fn mark_stale_sessions_exited(&self) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE session SET state = 'exited', ended_at = COALESCE(ended_at, ?1)
+             WHERE state <> 'exited'",
+            [now_ms()],
+        )?)
+    }
+
     /// Sessions, oldest first, optionally limited to one project.
     pub fn list_sessions(&self, project_id: Option<Ulid>) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
