@@ -15,15 +15,17 @@ use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
     CommentReplyParams, CommentSendParams, CommentStatus, DaemonStatusResult, DocChangedEvent,
     DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff,
-    Frame, FrameDecoder, GitDiffParams, GitMode, GitSetBaseParams, GitStatus, GitStatusParams,
-    HelloParams, HelloResult, HookReportParams, Message, Outcome, PROTOCOL_VERSION, Project,
-    ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session,
-    SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind,
-    SessionListParams, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    Frame, FrameDecoder, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
+    GitDiscardParams, GitMode, GitSetBaseParams, GitStageParams, GitStatus, GitStatusParams,
+    HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION,
+    Project, ProjectAddParams, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
+    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
+    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
+    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
+    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
+    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
+    encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2279,6 +2281,164 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         mode: GitMode::Working,
     });
     assert_eq!(error_code(client.call(missing)), ErrorCode::NotFound);
+    client.stop();
+}
+
+/// T7.4: stage/unstage by path and by hunk, discard only when confirmed, commit; the watcher
+/// started by `git.status` reports index changes as `git.changed`.
+#[test]
+fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    let lines: Vec<String> = (1..=20).map(|n| format!("line {n}\n")).collect();
+    std::fs::write(repo.join("a.txt"), lines.concat()).unwrap();
+    std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let mut changed = lines.clone();
+    changed[1] = "line two\n".into();
+    changed[18] = "line nineteen\n".into();
+    std::fs::write(repo.join("a.txt"), changed.concat()).unwrap();
+    std::fs::write(repo.join("b.txt"), "b changed\n").unwrap();
+    std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let id = project.id;
+    let status = |client: &mut Client| -> GitStatus {
+        let request = Request::GitStatus(GitStatusParams {
+            project_id: id,
+            mode: GitMode::Working,
+        });
+        client.call(request).into_result().unwrap()
+    };
+    let names = |files: &[mkrew_protocol::ChangedFile]| -> Vec<String> {
+        files.iter().map(|f| f.path.clone()).collect()
+    };
+    let by_path = |paths: &[&str]| GitStageParams {
+        project_id: id,
+        paths: paths.iter().map(|&p| p.to_owned()).collect(),
+        hunk: None,
+    };
+    let by_hunk = |hunk: &mkrew_protocol::Hunk| GitStageParams {
+        project_id: id,
+        paths: vec![],
+        hunk: Some(HunkTarget {
+            path: "a.txt".into(),
+            hunk: hunk.clone(),
+        }),
+    };
+    let diff = |client: &mut Client, staged| -> FileDiff {
+        let request = Request::GitDiff(GitDiffParams {
+            project_id: id,
+            path: "a.txt".into(),
+            mode: GitMode::Working,
+            staged,
+            commit: None,
+        });
+        client.call(request).into_result().unwrap()
+    };
+    let changed_event = Event::GitChanged(GitChangedEvent { project_id: id });
+
+    // Changes made through the daemon are reported at once.
+    assert_eq!(names(&status(&mut client).unstaged), ["a.txt", "b.txt"]);
+    let _: () = client
+        .call(Request::GitStage(by_path(&["b.txt", "new.txt"])))
+        .into_result()
+        .unwrap();
+    client.wait_event(&changed_event);
+    let now = status(&mut client);
+    assert_eq!(names(&now.staged), ["b.txt", "new.txt"]);
+    assert!(now.untracked.is_empty());
+    let _: () = client
+        .call(Request::GitUnstage(by_path(&["new.txt"])))
+        .into_result()
+        .unwrap();
+    assert_eq!(names(&status(&mut client).untracked), ["new.txt"]);
+
+    // Stage the second hunk of a.txt only, then unstage it from the staged diff.
+    let unstaged = diff(&mut client, false).hunks;
+    assert_eq!(unstaged.len(), 2);
+    let _: () = client
+        .call(Request::GitStage(by_hunk(&unstaged[1])))
+        .into_result()
+        .unwrap();
+    let staged = diff(&mut client, true).hunks;
+    assert_eq!(staged.len(), 1);
+    assert_eq!(staged[0].lines, unstaged[1].lines);
+    assert_eq!(diff(&mut client, false).hunks, [unstaged[0].clone()]);
+    let _: () = client
+        .call(Request::GitUnstage(by_hunk(&staged[0])))
+        .into_result()
+        .unwrap();
+    assert_eq!(diff(&mut client, true).hunks, []);
+    // The same hunk again no longer applies.
+    assert_eq!(
+        error_code(client.call(Request::GitUnstage(by_hunk(&staged[0])))),
+        ErrorCode::Internal
+    );
+
+    // Discard only with confirm: a.txt back to the index, new.txt deleted.
+    let discard = |confirm| {
+        Request::GitDiscard(GitDiscardParams {
+            project_id: id,
+            paths: vec!["a.txt".into(), "new.txt".into()],
+            confirm,
+        })
+    };
+    assert_eq!(
+        error_code(client.call(discard(false))),
+        ErrorCode::InvalidRequest
+    );
+    assert!(repo.join("new.txt").exists());
+    let _: () = client.call(discard(true)).into_result().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+        lines.concat()
+    );
+    assert!(!repo.join("new.txt").exists());
+
+    // Commit the staged b.txt.
+    let commit = |message: &str| {
+        Request::GitCommit(GitCommitParams {
+            project_id: id,
+            message: message.into(),
+        })
+    };
+    let committed: GitCommitResult = client.call(commit("two")).into_result().unwrap();
+    assert_eq!(committed.commit, git(&repo, &["rev-parse", "HEAD"]));
+    assert_eq!(git(&repo, &["log", "-1", "--format=%s"]), "two");
+    let clean = status(&mut client);
+    assert!(clean.staged.is_empty() && clean.unstaged.is_empty() && clean.untracked.is_empty());
+
+    // `git.status` started the watcher: a commit made outside Mkrew (only `.git` changes) is
+    // reported too.
+    std::thread::sleep(Duration::from_millis(500));
+    client.call(Request::DaemonStatus);
+    client.events.clear();
+    git(&repo, &["commit", "-q", "--allow-empty", "-m", "outside"]);
+    client.wait_event(&changed_event);
+
+    for bad in [
+        commit("  \n"),
+        Request::GitStage(by_path(&[])),
+        Request::GitStage(by_path(&["../x"])),
+        Request::GitStage(GitStageParams {
+            hunk: by_hunk(&unstaged[0]).hunk,
+            ..by_path(&["a.txt"])
+        }),
+        Request::GitDiscard(GitDiscardParams {
+            project_id: id,
+            paths: vec![],
+            confirm: true,
+        }),
+    ] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
     client.stop();
 }
 

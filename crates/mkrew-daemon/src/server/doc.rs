@@ -84,7 +84,7 @@ impl Daemon {
             .get_project(project_id)
             .map_err(|e| store_outcome::<()>(Err(e)))?;
         self.hub
-            .watch_docs(project.id, &PathBuf::from(&project.path));
+            .keep_watched(project.id, &PathBuf::from(&project.path));
         Ok(project)
     }
 }

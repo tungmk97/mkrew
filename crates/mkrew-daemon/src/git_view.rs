@@ -87,7 +87,7 @@ impl Target {
 }
 
 impl GitCache {
-    fn repo(&self, git: &dyn GitBackend, dir: &Path) -> Result<Repo, ViewError> {
+    pub(crate) fn repo(&self, git: &dyn GitBackend, dir: &Path) -> Result<Repo, ViewError> {
         if let Some(repo) = lock(&self.repos).get(dir) {
             return Ok(repo.clone());
         }

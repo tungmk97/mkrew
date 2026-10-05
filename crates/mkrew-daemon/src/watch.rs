@@ -81,6 +81,30 @@ impl Filter {
         }
         Some(relative_path)
     }
+
+    /// `path` is a file of the root's `.git` dir that moves when commits, branches or the
+    /// index change (`HEAD`, `index`, `packed-refs`, `refs/…`): the git state changed even
+    /// when no working file did.
+    pub fn is_git_state(&self, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(self.root.join(".git")) else {
+            return false;
+        };
+        let mut parts = relative.components().map(|c| c.as_os_str());
+        match parts.next().and_then(|p| p.to_str()) {
+            Some("HEAD" | "index" | "packed-refs") => parts.next().is_none(),
+            Some("refs") => parts.next().is_some(),
+            _ => false,
+        }
+    }
+}
+
+/// One debounced batch of changes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Batch {
+    /// The changed files reported by [`Filter::relative`], sorted and de-duplicated.
+    pub files: Vec<String>,
+    /// A [`Filter::is_git_state`] file changed.
+    pub git: bool,
 }
 
 /// A running project watcher; dropping it stops watching (a pending batch is still delivered).
@@ -89,13 +113,11 @@ pub struct Watch {
 }
 
 /// Watches `root` recursively and calls `on_batch` with the sorted, de-duplicated relative
-/// paths of the files changed (created, modified, removed, renamed) in each batch. A removed
-/// directory cannot be told from a removed file, so it is reported too (T5.6 attributes such
-/// paths like files). Non-UTF-8 paths are skipped. Must run inside the tokio runtime.
-pub fn watch(
-    root: &Path,
-    on_batch: impl Fn(Vec<String>) + Send + 'static,
-) -> ::notify::Result<Watch> {
+/// paths of the files changed (created, modified, removed, renamed) in each batch, and whether
+/// the git state changed. A removed directory cannot be told from a removed file, so it is
+/// reported too (T5.6 attributes such paths like files). Non-UTF-8 paths are skipped. Must run
+/// inside the tokio runtime.
+pub fn watch(root: &Path, on_batch: impl Fn(Batch) + Send + 'static) -> ::notify::Result<Watch> {
     let (tx, rx) = mpsc::unbounded_channel();
     let mut watcher = ::notify::recommended_watcher(
         move |event: ::notify::Result<::notify::Event>| match event {
@@ -116,10 +138,12 @@ pub fn watch(
 async fn debounce(
     filter: Filter,
     mut rx: mpsc::UnboundedReceiver<Vec<PathBuf>>,
-    on_batch: impl Fn(Vec<String>),
+    on_batch: impl Fn(Batch),
 ) {
     let mut batch = BTreeSet::new();
-    let add = |batch: &mut BTreeSet<String>, paths: Vec<PathBuf>| {
+    let mut git = false;
+    let add = |batch: &mut BTreeSet<String>, git: &mut bool, paths: Vec<PathBuf>| {
+        *git |= paths.iter().any(|path| filter.is_git_state(path));
         // Files only: a directory "changes" whenever an entry in it does.
         batch.extend(paths.iter().filter_map(|path| {
             let is_dir = path.metadata().ok().map(|m| m.is_dir());
@@ -130,18 +154,21 @@ async fn debounce(
         }));
     };
     while let Some(paths) = rx.recv().await {
-        add(&mut batch, paths);
+        add(&mut batch, &mut git, paths);
         let deadline = tokio::time::Instant::now() + MAX_DELAY;
         let open = loop {
             let quiet_end = (tokio::time::Instant::now() + QUIET).min(deadline);
             match tokio::time::timeout_at(quiet_end, rx.recv()).await {
-                Ok(Some(paths)) => add(&mut batch, paths),
+                Ok(Some(paths)) => add(&mut batch, &mut git, paths),
                 Ok(None) => break false,
                 Err(_) => break true,
             }
         };
-        if !batch.is_empty() {
-            on_batch(std::mem::take(&mut batch).into_iter().collect());
+        if !batch.is_empty() || git {
+            on_batch(Batch {
+                files: std::mem::take(&mut batch).into_iter().collect(),
+                git: std::mem::take(&mut git),
+            });
         }
         if !open {
             break;
@@ -272,8 +299,9 @@ mod tests {
         let root = dir.path().to_path_buf();
         let (tx, rx) = mpsc::unbounded_channel();
         let (out_tx, mut out) = mpsc::unbounded_channel();
-        let task = tokio::spawn(debounce(Filter::new(&root), rx, move |batch| {
-            let _ = out_tx.send((tokio::time::Instant::now(), batch));
+        let task = tokio::spawn(debounce(Filter::new(&root), rx, move |batch: Batch| {
+            assert!(!batch.git);
+            let _ = out_tx.send((tokio::time::Instant::now(), batch.files));
         }));
         let start = tokio::time::Instant::now();
         tx.send(vec![root.join("b.rs"), root.join("target/x")])
@@ -319,6 +347,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn git_state_is_head_index_and_refs_of_the_root_git_dir() {
+        let (dir, filter) = filter("");
+        let git = dir.path().join(".git");
+        for state in [
+            "HEAD",
+            "index",
+            "packed-refs",
+            "refs/heads/main",
+            "refs/tags/v1",
+        ] {
+            assert!(filter.is_git_state(&git.join(state)), "{state}");
+        }
+        for other in [
+            "index.lock",
+            "refs",
+            "objects/ab/cdef",
+            "logs/HEAD",
+            "HEAD/x",
+        ] {
+            assert!(!filter.is_git_state(&git.join(other)), "{other}");
+        }
+        assert!(!filter.is_git_state(&dir.path().join("sub/.git/HEAD")));
+        assert!(!filter.is_git_state(&dir.path().join("HEAD")));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn debounce_flags_git_state_changes_without_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let (tx, rx) = mpsc::unbounded_channel();
+        let (out_tx, mut out) = mpsc::unbounded_channel();
+        let task = tokio::spawn(debounce(Filter::new(&root), rx, move |batch| {
+            let _ = out_tx.send(batch);
+        }));
+        tx.send(vec![root.join(".git/index.lock"), root.join(".git/index")])
+            .unwrap();
+        tx.send(vec![root.join(".git/objects/ab/cd")]).unwrap();
+        let batch = out.recv().await.unwrap();
+        assert_eq!(
+            batch,
+            Batch {
+                files: vec![],
+                git: true
+            }
+        );
+        // Reset after each batch.
+        tx.send(vec![root.join("a.rs")]).unwrap();
+        drop(tx);
+        task.await.unwrap();
+        assert_eq!(
+            out.recv().await.unwrap(),
+            Batch {
+                files: vec!["a.rs".into()],
+                git: false
+            }
+        );
+    }
+
     #[tokio::test]
     async fn watcher_reports_project_changes_but_not_ignored_ones() {
         let dir = tempfile::tempdir().unwrap();
@@ -345,7 +432,7 @@ mod tests {
                 .await
                 .expect("no batch with src/lib.rs")
                 .unwrap();
-            seen.extend(batch);
+            seen.extend(batch.files);
         }
         // Not `src` either, although creating `src/lib.rs` changes the directory.
         assert_eq!(seen, BTreeSet::from(["src/lib.rs".to_owned()]));

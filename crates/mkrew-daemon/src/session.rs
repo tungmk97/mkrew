@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
-    ConflictDetectedEvent, DocChangedEvent, DocComment, Event, HookReportParams, Session,
-    SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent, StateSource,
+    ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
+    Session, SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -160,11 +160,12 @@ fn coalesce(bytes: &mut Vec<u8>, output: &mut mpsc::Receiver<PtyEvent>) -> Optio
     None
 }
 
-/// A project's file watcher. `docs`: a client listed or read its docs, so it stays watched
-/// after its last session exits, until the daemon stops (HUMAN_CHECKS T6.4).
+/// A project's file watcher. `kept`: a client listed or read its docs or opened its Git view,
+/// so it stays watched after its last session exits, until the daemon stops (HUMAN_CHECKS
+/// T6.4).
 struct ProjectWatch {
     _watch: Watch,
-    docs: bool,
+    kept: bool,
 }
 
 /// The channels of one live session.
@@ -447,24 +448,30 @@ impl Hub {
         }
     }
 
-    /// Keeps project `project_id` (folder `root`) watched for doc changes until the daemon
-    /// stops, whether or not it has live sessions.
-    pub fn watch_docs(self: &Arc<Self>, project_id: Ulid, root: &Path) {
+    /// Keeps project `project_id` (folder `root`) watched for doc and git changes until the
+    /// daemon stops, whether or not it has live sessions.
+    pub fn keep_watched(self: &Arc<Self>, project_id: Ulid, root: &Path) {
         self.watch_project(project_id, root, true);
     }
 
-    /// Starts watching `root` for project `project_id` unless it is watched already; `docs`
-    /// keeps the watch after the project's last session exits.
-    fn watch_project(self: &Arc<Self>, project_id: Ulid, root: &Path, docs: bool) {
+    /// Starts watching `root` for project `project_id` unless it is watched already; `kept`
+    /// keeps the watch after the project's last session exits. Every batch also broadcasts
+    /// `git.changed`: a reported file or the git state changed.
+    fn watch_project(self: &Arc<Self>, project_id: Ulid, root: &Path, kept: bool) {
         let mut watches = lock(&self.watches);
         if let Some(watch) = watches.get_mut(&project_id) {
-            watch.docs |= docs;
+            watch.kept |= kept;
             return;
         }
         let hub = Arc::downgrade(self);
-        let started = watch::watch(root, move |paths| {
+        let started = watch::watch(root, move |batch| {
             if let Some(hub) = hub.upgrade() {
-                hub.files_changed(project_id, &paths);
+                if !batch.files.is_empty() {
+                    hub.files_changed(project_id, &batch.files);
+                }
+                let _ = hub
+                    .events
+                    .send(Event::GitChanged(GitChangedEvent { project_id }));
             }
         });
         match started {
@@ -472,7 +479,7 @@ impl Hub {
                 tracing::debug!(%project_id, root = %root.display(), "watching project files");
                 let watch = ProjectWatch {
                     _watch: watch,
-                    docs,
+                    kept,
                 };
                 watches.insert(project_id, watch);
             }
@@ -480,8 +487,8 @@ impl Hub {
         }
     }
 
-    /// Stops watching project `project_id` once none of its sessions is live, unless its docs
-    /// are watched. Its conflict tracker goes either way.
+    /// Stops watching project `project_id` once none of its sessions is live, unless it is
+    /// kept watched. Its conflict tracker goes either way.
     fn unwatch_idle_project(&self, project_id: Ulid) {
         let mut watches = lock(&self.watches);
         let live = lock(&self.live)
@@ -490,7 +497,7 @@ impl Hub {
         if live {
             return;
         }
-        if watches.get(&project_id).is_some_and(|w| !w.docs) {
+        if watches.get(&project_id).is_some_and(|w| !w.kept) {
             watches.remove(&project_id);
             tracing::debug!(%project_id, "stopped watching project files");
         }

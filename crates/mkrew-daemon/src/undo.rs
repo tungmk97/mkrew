@@ -183,6 +183,21 @@ mod tests {
         fn is_tracked(&self, _: &Path, _: &str) -> io::Result<bool> {
             unreachable!()
         }
+        fn stage(&self, _: &Path, _: &[String]) -> io::Result<()> {
+            unreachable!()
+        }
+        fn unstage(&self, _: &Path, _: &[String]) -> io::Result<()> {
+            unreachable!()
+        }
+        fn apply_cached(&self, _: &Path, _: &Repo, _: &str, _: bool) -> io::Result<()> {
+            unreachable!()
+        }
+        fn discard(&self, _: &Path, _: &[String]) -> io::Result<()> {
+            unreachable!()
+        }
+        fn commit(&self, _: &Path, _: &str) -> io::Result<String> {
+            unreachable!()
+        }
     }
 
     #[test]

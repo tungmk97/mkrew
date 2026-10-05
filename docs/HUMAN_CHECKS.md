@@ -15,6 +15,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+- [ ] (T7.4) **Build machine:** a leftover `mkrew-fakeagent.exe` process (probably from a test
+      daemon that survived a killed run) locks `target\debug\mkrew-fakeagent.exe`, so
+      `scripts/verify.sh` fails to relink it ("Access is denied"). Please end stray
+      `mkrew-fakeagent.exe` / `mkrew-daemon.exe` processes. Also, drive C: has only ~7 GB free,
+      and a second target dir filled it up during T7.4 (LNK1318).
+
 - [ ] (T0.1) Run `pwsh scripts/verify.ps1` once. The headless session was not allowed to run
   `pwsh`; `bash scripts/verify.sh` (same fmt/clippy/test steps) passed on Windows.
 - [x] (T0.2) Before T0.8 (measurements, release build): install the Windows SDK so `fxc.exe`
@@ -988,6 +994,20 @@ _Decisions the agent made on its own. Override them here if you disagree._
   HEAD + file mtime/size + index mtime (staging invalidates it), 256 entries then cleared;
   commit diffs = `git show --diff-merges=first-parent` (needs git ≥ 2.31). Status uses
   `--untracked-files=all` and `GIT_OPTIONAL_LOCKS=0`.
+- (T7.4) **git.stage/unstage/discard/commit + git.changed:** stage = `git add -A`, unstage =
+  `git reset -q` (also on an unborn branch), paths on stdin (`--pathspec-from-file`, literal;
+  needs git ≥ 2.26); a hunk = `git apply --cached [-R]` with `--directory=<repo prefix>` (the
+  client must stage new/deleted/untracked files by path, see T7.2). **Discard** = lose the
+  *unstaged* changes only: tracked files go back to their index version, untracked ones are
+  deleted (`git clean`, ignored files never); staged changes are kept. **Commit** = the whole
+  index (also changes staged outside a subfolder project), hooks run, no amend. A stale hunk or
+  "nothing to commit" comes back as `internal` with git's message (not `invalid_state`).
+  `git.changed`: every watcher batch (working files or root `.git/{HEAD,index,packed-refs,refs/…}`)
+  + right after each successful daemon mutation, so two events may come < 300 ms apart.
+  `git.status` keeps the project watched until the daemon stops (like docs). Outside changes to a
+  `.git` dir outside the project folder (repo subfolder, worktree) only show via working-file
+  changes. Open review items: discard runs one `ls-files` per path; paths are `trim()`med
+  (`docs::relative_path`).
 
 ## Done
 

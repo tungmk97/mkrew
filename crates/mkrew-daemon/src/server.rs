@@ -331,6 +331,10 @@ impl Daemon {
             Request::GitSetBase(params) => (self.git_set_base(params), After::Continue),
             Request::GitStatus(params) => (self.git_status(params).await, After::Continue),
             Request::GitDiff(params) => (self.git_diff(params).await, After::Continue),
+            Request::GitStage(params) => (self.git_stage(params, false).await, After::Continue),
+            Request::GitUnstage(params) => (self.git_stage(params, true).await, After::Continue),
+            Request::GitDiscard(params) => (self.git_discard(params).await, After::Continue),
+            Request::GitCommit(params) => (self.git_commit(params).await, After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

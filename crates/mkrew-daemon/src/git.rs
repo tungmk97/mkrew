@@ -54,6 +54,22 @@ pub trait GitBackend: Send + Sync {
 
     /// `path` is in the index.
     fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool>;
+
+    /// Stages the whole `paths` (relative to `dir`): new, modified and deleted files.
+    fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
+
+    /// Puts the index entries of `paths` back to HEAD (out of the index before the first
+    /// commit); the working copies are kept.
+    fn unstage(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
+
+    /// `git apply --cached [-R]` of `patch`, whose paths are relative to `dir`.
+    fn apply_cached(&self, dir: &Path, repo: &Repo, patch: &str, reverse: bool) -> io::Result<()>;
+
+    /// Working copies of the tracked `paths` back to their index version.
+    fn discard(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
+
+    /// Commits the index (never amends); returns the new commit.
+    fn commit(&self, dir: &Path, message: &str) -> io::Result<String>;
 }
 
 /// A repository as seen from a folder inside it.
@@ -307,6 +323,78 @@ impl GitBackend for GitCli {
         command.args(["--literal-pathspecs", "ls-files", "-z", "--", path]);
         Ok(!run(command)?.is_empty())
     }
+
+    fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
+        let mut command = git(dir);
+        command.args(["--literal-pathspecs", "add", "-A"]);
+        run_with_paths(command, paths)
+    }
+
+    fn unstage(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
+        let mut command = git(dir);
+        // Also works on an unborn branch (the paths leave the index).
+        command.args(["--literal-pathspecs", "reset", "-q"]);
+        run_with_paths(command, paths)
+    }
+
+    fn apply_cached(&self, dir: &Path, repo: &Repo, patch: &str, reverse: bool) -> io::Result<()> {
+        let mut command = git(dir);
+        command.args(["apply", "--cached"]);
+        if reverse {
+            command.arg("-R");
+        }
+        // Patch paths are read from the repo root.
+        let prefix = repo.prefix.trim_end_matches('/');
+        if !prefix.is_empty() {
+            command.arg(format!("--directory={prefix}"));
+        }
+        command.arg("-");
+        run_with_input(command, patch.as_bytes()).map(drop)
+    }
+
+    fn discard(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
+        let mut command = git(dir);
+        command.args(["--literal-pathspecs", "restore", "--worktree"]);
+        run_with_paths(command, paths)
+    }
+
+    fn commit(&self, dir: &Path, message: &str) -> io::Result<String> {
+        let mut command = git(dir);
+        command.args(["commit", "-q", "-F", "-"]);
+        run_with_input(command, message.as_bytes())?;
+        self.head(dir)?
+            .ok_or_else(|| io::Error::other("git commit left no HEAD"))
+    }
+}
+
+/// Runs `command` with `paths` passed NUL-separated on stdin (no command-line length limit).
+fn run_with_paths(mut command: Command, paths: &[String]) -> io::Result<()> {
+    command.args(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(path.as_bytes());
+        input.push(0);
+    }
+    run_with_input(command, &input).map(drop)
+}
+
+/// [`run`] with `input` written to stdin. Git reads all of it before writing much, so writing
+/// first and reading afterwards cannot deadlock.
+fn run_with_input(mut command: Command, input: &[u8]) -> io::Result<Vec<u8>> {
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write as _;
+        match stdin.write_all(input) {
+            // Git exited early (e.g. a bad patch): its stderr says why.
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {}
+            result => result?,
+        }
+    }
+    failed_unless_success(child.wait_with_output()?)
 }
 
 /// `git diff` (or `git show` for [`Side::Commit`]) between the trees of `side`, before the
@@ -347,10 +435,18 @@ fn view_git(dir: &Path) -> Command {
 
 /// Runs `command`; a failure becomes an error carrying git's stderr.
 fn run(mut command: Command) -> io::Result<Vec<u8>> {
-    let output = command.stderr(Stdio::piped()).output()?;
+    failed_unless_success(command.stderr(Stdio::piped()).output()?)
+}
+
+/// The output's stdout, or an error carrying git's stderr (its stdout when stderr is empty,
+/// e.g. `git commit` with nothing staged).
+fn failed_unless_success(output: std::process::Output) -> io::Result<Vec<u8>> {
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::other(format!("git failed: {}", stderr.trim())));
+        let mut message = String::from_utf8_lossy(&output.stderr);
+        if message.trim().is_empty() {
+            message = String::from_utf8_lossy(&output.stdout);
+        }
+        return Err(io::Error::other(format!("git failed: {}", message.trim())));
     }
     Ok(output.stdout)
 }
@@ -491,6 +587,92 @@ mod tests {
             std::fs::read_to_string(root.join("outside.txt")).unwrap(),
             "b\n"
         );
+    }
+
+    /// `git diff` output of `dir` for one side, for building hunk patches.
+    fn hunks(dir: &Path, path: &str, side: Side<'_>) -> Vec<mkrew_protocol::Hunk> {
+        let text = GitCli.file_diff(dir, path, side).unwrap();
+        let mut files = mkrew_core::git::parse_diff(&text);
+        assert_eq!(files.len(), 1, "{text}");
+        files.remove(0).hunks
+    }
+
+    /// The project is a subfolder: hunk patches get the repo prefix; stage/unstage by path
+    /// works before the first commit; discard keeps the index; commit returns the new HEAD.
+    #[test]
+    fn stage_unstage_discard_and_commit_in_a_subfolder() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let dir = root.join("app");
+        std::fs::create_dir(&dir).unwrap();
+        run(root, &["init", "-q"]);
+        run(root, &["config", "core.autocrlf", "false"]);
+        run(root, &["config", "user.name", "t"]);
+        run(root, &["config", "user.email", "t@t"]);
+        run(root, &["config", "commit.gpgsign", "false"]);
+        let lines: Vec<String> = (1..=20).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(dir.join("a b.txt"), lines.concat()).unwrap();
+        std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+        let paths = |names: &[&str]| names.iter().map(|&n| n.to_owned()).collect::<Vec<_>>();
+        let staged = || run(root, &["diff", "--cached", "--name-only"]);
+
+        // Unborn branch: by path in and out of the index again.
+        GitCli.stage(&dir, &paths(&["a b.txt", "c.txt"])).unwrap();
+        assert_eq!(staged(), "app/a b.txt\napp/c.txt");
+        GitCli.unstage(&dir, &paths(&["c.txt"])).unwrap();
+        assert_eq!(staged(), "app/a b.txt");
+        let first = GitCli.commit(&dir, "one\n\nbody").unwrap();
+        assert_eq!(GitCli.head(&dir).unwrap(), Some(first.clone()));
+        assert_eq!(run(root, &["log", "-1", "--format=%B"]), "one\n\nbody");
+
+        // Two hunks; stage only the second, then unstage it with the staged diff's hunk.
+        let mut changed = lines.clone();
+        changed[1] = "line two\n".into();
+        changed[18] = "line nineteen\n".into();
+        std::fs::write(dir.join("a b.txt"), changed.concat()).unwrap();
+        let unstaged = hunks(&dir, "a b.txt", Side::Unstaged);
+        assert_eq!(unstaged.len(), 2);
+        let repo_info = GitCli.repo(&dir).unwrap().unwrap();
+        let patch = mkrew_core::git::hunk_patch("a b.txt", &unstaged[1]);
+        GitCli
+            .apply_cached(&dir, &repo_info, &patch, false)
+            .unwrap();
+        let index = hunks(&dir, "a b.txt", Side::Staged);
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].lines, unstaged[1].lines);
+        assert_eq!(
+            hunks(&dir, "a b.txt", Side::Unstaged),
+            [unstaged[0].clone()]
+        );
+        let patch = mkrew_core::git::hunk_patch("a b.txt", &index[0]);
+        GitCli.apply_cached(&dir, &repo_info, &patch, true).unwrap();
+        assert_eq!(staged(), "");
+        // A hunk that no longer matches is refused with git's reason.
+        let error = GitCli
+            .apply_cached(&dir, &repo_info, &patch, true)
+            .unwrap_err();
+        assert!(error.to_string().starts_with("git failed: "), "{error}");
+
+        // Stage one hunk, then discard: the working copy goes back to the index.
+        let patch = mkrew_core::git::hunk_patch("a b.txt", &unstaged[0]);
+        GitCli
+            .apply_cached(&dir, &repo_info, &patch, false)
+            .unwrap();
+        GitCli.discard(&dir, &paths(&["a b.txt"])).unwrap();
+        let mut expected = lines.clone();
+        expected[1] = "line two\n".into();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a b.txt")).unwrap(),
+            expected.concat()
+        );
+        assert_eq!(staged(), "app/a b.txt");
+
+        let second = GitCli.commit(&dir, "two").unwrap();
+        assert_ne!(second, first);
+        assert_eq!(staged(), "");
+        // Nothing staged: git's explanation is on stdout.
+        let error = GitCli.commit(&dir, "three").unwrap_err().to_string();
+        assert!(error.len() > "git failed: ".len(), "{error}");
     }
 
     #[test]
