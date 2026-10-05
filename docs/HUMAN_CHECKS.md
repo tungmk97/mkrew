@@ -318,6 +318,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   updates within ~1 s; delete it → "This file was deleted."; "Open in Zed" / Ctrl+Shift+Z
   opens the file (without `zed` installed → the install hint shows under the header). Empty
   workspace → "No Markdown files to review yet." + "Show terminals". Screenshots for §14.
+- [ ] (T6.9) **Docs comments** (logic covered by `comments.rs` unit tests + `tests/docs_view.rs`;
+  the margin was never seen): in Docs, click a paragraph (highlighted), Shift+click a later
+  block → both picked; "Comment" / Ctrl+Alt+M → draft in the margin with "Lines a–b"; type,
+  Enter → thread appears, the file's "N open" badge goes up. Same in Source view by clicking
+  line numbers/lines. Hover a thread → Reply / Resolve; reply with Enter; Resolve → "✓
+  Resolved" (dimmed), Reopen brings it back. Esc drops a draft. Edit the passage away in Zed →
+  "⚠ Outdated"; `mk comment reply` from a session → reply shows live with "↩ Addressed".
+  On a layout where Ctrl+Alt+M is AltGr+M (e.g. German "µ"), typing in a draft still inserts
+  the character. Dark + light screenshots for §14.
 
 ## Questions with assumed defaults
 
@@ -887,6 +896,23 @@ _Decisions the agent made on its own. Override them here if you disagree._
   interactive but do nothing; the selected row / active Preview-Source segment use
   `surface_raised` (same as hover) instead of an accent tint; `docs` entries of removed
   workspaces are never pruned.
+- (T6.9) **Comment selection = lines, not characters:** GPUI text has no built-in selection,
+  so "select text" picks whole lines: a click on a top-level preview block (a whole list or
+  table counts as one block) or on a source line; Shift+click extends to cover both. The quote
+  is the selected source lines, trimmed (Markdown syntax included — the daemon re-anchors on
+  the raw file). Use Source view for finer anchors. Threads are listed in the right margin in
+  anchor order (not pixel-aligned next to their anchor); clicking a thread's "Lines a–b"
+  selects those lines. Enter saves a draft (no multi-line typing; pasted line breaks are
+  kept). Resolve is offered on every unresolved thread (incl. outdated), Reopen only on
+  resolved ones; resolved threads hide Reply. Selection highlight reuses the
+  `terminal_selection_bg` token. See ADR 0006 (SPEC §12 amended). The quote is taken when
+  the draft opens; the margin stays while the doc is re-read after an edit. Open review
+  items: Reply/Resolve are hover-revealed (also shown on a picked thread / while replying)
+  and not keyboard-reachable; nothing clears a selection (no Esc / empty-space click); a
+  click on a (future clickable) link also picks its block; agent replies show the raw
+  profile id as author; the 300 px margin never collapses on narrow windows; A→B→A file
+  switches can let a stale `comment.list` answer drop an update in between (narrow window);
+  a double click on Resolve sends it twice (harmless).
 
 ## Done
 

@@ -60,6 +60,8 @@ pub enum Command {
     ShowDocs,
     /// Docs only: switch between the rendered preview and the source with line numbers.
     ToggleDocSource,
+    /// Docs only: comment on the selected lines.
+    AddComment,
     /// Open the new task dialog for the active workspace.
     NewTask,
     /// Board only: run the selected Todo card.
@@ -121,6 +123,7 @@ impl Command {
             Command::ShowTerminals,
             Command::ShowDocs,
             Command::ToggleDocSource,
+            Command::AddComment,
             Command::NewTask,
             Command::RunTask,
         ]);
@@ -164,6 +167,7 @@ impl Command {
             Command::ShowTerminals => "show_terminals".into(),
             Command::ShowDocs => "show_docs".into(),
             Command::ToggleDocSource => "toggle_doc_source".into(),
+            Command::AddComment => "add_comment".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
         }
@@ -212,6 +216,7 @@ impl Command {
             Command::ShowTerminals => "ctrl-shift-2".into(),
             Command::ShowDocs => "ctrl-shift-3".into(),
             Command::ToggleDocSource => "ctrl-shift-e".into(),
+            Command::AddComment => "ctrl-alt-m".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
         }
@@ -226,7 +231,7 @@ impl Command {
             | Command::PageDown
             | Command::Find => Some(TERMINAL_CONTEXT),
             Command::RunTask => Some(BOARD_CONTEXT),
-            Command::ToggleDocSource => Some(DOCS_CONTEXT),
+            Command::ToggleDocSource | Command::AddComment => Some(DOCS_CONTEXT),
             _ => None,
         }
     }
@@ -489,6 +494,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
         assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowDocs));
         assert_eq!(bound("ctrl-shift-e"), Some(Command::ToggleDocSource));
+        assert_eq!(bound("ctrl-alt-m"), Some(Command::AddComment));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(
@@ -513,6 +519,7 @@ mod tests {
         assert_eq!(Command::RunTask.context(), Some(BOARD_CONTEXT));
         // Ctrl+Shift+E only toggles while Docs are shown; terminals still get it.
         assert_eq!(Command::ToggleDocSource.context(), Some(DOCS_CONTEXT));
+        assert_eq!(Command::AddComment.context(), Some(DOCS_CONTEXT));
     }
 
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted

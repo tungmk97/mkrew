@@ -19,14 +19,16 @@ use gpui::{
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    AgentProfilesResult, DocContent, DocFile, DocListParams, DocReadParams, Event, Outcome,
-    Project, ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory,
-    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
-    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
-    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    AgentProfilesResult, CommentId, CommentListParams, CommentRef, DocComment, DocContent, DocFile,
+    DocListParams, DocReadParams, Event, Outcome, Project, ProjectAddParams, Request, Session,
+    SessionAttachResult, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
+    SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams,
+    TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
+    TerminalTab, UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
+use mkrew_ui::comments::{self, Selection, Thread};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::follow_up::{self, FollowUp};
@@ -187,6 +189,8 @@ struct Shell {
     views: HashMap<Ulid, View>,
     /// The Docs view of every workspace it was shown for.
     docs: HashMap<Ulid, Docs>,
+    /// Focused while a Docs comment or reply draft takes keys (the draft stays on blur).
+    comment_focus: FocusHandle,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
@@ -382,6 +386,7 @@ impl Shell {
             _follow_up_blur: follow_up_blur,
             views: HashMap::new(),
             docs: HashMap::new(),
+            comment_focus: cx.focus_handle(),
             task_dialog: None,
             undo_dialog: None,
             history: None,
@@ -829,7 +834,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// `doc.read`; the answer is dropped if another file got selected meanwhile.
+    /// `doc.read` (and `comment.list` for a newly shown file); the answer is dropped if
+    /// another file got selected meanwhile.
     fn read_doc(
         &mut self,
         project_id: Ulid,
@@ -840,6 +846,13 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        let list = self
+            .docs
+            .get_mut(&project_id)
+            .and_then(|docs| docs.comments.begin_list(&file_path));
+        if let Some(file_path) = list {
+            self.load_comments(project_id, file_path, window, cx);
+        }
         let read = connection.call::<DocContent>(Request::DocRead(DocReadParams {
             project_id,
             file_path: file_path.clone(),
@@ -902,6 +915,220 @@ impl Shell {
             }
         };
         cx.notify();
+    }
+
+    /// `comment.list` of the shown doc; `comment.updated` keeps it live afterwards.
+    fn load_comments(
+        &mut self,
+        project_id: Ulid,
+        file_path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let listed = connection.call::<Vec<DocComment>>(Request::CommentList(CommentListParams {
+            project_id,
+            file_path: Some(file_path.clone()),
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let listed = listed.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update(cx, |shell, cx| {
+                if let Err(error) = &listed {
+                    tracing::warn!(%project_id, file_path, "comment.list failed: {error}");
+                }
+                if let Some(docs) = shell.docs.get_mut(&project_id) {
+                    docs.comments.listed(&file_path, listed);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The comment or reply being typed in the active workspace's Docs view, while its field is
+    /// on screen (the margin shows with the doc, also while it is re-read).
+    fn comment_draft(&self) -> Option<&comments::Draft> {
+        if self.view() != View::Docs {
+            return None;
+        }
+        let docs = self.docs.get(&self.workspace?)?;
+        if !margin_shown(&docs.doc) {
+            return None;
+        }
+        docs.comments.draft.as_ref()
+    }
+
+    /// A click on lines `start..=end` of the shown doc (Shift extends the selection).
+    fn pick_doc_lines(
+        &mut self,
+        project_id: Ulid,
+        start: u32,
+        end: u32,
+        extend: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(docs) = self.docs.get_mut(&project_id) {
+            docs.comments.pick(start, end, extend);
+            cx.notify();
+        }
+    }
+
+    /// "Add comment" (Ctrl+Alt+M): a draft in the margin for the selected lines.
+    fn start_comment(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(Docs { doc, comments, .. }) = self.docs.get_mut(&project_id) else {
+            return;
+        };
+        if let Doc::Shown(shown) = doc
+            && comments.start_comment(&shown.lines)
+        {
+            window.focus(&self.comment_focus, cx);
+            cx.notify();
+        }
+    }
+
+    fn start_reply(
+        &mut self,
+        project_id: Ulid,
+        root: CommentId,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(docs) = self.docs.get_mut(&project_id) {
+            docs.comments.start_reply(root);
+            window.focus(&self.comment_focus, cx);
+            cx.notify();
+        }
+    }
+
+    fn close_comment_draft(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
+            docs.comments.draft = None;
+        }
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
+    }
+
+    /// Keys typed in a comment draft: Enter saves, Esc drops it.
+    fn comment_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == DialogKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let Some(draft) = self
+            .docs
+            .get_mut(&project_id)
+            .and_then(|docs| docs.comments.draft.as_mut())
+        else {
+            return;
+        };
+        if let Some(text) = paste {
+            draft.insert(&text);
+        }
+        match draft.key(key) {
+            comments::Outcome::Edited => cx.notify(),
+            comments::Outcome::Cancel => self.close_comment_draft(window, cx),
+            comments::Outcome::Submit => self.submit_comment(project_id, window, cx),
+        }
+    }
+
+    /// `comment.create` / `comment.reply` of the draft; saved → the draft closes.
+    fn submit_comment(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(comments) = self
+            .docs
+            .get_mut(&project_id)
+            .map(|docs| &mut docs.comments)
+        else {
+            return;
+        };
+        let Some(serial) = comments.draft.as_ref().map(|draft| draft.serial) else {
+            return;
+        };
+        let Some(request) = comments.submit(project_id) else {
+            return;
+        };
+        cx.notify();
+        let saved = connection.call::<DocComment>(request);
+        cx.spawn_in(window, async move |this, cx| {
+            let saved = saved.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &saved {
+                    tracing::warn!(%project_id, "saving a comment failed: {error}");
+                }
+                let ok = saved.is_ok();
+                if let Some(docs) = shell.docs.get_mut(&project_id) {
+                    let saved = saved.map_err(|error| format!("Cannot save: {error}"));
+                    docs.comments.submitted(serial, saved);
+                }
+                if ok && shell.comment_focus.is_focused(window) && shell.comment_draft().is_none() {
+                    window.focus(&shell.focus_handle, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Resolve (or Reopen) the thread of `root`; the answer updates it like `comment.updated`.
+    fn set_comment_status(
+        &mut self,
+        project_id: Ulid,
+        root: CommentId,
+        resolve: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let params = CommentRef { comment_id: root };
+        let request = if resolve {
+            Request::CommentResolve(params)
+        } else {
+            Request::CommentReopen(params)
+        };
+        let changed = connection.call::<DocComment>(request);
+        cx.spawn_in(window, async move |this, cx| {
+            let changed = changed.await;
+            let _ = this.update(cx, |shell, cx| {
+                let Some(docs) = shell.docs.get_mut(&project_id) else {
+                    return;
+                };
+                match changed {
+                    Ok(comment) => {
+                        docs.comments.error = None;
+                        docs.comments.apply_event(project_id, &comment);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%project_id, %root, "comment status change failed: {error:#}");
+                        let what = if resolve { "resolve" } else { "reopen" };
+                        docs.comments.error = Some(format!("Cannot {what}: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
@@ -1914,6 +2141,14 @@ impl Shell {
             self.follow_up = None;
             window.focus(&self.focus_handle, cx);
         }
+        // Same for a Docs comment draft (Ctrl+Alt+M is AltGr+M on many layouts).
+        if self.comment_focus.is_focused(window) {
+            if self.comment_draft().is_some() {
+                cx.propagate();
+                return;
+            }
+            window.focus(&self.focus_handle, cx);
+        }
         if self.view() != View::Terminals {
             match *command {
                 // Opening or picking a tab or pane shows the terminals.
@@ -2026,6 +2261,12 @@ impl Shell {
                 if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
                     docs.toggle_mode();
                     cx.notify();
+                }
+            }
+            Command::AddComment => {
+                // Only bound while Docs are shown.
+                if let Some(project_id) = self.workspace {
+                    self.start_comment(project_id, window, cx);
                 }
             }
             Command::NewTask => {
@@ -2744,7 +2985,7 @@ impl Shell {
             .child(self.render_view_bar(view, theme, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
-            (View::Docs, _) => main.child(self.render_docs(project_id, theme, cx)),
+            (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
                 .child(self.render_tab(tabs, now, theme, cx)),
@@ -2898,6 +3139,7 @@ impl Shell {
         &self,
         project_id: Ulid,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let empty = |sentence: &str, detail: Option<String>| {
@@ -2969,16 +3211,18 @@ impl Shell {
                         doc_row(project_id, file, shown, theme, cx)
                     })),
             )
-            .child(self.render_doc(project_id, docs, theme, cx))
+            .child(self.render_doc(project_id, docs, theme, window, cx))
             .into_any_element()
     }
 
-    /// The selected doc: its path, Preview / Source and Open in Zed, then its content.
+    /// The selected doc: its path, Preview / Source, Comment and Open in Zed, then its content
+    /// (blocks / lines are picked by clicking) with the comment threads in the right margin.
     fn render_doc(
         &self,
         project_id: Ulid,
         docs: &Docs,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         let panel = div()
@@ -3017,6 +3261,7 @@ impl Shell {
                     .child(file_path.clone()),
             )
             .child(self.doc_mode_toggle(project_id, docs.mode, theme, cx))
+            .child(self.add_comment_button(project_id, docs, theme, cx))
             .child(
                 button("doc-zed", "Open in Zed", theme, false)
                     .flex_none()
@@ -3060,12 +3305,26 @@ impl Shell {
                         .flex_1()
                         .into_any_element()
                 }
-                Mode::Source => preview::source("doc-source", Rc::clone(shown), theme)
+                Mode::Source => {
+                    let this = cx.entity().downgrade();
+                    let on_line: preview::OnLine = Rc::new(move |line, extend, _, cx| {
+                        let _ = this.update(cx, |shell, cx| {
+                            shell.pick_doc_lines(project_id, line, line, extend, cx);
+                        });
+                    });
+                    preview::source(
+                        "doc-source",
+                        Rc::clone(shown),
+                        docs.comments.selection,
+                        on_line,
+                        theme,
+                    )
                     .flex_1()
                     .min_h_0()
                     .px(px(space::L))
                     .pb(px(space::L))
-                    .into_any_element(),
+                    .into_any_element()
+                }
                 Mode::Preview => div()
                     .id("doc-preview")
                     .flex_1()
@@ -3080,11 +3339,19 @@ impl Shell {
                             .flex_col()
                             .gap(px(space::M))
                             .text_size(px(font_size::BODY))
-                            .children(preview::blocks(&shown.blocks, theme)),
+                            .children(preview_blocks(
+                                project_id,
+                                &shown.blocks,
+                                docs.comments.selection,
+                                theme,
+                                cx,
+                            )),
                     )
                     .into_any_element(),
             },
         };
+        let margin = margin_shown(&docs.doc)
+            .then(|| self.render_comments(project_id, docs, theme, window, cx));
         panel
             .child(header)
             .children(docs.zed_error.clone().map(|error| {
@@ -3092,7 +3359,336 @@ impl Shell {
                     .px(px(space::L))
                     .pb(px(space::S))
             }))
-            .child(body)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(body),
+                    )
+                    .children(margin),
+            )
+    }
+
+    /// "Comment" (Ctrl+Alt+M): enabled once lines are selected.
+    fn add_comment_button(
+        &self,
+        project_id: Ulid,
+        docs: &Docs,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let keys = self.keymap.label(Command::AddComment);
+        let ready = matches!(docs.doc, Doc::Shown(_)) && docs.comments.selection.is_some();
+        if !ready {
+            return disabled_button("doc-comment", "Comment", theme, false)
+                .flex_none()
+                .tooltip(tooltip(theme, "Select lines first, then comment", keys));
+        }
+        button("doc-comment", "Comment", theme, false)
+            .flex_none()
+            .tooltip(tooltip(theme, "Comment on the selected lines", keys))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.start_comment(project_id, window, cx);
+            }))
+    }
+
+    /// The right margin (SPEC §12): the new-comment draft, then every thread of the file in
+    /// anchor order with its replies, Reply and Resolve / Reopen.
+    fn render_comments(
+        &self,
+        project_id: Ulid,
+        docs: &Docs,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let comments = &docs.comments;
+        let focused = self.comment_focus.is_focused(window);
+        let margin = div()
+            .id("doc-comments")
+            .flex_none()
+            .w(px(theme::DOC_MARGIN_WIDTH))
+            .h_full()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .pr(px(space::L))
+            .pb(px(space::L))
+            .text_size(px(font_size::BODY));
+        let new_draft = comments
+            .draft
+            .as_ref()
+            .and_then(|draft| match draft.target {
+                comments::Target::New(selection) => Some((draft, selection)),
+                comments::Target::Reply(_) => None,
+            });
+        let margin = margin.children(new_draft.map(|(draft, selection)| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(space::S))
+                .p(px(space::M))
+                .rounded(px(radius::MEDIUM))
+                .bg(rgb(theme.surface_raised))
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(comments::lines_label(selection.start, selection.end)),
+                )
+                .child(self.comment_field(
+                    draft,
+                    "Add a comment… (Enter saves)",
+                    focused,
+                    theme,
+                    cx,
+                ))
+        }));
+        let list =
+            match &comments.list {
+                comments::List::Loading => {
+                    return margin.child(meta_line(theme, "Loading comments…".into()));
+                }
+                comments::List::Failed(error) => {
+                    let file_path = comments.file_path.clone().unwrap_or_default();
+                    return margin
+                        .child(notice(
+                            theme.text,
+                            format!("✕ Cannot load comments: {error}"),
+                        ))
+                        .child(button("comments-retry", "Retry", theme, false).on_click(
+                            cx.listener(move |shell, _, window, cx| {
+                                let list = shell
+                                    .docs
+                                    .get_mut(&project_id)
+                                    .and_then(|docs| docs.comments.begin_list(&file_path));
+                                if let Some(file_path) = list {
+                                    shell.load_comments(project_id, file_path, window, cx);
+                                }
+                            }),
+                        ));
+                }
+                comments::List::Loaded(list) => list,
+            };
+        let threads = comments::threads(list);
+        let margin = margin.children(
+            comments
+                .error
+                .clone()
+                .map(|error| notice(theme.text, format!("✕ {error}"))),
+        );
+        if threads.is_empty() && new_draft.is_none() {
+            let keys = self.keymap.label(Command::AddComment);
+            return margin.child(meta_line(
+                theme,
+                format!("Select lines, then comment ({keys}).").into(),
+            ));
+        }
+        margin.children(
+            threads
+                .into_iter()
+                .map(|thread| self.comment_thread(project_id, &thread, docs, focused, theme, cx)),
+        )
+    }
+
+    /// One thread: anchor (click selects its lines), status, messages, then Reply and
+    /// Resolve / Reopen (revealed on hover, like other secondary actions).
+    fn comment_thread(
+        &self,
+        project_id: Ulid,
+        thread: &Thread<'_>,
+        docs: &Docs,
+        focused: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let root = thread.root;
+        let root_id = root.id;
+        let group = SharedString::from(format!("thread-{root_id}"));
+        let (icon, word) = comments::status_label(root.status);
+        let resolved = root.status == mkrew_protocol::CommentStatus::Resolved;
+        let lines = root.start_line.zip(root.end_line);
+        let anchor = lines.map_or_else(String::new, |(start, end)| {
+            comments::lines_label(start, end)
+        });
+        let picked = lines
+            .is_some_and(|(start, end)| docs.comments.selection == Some(Selection { start, end }));
+        let reply_draft = docs
+            .comments
+            .draft
+            .as_ref()
+            .filter(|draft| draft.target == comments::Target::Reply(root_id));
+        // The icon and word carry the status; only "outdated" warns (like conflict badges).
+        let status_color = match root.status {
+            mkrew_protocol::CommentStatus::Outdated => theme.status_needs_input,
+            _ => theme.text_muted,
+        };
+        let entry = |comment: &DocComment| {
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(if comment.author == DocComment::USER {
+                            "You".to_owned()
+                        } else {
+                            comment.author.clone()
+                        }),
+                )
+                .child(
+                    div()
+                        .text_color(rgb(theme.text))
+                        .child(comment.body.clone()),
+                )
+        };
+        let actions = div()
+            .flex()
+            .gap(px(space::XS))
+            // Also shown on the picked thread (its anchor was clicked) and while replying.
+            .opacity(if picked || reply_draft.is_some() {
+                opacity::FULL
+            } else {
+                opacity::HIDDEN
+            })
+            .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+            .when(!resolved && reply_draft.is_none(), |el| {
+                el.child(
+                    button("comment-reply", "Reply", theme, false).on_click(cx.listener(
+                        move |shell, _, window, cx| {
+                            shell.start_reply(project_id, root_id, window, cx)
+                        },
+                    )),
+                )
+            })
+            .child(
+                button(
+                    "comment-status",
+                    if comments::can_reopen(root.status) {
+                        "Reopen"
+                    } else {
+                        "Resolve"
+                    },
+                    theme,
+                    false,
+                )
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    shell.set_comment_status(project_id, root_id, !resolved, window, cx);
+                })),
+            );
+        div()
+            .id(group.clone())
+            .group(group)
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .p(px(space::M))
+            .rounded(px(radius::MEDIUM))
+            .bg(rgb(theme.surface_raised))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(if picked {
+                theme.pane_focus_border
+            } else {
+                theme.surface_raised
+            }))
+            .when(resolved, |el| el.opacity(opacity::SECONDARY))
+            .child(
+                div()
+                    .id("comment-anchor")
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .text_size(px(font_size::META))
+                    .cursor_pointer()
+                    .when_some(lines, |el, (start, end)| {
+                        el.on_click(cx.listener(move |shell, _, _, cx| {
+                            shell.pick_doc_lines(project_id, start, end, false, cx);
+                        }))
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text_muted))
+                            .child(anchor),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(rgb(status_color))
+                            .child(format!("{icon} {word}")),
+                    ),
+            )
+            .children(root.quote.clone().filter(|q| !q.is_empty()).map(|quote| {
+                div()
+                    .pl(px(space::S))
+                    .border_l(px(theme::DOC_QUOTE_BAR_WIDTH))
+                    .border_color(rgb(theme.border))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(quote.lines().next().unwrap_or_default().to_owned())
+            }))
+            .child(entry(root))
+            .children(thread.replies.iter().map(|reply| entry(reply)))
+            .children(
+                reply_draft.map(|draft| {
+                    self.comment_field(draft, "Reply… (Enter sends)", focused, theme, cx)
+                }),
+            )
+            .child(actions)
+    }
+
+    /// The draft's input (takes the keyboard when clicked) and its saving / failure line.
+    fn comment_field(
+        &self,
+        draft: &comments::Draft,
+        placeholder: &'static str,
+        focused: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let status = if draft.busy {
+            Some(("…", theme.text_muted, "Saving".to_owned()))
+        } else {
+            draft
+                .error
+                .clone()
+                .map(|error| ("✕", theme.status_exited, error))
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .child(
+                text_field("comment-draft", &draft.text, placeholder, focused, theme)
+                    .bg(rgb(theme.surface))
+                    .track_focus(&self.comment_focus)
+                    .on_key_down(cx.listener(Shell::comment_key_down))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        window.focus(&shell.comment_focus, cx);
+                        cx.notify();
+                    })),
+            )
+            .children(status.map(|(icon, color, text)| {
+                div()
+                    .flex()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .child(div().text_color(rgb(color)).child(icon))
+                    .child(div().text_color(rgb(theme.text)).child(text))
+            }))
     }
 
     /// Preview / Source segments; the inactive one switches (as Ctrl+Shift+E does).
@@ -4375,6 +4971,56 @@ fn text_field(
                     .when(focused && i == last, |row| row.child(caret()))
             }))
         })
+}
+
+/// The preview's top-level blocks, each picked by a click (Shift extends) to comment on its
+/// lines; picked ones are highlighted.
+fn preview_blocks(
+    project_id: Ulid,
+    blocks: &[mkrew_ui::markdown::Block],
+    selection: Option<Selection>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> Vec<gpui::AnyElement> {
+    let hover = theme.surface_raised;
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let element = preview::block(block, theme)?;
+            let (start, end) = (block.lines.start, block.lines.end);
+            let picked = selection.is_some_and(|s| s.contains(start, end));
+            let wrapped = div()
+                .id(("doc-block", index))
+                .px(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .cursor_pointer()
+                .when(picked, |el| el.bg(rgb(theme.terminal_selection_bg)))
+                .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
+                        shell.pick_doc_lines(project_id, start, end, event.modifiers.shift, cx);
+                    }),
+                )
+                .child(element);
+            Some(wrapped.into_any_element())
+        })
+        .collect()
+}
+
+/// Whether the Docs comment margin shows next to `doc`: with a shown file, and while it is
+/// re-read after a change (so an open draft keeps its field).
+fn margin_shown(doc: &Doc) -> bool {
+    matches!(doc, Doc::Shown(_) | Doc::Loading)
+}
+
+/// A muted one-line note (e.g. "Loading comments…").
+fn meta_line(theme: &Theme, text: SharedString) -> gpui::Div {
+    div()
+        .text_size(px(font_size::META))
+        .text_color(rgb(theme.text_muted))
+        .child(text)
 }
 
 /// A file of the Docs list: its name, its folder below, and its open-comment count.

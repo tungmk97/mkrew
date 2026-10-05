@@ -634,8 +634,10 @@ agent session that wrote them so it edits the file **in the same conversation co
   Show open-comment counts.
 - **Rendering:** `pulldown-cmark` → GPUI elements: headings, paragraphs, lists, task lists, tables,
   code blocks, links, quotes. Toggle to source view with line numbers. No syntax highlighting in v1.
-- **Comments:** select text → "Add comment". Anchored by line range + quoted text. Threads with
-  replies, resolve, reopen. Shown in the right margin next to the anchor.
+- **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →
+  "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
+  replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
+  lines highlights them (ADR 0006; character selection and anchor-aligned cards are backlog).
 - **Re-anchoring:** on `doc.changed`, find `quote` in the new content to update lines; if not found
   → `outdated` (still visible, never auto-deleted).
 - **Send to agent:** sends all open comments of the file (or the selected ones) to one session.

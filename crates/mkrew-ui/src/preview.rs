@@ -7,10 +7,12 @@ use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, FontStyle, FontWeight, HighlightStyle, Hsla, SharedString, StrikethroughStyle,
-    StyledText, UnderlineStyle, UniformList, div, px, rgb, uniform_list,
+    AnyElement, App, FontStyle, FontWeight, HighlightStyle, Hsla, MouseButton, MouseDownEvent,
+    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, UniformList, Window, div, px,
+    rgb, uniform_list,
 };
 
+use crate::comments::Selection;
 use crate::docs::{Shown, gutter};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
 use crate::theme::{self, Theme, font_size, radius, space, weight};
@@ -39,7 +41,7 @@ pub fn blocks(blocks: &[Block], theme: &Theme) -> Vec<AnyElement> {
 }
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
-fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
+pub fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
             let (size, weight) = match level {
@@ -222,21 +224,43 @@ fn text(runs: &[Run], theme: &Theme) -> StyledText {
     StyledText::new(text).with_highlights(highlights)
 }
 
+/// Called with a clicked source line (1-based) and whether Shift was held.
+pub type OnLine = Rc<dyn Fn(u32, bool, &mut Window, &mut App)>;
+
 /// The file's lines with right-aligned line numbers in the monospaced font; only the rows on
-/// screen are laid out.
-pub fn source(id: &'static str, shown: Rc<Shown>, theme: &Theme) -> UniformList {
+/// screen are laid out. The `selected` lines are highlighted; a click picks a line.
+pub fn source(
+    id: &'static str,
+    shown: Rc<Shown>,
+    selected: Option<Selection>,
+    on_line: OnLine,
+    theme: &Theme,
+) -> UniformList {
     let total = shown.lines.len();
-    let (text, muted) = (theme.text, theme.text_muted);
+    let (text, muted, selection_bg) = (theme.text, theme.text_muted, theme.terminal_selection_bg);
     let line_height = theme.terminal_font_size * theme.terminal_line_height;
     uniform_list(id, total, move |range, _, _| {
         range
             .map(|index| {
                 let line = shown.lines.get(index).map(String::as_str).unwrap_or("");
+                let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
+                let on_line = Rc::clone(&on_line);
                 div()
+                    .w_full()
                     .h(px(line_height))
                     .flex()
                     .gap(px(space::L))
                     .whitespace_nowrap()
+                    .cursor_pointer()
+                    .when(selected.is_some_and(|s| s.contains(number, number)), |el| {
+                        el.bg(rgb(selection_bg))
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        move |event: &MouseDownEvent, window, cx| {
+                            on_line(number, event.modifiers.shift, window, cx);
+                        },
+                    )
                     .child(
                         div()
                             .flex_none()

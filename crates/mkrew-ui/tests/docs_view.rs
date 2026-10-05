@@ -1,6 +1,8 @@
 //! The Docs view-model against the real daemon (SPEC §12): `doc.list` lists the workspace's
 //! Markdown files, the first one is read and rendered, an external edit (as from Zed) arrives
-//! as `doc.changed` and re-reads it, and a new comment re-lists with its open count.
+//! as `doc.changed` and re-reads it, and a new comment re-lists with its open count. The shown
+//! file's threads follow `comment.updated`; comments and replies are saved from the margin's
+//! drafts.
 //!
 //! Needs `target/<profile>/mkrew-daemon` built (`cargo test --workspace`).
 
@@ -13,10 +15,11 @@ use std::time::{Duration, Instant};
 use futures_lite::future::block_on;
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    CommentCreateParams, DocComment, DocListParams, DocReadParams, Project, ProjectAddParams,
-    Request,
+    CommentCreateParams, CommentListParams, CommentRef, CommentStatus, DocComment, DocListParams,
+    DocReadParams, Project, ProjectAddParams, Request,
 };
 use mkrew_ui::client::{Connection, Inbox, Incoming};
+use mkrew_ui::comments::{self, List};
 use mkrew_ui::connect::{DaemonLauncher, POLL, TIMEOUT, connect_or_spawn};
 use mkrew_ui::docs::{Doc, Docs, Files};
 use mkrew_ui::markdown::BlockKind;
@@ -90,7 +93,35 @@ impl Ui {
             file_path: file_path.clone(),
         })))
         .map_err(|error| format!("{error:#}"));
+        if let Some(file_path) = self.docs.comments.begin_list(&file_path) {
+            let listed = block_on(
+                self.connection
+                    .call(Request::CommentList(CommentListParams {
+                        project_id: self.docs.project_id,
+                        file_path: Some(file_path.clone()),
+                    })),
+            )
+            .map_err(|error| format!("{error:#}"));
+            self.docs.comments.listed(&file_path, listed);
+        }
         self.docs.read(&file_path, read);
+    }
+
+    /// Saves the open draft as the shell does.
+    fn submit(&mut self) {
+        let serial = self.docs.comments.draft.as_ref().unwrap().serial;
+        let request = self.docs.comments.submit(self.docs.project_id).unwrap();
+        let saved =
+            block_on(self.connection.call::<DocComment>(request)).map_err(|e| format!("{e:#}"));
+        self.docs.comments.submitted(serial, saved);
+    }
+
+    /// Opens a new-comment draft on the selection of the shown file.
+    fn start_comment(&mut self) -> bool {
+        let Doc::Shown(shown) = &self.docs.doc else {
+            panic!("no doc shown");
+        };
+        self.docs.comments.start_comment(&shown.lines)
     }
 
     /// Applies events (re-reading and re-listing as asked) until `done` holds.
@@ -125,6 +156,25 @@ fn heading(docs: &Docs) -> Option<String> {
         BlockKind::Heading { runs, .. } => Some(runs.iter().map(|r| r.text.as_str()).collect()),
         _ => None,
     })
+}
+
+/// The shown file's threads as (lines, status, bodies of root and replies).
+fn threads(docs: &Docs) -> Vec<((u32, u32), CommentStatus, Vec<String>)> {
+    let List::Loaded(list) = &docs.comments.list else {
+        return Vec::new();
+    };
+    comments::threads(list)
+        .iter()
+        .map(|thread| {
+            let root = thread.root;
+            let lines = (root.start_line.unwrap(), root.end_line.unwrap());
+            let bodies = std::iter::once(root)
+                .chain(thread.replies.iter().copied())
+                .map(|c| c.body.clone())
+                .collect();
+            (lines, root.status, bodies)
+        })
+        .collect()
 }
 
 fn open_comments(docs: &Docs, file_path: &str) -> Option<u32> {
@@ -177,20 +227,63 @@ fn docs_list_render_and_follow_external_edits_and_comments() {
 
     // A new comment re-lists with its count.
     assert_eq!(open_comments(&ui.docs, "PLAN.md"), Some(0));
-    let _: DocComment = block_on(
-        ui.connection
-            .call(Request::CommentCreate(CommentCreateParams {
-                project_id: project.id,
-                file_path: "PLAN.md".into(),
-                start_line: 3,
-                end_line: 3,
-                quote: "Ship".into(),
-                body: "When?".into(),
-            })),
-    )
+    let when: DocComment = block_on(ui.connection.call(Request::CommentCreate(
+        CommentCreateParams {
+            project_id: project.id,
+            file_path: "PLAN.md".into(),
+            start_line: 3,
+            end_line: 3,
+            quote: "Ship".into(),
+            body: "When?".into(),
+        },
+    )))
     .unwrap();
     ui.wait("one open comment", |docs| {
         open_comments(docs, "PLAN.md") == Some(1)
+    });
+    // The margin got it from `comment.updated`.
+    assert_eq!(
+        threads(&ui.docs),
+        [((3, 3), CommentStatus::Open, vec!["When?".to_owned()])]
+    );
+
+    // A comment on the picked heading and a reply, saved from drafts.
+    ui.docs.comments.pick(1, 1, false);
+    assert!(ui.start_comment());
+    ui.docs
+        .comments
+        .draft
+        .as_mut()
+        .unwrap()
+        .insert("Rename it?");
+    ui.submit();
+    assert_eq!(ui.docs.comments.draft, None);
+    ui.docs.comments.start_reply(when.id);
+    ui.docs.comments.draft.as_mut().unwrap().insert("Friday");
+    ui.submit();
+    let saved: DocComment = block_on(ui.connection.call(Request::CommentList(CommentListParams {
+        project_id: project.id,
+        file_path: Some("PLAN.md".into()),
+    })))
+    .map(|list: Vec<DocComment>| list.into_iter().find(|c| c.body == "Rename it?").unwrap())
+    .unwrap();
+    assert_eq!(saved.quote.as_deref(), Some("# Plan v2"));
+
+    // Resolving arrives as an update of the thread.
+    let _: DocComment = block_on(ui.connection.call(Request::CommentResolve(CommentRef {
+        comment_id: when.id,
+    })))
+    .unwrap();
+    ui.wait("the resolved thread", |docs| {
+        threads(docs)
+            == [
+                ((1, 1), CommentStatus::Open, vec!["Rename it?".to_owned()]),
+                (
+                    (3, 3),
+                    CommentStatus::Resolved,
+                    vec!["When?".to_owned(), "Friday".to_owned()],
+                ),
+            ]
     });
 
     // Another file; deleting the shown one says so.

@@ -133,6 +133,9 @@ pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
 /// Width of the bar left of a Markdown quote.
 pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
 
+/// Width of the Docs view's comment margin (right of the preview / source).
+pub const DOC_MARGIN_WIDTH: f32 = 300.0;
+
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 

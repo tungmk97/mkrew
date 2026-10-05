@@ -8,6 +8,7 @@ use std::rc::Rc;
 use mkrew_protocol::{DocContent, DocFile, Event};
 use ulid::Ulid;
 
+use crate::comments::Comments;
 use crate::markdown::{self, Block};
 
 /// The file list.
@@ -77,6 +78,8 @@ pub struct Docs {
     pub mode: Mode,
     /// Why the last "Open in Zed" failed.
     pub zed_error: Option<String>,
+    /// The selected file's review comments.
+    pub comments: Comments,
     listing: bool,
     list_again: bool,
     /// The hash the last `doc.changed` announced for the selected file: reads answering with
@@ -93,6 +96,7 @@ impl Docs {
             doc: Doc::None,
             mode: Mode::default(),
             zed_error: None,
+            comments: Comments::default(),
             listing: false,
             list_again: false,
             changed_to: None,
@@ -194,10 +198,13 @@ impl Docs {
                 }
                 reaction
             }
-            Event::CommentUpdated(comment) if comment.project_id == self.project_id => Reaction {
-                relist: true,
-                reread: None,
-            },
+            Event::CommentUpdated(comment) if comment.project_id == self.project_id => {
+                self.comments.apply_event(self.project_id, comment);
+                Reaction {
+                    relist: true,
+                    reread: None,
+                }
+            }
             _ => Reaction::default(),
         }
     }
