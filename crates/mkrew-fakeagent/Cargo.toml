@@ -1,0 +1,21 @@
+[package]
+name = "mkrew-fakeagent"
+description = "Scriptable fake coding agent used by Mkrew tests and demos (SPEC §16)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# `enable_ansi_colors()`: turns on VT processing on Windows consoles without our own unsafe code;
+# 1.x is already in the tree via clap.
+anstyle-query = "1"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2"
+toml = "1.1"
+
+[dev-dependencies]
+tempfile = "3"

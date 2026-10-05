@@ -1,0 +1,40 @@
+# Default scenario: do a bit of "work", ask for confirmation, finish.
+# After the answer it prints at least 4 lines so the prompt leaves the 4-line tail the
+# state machine matches `needs_input_patterns` against (SPEC §6).
+
+[[step]]
+action = "print"
+text = "Fake agent ready."
+color = "cyan"
+
+[[step]]
+action = "spinner"
+text = "Reading the project"
+ms = 600
+
+[[step]]
+action = "print"
+text = "Plan: edit src/main.rs (+3 -1)"
+
+[[step]]
+action = "ask"
+
+[[step]]
+action = "spinner"
+text = "Applying changes"
+ms = 600
+
+[[step]]
+action = "print"
+text = "Edited src/main.rs"
+color = "green"
+
+[[step]]
+action = "print"
+text = "Ran 3 checks: all passed"
+color = "green"
+
+[[step]]
+action = "print"
+text = "Done."
+color = "cyan"

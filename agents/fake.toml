@@ -1,5 +1,6 @@
-# Scriptable fake agent used by tests and demos (SPEC §16).
-# The scenario is chosen per run (see crates/mkrew-fakeagent, T1.7).
+# Scriptable fake agent used by tests and demos (SPEC §16), built from crates/mkrew-fakeagent.
+# Runs the built-in `ask` scenario; pick another with `MKREW_FAKE_SCENARIO=<file|name>`
+# (built-ins: ask, flood) or `args = ["--scenario", "<file|name>"]`.
 name = "Fake agent"
 command = "mkrew-fakeagent"
 args = []

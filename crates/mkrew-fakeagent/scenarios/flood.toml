@@ -1,0 +1,15 @@
+# Stress scenario (SPEC §15): high-volume colored output as fast as possible, then exit.
+
+[[step]]
+action = "print"
+text = "Flooding…"
+color = "yellow"
+
+[[step]]
+action = "flood"
+lines = 200000
+
+[[step]]
+action = "print"
+text = "Flood done."
+color = "yellow"

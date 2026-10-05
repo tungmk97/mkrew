@@ -128,6 +128,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (`windows-sys`) — the only `unsafe` in the workspace. Also adds `CREATE_NEW_PROCESS_GROUP`
   (Ctrl+C in the shell does not reach the daemon); Unix uses its own process group, not
   `setsid`.
+- (T1.7) `mkrew-fakeagent`: TOML scenarios only (no JSON yet); `[[step]]` tables tagged by
+  `action` (`print`/`spinner`/`ask`/`sleep`/`flood`/`write_file`/`exit`), unknown keys are
+  errors. Scenario = `--scenario <file|name>`, else `MKREW_FAKE_SCENARIO`, else built-in `ask`
+  (an existing file wins over a built-in name; written into SPEC §16). `ask`'s answer is not
+  checked (`n` behaves like `y`). `write_file` overwrites. The `mk hook fake <event>` and
+  `mk comment reply` steps of §16 come with those commands (M3 / comments milestone).
+  Colors use `anstyle-query` to enable Windows VT processing (no own `unsafe`).
 
 ## Done
 

@@ -3464,6 +3464,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mkrew-fakeagent"
+version = "0.1.0"
+dependencies = [
+ "anstyle-query",
+ "anyhow",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "mkrew-protocol"
 version = "0.1.0"
 dependencies = [
