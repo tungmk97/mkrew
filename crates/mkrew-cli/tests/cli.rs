@@ -44,7 +44,9 @@ impl Env {
             .args(args)
             .env("MKREW_DATA_DIR", self.dir.path().join("data"))
             .env("MKREW_CONFIG_DIR", self.dir.path().join("config"))
-            .env("MKREW_SOCKET", &self.socket);
+            .env("MKREW_SOCKET", &self.socket)
+            // Inherited by the daemon `mk` starts: no real toasts from tests.
+            .env(mkrew_daemon::ENV_NOTIFY, "off");
         command
     }
 

@@ -164,6 +164,9 @@ pub enum Event {
     /// dropped and this screen replaces it; output frames continue from this point (SPEC §7).
     #[serde(rename = "session.snapshot")]
     SessionSnapshot(SessionSnapshotEvent),
+    /// The user clicked the OS notification of a session (SPEC §8); the UI focuses its pane.
+    #[serde(rename = "notification.clicked")]
+    NotificationClicked(NotificationClickedEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -567,6 +570,12 @@ pub struct SessionExitedEvent {
     pub exit_code: Option<i32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotificationClickedEvent {
+    pub session_id: Ulid,
+    pub project_id: Ulid,
+}
+
 mod base64_bytes {
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
@@ -962,5 +971,13 @@ mod tests {
         })));
         assert_eq!(tab["event"], "tab.updated");
         assert_eq!(tab["data"]["layout"], serde_json::Value::Null);
+        let clicked = round_trip(&Message::Event(Event::NotificationClicked(
+            NotificationClickedEvent {
+                session_id: sid(),
+                project_id: sid(),
+            },
+        )));
+        assert_eq!(clicked["event"], "notification.clicked");
+        assert_eq!(clicked["data"]["session_id"], sid().to_string());
     }
 }

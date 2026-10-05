@@ -70,6 +70,7 @@ pub struct DaemonLauncher {
     paths: Paths,
     exe: PathBuf,
     child: Option<Child>,
+    notifications: bool,
 }
 
 impl DaemonLauncher {
@@ -78,7 +79,14 @@ impl DaemonLauncher {
             paths,
             exe,
             child: None,
+            notifications: true,
         }
+    }
+
+    /// A spawned daemon shows no OS notifications (tests).
+    pub fn without_notifications(mut self) -> Self {
+        self.notifications = false;
+        self
     }
 }
 
@@ -104,6 +112,9 @@ impl Launcher for DaemonLauncher {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        if !self.notifications {
+            command.env(mkrew_daemon::ENV_NOTIFY, "off");
+        }
         mkrew_daemon::spawn::detach(&mut command);
         let child = command
             .spawn()

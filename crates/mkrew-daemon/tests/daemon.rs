@@ -47,6 +47,28 @@ impl Env {
         self.dir.path().join("data")
     }
 
+    /// The daemon writes notifications here (JSON lines) instead of showing toasts.
+    fn notifications(&self) -> PathBuf {
+        self.dir.path().join("notifications.jsonl")
+    }
+
+    /// Waits until a notification for `session_id` was written; returns it.
+    fn wait_notification(&self, session_id: Ulid) -> Value {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let text = std::fs::read_to_string(self.notifications()).unwrap_or_default();
+            let found = text
+                .lines()
+                .map(|l| serde_json::from_str::<Value>(l).unwrap())
+                .find(|n| n["session_id"] == session_id.to_string());
+            if let Some(notice) = found {
+                return notice;
+            }
+            assert!(Instant::now() < deadline, "no notification: {text}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn write_profile(&self, id: &str, toml: &str) {
         let dir = self.dir.path().join("config").join("agents");
         std::fs::create_dir_all(&dir).unwrap();
@@ -90,6 +112,7 @@ impl Env {
             .env("MKREW_CONFIG_DIR", self.dir.path().join("config"))
             .env("MKREW_SOCKET", &self.socket)
             .env("MKREW_LOG", "debug")
+            .env(mkrew_daemon::ENV_NOTIFY, self.notifications())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -491,6 +514,10 @@ fn fake_agent_session_reaches_needs_input_and_is_killed() {
     assert_eq!(session.state_source, StateSource::Screen);
     assert_eq!(event.changed_at, session.state_changed_at);
     assert!(event.changed_at >= session.started_at);
+    // Entering needs_input notifies (SPEC §8).
+    let notice = env.wait_notification(id);
+    assert_eq!(notice["project_id"], project.id.to_string());
+    assert_eq!(notice["body"], "Needs input");
     let status: DaemonStatusResult = client.call(Request::DaemonStatus).into_result().unwrap();
     assert_eq!(status.sessions, 1);
 

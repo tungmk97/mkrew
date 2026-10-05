@@ -283,7 +283,8 @@ fn six_attached_floods_keep_the_ui_connection_responsive() {
     let project_dir = dir.path().join("proj");
     std::fs::create_dir(&project_dir).unwrap();
 
-    let mut launcher = DaemonLauncher::new(paths.clone(), sibling_exe("mkrew-daemon"));
+    let mut launcher =
+        DaemonLauncher::new(paths.clone(), sibling_exe("mkrew-daemon")).without_notifications();
     let connection = connect_or_spawn(&mut launcher, TIMEOUT, POLL).unwrap();
     let ui = Arc::new(Mutex::new(Ui::default()));
     let exits = Arc::new(AtomicUsize::new(0));

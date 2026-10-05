@@ -21,6 +21,7 @@ use ulid::Ulid;
 
 use crate::attach::{self, Attachment};
 use crate::launch::LaunchError;
+use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -52,8 +53,13 @@ impl Daemon {
     }
 
     /// Serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8).
-    pub async fn serve(self: Arc<Self>, listener: Listener) {
+    /// `notifier` = `None` turns OS notifications off.
+    pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
+        let notifications = notifier.map(|n| notify::start(Arc::clone(&self.hub), n));
         Arc::clone(&self).accept(listener).await;
+        if let Some(task) = notifications {
+            task.abort();
+        }
         self.hub.shutdown().await;
     }
 

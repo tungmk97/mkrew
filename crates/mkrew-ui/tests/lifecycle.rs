@@ -65,7 +65,8 @@ fn write_fake_profile(paths: &Paths) {
 }
 
 fn connect(paths: &Paths) -> Connection {
-    let mut launcher = DaemonLauncher::new(paths.clone(), sibling_exe("mkrew-daemon"));
+    let mut launcher =
+        DaemonLauncher::new(paths.clone(), sibling_exe("mkrew-daemon")).without_notifications();
     connect_or_spawn(&mut launcher, TIMEOUT, POLL).unwrap()
 }
 

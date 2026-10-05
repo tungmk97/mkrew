@@ -42,7 +42,7 @@ fn paths(dir: &Path) -> Paths {
 }
 
 fn connect(paths: &Paths) -> Connection {
-    let mut launcher = DaemonLauncher::new(paths.clone(), daemon_exe());
+    let mut launcher = DaemonLauncher::new(paths.clone(), daemon_exe()).without_notifications();
     connect_or_spawn(&mut launcher, TIMEOUT, POLL).unwrap()
 }
 

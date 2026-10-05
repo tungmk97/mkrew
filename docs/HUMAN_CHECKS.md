@@ -168,6 +168,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   done (Claude's `/hooks` lists the 4 `mk hook claude` entries). `uninstall` both → your files
   as before.
 
+- [ ] (T3.5) **OS notification + click**: restart the daemon (protocol v3), spawn the fake
+  agent → a toast "<project> · fake / Needs input" appears (Windows: attributed to "Windows
+  PowerShell" — no own AppUserModelID until packaging, M8); a second needs_input/done of the
+  same session within 30 s shows none. Click the toast (also once from Action Center) → `mk`
+  or the UI receives `notification.clicked` (the UI handles it from T3.7). Linux: same with
+  your notification server.
+
 ## Questions with assumed defaults
 
 _Decisions the agent made on its own. Override them here if you disagree._
@@ -453,6 +460,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   Not used: Codex's newer `[hooks]` system (needs the user to trust hooks via `/hooks`, no
   Notification event) — revisit if `notify` is deprecated. SPEC §19 "status reports hook
   version" is not implemented (no version marker in the hooks).
+- (T3.5) Notifications: `MKREW_NOTIFY` on the daemon (unset = OS via `notify-rust`, `off` =
+  none, anything else = JSON-lines file path; tests use `off` or a file, so `cargo test` shows
+  no toasts). Throttle = 30 s per session across needs_input and done together. Each toast
+  keeps one daemon thread waiting for its click/dismissal (a Linux server that never closes a
+  notification keeps it until the daemon exits). macOS: no click reporting (the daemon has no
+  main run loop). A click with no UI connected is dropped (the UI is not launched). New
+  `notification.clicked` event → protocol v3 (restart an old daemon after updating).
 
 ## Done
 

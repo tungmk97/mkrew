@@ -3485,6 +3485,7 @@ dependencies = [
  "mkrew-core",
  "mkrew-protocol",
  "mkrew-store",
+ "notify-rust",
  "portable-pty",
  "rustix",
  "serde",

@@ -8,6 +8,7 @@ mod emulator;
 pub mod ipc;
 mod launch;
 pub mod lock;
+mod notify;
 mod server;
 mod session;
 mod session_log;
@@ -18,6 +19,7 @@ use mkrew_core::Paths;
 use mkrew_store::Store;
 
 pub use lock::{InstanceLock, LockError};
+pub use notify::ENV_NOTIFY;
 
 /// Process exit code when another daemon already owns the data dir.
 pub const EXIT_ALREADY_RUNNING: u8 = 2;
@@ -53,7 +55,7 @@ fn serve(paths: &Paths) -> anyhow::Result<()> {
             ipc::listen(&paths.socket).with_context(|| format!("listen on {}", paths.socket))?;
         tracing::info!(socket = %paths.socket, "listening");
         server::Daemon::new(store, paths.clone())
-            .serve(listener)
+            .serve(listener, notify::from_env())
             .await;
         anyhow::Ok(())
     })?;
