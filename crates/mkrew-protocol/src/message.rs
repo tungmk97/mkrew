@@ -104,6 +104,9 @@ pub enum Request {
     SessionInput(SessionInputParams),
     #[serde(rename = "session.send")]
     SessionSend(SessionSendParams),
+    /// Removes a queued `session.send` text; `not_found` once written (SPEC §20B.2).
+    #[serde(rename = "session.unqueue")]
+    SessionUnqueue(SessionUnqueueParams),
     #[serde(rename = "session.wait")]
     SessionWait(SessionWaitParams),
     #[serde(rename = "session.resize")]
@@ -290,6 +293,9 @@ pub enum Event {
     /// again with the same `n`; the later event replaces the earlier one.
     #[serde(rename = "session.turn")]
     SessionTurn(SessionTurnEvent),
+    /// A session's send queue changed; carries the whole queue (SPEC §20B.2).
+    #[serde(rename = "session.queue")]
+    SessionQueue(SessionQueueEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -827,6 +833,34 @@ pub struct SessionSendParams {
     pub submit: bool,
 }
 
+/// `session.send` result (SPEC §20B.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSendResult {
+    pub send_id: Ulid,
+    /// The text waits in the session's queue (it was not handed to the PTY right away).
+    pub queued: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionUnqueueParams {
+    pub session_id: Ulid,
+    pub send_id: Ulid,
+}
+
+/// Event `session.queue`: the texts still waiting, in delivery order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionQueueEvent {
+    pub session_id: Ulid,
+    pub items: Vec<QueuedSend>,
+}
+
+/// One waiting `session.send` text, as sent (without the submit Enter).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedSend {
+    pub send_id: Ulid,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionWaitParams {
     pub session_id: Ulid,
@@ -1343,6 +1377,10 @@ mod tests {
                 text: "y".into(),
                 submit: true,
             }),
+            Request::SessionUnqueue(SessionUnqueueParams {
+                session_id: sid(),
+                send_id: sid(),
+            }),
             Request::SessionWait(SessionWaitParams {
                 session_id: sid(),
                 until: vec![SessionState::Idle, SessionState::Done],
@@ -1757,6 +1795,15 @@ mod tests {
         })));
         assert_eq!(turn["event"], "session.turn");
         assert_eq!(turn["data"]["files"], json!([{ "path": "src/a.rs" }]));
+        let queue = round_trip(&Message::Event(Event::SessionQueue(SessionQueueEvent {
+            session_id: sid(),
+            items: vec![QueuedSend {
+                send_id: sid(),
+                text: "fix it".into(),
+            }],
+        })));
+        assert_eq!(queue["event"], "session.queue");
+        assert_eq!(queue["data"]["items"][0]["text"], "fix it");
     }
 
     #[test]

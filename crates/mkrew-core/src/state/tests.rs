@@ -212,7 +212,7 @@ fn delivery_policy() {
 #[test]
 fn queue_holds_while_working_and_delivers_on_idle() {
     let mut q = SendQueue::default();
-    q.push("y".into());
+    q.push(Ulid::new(), "y".into());
     assert_eq!(q.pop(Working), None);
     assert_eq!(q.pop(Starting), None);
     assert_eq!(q.len(), 1);
@@ -223,8 +223,8 @@ fn queue_holds_while_working_and_delivers_on_idle() {
 #[test]
 fn queue_delivers_one_message_at_a_time() {
     let mut q = SendQueue::default();
-    q.push("first".into());
-    q.push("second".into());
+    q.push(Ulid::new(), "first".into());
+    q.push(Ulid::new(), "second".into());
     assert_eq!(q.pop(NeedsInput).as_deref(), Some("first"));
     // No output yet: the agent has not picked it up, so the second waits.
     assert_eq!(q.pop(NeedsInput), None);
@@ -236,9 +236,34 @@ fn queue_delivers_one_message_at_a_time() {
 #[test]
 fn queue_never_delivers_to_exited() {
     let mut q = SendQueue::default();
-    q.push("y".into());
+    q.push(Ulid::new(), "y".into());
     assert_eq!(q.pop(Exited), None);
     assert_eq!(q.len(), 1);
+}
+
+#[test]
+fn queue_removes_only_texts_not_yet_written() {
+    let mut q = SendQueue::default();
+    let (first, second) = (Ulid::new(), Ulid::new());
+    q.push(first, "first".into());
+    q.push(second, "second".into());
+    assert!(q.remove(second));
+    assert!(!q.contains(second));
+    assert!(!q.remove(second));
+    assert_eq!(q.pop(Idle).as_deref(), Some("first"));
+    // Written: too late to remove.
+    assert!(!q.remove(first));
+    assert!(q.is_empty());
+}
+
+#[test]
+fn queue_lists_items_in_delivery_order() {
+    let mut q = SendQueue::default();
+    let (a, b) = (Ulid::new(), Ulid::new());
+    q.push(a, "a".into());
+    q.push(b, "b".into());
+    let items: Vec<_> = q.items().collect();
+    assert_eq!(items, [(a, "a"), (b, "b")]);
 }
 
 #[test]
@@ -247,8 +272,8 @@ fn machine_and_queue_together() {
     let mut m = machine(StateMode::Screen);
     let mut q = SendQueue::default();
     m.on_output(c.at(0), BUSY);
-    q.push("y".into());
-    q.push("next".into());
+    q.push(Ulid::new(), "y".into());
+    q.push(Ulid::new(), "next".into());
     assert_eq!(q.pop(m.state()), None);
     m.on_output(c.at(100), PROMPT);
     assert_eq!(q.pop(m.state()).as_deref(), Some("y"));

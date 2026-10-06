@@ -10,10 +10,10 @@ use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, CommentStatus, DaemonStatusResult, ErrorCode, Event,
     Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
     PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
-    Session, SessionHistory, SessionKillParams, SessionKind, SessionReadParams, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource, Task,
-    TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, encode,
+    Session, SessionHistory, SessionKillParams, SessionKind, SessionReadParams, SessionSendParams,
+    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
+    SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent,
+    TaskRunParams, TaskUndoParams, TaskUpdateParams, TerminalTab, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -325,15 +325,9 @@ impl Daemon {
                 let outcome = self.session_command(params.session_id, command).await;
                 (outcome, After::Continue)
             }
-            Request::SessionSend(params) => {
-                let mut text = params.text;
-                if params.submit {
-                    text.push('\r');
-                }
-                let outcome = self
-                    .session_command(params.session_id, Command::Send(text))
-                    .await;
-                (outcome, After::Continue)
+            Request::SessionSend(params) => (self.session_send(params).await, After::Continue),
+            Request::SessionUnqueue(params) => {
+                (self.session_unqueue(params).await, After::Continue)
             }
             Request::SessionWait(params) => (self.session_wait(params).await, After::Continue),
             Request::HookReport(params) => (self.hook_report(params).await, After::Continue),
@@ -901,6 +895,55 @@ impl Daemon {
         // Dropped unanswered when the session exits first.
         match result.await {
             Ok(result) => ok(&result),
+            Err(_) => self.not_live(params.session_id),
+        }
+    }
+
+    /// Queues the text under a new `send_id`; replies once the session task decided whether it
+    /// waits (SPEC §20B.2).
+    async fn session_send(&self, params: SessionSendParams) -> Outcome {
+        let Some(session) = self.hub.sender(params.session_id) else {
+            return self.not_live(params.session_id);
+        };
+        let mut text = params.text;
+        if params.submit {
+            text.push('\r');
+        }
+        let send_id = Ulid::new();
+        let (reply, queued) = oneshot::channel();
+        let command = Command::Send {
+            id: send_id,
+            text,
+            reply: Some(reply),
+        };
+        if session.send(command).await.is_err() {
+            return self.not_live(params.session_id);
+        }
+        // Dropped unanswered when the session exits first.
+        match queued.await {
+            Ok(queued) => ok(&SessionSendResult { send_id, queued }),
+            Err(_) => self.not_live(params.session_id),
+        }
+    }
+
+    async fn session_unqueue(&self, params: SessionUnqueueParams) -> Outcome {
+        let Some(session) = self.hub.sender(params.session_id) else {
+            return self.not_live(params.session_id);
+        };
+        let (reply, removed) = oneshot::channel();
+        let command = Command::Unqueue {
+            id: params.send_id,
+            reply,
+        };
+        if session.send(command).await.is_err() {
+            return self.not_live(params.session_id);
+        }
+        match removed.await {
+            Ok(true) => ok(&()),
+            Ok(false) => {
+                let message = format!("send {} is not queued (already written?)", params.send_id);
+                Outcome::error(ErrorCode::NotFound, message)
+            }
             Err(_) => self.not_live(params.session_id),
         }
     }

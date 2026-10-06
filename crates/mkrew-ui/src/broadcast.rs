@@ -206,9 +206,9 @@ impl Broadcast {
         sends
     }
 
-    /// The send to `session_id` finished. `working`: the session was working when it was sent,
-    /// so the daemon queued the text. The draft empties once every send succeeded.
-    pub fn sent(&mut self, session_id: Ulid, result: Result<(), String>, working: bool) {
+    /// The send to `session_id` finished; `Ok(queued)` is the daemon's `queued` (the text waits
+    /// for the turn to end). The draft empties once every send succeeded.
+    pub fn sent(&mut self, session_id: Ulid, result: Result<bool, String>) {
         let Some(row) = self
             .rows
             .iter_mut()
@@ -217,8 +217,8 @@ impl Broadcast {
             return;
         };
         row.delivery = Some(match result {
-            Ok(()) if working => Delivery::Queued,
-            Ok(()) => Delivery::Sent,
+            Ok(true) => Delivery::Queued,
+            Ok(false) => Delivery::Sent,
             Err(error) => Delivery::Failed(error),
         });
         let all_ok = self
@@ -360,15 +360,15 @@ mod tests {
         assert!(dialog.rows[0].checked);
         assert_eq!(dialog.text, "  run the tests  ");
 
-        dialog.sent(ids[1], Ok(()), true);
+        dialog.sent(ids[1], Ok(true));
         assert_eq!(dialog.rows[1].delivery, Some(Delivery::Queued));
         assert!(dialog.busy());
-        dialog.sent(ids[0], Ok(()), false);
+        dialog.sent(ids[0], Ok(false));
         assert_eq!(dialog.rows[0].delivery, Some(Delivery::Sent));
         assert!(!dialog.busy());
         assert_eq!(dialog.text, "");
         // A late duplicate answer changes nothing.
-        dialog.sent(ids[0], Err("gone".into()), false);
+        dialog.sent(ids[0], Err("gone".into()));
         assert_eq!(dialog.rows[0].delivery, Some(Delivery::Sent));
     }
 
@@ -378,8 +378,8 @@ mod tests {
         dialog.insert("go");
         let ids: Vec<_> = dialog.rows.iter().map(|row| row.session_id).collect();
         dialog.begin();
-        dialog.sent(ids[0], Err("session exited".into()), false);
-        dialog.sent(ids[1], Ok(()), false);
+        dialog.sent(ids[0], Err("session exited".into()));
+        dialog.sent(ids[1], Ok(false));
         assert_eq!(
             dialog.rows[0].delivery,
             Some(Delivery::Failed("session exited".into()))
@@ -392,7 +392,7 @@ mod tests {
         assert_eq!(sends[0].session_id, ids[0]);
         assert_eq!(dialog.rows[1].delivery, None);
         // Nothing checked: nothing to send.
-        dialog.sent(ids[0], Ok(()), false);
+        dialog.sent(ids[0], Ok(false));
         dialog.text = "again".into();
         dialog.toggle(0);
         assert!(!dialog.can_send());

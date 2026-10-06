@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use mkrew_protocol::SessionState;
 use regex::Regex;
+use ulid::Ulid;
 
 use crate::profile::{StateConfig, StateMode};
 
@@ -179,13 +180,30 @@ pub fn can_deliver(state: SessionState) -> bool {
 /// machine see the session busy again before the next delivery check.
 #[derive(Debug, Default)]
 pub struct SendQueue {
-    pending: VecDeque<String>,
+    pending: VecDeque<(Ulid, String)>,
     in_flight: bool,
 }
 
 impl SendQueue {
-    pub fn push(&mut self, text: String) {
-        self.pending.push_back(text);
+    /// Queues `text` under its `send_id` (SPEC §20B.2).
+    pub fn push(&mut self, id: Ulid, text: String) {
+        self.pending.push_back((id, text));
+    }
+
+    /// Removes a waiting text; `false` once it was popped for the writer (or never queued).
+    pub fn remove(&mut self, id: Ulid) -> bool {
+        let before = self.pending.len();
+        self.pending.retain(|(queued, _)| *queued != id);
+        self.pending.len() != before
+    }
+
+    pub fn contains(&self, id: Ulid) -> bool {
+        self.pending.iter().any(|(queued, _)| *queued == id)
+    }
+
+    /// The waiting texts in delivery order.
+    pub fn items(&self) -> impl Iterator<Item = (Ulid, &str)> {
+        self.pending.iter().map(|(id, text)| (*id, text.as_str()))
     }
 
     /// The PTY produced output: a delivered message has been picked up.
@@ -198,7 +216,7 @@ impl SendQueue {
         if self.in_flight || !can_deliver(state) {
             return None;
         }
-        let text = self.pending.pop_front()?;
+        let (_, text) = self.pending.pop_front()?;
         self.in_flight = true;
         Some(text)
     }

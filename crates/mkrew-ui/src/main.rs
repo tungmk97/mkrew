@@ -25,9 +25,9 @@ use mkrew_protocol::{
     FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project,
     ProjectAddParams, ProjectRef, Request, Session, SessionAttachResult, SessionHistory,
     SessionKillParams, SessionKind, SessionListParams, SessionReadParams, SessionReadResult,
-    SessionRef, SessionSendParams, SessionSpawnResult, SessionState, SessionTurnEvent, StateSource,
-    TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams,
-    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
+    SessionTurnEvent, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
+    Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -3180,18 +3180,12 @@ impl Shell {
         };
         for params in dialog.begin() {
             let session_id = params.session_id;
-            let working = self
-                .sidebar
-                .sessions()
-                .iter()
-                .any(|s| s.id == session_id && s.state == SessionState::Working);
-            let sent = connection.request(Request::SessionSend(params));
+            let sent = connection.call::<SessionSendResult>(Request::SessionSend(params));
             cx.spawn_in(window, async move |this, cx| {
-                let result = match sent.await {
-                    Ok(Outcome::Result(_)) => Ok(()),
-                    Ok(Outcome::Error(body)) => Err(body.message),
-                    Err(error) => Err(format!("{error:#}")),
-                };
+                let result = sent
+                    .await
+                    .map(|sent| sent.queued)
+                    .map_err(|error| format!("{error:#}"));
                 let _ = this.update(cx, |shell, cx| {
                     if let Err(error) = &result {
                         tracing::warn!(%session_id, "broadcast session.send failed: {error}");
@@ -3200,7 +3194,7 @@ impl Shell {
                         return;
                     }
                     if let Some(dialog) = shell.broadcast.as_mut() {
-                        dialog.sent(session_id, result, working);
+                        dialog.sent(session_id, result);
                         cx.notify();
                     }
                 });

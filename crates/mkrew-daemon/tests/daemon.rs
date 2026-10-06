@@ -20,14 +20,15 @@ use mkrew_protocol::{
     GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
     GitLogParams, GitMarker, GitMode, GitSetBaseParams, GitShowParams, GitStageParams, GitStatus,
     GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome,
-    PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, Request,
-    ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
-    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionReadParams,
-    SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend,
+    Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent,
+    SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
+    SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams, TabListParams,
+    TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams,
+    TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus,
+    TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -1648,7 +1649,10 @@ fn send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish() {
         .unwrap();
     assert_eq!(working.state, SessionState::Working);
     // Queued while working, delivered once the prompt shows; the agent then finishes.
-    client.call(send(id, "y")).into_result::<()>().unwrap();
+    client
+        .call(send(id, "y"))
+        .into_result::<SessionSendResult>()
+        .unwrap();
     let done: SessionWaitResult = client
         .call(wait(
             id,
@@ -1682,6 +1686,131 @@ fn send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish() {
         error_code(client.call(send(id, "y"))),
         ErrorCode::InvalidState
     );
+    client.stop();
+}
+
+fn unqueue(session_id: Ulid, send_id: Ulid) -> Request {
+    Request::SessionUnqueue(SessionUnqueueParams {
+        session_id,
+        send_id,
+    })
+}
+
+/// Texts sent while the agent works wait with a `send_id`; one removed from the queue is never
+/// typed, the other is, and `session.queue` follows every change (SPEC §20B.2).
+#[test]
+fn a_queued_text_removed_while_working_is_never_typed() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("twice.toml");
+    let tail = "[[step]]\naction = \"print\"\ntext = \"step\"\n\n".repeat(4);
+    std::fs::write(
+        &scenario,
+        format!(
+            "[[step]]\naction = \"spinner\"\ntext = \"Working\"\nms = 4000\n\n\
+             [[step]]\naction = \"ask\"\n\n{tail}\
+             [[step]]\naction = \"ask\"\n\n{tail}\
+             [[step]]\naction = \"print\"\ntext = \"Done.\"\n"
+        ),
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "twice",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "twice").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::Working);
+
+    let kept: SessionSendResult = client.call(send(id, "kept-answer")).into_result().unwrap();
+    let removed: SessionSendResult = client
+        .call(send(id, "removed-answer"))
+        .into_result()
+        .unwrap();
+    assert!(kept.queued && removed.queued, "{kept:?} {removed:?}");
+    assert_ne!(kept.send_id, removed.send_id);
+    let both = vec![
+        QueuedSend {
+            send_id: kept.send_id,
+            text: "kept-answer".into(),
+        },
+        QueuedSend {
+            send_id: removed.send_id,
+            text: "removed-answer".into(),
+        },
+    ];
+    client.wait_event(&Event::SessionQueue(SessionQueueEvent {
+        session_id: id,
+        items: both,
+    }));
+    client
+        .call(unqueue(id, removed.send_id))
+        .into_result::<()>()
+        .unwrap();
+    assert_eq!(
+        error_code(client.call(unqueue(id, removed.send_id))),
+        ErrorCode::NotFound
+    );
+    client.wait_event(&Event::SessionQueue(SessionQueueEvent {
+        session_id: id,
+        items: vec![QueuedSend {
+            send_id: kept.send_id,
+            text: "kept-answer".into(),
+        }],
+    }));
+
+    // The first question takes the kept text; once written it can no longer be removed.
+    client.wait_event(&Event::SessionQueue(SessionQueueEvent {
+        session_id: id,
+        items: Vec::new(),
+    }));
+    assert_eq!(
+        error_code(client.call(unqueue(id, kept.send_id))),
+        ErrorCode::NotFound
+    );
+    client.wait_state(id, SessionState::NeedsInput);
+    client
+        .call(send(id, "last-answer"))
+        .into_result::<SessionSendResult>()
+        .unwrap();
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    let log = session_log(&env, id);
+    assert!(log.contains("kept-answer"), "{log}");
+    assert!(log.contains("last-answer"), "{log}");
+    assert!(!log.contains("removed-answer"), "{log}");
+    client.stop();
+}
+
+/// A session that exits with texts still waiting announces an empty queue.
+#[test]
+fn exiting_with_queued_texts_announces_an_empty_queue() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("slow.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"spinner\"\ntext = \"Working\"\nms = 20000\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as("slow", &format!("['--scenario', '{}']", scenario.display()));
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "slow").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::Working);
+    let sent: SessionSendResult = client.call(send(id, "later")).into_result().unwrap();
+    assert!(sent.queued, "{sent:?}");
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    client.wait_event(&Event::SessionQueue(SessionQueueEvent {
+        session_id: id,
+        items: Vec::new(),
+    }));
+    client.wait_state(id, SessionState::Exited);
     client.stop();
 }
 
@@ -1725,8 +1854,9 @@ fn session_read_shows_the_prompt_line_and_the_answer_goes_through() {
         ErrorCode::NotFound
     );
 
-    // Quick reply: the answer reaches the agent, which finishes and exits.
-    client.call(send(id, "y")).into_result::<()>().unwrap();
+    // Quick reply: written at once (not queued), the agent finishes and exits.
+    let sent: SessionSendResult = client.call(send(id, "y")).into_result().unwrap();
+    assert!(!sent.queued, "{sent:?}");
     let session = client.wait_state(id, SessionState::Exited);
     assert_eq!(session.exit_code, Some(0));
     assert!(session_log(&env, id).contains("Done."));
@@ -3178,7 +3308,7 @@ fn task_run_delivers_the_prompt_per_mode_and_the_card_follows_the_session() {
     });
     client
         .call(send(run.session_id, "y"))
-        .into_result::<()>()
+        .into_result::<SessionSendResult>()
         .unwrap();
     let done = wait_task(&mut client, by_default.id, |t| {
         t.status == TaskStatus::Review
@@ -3624,7 +3754,7 @@ fn task_run_passes_metacharacter_prompts_through_npm_cmd_shims() {
     client.wait_state(run.session_id, SessionState::NeedsInput);
     client
         .call(send(run.session_id, "y"))
-        .into_result::<()>()
+        .into_result::<SessionSendResult>()
         .unwrap();
     wait_task(&mut client, task.id, |t| t.status == TaskStatus::Review);
     let log = session_log(&env, run.session_id);

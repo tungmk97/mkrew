@@ -219,7 +219,8 @@ impl Sidebar {
             | Event::DocChanged(_)
             | Event::CommentUpdated(_)
             | Event::GitChanged(_)
-            | Event::SessionTurn(_) => Change::None,
+            | Event::SessionTurn(_)
+            | Event::SessionQueue(_) => Change::None,
         }
     }
 

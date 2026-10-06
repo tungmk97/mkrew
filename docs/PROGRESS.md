@@ -13,7 +13,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 ### Acceptance criteria
 - [ ] Composer: a multi-line send arrives as one bracketed paste; `@` inserts `file_ref`-formatted
       paths; drafts survive switching panes.
-- [ ] Send queue: `session.send` returns `{send_id, queued}`, `session.queue` events, `session.unqueue`;
+- [x] Send queue: `session.send` returns `{send_id, queued}`, `session.queue` events, `session.unqueue`;
       e2e with the fake agent: a text queued while working and removed is never typed.
 - [ ] Prompt library: samples seeded on first run, variables rendered (unit tests), insertable from
       the palette, the composer and the task dialog.
@@ -23,7 +23,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 - [ ] "Run with…" on a Todo/Review card updates the task's agent and runs it.
 
 ### Task queue
-- [ ] T10.1 Daemon send queue: `session.send` → `{send_id, queued}`, `session.unqueue` (`not_found` once written), event `session.queue` after every change, PROTOCOL_VERSION 18; CLI + UI client adapt; broadcast rows use the real `queued`; e2e: fake agent working, queued text removed is never typed; covers: send queue. (spec: §20B.2, §7, §8)
+- [x] T10.1 Daemon send queue: `session.send` → `{send_id, queued}`, `session.unqueue` (`not_found` once written), event `session.queue` after every change, PROTOCOL_VERSION 18; CLI + UI client adapt; broadcast rows use the real `queued`; e2e: fake agent working, queued text removed is never typed; covers: send queue. (spec: §20B.2, §7, §8) — feat(daemon): visible send queue with unqueue
 - [ ] T10.2 `mkrew_core::prompt`: `render(template, vars)` (unknown/unavailable vars → empty + listed), library load from `<config>/mkrew/prompts/*.md` (stem = name, optional `# Title`), seed `review.md`/`explain.md`/`fix-tests.md` when the dir is missing; unit tests; covers: prompt library (seed, render). (spec: §20B.3, §20.0)
 - [ ] T10.3 UI multi-line text box (Enter newline, Ctrl+Enter submit, Esc) + composer docked at a focused agent pane's bottom via `Ctrl+Shift+Enter`, send = `session.send` with submit, drafts per session in UI memory, keys local to the composer; covers: composer (multi-line send, drafts). (spec: §20B.1, §13, §14)
 - [ ] T10.4 Composer `@` opens quick-open and inserts `composer.file_ref` (pure formatter: relative, `/`, quoted if spaces; unit tests); composer lists queued texts with ✕ (`session.unqueue`); pane header `⧗ N queued`; covers: composer `@`, send queue UI. (spec: §20B.1, §20B.2, §12A)
@@ -49,7 +49,7 @@ milestone first.
 
 ## Notes for the next session
 
-- M10 must use the real `queued` from `session.send` → `{send_id, queued}` in broadcast (`mkrew_ui::broadcast::Broadcast::sent` drops its `working` param; Shell `send_broadcast`). PROTOCOL_VERSION is 17 after M9.
+- T10.1: PROTOCOL_VERSION 18. `session.send` returns `SessionSendResult {send_id, queued}` (callers decoding `()` break); `session.unqueue`; `Event::SessionQueue {session_id, items: [QueuedSend]}` (text without the submit `\r`; empty on exit). UI ignores `session.queue` so far (sidebar `Change::None`) — T10.4 consumes it. Daemon: `Command::Send {id, text, reply}` / `Command::Unqueue`, `Actor::announce_queue`.
 - Settings: daemon `crate::settings::SettingsHolder` (`Daemon.settings: Arc<_>`, `current()` = last good); `mkrew_core::settings::Settings` holds every §20.0 key (M10's `ComposerSettings` is already there). Measurements: `crates/mkrew-ui/tests/measure.rs` (how to run: ADR 0009).
 - `session.read` (`Shell::read_last_lines`, `Shell::read_peek`), turns (`mkrew_ui::turn::Turns`), peek (`mkrew_ui::peek`) are the M9 building blocks. `cargo insta` is not installed: write accepted `.snap` files by hand.
 - GPUI gotcha: an element with `track_focus` grabs focus on ANY mouse down (before `on_click`). `scripts/verify.ps1` needs approval headless; `bash scripts/verify.sh` runs. Daemon e2e `TIMEOUT` is 30 s (parallel load).

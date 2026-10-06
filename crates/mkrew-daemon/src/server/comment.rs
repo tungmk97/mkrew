@@ -10,6 +10,7 @@ use mkrew_protocol::{
     CommentStatus, DocComment, ErrorCode, Event, Outcome, Project,
 };
 use mkrew_store::{Store, StoreError};
+use ulid::Ulid;
 
 use super::doc::read_error;
 use super::{Daemon, ok, store_outcome};
@@ -113,7 +114,12 @@ impl Daemon {
         };
         let mut text = review::prompt(&file, &comments);
         text.push('\r');
-        if session.send(Command::Send(text)).await.is_err() {
+        let command = Command::Send {
+            id: Ulid::new(),
+            text,
+            reply: None,
+        };
+        if session.send(command).await.is_err() {
             return self.not_live(session_id);
         }
         let sent = {

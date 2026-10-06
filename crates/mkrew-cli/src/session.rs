@@ -6,8 +6,8 @@ use std::io::Write;
 use anyhow::Context;
 use mkrew_protocol::{
     Project, Request, Session, SessionHistory, SessionKind, SessionListParams, SessionRef,
-    SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams,
-    SessionWaitResult,
+    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionWaitParams, SessionWaitResult,
 };
 use ulid::Ulid;
 
@@ -101,11 +101,13 @@ pub fn send(
     text: String,
     no_submit: bool,
 ) -> anyhow::Result<()> {
-    client.call::<()>(Request::SessionSend(SessionSendParams {
-        session_id,
-        text,
-        submit: !no_submit,
-    }))
+    client
+        .call::<SessionSendResult>(Request::SessionSend(SessionSendParams {
+            session_id,
+            text,
+            submit: !no_submit,
+        }))
+        .map(|_| ())
 }
 
 /// Blocks until the session reaches one of `until` (or exits) and prints the state, plus the

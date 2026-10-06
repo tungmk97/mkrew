@@ -15,8 +15,8 @@ use mkrew_core::turn::{TurnEvent, TurnTracker};
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
-    Session, SessionAttachResult, SessionExitedEvent, SessionKind, SessionReadResult, SessionState,
-    SessionStateEvent, SessionTurnEvent, StateSource, TurnFile,
+    QueuedSend, Session, SessionAttachResult, SessionExitedEvent, SessionKind, SessionQueueEvent,
+    SessionReadResult, SessionState, SessionStateEvent, SessionTurnEvent, StateSource, TurnFile,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -203,8 +203,18 @@ pub enum Command {
         cols: u16,
         rows: u16,
     },
-    /// `session.send`: queued until the state allows delivery (SPEC §8).
-    Send(String),
+    /// `session.send`: queued until the state allows delivery (SPEC §8). `reply` gets whether
+    /// the text still waits in the queue after the delivery check.
+    Send {
+        id: Ulid,
+        text: String,
+        reply: Option<oneshot::Sender<bool>>,
+    },
+    /// `session.unqueue`: `reply` gets whether the text was still waiting (SPEC §20B.2).
+    Unqueue {
+        id: Ulid,
+        reply: oneshot::Sender<bool>,
+    },
     /// The send-writer task has queued a delivered text for the PTY.
     SendWritten,
     /// `hook.report` from inside the session (SPEC §6); `agent` is `report.agent` parsed.
@@ -411,7 +421,7 @@ impl Hub {
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let mut queue = SendQueue::default();
         if let Some(text) = typed {
-            queue.push(text);
+            queue.push(Ulid::new(), text);
         }
         let actor = Actor {
             hub: std::sync::Arc::clone(self),
@@ -854,9 +864,25 @@ impl Actor {
                         attachment.resnapshot(self.emulator().snapshot());
                     }
                     Some(Command::Resize { cols, rows }) => self.resize(cols, rows),
-                    Some(Command::Send(text)) => {
-                        self.queue.push(text);
-                        self.deliver();
+                    Some(Command::Send { id, text, reply }) => {
+                        self.queue.push(id, text);
+                        let delivered = self.deliver();
+                        let queued = self.queue.contains(id);
+                        // A delivery already announced the queue; else the push changed it.
+                        if !delivered && queued {
+                            self.announce_queue();
+                        }
+                        if let Some(reply) = reply {
+                            // The caller may have gone away; the text stays queued.
+                            let _ = reply.send(queued);
+                        }
+                    }
+                    Some(Command::Unqueue { id, reply }) => {
+                        let removed = self.queue.remove(id);
+                        if removed {
+                            self.announce_queue();
+                        }
+                        let _ = reply.send(removed);
                     }
                     Some(Command::SendWritten) => self.send_writing = false,
                     Some(Command::Hook { agent, report }) => self.on_hook(agent, report),
@@ -946,16 +972,36 @@ impl Actor {
     }
 
     /// Hands the next queued `session.send` text to [`write_sends`] if the state allows it;
-    /// the session task never waits for the PTY writer.
-    fn deliver(&mut self) {
+    /// the session task never waits for the PTY writer. `true` when a text left the queue
+    /// (then `session.queue` was announced).
+    fn deliver(&mut self) -> bool {
         let Some(text) = self.queue.pop(self.session.state) else {
-            return;
+            return false;
         };
         tracing::debug!(id = %self.session.id, pending = self.queue.len(), "delivering a queued send");
         let text = pasted(text, self.emulator().bracketed_paste());
         if self.sends.send(text).is_ok() {
             self.send_writing = true;
         }
+        self.announce_queue();
+        true
+    }
+
+    /// Broadcasts the whole send queue as `session.queue` (SPEC §20B.2).
+    fn announce_queue(&self) {
+        let items = self
+            .queue
+            .items()
+            .map(|(send_id, text)| QueuedSend {
+                send_id,
+                // Shown as sent: the submit Enter is not part of the text.
+                text: text.strip_suffix('\r').unwrap_or(text).to_owned(),
+            })
+            .collect();
+        let _ = self.hub.events.send(Event::SessionQueue(SessionQueueEvent {
+            session_id: self.session.id,
+            items,
+        }));
     }
 
     fn emulator(&mut self) -> &mut Emulator {
@@ -1099,6 +1145,11 @@ impl Actor {
             }
         }
         self.machine.on_exit();
+        // Waiting texts are never written now: announce them gone.
+        if !self.queue.is_empty() {
+            self.queue = SendQueue::default();
+            self.announce_queue();
+        }
         self.session.exit_code = exit_code;
         self.session.ended_at = Some(crate::server::now_ms());
         self.set_state(SessionState::Exited, StateSource::Daemon);

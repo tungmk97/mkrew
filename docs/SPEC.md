@@ -445,7 +445,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.attach` | `session_id` | screen snapshot (grid + cursor + modes) + subscribe to output |
 | `session.detach` | `session_id` | ok |
 | `session.input` | `session_id`, `data` (base64) | ok |
-| `session.send` | `session_id`, `text`, `submit` (bool) | ok — queued if the session is working; multi-line text goes as a bracketed paste when the program enabled mode 2004 |
+| `session.send` | `session_id`, `text`, `submit` (bool) | `send_id`, `queued` (from M10, §20B.2) — queued if the session is working; multi-line text goes as a bracketed paste when the program enabled mode 2004 |
 | `session.wait` | `session_id`, `until` (states), `timeout_ms` | final state |
 | `session.resize` | `session_id`, `cols`, `rows` | ok |
 | `session.kill` | `session_id`, `force` | ok |
@@ -1244,8 +1244,8 @@ feature is simply off for them (HUMAN_CHECKS).
 2. **Send queue visible.** While a send waits (session working), the composer lists queued texts
    (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`
    returns `{send_id, queued: bool}`; `session.unqueue` removes a not-yet-written text (`not_found`
-   once written); event `session.queue` carries the session's current queue after every change.
-   The pane header shows `⧗ 2 queued`.
+   once written); event `session.queue` carries the session's current queue after every change
+   (an exiting session announces it empty). The pane header shows `⧗ 2 queued`.
 3. **Prompt library.** Markdown files in `<config>/mkrew/prompts/*.md`; file stem = name; optional
    first line `# Title`. Variables: `{file}` (current file of Files/Git, project-relative),
    `{selection}` (picked lines, as quoted text), `{task}` (task title), `{project}` (name). An unknown
