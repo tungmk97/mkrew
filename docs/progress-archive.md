@@ -2,6 +2,31 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M8 — Polish & packaging (tag `m8-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T8.3–T8.9 and T8.10 manual checks
+in HUMAN_CHECKS "To verify"):
+
+- [ ] Full command palette; keymap customization via `keymap.toml` with duplicate detection.
+- [ ] Dev server per workspace: run `dev_command` in its own tab; optional auto-start after daemon start.
+- [ ] Windows installer (MSI or similar) and tar.gz for Linux/macOS.
+- [x] README: install, configure agents, uninstall.
+- [ ] Non-functional checks from §15 measured and recorded in `docs/decisions/` or the README.
+
+Tasks:
+
+- [x] T8.1 Dev server config — feat(project): dev server command and auto-start settings
+- [x] T8.2 Daemon dev server — feat(daemon): dev server start/stop and auto-start
+- [x] T8.3 UI dev server — feat(ui): dev server settings, start/stop and indicator
+- [x] T8.4 Command palette model — feat(ui): command palette model
+- [x] T8.5 Command palette UI — feat(ui): command palette dialog and palette-only actions
+- [x] T8.6 Keymap settings — feat(ui): keymap settings template and palette keymap errors
+- [x] T8.7 Packaging — feat(release): MSI and tar.gz packaging scripts and release workflow
+- [x] T8.8 README — docs: product README with install, agent setup and uninstall
+- [x] T8.9 §15 measurements — test(ui): §15 measurement scripts and ADR 0009 results
+- [x] T8.9a Idle UI CPU — test(ui): measure GPUI idle floor and judge idle CPU per machine
+- [x] T8.10 M8 manual checks + wrap-up — chore(progress): complete M8
+
 ## M7 — Files & Git (tag `m7-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T7.7–T7.11b and T7.12 manual

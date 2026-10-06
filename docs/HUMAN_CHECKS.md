@@ -540,6 +540,23 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   screen recorder: `scripts/measure-spike.sh`'s `--probe-keys` only covers the M0 spike); the
   50 MB-per-pane flood is the T2.9 check above. Update the ADR 0009 / README tables if the
   numbers differ.
+- [ ] (T8.10) **M8 wrap-up — the unticked M8 criteria.** The README criterion is ticked (written,
+  walkthrough above still open). The backend of every other criterion is covered by automated
+  tests (`project_dev_server_settings_are_added_updated_and_cleared`,
+  `dev_server_runs_once_in_its_own_tab_stops_and_auto_starts_after_a_restart`, CLI
+  `project_dev_server_is_configured_on_add_and_update`, `keymap::tests::{template_parses_to_the_defaults_commented_or_not,
+  edited_template_reports_a_duplicate, ensure_file_creates_the_template_once}`, `palette::tests`, `crates/mkrew-cli/tests/packaging.rs` and `crates/mkrew-ui/tests/measure.rs`); no
+  M8 view was ever seen and no installer was ever built. Restart the daemon first (protocol v16),
+  with `mk` on PATH.
+  - **Command palette + keymap** (criterion 1): the T8.5 and T8.6 checks above.
+  - **Dev server** (criterion 2): the T8.3 check above, with a real dev command (`npm run dev`
+    or similar) — it keeps running while you switch views, and auto-start works after a reboot.
+  - **Installer + tar.gz** (criterion 3): the two T8.7 checks above — the MSI on a **clean**
+    Windows (VM or Windows Sandbox), the tar.gz on Linux.
+  - **§15 checks** (criterion 5): the T8.9 check above (key → glyph latency is the only row
+    not measured).
+  - **§14 design check**: dark + light screenshots of the command palette (with keymap error
+    rows), the dev server settings dialog, the tab-bar Start/Stop button and the sidebar "▶ dev".
 
 ## Questions with assumed defaults
 
