@@ -498,6 +498,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - **View changes** (criterion 6): the T6.10 check above, on the threads Claude just addressed.
   - **§14 design check**: dark + light screenshots of the Docs view (preview with margin
     threads, source view), the Send-to-agent picker and the View-changes dialog.
+- [ ] (T8.3) **Dev server UI.** Restart the daemon (protocol v16). Workspace menu (⋯ /
+  right-click) → "Dev server settings…": type `npm run dev` (or `python -m http.server`), Tab
+  flips "Start it when the daemon starts", Enter saves (Esc keeps). The tab bar then shows
+  "Start dev server" (tooltip = the command); clicking it switches to Terminals and shows the
+  tab labelled "Dev server" with the command running; the sidebar row shows "▶ dev"; the
+  button and the menu item become "Stop dev server" → the pane shows it exited, "▶ dev" goes
+  away. Start again → the same tab is reused. Clear the command → no Start button. With
+  auto-start on: `mk daemon stop`, start the app → the dev server runs. Check the dialog and
+  the indicator in dark + light (§14).
 
 ## Questions with assumed defaults
 
@@ -1332,6 +1341,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   — a UI "Restart" must wait for `session.exited` first (or the daemon should skip stopping
   sessions); a running dev server whose pane was closed comes back with `tab_id: None` (not
   re-placed in the `dev` tab).
+- (T8.3) **Dev server UI choices:** the settings live in a "Dev server settings…" dialog opened
+  from the workspace menu (one-line command + auto-start checkbox; Tab toggles it since there is
+  one field; pasted line breaks are dropped). Start/Stop sit in the workspace menu and on the
+  tab bar's right (Start only when a command is set; no "Restart", see the T8.2 SHOULD). The
+  tab holding the running dev server is labelled "Dev server" (its stored title stays `dev`, so
+  renaming shows `dev`). Sidebar indicator = muted "▶ dev". Start/stop errors and "runs but has
+  no tab" show in the sidebar. Open review items: the reply-vs-`tab.updated` ordering
+  (`dev_reveal`) is glue in main.rs without a unit test; the "running" rule is duplicated from
+  the daemon's private `dev_session` (could move to `mkrew-protocol`); no busy state while
+  `project.dev_start` is in flight.
 
 ## Done
 

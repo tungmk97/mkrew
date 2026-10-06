@@ -6,7 +6,8 @@
 //! decisions, the keymap, the workspace menu, the "Open in Zed" command, the Docs view-model
 //! and its review comments (with the "Send to agent" and "View changes" dialogs), the Markdown
 //! render model of the Docs preview and its GPUI elements, and the Files view-model with its
-//! syntax highlighting and quick open, and the Git view-model and its base menu.
+//! syntax highlighting and quick open, the Git view-model and its base menu, and the
+//! workspace's dev server.
 
 pub mod base_dialog;
 pub mod board;
@@ -14,6 +15,7 @@ pub mod client;
 pub mod comments;
 pub mod conflicts;
 pub mod connect;
+pub mod dev_server;
 pub mod doc_dialog;
 pub mod docs;
 pub mod files_view;
