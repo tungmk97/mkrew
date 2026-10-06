@@ -441,6 +441,40 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   and `mk comment reply` shows "↩ Addressed" live. Check the margin + diff width at 1280 px,
   that typing in the draft never stages (`s`), and that Docs never lists the diff threads. Dark
   + light.
+- [ ] (T7.12) **M7 wrap-up — the unticked M7 criteria.** Two criteria are ticked (automated:
+  real-`git` integration tests on `tempfile` repos; `GitBackend` + the 10,000-file status perf
+  test `git_view::tests::status_of_a_10000_file_repo_meets_the_budget`). The backend of every
+  other criterion is covered by daemon/CLI e2e (`fs_list_read_and_find_follow_file_changes`,
+  `git_set_base_is_announced_persists_and_null_means_auto`,
+  `git_status_and_diff_follow_the_project_base_and_reject_bad_input`,
+  `git_stage_unstage_discard_and_commit_with_git_changed_events`,
+  `git_log_show_push_and_fetch_with_a_local_remote`, `fake_agent_fixes_code_for_diff_comments_and_replies`,
+  CLI `project_update_sets_and_clears_the_git_base`), the `fs.find` perf test
+  `files::tests::find_over_10000_files_meets_the_budget` and the UI model unit tests; no M7
+  view was ever seen. Restart the daemon first (protocol v14), with `mk` on PATH.
+  - **Files view** (criterion 1): the T7.7 check above.
+  - **Quick open < 100 ms** (criterion 2): the T7.8 check above, in a real 10,000-file repo
+    (e.g. a Zed or rust-lang checkout); typing must feel instant end to end (daemon + UI).
+  - **Git header + grouping** (criterion 3): the T7.9a check above.
+  - **Against base** (criterion 4): on a feature branch of a repo with `origin/HEAD`, Against
+    base lists only the branch's own changes (compare with `git diff $(git merge-base HEAD
+    origin/main)`); delete `origin/HEAD` → falls back to `main`, then `master`; the T7.9c base
+    menu and `mk project update <p> --base develop` / `--auto-base` both change the header.
+  - **Unified diff, stage/unstage, discard** (criterion 5): the T7.9a, T7.9b and T7.9d checks.
+  - **Commit, push, fetch** (criterion 6): the T7.10a check against a **real remote** (GitHub
+    or similar, your credentials): Fetch brings new upstream commits (behind count), Push sends
+    the current branch to its upstream only; a diverged branch → push is rejected with git's
+    message, never forced (check the remote's history afterwards).
+  - **History** (criterion 7): the T7.10b check above in a repo with > 50 commits (exactly 50
+    listed, per-commit diffs open).
+  - **Task "View changes"** (criterion 8): the T7.10c check above.
+  - **Diff-line comments, real agent** (criterion 9; the fake-agent e2e passes): the T7.11b
+    check with real Claude **and** Codex — the code prompt arrives as one message, the agent
+    fixes the code (not just answers) and runs `mk comment reply c_… "…"` per comment. If it
+    does not, note what the §12 code prompt is missing.
+  - **§14 design check**: dark + light screenshots of Files (tree + highlighted viewer), Quick
+    open, Git (Working / Against base / History / task changes, commit box, margin threads),
+    the base and discard dialogs.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,

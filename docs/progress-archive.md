@@ -2,6 +2,48 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M7 — Files & Git (tag `m7-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T7.7–T7.11b and T7.12 manual
+checks in HUMAN_CHECKS "To verify"):
+
+- [ ] Files view: lazy tree, respects `.gitignore`, git markers; read-only viewer with syntax
+      highlighting; large/binary files handled.
+- [ ] Quick open fuzzy-finds files in a 10,000-file repo in < 100 ms.
+- [ ] Git view header: branch, upstream, ahead/behind; Working changes grouped Staged/Unstaged/Untracked.
+- [ ] Against base uses `merge-base` correctly; base auto-detects `origin/HEAD` → `main` → `master`
+      and is configurable per workspace (UI and `mk project update --base`).
+- [ ] Unified diff; stage/unstage per file and per hunk; discard always confirms.
+- [ ] Commit from the UI; push current branch to upstream (never force); fetch.
+- [ ] History of 50 commits with per-commit diffs.
+- [ ] "View changes" on a task card shows the diff since the task checkpoint.
+- [ ] Diff-line comments sent to an agent; agent fixes and replies via `mk comment reply`
+      (e2e test with the fake agent).
+- [x] Integration tests run real `git` on temp repos (`tempfile`): status, diff, hunk staging,
+      commit, merge-base.
+- [x] `GitBackend` trait; status refresh meets §15 on a generated 10,000-file repo.
+
+Tasks:
+
+- [x] T7.1 Migration 0006 + files/git protocol + `git.set_base` — feat(protocol): files/git types, git.set_base and mk project update --base
+- [x] T7.2 Core git parsers — feat(core): git status/diff parsers and hunk patches
+- [x] T7.3 `git.status`/`git.diff` — feat(daemon): git.status and git.diff with base detection and caches
+- [x] T7.4 Stage/unstage/discard/commit — feat(daemon): git stage/unstage/discard/commit and git.changed events
+- [x] T7.5 Log/show/fetch/push + perf — feat(daemon): git.log/show/fetch/push and 10,000-file status perf test
+- [x] T7.6 `fs.list/read/find` — feat(daemon): fs.list/read/find with git markers and a watched file index
+- [x] T7.7 Files view — feat(ui): Files view with lazy git-marked tree and syntax-highlighted viewer
+- [x] T7.8 Quick open — feat(ui): quick open fuzzy file finder
+- [x] T7.9a Git view — feat(ui): Git view with grouped changes and unified diff viewer
+- [x] T7.9b Stage/unstage/discard UI — feat(ui): Git stage/unstage per file and hunk, discard confirmation
+- [x] T7.9c Base menu + Git keys — feat(ui): Git base menu and keymap commands for Git keys
+- [x] T7.9d Diff highlighting — feat(ui): syntax highlighting in the Git diff viewer
+- [x] T7.10a Commit box, Fetch/Push — feat(ui): Git commit box and Fetch/Push actions
+- [x] T7.10b History — feat(ui): Git History section with per-commit files and diffs
+- [x] T7.10c Task View changes — feat(git): task View changes since its checkpoint
+- [x] T7.11a Diff comments backend — feat(comments): diff-line comment context and fix-the-code prompt
+- [x] T7.11b Diff comments UI — feat(ui): diff-line comments in the Git view
+- [x] T7.12 M7 manual checks + wrap-up — chore(progress): complete M7
+
 ## M6 — Markdown review (tag `m6-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T6.8, T6.9, T6.10 and T6.11 manual

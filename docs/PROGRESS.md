@@ -2,66 +2,32 @@
 
 <!-- loop-state: machine-readable, keep these exact keys on their own lines -->
 status: RUNNING
-milestone: M7
+milestone: M8
 <!-- /loop-state -->
 
 Status values: `RUNNING` (loop continues) · `WAITING_HUMAN` (see docs/HUMAN_CHECKS.md, then set back to RUNNING) · `BLOCKED` (no task can progress) · `DONE`.
 Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note).
 
-## Current milestone: M7 — Files & Git (SPEC §18)
+## Current milestone: M8 — Polish & packaging (SPEC §18)
 
-### Acceptance criteria
-- [ ] Files view: lazy tree, respects `.gitignore`, git markers; read-only viewer with syntax
-      highlighting; large/binary files handled.
-- [ ] Quick open fuzzy-finds files in a 10,000-file repo in < 100 ms.
-- [ ] Git view header: branch, upstream, ahead/behind; Working changes grouped Staged/Unstaged/Untracked.
-- [ ] Against base uses `merge-base` correctly; base auto-detects `origin/HEAD` → `main` → `master`
-      and is configurable per workspace (UI and `mk project update --base`).
-- [ ] Unified diff; stage/unstage per file and per hunk; discard always confirms.
-- [ ] Commit from the UI; push current branch to upstream (never force); fetch.
-- [ ] History of 50 commits with per-commit diffs.
-- [ ] "View changes" on a task card shows the diff since the task checkpoint.
-- [ ] Diff-line comments sent to an agent; agent fixes and replies via `mk comment reply`
-      (e2e test with the fake agent).
-- [x] Integration tests run real `git` on temp repos (`tempfile`): status, diff, hunk staging,
-      commit, merge-base.
-- [x] `GitBackend` trait; status refresh meets §15 on a generated 10,000-file repo.
-
-### Task queue
-- [x] T7.1 Migration `0006_files_git.sql` (`project.base_ref`, `doc_comment.context`) + store; protocol types for `git.*`/`fs.*` (GitStatus, ChangedFile, Hunk, Commit, params; bump `PROTOCOL_VERSION`); `git.set_base` + `mk project update --base` (null = auto); covers: base configurable (CLI part). (spec: §5, §7, §9, §12B) — feat(protocol): files/git types, git.set_base and mk project update --base
-- [x] T7.2 Pure git parsers in core: porcelain v2 `-z --branch` status (branch, upstream, ahead/behind, staged/unstaged/untracked entries), unified diff → files/hunks with +/− counts, hunk → patch for `git apply --cached` (forward and reverse); unit tests incl. renames, CRLF, binary, no-newline-at-EOF; covers: unified diff, hunk staging (foundation). (spec: §12B, §16) — feat(core): git status/diff parsers and hunk patches
-- [x] T7.3 Extend `GitBackend`/`GitCli` + daemon `git.status` (working/base; ONE status call; base auto-detect `origin/HEAD` → `main` → `master`, `merge-base` cached until HEAD/base moves) and `git.diff` (per file on demand, cached by path/mode/mtime/size/HEAD; `commit?` = that commit's diff; > 1 MB = summary only); integration tests on `tempfile` repos; covers: header, grouping, merge-base, integration tests (status, diff, merge-base). (spec: §7, §12B, §15) — feat(daemon): git.status and git.diff with base detection and caches
-- [x] T7.4 Daemon `git.stage`/`git.unstage` (paths or hunk → `git apply --cached [-R]`), `git.discard` (requires `confirm: true`), `git.commit` (→ hash; no amend); `git.changed` event from the file watcher (debounced 300 ms, also on `.git/` HEAD/index changes); integration tests; covers: stage/unstage per file+hunk, discard confirm (daemon), commit, integration tests (hunk staging, commit). (spec: §7, §8, §12B) — feat(daemon): git stage/unstage/discard/commit and git.changed events
-- [x] T7.5 Daemon `git.log` (limit 50, `path?`), `git.show` (info + changed files), `git.fetch`/`git.push` (current branch → its upstream, never `--force`; tests use a local bare remote, no network); `GitBackend` perf test: status on a generated 10,000-file repo < 150 ms (asserted in release, logged in debug); covers: history, fetch/push, §15 status perf. (spec: §7, §12B, §15) — feat(daemon): git.log/show/fetch/push and 10,000-file status perf test
-- [x] T7.6 Daemon `fs.list` (lazy per dir, `.gitignore` respected unless `show_ignored`, git markers M/A/D/?, folder dot), `fs.read` (≤ 2 MB, binary flag, language by extension), `fs.find` (`ignore` walk cached per project + invalidated by the watcher, `nucleo-matcher` ranking); perf test 10,000 files < 100 ms; covers: Files view (backend), quick open speed. (spec: §7, §12A, §15) — feat(daemon): fs.list/read/find with git markers and a watched file index
-- [x] T7.7 UI Files view (`View::Files`, ctrl-shift-4): lazy tree with markers + show-ignored toggle, live updates, read-only viewer with line numbers and `syntect` highlighting (pure-Rust regex, lazy syntax set), large/binary notice + "Open in Zed" (also at a selected line), `.md` → "Review in Docs"; covers: Files view. (spec: §12A, §13, §14) — feat(ui): Files view with lazy git-marked tree and syntax-highlighted viewer
-- [x] T7.8 UI quick open (Ctrl+Shift+O): fuzzy file finder of the current workspace via `fs.find`, opens the file in the Files view; keyboard nav; covers: quick open. (spec: §12A, §13, §14) — feat(ui): quick open fuzzy file finder
-- [x] T7.9a UI Git view (`View::Git`, ctrl-shift-5): header (branch, upstream, ahead/behind, base shown), Working/Against-base toggle (`b`), changed-file list grouped Staged/Unstaged/Untracked with +/− counts, unified diff viewer (hunk nav `n`/`p`, collapsed unchanged gaps, diff tokens), file nav ↑↓/j k, Open in Zed; refresh on `git.changed`; covers: Git header, grouping, unified diff. (spec: §12B, §13, §14) — feat(ui): Git view with grouped changes and unified diff viewer
-- [x] T7.9b Git view actions: stage/unstage per file and per hunk (`s`/`u`, buttons on file rows + hunk headers; untracked/new files by path), discard per file with a confirm dialog showing what is lost (reuse undo dialog look); covers: stage/unstage, discard confirms. (spec: §12B, §13, §14) — feat(ui): Git stage/unstage per file and hunk, discard confirmation
-- [x] T7.9c Git view: base menu → `git.set_base` (type a ref / auto-detect; replaces the `mk project update --base` hint in the no-base empty state); keymap commands for Git toggle/hunk nav/stage (`GIT_CONTEXT`); covers: base configurable (UI). (spec: §12B, §13, §14) — feat(ui): Git base menu and keymap commands for Git keys
-- [x] T7.9d Git view: syntax highlighting of diff lines (§12B; reuse `highlight.rs` per hunk side, off the UI thread like the Files viewer). (spec: §12B, §14) — feat(ui): syntax highlighting in the Git diff viewer
-- [x] T7.10a UI Git commit box (multi-line, Ctrl+Enter, `c` focuses it; outside the `GIT_CONTEXT` column so typing never stages), Fetch/Push actions with errors shown; covers: commit/push/fetch from UI. (spec: §12B, §13) — feat(ui): Git commit box and Fetch/Push actions
-- [x] T7.10b UI Git History (last 50 via `git.log`) as a third list mode/section: select a commit → its files (`git.show`) → per-file diff (`git.diff` with `commit`); covers: history. (spec: §12B) — feat(ui): Git History section with per-commit files and diffs
-- [x] T7.10c Task "View changes": daemon diff from a commit to the working tree (e.g. `git.status`/`git.diff` param `since: commit`, tests on `tempfile` repos; bump `PROTOCOL_VERSION`), Review-column card action opens the Git view in that mode from `task.checkpoint`; covers: task View changes. (spec: §12B, §5, §7) — feat(git): task View changes since its checkpoint
-- [x] T7.11a Diff-line comments backend: `comment.create/list` carry `context` (`doc`/`diff`, anchored to new-side lines + quote), prompt variant for code ("fix the code"), fake-agent e2e (fake fixes the file and runs `mk comment reply`); covers: diff-line comments e2e (backend). (spec: §12, §12B, §16) — feat(comments): diff-line comment context and fix-the-code prompt
-- [x] T7.11b UI diff-line comments: Git diff viewer new-side line picking (click / Shift+click, like ADR 0006) → comment (`context: diff`, quote = picked new-side lines) → threads beside the diff → Send to agent (default = the task's session in task mode, else last/live session) reusing `comments`/`doc_dialog`; keymap command; covers: diff-line comments (UI). (spec: §12, §12B, §13, §14) — feat(ui): diff-line comments in the Git view
-- [ ] T7.12 M7 manual checks in HUMAN_CHECKS (Files/Git views, syntax highlighting, real push/fetch, §14 design check, real-agent diff-comment round trip) + wrap-up; covers: remaining manual parts of every criterion. (spec: §18, §14)
+_No task queue yet — the next session plans M8 (`mkrew-plan-milestone`)._
 
 ### Done (last 10)
 
-_M0–M6 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m6-done`; unticked criteria are in HUMAN_CHECKS)._
+_M0–M7 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m7-done`; unticked criteria are in HUMAN_CHECKS)._
 
 ### Carried over
 
-M6 left 6 of 7 criteria unticked; all wait on the T6.8, T6.9, T6.10 and T6.11 manual checks in
-HUMAN_CHECKS (Docs view rendering, comment margin, Send-to-agent/View-changes dialogs, real
-Claude/Codex review round trip, Zed external edit, §14 design check). If one fails, add a fix
-task to M7 first. M3–M5's unticked criteria (T3.4–T3.9, T4.7–T4.10, T5.4–T5.11 manual checks)
-still wait too.
+M7 left 9 of 11 criteria unticked; all wait on the T7.7–T7.11b and T7.12 manual checks in
+HUMAN_CHECKS (Files view, quick open in a real 10,000-file repo, Git view header/diff/stage/
+discard, base menu, commit box, real push/fetch, History, task "View changes", real-agent
+diff-comment round trip, §14 design check). If one fails, add a fix task to M8 first. M3–M6's
+unticked criteria (T3.4–T3.9, T4.7–T4.10, T5.4–T5.11, T6.8–T6.11 manual checks) still wait too.
 
 ## Notes for the next session
 
-- T7.11b: `Comments.context` (`Comments::new(ctx)`, `apply_event` filters by context, `start_quoted`); `Docs::apply` skips diff comments. `GitView.{comments (Diff), commented}` + `begin_comments` (no-op in History), `can_comment` (not History), `start_comment`, `comments_shown`, `task_session(sessions)`; `Shown::quote(selection)` (shown new-side lines only). `SendDialog.task` + `last_label()`. Keymap `COMMENTS_CONTEXT = "Docs || Git"` for AddComment/SendComments. main.rs `pick_diff_line` (focuses the Git list unless a draft is open), margin in `render_git_diff`. Theme `DIFF_PICK_BAR_WIDTH`. Choices + manual check in HUMAN_CHECKS T7.11b; open ui-review SHOULDs there too. Diff-comments criterion waits for the real-agent check (T7.12). Stray `target/debug/mkrew-fakeagent.locked-t711.exe` can be deleted when unlocked. T7.12 (M7 wrap-up) next.
+- M7 done (tag `m7-done`, T7.12 wrap-up maps every unticked criterion in HUMAN_CHECKS; full verify green). Next: plan M8 (§18 Polish & packaging). `PROTOCOL_VERSION = 14`.
+- T7.11b: `Comments.context` (`Comments::new(ctx)`, `apply_event` filters by context, `start_quoted`); `Docs::apply` skips diff comments. `GitView.{comments (Diff), commented}` + `begin_comments` (no-op in History), `can_comment` (not History), `start_comment`, `comments_shown`, `task_session(sessions)`; `Shown::quote(selection)` (shown new-side lines only). `SendDialog.task` + `last_label()`. Keymap `COMMENTS_CONTEXT = "Docs || Git"` for AddComment/SendComments. main.rs `pick_diff_line` (focuses the Git list unless a draft is open), margin in `render_git_diff`. Theme `DIFF_PICK_BAR_WIDTH`. Choices + manual check in HUMAN_CHECKS T7.11b; open ui-review SHOULDs there too. Diff-comments criterion waits for the real-agent check (T7.12). Stray `target/debug/mkrew-fakeagent.locked-t711.exe` can be deleted when unlocked.
 - T7.11a: protocol `CommentContext::{Doc, Diff}` on comments, `PROTOCOL_VERSION = 14`; core `review::prompt` code variant; E2E `fake_agent_fixes_code_for_diff_comments_and_replies`.
 - T7.10c: protocol `GitStatusParams.since` / `GitDiffParams.since` (base mode only: replaces the merge-base; status `merge_base` = the resolved commit), `PROTOCOL_VERSION = 13`, SPEC §7 rows updated. Daemon `git_view::status(.., mode, since)`, `diff` → `Target::Since(commit_id)`, shared `commit_id` (→ `UnknownCommit` = `not_found`); server `check_ref`s `since`. UI: `git_view::{Section::Task, Group::Task, TaskChanges{task_id, title, checkpoint}}`, `GitView.task` (kept while History shows; `listed() = (mode, since)` keys the in-flight status), `show_task`, private `changes()`/`list()`; `Target.commit` = checkpoint for `Group::Task` (→ `params().since`). `board::Card::can_view_changes` (Review + checkpoint). main.rs `view_task_changes`, card "Changes" quiet button, header line "Since <hash> · task: …" + Close, task empty/failed states. Task-changes criterion waits for the T7.10c manual check. T7.11 next (diff-line comments).
 - T7.10b: new `crates/mkrew-ui/src/git_history.rs` = pure `History{commits: Commits::{Loading, Loaded, Failed}, selected: Option<hash>, detail: Detail::{None, Loading, Loaded(files), Failed}}` (`logged → Logged{show, error}`, `select`, `step` (no-op at the ends), `shown(hash, result) → applied?`, `files`), `short_hash`, `age`. `git_view`: `Section::{Working, Base, History}` (`section()`, `show(section)`, `toggle_mode` from History = back to `mode`, `toggle_history`), `GitView.history: Option<History>` + `logging/log_again` (on the view so they outlive leaving), `begin_log/logged/select_commit/commit_shown/show_params`; `Group::Commit`, `Target.commit` (→ `GitDiffParams.commit`), `files() → Vec<(Target, ChangedFile)>`, `ListRow::{File(Target, _), Commit{commit, expanded}, Note}`, `Requests.{log, show}` (literals need `..Requests::default()`). In History `status_loaded` only feeds the header and never clears the log's `refresh_error`; `refresh` = status + log (no diff). Keymap `Command::GitToggleHistory` (`h`, GIT_CONTEXT; SPEC §13 row). main.rs: `load_git_log/load_git_show/select_git_commit/show_git_section/git_list`, free `git_commit_row`, `git_file_row(.., now, ..)` draws commit/note rows too. T7.10c can open the Git view in a new `Section` the same way. Choices + manual check in HUMAN_CHECKS T7.10b.
