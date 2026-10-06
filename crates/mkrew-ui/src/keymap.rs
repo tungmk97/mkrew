@@ -68,6 +68,8 @@ pub enum Command {
     ShowFiles,
     /// Files only: show or hide git-ignored files in the tree.
     ToggleIgnored,
+    /// Show the active workspace's Git view.
+    ShowGit,
     /// Fuzzy-find a file of the active workspace and open it in the Files view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
@@ -138,6 +140,7 @@ impl Command {
             Command::SendComments,
             Command::ShowFiles,
             Command::ToggleIgnored,
+            Command::ShowGit,
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
@@ -186,6 +189,7 @@ impl Command {
             Command::SendComments => "send_comments".into(),
             Command::ShowFiles => "show_files".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
+            Command::ShowGit => "show_git".into(),
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
@@ -239,6 +243,7 @@ impl Command {
             Command::SendComments => "ctrl-shift-s".into(),
             Command::ShowFiles => "ctrl-shift-4".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
+            Command::ShowGit => "ctrl-shift-5".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
@@ -524,6 +529,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
         assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowFiles));
         assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
+        assert_eq!(bound("ctrl-shift-5"), Some(Command::ShowGit));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));

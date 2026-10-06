@@ -155,6 +155,9 @@ pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 /// Height of the quick open match list (it scrolls past that).
 pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 
+/// Width of the Git view's header and changed-file list (left of the diff).
+pub const GIT_FILE_LIST_WIDTH: f32 = 300.0;
+
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 

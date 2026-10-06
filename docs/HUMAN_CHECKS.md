@@ -373,6 +373,18 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   or a click opens it in Files with its folders opened and the cursor on it; Esc closes and
   the pane gets the keyboard back. Ctrl+V pastes into the query. In a 10,000-file repo typing
   feels instant. Dark + light screenshots for §14.
+- [ ] (T7.9a) **Git view** (logic covered by `git_view.rs` unit tests; daemon `git.status`/
+  `git.diff` by daemon e2e; the view was never seen): Ctrl+Shift+5 or the "Git" tab in the
+  view bar → branch name, "→ origin/main  ↑2 ↓1" (or "No upstream"), Working changes /
+  Against base segments, "Base: main (auto-detected)". Changed files grouped Staged /
+  Unstaged / Untracked with change letters and +/− counts; the first is selected and its diff
+  shows: hunk headers on `diff-hunk-header`, added/deleted lines in the diff colors with old /
+  new line numbers, "⋯ N unchanged lines" between hunks. ↑ ↓ / j k move files (list scrolls
+  along), n / p move hunks (▸ marker, "Hunk 2 of 5", diff scrolls to it), b toggles the mode.
+  Have an agent edit / create / delete files → list and diff update within ~1 s. A binary file
+  or > 1 MB diff → notice + "Open in Zed". Clean repo → "No uncommitted changes." + "Against
+  base" button. Group-title rows and file rows are the same height (scrolling a long list
+  lands on the right file). Dark + light screenshots for §14.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1100,6 +1112,20 @@ _Decisions the agent made on its own. Override them here if you disagree._
   file if its folders were already listed (otherwise it may end up off-screen in a long tree);
   removing the workspace while the finder is open is not handled (finder stays); no "pick a
   workspace first" note.
+- (T7.9a) **Git view split:** T7.9 was split; T7.9a is read-only (header, toggle, grouped
+  list, diff, live refresh). T7.9b adds the base menu, stage/unstage, discard, diff syntax
+  highlighting and palette commands for the Git keys. Choices: Git single-key shortcuts
+  (↑↓ j k n p b) only work while the Git list has focus (like the Files tree arrows); they
+  are not keymap commands yet. The first changed file is selected automatically; after a
+  refresh the selection follows its path into another group (e.g. once staged), else the
+  first file. A failed refresh keeps the shown list with "✕ Refresh failed: …" under the
+  header. No gap row after the last hunk (file length unknown). "Open in Zed" opens the
+  selected file (no line; a deleted file opens a missing path). The no-base empty state
+  points to `mk project update --base` until T7.9b's menu. Open review items: the diff panel
+  is not shown while the status is loading/failed/empty (the message sits in the 300 px
+  column); long diff lines are clipped (no horizontal scroll, like the Files viewer);
+  `GIT_FILE_LIST_WIDTH` 300 vs `FILE_TREE_WIDTH` 280; M/R/C/T letters use the accent like
+  Files' markers; "↑2 ↓1" has no tooltip; CRLF lines are not marked.
 
 ## Done
 

@@ -15,7 +15,7 @@ pub struct DraggedCard {
     pub title: String,
 }
 
-/// What the main area of a workspace shows (SPEC §10; Files/Git come later).
+/// What the main area of a workspace shows (SPEC §10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum View {
     Board,
@@ -26,10 +26,18 @@ pub enum View {
     Docs,
     /// The file tree and read-only viewer (SPEC §12A).
     Files,
+    /// Changed files and their diffs (SPEC §12B).
+    Git,
 }
 
 impl View {
-    pub const ALL: [View; 4] = [View::Board, View::Terminals, View::Docs, View::Files];
+    pub const ALL: [View; 5] = [
+        View::Board,
+        View::Terminals,
+        View::Docs,
+        View::Files,
+        View::Git,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -37,6 +45,7 @@ impl View {
             View::Terminals => "Terminals",
             View::Docs => "Docs",
             View::Files => "Files",
+            View::Git => "Git",
         }
     }
 }

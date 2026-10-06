@@ -19,13 +19,13 @@ use gpui::{
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    AgentProfilesResult, CommentId, CommentListParams, CommentRef, DocComment, DocContent, DocFile,
-    DocListParams, DocReadParams, Event, FsContent, FsEntry, FsListParams, FsMatch, FsReadParams,
-    GitMarker, Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult,
-    SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionRef,
-    SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
-    UndoPreview,
+    AgentProfilesResult, ChangeKind, CommentId, CommentListParams, CommentRef, DiffLineKind,
+    DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff, FsContent,
+    FsEntry, FsListParams, FsMatch, FsReadParams, GitMarker, GitMode, GitStatus, Outcome, Project,
+    ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory, SessionKillParams,
+    SessionKind, SessionListParams, SessionRef, SessionSpawnResult, SessionState, StateSource,
+    TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams,
+    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
@@ -35,7 +35,8 @@ use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow_up::{self, FollowUp};
-use mkrew_ui::highlight::Code;
+use mkrew_ui::git_view::{self, GitView};
+use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{BOARD_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, Keymap, Run};
@@ -202,6 +203,13 @@ struct Shell {
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
+    /// The Git view of every workspace it was shown for.
+    git: HashMap<Ulid, GitView>,
+    /// Focused while a Git view is shown, so its single-key shortcuts work.
+    git_focus: FocusHandle,
+    /// Keep the selected changed file and the current hunk in view.
+    git_files_scroll: UniformListScrollHandle,
+    git_diff_scroll: UniformListScrollHandle,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
@@ -357,6 +365,7 @@ impl Shell {
                 shell.follow_up = None;
                 shell.docs.clear();
                 shell.files.clear();
+                shell.git.clear();
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -410,6 +419,10 @@ impl Shell {
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
             files_scroll: UniformListScrollHandle::new(),
+            git: HashMap::new(),
+            git_focus: cx.focus_handle(),
+            git_files_scroll: UniformListScrollHandle::new(),
+            git_diff_scroll: UniformListScrollHandle::new(),
             task_dialog: None,
             undo_dialog: None,
             history: None,
@@ -525,6 +538,9 @@ impl Shell {
         }
         if switched && self.view() == View::Files {
             self.refresh_files(project_id, window, cx);
+        }
+        if switched && self.view() == View::Git {
+            self.refresh_git(project_id, window, cx);
         }
         self.sync_panes(window, cx);
         cx.notify();
@@ -794,7 +810,7 @@ impl Shell {
 
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
     /// Docs re-lists its files (agents may have written new ones); showing Files refreshes the
-    /// tree and gives it the keyboard.
+    /// tree and gives it the keyboard, likewise for Git and its changes.
     fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(project_id) = self.workspace else {
             return;
@@ -808,6 +824,12 @@ impl Shell {
                 self.refresh_files(project_id, window, cx);
             }
             window.focus(&self.files_focus, cx);
+        }
+        if view == View::Git {
+            if shown != View::Git {
+                self.refresh_git(project_id, window, cx);
+            }
+            window.focus(&self.git_focus, cx);
         }
         if shown != view {
             self.sync_panes(window, cx);
@@ -1145,6 +1167,195 @@ impl Shell {
             error.to_string()
         });
         self.files_view(project_id).zed_error = error;
+        cx.notify();
+    }
+
+    /// The Git view of `project_id`, created on first use.
+    fn git_view(&mut self, project_id: Ulid) -> &mut GitView {
+        self.git
+            .entry(project_id)
+            .or_insert_with(|| GitView::new(project_id))
+    }
+
+    /// Asks the Git view of `project_id` for its status and shown diff again.
+    fn refresh_git(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let requests = self.git_view(project_id).refresh();
+        self.git_requests(project_id, requests, window, cx);
+    }
+
+    fn git_requests(
+        &mut self,
+        project_id: Ulid,
+        requests: git_view::Requests,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if requests.status {
+            self.load_git_status(project_id, window, cx);
+        }
+        if let Some(target) = requests.diff {
+            self.load_git_diff(project_id, target, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// `git.status` of the Git view of `project_id` in its shown mode (also keeps the daemon
+    /// watching the workspace, so `git.changed` follows file changes).
+    fn load_git_status(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(params) = self.git_view(project_id).begin_status() else {
+            return;
+        };
+        let loaded = connection.call::<GitStatus>(Request::GitStatus(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = loaded.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &loaded {
+                    tracing::warn!(%project_id, "git.status failed: {error}");
+                }
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                let requests = view.status_loaded(loaded);
+                shell.git_requests(project_id, requests, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// `git.diff` of the selected file; while one is in flight, the selected file's diff is
+    /// read once more after it answers.
+    fn load_git_diff(
+        &mut self,
+        project_id: Ulid,
+        target: git_view::Target,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if !self.git_view(project_id).begin_diff() {
+            return;
+        }
+        let loaded = connection.call::<FileDiff>(Request::GitDiff(target.params(project_id)));
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = loaded.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &loaded {
+                    tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
+                }
+                let again = shell
+                    .git
+                    .get_mut(&project_id)
+                    .and_then(|view| view.diff_loaded(&target, loaded));
+                if let Some(target) = again {
+                    shell.load_git_diff(project_id, target, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Follows `git.changed` in the Git view on screen (hidden ones refresh when shown).
+    fn git_event(&mut self, event: &Event, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Git) else {
+            return;
+        };
+        let Some(view) = self.git.get_mut(&project_id) else {
+            return;
+        };
+        let requests = view.apply(event);
+        self.git_requests(project_id, requests, window, cx);
+    }
+
+    /// A click on a changed file: shows its diff.
+    fn select_git_file(
+        &mut self,
+        project_id: Ulid,
+        target: git_view::Target,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.git_focus, cx);
+        let diff = self.git_view(project_id).select(target);
+        self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        let requests = git_view::Requests {
+            status: false,
+            diff,
+        };
+        self.git_requests(project_id, requests, window, cx);
+    }
+
+    /// ↑ ↓ / j k move between files (kept in view), n / p between hunks (scrolled to the
+    /// top), b toggles Working changes / Against base.
+    fn git_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(key), Some(project_id)) = (git_view::key(&event.keystroke), self.workspace)
+        else {
+            return;
+        };
+        cx.stop_propagation();
+        let view = self.git_view(project_id);
+        let requests = view.key(key);
+        let selected = view.selected.clone();
+        let file_row = view.list_rows().iter().position(|row| {
+            matches!(row, git_view::ListRow::File(group, file)
+                if selected.as_ref().is_some_and(|s| s.group == *group && s.path == file.path))
+        });
+        let hunk_row = match (&view.diff, view.hunk) {
+            (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk),
+            _ => None,
+        };
+        if let Some(at) = file_row {
+            self.git_files_scroll
+                .scroll_to_item(at, ScrollStrategy::Nearest);
+        }
+        match key {
+            git_view::Key::NextHunk | git_view::Key::PreviousHunk => {
+                if let Some(at) = hunk_row {
+                    self.git_diff_scroll.scroll_to_item(at, ScrollStrategy::Top);
+                }
+            }
+            git_view::Key::Up | git_view::Key::Down if requests.diff.is_some() => {
+                self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+            }
+            _ => {}
+        }
+        self.git_requests(project_id, requests, window, cx);
+    }
+
+    /// Opens the selected changed file of the Git view in Zed; a failure shows in the diff
+    /// header.
+    fn open_git_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        let Some(path) = self
+            .git
+            .get(&project_id)
+            .and_then(|view| view.selected.as_ref())
+            .map(|selected| selected.path.clone())
+        else {
+            return;
+        };
+        let Some(full) = self.workspace_file(project_id, &path) else {
+            return;
+        };
+        let error = zed::open(&full, None).err().map(|error| {
+            tracing::warn!(%project_id, path, "open in Zed failed: {error}");
+            error.to_string()
+        });
+        self.git_view(project_id).zed_error = error;
         cx.notify();
     }
 
@@ -2766,6 +2977,16 @@ impl Shell {
                 {
                     self.open_file_in_zed(project_id, cx);
                 }
+                // Git opens the selected changed file.
+                Some(project_id)
+                    if self.view() == View::Git
+                        && self
+                            .git
+                            .get(&project_id)
+                            .is_some_and(|view| view.selected.is_some()) =>
+                {
+                    self.open_git_file_in_zed(project_id, cx);
+                }
                 Some(project_id) => self.open_in_zed(project_id, cx),
                 None => {}
             },
@@ -2789,6 +3010,7 @@ impl Shell {
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
             Command::ShowFiles => self.show_view(View::Files, window, cx),
+            Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
             Command::ToggleIgnored => {
                 // Only bound while Files are shown.
@@ -3124,6 +3346,7 @@ impl Shell {
                 }
                 if matches!(event, Event::GitChanged(_)) {
                     self.files_event(event, window, cx);
+                    self.git_event(event, window, cx);
                 }
             }
             let Some(delivery) = self.router.route(incoming) else {
@@ -3537,6 +3760,7 @@ impl Shell {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
             (View::Files, _) => main.child(self.render_files(project_id, theme, window, cx)),
+            (View::Git, _) => main.child(self.render_git(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
                 .child(self.render_tab(tabs, now, theme, cx)),
@@ -3548,7 +3772,7 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The workspace's view switcher (SPEC §10): Board / Terminals / Docs / Files.
+    /// The workspace's view switcher (SPEC §10): Board / Terminals / Docs / Files / Git.
     fn render_view_bar(&self, shown: View, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
         let hover = theme.surface_raised;
         div()
@@ -3566,6 +3790,7 @@ impl Shell {
                     View::Terminals => Command::ShowTerminals,
                     View::Docs => Command::ShowDocs,
                     View::Files => Command::ShowFiles,
+                    View::Git => Command::ShowGit,
                 };
                 div()
                     .id(SharedString::from(format!("view-{}", view.title())))
@@ -4204,6 +4429,404 @@ impl Shell {
                     .px(px(space::L))
                     .pb(px(space::L))
                     .into_any_element()
+            }
+        };
+        panel
+            .child(header)
+            .children(view.zed_error.clone().map(|error| {
+                notice(theme.text, format!("✕ {error}"))
+                    .px(px(space::L))
+                    .pb(px(space::S))
+            }))
+            .child(body)
+    }
+
+    /// The workspace's changes (SPEC §12B): branch header and mode toggle over the
+    /// changed-file list, and the selected file's unified diff.
+    fn render_git(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let empty = |sentence: String, detail: Option<String>| {
+            message(theme, None, sentence.into(), detail.map(Into::into)).flex_1()
+        };
+        let Some(view) = self.git.get(&project_id) else {
+            return empty("Loading changes…".into(), None).into_any_element();
+        };
+        let status = match &view.status {
+            git_view::Status::Loaded(status) => Some(&**status),
+            git_view::Status::Loading | git_view::Status::Failed(_) => None,
+        };
+        let column = div()
+            .id("git-files")
+            .flex_none()
+            .w(px(theme::GIT_FILE_LIST_WIDTH))
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .pb(px(space::S))
+            .track_focus(&self.git_focus)
+            .on_key_down(cx.listener(Self::git_key_down))
+            .child(self.git_header(project_id, view, status, theme, cx));
+        let rows = view.list_rows();
+        let any_files = !rows.is_empty();
+        let list = match &view.status {
+            git_view::Status::Loading => empty("Loading changes…".into(), None).into_any_element(),
+            git_view::Status::Failed(error) => {
+                empty("Cannot read the git status.".into(), Some(error.clone()))
+                    .child(
+                        button("git-retry", "Retry", theme, true).on_click(cx.listener(
+                            move |shell, _, window, cx| shell.refresh_git(project_id, window, cx),
+                        )),
+                    )
+                    .into_any_element()
+            }
+            git_view::Status::Loaded(status) if !any_files => {
+                let (sentence, detail) = match (view.mode, &status.base_ref) {
+                    (GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
+                    (GitMode::Base, None) => (
+                        "No base branch found.".to_owned(),
+                        Some(
+                            "Set one with: mk project update <workspace> --base <branch>"
+                                .to_owned(),
+                        ),
+                    ),
+                    (GitMode::Base, Some(base)) => (format!("No changes against {base}."), None),
+                };
+                let (label, tip) = match view.mode {
+                    GitMode::Working => ("Against base", "Show everything on this branch"),
+                    GitMode::Base => ("Working changes", "Show uncommitted changes"),
+                };
+                empty(sentence, detail)
+                    .child(
+                        button("git-empty-mode", label, theme, true)
+                            .tooltip(tooltip(theme, tip, git_view::TOGGLE_MODE_KEY))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                window.focus(&shell.git_focus, cx);
+                                let requests = shell.git_view(project_id).toggle_mode();
+                                shell.git_requests(project_id, requests, window, cx);
+                            })),
+                    )
+                    .into_any_element()
+            }
+            git_view::Status::Loaded(_) => {
+                let rows = Rc::new(rows);
+                let selected = view.selected.clone();
+                let focused = self.git_focus.is_focused(window);
+                let row_theme = theme.clone();
+                uniform_list(
+                    "git-file-list",
+                    rows.len(),
+                    cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                        range
+                            .filter_map(|index| rows.get(index))
+                            .map(|row| {
+                                git_file_row(
+                                    project_id,
+                                    row,
+                                    selected.as_ref(),
+                                    focused,
+                                    &row_theme,
+                                    cx,
+                                )
+                            })
+                            .collect()
+                    }),
+                )
+                .track_scroll(&self.git_files_scroll)
+                .flex_1()
+                .min_h_0()
+                .px(px(space::S))
+                .into_any_element()
+            }
+        };
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .font_family(theme::UI_FONT)
+            .child(column.child(list))
+            .when(any_files, |el| {
+                el.child(self.render_git_diff(project_id, view, theme, cx))
+            })
+            .into_any_element()
+    }
+
+    /// Branch, upstream and ahead/behind, then the Working changes / Against base toggle and
+    /// the base it compares to.
+    fn git_header(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let branch = match status {
+            Some(status) => status
+                .branch
+                .clone()
+                .unwrap_or_else(|| "Detached HEAD".to_owned()),
+            None => "Git".to_owned(),
+        };
+        let tracking = status.map(|status| {
+            let upstream = match &status.upstream {
+                Some(upstream) => format!("→ {upstream}"),
+                None => "No upstream".to_owned(),
+            };
+            match git_view::ahead_behind(status) {
+                Some(counts) => format!("{upstream}  {counts}"),
+                None => upstream,
+            }
+        });
+        let base = status.map(|status| match (&status.base_ref, status.base_auto) {
+            (Some(base), true) => format!("Base: {base} (auto-detected)"),
+            (Some(base), false) => format!("Base: {base}"),
+            (None, _) => "No base branch".to_owned(),
+        });
+        let toggle_keys = SharedString::from(git_view::TOGGLE_MODE_KEY);
+        // Lighter than the active segment's fill, so hovering never looks selected.
+        let hover = theme.surface;
+        let segment = |mode: GitMode, id: &'static str, label: &'static str, tip: &'static str| {
+            let active = view.mode == mode;
+            div()
+                .id(id)
+                .flex_1()
+                .flex()
+                .justify_center()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .text_size(px(font_size::BODY))
+                .when(active, |el| {
+                    el.bg(rgb(theme.surface_raised))
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text))
+                })
+                .when(!active, |el| {
+                    el.cursor_pointer()
+                        .text_color(rgb(theme.text_muted))
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.git_focus, cx);
+                            let requests = shell.git_view(project_id).toggle_mode();
+                            shell.git_requests(project_id, requests, window, cx);
+                        }))
+                })
+                .tooltip(tooltip(theme, tip, toggle_keys.clone()))
+                .child(label)
+        };
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .px(px(space::M))
+            .pt(px(space::XS))
+            .child(
+                div()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(branch),
+            )
+            .children(tracking.map(|tracking| meta_line(theme, tracking.into())))
+            .child(
+                div()
+                    .mt(px(space::XS))
+                    .flex()
+                    .gap(px(space::XS))
+                    .child(segment(
+                        GitMode::Working,
+                        "git-mode-working",
+                        "Working changes",
+                        "Uncommitted changes: staged, unstaged, untracked",
+                    ))
+                    .child(segment(
+                        GitMode::Base,
+                        "git-mode-base",
+                        "Against base",
+                        "Everything on this branch since it left the base",
+                    )),
+            )
+            .children(base.map(|base| meta_line(theme, base.into())))
+            .children(
+                view.refresh_error
+                    .clone()
+                    .map(|error| notice(theme.text, format!("✕ Refresh failed: {error}"))),
+            )
+    }
+
+    /// The selected file's diff: its path, counts, current hunk and Open in Zed, then the
+    /// unified diff (or why it is not shown).
+    fn render_git_diff(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let panel = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .mr(px(space::S))
+            .mb(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .overflow_hidden()
+            .bg(rgb(theme.surface));
+        let Some(selected) = view.selected.clone() else {
+            return panel.child(
+                message(
+                    theme,
+                    None,
+                    "Select a file to see its changes.".into(),
+                    Some("Use ↑ ↓ (or j k) to move between files.".into()),
+                )
+                .flex_1(),
+            );
+        };
+        let zed_keys = self.keymap.label(Command::OpenInZed);
+        let zed_button = |id: &'static str, primary: bool| {
+            button(id, "Open in Zed", theme, primary)
+                .flex_none()
+                .tooltip(tooltip(theme, "Open this file in Zed", zed_keys.clone()))
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    shell.open_git_file_in_zed(project_id, cx);
+                }))
+        };
+        let shown = match &view.diff {
+            git_view::Diff::Shown(shown) => Some(Rc::clone(shown)),
+            _ => None,
+        };
+        let renamed = shown
+            .as_ref()
+            .and_then(|shown| shown.diff.old_path.clone())
+            .map(|old| format!("from {old}"));
+        let hunk_label = shown.as_ref().and_then(|shown| {
+            let count = shown.diff.hunks.len();
+            match view.hunk {
+                Some(hunk) => Some(format!("Hunk {} of {count}", hunk + 1)),
+                None if count > 1 => Some(format!("{count} hunks")),
+                None => None,
+            }
+        });
+        let counts = shown
+            .as_ref()
+            .filter(|shown| !shown.diff.binary)
+            .map(|shown| (shown.diff.added, shown.diff.removed));
+        let header = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::L))
+            .py(px(space::S))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(selected.path.clone()),
+            )
+            .children(renamed.map(|renamed| meta_line(theme, renamed.into()).flex_none()))
+            .children(counts.map(|(added, removed)| change_counts(added, removed, theme)))
+            .children(hunk_label.map(|label| {
+                div()
+                    .id("git-hunks")
+                    .flex_none()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .tooltip(tooltip(theme, "Next / previous hunk", git_view::HUNK_KEYS))
+                    .child(label)
+            }))
+            .child(zed_button("git-zed", false));
+        let body = match &view.diff {
+            git_view::Diff::None | git_view::Diff::Loading => {
+                message(theme, None, "Loading…".into(), None)
+                    .flex_1()
+                    .into_any_element()
+            }
+            git_view::Diff::Failed(error) => message(
+                theme,
+                None,
+                "Cannot show this diff.".into(),
+                Some(error.clone().into()),
+            )
+            .flex_1()
+            .child(
+                button("git-diff-retry", "Retry", theme, true).on_click(cx.listener(
+                    move |shell, _, window, cx| {
+                        let diff = shell.git_view(project_id).select(selected.clone());
+                        let requests = git_view::Requests {
+                            status: false,
+                            diff,
+                        };
+                        shell.git_requests(project_id, requests, window, cx);
+                    },
+                )),
+            )
+            .into_any_element(),
+            git_view::Diff::Shown(shown) if shown.diff.binary || shown.diff.too_large => {
+                let sentence = if shown.diff.binary {
+                    "This is a binary file."
+                } else {
+                    "This diff is too large to show here."
+                };
+                message(
+                    theme,
+                    None,
+                    sentence.into(),
+                    Some("Open it in Zed instead.".into()),
+                )
+                .flex_1()
+                .child(zed_button("git-zed-notice", true))
+                .into_any_element()
+            }
+            git_view::Diff::Shown(shown) if shown.rows.is_empty() => message(
+                theme,
+                None,
+                "No line changes to show.".into(),
+                Some("Only the file's mode or name changed.".into()),
+            )
+            .flex_1()
+            .into_any_element(),
+            git_view::Diff::Shown(shown) => {
+                let shown = Rc::clone(shown);
+                let current = view.hunk;
+                let line_height = theme.terminal_font_size * theme.terminal_line_height;
+                let row_theme = theme.clone();
+                uniform_list("git-diff", shown.rows.len(), move |range, _, _| {
+                    range
+                        .filter_map(|index| shown.rows.get(index))
+                        .map(|row| {
+                            git_diff_row(&shown, row, current, line_height, &row_theme)
+                                .into_any_element()
+                        })
+                        .collect()
+                })
+                .track_scroll(&self.git_diff_scroll)
+                .flex_1()
+                .min_h_0()
+                .pb(px(space::L))
+                .font_family(theme.terminal_font_family)
+                .text_size(px(theme.terminal_font_size))
+                .into_any_element()
             }
         };
         panel
@@ -6489,6 +7112,233 @@ fn file_row(
             shell.click_file(project_id, &path, window, cx);
         }))
         .into_any_element()
+}
+
+/// "+3 −1" in the diff colors.
+fn change_counts(added: u32, removed: u32, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .gap(px(space::XS))
+        .text_size(px(font_size::META))
+        .child(
+            div()
+                .text_color(rgb(theme.diff_add_text))
+                .child(format!("+{added}")),
+        )
+        .child(
+            div()
+                .text_color(rgb(theme.diff_del_text))
+                .child(format!("−{removed}")),
+        )
+}
+
+/// One row of the Git changed-file list: a group title with its count, or a file (change
+/// letter, name, folder muted, +/− counts). Every row is one body line high (uniform list);
+/// the selected file is raised, with a focus ring while the list has the keyboard.
+fn git_file_row(
+    project_id: Ulid,
+    row: &git_view::ListRow,
+    selected: Option<&git_view::Target>,
+    focused: bool,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let (group, file) = match row {
+        git_view::ListRow::Header(group, count) => {
+            // The same box as a file row (uniform list: rows are sized from the first one).
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.bg))
+                .text_size(px(font_size::BODY))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(group.title())
+                .child(count.to_string())
+                .into_any_element();
+        }
+        git_view::ListRow::File(group, file) => (*group, file),
+    };
+    let target = git_view::Target {
+        group,
+        path: file.path.clone(),
+    };
+    let picked = selected == Some(&target);
+    let (letter, color, what) = match file.kind {
+        ChangeKind::Added => ("A", theme.diff_add_text, "Added"),
+        ChangeKind::Modified => ("M", theme.accent, "Modified"),
+        ChangeKind::Deleted => ("D", theme.diff_del_text, "Deleted"),
+        ChangeKind::Renamed => ("R", theme.accent, "Renamed"),
+        ChangeKind::Copied => ("C", theme.accent, "Copied"),
+        ChangeKind::TypeChanged => ("T", theme.accent, "File type changed"),
+        ChangeKind::Untracked => ("?", theme.diff_add_text, "Untracked"),
+        ChangeKind::Conflicted => ("!", theme.diff_del_text, "Conflicted"),
+    };
+    let (dir, name) = match file.path.rsplit_once('/') {
+        Some((dir, name)) => (Some(dir.to_owned()), name.to_owned()),
+        None => (None, file.path.clone()),
+    };
+    let fill = if picked {
+        theme.surface_raised
+    } else {
+        theme.bg
+    };
+    let hover = theme.surface_raised;
+    let id = format!("git-file-{group:?}-{}", file.path);
+    div()
+        .id(SharedString::from(id.clone()))
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .border(px(theme::BORDER_WIDTH))
+        // The border is always there (so rows never shift); it only shows as the focus ring.
+        .border_color(rgb(if picked && focused {
+            theme.pane_focus_border
+        } else {
+            fill
+        }))
+        .cursor_pointer()
+        .text_size(px(font_size::BODY))
+        .when(picked, |el| el.bg(rgb(fill)))
+        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-kind")))
+                .flex_none()
+                .w(px(space::M))
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(color))
+                .tooltip(tooltip(theme, what, ""))
+                .child(letter),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .gap(px(space::XS))
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .child(
+                    div()
+                        .flex_none()
+                        .text_color(rgb(theme.text))
+                        .when(picked, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                        .child(name),
+                )
+                .children(dir.map(|dir| {
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(dir)
+                })),
+        )
+        .children(
+            git_view::counts(file).map(|(added, removed)| change_counts(added, removed, theme)),
+        )
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.select_git_file(project_id, target.clone(), window, cx);
+        }))
+        .into_any_element()
+}
+
+/// One row of the Git diff viewer, `line_height` high: a collapsed gap of unchanged lines, a
+/// hunk header (the current hunk in the accent), or a line with its old / new numbers, its
+/// `+` / `−` sign and the diff colors.
+fn git_diff_row(
+    shown: &git_view::Shown,
+    row: &git_view::DiffRow,
+    current: Option<usize>,
+    line_height: f32,
+    theme: &Theme,
+) -> gpui::Div {
+    let frame = div()
+        .w_full()
+        .h(px(line_height))
+        .flex()
+        .items_center()
+        .gap(px(space::M))
+        .px(px(space::L))
+        .whitespace_nowrap();
+    let width = shown.number_width;
+    let number = |n: Option<u32>| match n {
+        Some(n) => format!("{n:>width$}"),
+        None => " ".repeat(width),
+    };
+    match row {
+        git_view::DiffRow::Gap(count) => {
+            let lines = if *count == 1 { "line" } else { "lines" };
+            frame
+                .text_color(rgb(theme.text_muted))
+                .child(format!("⋯ {count} unchanged {lines}"))
+        }
+        git_view::DiffRow::Hunk(index) => {
+            let Some(hunk) = shown.diff.hunks.get(*index) else {
+                return frame;
+            };
+            let at = current == Some(*index);
+            // The current hunk gets a marker, not only the accent color.
+            let text = format!(
+                "{} @@ -{},{} +{},{} @@ {}",
+                if at { "▸" } else { " " },
+                hunk.old_start,
+                hunk.old_lines,
+                hunk.new_start,
+                hunk.new_lines,
+                hunk.header
+            );
+            frame
+                .bg(rgb(theme.diff_hunk_header))
+                .text_color(rgb(if at { theme.accent } else { theme.text_muted }))
+                .child(text)
+        }
+        git_view::DiffRow::Line(line) => {
+            let (bg, fg, sign) = match line.kind {
+                DiffLineKind::Add => (Some(theme.diff_add_bg), theme.diff_add_text, "+"),
+                DiffLineKind::Del => (Some(theme.diff_del_bg), theme.diff_del_text, "−"),
+                DiffLineKind::Context => (None, theme.text, " "),
+            };
+            frame
+                .when_some(bg, |el, bg| el.bg(rgb(bg)))
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .gap(px(space::S))
+                        .text_color(rgb(theme.text_muted))
+                        .child(number(line.old_line))
+                        .child(number(line.new_line)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(space::S))
+                        .text_color(rgb(fg))
+                        .child(sign)
+                        .child(line.text.replace('\t', highlight::TAB)),
+                )
+                .when(line.no_newline, |el| {
+                    el.child(
+                        div()
+                            .text_color(rgb(theme.text_muted))
+                            .child("(no newline at end of file)"),
+                    )
+                })
+        }
+    }
 }
 
 /// A file size for people: bytes, KB or MB (1024-based, one decimal).

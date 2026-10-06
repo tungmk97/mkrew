@@ -21,7 +21,7 @@ pub const HIGHLIGHT_MAX_BYTES: usize = 512 * 1024;
 pub const HIGHLIGHT_MAX_LINE: usize = 4096;
 
 /// A tab shows as this many spaces.
-const TAB: &str = "    ";
+pub const TAB: &str = "    ";
 
 /// What a highlighted span is; plain text has no span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
