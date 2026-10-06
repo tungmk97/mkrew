@@ -43,6 +43,71 @@ impl Viewed {
     }
 }
 
+/// The last non-blank screen line of each Inbox entry (§20A.4), read once when the entry
+/// appears (`session.read lines=1`); a later state change appears again and reads again.
+#[derive(Debug, Default)]
+pub struct LastLines {
+    /// Session → `state_changed_at` of the read entry and its line (`None` while reading,
+    /// or when the screen was blank or the read failed).
+    lines: HashMap<Ulid, (i64, Option<String>)>,
+}
+
+impl LastLines {
+    /// The entries to read now: those without a line for their current state change. They
+    /// count as reading from here on; sessions that left the Inbox are forgotten.
+    pub fn to_read(&mut self, entries: &[Entry]) -> Vec<(Ulid, i64)> {
+        self.lines
+            .retain(|id, _| entries.iter().any(|e| e.session_id == *id));
+        let mut to_read = Vec::new();
+        for e in entries {
+            if self
+                .lines
+                .get(&e.session_id)
+                .is_none_or(|(at, _)| *at != e.state_changed_at)
+            {
+                self.lines.insert(e.session_id, (e.state_changed_at, None));
+                to_read.push((e.session_id, e.state_changed_at));
+            }
+        }
+        to_read
+    }
+
+    /// The read of `session` at `state_changed_at` returned `lines`; ignored if the entry
+    /// changed since.
+    pub fn read(&mut self, session: Ulid, state_changed_at: i64, lines: &[String]) {
+        if let Some((at, line)) = self.lines.get_mut(&session)
+            && *at == state_changed_at
+        {
+            *line = lines
+                .iter()
+                .rev()
+                .map(|l| l.trim())
+                .find(|l| !l.is_empty())
+                .map(str::to_owned);
+        }
+    }
+
+    /// The read of `session` at `state_changed_at` failed: the next [`LastLines::to_read`]
+    /// asks again.
+    pub fn forget(&mut self, session: Ulid, state_changed_at: i64) {
+        if self
+            .lines
+            .get(&session)
+            .is_some_and(|(at, _)| *at == state_changed_at)
+        {
+            self.lines.remove(&session);
+        }
+    }
+
+    /// The line shown under `entry`, if read.
+    pub fn get(&self, entry: &Entry) -> Option<&str> {
+        match self.lines.get(&entry.session_id) {
+            Some((at, Some(line))) if *at == entry.state_changed_at => Some(line),
+            _ => None,
+        }
+    }
+}
+
 /// The Inbox, newest state change first. Sessions of unknown (e.g. archived) workspaces are
 /// left out.
 pub fn entries(projects: &[Project], sessions: &[Session], viewed: &Viewed) -> Vec<Entry> {
@@ -274,6 +339,47 @@ mod tests {
             Some(Jump::Workspace(api.id))
         );
         assert_eq!(jump(&projects, &sessions, Ulid::new(), Ulid::new()), None);
+    }
+
+    #[test]
+    fn last_lines_are_read_once_per_appearance() {
+        let api = project("api");
+        let mut asking = session(&api, SessionState::NeedsInput, 5);
+        let projects = [api];
+        let mut last = LastLines::default();
+        let listed = entries(&projects, &[asking.clone()], &Viewed::default());
+        assert_eq!(last.to_read(&listed), vec![(asking.id, 5)]);
+        // Reading: not asked again, nothing shown yet.
+        assert!(last.to_read(&listed).is_empty());
+        assert_eq!(last.get(&listed[0]), None);
+
+        last.read(
+            asking.id,
+            5,
+            &["Continue?".to_owned(), "  Apply edit? (y/n)  ".to_owned()],
+        );
+        assert_eq!(last.get(&listed[0]), Some("Apply edit? (y/n)"));
+        assert!(last.to_read(&listed).is_empty());
+
+        // A new state change re-reads; a late answer of the old read is ignored.
+        asking.state_changed_at = 9;
+        let listed = entries(&projects, &[asking.clone()], &Viewed::default());
+        assert_eq!(last.get(&listed[0]), None);
+        assert_eq!(last.to_read(&listed), vec![(asking.id, 9)]);
+        last.read(asking.id, 5, &["old".to_owned()]);
+        assert_eq!(last.get(&listed[0]), None);
+        last.read(asking.id, 9, &["   ".to_owned()]);
+        assert_eq!(last.get(&listed[0]), None);
+
+        // A failed read is asked again; a stale failure is ignored.
+        last.forget(asking.id, 5);
+        assert!(last.to_read(&listed).is_empty());
+        last.forget(asking.id, 9);
+        assert_eq!(last.to_read(&listed), vec![(asking.id, 9)]);
+
+        // Leaving the Inbox forgets it; coming back reads again.
+        assert!(last.to_read(&[]).is_empty());
+        assert_eq!(last.to_read(&listed), vec![(asking.id, 9)]);
     }
 
     #[test]

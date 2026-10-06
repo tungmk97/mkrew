@@ -24,9 +24,10 @@ use mkrew_protocol::{
     DocListParams, DocReadParams, Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch,
     FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project,
     ProjectAddParams, ProjectRef, Request, Session, SessionAttachResult, SessionHistory,
-    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
-    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
-    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    SessionKillParams, SessionKind, SessionListParams, SessionReadParams, SessionReadResult,
+    SessionRef, SessionSpawnResult, SessionState, SessionTurnEvent, StateSource, TabCreateParams,
+    TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef,
+    TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -43,7 +44,7 @@ use mkrew_ui::git_history::{self, Commits};
 use mkrew_ui::git_view::{self, GitView, TaskChanges};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
-use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
+use mkrew_ui::inbox::{self, Entry, Jump, LastLines, Viewed};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
     GIT_CONTEXT, Keymap, KeymapError, Run,
@@ -61,6 +62,7 @@ use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::zed;
@@ -192,6 +194,10 @@ struct Shell {
     dev_reveal: Option<Ulid>,
     /// Done sessions already seen, so they leave the Inbox.
     viewed: Viewed,
+    /// The last screen line under each Inbox entry.
+    last_lines: LastLines,
+    /// Each session's last turn, summarized while it is done.
+    turns: Turns,
     /// Every workspace's task cards.
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
@@ -450,6 +456,8 @@ impl Shell {
             dev_dialog: None,
             dev_reveal: None,
             viewed: Viewed::default(),
+            last_lines: LastLines::default(),
+            turns: Turns::default(),
             board: Board::default(),
             board_error: None,
             conflicts: Conflicts::default(),
@@ -555,6 +563,7 @@ impl Shell {
                 shell
                     .conflicts
                     .prune(&shell.board, shell.sidebar.sessions());
+                shell.read_last_lines(window, cx);
                 cx.notify();
                 if std::mem::take(&mut shell.refresh_again) {
                     shell.refresh(window, cx);
@@ -4353,6 +4362,41 @@ impl Shell {
         .detach();
     }
 
+    /// Reads the last screen line of every Inbox entry that just appeared (§20A.4).
+    fn read_last_lines(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let entries = inbox::entries(
+            self.sidebar.projects(),
+            self.sidebar.sessions(),
+            &self.viewed,
+        );
+        for (session_id, changed_at) in self.last_lines.to_read(&entries) {
+            let read =
+                connection.call::<SessionReadResult>(Request::SessionRead(SessionReadParams {
+                    session_id,
+                    lines: 1,
+                }));
+            cx.spawn_in(window, async move |this, cx| {
+                let read = read.await;
+                let _ = this.update(cx, |shell, cx| match read {
+                    Ok(read) => {
+                        shell.last_lines.read(session_id, changed_at, &read.lines);
+                        cx.notify();
+                    }
+                    // E.g. the session ended meanwhile: read again on the next state change
+                    // or refresh while it is still listed.
+                    Err(error) => {
+                        tracing::debug!(%session_id, "session.read failed: {error:#}");
+                        shell.last_lines.forget(session_id, changed_at);
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
     /// Routes a batch of incoming frames; returns whether a pane got new content.
     fn dispatch(
         &mut self,
@@ -4362,10 +4406,17 @@ impl Shell {
     ) -> bool {
         let mut fed: Vec<Entity<TerminalPane>> = Vec::new();
         let mut layout_changed = false;
+        let mut inbox_changed = false;
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
                 if self.board.apply(event) {
                     cx.notify();
+                }
+                if self.turns.apply(event) {
+                    cx.notify();
+                }
+                if matches!(event, Event::SessionState(_)) {
+                    inbox_changed = true;
                 }
                 match self.sidebar.apply(event) {
                     Change::None => {}
@@ -4426,6 +4477,9 @@ impl Shell {
         if layout_changed {
             self.sync_panes(window, cx);
             cx.notify();
+        }
+        if inbox_changed {
+            self.read_last_lines(window, cx);
         }
         for pane in &fed {
             pane.update(cx, |_, cx| cx.notify());
@@ -4636,11 +4690,11 @@ impl Shell {
                 .flex_col()
                 .px(px(space::XS))
                 .pb(px(space::S))
-                .children(
-                    entries
-                        .into_iter()
-                        .map(|entry| inbox_row(entry, now, theme, cx)),
-                )
+                .children(entries.into_iter().map(|entry| {
+                    let last_line = self.last_lines.get(&entry).map(str::to_owned);
+                    let turn = self.turns.get(entry.session_id);
+                    inbox_row(entry, last_line, turn, now, theme, cx)
+                }))
         };
         // At most half the sidebar; a long Inbox scrolls on its own.
         div()
@@ -8854,7 +8908,7 @@ impl Shell {
                         cx,
                     )
                 });
-                pane_header(info, conflict, now, theme)
+                pane_header(info, self.turns.get(session), conflict, now, theme)
             }))
             .child(div().flex_1().min_h_0().child(content))
             .when(several && !is_focused, |el| {
@@ -10060,10 +10114,12 @@ fn session_row(
         .into_any_element()
 }
 
-/// One Inbox line: status icon, `workspace: agent · title` and the status; a click shows the
-/// pane.
+/// One Inbox line: status icon, `workspace: agent · title` over the last screen line, and the
+/// status (with the last turn's summary when done); a click shows the pane.
 fn inbox_row(
     entry: Entry,
+    last_line: Option<String>,
+    turn: Option<&SessionTurnEvent>,
     now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -10077,7 +10133,8 @@ fn inbox_row(
     div()
         .id(SharedString::from(format!("inbox-{session_id}")))
         .flex()
-        .items_center()
+        // Icon and status line up with the name, above the last screen line.
+        .items_baseline()
         .gap(px(space::S))
         .px(px(space::S))
         .py(px(space::XS))
@@ -10099,12 +10156,26 @@ fn inbox_row(
             div()
                 .flex_1()
                 .min_w_0()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .text_size(px(font_size::BODY))
-                .text_color(rgb(theme.text))
-                .child(name),
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_size(px(font_size::BODY))
+                        .text_color(rgb(theme.text))
+                        .child(name),
+                )
+                .children(last_line.map(|line| {
+                    div()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(line)
+                })),
         )
         .child(
             div()
@@ -10118,7 +10189,13 @@ fn inbox_row(
                     entry.state_source,
                     entry.state_changed_at,
                 ))
-                .child(status::text(entry.state, None, entry.state_changed_at, now)),
+                .child(turn::status_text(
+                    entry.state,
+                    None,
+                    entry.state_changed_at,
+                    now,
+                    turn,
+                )),
         )
         .into_any_element()
 }
@@ -10643,9 +10720,11 @@ fn conflict_badge(
 }
 
 /// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
-/// warning, status text and time; hovering the status shows its source and last change.
+/// warning, status text and time (with the last turn's summary when done); hovering the
+/// status shows its source and last change.
 fn pane_header(
     session: &Session,
+    turn: Option<&SessionTurnEvent>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
     now: i64,
     theme: &Theme,
@@ -10699,7 +10778,13 @@ fn pane_header(
                     session.state_source,
                     changed_at,
                 ))
-                .child(status::text(state, session.exit_code, changed_at, now)),
+                .child(turn::status_text(
+                    state,
+                    session.exit_code,
+                    changed_at,
+                    now,
+                    turn,
+                )),
         )
 }
 

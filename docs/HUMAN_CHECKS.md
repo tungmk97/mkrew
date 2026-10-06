@@ -1480,6 +1480,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   To verify: `cargo clippy` on Linux/macOS; on Windows run a fake agent that works for a while
   and check `powercfg /requests` (as admin) lists `mkrew-daemon` under SYSTEM, and that it is gone
   ~5 s after the agent stops; a shell session running a command never appears there.
+- (T9.8, ADR 0011) **Turn summary + Inbox last line:** the summary reads `done · 3 files · 4m`
+  (app duration style, not `4 min`); only the latest turn of a session is kept, and only while
+  the UI runs (a UI started after the turn ended shows plain `done`). The Inbox last line is read
+  once per entry appearance (`session.read lines=1`), so it does not follow later output; the row
+  grows by one line when the read returns. To verify: run a fake agent `ask` scenario → the
+  Inbox row shows the `(y/n)` line under the name; a fake agent that edits 2 files → Inbox row
+  and pane header show `✓ done · 2 files · …`.
 
 ## Done
 

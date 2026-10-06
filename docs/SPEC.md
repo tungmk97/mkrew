@@ -1207,8 +1207,8 @@ feature is simply off for them (HUMAN_CHECKS).
    `ended_at` and `files` = paths attributed to the session during the turn (the hook-reported
    edits and file-watcher batches already attributed in M5, deduplicated, relative). From M11 each
    file also carries `added`/`removed` (numstat between the turn's start and end snapshots).
-   The Inbox row of a `done` session shows `✓ done · 3 files · 4 min`; the pane header shows the same
-   after the status. The summary text is UI-side; the event carries the data.
+   The Inbox row of a `done` session shows `✓ done · 3 files · 4m` (no files → `✓ done · 4m`;
+   durations as everywhere else, ADR 0011); the pane header shows the same after the status. The summary text is UI-side; the event carries the data.
 4. **Last line.** The Inbox row also shows the last non-blank screen line (truncated, muted) —
    taken from `session.read` with `lines = 1` when the entry appears.
 5. **Keep awake.** While at least one agent session (not shell) is `working` and
