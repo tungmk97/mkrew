@@ -1,6 +1,7 @@
 //! GPUI elements of the Docs view (SPEC §12, §14): the [`markdown`](crate::markdown) blocks as
-//! the rendered preview, and the source view with line numbers. Only [`inline`] is pure (and
-//! tested); the rest maps the model onto theme tokens.
+//! the rendered preview, and the source view with line numbers; and the Files viewer's
+//! highlighted code (SPEC §12A). Only [`inline`] and [`token_color`] are pure (and tested);
+//! the rest maps the model onto theme tokens.
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -14,6 +15,7 @@ use gpui::{
 
 use crate::comments::Selection;
 use crate::docs::{Shown, gutter};
+use crate::highlight::{Code, Token};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
 use crate::theme::{self, Theme, font_size, radius, space, weight};
 
@@ -279,6 +281,85 @@ pub fn source(
     .text_size(px(theme.terminal_font_size))
 }
 
+/// The theme color of a highlighted token (SPEC §14).
+pub fn token_color(token: Token, theme: &Theme) -> u32 {
+    match token {
+        Token::Comment => theme.text_muted,
+        Token::String => theme.syntax_string,
+        Token::Number => theme.syntax_number,
+        Token::Keyword => theme.syntax_keyword,
+        Token::Type => theme.syntax_type,
+        Token::Function => theme.syntax_function,
+    }
+}
+
+/// The Files viewer (SPEC §12A): `code` with line numbers and syntax colors; a click on a line
+/// calls `on_line` (Shift is ignored), `selected` is shown like a selection.
+pub fn code_view(
+    id: &'static str,
+    code: Rc<Code>,
+    selected: Option<u32>,
+    on_line: OnLine,
+    theme: &Theme,
+) -> UniformList {
+    let total = code.lines.len();
+    let (font_family, font_size) = (theme.terminal_font_family, theme.terminal_font_size);
+    let line_height = theme.terminal_font_size * theme.terminal_line_height;
+    let theme = theme.clone();
+    uniform_list(id, total, move |range, _, _| {
+        range
+            .map(|index| {
+                let line = code.lines.get(index).map(String::as_str).unwrap_or("");
+                let spans = code.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
+                let highlights: Vec<_> = spans
+                    .iter()
+                    .map(|(range, token)| {
+                        let color = Hsla::from(rgb(token_color(*token, &theme)));
+                        let style = HighlightStyle {
+                            color: Some(color),
+                            ..HighlightStyle::default()
+                        };
+                        (range.clone(), style)
+                    })
+                    .collect();
+                let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
+                let on_line = Rc::clone(&on_line);
+                let picked = selected == Some(number);
+                // A raised band plus an accent number: syntax colors and muted comments stay
+                // ≥ 4.5:1 on it (the terminal selection color would not).
+                div()
+                    .w_full()
+                    .h(px(line_height))
+                    .flex()
+                    .gap(px(space::L))
+                    .whitespace_nowrap()
+                    .cursor_pointer()
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, window, cx| {
+                        on_line(number, false, window, cx);
+                    })
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(rgb(if picked {
+                                theme.accent
+                            } else {
+                                theme.text_muted
+                            }))
+                            .child(gutter(index + 1, total)),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(theme.text))
+                            .child(StyledText::new(line.to_owned()).with_highlights(highlights)),
+                    )
+            })
+            .collect()
+    })
+    .font_family(font_family)
+    .text_size(px(font_size))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,5 +399,13 @@ mod tests {
                 .all(|(range, _, _)| text.get(range.clone()).is_some())
         );
         assert_eq!(inline(&[]), (String::new(), vec![]));
+    }
+
+    #[test]
+    fn tokens_take_theme_colors_and_comments_are_muted() {
+        let theme = Theme::dark();
+        assert_eq!(token_color(Token::Comment, &theme), theme.text_muted);
+        assert_eq!(token_color(Token::Keyword, &theme), theme.syntax_keyword);
+        assert_eq!(token_color(Token::Function, &theme), theme.syntax_function);
     }
 }

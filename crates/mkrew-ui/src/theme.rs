@@ -143,6 +143,15 @@ pub const SEND_SESSIONS_HEIGHT: f32 = 200.0;
 /// the undo one.
 pub const CHANGES_DIFF_HEIGHT: f32 = 420.0;
 
+/// Width of the Files view's tree.
+pub const FILE_TREE_WIDTH: f32 = 280.0;
+
+/// Indent per folder level in the Files tree.
+pub const FILE_TREE_INDENT: f32 = space::M;
+
+/// Side of the dot on a Files tree folder holding changes.
+pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
+
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 
@@ -195,6 +204,13 @@ pub struct Theme {
     pub diff_del_bg: u32,
     pub diff_del_text: u32,
     pub diff_hunk_header: u32,
+    /// Files viewer syntax colors (harmonized with the ANSI palette; comments use
+    /// `text_muted`).
+    pub syntax_keyword: u32,
+    pub syntax_string: u32,
+    pub syntax_number: u32,
+    pub syntax_type: u32,
+    pub syntax_function: u32,
     /// ANSI 0–15, harmonized with the tokens above.
     pub ansi: [u32; 16],
     pub terminal_font_family: &'static str,
@@ -241,6 +257,11 @@ impl Theme {
             diff_del_bg: 0x3D2226,
             diff_del_text: 0xF2A0A4,
             diff_hunk_header: 0x25262C,
+            syntax_keyword: 0xC28CF0,
+            syntax_string: 0x7DD3A0,
+            syntax_number: 0xF0C674,
+            syntax_type: 0x8BE0EC,
+            syntax_function: 0xA3AFFF,
             ansi: [
                 0x25262C, 0xE5676B, 0x4CB782, 0xE3A63E, 0x7C8CFF, 0xC28CF0, 0x5EC4D6, 0xC9CBD1,
                 0x6E7079, 0xF2A0A4, 0x7DD3A0, 0xF0C674, 0xA3AFFF, 0xD8B4FE, 0x8BE0EC, 0xF5F6F8,
@@ -272,6 +293,12 @@ impl Theme {
             diff_del_bg: 0xFCE8E8,
             diff_del_text: 0xA61B1B,
             diff_hunk_header: 0xF3F3F1,
+            // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
+            syntax_keyword: 0x8A3FB8,
+            syntax_string: 0x276749,
+            syntax_number: 0x975A16,
+            syntax_type: 0x17707F,
+            syntax_function: 0x3B47B8,
             ansi: [
                 // "White" stays readable on the light background (≥ 3:1).
                 0x1D1E22, 0xC53030, 0x2F855A, 0xB7791F, 0x4F5BD5, 0x9B4DCA, 0x1F8A9E, 0x8A8C94,
@@ -304,6 +331,11 @@ impl Theme {
             diff_del_bg: 0,
             diff_del_text: 0,
             diff_hunk_header: 0,
+            syntax_keyword: 0,
+            syntax_string: 0,
+            syntax_number: 0,
+            syntax_type: 0,
+            syntax_function: 0,
             ansi: [0; 16],
             terminal_font_family: TERMINAL_FONT,
             terminal_font_fallback: TERMINAL_FONT_FALLBACK,
@@ -360,6 +392,26 @@ mod tests {
             ] {
                 let ratio = contrast(theme.text, bg);
                 assert!(ratio >= 4.5, "{bg:06X}: {ratio:.2}");
+            }
+        }
+    }
+
+    #[test]
+    fn code_stays_readable() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for fg in [
+                theme.syntax_keyword,
+                theme.syntax_string,
+                theme.syntax_number,
+                theme.syntax_type,
+                theme.syntax_function,
+                theme.accent,
+            ] {
+                // `surface_raised` = the Files viewer's selected line.
+                for bg in [theme.bg, theme.surface, theme.surface_raised] {
+                    let ratio = contrast(fg, bg);
+                    assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                }
             }
         }
     }

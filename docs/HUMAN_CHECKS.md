@@ -347,6 +347,20 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   No live agent → "No agent is running…" + Close. After the agent edits the file, hover the
   thread → "View changes" shows the diff (−/+ rows, hunk band); unchanged file → "Nothing
   changed…". Dark + light screenshots for §14.
+- [ ] (T7.7) **Files view** (logic covered by `files_view.rs` / `highlight.rs` unit tests;
+  daemon side by `fs_list_read_and_find_follow_file_changes`; the view was never seen):
+  Ctrl+Shift+4 (or the "Files" tab) → tree of the workspace, folders first, ▸/▾ chevrons,
+  M/A/D/? letters on changed files (tooltip names them), a dot on folders holding changes.
+  ↑ ↓ move the focus-ringed cursor (the list scrolls along), → opens a folder / goes to its
+  first child, ← closes / goes to the parent, Enter or click opens a file. Ctrl+Shift+H and
+  the "Show ignored" button show `target/`, `node_modules/` (muted names). Have an agent
+  create, edit, rename and delete files → the tree and the opened file update within ~1 s.
+  Open a `.rs`, `.ts`, `.py`, `.toml`, `.md` file → line numbers + syntax colors readable in
+  dark and light (TOML has no bundled syntax → plain); click a line → raised band + accent
+  number + "Line N"; "Open in Zed" / Ctrl+Shift+Z opens Zed at that line. A PNG → "This is a
+  binary file." + size + "Open in Zed"; a > 2 MB log → "too large" notice; a 1 MB text file
+  shows plain and scrolls smoothly. A `.md` → "Review in Docs" switches to Docs with it
+  selected. Dark + light screenshots for §14.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1051,6 +1065,20 @@ _Decisions the agent made on its own. Override them here if you disagree._
   folder moved in from outside only yields a directory event, which does not invalidate the
   find cache; e2e `fs_list_read_and_find_follow_file_changes` uses a 500 ms sleep to drain
   watcher batches (could poll `fs.find` with a deadline instead).
+- (T7.7) **Files view:** syntax colors are 5 new theme tokens `syntax_keyword/string/number/
+  type/function` (ANSI-harmonized in dark, darkened in light; comments = `text_muted`; all
+  tested ≥ 4.5:1 on `bg`/`surface`/`surface_raised`) — not yet in the SPEC §14 table.
+  syntect 5.3 bundled syntaxes (no TOML/TypeScript: `.ts/.tsx/.jsx` use JavaScript, TOML is
+  plain); files > 512 KB or with a line > 4,096 bytes are shown unhighlighted (highlighting
+  runs on the background executor, whole file at once). Tabs show as 4 spaces. Marker colors:
+  M = accent, A/? = `diff_add_text`, D = `diff_del_text` (letters carry the meaning; the
+  ui-reviewer suggested amber for M, but status colors are reserved for agent states). Only
+  the Files view on screen follows `git.changed` (re-lists the root + open folders on screen,
+  re-reads the opened file; reads coalesce while one is in flight); hidden ones refresh when
+  shown. A selected line is cleared by clicking it again; no multi-line selection (T7.11
+  adds line picking in the Git diff). Open review NITs: `rows()` is rebuilt per
+  click/key/frame (O(n) of the visible tree); code lines have no hover state; the "Select a
+  file" empty state has a key hint but no button (Quick open lands in T7.8).
 
 ## Done
 

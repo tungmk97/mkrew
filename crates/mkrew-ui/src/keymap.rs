@@ -64,6 +64,10 @@ pub enum Command {
     AddComment,
     /// Docs only: send the shown file's open (or selected) comments to an agent session.
     SendComments,
+    /// Show the active workspace's file tree and viewer.
+    ShowFiles,
+    /// Files only: show or hide git-ignored files in the tree.
+    ToggleIgnored,
     /// Open the new task dialog for the active workspace.
     NewTask,
     /// Board only: run the selected Todo card.
@@ -78,6 +82,9 @@ pub const BOARD_CONTEXT: &str = "Board";
 
 /// Key context of the window while a Docs view is shown.
 pub const DOCS_CONTEXT: &str = "Docs";
+
+/// Key context of the window while a Files view is shown.
+pub const FILES_CONTEXT: &str = "Files";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
@@ -127,6 +134,8 @@ impl Command {
             Command::ToggleDocSource,
             Command::AddComment,
             Command::SendComments,
+            Command::ShowFiles,
+            Command::ToggleIgnored,
             Command::NewTask,
             Command::RunTask,
         ]);
@@ -172,6 +181,8 @@ impl Command {
             Command::ToggleDocSource => "toggle_doc_source".into(),
             Command::AddComment => "add_comment".into(),
             Command::SendComments => "send_comments".into(),
+            Command::ShowFiles => "show_files".into(),
+            Command::ToggleIgnored => "toggle_ignored".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
         }
@@ -222,6 +233,8 @@ impl Command {
             Command::ToggleDocSource => "ctrl-shift-e".into(),
             Command::AddComment => "ctrl-alt-m".into(),
             Command::SendComments => "ctrl-shift-s".into(),
+            Command::ShowFiles => "ctrl-shift-4".into(),
+            Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
         }
@@ -239,6 +252,7 @@ impl Command {
             Command::ToggleDocSource | Command::AddComment | Command::SendComments => {
                 Some(DOCS_CONTEXT)
             }
+            Command::ToggleIgnored => Some(FILES_CONTEXT),
             _ => None,
         }
     }
@@ -503,6 +517,8 @@ mod tests {
         assert_eq!(bound("ctrl-shift-e"), Some(Command::ToggleDocSource));
         assert_eq!(bound("ctrl-alt-m"), Some(Command::AddComment));
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
+        assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowFiles));
+        assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(
@@ -528,6 +544,8 @@ mod tests {
         // Ctrl+Shift+E only toggles while Docs are shown; terminals still get it.
         assert_eq!(Command::ToggleDocSource.context(), Some(DOCS_CONTEXT));
         assert_eq!(Command::AddComment.context(), Some(DOCS_CONTEXT));
+        // Ctrl+Shift+H only toggles ignored files while Files are shown.
+        assert_eq!(Command::ToggleIgnored.context(), Some(FILES_CONTEXT));
         assert_eq!(Command::SendComments.context(), Some(DOCS_CONTEXT));
     }
 

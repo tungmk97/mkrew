@@ -13,18 +13,18 @@ use std::time::Duration;
 use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, KeyDownEvent,
-    MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, SharedString, Subscription,
-    TitlebarOptions, Window, WindowAppearance, WindowBounds, WindowOptions, anchored, deferred,
-    div, px, relative, rgb, size,
+    MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
+    Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance, WindowBounds,
+    WindowOptions, anchored, deferred, div, px, relative, rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfilesResult, CommentId, CommentListParams, CommentRef, DocComment, DocContent, DocFile,
-    DocListParams, DocReadParams, Event, Outcome, Project, ProjectAddParams, Request, Session,
-    SessionAttachResult, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
-    SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams,
-    TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
-    TerminalTab, UndoPreview,
+    DocListParams, DocReadParams, Event, FsContent, FsEntry, FsListParams, FsReadParams, GitMarker,
+    Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory,
+    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
+    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
+    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
@@ -32,10 +32,12 @@ use mkrew_ui::comments::{self, Selection, Thread};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
+use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow_up::{self, FollowUp};
+use mkrew_ui::highlight::Code;
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
-use mkrew_ui::keymap::{BOARD_CONTEXT, Command, DOCS_CONTEXT, Keymap, Run};
+use mkrew_ui::keymap::{BOARD_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::preview;
 use mkrew_ui::router::{Delivery, Router};
@@ -192,6 +194,12 @@ struct Shell {
     docs: HashMap<Ulid, Docs>,
     /// Focused while a Docs comment or reply draft takes keys (the draft stays on blur).
     comment_focus: FocusHandle,
+    /// The Files view of every workspace it was shown for.
+    files: HashMap<Ulid, FilesView>,
+    /// Focused while a Files view is shown, so arrow keys move its tree cursor.
+    files_focus: FocusHandle,
+    /// Keeps the Files tree cursor in view.
+    files_scroll: UniformListScrollHandle,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
@@ -341,6 +349,7 @@ impl Shell {
                 shell.doc_dialog = None;
                 shell.follow_up = None;
                 shell.docs.clear();
+                shell.files.clear();
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -391,6 +400,9 @@ impl Shell {
             views: HashMap::new(),
             docs: HashMap::new(),
             comment_focus: cx.focus_handle(),
+            files: HashMap::new(),
+            files_focus: cx.focus_handle(),
+            files_scroll: UniformListScrollHandle::new(),
             task_dialog: None,
             undo_dialog: None,
             history: None,
@@ -501,6 +513,9 @@ impl Shell {
         }
         if switched && self.view() == View::Docs {
             self.load_docs(project_id, window, cx);
+        }
+        if switched && self.view() == View::Files {
+            self.refresh_files(project_id, window, cx);
         }
         self.sync_panes(window, cx);
         cx.notify();
@@ -769,7 +784,8 @@ impl Shell {
     }
 
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
-    /// Docs re-lists its files (agents may have written new ones).
+    /// Docs re-lists its files (agents may have written new ones); showing Files refreshes the
+    /// tree and gives it the keyboard.
     fn show_view(&mut self, view: View, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(project_id) = self.workspace else {
             return;
@@ -777,6 +793,12 @@ impl Shell {
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);
+        }
+        if view == View::Files {
+            if shown != View::Files {
+                self.refresh_files(project_id, window, cx);
+            }
+            window.focus(&self.files_focus, cx);
         }
         if shown != view {
             self.sync_panes(window, cx);
@@ -920,6 +942,216 @@ impl Shell {
             }
         };
         cx.notify();
+    }
+
+    /// The Files view of `project_id`, created on first use.
+    fn files_view(&mut self, project_id: Ulid) -> &mut FilesView {
+        self.files
+            .entry(project_id)
+            .or_insert_with(|| FilesView::new(project_id))
+    }
+
+    /// Lists the root and open folders of the Files view of `project_id` again and re-reads
+    /// its opened file.
+    fn refresh_files(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let requests = self.files_view(project_id).refresh();
+        self.files_requests(project_id, requests, window, cx);
+    }
+
+    fn files_requests(
+        &mut self,
+        project_id: Ulid,
+        requests: Requests,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        for dir in requests.list {
+            self.list_dir(project_id, dir, window, cx);
+        }
+        if let Some(path) = requests.read {
+            self.read_file(project_id, path, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// `fs.list` of one folder of the Files view of `project_id` (also keeps the daemon
+    /// watching the workspace, so `git.changed` follows file changes).
+    fn list_dir(
+        &mut self,
+        project_id: Ulid,
+        dir: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let view = self.files_view(project_id);
+        if !view.begin_list(&dir) {
+            return;
+        }
+        let listed = connection.call::<Vec<FsEntry>>(Request::FsList(FsListParams {
+            project_id,
+            dir: dir.clone(),
+            show_ignored: view.show_ignored,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let listed = listed.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &listed {
+                    tracing::warn!(%project_id, dir, "fs.list failed: {error}");
+                }
+                let Some(view) = shell.files.get_mut(&project_id) else {
+                    return;
+                };
+                for dir in view.listed(&dir, listed) {
+                    shell.list_dir(project_id, dir, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `fs.read` of the opened file, highlighted on the background executor; while one is in
+    /// flight, the file is read once more after it answers.
+    fn read_file(
+        &mut self,
+        project_id: Ulid,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if !self.files_view(project_id).begin_read() {
+            return;
+        }
+        let read = connection.call::<FsContent>(Request::FsRead(FsReadParams {
+            project_id,
+            path: path.clone(),
+        }));
+        let background = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let code = match read.await {
+                Ok(content) => Ok(background.spawn(async move { Code::new(&content) }).await),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &code {
+                    tracing::warn!(%project_id, path, "fs.read failed: {error}");
+                }
+                let again = shell
+                    .files
+                    .get_mut(&project_id)
+                    .and_then(|view| view.read(&path, code));
+                if let Some(path) = again {
+                    shell.read_file(project_id, path, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Follows `git.changed` in the Files view on screen (hidden ones refresh when shown).
+    fn files_event(&mut self, event: &Event, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Files) else {
+            return;
+        };
+        let Some(view) = self.files.get_mut(&project_id) else {
+            return;
+        };
+        let requests = view.apply(event);
+        self.files_requests(project_id, requests, window, cx);
+    }
+
+    /// A click on a tree row: opens or closes a folder, opens a file.
+    fn click_file(
+        &mut self,
+        project_id: Ulid,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.files_focus, cx);
+        let requests = self.files_view(project_id).click(path);
+        self.files_requests(project_id, requests, window, cx);
+    }
+
+    /// Arrow keys move the tree cursor (kept in view), ← / → close / open folders, Enter opens.
+    fn files_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(key), Some(project_id)) = (files_view::key(&event.keystroke), self.workspace)
+        else {
+            return;
+        };
+        cx.stop_propagation();
+        let view = self.files_view(project_id);
+        let requests = view.key(key);
+        let cursor = view.cursor.clone();
+        let at = view.rows().iter().position(|row| {
+            matches!(row, files_view::Row::Entry { entry, .. } if Some(&entry.path) == cursor.as_ref())
+        });
+        if let Some(at) = at {
+            self.files_scroll
+                .scroll_to_item(at, ScrollStrategy::Nearest);
+        }
+        self.files_requests(project_id, requests, window, cx);
+    }
+
+    /// The absolute path of `path` (relative, `/`-separated) in workspace `project_id`, with
+    /// native separators (Zed gets the path verbatim).
+    fn workspace_file(&self, project_id: Ulid, path: &str) -> Option<PathBuf> {
+        let project = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|p| p.id == project_id)?;
+        Some(
+            path.split('/')
+                .fold(PathBuf::from(&project.path), |full, part| full.join(part)),
+        )
+    }
+
+    /// Opens the opened file of the Files view in Zed, at the selected line if any; a failure
+    /// shows in the viewer header.
+    fn open_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        let Some(view) = self.files.get(&project_id) else {
+            return;
+        };
+        let (Some(path), line) = (view.file.clone(), view.line) else {
+            return;
+        };
+        let Some(full) = self.workspace_file(project_id, &path) else {
+            return;
+        };
+        let error = zed::open(&full, line).err().map(|error| {
+            tracing::warn!(%project_id, path, "open in Zed failed: {error}");
+            error.to_string()
+        });
+        self.files_view(project_id).zed_error = error;
+        cx.notify();
+    }
+
+    /// "Review in Docs" for an opened `.md` file: the Docs view shows it.
+    fn review_in_docs(
+        &mut self,
+        project_id: Ulid,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.docs
+            .entry(project_id)
+            .or_insert_with(|| Docs::new(project_id));
+        self.select_doc(project_id, &path, window, cx);
+        self.show_view(View::Docs, window, cx);
     }
 
     /// `comment.list` of the shown doc; `comment.updated` keeps it live afterwards.
@@ -2387,6 +2619,16 @@ impl Shell {
                 {
                     self.open_doc_in_zed(project_id, cx);
                 }
+                // Files open the opened file, at the selected line.
+                Some(project_id)
+                    if self.view() == View::Files
+                        && self
+                            .files
+                            .get(&project_id)
+                            .is_some_and(|view| view.file.is_some()) =>
+                {
+                    self.open_file_in_zed(project_id, cx);
+                }
                 Some(project_id) => self.open_in_zed(project_id, cx),
                 None => {}
             },
@@ -2409,6 +2651,14 @@ impl Shell {
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
+            Command::ShowFiles => self.show_view(View::Files, window, cx),
+            Command::ToggleIgnored => {
+                // Only bound while Files are shown.
+                if let Some(project_id) = self.workspace {
+                    let requests = self.files_view(project_id).toggle_ignored();
+                    self.files_requests(project_id, requests, window, cx);
+                }
+            }
             Command::ToggleDocSource => {
                 // Only bound while Docs are shown.
                 if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
@@ -2733,6 +2983,9 @@ impl Shell {
                 }
                 if matches!(event, Event::DocChanged(_) | Event::CommentUpdated(_)) {
                     self.doc_event(event, window, cx);
+                }
+                if matches!(event, Event::GitChanged(_)) {
+                    self.files_event(event, window, cx);
                 }
             }
             let Some(delivery) = self.router.route(incoming) else {
@@ -3145,6 +3398,7 @@ impl Shell {
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
+            (View::Files, _) => main.child(self.render_files(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
                 .child(self.render_tab(tabs, now, theme, cx)),
@@ -3156,7 +3410,7 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The workspace's view switcher (SPEC §10): Board / Terminals / Docs.
+    /// The workspace's view switcher (SPEC §10): Board / Terminals / Docs / Files.
     fn render_view_bar(&self, shown: View, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
         let hover = theme.surface_raised;
         div()
@@ -3173,6 +3427,7 @@ impl Shell {
                     View::Board => Command::ShowBoard,
                     View::Terminals => Command::ShowTerminals,
                     View::Docs => Command::ShowDocs,
+                    View::Files => Command::ShowFiles,
                 };
                 div()
                     .id(SharedString::from(format!("view-{}", view.title())))
@@ -3535,6 +3790,292 @@ impl Shell {
                     )
                     .children(margin),
             )
+    }
+
+    /// The workspace's files (SPEC §12A): the lazy tree with git markers, and the opened file
+    /// read-only with line numbers and syntax colors.
+    fn render_files(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let empty = |sentence: &str, detail: Option<String>| {
+            message(
+                theme,
+                None,
+                sentence.to_owned().into(),
+                detail.map(Into::into),
+            )
+            .flex_1()
+        };
+        let Some(view) = self.files.get(&project_id) else {
+            return empty("Loading files…", None).into_any_element();
+        };
+        let ignored_keys = self.keymap.label(Command::ToggleIgnored);
+        let (ignored_label, ignored_tip) = if view.show_ignored {
+            ("Hide ignored", "Hide git-ignored files")
+        } else {
+            ("Show ignored", "Show git-ignored files")
+        };
+        let header = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .pb(px(space::XS))
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child("Files"),
+            )
+            .child(
+                button("files-ignored", ignored_label, theme, false)
+                    .flex_none()
+                    .tooltip(tooltip(theme, ignored_tip, ignored_keys.clone()))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        let requests = shell.files_view(project_id).toggle_ignored();
+                        shell.files_requests(project_id, requests, window, cx);
+                    })),
+            );
+        let tree = match view.root() {
+            files_view::Listing::Loading => empty("Loading files…", None).into_any_element(),
+            files_view::Listing::Failed(error) => {
+                empty("Cannot list the files.", Some(error.clone()))
+                    .child(
+                        button("files-retry", "Retry", theme, true).on_click(cx.listener(
+                            move |shell, _, window, cx| shell.refresh_files(project_id, window, cx),
+                        )),
+                    )
+                    .into_any_element()
+            }
+            files_view::Listing::Loaded(entries) if entries.is_empty() && view.show_ignored => {
+                empty("This workspace has no files yet.", None).into_any_element()
+            }
+            files_view::Listing::Loaded(entries) if entries.is_empty() => {
+                empty("No files here yet (ignored files are hidden).", None)
+                    .child(
+                        button("files-empty-ignored", "Show ignored", theme, true)
+                            .tooltip(tooltip(
+                                theme,
+                                "Show git-ignored files",
+                                ignored_keys.clone(),
+                            ))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                let requests = shell.files_view(project_id).toggle_ignored();
+                                shell.files_requests(project_id, requests, window, cx);
+                            })),
+                    )
+                    .into_any_element()
+            }
+            files_view::Listing::Loaded(_) => {
+                let rows = Rc::new(view.rows());
+                let cursor = view.cursor.clone();
+                let opened = view.file.clone();
+                let focused = self.files_focus.is_focused(window);
+                let row_theme = theme.clone();
+                uniform_list(
+                    "file-tree",
+                    rows.len(),
+                    cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                        range
+                            .filter_map(|index| rows.get(index))
+                            .map(|row| {
+                                let shown = FileRowState {
+                                    cursor: cursor.as_deref(),
+                                    opened: opened.as_deref(),
+                                    focused,
+                                };
+                                file_row(project_id, row, &shown, &row_theme, cx)
+                            })
+                            .collect()
+                    }),
+                )
+                .track_scroll(&self.files_scroll)
+                .flex_1()
+                .min_h_0()
+                .px(px(space::S))
+                .into_any_element()
+            }
+        };
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .font_family(theme::UI_FONT)
+            .child(
+                div()
+                    .id("files-tree")
+                    .flex_none()
+                    .w(px(theme::FILE_TREE_WIDTH))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .pb(px(space::S))
+                    .track_focus(&self.files_focus)
+                    .on_key_down(cx.listener(Self::files_key_down))
+                    .child(header)
+                    .child(tree),
+            )
+            .child(self.render_file(project_id, view, theme, cx))
+            .into_any_element()
+    }
+
+    /// The opened file: its path, Review in Docs (Markdown) and Open in Zed, then its lines
+    /// (a click selects one for "Open in Zed" at that line), or why it is not shown.
+    fn render_file(
+        &self,
+        project_id: Ulid,
+        view: &FilesView,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let panel = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_col()
+            .mr(px(space::S))
+            .mb(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .overflow_hidden()
+            .bg(rgb(theme.surface));
+        let Some(path) = view.file.clone() else {
+            return panel.child(
+                message(
+                    theme,
+                    None,
+                    "Select a file to view it.".into(),
+                    Some("Use ↑ ↓ to move, → to open a folder, Enter to open a file.".into()),
+                )
+                .flex_1(),
+            );
+        };
+        let zed_keys = self.keymap.label(Command::OpenInZed);
+        let zed_tip = match view.line {
+            Some(line) => format!("Open this file in Zed at line {line}"),
+            None => "Open this file in Zed".to_owned(),
+        };
+        let zed_button = |id: &'static str, primary: bool| {
+            button(id, "Open in Zed", theme, primary)
+                .flex_none()
+                .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    shell.open_file_in_zed(project_id, cx);
+                }))
+        };
+        let markdown = path
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"));
+        let review_path = path.clone();
+        let header = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::L))
+            .py(px(space::S))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(path.clone()),
+            )
+            .children(view.line.map(|line| {
+                div()
+                    .flex_none()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("Line {line}"))
+            }))
+            .when(markdown, |el| {
+                el.child(
+                    button("file-review", "Review in Docs", theme, false)
+                        .flex_none()
+                        .tooltip(tooltip(theme, "Review and comment on this file", ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.review_in_docs(project_id, review_path.clone(), window, cx);
+                        })),
+                )
+            })
+            .child(zed_button("file-zed", false));
+        let body = match &view.content {
+            Content::None | Content::Loading => message(theme, None, "Loading…".into(), None)
+                .flex_1()
+                .into_any_element(),
+            Content::Failed(error) => message(
+                theme,
+                None,
+                "Cannot read this file.".into(),
+                Some(error.clone().into()),
+            )
+            .flex_1()
+            .child(
+                button("file-retry", "Retry", theme, true).on_click(cx.listener(
+                    move |shell, _, window, cx| {
+                        let read = shell.files_view(project_id).open(&path);
+                        let requests = Requests { list: vec![], read };
+                        shell.files_requests(project_id, requests, window, cx);
+                    },
+                )),
+            )
+            .into_any_element(),
+            Content::Shown(code) if code.binary || code.too_large => {
+                let sentence = if code.binary {
+                    "This is a binary file."
+                } else {
+                    "This file is too large to show here."
+                };
+                message(
+                    theme,
+                    None,
+                    sentence.into(),
+                    Some(format!("{} — open it in Zed instead.", size_label(code.size)).into()),
+                )
+                .flex_1()
+                .child(zed_button("file-zed-notice", true))
+                .into_any_element()
+            }
+            Content::Shown(code) if code.lines.is_empty() => {
+                message(theme, None, "This file is empty.".into(), None)
+                    .flex_1()
+                    .into_any_element()
+            }
+            Content::Shown(code) => {
+                let this = cx.entity().downgrade();
+                let on_line: preview::OnLine = Rc::new(move |line, _, _, cx| {
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.files_view(project_id).pick_line(line);
+                        cx.notify();
+                    });
+                });
+                preview::code_view("file-code", Rc::clone(code), view.line, on_line, theme)
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(space::L))
+                    .pb(px(space::L))
+                    .into_any_element()
+            }
+        };
+        panel
+            .child(header)
+            .children(view.zed_error.clone().map(|error| {
+                notice(theme.text, format!("✕ {error}"))
+                    .px(px(space::L))
+                    .pb(px(space::S))
+            }))
+            .child(body)
     }
 
     /// "Comment" (Ctrl+Alt+M): enabled once lines are selected.
@@ -5520,6 +6061,152 @@ fn meta_line(theme: &Theme, text: SharedString) -> gpui::Div {
 }
 
 /// A file of the Docs list: its name, its folder below, and its open-comment count.
+/// What a Files tree row needs to know about the view.
+struct FileRowState<'a> {
+    /// The tree cursor's path.
+    cursor: Option<&'a str>,
+    /// The opened file's path.
+    opened: Option<&'a str>,
+    /// The tree has the keyboard (the cursor shows a focus ring).
+    focused: bool,
+}
+
+/// One Files tree row: indented by depth, a chevron on folders, the name (muted when
+/// ignored), and on the right the git marker letter (files) or a dot (folders with changes).
+/// Every row is one body line high (the tree is a uniform list).
+fn file_row(
+    project_id: Ulid,
+    row: &files_view::Row,
+    state: &FileRowState<'_>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let (entry, depth, expanded) = match row {
+        files_view::Row::Note { depth, text } => {
+            return div()
+                .pl(px(space::S + theme::FILE_TREE_INDENT * *depth as f32))
+                .py(px(space::XS))
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(theme.text_muted))
+                .child(text.clone())
+                .into_any_element();
+        }
+        files_view::Row::Entry {
+            entry,
+            depth,
+            expanded,
+        } => (entry, *depth, *expanded),
+    };
+    let at_cursor = state.cursor == Some(entry.path.as_str());
+    let opened = state.opened == Some(entry.path.as_str());
+    let hover = theme.surface_raised;
+    let fill = if at_cursor || opened {
+        theme.surface_raised
+    } else {
+        theme.bg
+    };
+    let chevron = match (entry.is_dir, expanded) {
+        (false, _) => "",
+        (true, false) => "▸",
+        (true, true) => "▾",
+    };
+    let marker = entry.marker.map(|marker| match marker {
+        GitMarker::Modified => ("M", theme.accent, "Modified"),
+        GitMarker::Added => ("A", theme.diff_add_text, "Added"),
+        GitMarker::Deleted => ("D", theme.diff_del_text, "Deleted"),
+        GitMarker::Untracked => ("?", theme.diff_add_text, "Untracked"),
+    });
+    let path = entry.path.clone();
+    div()
+        .id(SharedString::from(format!("file-{}", entry.path)))
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .pl(px(space::S + theme::FILE_TREE_INDENT * depth as f32))
+        .pr(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .border(px(theme::BORDER_WIDTH))
+        // The border is always there (so rows never shift); it only shows as the focus ring.
+        .border_color(rgb(if at_cursor && state.focused {
+            theme.pane_focus_border
+        } else {
+            fill
+        }))
+        .cursor_pointer()
+        .text_size(px(font_size::BODY))
+        .when(at_cursor || opened, |el| el.bg(rgb(fill)))
+        .when(!at_cursor && !opened, |el| {
+            el.hover(move |style| style.bg(rgb(hover)))
+        })
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .child(
+            div()
+                .flex_none()
+                .w(px(space::M))
+                .text_color(rgb(theme.text_muted))
+                .child(chevron),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_color(rgb(if entry.ignored {
+                    theme.text_muted
+                } else {
+                    theme.text
+                }))
+                .when(opened, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                .child(entry.name.clone()),
+        )
+        .children(marker.map(|(letter, color, what)| {
+            div()
+                .id(SharedString::from(format!("file-marker-{}", entry.path)))
+                .flex_none()
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(color))
+                .tooltip(tooltip(theme, what, ""))
+                .child(letter)
+        }))
+        .when(entry.is_dir && entry.has_changes, |el| {
+            el.child(
+                div()
+                    .id(SharedString::from(format!("file-changes-{}", entry.path)))
+                    .flex_none()
+                    .size(px(theme::FILE_CHANGES_DOT_SIZE))
+                    .rounded_full()
+                    .bg(rgb(theme.accent))
+                    .tooltip(tooltip(theme, "Contains changes", "")),
+            )
+        })
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.click_file(project_id, &path, window, cx);
+        }))
+        .into_any_element()
+}
+
+/// A file size for people: bytes, KB or MB (1024-based, one decimal).
+fn size_label(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes == 1 {
+        "1 byte".to_owned()
+    } else if bytes_f < KB {
+        format!("{bytes} bytes")
+    } else if bytes_f < KB * KB {
+        format!("{:.1} KB", bytes_f / KB)
+    } else {
+        format!("{:.1} MB", bytes_f / (KB * KB))
+    }
+}
+
 fn doc_row(
     project_id: Ulid,
     file: &DocFile,
@@ -6516,6 +7203,9 @@ impl Render for Shell {
                 el.key_context(BOARD_CONTEXT)
             })
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
+            .when(self.view() == View::Files, |el| {
+                el.key_context(FILES_CONTEXT)
+            })
             .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(now, &theme, cx))
             .child(self.render_main(now, &theme, window, cx))

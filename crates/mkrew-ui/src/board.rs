@@ -24,16 +24,19 @@ pub enum View {
     Terminals,
     /// The Markdown review (SPEC §12).
     Docs,
+    /// The file tree and read-only viewer (SPEC §12A).
+    Files,
 }
 
 impl View {
-    pub const ALL: [View; 3] = [View::Board, View::Terminals, View::Docs];
+    pub const ALL: [View; 4] = [View::Board, View::Terminals, View::Docs, View::Files];
 
     pub fn title(self) -> &'static str {
         match self {
             View::Board => "Board",
             View::Terminals => "Terminals",
             View::Docs => "Docs",
+            View::Files => "Files",
         }
     }
 }
