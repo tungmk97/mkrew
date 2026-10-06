@@ -142,6 +142,11 @@ impl TerminalPane {
         }
     }
 
+    /// Whether the pane (or its find bar) has the keyboard.
+    pub fn has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus_handle.contains_focused(window, cx)
+    }
+
     /// Feeds output bytes. The caller notifies once per batch (≤ one repaint per frame).
     pub fn feed(&mut self, bytes: &[u8]) {
         self.emulator.advance(bytes);

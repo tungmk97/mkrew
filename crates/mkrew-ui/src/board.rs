@@ -234,6 +234,11 @@ impl Board {
         }
     }
 
+    /// Every workspace's tasks.
+    pub fn tasks(&self) -> &[Task] {
+        &self.tasks
+    }
+
     pub fn task(&self, task_id: Ulid) -> Option<&Task> {
         self.tasks.iter().find(|task| task.id == task_id)
     }

@@ -1,7 +1,8 @@
 //! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
-//! view, with its title and shortcut, plus "Go to" workspace / session / task items (the §13
-//! quick open of those). Typing filters with a fuzzy subsequence match ranked by word starts
-//! and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
+//! view, with its title and shortcut, palette-only actions that have no key (Git fetch / push /
+//! discard, task "View changes", dev server start / stop), plus "Go to" workspace / session /
+//! task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
+//! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
 use std::ops::Range;
 
@@ -27,6 +28,61 @@ pub struct Context {
     pub tabs: usize,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
     pub terminal: bool,
+    /// The Git view's selected file can be discarded (unstaged or untracked).
+    pub discard: bool,
+    /// The selected board card offers "View changes".
+    pub task_changes: bool,
+    /// The active workspace has a dev command.
+    pub dev_command: bool,
+    /// The active workspace's dev server runs.
+    pub dev_running: bool,
+}
+
+/// A palette-only action: no key is bound to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Extra {
+    GitFetch,
+    GitPush,
+    GitDiscard,
+    ViewTaskChanges,
+    StartDevServer,
+    StopDevServer,
+}
+
+impl Extra {
+    pub const ALL: [Self; 6] = [
+        Self::GitFetch,
+        Self::GitPush,
+        Self::GitDiscard,
+        Self::ViewTaskChanges,
+        Self::StartDevServer,
+        Self::StopDevServer,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::GitFetch => "Git: Fetch",
+            Self::GitPush => "Git: Push",
+            Self::GitDiscard => "Git: Discard changes to selected file…",
+            Self::ViewTaskChanges => "Task: View changes of selected task",
+            Self::StartDevServer => "Dev server: Start",
+            Self::StopDevServer => "Dev server: Stop",
+        }
+    }
+
+    /// Whether the action can act in `context` (where its buttons are on screen).
+    pub fn available(self, context: &Context) -> bool {
+        let in_view = |view| context.workspace && context.view == view;
+        match self {
+            Self::GitFetch | Self::GitPush => in_view(View::Git),
+            Self::GitDiscard => in_view(View::Git) && context.discard,
+            Self::ViewTaskChanges => in_view(View::Board) && context.task_changes,
+            Self::StartDevServer => {
+                context.workspace && context.dev_command && !context.dev_running
+            }
+            Self::StopDevServer => context.workspace && context.dev_running,
+        }
+    }
 }
 
 /// Where a "Go to" item leads.
@@ -41,6 +97,7 @@ pub enum Target {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Run(Command),
+    Extra(Extra),
     GoTo(Target),
 }
 
@@ -163,8 +220,9 @@ pub fn available(command: Command, context: &Context) -> bool {
     }
 }
 
-/// The palette's entries: the available commands in keymap order, then "Go to" every
-/// workspace, live session and task (archived workspaces and their items left out).
+/// The palette's entries: the available commands in keymap order, the available
+/// palette-only actions, then "Go to" every workspace, live session and task (archived
+/// workspaces and their items left out).
 pub fn entries(
     keymap: &Keymap,
     context: &Context,
@@ -181,6 +239,16 @@ pub fn entries(
             shortcut: keymap.label(command),
         })
         .collect();
+    entries.extend(
+        Extra::ALL
+            .into_iter()
+            .filter(|extra| extra.available(context))
+            .map(|extra| Entry {
+                action: Action::Extra(extra),
+                title: extra.title().into(),
+                shortcut: String::new(),
+            }),
+    );
     let workspace = |id: Ulid| {
         projects
             .iter()
@@ -410,6 +478,10 @@ mod tests {
             workspaces: 2,
             tabs: 2,
             terminal: false,
+            discard: false,
+            task_changes: false,
+            dev_command: false,
+            dev_running: false,
         }
     }
 
@@ -418,7 +490,7 @@ mod tests {
             .into_iter()
             .filter_map(|entry| match entry.action {
                 Action::Run(command) => Some(command),
-                Action::GoTo(_) => None,
+                Action::Extra(_) | Action::GoTo(_) => None,
             })
             .collect()
     }
@@ -554,14 +626,91 @@ mod tests {
         assert!(!lone.contains(&Command::NextTab));
         assert!(lone.contains(&Command::Tab(1)));
 
-        let none = commands(&Context {
+        let none = Context {
             workspace: false,
-            view: View::Terminals,
             workspaces: 0,
             tabs: 0,
-            terminal: false,
-        });
-        assert_eq!(none, [Command::AddWorkspace, Command::NextInbox]);
+            dev_command: true,
+            dev_running: true,
+            ..context(View::Terminals)
+        };
+        assert_eq!(commands(&none), [Command::AddWorkspace, Command::NextInbox]);
+        assert_eq!(extras(&none), []);
+    }
+
+    fn extras(context: &Context) -> Vec<Extra> {
+        entries(&Keymap::defaults(), context, &[], &[], &[])
+            .into_iter()
+            .filter_map(|entry| match entry.action {
+                Action::Extra(extra) => Some(extra),
+                Action::Run(_) | Action::GoTo(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn palette_only_actions_follow_the_view_and_state() {
+        assert_eq!(extras(&context(View::Terminals)), []);
+        assert_eq!(
+            extras(&context(View::Git)),
+            [Extra::GitFetch, Extra::GitPush]
+        );
+        let git = Context {
+            discard: true,
+            task_changes: true,
+            ..context(View::Git)
+        };
+        assert_eq!(
+            extras(&git),
+            [Extra::GitFetch, Extra::GitPush, Extra::GitDiscard]
+        );
+        let board = Context {
+            discard: true,
+            task_changes: true,
+            ..context(View::Board)
+        };
+        assert_eq!(extras(&board), [Extra::ViewTaskChanges]);
+        let stopped = Context {
+            dev_command: true,
+            ..context(View::Docs)
+        };
+        assert_eq!(extras(&stopped), [Extra::StartDevServer]);
+        // A running dev server can be stopped even after its command was cleared.
+        let running = Context {
+            dev_running: true,
+            ..context(View::Docs)
+        };
+        assert_eq!(extras(&running), [Extra::StopDevServer]);
+        let both = Context {
+            dev_command: true,
+            ..running
+        };
+        assert_eq!(extras(&both), [Extra::StopDevServer]);
+
+        let commands: Vec<String> = Command::all().into_iter().map(title).collect();
+        let titles: Vec<&str> = Extra::ALL.into_iter().map(Extra::title).collect();
+        for (i, title) in titles.iter().enumerate() {
+            assert!(!titles[..i].contains(title), "{title}");
+            assert!(!commands.iter().any(|command| command == title), "{title}");
+        }
+        // Palette-only actions come after the commands, before "Go to".
+        let all = entries(
+            &Keymap::defaults(),
+            &git,
+            &[project("app", false)],
+            &[],
+            &[],
+        );
+        let kinds: Vec<u8> = all
+            .iter()
+            .map(|entry| match entry.action {
+                Action::Run(_) => 0,
+                Action::Extra(_) => 1,
+                Action::GoTo(_) => 2,
+            })
+            .collect();
+        assert!(kinds.is_sorted(), "{kinds:?}");
+        assert!(kinds.contains(&1) && kinds.contains(&2));
     }
 
     #[test]

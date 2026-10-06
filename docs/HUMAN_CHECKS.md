@@ -507,6 +507,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   away. Start again → the same tab is reused. Clear the command → no Start button. With
   auto-start on: `mk daemon stop`, start the app → the dev server runs. Check the dialog and
   the indicator in dark + light (§14).
+- [ ] (T8.5) **Command palette.** Ctrl+Shift+P opens "Command palette"; typing filters
+  (matched chars in accent, shortcuts muted on the right), ↑↓ / click pick, Enter runs, Esc
+  closes and the keyboard is back where it was. Check: in a terminal pane "Terminal: Copy" /
+  "Find in scrollback" act on that pane; in Git (list focused) "Git: Stage…", "Git: Fetch",
+  "Git: Push", "Git: Discard changes to selected file…" (opens the confirmation); on the board
+  with a Review card selected "Task: View changes of selected task"; "Dev server: Start/Stop"
+  with a dev command set; "Go to workspace / session / task" switch to it (a task selects its
+  card on the board). Dark + light screenshots (§14).
 
 ## Questions with assumed defaults
 
@@ -1359,6 +1367,18 @@ _Decisions the agent made on its own. Override them here if you disagree._
   and every task (any status) the UI knows. Ctrl+Shift+O stays the Files quick open (T7.8), so
   its palette title is "Files: Quick open file". Fuzzy match is our own (case-insensitive
   subsequence, best alignment scored by word starts + runs), not `nucleo-matcher`.
+- (T8.5) **Command palette UI choices:** a picked command runs from the focus the palette
+  opened over (deferred `window.dispatch_action(Run)`; Git / comment commands in the Git view
+  refocus the Git list first), so it behaves like its shortcut. Palette-only actions show only
+  where their buttons are: Git fetch / push in the Git view (errors show under its header),
+  discard when the selected file is unstaged / untracked, "View changes" on the board for the
+  selected Review card with a checkpoint, dev server Start when a command is set and it is not
+  running, Stop while it runs. "Open keymap settings" comes with T8.6's
+  `Command::OpenKeymapSettings` (listed as a command automatically). "Go to task" switches to
+  the board and selects the card (no scroll to it). Ctrl+Shift+P again closes it. Open review
+  items: the "Command palette" heading is kept (like quick open's) though palettes often start
+  with the field; a click outside does not close it (shared `modal_shade`, quick open too); rows
+  are plain elements (`uniform_list` for big boards later); shortcuts are muted text, not keycaps.
 
 ## Done
 

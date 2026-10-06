@@ -45,9 +45,10 @@ use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{
-    BOARD_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, GIT_CONTEXT, Keymap, Run,
+    BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, GIT_CONTEXT, Keymap, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
+use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::preview;
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
 use mkrew_ui::router::{Delivery, Router};
@@ -241,6 +242,12 @@ struct Shell {
     quick_open: Option<QuickOpen>,
     /// Keeps the quick open pick in view.
     quick_open_scroll: ScrollHandle,
+    /// The open command palette (modal).
+    palette: Option<Palette>,
+    /// Keeps the palette pick in view.
+    palette_scroll: ScrollHandle,
+    /// What had the keyboard when the palette opened; a picked command acts on it.
+    palette_return: Option<(FocusHandle, Option<Ulid>)>,
     /// Focused while a dialog is open; the task dialog's keys edit the draft.
     dialog_focus: FocusHandle,
     /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
@@ -383,6 +390,8 @@ impl Shell {
                 shell.history_pane = None;
                 shell.doc_dialog = None;
                 shell.quick_open = None;
+                shell.palette = None;
+                shell.palette_return = None;
                 shell.follow_up = None;
                 shell.docs.clear();
                 shell.files.clear();
@@ -456,6 +465,9 @@ impl Shell {
             doc_dialog: None,
             quick_open: None,
             quick_open_scroll: ScrollHandle::new(),
+            palette: None,
+            palette_scroll: ScrollHandle::new(),
+            palette_return: None,
             dialog_focus: cx.focus_handle(),
             prompt_scroll: ScrollHandle::new(),
             dialog_serial: 0,
@@ -2414,6 +2426,179 @@ impl Shell {
         self.files_requests(project_id, requests, window, cx);
     }
 
+    /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
+    /// palette-only actions and "Go to" items.
+    fn open_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let workspace = self.workspace;
+        let terminal = self.focused_session().filter(|session| {
+            self.panes
+                .get(session)
+                .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
+        });
+        let discard = workspace
+            .and_then(|id| self.git.get(&id))
+            .is_some_and(|view| {
+                view.selected
+                    .as_ref()
+                    .is_some_and(|target| view.discard(target).is_some())
+            });
+        let task_changes = self
+            .selected_card
+            .and_then(|id| self.board.task(id))
+            .is_some_and(|task| {
+                Some(task.project_id) == workspace
+                    && task.status == TaskStatus::Review
+                    && task.checkpoint.is_some()
+            });
+        let (dev_running, dev_command) = workspace.map_or((false, None), |id| self.dev_server(id));
+        let context = palette::Context {
+            workspace: workspace.is_some(),
+            view: self.view(),
+            workspaces: self.sidebar.projects().len(),
+            tabs: workspace
+                .and_then(|id| self.tabs.get(&id))
+                .map_or(0, |tabs| tabs.tabs().len()),
+            terminal: terminal.is_some(),
+            discard,
+            task_changes,
+            dev_command: dev_command.is_some(),
+            dev_running,
+        };
+        let entries = palette::entries(
+            &self.keymap,
+            &context,
+            self.sidebar.projects(),
+            self.sidebar.sessions(),
+            self.board.tasks(),
+        );
+        self.workspace_menu = None;
+        self.palette = Some(Palette::new(entries));
+        self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
+        self.palette_scroll.scroll_to_item(0);
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    /// Closes the palette; the keyboard goes back to where it was (unless that pane went away
+    /// meanwhile).
+    fn close_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.palette = None;
+        match self.palette_return.take() {
+            Some((focus, session))
+                if session.is_none_or(|session| self.panes.contains_key(&session)) =>
+            {
+                window.focus(&focus, cx);
+            }
+            _ => self.focus_pane(window, cx),
+        }
+        cx.notify();
+    }
+
+    /// Typing filters, ↑ / ↓ move the pick (kept in view), Enter runs it, Esc closes.
+    fn palette_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = quick_open::key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == quick_open::Key::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(palette) = self.palette.as_mut() else {
+            return;
+        };
+        match key {
+            quick_open::Key::Close => return self.close_palette(window, cx),
+            quick_open::Key::Open => return self.run_palette_pick(window, cx),
+            quick_open::Key::Paste => {
+                if let Some(text) = paste {
+                    palette.insert(&text);
+                }
+            }
+            quick_open::Key::Move(_) | quick_open::Key::Backspace | quick_open::Key::Insert(_) => {
+                palette.key(key);
+            }
+        }
+        self.palette_scroll.scroll_to_item(palette.selected);
+        cx.notify();
+    }
+
+    /// Runs the palette's pick. A command goes through the shell's `run` from where the
+    /// keyboard was (terminal commands reach their pane; Git ones need the Git list).
+    fn run_palette_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(action) = self.palette.as_ref().and_then(Palette::picked) else {
+            return;
+        };
+        self.close_palette(window, cx);
+        let workspace = self.workspace;
+        match action {
+            palette::Action::Run(command) => {
+                if self.view() == View::Git
+                    && command.context().is_some_and(|context| {
+                        context == GIT_CONTEXT || context == COMMENTS_CONTEXT
+                    })
+                {
+                    window.focus(&self.git_focus, cx);
+                }
+                // Deferred; gpui-pre captures the focus just restored now and resolves it in
+                // the last rendered frame (root if gone), so terminal commands reach the pane.
+                window.dispatch_action(Box::new(Run(command)), cx);
+            }
+            palette::Action::Extra(extra) => {
+                let Some(project_id) = workspace else {
+                    return;
+                };
+                match extra {
+                    Extra::GitFetch => self.run_git_remote(project_id, Remote::Fetch, window, cx),
+                    Extra::GitPush => self.run_git_remote(project_id, Remote::Push, window, cx),
+                    Extra::GitDiscard => {
+                        let target = self
+                            .git
+                            .get(&project_id)
+                            .and_then(|view| view.selected.clone());
+                        if let Some(target) = target {
+                            self.open_git_discard(project_id, target, window, cx);
+                        }
+                    }
+                    Extra::ViewTaskChanges => {
+                        if let Some(task_id) = self.selected_card {
+                            self.view_task_changes(task_id, window, cx);
+                        }
+                    }
+                    // The list is built on open: the dev server may have changed since.
+                    Extra::StartDevServer => self.start_dev_server(project_id, window, cx),
+                    Extra::StopDevServer => {
+                        if self.dev_server(project_id).0 {
+                            self.stop_dev_server(project_id, window, cx);
+                        }
+                    }
+                }
+            }
+            palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
+                self.activate_workspace(project_id, window, cx);
+            }
+            palette::Action::GoTo(palette::Target::Session(session_id)) => {
+                self.open_session(session_id, window, cx);
+            }
+            palette::Action::GoTo(palette::Target::Task {
+                project_id,
+                task_id,
+            }) => {
+                if workspace != Some(project_id) {
+                    self.activate_workspace(project_id, window, cx);
+                }
+                self.selected_card = Some(task_id);
+                self.show_view(View::Board, window, cx);
+                cx.notify();
+            }
+        }
+    }
+
     /// Whether a modal dialog is open (it keeps the keyboard).
     fn modal_open(&self) -> bool {
         self.task_dialog.is_some()
@@ -2424,6 +2609,7 @@ impl Shell {
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.quick_open.is_some()
+            || self.palette.is_some()
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
@@ -3653,6 +3839,10 @@ impl Shell {
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
+        // Its own shortcut closes the palette again.
+        if *command == Command::CommandPalette && self.palette.is_some() {
+            return self.close_palette(window, cx);
+        }
         // The dialogs are modal: bound keys go on to their key handler (e.g. Ctrl+Alt+digit
         // is AltGr on many layouts) instead of acting behind them.
         if self.modal_open() {
@@ -3816,8 +4006,7 @@ impl Shell {
             Command::ShowFiles => self.show_view(View::Files, window, cx),
             Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
-            // The palette dialog (`palette::Palette`) is rendered from T8.5 on.
-            Command::CommandPalette => {}
+            Command::CommandPalette => self.open_palette(window, cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
@@ -7881,6 +8070,142 @@ impl Shell {
         Self::modal_shade("quick-open-shade", panel, cx)
     }
 
+    /// The command palette: the query field over the matching entries (matched chars in the
+    /// accent color, shortcuts muted on the right, the pick ringed); a click or Enter runs one.
+    fn render_palette(
+        &self,
+        palette: &Palette,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let accent = gpui::Hsla::from(rgb(theme.accent));
+        let hover = theme.surface_raised;
+        let rows: Vec<gpui::AnyElement> = palette
+            .rows()
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let picked = index == palette.selected;
+                let highlights = row.ranges.into_iter().map(|range| {
+                    let style = gpui::HighlightStyle {
+                        color: Some(accent),
+                        font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                        ..gpui::HighlightStyle::default()
+                    };
+                    (range, style)
+                });
+                div()
+                    .id(("palette-entry", index))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::M))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(if picked {
+                        theme.pane_focus_border
+                    } else {
+                        theme.surface
+                    }))
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+                    .cursor_pointer()
+                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if let Some(palette) = shell.palette.as_mut() {
+                            palette.pick(index);
+                            shell.run_palette_pick(window, cx);
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(
+                                gpui::StyledText::new(row.entry.title.clone())
+                                    .with_highlights(highlights),
+                            ),
+                    )
+                    .when(!row.entry.shortcut.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .flex_none()
+                                .text_size(px(font_size::META))
+                                .text_color(rgb(theme.text_muted))
+                                .child(row.entry.shortcut.clone()),
+                        )
+                    })
+                    .into_any_element()
+            })
+            .collect();
+        let empty = rows.is_empty();
+        let panel = div()
+            .id("palette")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::palette_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Command palette"),
+            )
+            .child(text_field(
+                "palette-query",
+                palette.query(),
+                "Type a command, workspace, session or task",
+                true,
+                theme,
+            ))
+            .when(!empty, |el| {
+                el.child(
+                    div()
+                        .id("palette-entries")
+                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.palette_scroll)
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(rows),
+                )
+            })
+            .when(empty, |el| {
+                el.child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(format!("Nothing matches “{}”.", palette.query().trim())),
+                )
+            })
+            .child(
+                div()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child("↑ ↓ to pick · Enter runs it · Esc closes"),
+            );
+        Self::modal_shade("palette-shade", panel, cx)
+    }
+
     /// "View changes": the sent thread's file as sent vs as shown now.
     fn render_changes(
         &self,
@@ -10509,6 +10834,11 @@ impl Render for Shell {
                 self.quick_open
                     .as_ref()
                     .map(|open| self.render_quick_open(open, &theme, cx)),
+            )
+            .children(
+                self.palette
+                    .as_ref()
+                    .map(|palette| self.render_palette(palette, &theme, cx)),
             )
     }
 }
