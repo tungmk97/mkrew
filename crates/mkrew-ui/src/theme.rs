@@ -158,6 +158,9 @@ pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 /// Width of the Git view's header and changed-file list (left of the diff).
 pub const GIT_FILE_LIST_WIDTH: f32 = 300.0;
 
+/// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
+pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
+
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 

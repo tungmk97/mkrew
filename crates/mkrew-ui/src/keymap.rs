@@ -78,6 +78,8 @@ pub enum Command {
     /// Git only: stage / unstage the selected file, or its current hunk.
     GitStage,
     GitUnstage,
+    /// Git only: move the keyboard to the commit message box (Working changes).
+    GitFocusCommit,
     /// Fuzzy-find a file of the active workspace and open it in the Files view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
@@ -158,6 +160,7 @@ impl Command {
             Command::GitPreviousHunk,
             Command::GitStage,
             Command::GitUnstage,
+            Command::GitFocusCommit,
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
@@ -212,6 +215,7 @@ impl Command {
             Command::GitPreviousHunk => "git_previous_hunk".into(),
             Command::GitStage => "git_stage".into(),
             Command::GitUnstage => "git_unstage".into(),
+            Command::GitFocusCommit => "git_focus_commit".into(),
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
@@ -271,6 +275,7 @@ impl Command {
             Command::GitPreviousHunk => "p".into(),
             Command::GitStage => "s".into(),
             Command::GitUnstage => "u".into(),
+            Command::GitFocusCommit => "c".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
@@ -294,7 +299,8 @@ impl Command {
             | Command::GitNextHunk
             | Command::GitPreviousHunk
             | Command::GitStage
-            | Command::GitUnstage => Some(GIT_CONTEXT),
+            | Command::GitUnstage
+            | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
     }
@@ -598,6 +604,7 @@ mod tests {
             ("p", Command::GitPreviousHunk),
             ("s", Command::GitStage),
             ("u", Command::GitUnstage),
+            ("c", Command::GitFocusCommit),
         ] {
             assert_eq!(bound(keys), Some(command), "{keys}");
             assert_eq!(command.context(), Some(GIT_CONTEXT), "{command:?}");

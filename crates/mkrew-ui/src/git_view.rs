@@ -2,7 +2,8 @@
 //! changes grouped Staged / Unstaged / Untracked, or Against base), the selected changed file
 //! and its `git.diff` laid out as rows (hunk headers, lines, and "unchanged lines" gaps between
 //! hunks), and the current hunk moved by `n` / `p`. `git.changed` re-asks the status and the
-//! shown diff. Stage / unstage a file or hunk (`s` / `u`) and the discard confirmation.
+//! shown diff. Stage / unstage a file or hunk (`s` / `u`) and the discard confirmation; the
+//! commit box and Fetch / Push live in [`crate::git_actions`].
 //! Pure and tested headlessly; `main.rs` does the requests and renders it.
 
 use std::rc::Rc;
@@ -14,6 +15,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::git_actions::{CommitBox, Remotes};
 use crate::highlight::{self, Spans};
 
 /// The group a changed file is listed in.
@@ -275,6 +277,10 @@ pub struct GitView {
     pub refresh_error: Option<String>,
     /// Why the last stage / unstage failed.
     pub stage_error: Option<String>,
+    /// The commit message draft.
+    pub commit: CommitBox,
+    /// Fetch / Push.
+    pub remotes: Remotes,
     /// A stage / unstage is in flight (another is not sent meanwhile).
     staging: bool,
     /// A status was ever asked for (the view loads when first shown).
@@ -299,6 +305,8 @@ impl GitView {
             zed_error: None,
             refresh_error: None,
             stage_error: None,
+            commit: CommitBox::default(),
+            remotes: Remotes::default(),
             staging: false,
             started: false,
             loading: None,
@@ -408,6 +416,14 @@ impl GitView {
             .concat(),
             GitMode::Base => group(Group::Base, &status.against_base),
         }
+    }
+
+    /// Whether the commit box is on screen: Working changes of a loaded status, with changes
+    /// listed or a draft typed.
+    pub fn commit_box_shown(&self) -> bool {
+        self.mode == GitMode::Working
+            && matches!(self.status, Status::Loaded(_))
+            && (!self.files().is_empty() || !self.commit.text.is_empty())
     }
 
     /// The changed-file list: in Working mode each non-empty group under its title.
@@ -961,6 +977,22 @@ mod tests {
             view.list_rows(),
             [ListRow::File(Group::Base, file("x.rs", ChangeKind::Added))]
         );
+    }
+
+    #[test]
+    fn the_commit_box_shows_with_working_changes_or_a_draft() {
+        let mut view = GitView::new(Ulid::new());
+        assert!(!view.commit_box_shown(), "still loading");
+        let mut view_loaded = loaded();
+        assert!(view_loaded.commit_box_shown());
+        view_loaded.key(Key::ToggleMode);
+        assert!(!view_loaded.commit_box_shown(), "against base");
+
+        view.begin_status();
+        view.status_loaded(Ok(GitStatus::default()));
+        assert!(!view.commit_box_shown(), "nothing changed, nothing typed");
+        view.commit.insert("WIP");
+        assert!(view.commit_box_shown(), "a draft stays reachable");
     }
 
     #[test]

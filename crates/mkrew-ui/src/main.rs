@@ -21,11 +21,11 @@ use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfilesResult, ChangeKind, CommentId, CommentListParams, CommentRef, DiffLineKind,
     DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff, FsContent,
-    FsEntry, FsListParams, FsMatch, FsReadParams, GitMarker, GitMode, GitStatus, Outcome, Project,
-    ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory, SessionKillParams,
-    SessionKind, SessionListParams, SessionRef, SessionSpawnResult, SessionState, StateSource,
-    TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams,
-    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus,
+    Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory,
+    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
+    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
+    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -36,6 +36,7 @@ use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow_up::{self, FollowUp};
+use mkrew_ui::git_actions::{self, Remote};
 use mkrew_ui::git_view::{self, GitView};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
@@ -210,6 +211,8 @@ struct Shell {
     git: HashMap<Ulid, GitView>,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
     git_focus: FocusHandle,
+    /// The commit box of the shown Git view (outside `GIT_CONTEXT`, so typing never stages).
+    git_commit_focus: FocusHandle,
     /// Keep the selected changed file and the current hunk in view.
     git_files_scroll: UniformListScrollHandle,
     git_diff_scroll: UniformListScrollHandle,
@@ -430,6 +433,7 @@ impl Shell {
             files_scroll: UniformListScrollHandle::new(),
             git: HashMap::new(),
             git_focus: cx.focus_handle(),
+            git_commit_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
             git_diff_scroll: UniformListScrollHandle::new(),
             git_discard: None,
@@ -1236,6 +1240,10 @@ impl Shell {
                 };
                 let requests = view.status_loaded(loaded);
                 shell.git_requests(project_id, requests, window, cx);
+                // Everything committed: the box is gone, the list takes the keyboard back.
+                if shell.git_commit_focus.is_focused(window) && !shell.git_commit_shown() {
+                    window.focus(&shell.git_focus, cx);
+                }
             });
         })
         .detach();
@@ -1506,6 +1514,120 @@ impl Shell {
                         cx.notify();
                     }
                 }
+            });
+        })
+        .detach();
+    }
+
+    /// Keys typed in the commit box: Enter is a new line, Ctrl+Enter commits, Esc goes back
+    /// to the changed-file list (the draft stays).
+    fn git_commit_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == DialogKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let draft = &mut self.git_view(project_id).commit;
+        if let Some(text) = paste {
+            draft.insert(&text);
+        }
+        match draft.key(key) {
+            git_actions::Outcome::Edited => cx.notify(),
+            git_actions::Outcome::Leave => {
+                window.focus(&self.git_focus, cx);
+                cx.notify();
+            }
+            git_actions::Outcome::Commit => self.commit_git(project_id, window, cx),
+        }
+    }
+
+    /// Whether the active workspace's Git view is shown with its commit box.
+    fn git_commit_shown(&self) -> bool {
+        self.view() == View::Git
+            && self
+                .workspace
+                .and_then(|id| self.git.get(&id))
+                .is_some_and(GitView::commit_box_shown)
+    }
+
+    /// `git.commit` of the staged changes with the drafted message; then the view reads its
+    /// status again either way (a hook may have changed files; a failure stays under the box).
+    fn commit_git(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let view = self.git_view(project_id);
+        let staged = match &view.status {
+            git_view::Status::Loaded(status) => status.staged.len(),
+            git_view::Status::Loading | git_view::Status::Failed(_) => 0,
+        };
+        let params = view.commit.begin(project_id, staged);
+        cx.notify();
+        let Some(params) = params else {
+            return;
+        };
+        let committed = connection.call::<GitCommitResult>(Request::GitCommit(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = committed
+                .await
+                .map(|_| ())
+                .map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &result {
+                    tracing::warn!(%project_id, "git.commit failed: {error}");
+                }
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                view.commit.committed(result);
+                shell.refresh_git(project_id, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Fetch or Push of the Git view header; then the view reads its status again (base,
+    /// ahead/behind). A failure shows under the header.
+    fn run_git_remote(
+        &mut self,
+        project_id: Ulid,
+        remote: Remote,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if !self.git_view(project_id).remotes.begin(remote) {
+            return;
+        }
+        cx.notify();
+        let sent = connection.request(remote.request(project_id));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match sent.await {
+                Ok(Outcome::Result(_)) => Ok(()),
+                Ok(Outcome::Error(body)) => Err(body.message),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &result {
+                    tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
+                }
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                view.remotes.finished(remote, result);
+                shell.refresh_git(project_id, window, cx);
             });
         })
         .detach();
@@ -3132,6 +3254,15 @@ impl Shell {
             }
             window.focus(&self.focus_handle, cx);
         }
+        // Same for the Git commit box (Esc leaves it, then shortcuts act again), unless it went
+        // away (everything committed, mode switched): then the list takes the keyboard back.
+        if self.git_commit_focus.is_focused(window) {
+            if self.git_commit_shown() {
+                cx.propagate();
+                return;
+            }
+            window.focus(&self.git_focus, cx);
+        }
         if self.view() != View::Terminals {
             match *command {
                 // Opening or picking a tab or pane shows the terminals.
@@ -3271,6 +3402,12 @@ impl Shell {
             }
             Command::GitUnstage => {
                 self.git_key(git_view::Key::Stage(git_view::Stage::Unstage), window, cx);
+            }
+            Command::GitFocusCommit => {
+                if self.git_commit_shown() {
+                    window.focus(&self.git_commit_focus, cx);
+                    cx.notify();
+                }
             }
             Command::ToggleIgnored => {
                 // Only bound while Files are shown.
@@ -4722,9 +4859,8 @@ impl Shell {
         };
         let column = div()
             .id("git-files")
-            .flex_none()
-            .w(px(theme::GIT_FILE_LIST_WIDTH))
-            .h_full()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
             .gap(px(space::S))
@@ -4830,7 +4966,19 @@ impl Shell {
             .min_h_0()
             .flex()
             .font_family(theme::UI_FONT)
-            .child(column.child(list))
+            .child(
+                // The commit box sits outside the `GIT_CONTEXT` column: typing never stages.
+                div()
+                    .flex_none()
+                    .w(px(theme::GIT_FILE_LIST_WIDTH))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(column.child(list))
+                    .when_some(status.filter(|_| view.commit_box_shown()), |el, status| {
+                        el.child(self.git_commit_box(project_id, view, status, theme, window, cx))
+                    }),
+            )
             .when(any_files, |el| {
                 el.child(self.render_git_diff(project_id, view, theme, cx))
             })
@@ -4868,6 +5016,24 @@ impl Shell {
             (Some(base), true) => format!("Base: {base} (auto-detected)"),
             (Some(base), false) => format!("Base: {base}"),
             (None, _) => "No base branch".to_owned(),
+        });
+        // The upstream line ends with Fetch and Push.
+        let tracking = tracking.map(|tracking| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .child(
+                    meta_line(theme, tracking.into())
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap(),
+                )
+                .children([Remote::Fetch, Remote::Push].map(|remote| {
+                    self.git_remote_action(project_id, view, status, remote, theme, cx)
+                }))
         });
         let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
         // Lighter than the active segment's fill, so hovering never looks selected.
@@ -4919,7 +5085,14 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child(branch),
             )
-            .children(tracking.map(|tracking| meta_line(theme, tracking.into())))
+            .children(tracking)
+            // Wrapped, not cut: git's push / fetch errors say what to do.
+            .children(view.remotes.error.clone().map(|error| {
+                div()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text))
+                    .child(format!("✕ {error}"))
+            }))
             .child(
                 div()
                     .mt(px(space::XS))
@@ -4973,6 +5146,135 @@ impl Shell {
                 view.refresh_error
                     .clone()
                     .map(|error| notice(theme.text, format!("✕ Refresh failed: {error}"))),
+            )
+    }
+
+    /// "Fetch" / "Push" on the header's upstream line: shows "Fetching…" while it runs, and is
+    /// faded while another runs (or, for Push, without a branch and upstream).
+    fn git_remote_action(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+        remote: Remote,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let id = SharedString::from(format!("git-{}", remote.label().to_lowercase()));
+        let running = view.remotes.running;
+        let no_upstream = status.is_none_or(|s| s.branch.is_none() || s.upstream.is_none());
+        let tip = match remote {
+            Remote::Fetch => "Fetch from the remotes (refreshes the base)",
+            Remote::Push if no_upstream => "This branch has no upstream to push to",
+            Remote::Push => "Push this branch to its upstream (never forced)",
+        };
+        let idle = |label: &'static str, opacity: f32| {
+            div()
+                .id(id.clone())
+                .flex_none()
+                .px(px(space::XS))
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .opacity(opacity)
+                .child(label)
+        };
+        if running == Some(remote) {
+            return idle(remote.running_label(), 1.0).into_any_element();
+        }
+        if running.is_some() || (remote == Remote::Push && no_upstream) {
+            return idle(remote.label(), opacity::DISABLED)
+                .tooltip(tooltip(theme, tip, ""))
+                .into_any_element();
+        }
+        row_action(id, remote.label(), theme)
+            .tooltip(tooltip(theme, tip, ""))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.run_git_remote(project_id, remote, window, cx);
+            }))
+            .into_any_element()
+    }
+
+    /// The commit message box under the changed-file list (Working changes): Enter breaks a
+    /// line, Ctrl+Enter or the button commits the staged changes.
+    fn git_commit_box(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: &GitStatus,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let draft = &view.commit;
+        let focused = self.git_commit_focus.is_focused(window);
+        let staged = status.staged.len();
+        let summary = match staged {
+            0 => "Nothing staged".to_owned(),
+            1 => "1 staged file".to_owned(),
+            n => format!("{n} staged files"),
+        };
+        let label = if draft.busy {
+            "Committing…"
+        } else {
+            "Commit"
+        };
+        let commit = if draft.busy || staged == 0 {
+            disabled_button("git-commit", label, theme, true)
+        } else {
+            button("git-commit", label, theme, true).on_click(
+                cx.listener(move |shell, _, window, cx| shell.commit_git(project_id, window, cx)),
+            )
+        };
+        let tip = if staged == 0 {
+            "Stage changes to commit them"
+        } else {
+            "Commit the staged changes"
+        };
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .p(px(space::M))
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .child(
+                text_field(
+                    "git-commit-message",
+                    &draft.text,
+                    "Commit message",
+                    focused,
+                    theme,
+                )
+                .max_h(px(theme::GIT_COMMIT_BOX_MAX_HEIGHT))
+                .overflow_y_scroll()
+                .when(draft.busy, |el| el.opacity(opacity::DISABLED))
+                .tooltip(tooltip(
+                    theme,
+                    "Message of the next commit (Enter: new line)",
+                    self.keymap.label(Command::GitFocusCommit),
+                ))
+                .track_focus(&self.git_commit_focus)
+                .on_key_down(cx.listener(Shell::git_commit_key_down))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    window.focus(&shell.git_commit_focus, cx);
+                    cx.notify();
+                })),
+            )
+            // Wrapped like the Fetch / Push error: hook output says what to fix.
+            .children(draft.error.clone().map(|error| {
+                div()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text))
+                    .child(format!("✕ {error}"))
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(meta_line(theme, summary.into()).flex_1().min_w_0())
+                    .child(commit.tooltip(tooltip(theme, tip, "Ctrl+Enter"))),
             )
     }
 

@@ -411,6 +411,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   comment stays comment-colored; a big diff (thousands of lines) opens without freezing the
   UI; an unknown file type (`LICENSE`) stays plain; the discard dialog's preview is colored
   too.
+- [ ] (T7.10a) **Git commit box, Fetch / Push** (state covered by `git_actions.rs` unit tests;
+  the UI was never seen): stage a file, press `c`, type a 2-line message (Enter breaks the line, typing
+  `s`/`u`/`b` only types), Ctrl+Enter commits → box empties, list + ahead count refresh; with
+  nothing staged the button is faded; a failing pre-commit hook shows its error under the box.
+  Fetch on a repo with a real remote → "Fetching…", then behind/base update; Push → ahead goes
+  to 0; a rejected push shows git's message wrapped under the header; Push is faded on a
+  branch without upstream. Check the layout (box at the bottom of the left column, long
+  messages scroll at ~8 lines) in dark + light.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1185,6 +1193,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   line numbers (`text-muted`) reach 4.5:1 on deleted lines (was 4.38); new test
   `highlighted_diff_lines_stay_readable`. Dark `text-muted` on `diff-add-bg` is 4.53:1 —
   little headroom (ui-reviewer SHOULD, left as is).
+- (T7.10a) **Commit box / Fetch / Push choices:** T7.10 was split (a: commit + Fetch/Push,
+  b: History, c: task "View changes", which needs a daemon diff-since-commit). The commit box
+  sits under the changed-file list, only in Working changes, and only when there are changes
+  or a draft. `c` (new `git_focus_commit` command, §13) focuses it from the list; Enter = new
+  line, Ctrl+Enter = commit, Esc = back to the list (draft kept per workspace). While it has
+  focus, every shortcut goes to the box (like the comment draft) — press Esc first to switch
+  views; once the box goes away (all committed) the list gets the keyboard back. Not done
+  (ui-reviewer SHOULDs): palette commands for Fetch/Push (§13 lists no keys), keeping the
+  caret in view when a long message scrolls, a platform-aware "Ctrl+Enter" hint on macOS. Commit is disabled with nothing staged ("Stage changes to
+  commit them"); the message is trimmed, internal blank lines kept. Fetch / Push are small
+  actions at the end of the upstream line; one runs at a time ("Fetching…"); Push is faded
+  without a branch + upstream (no `push -u` in v1). Errors are wrapped under the header (push)
+  or under the box (commit); every outcome re-reads the status.
 
 ## Done
 
