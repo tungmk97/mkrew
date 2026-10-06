@@ -1,10 +1,11 @@
 //! The prompt composer docked at an agent pane's bottom (SPEC §20B.1): one draft per session,
 //! kept in UI memory while the composer is hidden or another pane has the keyboard, sent with
-//! `session.send` + Enter. Pure and tested headlessly; `main.rs` renders it.
+//! `session.send` + Enter, with the session's send queue (§20B.2). Pure and tested headlessly;
+//! `main.rs` renders it.
 
 use std::collections::HashMap;
 
-use mkrew_protocol::SessionSendParams;
+use mkrew_protocol::{Event, QueuedSend, SessionSendParams};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
@@ -26,6 +27,8 @@ pub struct Draft {
 #[derive(Debug, Clone, Default)]
 pub struct Composers {
     drafts: HashMap<Ulid, Draft>,
+    /// Each session's texts waiting to be typed (`session.queue`), in delivery order.
+    queues: HashMap<Ulid, Vec<QueuedSend>>,
 }
 
 impl Composers {
@@ -88,6 +91,26 @@ impl Composers {
         })
     }
 
+    /// Keeps the queue of a `session.queue` event. Returns `true` when it changed.
+    pub fn apply(&mut self, event: &Event) -> bool {
+        let Event::SessionQueue(queue) = event else {
+            return false;
+        };
+        if queue.items.is_empty() {
+            self.queues.remove(&queue.session_id).is_some()
+        } else {
+            self.queues
+                .insert(queue.session_id, queue.items.clone())
+                .as_ref()
+                != Some(&queue.items)
+        }
+    }
+
+    /// `session`'s texts waiting to be typed.
+    pub fn queue(&self, session: Ulid) -> &[QueuedSend] {
+        self.queues.get(&session).map_or(&[], Vec::as_slice)
+    }
+
     /// The send finished: written or queued empties the draft, a failure keeps it.
     pub fn sent(&mut self, session: Ulid, result: Result<(), String>) {
         let Some(draft) = self.drafts.get_mut(&session) else {
@@ -99,6 +122,23 @@ impl Composers {
             Err(error) => draft.error = Some(format!("Cannot send: {error}")),
         }
     }
+}
+
+/// How a picked file is typed (§20B.1): `template` (`composer.file_ref`) with `{path}` replaced
+/// by the project-relative `path`, `/`-separated, quoted with `"` if it contains spaces.
+pub fn file_ref(template: &str, path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let path = if path.contains(' ') {
+        format!("\"{path}\"")
+    } else {
+        path
+    };
+    template.replace("{path}", &path)
+}
+
+/// The first line of a queued text, as listed in the composer.
+pub fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or_default()
 }
 
 /// `text` without trailing blanks and leading blank lines; the first line keeps its indent
@@ -114,6 +154,7 @@ fn without_blank_edges(text: &str) -> &str {
 mod tests {
     use super::*;
     use crate::text_box::Outcome;
+    use mkrew_protocol::SessionQueueEvent;
 
     fn type_text(composers: &mut Composers, session: Ulid, text: &str) {
         for (i, line) in text.split('\n').enumerate() {
@@ -189,5 +230,54 @@ mod tests {
 
         composers.key(session, DialogKey::Insert("!".into()));
         assert_eq!(composers.shown(session).unwrap().error, None);
+    }
+
+    #[test]
+    fn file_refs_are_relative_slashed_and_quoted_with_spaces() {
+        assert_eq!(file_ref("@{path}", "src/main.rs"), "@src/main.rs");
+        assert_eq!(file_ref("@{path}", "src\\ui\\app.rs"), "@src/ui/app.rs");
+        assert_eq!(
+            file_ref("@{path}", "docs/my notes.md"),
+            "@\"docs/my notes.md\""
+        );
+        assert_eq!(file_ref("{path}", "a b\\c.txt"), "\"a b/c.txt\"");
+        assert_eq!(file_ref("see {path} ", "x.rs"), "see x.rs ");
+    }
+
+    #[test]
+    fn queues_follow_session_queue_events() {
+        let session = Ulid::new();
+        let mut composers = Composers::default();
+        assert!(composers.queue(session).is_empty());
+        let items = vec![
+            QueuedSend {
+                send_id: Ulid::new(),
+                text: "fix it\nplease".into(),
+            },
+            QueuedSend {
+                send_id: Ulid::new(),
+                text: "then test".into(),
+            },
+        ];
+        let event = |items: Vec<QueuedSend>| {
+            Event::SessionQueue(SessionQueueEvent {
+                session_id: session,
+                items,
+            })
+        };
+        assert!(composers.apply(&event(items.clone())));
+        assert!(!composers.apply(&event(items.clone())), "unchanged");
+        assert_eq!(composers.queue(session), items.as_slice());
+        assert_eq!(first_line(&composers.queue(session)[0].text), "fix it");
+
+        assert!(composers.apply(&event(items[1..].to_vec())));
+        assert_eq!(composers.queue(session).len(), 1);
+        assert!(
+            composers.apply(&event(Vec::new())),
+            "emptied (sent or exited)"
+        );
+        assert!(composers.queue(session).is_empty());
+        assert!(!composers.apply(&event(Vec::new())));
+        assert_eq!(first_line(""), "");
     }
 }

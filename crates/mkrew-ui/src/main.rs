@@ -26,15 +26,16 @@ use mkrew_protocol::{
     ProjectAddParams, ProjectRef, Request, Session, SessionAttachResult, SessionHistory,
     SessionKillParams, SessionKind, SessionListParams, SessionReadParams, SessionReadResult,
     SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
-    SessionTurnEvent, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
-    Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    SessionTurnEvent, SessionUnqueueParams, StateSource, TabCreateParams, TabListParams, TabRef,
+    TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
+    UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
-use mkrew_ui::composer::{Composers, Draft};
+use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::dev_server::{self, DevDialog};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
@@ -190,6 +191,8 @@ struct Shell {
     keymap_errors: Vec<KeymapError>,
     /// `<config>/mkrew/keymap.toml` (Ctrl+, creates and opens it).
     keymap_file: PathBuf,
+    /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed (§20.0).
+    settings_file: PathBuf,
     /// The open workspace menu (Open in Zed, dev server, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open "Dev server" settings of a workspace (modal).
@@ -301,6 +304,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let keymap_file = paths.keymap_file();
+        let settings_file = paths.settings_file();
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
@@ -474,6 +478,7 @@ impl Shell {
                 }),
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
+            settings_file,
             workspace_menu: None,
             dev_dialog: None,
             broadcast: None,
@@ -2384,9 +2389,59 @@ impl Shell {
     }
 
     fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.quick_open = None;
-        self.focus_pane(window, cx);
+        let open = self.quick_open.take();
+        // Esc on an `@` picker types the `@` it replaced (an e-mail, a handle).
+        match open.and_then(|open| open.composer) {
+            Some(session) => self.composer_typed(session, "@", window, cx),
+            None => self.focus_pane(window, cx),
+        }
         cx.notify();
+    }
+
+    /// `@` in `session`'s composer: quick open over its workspace's files; the pick is typed
+    /// as `composer.file_ref` (§20B.1). Without a daemon the `@` is typed as is.
+    fn open_file_ref_picker(
+        &mut self,
+        session: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = self
+            .sidebar
+            .sessions()
+            .iter()
+            .find(|s| s.id == session)
+            .map(|s| s.project_id)
+            .filter(|_| self.connection.is_some())
+        else {
+            self.composers.insert(session, "@");
+            cx.notify();
+            return;
+        };
+        let mut open = QuickOpen::new(project_id);
+        open.composer = Some(session);
+        self.quick_open = Some(open);
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        self.find_files(window, cx);
+        cx.notify();
+    }
+
+    /// Types `text` into `session`'s draft and gives its composer the keyboard back.
+    fn composer_typed(
+        &mut self,
+        session: Ulid,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composers.insert(session, text);
+        self.composer_scroll.scroll_to_bottom();
+        if self.composer_session() == Some(session) {
+            window.focus(&self.composer_focus, cx);
+        } else {
+            self.focus_pane(window, cx);
+        }
     }
 
     /// `fs.find` for the finder's query; a reply to an older query or finder is dropped.
@@ -2468,6 +2523,17 @@ impl Shell {
             self.quick_open = Some(open);
             return;
         };
+        if let Some(session) = open.composer {
+            // A missing or broken settings file types the default form (the daemon reports it).
+            let template = mkrew_core::settings::load(&self.settings_file)
+                .unwrap_or_default()
+                .composer
+                .file_ref;
+            let text = composer::file_ref(&template, &path);
+            self.composer_typed(session, &text, window, cx);
+            cx.notify();
+            return;
+        }
         let project_id = open.project_id;
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
@@ -3971,6 +4037,11 @@ impl Shell {
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
         };
+        if key == DialogKey::Insert("@".into())
+            && self.composers.shown(session).is_some_and(|d| !d.busy)
+        {
+            return self.open_file_ref_picker(session, window, cx);
+        }
         if key == DialogKey::Paste
             && let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
         {
@@ -4014,6 +4085,26 @@ impl Shell {
                 shell.composers.sent(session, result);
                 cx.notify();
             });
+        })
+        .detach();
+    }
+
+    /// `session.unqueue`: the queued text is not typed; the `session.queue` event that follows
+    /// updates the list (a text written meanwhile fails with `not_found` and leaves it too).
+    fn unqueue(&mut self, session: Ulid, send_id: Ulid, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let removed = connection.request(Request::SessionUnqueue(SessionUnqueueParams {
+            session_id: session,
+            send_id,
+        }));
+        cx.spawn(async move |_, _| match removed.await {
+            Ok(Outcome::Result(_)) => {}
+            Ok(Outcome::Error(body)) => {
+                tracing::warn!(%session, "session.unqueue failed: {}", body.message);
+            }
+            Err(error) => tracing::warn!(%session, "session.unqueue failed: {error:#}"),
         })
         .detach();
     }
@@ -4940,6 +5031,9 @@ impl Shell {
                     cx.notify();
                 }
                 if self.turns.apply(event) {
+                    cx.notify();
+                }
+                if self.composers.apply(event) {
                     cx.notify();
                 }
                 if let Event::SessionState(state) = event {
@@ -9054,7 +9148,11 @@ impl Shell {
                     .text_size(px(font_size::CARD_TITLE))
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child(format!("Open file{workspace}")),
+                    .child(if open.composer.is_some() {
+                        format!("Insert file{workspace}")
+                    } else {
+                        format!("Open file{workspace}")
+                    }),
             )
             .child(text_field(
                 "quick-open-query",
@@ -9095,7 +9193,11 @@ impl Shell {
                 div()
                     .text_size(px(font_size::META))
                     .text_color(rgb(theme.text_muted))
-                    .child("↑ ↓ to pick · Enter opens it in Files · Esc closes"),
+                    .child(if open.composer.is_some() {
+                        "↑ ↓ to pick · Enter types its path in the composer · Esc types @"
+                    } else {
+                        "↑ ↓ to pick · Enter opens it in Files · Esc closes"
+                    }),
             );
         Self::modal_shade("quick-open-shade", panel, cx)
     }
@@ -9863,7 +9965,8 @@ impl Shell {
                         cx,
                     )
                 });
-                pane_header(info, self.turns.get(session), conflict, now, theme)
+                let queued = self.composers.queue(session).len();
+                pane_header(info, self.turns.get(session), conflict, queued, now, theme)
             }))
             .child(div().flex_1().min_h_0().child(content))
             .children(self.composers.shown(session).map(|draft| {
@@ -9926,10 +10029,58 @@ impl Shell {
                 (
                     "",
                     theme.text_muted,
-                    "Ctrl+Enter to send · Esc to hide".to_owned(),
+                    "Ctrl+Enter to send · @ for a file · Esc to hide".to_owned(),
                 )
             })
         };
+        // The texts waiting for the agent (§20B.2), first line each, ✕ removes one.
+        let hover = theme.border;
+        let queued = self
+            .composers
+            .queue(session)
+            .iter()
+            .map(|item| {
+                let send_id = item.send_id;
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(rgb(theme.text_muted))
+                            .child("⧗"),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_color(rgb(theme.text))
+                            .child(composer::first_line(&item.text).to_owned()),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("unqueue-{send_id}")))
+                            .flex_none()
+                            .px(px(space::S))
+                            .rounded(px(radius::SMALL))
+                            .cursor_pointer()
+                            .text_color(rgb(theme.text_muted))
+                            .hover(move |style| style.bg(rgb(hover)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .tooltip(tooltip(theme, "Remove from the queue (not sent)", ""))
+                            .on_click(cx.listener(move |shell, _, _, cx| {
+                                cx.stop_propagation();
+                                shell.unqueue(session, send_id, cx);
+                            }))
+                            .child("✕"),
+                    )
+            })
+            .collect::<Vec<_>>();
         div()
             .flex_none()
             .flex()
@@ -9949,6 +10100,19 @@ impl Shell {
                     cx.notify();
                 }),
             )
+            .when(!queued.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("composer-queue")
+                        .flex_none()
+                        .max_h(px(theme::COMPOSER_QUEUE_MAX_HEIGHT))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(queued),
+                )
+            })
             .child(field)
             .children(status.map(|(icon, color, text)| {
                 div()
@@ -11765,12 +11929,13 @@ fn conflict_badge(
 }
 
 /// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
-/// warning, status text and time (with the last turn's summary when done); hovering the
-/// status shows its source and last change.
+/// warning, the number of queued sends (§20B.2), status text and time (with the last turn's
+/// summary when done); hovering the status shows its source and last change.
 fn pane_header(
     session: &Session,
     turn: Option<&SessionTurnEvent>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
+    queued: usize,
     now: i64,
     theme: &Theme,
 ) -> gpui::Div {
@@ -11812,6 +11977,14 @@ fn pane_header(
                 .flex_none()
                 .max_w(relative(theme::PANE_CONFLICT_MAX_FRACTION))
         }))
+        .when(queued > 0, |el| {
+            el.child(
+                div()
+                    .flex_none()
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("⧗ {queued} queued")),
+            )
+        })
         .child(
             div()
                 .id(SharedString::from(format!("pane-status-{}", session.id)))

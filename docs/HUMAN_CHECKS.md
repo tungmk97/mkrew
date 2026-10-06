@@ -1559,6 +1559,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   To verify: agent pane → Ctrl+Shift+Enter → type 2 lines (Enter) → Ctrl+Enter → the agent gets
   one paste + Enter; type, Esc, switch panes and back, Ctrl+Shift+Enter → draft still there;
   check the composer visually (dark/light).
+- (T10.4) **Composer `@`:** typing `@` opens the file picker instead of typing `@` (so the
+  default `@{path}` form is not doubled); Esc on it types the `@` (e-mails, handles), and with no
+  daemon the `@` is typed directly. `settings.toml` is re-read at each pick (a broken file =
+  the default `@{path}`). Paths are those of the session's workspace (`fs.find`), even when the
+  session runs in a task worktree. Removing a queued text has no keyboard path (✕ click only);
+  an unqueue error is only logged. Queues are not re-fetched after a daemon reconnect.
+  To verify: composer → `@` → pick `docs/my notes.md` → `@"docs/my notes.md"` typed; make the
+  agent work, send twice → both listed with ✕ and the header shows `⧗ 2 queued`; ✕ one → it is
+  never typed.
 
 ## Done
 

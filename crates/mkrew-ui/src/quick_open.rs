@@ -61,6 +61,8 @@ pub struct QuickOpen {
     pub results: Results,
     /// Index of the picked match.
     pub selected: usize,
+    /// Opened by `@` in this session's composer: the pick is typed there instead of opened.
+    pub composer: Option<Ulid>,
     /// Number of the last `fs.find` sent; older answers are dropped.
     sent: u64,
 }
@@ -72,6 +74,7 @@ impl QuickOpen {
             query: String::new(),
             results: Results::Loading,
             selected: 0,
+            composer: None,
             sent: 0,
         }
     }

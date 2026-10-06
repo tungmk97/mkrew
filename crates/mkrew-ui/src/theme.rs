@@ -111,6 +111,9 @@ pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
 /// Tallest an agent pane's prompt composer grows (it scrolls past that, ~8 lines; §20B.1).
 pub const COMPOSER_MAX_HEIGHT: f32 = 160.0;
 
+/// Tallest the composer's list of queued texts grows (it scrolls past that, ~4 rows; §20B.2).
+pub const COMPOSER_QUEUE_MAX_HEIGHT: f32 = 88.0;
+
 /// Width of the "Undo task" dialog (wider: it shows a diff).
 pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
 
