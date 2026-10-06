@@ -38,6 +38,8 @@ pub struct Context {
     pub dev_running: bool,
     /// The active workspace has a live agent session.
     pub agents: bool,
+    /// The terminal pane that had the keyboard runs an agent (it has a composer).
+    pub agent_pane: bool,
 }
 
 /// A palette-only action: no key is bound to it.
@@ -158,6 +160,7 @@ pub fn title(command: Command) -> String {
         Command::OpenInZed => "Zed: Open workspace or current file in Zed".into(),
         Command::NextInbox => "Inbox: Jump to next item needing attention".into(),
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
+        Command::OpenComposer => "Agent: Open the prompt composer".into(),
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
@@ -217,6 +220,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::Copy | Command::Paste | Command::PageUp | Command::PageDown | Command::Find => {
             on_panes && context.terminal
         }
+        Command::OpenComposer => on_panes && context.agent_pane,
         Command::RunTask => in_view(View::Board),
         Command::ToggleDocSource => in_view(View::Docs),
         Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Git),
@@ -507,6 +511,7 @@ mod tests {
             dev_command: false,
             dev_running: false,
             agents: false,
+            agent_pane: false,
         }
     }
 
@@ -650,6 +655,13 @@ mod tests {
         });
         assert!(focused.contains(&Command::Copy));
         assert!(focused.contains(&Command::Find));
+        assert!(!focused.contains(&Command::OpenComposer), "a shell pane");
+        let agent = commands(&Context {
+            terminal: true,
+            agent_pane: true,
+            ..context(View::Terminals)
+        });
+        assert!(agent.contains(&Command::OpenComposer));
 
         let git = commands(&context(View::Git));
         assert!(git.contains(&Command::GitStage));

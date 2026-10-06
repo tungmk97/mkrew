@@ -1549,6 +1549,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   from the body (with the blank lines after it); without one the title is the file stem.
   Values are not expanded again. The three seeded samples' wording is the agent's choice
   (`mkrew_core::prompt::SAMPLES`); they are written only when `prompts/` does not exist.
+- (T10.3) **Composer:** the text box types and deletes at the end only (no caret movement,
+  like the task dialog / follow-up fields). While it has the keyboard every shortcut goes to it
+  (like the follow-up field; Esc gets out), except Ctrl+Shift+Enter which just keeps it.
+  The sent text drops trailing blanks and leading blank lines (the first line's indent stays).
+  Drafts of ended sessions stay in memory until the UI restarts. The composer opens on exited
+  agents too (send then shows the daemon's error). Shown composers stay docked when another
+  pane is focused; only the focused one shows the key hint.
+  To verify: agent pane → Ctrl+Shift+Enter → type 2 lines (Enter) → Ctrl+Enter → the agent gets
+  one paste + Enter; type, Esc, switch panes and back, Ctrl+Shift+Enter → draft still there;
+  check the composer visually (dark/light).
 
 ## Done
 

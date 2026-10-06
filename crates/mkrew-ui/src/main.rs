@@ -34,6 +34,7 @@ use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
+use mkrew_ui::composer::{Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::dev_server::{self, DevDialog};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
@@ -63,6 +64,7 @@ use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, on_screen, rename_params};
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
+use mkrew_ui::text_box;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
 use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
@@ -219,6 +221,11 @@ struct Shell {
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
     follow_up_focus: FocusHandle,
     _follow_up_blur: Subscription,
+    /// The prompt composer draft of every agent session (§20B.1).
+    composers: Composers,
+    /// Focused while the focused pane's composer takes keys.
+    composer_focus: FocusHandle,
+    composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
     /// The Docs view of every workspace it was shown for.
@@ -483,6 +490,9 @@ impl Shell {
             follow_up: None,
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
+            composers: Composers::default(),
+            composer_focus: cx.focus_handle(),
+            composer_scroll: ScrollHandle::new(),
             views: HashMap::new(),
             docs: HashMap::new(),
             comment_focus: cx.focus_handle(),
@@ -2512,6 +2522,7 @@ impl Shell {
             dev_command: dev_command.is_some(),
             dev_running,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
+            agent_pane: self.focused_agent().is_some(),
         };
         let mut entries = palette::keymap_errors(&self.keymap, &self.keymap_errors);
         entries.extend(palette::entries(
@@ -3919,6 +3930,94 @@ impl Shell {
         .detach();
     }
 
+    /// The focused pane's session while its composer is shown.
+    fn composer_session(&self) -> Option<Ulid> {
+        self.focused_session()
+            .filter(|&session| self.composers.shown(session).is_some())
+    }
+
+    /// The focused pane's session when it runs an agent.
+    fn focused_agent(&self) -> Option<Ulid> {
+        self.focused_session().filter(|&id| {
+            self.sidebar
+                .sessions()
+                .iter()
+                .any(|s| s.id == id && s.kind == SessionKind::Agent)
+        })
+    }
+
+    /// Shows the focused agent pane's composer (keeping its draft) and gives it the keyboard.
+    fn open_composer(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(session) = self.focused_agent() else {
+            return;
+        };
+        self.composers.open(session);
+        self.composer_scroll.scroll_to_bottom();
+        window.focus(&self.composer_focus, cx);
+        cx.notify();
+    }
+
+    /// Keys typed in the composer: Enter is a new line, Ctrl+Enter sends, Esc hides it.
+    fn composer_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(session) = self.composer_session() else {
+            return;
+        };
+        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+            return;
+        };
+        if key == DialogKey::Paste
+            && let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+        {
+            self.composers.insert(session, &text);
+        }
+        match self.composers.key(session, key) {
+            text_box::Outcome::Edited => {
+                self.composer_scroll.scroll_to_bottom();
+                cx.notify();
+            }
+            text_box::Outcome::Cancel => {
+                self.composers.hide(session);
+                self.focus_pane(window, cx);
+                cx.notify();
+            }
+            text_box::Outcome::Submit => self.send_composer(session, window, cx),
+        }
+    }
+
+    /// `session.send` of `session`'s draft with Enter (one bracketed paste when multi-line,
+    /// §7); the draft empties once it is written or queued.
+    fn send_composer(&mut self, session: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(params) = self.composers.begin_send(session) else {
+            return;
+        };
+        cx.notify();
+        let sent = connection.request(Request::SessionSend(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match sent.await {
+                Ok(Outcome::Result(_)) => Ok(()),
+                Ok(Outcome::Error(body)) => Err(body.message),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                if let Err(error) = &result {
+                    tracing::warn!(%session, "session.send failed: {error}");
+                }
+                shell.composers.sent(session, result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Starts an agent (the workspace's default agent) or a shell in the workspace folder and
     /// shows it next to the focused pane of the active tab, split along `axis`.
     fn new_pane(
@@ -4024,6 +4123,17 @@ impl Shell {
                 return;
             }
             window.focus(&self.git_focus, cx);
+        }
+        // Same for the focused pane's composer (§20B.1), unless it went away. Its own shortcut
+        // keeps it focused (Ctrl+Shift+Enter would read as Ctrl+Enter: send).
+        if self.composer_focus.is_focused(window) {
+            if self.composer_session().is_some() {
+                if *command != Command::OpenComposer {
+                    cx.propagate();
+                }
+                return;
+            }
+            self.focus_pane(window, cx);
         }
         if self.view() != View::Terminals {
             match *command {
@@ -4157,6 +4267,7 @@ impl Shell {
                     self.open_peek(first.session_id, Place::Inbox, true, window, cx);
                 }
             }
+            Command::OpenComposer => self.open_composer(window, cx),
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
@@ -5586,7 +5697,13 @@ impl Shell {
             (View::Git, _) => main.child(self.render_git(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => main
                 .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
-                .child(self.render_tab(tabs, now, theme, cx)),
+                .child(self.render_tab(
+                    tabs,
+                    now,
+                    self.composer_focus.is_focused(window),
+                    theme,
+                    cx,
+                )),
             (View::Terminals, None) => {
                 let (sentence, detail) = self.status_line();
                 main.child(message(theme, None, sentence, detail).flex_1())
@@ -9627,10 +9744,12 @@ impl Shell {
     }
 
     /// The active tab's split tree: each pane placed at its fraction of the area.
+    /// `composer_focused`: the focused pane's composer has the keyboard.
     fn render_tab(
         &self,
         tabs: &Tabs,
         now: i64,
+        composer_focused: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
@@ -9680,17 +9799,28 @@ impl Shell {
                         .w(relative(rect.w as f32))
                         .h(relative(rect.h as f32))
                         .p(half_gap)
-                        .child(self.pane_frame(session, several, is_focused, now, theme, cx))
+                        .child(self.pane_frame(
+                            session,
+                            several,
+                            is_focused,
+                            is_focused && composer_focused,
+                            now,
+                            theme,
+                            cx,
+                        ))
                 },
             )))
     }
 
-    /// One pane: the terminal (or why it is not shown), its border, and the unfocused dim.
+    /// One pane: the terminal (or why it is not shown), its composer, its border, and the
+    /// unfocused dim.
+    #[allow(clippy::too_many_arguments)]
     fn pane_frame(
         &self,
         session: Ulid,
         several: bool,
         is_focused: bool,
+        composer_focused: bool,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -9736,6 +9866,9 @@ impl Shell {
                 pane_header(info, self.turns.get(session), conflict, now, theme)
             }))
             .child(div().flex_1().min_h_0().child(content))
+            .children(self.composers.shown(session).map(|draft| {
+                self.composer_panel(session, draft, is_focused, composer_focused, theme, cx)
+            }))
             .when(several && !is_focused, |el| {
                 el.child(
                     div()
@@ -9754,6 +9887,87 @@ impl Shell {
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(border)),
             )
+    }
+
+    /// The composer docked under `session`'s pane (§20B.1): the draft, then why the last send
+    /// failed or the keys. Only the focused pane's composer takes the keyboard (`focused`: it
+    /// has it now); a click on another pane's composer focuses that pane and its composer.
+    fn composer_panel(
+        &self,
+        session: Ulid,
+        draft: &Draft,
+        is_focused: bool,
+        focused: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let field = text_field(
+            "composer",
+            draft.text.text(),
+            "Message the agent…",
+            focused && !draft.busy,
+            theme,
+        )
+        .max_h(px(theme::COMPOSER_MAX_HEIGHT))
+        .overflow_y_scroll()
+        .when(draft.busy, |el| el.opacity(opacity::DISABLED))
+        .when(is_focused, |el| {
+            el.track_focus(&self.composer_focus)
+                .track_scroll(&self.composer_scroll)
+                .on_key_down(cx.listener(Self::composer_key_down))
+        });
+        // The keys only while it has the keyboard (they do nothing on other panes).
+        let status = if draft.busy {
+            Some(("↑", theme.text_muted, "Sending…".to_owned()))
+        } else if let Some(error) = &draft.error {
+            Some(("✕", theme.status_exited, error.clone()))
+        } else {
+            focused.then(|| {
+                (
+                    "",
+                    theme.text_muted,
+                    "Ctrl+Enter to send · Esc to hide".to_owned(),
+                )
+            })
+        };
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(space::XS))
+            .p(px(space::S))
+            .bg(rgb(theme.surface))
+            .font_family(theme::UI_FONT)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(tabs) = shell.active_tabs_mut() {
+                        tabs.focus(session);
+                    }
+                    window.focus(&shell.composer_focus, cx);
+                    cx.notify();
+                }),
+            )
+            .child(field)
+            .children(status.map(|(icon, color, text)| {
+                div()
+                    .flex()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .when(!icon.is_empty(), |el| {
+                        el.child(div().text_color(rgb(color)).child(icon))
+                    })
+                    .child(
+                        div()
+                            .text_color(rgb(if draft.error.is_some() {
+                                theme.text
+                            } else {
+                                theme.text_muted
+                            }))
+                            .child(text),
+                    )
+            }))
     }
 
     /// Why a pane on screen has no terminal yet.
@@ -9953,7 +10167,7 @@ fn danger_button(
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
-/// A text input of the task dialog: its lines with a caret at the end while `focused`, or a
+/// A text input (task dialog, follow-up, composer): its lines with a caret at the end while `focused`, or a
 /// muted placeholder when empty. Callers make clicks focus it.
 fn text_field(
     id: &'static str,
