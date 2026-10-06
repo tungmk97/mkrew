@@ -515,6 +515,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   with a Review card selected "Task: View changes of selected task"; "Dev server: Start/Stop"
   with a dev command set; "Go to workspace / session / task" switch to it (a task selects its
   card on the board). Dark + light screenshots (§14).
+- [ ] (T8.6) **Keymap settings.** With no `<config>/mkrew/keymap.toml`, Ctrl+, (and the palette's
+  "Global: Open keymap settings") creates it with every command commented at its default and
+  opens it in Zed; a second Ctrl+, opens the same file unchanged. Uncomment
+  `close_pane = "ctrl-shift-k"` (taken by add_workspace), add `nope = "ctrl-1"` and
+  `find = ""`, restart: the sidebar shows the first error (+2 more), Ctrl+Shift+P lists three
+  "Keymap error: …" rows at the top, picking one opens the file; Ctrl+Shift+X still closes a
+  pane. Without Zed on `PATH` the error shows in the sidebar.
 
 ## Questions with assumed defaults
 
@@ -1379,6 +1386,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   items: the "Command palette" heading is kept (like quick open's) though palettes often start
   with the field; a click outside does not close it (shared `modal_shade`, quick open too); rows
   are plain elements (`uniform_list` for big boards later); shortcuts are muted text, not keycaps.
+- (T8.6) **Keymap settings choices:** edits still apply after a restart (no live reload; the
+  template header says so). Keymap errors are those found at start, listed first in the palette
+  as "Keymap error: <message>" with the Ctrl+, shortcut, and always shown (they are not filtered
+  by view). The template uses GPUI key syntax with `ctrl-` defaults; the §13 macOS Ctrl→Cmd
+  mapping is still not applied to any default (pre-existing gap). An existing file is never
+  overwritten; a failed write removes the partial file.
 
 ## Done
 

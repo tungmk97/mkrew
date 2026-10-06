@@ -90,6 +90,8 @@ pub enum Command {
     RunTask,
     /// Open the command palette (every command, plus "Go to" workspace / session / task).
     CommandPalette,
+    /// Create `keymap.toml` from the template if missing and open it in Zed.
+    OpenKeymapSettings,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -173,6 +175,7 @@ impl Command {
             Command::NewTask,
             Command::RunTask,
             Command::CommandPalette,
+            Command::OpenKeymapSettings,
         ]);
         all
     }
@@ -230,6 +233,7 @@ impl Command {
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
             Command::CommandPalette => "command_palette".into(),
+            Command::OpenKeymapSettings => "open_keymap_settings".into(),
         }
     }
 
@@ -292,6 +296,7 @@ impl Command {
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
             Command::CommandPalette => "ctrl-shift-p".into(),
+            Command::OpenKeymapSettings => "ctrl-,".into(),
         }
     }
 
@@ -316,6 +321,50 @@ impl Command {
             | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
+    }
+}
+
+/// A fresh `keymap.toml`: every command commented out at its default, in [`Command::all`]
+/// order, so uncommenting a line and changing its keys is all it takes.
+pub fn template() -> String {
+    let mut text = String::from(
+        "# Mkrew keyboard shortcuts. Uncomment a line, change its keys, then restart Mkrew.\n\
+         # Keys use GPUI syntax: modifiers ctrl, alt, shift joined by `-`, e.g. \"ctrl-shift-k\".\n\
+         # A keystroke bound twice, an unknown command or an invalid keystroke is listed in the\n\
+         # command palette (Ctrl+Shift+P) and that entry keeps its default.\n\n",
+    );
+    for command in Command::all() {
+        text.push_str(&format!(
+            "# {} = \"{}\"\n",
+            command.name(),
+            command.default_keys()
+        ));
+    }
+    text
+}
+
+/// Writes [`template`] to `path` (creating its folder) unless the file exists; an existing
+/// file is never touched.
+pub fn ensure_file(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            let written = std::io::Write::write_all(&mut file, template().as_bytes());
+            if written.is_err() {
+                // A half-written file would never be rewritten; the next Ctrl+, tries again.
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
+            written
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -585,6 +634,9 @@ mod tests {
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(bound("ctrl-shift-p"), Some(Command::CommandPalette));
+        assert_eq!(bound("ctrl-,"), Some(Command::OpenKeymapSettings));
+        assert_eq!(keymap.label(Command::OpenKeymapSettings), "Ctrl+,");
+        assert_eq!(Command::OpenKeymapSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))
@@ -748,6 +800,55 @@ mod tests {
     fn every_binding_becomes_a_gpui_key_binding() {
         let (keymap, _) = Keymap::parse("split_down = \"ctrl-alt--\"\n");
         assert_eq!(keymap.key_bindings().len(), Command::all().len());
+    }
+
+    #[test]
+    fn template_parses_to_the_defaults_commented_or_not() {
+        let text = template();
+        let defaults = Keymap::defaults();
+        let (keymap, errors) = Keymap::parse(&text);
+        assert_eq!(errors, []);
+        assert_eq!(keymap.bindings(), defaults.bindings());
+        // One commented line per command; uncommented they round-trip to the defaults too.
+        let lines: Vec<&str> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("# "))
+            .filter(|line| line.contains(" = \""))
+            .collect();
+        assert_eq!(lines.len(), Command::all().len());
+        let (keymap, errors) = Keymap::parse(&lines.join("\n"));
+        assert_eq!(errors, []);
+        assert_eq!(keymap.bindings(), defaults.bindings());
+    }
+
+    #[test]
+    fn edited_template_reports_a_duplicate() {
+        let text = template().replace(
+            "# close_pane = \"ctrl-shift-x\"",
+            "close_pane = \"ctrl-shift-k\"",
+        );
+        let (keymap, errors) = Keymap::parse(&text);
+        assert_eq!(
+            errors,
+            [KeymapError::Duplicate {
+                command: "close_pane".into(),
+                keys: "ctrl-shift-k".into(),
+                other: "add_workspace".into(),
+            }]
+        );
+        assert_eq!(keymap.label(Command::ClosePane), "Ctrl+Shift+X");
+    }
+
+    #[test]
+    fn ensure_file_creates_the_template_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mkrew").join("keymap.toml");
+        ensure_file(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), template());
+        let edited = "close_pane = \"ctrl-shift-q\"\n";
+        std::fs::write(&path, edited).unwrap();
+        ensure_file(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
     }
 
     #[test]

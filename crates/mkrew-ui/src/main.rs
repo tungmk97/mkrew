@@ -45,7 +45,8 @@ use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{
-    BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, GIT_CONTEXT, Keymap, Run,
+    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
+    GIT_CONTEXT, Keymap, KeymapError, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::palette::{self, Extra, Palette};
@@ -178,6 +179,10 @@ struct Shell {
     keymap: Keymap,
     /// What was wrong with `keymap.toml` at start (those entries use their defaults).
     keymap_error: Option<String>,
+    /// The same problems, one palette entry each.
+    keymap_errors: Vec<KeymapError>,
+    /// `<config>/mkrew/keymap.toml` (Ctrl+, creates and opens it).
+    keymap_file: PathBuf,
     /// The open workspace menu (Open in Zed, dev server, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open "Dev server" settings of a workspace (modal).
@@ -260,10 +265,11 @@ impl Shell {
     fn new(
         paths: Paths,
         keymap: Keymap,
-        keymap_errors: &[mkrew_ui::keymap::KeymapError],
+        keymap_errors: &[KeymapError],
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
+        let keymap_file = paths.keymap_file();
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
@@ -432,6 +438,8 @@ impl Shell {
                         n - 1
                     ),
                 }),
+            keymap_errors: keymap_errors.to_vec(),
+            keymap_file,
             workspace_menu: None,
             dev_dialog: None,
             dev_reveal: None,
@@ -2464,13 +2472,14 @@ impl Shell {
             dev_command: dev_command.is_some(),
             dev_running,
         };
-        let entries = palette::entries(
+        let mut entries = palette::keymap_errors(&self.keymap, &self.keymap_errors);
+        entries.extend(palette::entries(
             &self.keymap,
             &context,
             self.sidebar.projects(),
             self.sidebar.sessions(),
             self.board.tasks(),
-        );
+        ));
         self.workspace_menu = None;
         self.palette = Some(Palette::new(entries));
         self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
@@ -2830,6 +2839,22 @@ impl Shell {
             Err(error) => {
                 tracing::warn!(%project_id, "open in Zed failed: {error}");
                 self.sidebar_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    /// Ctrl+,: writes the commented `keymap.toml` template if the file is missing and opens it
+    /// in Zed; a failure shows in the sidebar. Changes apply after a restart.
+    fn open_keymap_settings(&mut self, cx: &mut Context<'_, Self>) {
+        let opened = keymap::ensure_file(&self.keymap_file)
+            .map_err(|error| format!("Cannot create keymap.toml: {error}"))
+            .and_then(|()| zed::open(&self.keymap_file, None).map_err(|error| error.to_string()));
+        match opened {
+            Ok(()) => self.sidebar_error = None,
+            Err(error) => {
+                tracing::warn!(path = %self.keymap_file.display(), "open keymap settings failed: {error}");
+                self.sidebar_error = Some(error);
             }
         }
         cx.notify();
@@ -4007,6 +4032,7 @@ impl Shell {
             Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
             Command::CommandPalette => self.open_palette(window, cx),
+            Command::OpenKeymapSettings => self.open_keymap_settings(cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),

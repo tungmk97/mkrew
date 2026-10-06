@@ -11,7 +11,7 @@ use ulid::Ulid;
 
 use crate::board::View;
 use crate::history;
-use crate::keymap::{Command, Keymap};
+use crate::keymap::{Command, Keymap, KeymapError};
 use crate::quick_open::{Key, match_ranges};
 use crate::split::Direction;
 
@@ -171,6 +171,7 @@ pub fn title(command: Command) -> String {
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
         Command::CommandPalette => "Global: Command palette".into(),
+        Command::OpenKeymapSettings => "Global: Open keymap settings".into(),
     }
 }
 
@@ -181,7 +182,7 @@ pub fn available(command: Command, context: &Context) -> bool {
     match command {
         // Already open.
         Command::CommandPalette => false,
-        Command::AddWorkspace | Command::NextInbox => true,
+        Command::AddWorkspace | Command::NextInbox | Command::OpenKeymapSettings => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -218,6 +219,19 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitUnstage
         | Command::GitFocusCommit => in_view(View::Git),
     }
+}
+
+/// One entry per `keymap.toml` problem found at start (SPEC §13), listed before the
+/// commands; picking one opens the keymap settings to fix it.
+pub fn keymap_errors(keymap: &Keymap, errors: &[KeymapError]) -> Vec<Entry> {
+    errors
+        .iter()
+        .map(|error| Entry {
+            action: Action::Run(Command::OpenKeymapSettings),
+            title: format!("Keymap error: {error}"),
+            shortcut: keymap.label(Command::OpenKeymapSettings),
+        })
+        .collect()
 }
 
 /// The palette's entries: the available commands in keymap order, the available
@@ -556,6 +570,30 @@ mod tests {
     }
 
     #[test]
+    fn keymap_errors_open_the_keymap_settings() {
+        let (keymap, errors) =
+            Keymap::parse("close_pane = \"ctrl-shift-k\"\nnope = \"ctrl-1\"\nfind = \"\"\n");
+        let listed = keymap_errors(&keymap, &errors);
+        assert_eq!(listed.len(), 3);
+        for entry in &listed {
+            assert_eq!(entry.action, Action::Run(Command::OpenKeymapSettings));
+            assert_eq!(entry.shortcut, "Ctrl+,");
+        }
+        let titles: Vec<&str> = listed.iter().map(|entry| entry.title.as_str()).collect();
+        assert!(titles.contains(
+            &"Keymap error: `close_pane = \"ctrl-shift-k\"` is already bound to `add_workspace`"
+        ));
+        assert!(titles.contains(&"Keymap error: unknown command `nope` in keymap.toml"));
+        assert!(titles.contains(&"Keymap error: `find = \"\"` is not a valid keystroke"));
+        // Typing "keymap" finds them and the settings command.
+        let mut all = listed;
+        all.extend(entries(&keymap, &context(View::Terminals), &[], &[], &[]));
+        let mut palette = Palette::new(all);
+        palette.insert("keymap");
+        assert_eq!(palette.rows().len(), 4);
+    }
+
+    #[test]
     fn commands_carry_their_shortcut() {
         let (keymap, errors) = Keymap::parse("new_shell_tab = \"ctrl-shift-y\"\n");
         assert_eq!(errors, []);
@@ -634,7 +672,14 @@ mod tests {
             dev_running: true,
             ..context(View::Terminals)
         };
-        assert_eq!(commands(&none), [Command::AddWorkspace, Command::NextInbox]);
+        assert_eq!(
+            commands(&none),
+            [
+                Command::AddWorkspace,
+                Command::NextInbox,
+                Command::OpenKeymapSettings
+            ]
+        );
         assert_eq!(extras(&none), []);
     }
 
