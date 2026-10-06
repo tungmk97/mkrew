@@ -5,6 +5,7 @@ use gpui::Keystroke;
 use mkrew_protocol::{AgentProfileInfo, Request, Task, TaskCreateParams, TaskUpdateParams};
 use ulid::Ulid;
 
+use crate::text_box::TextBox;
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
 
 /// Creating a task in a workspace, or editing one.
@@ -76,7 +77,8 @@ pub enum Outcome {
 pub struct TaskDialog {
     pub mode: Mode,
     pub title: String,
-    pub prompt: String,
+    /// The multi-line prompt (§20B.1).
+    pub prompt: TextBox,
     /// `None` = the workspace's default agent at run time.
     pub agent: Option<String>,
     pub field: Field,
@@ -102,7 +104,9 @@ impl TaskDialog {
         Self::open(Mode::Edit(task), title, prompt, agent)
     }
 
-    fn open(mode: Mode, title: String, prompt: String, agent: Option<String>) -> Self {
+    fn open(mode: Mode, title: String, text: String, agent: Option<String>) -> Self {
+        let mut prompt = TextBox::default();
+        prompt.insert(&text);
         Self {
             mode,
             title,
@@ -137,7 +141,9 @@ impl TaskDialog {
             DialogKey::Save => return Outcome::Save,
             DialogKey::Enter => match self.field {
                 Field::Title => return Outcome::Save,
-                Field::Prompt => self.prompt.push('\n'),
+                Field::Prompt => {
+                    self.prompt.key(DialogKey::Enter);
+                }
             },
             DialogKey::SwitchField => {
                 self.field = match self.field {
@@ -145,9 +151,14 @@ impl TaskDialog {
                     Field::Prompt => Field::Title,
                 };
             }
-            DialogKey::Backspace => {
-                self.focused_text().pop();
-            }
+            DialogKey::Backspace => match self.field {
+                Field::Title => {
+                    self.title.pop();
+                }
+                Field::Prompt => {
+                    self.prompt.key(DialogKey::Backspace);
+                }
+            },
             DialogKey::Insert(text) => self.insert(&text),
             DialogKey::Paste => {}
         }
@@ -162,15 +173,14 @@ impl TaskDialog {
                     .chars()
                     .map(|c| if c.is_control() { ' ' } else { c }),
             ),
-            Field::Prompt => self.prompt.push_str(&text.replace("\r\n", "\n")),
+            Field::Prompt => self.prompt.insert(text),
         }
     }
 
-    fn focused_text(&mut self) -> &mut String {
-        match self.field {
-            Field::Title => &mut self.title,
-            Field::Prompt => &mut self.prompt,
-        }
+    /// Types a picked library prompt (§20B.3) at the end of the prompt, which gets the keys.
+    pub fn insert_prompt(&mut self, text: &str) {
+        self.field = Field::Prompt;
+        self.prompt.insert(text);
     }
 
     /// The agent rows: the workspace default first (named after `default_agent` when set),
@@ -205,7 +215,7 @@ impl TaskDialog {
         if title.is_empty() {
             return Err("Give the task a title.");
         }
-        let prompt = self.prompt.trim();
+        let prompt = self.prompt.text().trim();
         Ok(match &self.mode {
             Mode::New { project_id } => Some(Request::TaskCreate(TaskCreateParams {
                 project_id: *project_id,
@@ -307,7 +317,7 @@ mod tests {
         type_text(&mut dialog, "and yy");
         dialog.key(DialogKey::Backspace);
         assert_eq!(dialog.title, "Add tests");
-        assert_eq!(dialog.prompt, "Cover x\nand y");
+        assert_eq!(dialog.prompt.text(), "Cover x\nand y");
         dialog.key(DialogKey::SwitchField);
         assert_eq!(dialog.key(DialogKey::Enter), Outcome::Save);
         assert_eq!(dialog.key(DialogKey::Save), Outcome::Save);
@@ -321,7 +331,18 @@ mod tests {
         dialog.key(DialogKey::SwitchField);
         dialog.insert("one\r\ntwo");
         assert_eq!(dialog.title, "a b");
-        assert_eq!(dialog.prompt, "one\ntwo");
+        assert_eq!(dialog.prompt.text(), "one\ntwo");
+    }
+
+    #[test]
+    fn a_picked_prompt_goes_to_the_end_of_the_prompt() {
+        let mut dialog = TaskDialog::edit(task());
+        assert_eq!(dialog.field, Field::Title);
+        dialog.insert_prompt("\nReview it.\r\n");
+        assert_eq!(dialog.field, Field::Prompt);
+        assert_eq!(dialog.title, "Fix login");
+        assert_eq!(dialog.prompt.text(), "Fix the login bug\nReview it.\n");
+        assert_eq!(dialog.save_request().map(|r| r.is_some()), Ok(true));
     }
 
     #[test]

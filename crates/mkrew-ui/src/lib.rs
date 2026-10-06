@@ -35,6 +35,7 @@ pub mod markdown;
 pub mod palette;
 pub mod peek;
 pub mod preview;
+pub mod prompt_picker;
 pub mod quick_open;
 pub mod router;
 pub mod sidebar;

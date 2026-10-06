@@ -594,6 +594,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T10.5) The three prompt entry points ("Insert prompt…" in the palette, "Prompts…" in the
+  composer, "From prompt…" in the task dialog) open one modal picker (list + rendered preview +
+  muted "left empty" note), not dropdown menus. A pick is appended to the composer draft / task
+  prompt. `{file}` = the workspace's file open in Files, else the one selected in Git; `{task}` =
+  the session's task (composer) or the dialog's title; `{selection}` stays empty until T10.6.
+  The Board follow-up is now the multi-line box: Enter = new line, Ctrl+Enter sends (§20B.1).
+
 - (T4.1, ADR 0004) Tasks without an agent store `agent_profile = ''` = workspace default at run
   time; deleting a task is refused while one of its sessions is live, exited sessions are kept
   as free terminals (`task_id` = NULL); new `task.deleted` event. `task.move` accepts any status

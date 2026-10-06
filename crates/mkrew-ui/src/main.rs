@@ -18,6 +18,7 @@ use gpui::{
     WindowOptions, anchored, deferred, div, px, relative, rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
+use mkrew_core::prompt::PromptVars;
 use mkrew_protocol::{
     AgentProfilesResult, ChangeKind, CommentContext, CommentId, CommentListParams, CommentRef,
     Commit, CommitDetail, DevServer, DevStartParams, DiffLineKind, DocComment, DocContent, DocFile,
@@ -56,6 +57,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::peek::{self, Peek, Place};
 use mkrew_ui::preview;
+use mkrew_ui::prompt_picker::{self, PromptPicker};
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
@@ -193,6 +195,8 @@ struct Shell {
     keymap_file: PathBuf,
     /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed (§20.0).
     settings_file: PathBuf,
+    /// `<config>/mkrew/prompts`, read (seeded the first time) when a prompt picker opens.
+    prompts_dir: PathBuf,
     /// The open workspace menu (Open in Zed, dev server, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open "Dev server" settings of a workspace (modal).
@@ -224,6 +228,8 @@ struct Shell {
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
     follow_up_focus: FocusHandle,
     _follow_up_blur: Subscription,
+    /// Keeps the follow-up field's end (where the caret is) in view.
+    follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
     composers: Composers,
     /// Focused while the focused pane's composer takes keys.
@@ -274,6 +280,10 @@ struct Shell {
     palette_scroll: ScrollHandle,
     /// What had the keyboard when the palette opened; a picked command acts on it.
     palette_return: Option<(FocusHandle, Option<Ulid>)>,
+    /// The open prompt picker (modal; over the task dialog when it types into it).
+    prompt_picker: Option<PromptPicker>,
+    /// Keeps the prompt picker's pick in view.
+    prompt_picker_scroll: ScrollHandle,
     /// The open peek popover (§20A.1).
     peek: Option<Peek>,
     /// The session row under the mouse, for the peek's hover delay.
@@ -305,6 +315,7 @@ impl Shell {
     ) -> Self {
         let keymap_file = paths.keymap_file();
         let settings_file = paths.settings_file();
+        let prompts_dir = paths.prompts_dir();
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
@@ -352,7 +363,7 @@ impl Shell {
             // one goes.
             shell
                 .follow_up
-                .take_if(|draft| draft.text.is_empty() && !draft.busy);
+                .take_if(|draft| draft.text.text().is_empty() && !draft.busy);
             cx.notify();
         });
         let (painted, painted_rx) = async_channel::bounded(1);
@@ -433,6 +444,7 @@ impl Shell {
                 shell.doc_dialog = None;
                 shell.quick_open = None;
                 shell.palette = None;
+                shell.prompt_picker = None;
                 shell.palette_return = None;
                 shell.peek = None;
                 shell.peek_return = None;
@@ -479,6 +491,7 @@ impl Shell {
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_file,
+            prompts_dir,
             workspace_menu: None,
             dev_dialog: None,
             broadcast: None,
@@ -495,6 +508,7 @@ impl Shell {
             follow_up: None,
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
+            follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             composer_focus: cx.focus_handle(),
             composer_scroll: ScrollHandle::new(),
@@ -521,6 +535,8 @@ impl Shell {
             palette: None,
             palette_scroll: ScrollHandle::new(),
             palette_return: None,
+            prompt_picker: None,
+            prompt_picker_scroll: ScrollHandle::new(),
             peek: None,
             peek_hover: peek::Hover::default(),
             peek_focus: cx.focus_handle(),
@@ -2705,6 +2721,16 @@ impl Shell {
                         }
                     }
                     Extra::Broadcast => self.open_broadcast(project_id, window, cx),
+                    // Into the open composer, else one opened on the focused agent pane.
+                    Extra::InsertPrompt => {
+                        if let Some(session) = self.focused_agent() {
+                            if self.composers.shown(session).is_none() {
+                                self.open_composer(window, cx);
+                            }
+                            let target = prompt_picker::Target::Composer(session);
+                            self.open_prompt_picker(target, window, cx);
+                        }
+                    }
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
@@ -2739,6 +2765,7 @@ impl Shell {
             || self.doc_dialog.is_some()
             || self.quick_open.is_some()
             || self.palette.is_some()
+            || self.prompt_picker.is_some()
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
@@ -2978,6 +3005,22 @@ impl Shell {
             }
         }
         cx.notify();
+    }
+
+    /// The prompt picker's empty state: opens the prompts folder (created if missing) in Zed
+    /// to add Markdown prompts; a failure shows in the sidebar.
+    fn open_prompts_dir(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let opened = std::fs::create_dir_all(&self.prompts_dir)
+            .map_err(|error| format!("Cannot create the prompts folder: {error}"))
+            .and_then(|()| zed::open(&self.prompts_dir, None).map_err(|error| error.to_string()));
+        match opened {
+            Ok(()) => self.sidebar_error = None,
+            Err(error) => {
+                tracing::warn!(path = %self.prompts_dir.display(), "open prompts folder failed: {error}");
+                self.sidebar_error = Some(error);
+            }
+        }
+        self.close_prompt_picker(None, window, cx);
     }
 
     /// Makes `agent` the default agent of `project_id` (`project.update`); the sidebar picks
@@ -3924,7 +3967,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// Keys typed in the follow-up field: Enter sends, Esc drops the draft.
+    /// Keys typed in the follow-up field: Enter is a new line, Ctrl+Enter sends, Esc drops the
+    /// draft.
     fn follow_up_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -3945,7 +3989,10 @@ impl Shell {
             draft.insert(&text);
         }
         match draft.key(key) {
-            follow_up::Outcome::Edited => cx.notify(),
+            follow_up::Outcome::Edited => {
+                self.follow_up_scroll.scroll_to_bottom();
+                cx.notify();
+            }
             follow_up::Outcome::Cancel => self.close_follow_up(window, cx),
             follow_up::Outcome::Send => self.send_follow_up(window, cx),
         }
@@ -4087,6 +4134,141 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// The prompt variables known for `project_id` (§20B.3): its name, `task` (a task title)
+    /// and the file open in its Files view, else the one selected in its Git view.
+    fn prompt_vars(&self, project_id: Ulid, task: Option<String>) -> PromptVars {
+        let project = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|project| project.id == project_id)
+            .map(|project| project.name.clone());
+        let file = self
+            .files
+            .get(&project_id)
+            .and_then(|view| view.file.clone())
+            .or_else(|| {
+                self.git
+                    .get(&project_id)
+                    .and_then(|view| view.selected.as_ref())
+                    .map(|target| target.path.clone())
+            });
+        PromptVars {
+            file,
+            selection: None,
+            task,
+            project,
+        }
+    }
+
+    /// Opens the prompt picker typing into `target`; the library is read (seeded the first
+    /// time) now, so edited prompt files show without a restart.
+    fn open_prompt_picker(
+        &mut self,
+        target: prompt_picker::Target,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let vars = match target {
+            prompt_picker::Target::Composer(session) => {
+                let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == session) else {
+                    return;
+                };
+                let task = session
+                    .task_id
+                    .and_then(|id| self.board.task(id))
+                    .map(|task| task.title.clone());
+                self.prompt_vars(session.project_id, task)
+            }
+            prompt_picker::Target::TaskDialog => {
+                let Some(dialog) = &self.task_dialog else {
+                    return;
+                };
+                let title = dialog.title.trim();
+                let task = (!title.is_empty()).then(|| title.to_owned());
+                self.prompt_vars(dialog.project_id(), task)
+            }
+        };
+        let library = mkrew_core::prompt::load_or_seed(&self.prompts_dir);
+        for error in &library.errors {
+            tracing::warn!(file = %error.file.display(), "cannot read prompt: {}", error.message);
+        }
+        self.workspace_menu = None;
+        self.prompt_picker = Some(PromptPicker::new(target, library, vars));
+        self.prompt_picker_scroll.scroll_to_item(0);
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    /// Closes the prompt picker: `text` (the rendered pick) is typed into its target, which
+    /// gets the keyboard back.
+    fn close_prompt_picker(
+        &mut self,
+        text: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(picker) = self.prompt_picker.take() else {
+            return;
+        };
+        match (picker.target, text) {
+            (prompt_picker::Target::Composer(session), Some(text)) => {
+                let before = self.composers.shown(session).map_or("", |d| d.text.text());
+                let text = prompt_picker::on_new_line(before, &text);
+                self.composer_typed(session, &text, window, cx);
+            }
+            (prompt_picker::Target::Composer(session), None)
+                if self.composer_session() == Some(session) =>
+            {
+                window.focus(&self.composer_focus, cx);
+            }
+            (prompt_picker::Target::TaskDialog, Some(text)) => {
+                if let Some(dialog) = self.task_dialog.as_mut() {
+                    let text = prompt_picker::on_new_line(dialog.prompt.text(), &text);
+                    dialog.insert_prompt(&text);
+                    self.prompt_scroll.scroll_to_bottom();
+                }
+                self.focus_pane(window, cx);
+            }
+            _ => self.focus_pane(window, cx),
+        }
+        cx.notify();
+    }
+
+    /// ↑ / ↓ move the pick (kept in view), Enter types it, Esc closes.
+    fn prompt_picker_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = quick_open::key(&event.keystroke) else {
+            return;
+        };
+        let Some(picker) = self.prompt_picker.as_mut() else {
+            return;
+        };
+        match key {
+            quick_open::Key::Close => self.close_prompt_picker(None, window, cx),
+            quick_open::Key::Open => self.insert_prompt_pick(window, cx),
+            quick_open::Key::Move(by) => {
+                picker.step(by);
+                self.prompt_picker_scroll.scroll_to_item(picker.selected);
+                cx.notify();
+            }
+            quick_open::Key::Backspace | quick_open::Key::Paste | quick_open::Key::Insert(_) => {}
+        }
+    }
+
+    /// Types the picked prompt, rendered, into the picker's target.
+    fn insert_prompt_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(rendered) = self.prompt_picker.as_ref().and_then(PromptPicker::preview) else {
+            return;
+        };
+        self.close_prompt_picker(Some(rendered.text), window, cx);
     }
 
     /// `session.unqueue`: the queued text is not typed; the `session.queue` event that follows
@@ -5901,6 +6083,7 @@ impl Shell {
             starting: &self.starting,
             follow_up: self.follow_up.as_ref(),
             follow_up_focus: &self.follow_up_focus,
+            follow_up_scroll: &self.follow_up_scroll,
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
             conflicts: &self.conflicts,
@@ -7919,8 +8102,11 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme::UI_FONT)
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::task_dialog_key_down))
+            // The prompt picker over it has the keyboard meanwhile.
+            .when(self.prompt_picker.is_none(), |el| {
+                el.track_focus(&self.dialog_focus)
+                    .on_key_down(cx.listener(Self::task_dialog_key_down))
+            })
             .child(
                 div()
                     .text_size(px(font_size::CARD_TITLE))
@@ -7946,12 +8132,35 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .gap(px(space::XS))
-                    .child(label("Prompt"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(label("Prompt"))
+                            .when(!dialog.busy, |el| {
+                                el.child(
+                                    button("task-from-prompt", "From prompt…", theme, false)
+                                        .tooltip(tooltip(
+                                            theme,
+                                            "Add a prompt from the library",
+                                            "",
+                                        ))
+                                        .on_click(cx.listener(|shell, _, window, cx| {
+                                            shell.open_prompt_picker(
+                                                prompt_picker::Target::TaskDialog,
+                                                window,
+                                                cx,
+                                            );
+                                        })),
+                                )
+                            }),
+                    )
                     .child(
                         field(
                             "task-prompt",
                             Field::Prompt,
-                            &dialog.prompt,
+                            dialog.prompt.text(),
                             "Sent to the agent when the task runs.",
                         )
                         .h(px(theme::PROMPT_FIELD_HEIGHT))
@@ -9338,6 +9547,178 @@ impl Shell {
         Self::modal_shade("palette-shade", panel, cx)
     }
 
+    /// The prompt picker (§20B.3): the library's prompts (the pick ringed), the pick rendered
+    /// with the known variables, a muted note naming the ones left empty; a click or Enter
+    /// types it.
+    fn render_prompt_picker(
+        &self,
+        picker: &PromptPicker,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let hover = theme.surface_raised;
+        let rows: Vec<gpui::AnyElement> = picker
+            .library
+            .prompts
+            .iter()
+            .enumerate()
+            .map(|(index, prompt)| {
+                let picked = index == picker.selected;
+                div()
+                    .id(("prompt-entry", index))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::M))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(if picked {
+                        theme.pane_focus_border
+                    } else {
+                        theme.surface
+                    }))
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+                    .cursor_pointer()
+                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if let Some(picker) = shell.prompt_picker.as_mut() {
+                            picker.pick(index);
+                            shell.insert_prompt_pick(window, cx);
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(prompt.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.text_muted))
+                            .child(prompt.name.clone()),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let preview = picker.preview();
+        let note = preview
+            .as_ref()
+            .and_then(|rendered| prompt_picker::missing_note(&rendered.missing));
+        let muted = |text: String| {
+            div()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let unreadable = picker.library.errors.len();
+        let into = match picker.target {
+            prompt_picker::Target::Composer(_) => {
+                "↑ ↓ to pick · Enter types it in the composer · Esc closes"
+            }
+            prompt_picker::Target::TaskDialog => {
+                "↑ ↓ to pick · Enter adds it to the task prompt · Esc closes"
+            }
+        };
+        let panel = div()
+            .id("prompt-picker")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::prompt_picker_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Insert prompt"),
+            )
+            .when(rows.is_empty(), |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::M))
+                        .child(div().flex_1().min_w_0().child(muted(
+                            "No prompts yet: add Markdown files to the prompts folder.".to_owned(),
+                        )))
+                        .child(
+                            button("prompt-open-dir", "Open prompts folder", theme, true)
+                                .flex_none()
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.open_prompts_dir(window, cx);
+                                })),
+                        ),
+                )
+            })
+            .when(!rows.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("prompt-entries")
+                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.prompt_picker_scroll)
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(rows),
+                )
+            })
+            .children(preview.map(|rendered| {
+                // No border: the raised surface sets the preview apart (§14).
+                div()
+                    .id("prompt-preview")
+                    .max_h(px(theme::PROMPT_FIELD_HEIGHT))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .px(px(space::S))
+                    .py(px(space::S))
+                    .rounded(px(radius::MEDIUM))
+                    .bg(rgb(theme.surface_raised))
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .children(rendered.text.split('\n').map(|line| {
+                        // An empty line still takes a line's height.
+                        div().child(if line.is_empty() { " " } else { line }.to_owned())
+                    }))
+            }))
+            .children(note.map(muted))
+            .when(unreadable > 0, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .gap(px(space::XS))
+                        .text_size(px(font_size::META))
+                        .child(div().text_color(rgb(theme.status_needs_input)).child("⚠"))
+                        .child(muted(format!(
+                            "{unreadable} prompt file(s) could not be read (see the log)."
+                        ))),
+                )
+            })
+            .child(muted(into.to_owned()));
+        Self::modal_shade("prompt-picker-shade", panel, cx)
+    }
+
     /// "View changes": the sent thread's file as sent vs as shown now.
     fn render_changes(
         &self,
@@ -10114,24 +10495,57 @@ impl Shell {
                 )
             })
             .child(field)
-            .children(status.map(|(icon, color, text)| {
+            .child(
                 div()
                     .flex()
-                    .gap(px(space::XS))
-                    .text_size(px(font_size::META))
-                    .when(!icon.is_empty(), |el| {
-                        el.child(div().text_color(rgb(color)).child(icon))
-                    })
+                    .items_center()
+                    .gap(px(space::S))
                     .child(
                         div()
-                            .text_color(rgb(if draft.error.is_some() {
-                                theme.text
-                            } else {
-                                theme.text_muted
-                            }))
-                            .child(text),
+                            .flex_1()
+                            .min_w_0()
+                            .children(status.map(|(icon, color, text)| {
+                                div()
+                                    .flex()
+                                    .gap(px(space::XS))
+                                    .text_size(px(font_size::META))
+                                    .when(!icon.is_empty(), |el| {
+                                        el.child(div().text_color(rgb(color)).child(icon))
+                                    })
+                                    .child(
+                                        div()
+                                            .text_color(rgb(if draft.error.is_some() {
+                                                theme.text
+                                            } else {
+                                                theme.text_muted
+                                            }))
+                                            .child(text),
+                                    )
+                            })),
                     )
-            }))
+                    // The prompt library (§20B.3), typed into this draft.
+                    .when(is_focused && !draft.busy, |el| {
+                        el.child(
+                            quiet_button(
+                                "composer-prompts",
+                                "Prompts…",
+                                theme,
+                                theme.surface_raised,
+                            )
+                            .flex_none()
+                            .tooltip(tooltip(theme, "Insert a prompt from the library", ""))
+                            .on_click(cx.listener(
+                                move |shell, _, window, cx| {
+                                    shell.open_prompt_picker(
+                                        prompt_picker::Target::Composer(session),
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )),
+                        )
+                    }),
+            )
     }
 
     /// Why a pane on screen has no terminal yet.
@@ -11416,6 +11830,7 @@ struct CardContext<'a> {
     starting: &'a HashSet<Ulid>,
     follow_up: Option<&'a FollowUp>,
     follow_up_focus: &'a FocusHandle,
+    follow_up_scroll: &'a ScrollHandle,
     /// The follow-up field has the keyboard (shows its caret).
     follow_up_focused: bool,
     /// Shortcut label of Run on the selected card.
@@ -11809,8 +12224,8 @@ fn card_action(
         }))
 }
 
-/// The follow-up input of a running / needs-input card: a one-line field that takes the
-/// keyboard when clicked; Enter sends it to the card's session (SPEC §10).
+/// The follow-up input of a running / needs-input card: the multi-line text box that takes the
+/// keyboard when clicked; Ctrl+Enter sends it to the card's session (SPEC §10, §20B.1).
 fn follow_up_field(
     task_id: Ulid,
     session_id: Ulid,
@@ -11821,22 +12236,25 @@ fn follow_up_field(
     let draft = cards
         .follow_up
         .filter(|draft| draft.task_id == task_id && draft.session_id == session_id);
-    let text = draft.map_or("", |draft| draft.text.as_str());
+    let text = draft.map_or("", |draft| draft.text.text());
     let focused = draft.is_some() && cards.follow_up_focused;
     let field = text_field(
         "card-follow-up",
         text,
-        "Follow up… (Enter sends)",
+        "Follow up… (Ctrl+Enter sends)",
         focused,
         theme,
     )
     .bg(rgb(theme.surface))
+    .max_h(px(theme::PROMPT_FIELD_HEIGHT))
+    .overflow_y_scroll()
     .on_click(cx.listener(move |shell, _, window, cx| {
         cx.stop_propagation();
         shell.open_follow_up(task_id, session_id, window, cx);
     }))
     .when(draft.is_some(), |el| {
         el.track_focus(cards.follow_up_focus)
+            .track_scroll(cards.follow_up_scroll)
             .on_key_down(cx.listener(Shell::follow_up_key_down))
     });
     let status = draft.and_then(|draft| {
@@ -12191,6 +12609,11 @@ impl Render for Shell {
                 self.palette
                     .as_ref()
                     .map(|palette| self.render_palette(palette, &theme, cx)),
+            )
+            .children(
+                self.prompt_picker
+                    .as_ref()
+                    .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
             )
     }
 }

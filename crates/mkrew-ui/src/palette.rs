@@ -1,6 +1,6 @@
 //! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
 //! view, with its title and shortcut, palette-only actions that have no key (Git fetch / push /
-//! discard, task "View changes", dev server start / stop, broadcast), plus "Go to" workspace /
+//! discard, task "View changes", dev server start / stop, broadcast, insert prompt), plus "Go to" workspace /
 //! session / task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
 //! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
@@ -52,10 +52,11 @@ pub enum Extra {
     StartDevServer,
     StopDevServer,
     Broadcast,
+    InsertPrompt,
 }
 
 impl Extra {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -63,6 +64,7 @@ impl Extra {
         Self::StartDevServer,
         Self::StopDevServer,
         Self::Broadcast,
+        Self::InsertPrompt,
     ];
 
     pub fn title(self) -> &'static str {
@@ -74,6 +76,7 @@ impl Extra {
             Self::StartDevServer => "Dev server: Start",
             Self::StopDevServer => "Dev server: Stop",
             Self::Broadcast => "Agent: Broadcast to agents…",
+            Self::InsertPrompt => "Agent: Insert prompt…",
         }
     }
 
@@ -89,6 +92,10 @@ impl Extra {
             }
             Self::StopDevServer => context.workspace && context.dev_running,
             Self::Broadcast => context.workspace && context.agents,
+            // Into the focused agent pane's composer (opened if hidden).
+            Self::InsertPrompt => {
+                in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
+            }
         }
     }
 }
@@ -761,6 +768,16 @@ mod tests {
             ..context(View::Board)
         };
         assert_eq!(extras(&agents), [Extra::Broadcast]);
+        let agent_pane = Context {
+            agent_pane: true,
+            ..context(View::Terminals)
+        };
+        assert_eq!(extras(&agent_pane), [Extra::InsertPrompt]);
+        let elsewhere = Context {
+            agent_pane: true,
+            ..context(View::Board)
+        };
+        assert_eq!(extras(&elsewhere), [], "the composer is not on screen");
 
         let commands: Vec<String> = Command::all().into_iter().map(title).collect();
         let titles: Vec<&str> = Extra::ALL.into_iter().map(Extra::title).collect();
