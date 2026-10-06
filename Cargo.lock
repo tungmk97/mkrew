@@ -3642,6 +3642,7 @@ version = "0.1.0"
 dependencies = [
  "anstyle-query",
  "anyhow",
+ "mkrew-core",
  "serde",
  "serde_json",
  "tempfile",

@@ -13,6 +13,7 @@ pub mod review;
 pub mod settings;
 pub mod state;
 pub mod task;
+pub mod turn;
 
 pub use hook::HookAgent;
 pub use paths::Paths;

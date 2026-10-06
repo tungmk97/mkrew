@@ -114,6 +114,12 @@ pub enum Step {
         path: PathBuf,
         content: String,
     },
+    /// Append a line to each of `paths` (relative to the working directory; created with their
+    /// directories if missing) and report each edit like Claude's `PostToolUse` hook (SPEC
+    /// §20F): `mk hook fake PostToolUse <json>` with the absolute `tool_input.file_path`.
+    EditFiles {
+        paths: Vec<PathBuf>,
+    },
     /// Run `mk hook fake <event>` like an agent hook would (SPEC §6) and wait for it.
     /// `session_id` is reported as the agent's own id (payload `{"session_id": …}`).
     Hook {
@@ -239,6 +245,13 @@ pub fn run(
                     source,
                 })?;
             }
+            Step::EditFiles { paths } => {
+                out.flush()?;
+                for path in paths {
+                    append_line(path, "edited by mkrew-fakeagent")?;
+                    mk(&["hook", "fake", "PostToolUse", &edit_payload(path)])?;
+                }
+            }
             Step::Hook { event, session_id } => {
                 out.flush()?;
                 hook(event, session_id.as_deref())?;
@@ -346,6 +359,37 @@ fn address(review: &Review) -> Result<(), Error> {
         content.push_str(&format!("Addressed {id}: {body}\n"));
     }
     fs::write(path, content).map_err(edit_error)
+}
+
+/// Appends `line` to `path`, creating the file and its parent directories if missing.
+fn append_line(path: &Path, line: &str) -> Result<(), Error> {
+    let write_error = |source| Error::WriteFile {
+        path: path.to_owned(),
+        source,
+    };
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(write_error)?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(write_error)?;
+    writeln!(file, "{line}").map_err(write_error)
+}
+
+/// A Claude-like `PostToolUse` payload for a `Write` of `path`, made absolute against the
+/// working directory like Claude reports it.
+fn edit_payload(path: &Path) -> String {
+    let path = std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_owned());
+    serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": { "file_path": path.to_string_lossy() },
+    })
+    .to_string()
 }
 
 /// Runs `mk hook fake <event> [<json>]`.
@@ -648,6 +692,43 @@ mod tests {
             comments: vec![],
         };
         assert!(matches!(address(&missing), Err(Error::EditFile { .. })));
+    }
+
+    #[test]
+    fn edit_files_parses_and_reports_what_hooks_read() {
+        let scenario = parse(
+            "test",
+            "[[step]]\naction = \"edit_files\"\npaths = [\"a.rs\", \"src/b.rs\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            scenario.steps,
+            [Step::EditFiles {
+                paths: vec!["a.rs".into(), "src/b.rs".into()]
+            }]
+        );
+        // The daemon attributes edits with `hook::edited_paths` (SPEC §6, §20A.3).
+        let payload: serde_json::Value =
+            serde_json::from_str(&edit_payload(Path::new("src/b.rs"))).unwrap();
+        let expected = std::env::current_dir().unwrap().join("src/b.rs");
+        assert_eq!(
+            mkrew_core::hook::edited_paths(&payload),
+            [expected.to_string_lossy()]
+        );
+    }
+
+    #[test]
+    fn append_line_creates_then_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("src/nested/a.rs");
+        append_line(&file, "one").unwrap();
+        append_line(&file, "two").unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "one\ntwo\n");
+        // A directory in the way of the file.
+        assert!(matches!(
+            append_line(&dir.path().join("src"), "x"),
+            Err(Error::WriteFile { .. })
+        ));
     }
 
     #[test]

@@ -1452,6 +1452,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   1.25–2.03% of a core (vsync thread invalidates every window each vblank), now measured by
   `examples/idle_floor.rs` next to Mkrew. SPEC §15's row now says "of the machine". Lowering the
   per-core number would need a patched gpui — say so if you want that.
+- (T9.4) **Turn at `needs_input`:** SPEC §20.0 says a turn ends at `needs_input` and that a
+  `needs_input` → `working` resume continues it. Chosen: `needs_input` ends the turn (so
+  `session.turn` is sent), and going straight back to `working` reopens it with the same `n`,
+  start and files; it ends (and is sent) again later. A `needs_input` with no turn open (e.g. a
+  startup trust prompt, or after `done`) then `working` starts a new turn. Files are attributed
+  only while a turn is open.
 
 ## Done
 
