@@ -2478,6 +2478,19 @@ impl Shell {
             return;
         };
         self.tab_error = None;
+        let no_default_agent = kind == SessionKind::Agent
+            && self
+                .sidebar
+                .projects()
+                .iter()
+                .any(|project| project.id == project_id && project.default_agent.is_none());
+        if no_default_agent {
+            // The daemon would refuse; let the user pick one (the menu lists the profiles).
+            self.tab_error =
+                Some("Pick a default agent for this workspace, then press + Agent again.".into());
+            self.open_workspace_menu(project_id, window, cx);
+            return;
+        }
         cx.notify();
         let params = lifecycle::spawn_params(project_id, Some(tab_id), kind);
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
@@ -5859,14 +5872,10 @@ fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context<'_, Shell>
         .detach();
 }
 
-/// A small text button: primary (accent) or quiet (hover shows a surface).
-fn button(
-    id: &'static str,
-    label: &'static str,
-    theme: &Theme,
-    primary: bool,
-) -> gpui::Stateful<gpui::Div> {
-    let base = div()
+/// The shared frame of [`button`], [`quiet_button`] and [`danger_button`]: no colors, no hover
+/// (gpui allows one `hover` per element).
+fn button_frame(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
         .id(id)
         .flex()
         .items_center()
@@ -5876,18 +5885,38 @@ fn button(
         .rounded(px(radius::SMALL))
         .cursor_pointer()
         .text_size(px(font_size::BODY))
-        .child(label);
+        .child(label)
+}
+
+/// A small text button: primary (accent) or quiet (hover shows a surface).
+fn button(
+    id: &'static str,
+    label: &'static str,
+    theme: &Theme,
+    primary: bool,
+) -> gpui::Stateful<gpui::Div> {
     if primary {
-        base.bg(rgb(theme.accent))
+        button_frame(id, label)
+            .bg(rgb(theme.accent))
             .text_color(rgb(theme.surface))
             .hover(|style| style.opacity(opacity::HOVER))
             .active(|style| style.opacity(opacity::ACTIVE))
     } else {
-        let hover = theme.surface_raised;
-        base.text_color(rgb(theme.text_muted))
-            .hover(move |style| style.bg(rgb(hover)))
-            .active(|style| style.opacity(opacity::ACTIVE))
+        quiet_button(id, label, theme, theme.surface_raised)
     }
+}
+
+/// A quiet [`button`] whose hover shows `hover` (e.g. one step above a raised card).
+fn quiet_button(
+    id: &'static str,
+    label: &'static str,
+    theme: &Theme,
+    hover: u32,
+) -> gpui::Stateful<gpui::Div> {
+    button_frame(id, label)
+        .text_color(rgb(theme.text_muted))
+        .hover(move |style| style.bg(rgb(hover)))
+        .active(|style| style.opacity(opacity::ACTIVE))
 }
 
 /// A [`button`] that cannot be used right now: faded, no hover, no click.
@@ -5922,12 +5951,13 @@ fn danger_button(
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let text = theme.text;
-    button(id, label, theme, false)
+    button_frame(id, label)
         .bg(rgb(theme.diff_del_bg))
         .text_color(rgb(theme.diff_del_text))
         .font_weight(FontWeight(weight::MEDIUM))
         // Stronger than an opacity change on the faint background.
         .hover(move |style| style.text_color(rgb(text)))
+        .active(|style| style.opacity(opacity::ACTIVE))
 }
 
 /// A text input of the task dialog: its lines with a caret at the end while `focused`, or a
@@ -6827,10 +6857,9 @@ fn task_card(
         .when(action.is_some() || can_undo, |el| {
             // Secondary: shown on hover, left of the column's action (SPEC §14).
             let undo = can_undo.then(|| {
-                button("card-undo", "Undo", theme, false)
+                quiet_button("card-undo", "Undo", theme, edit_hover)
                     .opacity(opacity::HIDDEN)
                     .group_hover(group, |style| style.opacity(opacity::FULL))
-                    .hover(move |style| style.bg(rgb(edit_hover)))
                     .tooltip(tooltip(
                         theme,
                         "Undo task: review and discard its changes",
@@ -6886,11 +6915,13 @@ fn card_action(
     if cards.starting.contains(&task_id) {
         return disabled_button(id, "Starting…", theme, primary);
     }
-    // One step above the card's own `surface_raised`.
-    let hover = theme.border;
-    button(id, label, theme, primary)
-        // A quiet button's surface hover would vanish on the raised card.
-        .when(!primary, |el| el.hover(move |style| style.bg(rgb(hover))))
+    // A quiet button's surface hover would vanish on the raised card: one step above it.
+    let action_button = if primary {
+        button(id, label, theme, true)
+    } else {
+        quiet_button(id, label, theme, theme.border)
+    };
+    action_button
         .tooltip(tooltip(theme, tip, keys))
         .on_click(cx.listener(move |shell, _, window, cx| {
             cx.stop_propagation();
