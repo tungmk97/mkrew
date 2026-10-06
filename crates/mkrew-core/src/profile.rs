@@ -320,7 +320,7 @@ fn io_error(path: &Path, e: &io::Error) -> ProfileError {
 }
 
 /// 1-based line and character column of byte `offset` in `src`.
-fn line_col(src: &str, offset: usize) -> (usize, usize) {
+pub(crate) fn line_col(src: &str, offset: usize) -> (usize, usize) {
     let offset = offset.min(src.len());
     let before = src.get(..offset).unwrap_or(src);
     let line = before.matches('\n').count() + 1;

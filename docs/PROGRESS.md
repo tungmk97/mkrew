@@ -20,7 +20,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 - [ ] Inbox rows show the last non-blank screen line (§20A.4).
 
 ### Task queue
-- [ ] T9.1 `mkrew_core::settings`: `Settings` struct with every §20.0 key + defaults, `deny_unknown_fields`, `Paths::settings_file()`, `load(path)` (missing file = defaults); unit tests (missing, partial, unknown key, bad type); covers: settings defaults/parse errors. (spec: §20.0, §17)
+- [x] T9.1 `mkrew_core::settings`: `Settings` struct with every §20.0 key + defaults, `deny_unknown_fields`, `Paths::settings_file()`, `load(path)` (missing file = defaults); unit tests (missing, partial, unknown key, bad type); covers: settings defaults/parse errors. (spec: §20.0, §17) — feat(core): settings.toml model and loader
 - [ ] T9.2 Daemon settings holder: load at start, watch the config dir (debounced 300 ms) and re-read, keep last good on error, `daemon.status.settings_error?`; protocol field + test that edits the file (good → bad → good); covers: settings re-read + status error. (spec: §20.0, §7, §8)
 - [ ] T9.3 `session.read` request (protocol + daemon: last N non-blank emulator rows as plain text, `state`, `state_changed_at`, 1–200 range, `invalid_state` for non-live sessions); e2e with fake agent `ask` scenario reading the "(y/n)" line, then `session.send y`; covers: session.read e2e. (spec: §20A.1, §20A protocol, §7)
 - [ ] T9.4 `mkrew_core::turn` pure model (start/end/resume rules, numbering) with unit tests on state sequences; fakeagent `edit_files { paths }` step (writes files + PostToolUse hooks). (spec: §20.0 Turn, §20A.3, §20F)
@@ -44,6 +44,8 @@ T5.4–T5.11, T6.8–T6.11, T7.7–T7.12, T8.3–T8.10). If one fails, add a fix
 milestone first.
 
 ## Notes for the next session
+
+- Settings: `mkrew_core::settings::{load, parse, Settings, SettingsError}` (`Settings: Clone + Eq`; `SettingsError` displays `file:line:col: msg`). T9.2 keeps the last good value when `load` errs.
 
 - Measurements: `crates/mkrew-ui/tests/measure.rs` (`#[ignore]`, real window; first `cargo build --release -p mkrew-ui --example idle_floor`, then `cargo test --release -p mkrew-ui --test measure -- --ignored --nocapture`); results in ADR 0009.
 - Headless sessions here can't run new scripts directly (approval); run them through a temporary `cargo test` if needed.

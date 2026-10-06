@@ -84,6 +84,11 @@ impl Paths {
     pub fn keymap_file(&self) -> PathBuf {
         self.config_dir.join("keymap.toml")
     }
+
+    /// User settings (SPEC §20.0).
+    pub fn settings_file(&self) -> PathBuf {
+        self.config_dir.join("settings.toml")
+    }
 }
 
 /// `\\.\pipe\mkrew-<username>`, with anything but ASCII letters and digits in the name
@@ -132,6 +137,10 @@ mod tests {
         assert_eq!(paths.lock_file(), Path::new("/tmp/d").join("mkrew.lock"));
         assert_eq!(paths.agents_dir(), Path::new("/tmp/c").join("agents"));
         assert_eq!(paths.keymap_file(), Path::new("/tmp/c").join("keymap.toml"));
+        assert_eq!(
+            paths.settings_file(),
+            Path::new("/tmp/c").join("settings.toml")
+        );
     }
 
     #[test]
