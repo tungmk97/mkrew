@@ -557,6 +557,38 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
     not measured).
   - **§14 design check**: dark + light screenshots of the command palette (with keymap error
     rows), the dev server settings dialog, the tab-bar Start/Stop button and the sidebar "▶ dev".
+- [ ] (T9.11) **M9 wrap-up — the unticked M9 criteria.** The settings criterion is ticked. The
+  backend of every other criterion is covered by automated tests (daemon e2e
+  `session_read_shows_the_prompt_line_and_the_answer_goes_through`,
+  `a_turn_that_edits_two_files_reports_both`, `settings_are_reread_and_errors_reported_in_status`;
+  `notify::tests::switches_and_sound_follow_the_settings_file` + `notify::decide` unit tests;
+  `awake::tests::{held_while_an_agent_works_and_released_five_seconds_after_the_last_stops,
+  working_again_within_the_linger_keeps_it_held}`; UI `peek`, `broadcast`, `turn`, `inbox` unit
+  tests + snapshots); no M9 view was ever seen, no sound heard, no real inhibitor checked. Restart
+  the daemon first (protocol v17), with `mk` on PATH. Details of each check: the "Questions with
+  assumed defaults" entries T9.6–T9.10.
+  - **Peek + quick reply** (criterion 2): fake agent `ask` scenario → hover its Inbox row and its
+    sidebar row 300 ms → popover with the last lines, state + age; click `y` → the agent goes on
+    without leaving the view. Then Ctrl+Shift+Space from a focused terminal, ↑/↓, type a reply +
+    Enter, Esc → the terminal has the keyboard again. Repeat once with a real Claude permission
+    prompt (numbered choices, not y/n: answer through the typed input, e.g. `1` + Enter).
+  - **Turn summary** (criterion 3): fake agent `edit_files` with 2 paths (or Claude editing 2
+    files in one prompt) → Inbox row and pane header show `done · 2 files · …`.
+  - **Sound** (criterion 4): `notify.sound = true` → a needs_input toast plays the sound on
+    Windows (macOS/Linux if available); `sound = false` → silent; `notify.done = false` → no toast
+    on done; `notify.needs_input = false` → no toast on needs_input.
+  - **Keep awake** (criterion 5): while an agent works, `powercfg /requests` (admin) lists
+    `mkrew-daemon` under SYSTEM; gone ~5 s after it stops; a shell running a command never shows.
+    `cargo clippy --workspace --all-targets -- -D warnings` on Linux and macOS (backends never
+    compiled there); on Linux `systemd-inhibit --list` shows it while an agent works.
+  - **Broadcast** (criterion 6): two real agents (Claude + Codex, one working, one idle) →
+    palette "Agent: Broadcast to agents…" → both checked → type + Enter → each agent gets the text
+    once, rows show "queued" / "sent"; kill one and send again → "failed: …".
+  - **Inbox last line** (criterion 7): an agent waiting in the Inbox shows its last non-blank
+    screen line (e.g. the `(y/n)` prompt) under its name.
+  - **§14 design check**: dark + light screenshots of the peek popover (needs_input with `y`/`n`
+    and a plain one), the broadcast dialog after a send with mixed results, an Inbox row with last
+    line + turn summary, and a pane header with the summary.
 
 ## Questions with assumed defaults
 

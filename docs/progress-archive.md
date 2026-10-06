@@ -2,6 +2,33 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M9 — Attention (tag `m9-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T9.6–T9.10 and T9.11 manual checks
+in HUMAN_CHECKS "To verify" / "Questions with assumed defaults"):
+
+- [x] `settings.toml` (§20.0): defaults when missing, parse errors reported in `daemon.status` with the last good settings kept, re-read after the file changes; unit tests.
+- [ ] `session.read` returns the last screen lines; the peek popover shows them for an Inbox or sidebar row, and its quick reply answers a fake agent's "(y/n)" without leaving the view (e2e for the request + manual check for the popover).
+- [ ] Turns start and end as §20A.3 defines; a fake agent that edits 2 files in one turn produces `session.turn` with both paths (+/− counts arrive in M11); Inbox row and pane header show the summary.
+- [ ] `notify.needs_input` / `notify.done` / `notify.sound` switches are respected (unit tests on the decision; manual check for the sound).
+- [ ] Keep awake: inhibitor held while an agent works and released ≤ 5 s after the last one stops (fake inhibitor test); real backends per OS; manual check (`powercfg /requests`).
+- [ ] Broadcast sends one text to every checked session; each result is shown.
+- [ ] Inbox rows show the last non-blank screen line (§20A.4).
+
+Tasks:
+
+- [x] T9.1 Settings model — feat(core): settings.toml model and loader
+- [x] T9.2 Daemon settings holder — feat(daemon): watch settings.toml and report errors in daemon.status
+- [x] T9.3 `session.read` — feat(daemon): session.read returns the last screen lines
+- [x] T9.4 Turn model + fake `edit_files` — feat(core): turn model and fake agent edit_files step
+- [x] T9.5 Daemon turn tracking — feat(daemon): track turns and broadcast session.turn
+- [x] T9.6 Notification switches + sound — feat(daemon): notification switches and sound from settings
+- [x] T9.7 Keep awake — feat(daemon): keep the system awake while agents work
+- [x] T9.8 Inbox last line + turn summary — feat(ui): Inbox last line and turn summary
+- [x] T9.9 Peek popover — feat(ui): peek popover with quick reply
+- [x] T9.10 Broadcast — feat(ui): broadcast to agents dialog
+- [x] T9.11 M9 manual checks + wrap-up — chore(progress): complete M9
+
 ## M8 — Polish & packaging (tag `m8-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T8.3–T8.9 and T8.10 manual checks
