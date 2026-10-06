@@ -1500,6 +1500,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   To verify: fake agent `ask` → hover its Inbox row 300 ms → popover with the `(y/n)` line,
   state and age; click `y` → the agent continues, the popover shows the new screen; Ctrl+Shift+Space
   from a focused terminal, type a reply + Enter, Esc → the terminal has the keyboard again.
+- (T9.10) **Broadcast:** `session.send` returns only `ok` until M10 (`{send_id, queued}`), so a
+  row shows "queued" when its session was `working` at send time (the daemon queues then) and
+  "sent" otherwise. The palette offers "Agent: Broadcast to agents…" only while the active
+  workspace has a live agent session. The text is one line (pasted line breaks become spaces);
+  ↑/↓ move between sessions, Tab or a click checks/unchecks one, Enter sends, Esc closes. The
+  text clears once every send succeeded; after a failure it stays so the failed rows can be
+  re-sent alone. The dialog stays open after sending (to show the results). The session list
+  is fixed when the dialog opens (an agent exiting meanwhile shows "failed: …" on send).
+  To verify: two fake agents (one working, one idle) → palette → Broadcast → both checked →
+  type + Enter → rows show "queued" / "sent"; kill one agent and send again → "failed: …".
 
 ## Done
 

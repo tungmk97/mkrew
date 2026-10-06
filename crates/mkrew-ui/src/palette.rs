@@ -1,7 +1,7 @@
 //! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
 //! view, with its title and shortcut, palette-only actions that have no key (Git fetch / push /
-//! discard, task "View changes", dev server start / stop), plus "Go to" workspace / session /
-//! task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
+//! discard, task "View changes", dev server start / stop, broadcast), plus "Go to" workspace /
+//! session / task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
 //! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
 use std::ops::Range;
@@ -36,6 +36,8 @@ pub struct Context {
     pub dev_command: bool,
     /// The active workspace's dev server runs.
     pub dev_running: bool,
+    /// The active workspace has a live agent session.
+    pub agents: bool,
 }
 
 /// A palette-only action: no key is bound to it.
@@ -47,16 +49,18 @@ pub enum Extra {
     ViewTaskChanges,
     StartDevServer,
     StopDevServer,
+    Broadcast,
 }
 
 impl Extra {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
         Self::ViewTaskChanges,
         Self::StartDevServer,
         Self::StopDevServer,
+        Self::Broadcast,
     ];
 
     pub fn title(self) -> &'static str {
@@ -67,6 +71,7 @@ impl Extra {
             Self::ViewTaskChanges => "Task: View changes of selected task",
             Self::StartDevServer => "Dev server: Start",
             Self::StopDevServer => "Dev server: Stop",
+            Self::Broadcast => "Agent: Broadcast to agents…",
         }
     }
 
@@ -81,6 +86,7 @@ impl Extra {
                 context.workspace && context.dev_command && !context.dev_running
             }
             Self::StopDevServer => context.workspace && context.dev_running,
+            Self::Broadcast => context.workspace && context.agents,
         }
     }
 }
@@ -500,6 +506,7 @@ mod tests {
             task_changes: false,
             dev_command: false,
             dev_running: false,
+            agents: false,
         }
     }
 
@@ -674,6 +681,7 @@ mod tests {
             tabs: 0,
             dev_command: true,
             dev_running: true,
+            agents: true,
             ..context(View::Terminals)
         };
         assert_eq!(
@@ -736,6 +744,11 @@ mod tests {
             ..running
         };
         assert_eq!(extras(&both), [Extra::StopDevServer]);
+        let agents = Context {
+            agents: true,
+            ..context(View::Board)
+        };
+        assert_eq!(extras(&agents), [Extra::Broadcast]);
 
         let commands: Vec<String> = Command::all().into_iter().map(title).collect();
         let titles: Vec<&str> = Extra::ALL.into_iter().map(Extra::title).collect();

@@ -31,6 +31,7 @@ use mkrew_protocol::{
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
+use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::conflicts::{self, Conflicts};
@@ -191,6 +192,8 @@ struct Shell {
     workspace_menu: Option<WorkspaceMenu>,
     /// The open "Dev server" settings of a workspace (modal).
     dev_dialog: Option<DevDialog>,
+    /// The open "Broadcast to agents…" dialog (modal).
+    broadcast: Option<Broadcast>,
     /// The dev tab to show once its `tab.updated` arrives (it may trail `project.dev_start`).
     dev_reveal: Option<Ulid>,
     /// Done sessions already seen, so they leave the Inbox.
@@ -408,6 +411,7 @@ impl Shell {
                 shell.renaming = None;
                 shell.workspace_menu = None;
                 shell.dev_dialog = None;
+                shell.broadcast = None;
                 shell.dev_reveal = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
@@ -465,6 +469,7 @@ impl Shell {
             keymap_file,
             workspace_menu: None,
             dev_dialog: None,
+            broadcast: None,
             dev_reveal: None,
             viewed: Viewed::default(),
             last_lines: LastLines::default(),
@@ -2506,6 +2511,7 @@ impl Shell {
             task_changes,
             dev_command: dev_command.is_some(),
             dev_running,
+            agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
         };
         let mut entries = palette::keymap_errors(&self.keymap, &self.keymap_errors);
         entries.extend(palette::entries(
@@ -2621,6 +2627,7 @@ impl Shell {
                             self.stop_dev_server(project_id, window, cx);
                         }
                     }
+                    Extra::Broadcast => self.open_broadcast(project_id, window, cx),
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
@@ -2650,6 +2657,7 @@ impl Shell {
             || self.git_discard.is_some()
             || self.git_base.is_some()
             || self.dev_dialog.is_some()
+            || self.broadcast.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.quick_open.is_some()
@@ -3113,6 +3121,93 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// "Broadcast to agents…" over the live agent sessions of `project_id`, all checked.
+    fn open_broadcast(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.workspace_menu = None;
+        self.broadcast = Some(Broadcast::new(project_id, self.sidebar.sessions()));
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    fn close_broadcast(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.broadcast = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// Typing edits the text, ↑ / ↓ move between sessions, Tab checks one, Enter sends, Esc
+    /// closes.
+    fn broadcast_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(dialog) = self.broadcast.as_mut() else {
+            return;
+        };
+        match dialog.key(&event.keystroke) {
+            broadcast::Outcome::Close => return self.close_broadcast(window, cx),
+            broadcast::Outcome::Send => return self.send_broadcast(window, cx),
+            broadcast::Outcome::Paste => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    dialog.insert(&text);
+                }
+            }
+            broadcast::Outcome::Edited => {}
+        }
+        cx.notify();
+    }
+
+    /// One `session.send` per checked session; each row shows its own result. A session that
+    /// is working gets the text queued by the daemon (SPEC §8), shown as "queued".
+    fn send_broadcast(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(dialog) = self.broadcast.as_mut() else {
+            return;
+        };
+        for params in dialog.begin() {
+            let session_id = params.session_id;
+            let working = self
+                .sidebar
+                .sessions()
+                .iter()
+                .any(|s| s.id == session_id && s.state == SessionState::Working);
+            let sent = connection.request(Request::SessionSend(params));
+            cx.spawn_in(window, async move |this, cx| {
+                let result = match sent.await {
+                    Ok(Outcome::Result(_)) => Ok(()),
+                    Ok(Outcome::Error(body)) => Err(body.message),
+                    Err(error) => Err(format!("{error:#}")),
+                };
+                let _ = this.update(cx, |shell, cx| {
+                    if let Err(error) = &result {
+                        tracing::warn!(%session_id, "broadcast session.send failed: {error}");
+                    }
+                    if shell.dialog_serial != serial {
+                        return;
+                    }
+                    if let Some(dialog) = shell.broadcast.as_mut() {
+                        dialog.sent(session_id, result, working);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        cx.notify();
     }
 
     /// Shows the modal task dialog (replacing any open one) and lists the agent profiles for
@@ -8348,6 +8443,187 @@ impl Shell {
         Self::modal_shade("dev-shade", panel, cx)
     }
 
+    /// "Broadcast to agents": a checkbox row per live agent session (with its last result),
+    /// the text, then Cancel and Send (Enter).
+    fn render_broadcast(
+        &self,
+        dialog: &Broadcast,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let hover = theme.surface_raised;
+        let busy = dialog.busy();
+        let rows = dialog.rows.iter().enumerate().map(|(index, row)| {
+            let result = row.delivery.as_ref().map(|delivery| {
+                let icon_color = match delivery {
+                    BroadcastDelivery::Failed(_) => theme.status_exited,
+                    _ => theme.text_muted,
+                };
+                div()
+                    .id(("broadcast-result", index))
+                    .flex_none()
+                    .max_w(px(theme::BROADCAST_RESULT_WIDTH))
+                    .flex()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child(div().text_color(rgb(icon_color)).child(delivery.icon()))
+                    .child(div().min_w_0().truncate().child(delivery.text()))
+                    .tooltip(tooltip(theme, &delivery.text(), ""))
+            });
+            div()
+                .id(("broadcast-row", index))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::XS))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::transparent_black())
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(theme.text))
+                .when(index == dialog.cursor, |el| {
+                    el.border_color(rgb(theme.accent))
+                })
+                .when(busy, |el| el.opacity(opacity::DISABLED))
+                .when(!busy, |el| {
+                    el.cursor_pointer()
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .tooltip(tooltip(theme, "Check or uncheck", "Tab"))
+                })
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    if let Some(dialog) = shell.broadcast.as_mut() {
+                        dialog.toggle(index);
+                    }
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .size(px(space::M))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(radius::SMALL))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(theme.border))
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.accent))
+                        .child(if row.checked { "✓" } else { "" }),
+                )
+                .child(div().flex_1().min_w_0().truncate().child(row.label.clone()))
+                .children(result)
+        });
+        let send_label = if busy { "Sending…" } else { "Send" };
+        let footer = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap(px(space::S))
+            .pt(px(space::S));
+        let footer = if dialog.rows.is_empty() {
+            footer
+                .child(
+                    button("broadcast-close", "Close", theme, false)
+                        .tooltip(tooltip(theme, "Close", "Esc"))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.close_broadcast(window, cx);
+                        })),
+                )
+                .child(
+                    button("broadcast-terminals", "Show terminals", theme, true)
+                        .tooltip(tooltip(theme, "Start an agent there, then broadcast", ""))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.close_broadcast(window, cx);
+                            shell.show_view(View::Terminals, window, cx);
+                        })),
+                )
+        } else {
+            footer
+                .child(
+                    button("broadcast-cancel", "Cancel", theme, false)
+                        .tooltip(tooltip(theme, "Close the dialog", "Esc"))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.close_broadcast(window, cx);
+                        })),
+                )
+                .child(if dialog.can_send() {
+                    button("broadcast-send", send_label, theme, true)
+                        .tooltip(tooltip(theme, "Send to the checked sessions", "Enter"))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.send_broadcast(window, cx);
+                        }))
+                } else {
+                    disabled_button("broadcast-send", send_label, theme, true).tooltip(tooltip(
+                        theme,
+                        "Type a message and check a session",
+                        "",
+                    ))
+                })
+        };
+        let panel = div()
+            .id("broadcast-dialog")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::broadcast_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Broadcast to agents"),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(if dialog.rows.is_empty() {
+                        "No live agent sessions in this workspace."
+                    } else {
+                        "Sends the text, then Enter, to every checked session. A working agent \
+                         gets it when its turn ends."
+                    }),
+            )
+            .when(!dialog.rows.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("broadcast-sessions")
+                        .max_h(px(theme::SEND_SESSIONS_HEIGHT))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(rows),
+                )
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child("↑↓ move · Tab check · Enter send"),
+                )
+                .child(text_field(
+                    "broadcast-text",
+                    &dialog.text,
+                    "e.g. run the tests",
+                    true,
+                    theme,
+                ))
+            })
+            .child(footer);
+        Self::modal_shade("broadcast-shade", panel, cx)
+    }
+
     /// A Docs dialog: its title, a sentence, its body and the buttons, in the shared modal
     /// frame (Esc closes it; "Send to agent" also takes ↑ / ↓ / Enter).
     fn doc_dialog_panel(
@@ -11510,6 +11786,11 @@ impl Render for Shell {
                 self.dev_dialog
                     .as_ref()
                     .map(|dialog| self.render_dev_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.broadcast
+                    .as_ref()
+                    .map(|dialog| self.render_broadcast(dialog, &theme, cx)),
             )
             .children(
                 self.history

@@ -170,6 +170,10 @@ pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 /// Width of the peek popover next to a session row (§20A.1).
 pub const PEEK_WIDTH: f32 = 480.0;
 
+/// Widest a broadcast row's result ("failed: …") gets before it is cut (§20A.6); the full
+/// text is in its tooltip.
+pub const BROADCAST_RESULT_WIDTH: f32 = 200.0;
+
 /// How long the mouse rests on a session row before it peeks (§20A.1).
 pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
 
