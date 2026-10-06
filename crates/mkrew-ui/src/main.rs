@@ -3816,6 +3816,8 @@ impl Shell {
             Command::ShowFiles => self.show_view(View::Files, window, cx),
             Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
+            // The palette dialog (`palette::Palette`) is rendered from T8.5 on.
+            Command::CommandPalette => {}
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),

@@ -1351,6 +1351,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (`dev_reveal`) is glue in main.rs without a unit test; the "running" rule is duplicated from
   the daemon's private `dev_session` (could move to `mkrew-protocol`); no busy state while
   `project.dev_start` is in flight.
+- (T8.4) **Command palette model choices:** commands that cannot act in the current view are
+  hidden, not greyed out (e.g. Git commands outside Git, pane commands outside Terminals,
+  "Jump to tab 7" with 3 tabs, terminal copy/paste/find unless a pane had the keyboard). Titles
+  read "Group: Action" like the §13 table. "Go to" items cover the §13 "quick open workspace /
+  session / task": every non-archived workspace, every non-exited session (`title · workspace`)
+  and every task (any status) the UI knows. Ctrl+Shift+O stays the Files quick open (T7.8), so
+  its palette title is "Files: Quick open file". Fuzzy match is our own (case-insensitive
+  subsequence, best alignment scored by word starts + runs), not `nucleo-matcher`.
 
 ## Done
 

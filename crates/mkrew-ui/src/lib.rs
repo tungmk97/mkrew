@@ -7,7 +7,7 @@
 //! and its review comments (with the "Send to agent" and "View changes" dialogs), the Markdown
 //! render model of the Docs preview and its GPUI elements, and the Files view-model with its
 //! syntax highlighting and quick open, the Git view-model and its base menu, and the
-//! workspace's dev server.
+//! workspace's dev server, and the command palette.
 
 pub mod base_dialog;
 pub mod board;
@@ -29,6 +29,7 @@ pub mod inbox;
 pub mod keymap;
 pub mod lifecycle;
 pub mod markdown;
+pub mod palette;
 pub mod preview;
 pub mod quick_open;
 pub mod router;

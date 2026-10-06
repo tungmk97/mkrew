@@ -88,6 +88,8 @@ pub enum Command {
     NewTask,
     /// Board only: run the selected Todo card.
     RunTask,
+    /// Open the command palette (every command, plus "Go to" workspace / session / task).
+    CommandPalette,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -170,6 +172,7 @@ impl Command {
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
+            Command::CommandPalette,
         ]);
         all
     }
@@ -226,6 +229,7 @@ impl Command {
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
+            Command::CommandPalette => "command_palette".into(),
         }
     }
 
@@ -287,6 +291,7 @@ impl Command {
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
+            Command::CommandPalette => "ctrl-shift-p".into(),
         }
     }
 
@@ -579,6 +584,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
+        assert_eq!(bound("ctrl-shift-p"), Some(Command::CommandPalette));
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))
