@@ -91,7 +91,8 @@ impl Daemon {
         let _settings_watch = settings::watch(Arc::clone(&self.settings))
             .inspect_err(|e| tracing::warn!("settings.toml is not watched: {e}"))
             .ok();
-        let notifications = notifier.map(|n| notify::start(Arc::clone(&self.hub), n));
+        let notifications =
+            notifier.map(|n| notify::start(Arc::clone(&self.hub), Arc::clone(&self.settings), n));
         let backups = backup::start(Arc::clone(&self.hub), self.paths.backups_dir());
         self.resume_tasks();
         self.autostart_dev_servers();

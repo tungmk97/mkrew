@@ -1463,6 +1463,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (not added to the ended turn, not to the next one), matching M5, where only a session in
   `working` gets batches attributed. Hook-reported edits arrive before the `done` hook, so
   agents with hooks (Claude, fake) lose nothing. Only agent sessions have turns (shells: none).
+- (T9.6) **Notification sound per OS:** Windows: `sound_name("Default")`, because notify-rust
+  shows a *silent* toast when no name is set (so before M9, toasts were silent).
+  macOS: `"NSUserNotificationDefaultSoundName"`. Linux has no default sound, so the freedesktop
+  `sound-name` hint is `message-new-instant`, plus `suppress-sound` when the switch is off.
+  A switched-off kind does not use up the 30 s window; an allowed notice does.
+  To verify: with `notify.sound = true`, a needs_input toast plays the sound on Windows (and on
+  macOS/Linux if you have them). With `sound = false` it is silent. With `notify.done = false`,
+  no toast appears on done.
 
 ## Done
 

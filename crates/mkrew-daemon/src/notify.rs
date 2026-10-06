@@ -1,9 +1,11 @@
-//! OS notifications (SPEC §8): one when a session enters needs_input or done, at most one per
-//! session per [`THROTTLE`]; a click becomes a `notification.clicked` event.
+//! OS notifications (SPEC §8, §20A.2): one when a session enters needs_input or done, unless
+//! `notify.needs_input` / `notify.done` turns that kind off, at most one per session per
+//! [`THROTTLE`], with the OS default sound when `notify.sound`; a click becomes a
+//! `notification.clicked` event.
 //!
-//! The policy lives in [`start`] and is tested with a fake [`Notifier`]. `MKREW_NOTIFY`
-//! picks the backend: unset = the OS, `off` = none, anything else = a JSON-lines file path
-//! (tests read it instead of showing real toasts).
+//! The policy is `decide`; [`start`] applies it and is tested with a fake [`Notifier`].
+//! `MKREW_NOTIFY` picks the backend: unset = the OS, `off` = none, anything else = a JSON-lines
+//! file path (tests read it instead of showing real toasts).
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -11,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use mkrew_core::settings::NotifySettings;
 use mkrew_protocol::{Event, NotificationClickedEvent, SessionState};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc};
@@ -18,6 +21,7 @@ use tokio::task::JoinHandle;
 use ulid::Ulid;
 
 use crate::session::Hub;
+use crate::settings::SettingsHolder;
 
 /// Selects the notifier: unset = OS, `off` = none, else a JSON-lines file.
 pub const ENV_NOTIFY: &str = "MKREW_NOTIFY";
@@ -29,6 +33,8 @@ pub struct Notice {
     pub project_id: Ulid,
     pub title: String,
     pub body: String,
+    /// Play the OS default sound.
+    pub sound: bool,
 }
 
 /// Where a click on a shown notice is reported.
@@ -48,8 +54,12 @@ pub fn from_env() -> Option<Arc<dyn Notifier>> {
     }
 }
 
-/// Watches `hub` events and notifies; runs until aborted.
-pub fn start(hub: Arc<Hub>, notifier: Arc<dyn Notifier>) -> JoinHandle<()> {
+/// Watches `hub` events and notifies with the current `settings`; runs until aborted.
+pub fn start(
+    hub: Arc<Hub>,
+    settings: Arc<SettingsHolder>,
+    notifier: Arc<dyn Notifier>,
+) -> JoinHandle<()> {
     let mut events = hub.events.subscribe();
     tokio::spawn(async move {
         let (clicked, mut clicks) = mpsc::unbounded_channel();
@@ -58,9 +68,11 @@ pub fn start(hub: Arc<Hub>, notifier: Arc<dyn Notifier>) -> JoinHandle<()> {
             tokio::select! {
                 event = events.recv() => match event {
                     Ok(Event::SessionState(e)) => {
-                        let Some(body) = body(e.state) else { continue };
-                        let Some(notice) = notice(&hub, e.session_id, body) else { continue };
-                        if throttle.allow(e.session_id, Instant::now()) {
+                        let notify = settings.current().notify;
+                        let alert =
+                            decide(e.session_id, e.state, &notify, &mut throttle, Instant::now());
+                        let Some(alert) = alert else { continue };
+                        if let Some(notice) = notice(&hub, e.session_id, alert) {
                             notifier.show(notice, clicked.clone());
                         }
                     }
@@ -81,15 +93,35 @@ pub fn start(hub: Arc<Hub>, notifier: Arc<dyn Notifier>) -> JoinHandle<()> {
     })
 }
 
-fn body(state: SessionState) -> Option<&'static str> {
-    match state {
-        SessionState::NeedsInput => Some("Needs input"),
-        SessionState::Done => Some("Done"),
-        _ => None,
-    }
+/// What to show for one state change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Alert {
+    body: &'static str,
+    sound: bool,
 }
 
-fn notice(hub: &Hub, session_id: Ulid, body: &str) -> Option<Notice> {
+/// The notification for `session_id` entering `state`, if any: only needs_input and done,
+/// each behind its switch, then the throttle (a switched-off kind does not use up the window;
+/// an allowed one does, even if the session lookup for the notice then fails).
+fn decide(
+    session_id: Ulid,
+    state: SessionState,
+    settings: &NotifySettings,
+    throttle: &mut Throttle,
+    now: Instant,
+) -> Option<Alert> {
+    let body = match state {
+        SessionState::NeedsInput if settings.needs_input => "Needs input",
+        SessionState::Done if settings.done => "Done",
+        _ => return None,
+    };
+    throttle.allow(session_id, now).then_some(Alert {
+        body,
+        sound: settings.sound,
+    })
+}
+
+fn notice(hub: &Hub, session_id: Ulid, alert: Alert) -> Option<Notice> {
     let store = hub.store();
     let session = match store.list_sessions(None) {
         Ok(sessions) => sessions.into_iter().find(|s| s.id == session_id)?,
@@ -104,7 +136,8 @@ fn notice(hub: &Hub, session_id: Ulid, body: &str) -> Option<Notice> {
         session_id,
         project_id: project.id,
         title: format!("{} · {name}", project.name),
-        body: body.to_owned(),
+        body: alert.body.to_owned(),
+        sound: alert.sound,
     })
 }
 
@@ -140,6 +173,7 @@ impl Notifier for OsNotifier {
                     .appname("Mkrew")
                     .summary(&notice.title)
                     .body(&notice.body);
+                set_sound(&mut notification, notice.sound);
                 // Linux servers only report a body click for a "default" action.
                 #[cfg(all(unix, not(target_os = "macos")))]
                 notification.action("default", "Open");
@@ -167,6 +201,34 @@ impl Notifier for OsNotifier {
         if let Err(e) = spawned {
             tracing::warn!("starting a notification thread failed: {e}");
         }
+    }
+}
+
+/// The OS default sound, or silence: Windows toasts are silent without a sound name.
+#[cfg(target_os = "windows")]
+fn set_sound(notification: &mut notify_rust::Notification, sound: bool) {
+    if sound {
+        notification.sound_name("Default");
+    }
+}
+
+/// The OS default sound, or silence (no sound name).
+#[cfg(target_os = "macos")]
+fn set_sound(notification: &mut notify_rust::Notification, sound: bool) {
+    if sound {
+        // mac-notification-sys maps exactly this string to the system default sound.
+        notification.sound_name("NSUserNotificationDefaultSoundName");
+    }
+}
+
+/// A freedesktop sound hint; whether it plays is up to the notification server. Linux has no
+/// single default sound: "message-new-instant" is the sound-naming spec's generic alert.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn set_sound(notification: &mut notify_rust::Notification, sound: bool) {
+    if sound {
+        notification.sound_name("message-new-instant");
+    } else {
+        notification.hint(notify_rust::Hint::SuppressSound(true));
     }
 }
 
@@ -236,6 +298,11 @@ mod tests {
         (Arc::new(Hub::new(store)), project.id)
     }
 
+    /// Settings read from `<dir>/settings.toml` (missing = defaults).
+    fn settings(dir: &tempfile::TempDir) -> Arc<SettingsHolder> {
+        Arc::new(SettingsHolder::load(dir.path().join("settings.toml")))
+    }
+
     fn add_session(hub: &Hub, project_id: Ulid, title: Option<&str>) -> Ulid {
         let id = Ulid::new();
         hub.store()
@@ -283,6 +350,148 @@ mod tests {
         assert!(!throttle.allow(a, t0 + THROTTLE));
     }
 
+    fn switches(needs_input: bool, done: bool, sound: bool) -> NotifySettings {
+        NotifySettings {
+            needs_input,
+            done,
+            sound,
+            ..NotifySettings::default()
+        }
+    }
+
+    #[test]
+    fn decide_covers_every_kind_and_switch() {
+        let t0 = Instant::now();
+        let needs = Some(Alert {
+            body: "Needs input",
+            sound: true,
+        });
+        let done = Some(Alert {
+            body: "Done",
+            sound: true,
+        });
+        let cases = [
+            (SessionState::NeedsInput, switches(true, true, true), needs),
+            (SessionState::NeedsInput, switches(false, true, true), None),
+            (SessionState::Done, switches(true, true, true), done),
+            (SessionState::Done, switches(true, false, true), None),
+            (SessionState::Working, switches(true, true, true), None),
+            (SessionState::Idle, switches(true, true, true), None),
+            (SessionState::Exited, switches(true, true, true), None),
+        ];
+        for (state, settings, expected) in cases {
+            let mut throttle = Throttle::default();
+            let got = decide(Ulid::new(), state, &settings, &mut throttle, t0);
+            assert_eq!(got, expected, "{state:?} with {settings:?}");
+        }
+    }
+
+    #[test]
+    fn decide_reports_the_sound_switch() {
+        let mut throttle = Throttle::default();
+        let alert = decide(
+            Ulid::new(),
+            SessionState::Done,
+            &switches(true, true, false),
+            &mut throttle,
+            Instant::now(),
+        );
+        assert_eq!(
+            alert,
+            Some(Alert {
+                body: "Done",
+                sound: false,
+            })
+        );
+    }
+
+    #[test]
+    fn decide_throttles_per_session_and_a_switched_off_kind_keeps_the_window_free() {
+        let mut throttle = Throttle::default();
+        let session = Ulid::new();
+        let t0 = Instant::now();
+        let quiet_done = switches(true, false, true);
+        let all = switches(true, true, true);
+        // Done is off: nothing shown, and the window is not used up.
+        assert_eq!(
+            decide(session, SessionState::Done, &quiet_done, &mut throttle, t0),
+            None
+        );
+        assert!(decide(session, SessionState::NeedsInput, &all, &mut throttle, t0).is_some());
+        let later = t0 + THROTTLE - Duration::from_millis(1);
+        assert_eq!(
+            decide(session, SessionState::Done, &all, &mut throttle, later),
+            None
+        );
+        let other = Ulid::new();
+        assert!(decide(other, SessionState::Done, &all, &mut throttle, later).is_some());
+        assert!(
+            decide(
+                session,
+                SessionState::Done,
+                &all,
+                &mut throttle,
+                t0 + THROTTLE
+            )
+            .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn switches_and_sound_follow_the_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hub, project_id) = hub(&dir);
+        let settings = settings(&dir);
+        std::fs::write(
+            dir.path().join("settings.toml"),
+            "[notify]\ndone = false\nsound = false\n",
+        )
+        .unwrap();
+        settings.reload();
+        let first = add_session(&hub, project_id, None);
+        let second = add_session(&hub, project_id, None);
+        let fake = Arc::new(Fake::default());
+        let task = start(Arc::clone(&hub), Arc::clone(&settings), fake.clone());
+
+        state(&hub, first, SessionState::Done);
+        state(&hub, second, SessionState::NeedsInput);
+        let notices = fake.wait_for(1).await;
+        assert_eq!(
+            notices,
+            [Notice {
+                session_id: second,
+                project_id,
+                title: "repo · claude".into(),
+                body: "Needs input".into(),
+                sound: false,
+            }]
+        );
+
+        // A change while running applies to the next event.
+        std::fs::write(
+            dir.path().join("settings.toml"),
+            "[notify]\nneeds_input = false\n",
+        )
+        .unwrap();
+        settings.reload();
+        let third = add_session(&hub, project_id, None);
+        let fourth = add_session(&hub, project_id, None);
+        state(&hub, third, SessionState::NeedsInput);
+        state(&hub, fourth, SessionState::Done);
+        let notices = fake.wait_for(2).await;
+        assert_eq!(
+            notices[1..],
+            [Notice {
+                session_id: fourth,
+                project_id,
+                title: "repo · claude".into(),
+                body: "Done".into(),
+                sound: true,
+            }]
+        );
+        task.abort();
+    }
+
     #[tokio::test]
     async fn needs_input_and_done_notify_once_per_session_per_window() {
         let dir = tempfile::tempdir().unwrap();
@@ -290,7 +499,7 @@ mod tests {
         let first = add_session(&hub, project_id, None);
         let second = add_session(&hub, project_id, Some("fix tests"));
         let fake = Arc::new(Fake::default());
-        let task = start(Arc::clone(&hub), fake.clone());
+        let task = start(Arc::clone(&hub), settings(&dir), fake.clone());
 
         state(&hub, first, SessionState::Working);
         state(&hub, first, SessionState::Idle);
@@ -308,12 +517,14 @@ mod tests {
                     project_id,
                     title: "repo · claude".into(),
                     body: "Needs input".into(),
+                    sound: true,
                 },
                 Notice {
                     session_id: second,
                     project_id,
                     title: "repo · fix tests".into(),
                     body: "Done".into(),
+                    sound: true,
                 },
             ]
         );
@@ -326,7 +537,7 @@ mod tests {
         let (hub, project_id) = hub(&dir);
         let session_id = add_session(&hub, project_id, None);
         let fake = Arc::new(Fake::default());
-        let task = start(Arc::clone(&hub), fake.clone());
+        let task = start(Arc::clone(&hub), settings(&dir), fake.clone());
         let mut events = hub.events.subscribe();
 
         state(&hub, session_id, SessionState::NeedsInput);
@@ -362,6 +573,7 @@ mod tests {
             project_id: Ulid::new(),
             title: "repo · claude".into(),
             body: "Done".into(),
+            sound: true,
         };
         let (clicked, _) = mpsc::unbounded_channel();
         notifier.show(notice.clone(), clicked.clone());

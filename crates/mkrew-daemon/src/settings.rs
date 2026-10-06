@@ -59,8 +59,6 @@ impl SettingsHolder {
     }
 
     /// The last good settings (defaults until a load succeeds).
-    // Read by notifications and keep awake from T9.6/T9.7 on.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn current(&self) -> Settings {
         self.lock().settings.clone()
     }
