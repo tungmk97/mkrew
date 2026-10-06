@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
@@ -77,6 +77,7 @@ const DRAIN_BATCH: usize = 256;
 const FIRST_TAB_TITLE: &str = "Terminal";
 
 fn main() {
+    let launched = Instant::now();
     let filter = EnvFilter::try_from_env("MKREW_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -108,7 +109,7 @@ fn main() {
             ..Default::default()
         };
         let opened = cx.open_window(options, |window, cx| {
-            cx.new(|cx| Shell::new(paths, keymap, &keymap_errors, window, cx))
+            cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, window, cx))
         });
         if let Err(error) = opened {
             eprintln!("mkrew: cannot open window: {error:#}");
@@ -259,10 +260,15 @@ struct Shell {
     prompt_scroll: ScrollHandle,
     /// Bumped per opened dialog, so a late reply never changes or closes a newer one.
     dialog_serial: u64,
+    /// Process start, until the first frame and the first connected frame are logged
+    /// (`scripts/measure.*`, SPEC §15 UI startup).
+    launched: Option<Instant>,
+    first_frame_logged: bool,
 }
 
 impl Shell {
     fn new(
+        launched: Instant,
         paths: Paths,
         keymap: Keymap,
         keymap_errors: &[KeymapError],
@@ -479,6 +485,8 @@ impl Shell {
             dialog_focus: cx.focus_handle(),
             prompt_scroll: ScrollHandle::new(),
             dialog_serial: 0,
+            launched: Some(launched),
+            first_frame_logged: false,
         }
     }
 
@@ -10797,6 +10805,16 @@ impl Render for Shell {
             WindowAppearance::Dark | WindowAppearance::VibrantDark
         );
         let theme = Theme::for_appearance(dark);
+        if let Some(launched) = self.launched {
+            if !self.first_frame_logged {
+                self.first_frame_logged = true;
+                tracing::info!(ms = launched.elapsed().as_millis(), "first frame");
+            }
+            if matches!(self.status, Status::Connected) {
+                self.launched = None;
+                tracing::info!(ms = launched.elapsed().as_millis(), "first connected frame");
+            }
+        }
         // One clock reading per frame, so every spinner and time agrees.
         let now = status::now_ms();
         // Rendering is what marks the focused pane of the active window viewed (its done leaves

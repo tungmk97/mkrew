@@ -534,6 +534,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   unpack, `bin/mk --help`, `bin/mkrew` starts and spawns `bin/mkrew-daemon`.
 - [ ] (T8.8) **README walkthrough.** Follow README "Install" → "Configure agents" → "Uninstall"
   once on a clean machine (MSI on Windows, tar.gz on Linux) and fix any step that does not match.
+- [ ] (T8.9) **§15 measurements not taken here** (ADR 0009): run `bash scripts/measure.sh` /
+  `pwsh scripts/measure.ps1` once yourself (the headless session ran the three tests they call,
+  not the scripts) and on Linux; measure key press → glyph on screen (< 16 ms, needs eyes or a
+  screen recorder: `scripts/measure-spike.sh`'s `--probe-keys` only covers the M0 spike); the
+  50 MB-per-pane flood is the T2.9 check above. Update the ADR 0009 / README tables if the
+  numbers differ.
 
 ## Questions with assumed defaults
 
@@ -1420,6 +1426,10 @@ _Decisions the agent made on its own. Override them here if you disagree._
   "the system libraries GPUI needs (the same ones as building Zed)" — add an exact package list
   if you want one. `crates/mkrew-cli/tests/readme.rs` checks the sections and that every `mk`
   command and flag in the README exists.
+- (T8.9) **Measurement choices:** "first frame" = the UI's first render, timed from launch by
+  the measure test (includes process start); also reported once connected. Measurements report
+  only — no new assertions, so noisy machines do not fail `verify`. Idle UI CPU measured 1.9–2.5%
+  with six panes (budget 1%); recorded as over budget with fix task T8.9a rather than relaxing §15.
 
 ## Done
 

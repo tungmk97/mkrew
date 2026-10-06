@@ -170,6 +170,20 @@ first. The hooks call `mk hook …`, which does nothing when the agent runs outs
 `\\.\pipe\mkrew-<username>` (Windows) or `$XDG_RUNTIME_DIR/mkrew.sock` (else in the data
 directory).
 
+## Performance
+
+Measured on Windows 11 with release builds (`bash scripts/measure.sh`, Windows:
+`pwsh scripts/measure.ps1`); details in
+[`docs/decisions/0009-non-functional-measurements.md`](docs/decisions/0009-non-functional-measurements.md).
+
+| | Target | Measured |
+| --- | --- | --- |
+| Window first frame (daemon running) | < 500 ms | 370 ms |
+| Idle CPU, 6 sessions open | < 1% | UI ~2%, daemon 0% (being fixed) |
+| Memory, 6 sessions open | UI < 150 MB, daemon < 50 MB | UI 60–109 MiB, daemon 19–24 MiB |
+| 6 panes flooding output | input < 16 ms, flat RAM, daemon < 1 core | p95 0.5 ms round trip / 8.5 ms per output batch, flat RAM, 0.8 core |
+| Git status, 10,000-file repo | < 150 ms | 98 ms |
+
 ## Development
 
 The full spec is [`docs/SPEC.md`](docs/SPEC.md). This repository is built by coding agents, one
