@@ -1,0 +1,99 @@
+//! Release packaging (SPEC §4): the installer and the tar.gz ship `mkrew`, `mk`, the daemon
+//! and every sample agent profile.
+
+// Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
+#![allow(clippy::unwrap_used)]
+
+use std::path::{Path, PathBuf};
+
+const BINS: [&str; 3] = ["mkrew", "mk", "mkrew-daemon"];
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+#[cfg(unix)]
+fn sample_profiles() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(repo_root().join("agents"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".toml"))
+        .collect();
+    names.sort();
+    assert!(names.len() >= 5, "{names:?}");
+    names
+}
+
+#[test]
+fn installer_lists_binaries_and_profiles() {
+    let wxs = std::fs::read_to_string(repo_root().join("packaging/mkrew.wxs")).unwrap();
+    for bin in BINS {
+        let source = format!(r#"Source="$(BinDir)\{bin}.exe""#);
+        assert!(wxs.contains(&source), "missing {source}");
+    }
+    // Every `agents/*.toml` is picked up by the wildcard into the agents folder.
+    assert!(wxs.contains(r#"<Directory Id="AGENTSDIR" Name="agents">"#));
+    assert!(wxs.contains(r#"<Files Include="$(AgentsDir)\*.toml" />"#));
+    assert!(wxs.contains(r#"Name="PATH" Value="[BINDIR]""#));
+}
+
+// `package.sh` targets Linux/macOS; on Windows `bash` may resolve to WSL (System32 first).
+#[cfg(unix)]
+#[test]
+fn tarball_layout() {
+    use std::process::Command;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let bin_dir = tmp.path().join("bin");
+    let out = tmp.path().join("out");
+    std::fs::create_dir(&bin_dir).unwrap();
+    for bin in BINS {
+        std::fs::write(bin_dir.join(bin), "fake").unwrap();
+    }
+    let output = Command::new("bash")
+        .arg(repo_root().join("scripts/package.sh"))
+        .args(["--no-build", "--bin-dir"])
+        .arg(&bin_dir)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let archive = String::from_utf8(output.stdout).unwrap().trim().to_owned();
+    let name = Path::new(&archive)
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .strip_suffix(".tar.gz")
+        .unwrap()
+        .to_owned();
+    assert!(
+        name.starts_with(&format!("mkrew-{}-", env!("CARGO_PKG_VERSION"))),
+        "{name}"
+    );
+
+    let listing = Command::new("tar")
+        .arg("-tzf")
+        .arg(&archive)
+        .output()
+        .unwrap();
+    assert!(listing.status.success(), "{listing:?}");
+    let mut files: Vec<String> = String::from_utf8(listing.stdout)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.ends_with('/'))
+        .map(str::to_owned)
+        .collect();
+    files.sort();
+
+    let mut expected = vec![format!("{name}/README.md")];
+    expected.extend(
+        sample_profiles()
+            .iter()
+            .map(|p| format!("{name}/agents/{p}")),
+    );
+    expected.extend(BINS.iter().map(|b| format!("{name}/bin/{b}")));
+    expected.sort();
+    assert_eq!(files, expected);
+}

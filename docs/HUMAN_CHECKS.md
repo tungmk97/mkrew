@@ -522,6 +522,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `find = ""`, restart: the sidebar shows the first error (+2 more), Ctrl+Shift+P lists three
   "Keymap error: …" rows at the top, picking one opens the file; Ctrl+Shift+X still closes a
   pane. Without Zed on `PATH` the error shows in the sidebar.
+- [ ] (T8.7) **Windows installer.** Never built here (no WiX/.NET; the test only string-checks
+  `packaging/mkrew.wxs`). Run the Release workflow by hand (`workflow_dispatch`) or locally:
+  `dotnet tool install --global wix --version 7.0.0`, `pwsh scripts/package.ps1 -AcceptWixEula`.
+  On a clean Windows: `msiexec /i dist\mkrew-<v>-x64.msi` installs `Program Files\Mkrew\bin\
+  {mkrew,mk,mkrew-daemon}.exe` + `agents\*.toml`, adds `bin` to the system PATH (new terminal:
+  `mk --help`), adds a Start Menu "Mkrew" shortcut that opens the app with no console window;
+  installing a newer version replaces it; uninstall removes files, shortcut and PATH entry.
+- [ ] (T8.7) **tar.gz.** Built and listed only with fake binaries (test). Check the Release
+  workflow artifacts on Linux and macOS (macOS is not in CI, so gpui may not build there):
+  unpack, `bin/mk --help`, `bin/mkrew` starts and spawns `bin/mkrew-daemon`.
 
 ## Questions with assumed defaults
 
@@ -1392,6 +1402,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   by view). The template uses GPUI key syntax with `ctrl-` defaults; the §13 macOS Ctrl→Cmd
   mapping is still not applied to any default (pre-existing gap). An existing file is never
   overwritten; a failed write removes the partial file.
+- (T8.7) **Packaging choices:** plain WiX 7 `wix build` (cargo-wix still defaults to WiX 3), MSI
+  per machine. **WiX 7 needs its OSMF EULA accepted** (the Open Source Maintenance Fee applies
+  above US$10k/yr revenue from projects using WiX): `package.ps1` only passes `-acceptEula wix7`
+  with `-AcceptWixEula`, but the Release workflow passes it by default — remove the switch from
+  `.github/workflows/release.yml` (and accept with `wix eula accept wix7` yourself) or pin WiX
+  6.0.2 if you disagree. The release job runs on `v*` tags and by hand, uploads workflow artifacts
+  only (no GitHub release). Archives ship `agents/*.toml` as reference copies (the daemon seeds
+  the config dir itself) and README.md; no code signing.
 
 ## Done
 

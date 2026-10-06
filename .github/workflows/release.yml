@@ -1,0 +1,53 @@
+# Release packages on version tags (SPEC §4): MSI on Windows, tar.gz on Linux/macOS.
+# Builds and uploads workflow artifacts only; nothing is published to a release or registry.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manual dry run of the packaging path (still uploads artifacts only).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      # Accepting the WiX OSMF EULA is the maintainer's call (docs/HUMAN_CHECKS.md).
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package.ps1 -AcceptWixEula
+      - if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mkrew-${{ github.ref_name }}-${{ matrix.os }}
+          path: |
+            dist/*.msi
+            dist/*.tar.gz
+          if-no-files-found: error

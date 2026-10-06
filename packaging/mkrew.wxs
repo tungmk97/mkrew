@@ -1,0 +1,36 @@
+<!--
+  Windows installer (SPEC §4), built by scripts/package.ps1 with WiX 7 (`wix build`).
+  Installs bin\{mkrew,mk,mkrew-daemon}.exe and agents\*.toml under Program Files\Mkrew, adds
+  bin to the system PATH and a Start Menu shortcut. Defines: Version, BinDir, AgentsDir.
+  Keep the UpgradeCode fixed forever (major upgrades replace the old install).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Mkrew" Manufacturer="Mkrew" Version="$(Version)"
+           UpgradeCode="6F0B8A3E-2C7D-4E51-9B64-3A1D5C8E7F20" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Mkrew is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Mkrew">
+        <Directory Id="BINDIR" Name="bin">
+          <Component>
+            <File Id="MkrewExe" Source="$(BinDir)\mkrew.exe" KeyPath="yes">
+              <Shortcut Id="MkrewStartMenu" Name="Mkrew"
+                        Directory="ProgramMenuFolder" WorkingDirectory="BINDIR" />
+            </File>
+          </Component>
+          <Component>
+            <File Id="MkExe" Source="$(BinDir)\mk.exe" KeyPath="yes" />
+            <Environment Id="MkrewPath" Name="PATH" Value="[BINDIR]" Action="set"
+                         Part="last" System="yes" Permanent="no" />
+          </Component>
+          <File Id="DaemonExe" Source="$(BinDir)\mkrew-daemon.exe" />
+        </Directory>
+        <!-- Reference copies: the daemon seeds the config dir from profiles compiled into it. -->
+        <Directory Id="AGENTSDIR" Name="agents">
+          <Files Include="$(AgentsDir)\*.toml" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+  </Package>
+</Wix>
