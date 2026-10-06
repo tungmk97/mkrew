@@ -282,6 +282,9 @@ CREATE INDEX doc_comment_file ON doc_comment(project_id, file_path);
 -- migrations/0006_files_git.sql (M7)
 ALTER TABLE project ADD COLUMN base_ref TEXT;                          -- NULL = auto-detect
 ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|diff
+
+-- migrations/0007_dev_server.sql (M8)
+ALTER TABLE project ADD COLUMN dev_autostart INTEGER NOT NULL DEFAULT 0; -- start dev_command after daemon start
 ```
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
@@ -420,7 +423,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Method | Main params | Returns |
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
-| `project.list/add/update/archive` | `path`, `name`, `dev_command`, `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `default_agent` must be an agent profile) |
+| `project.list/add/update/archive` | `path`, `name`, `dev_command`, `dev_autostart` (update only), `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `dev_command` is trimmed, blank = cleared; `default_agent` must be an agent profile) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
@@ -536,7 +539,7 @@ Rules: on
 mk daemon start | stop | status
 mk project add <path> [--name N] [--dev "npm run dev"]
 mk project list
-mk project update <project> [--base develop | --auto-base] [--dev "..."]
+mk project update <project> [--base develop | --auto-base] [--dev "..." | --no-dev] [--dev-autostart on|off]
 mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>

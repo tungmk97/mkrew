@@ -187,20 +187,32 @@ enum ProjectCommand {
         /// Display name (default: the directory name).
         #[arg(long)]
         name: Option<String>,
+        /// Dev server command, e.g. "npm run dev".
+        #[arg(long)]
+        dev: Option<String>,
     },
     /// List registered projects.
     List,
     /// Change project settings.
-    #[command(group(clap::ArgGroup::new("change").required(true)))]
+    #[command(group(clap::ArgGroup::new("change").required(true).multiple(true)))]
     Update {
         /// Project id or name.
         project: String,
         /// Git view base to compare against, e.g. `develop` or `origin/main`.
-        #[arg(long, group = "change")]
+        #[arg(long, group = "change", conflicts_with = "auto_base")]
         base: Option<String>,
         /// Auto-detect the base again (`origin/HEAD` → `main` → `master`).
         #[arg(long, group = "change")]
         auto_base: bool,
+        /// Dev server command, e.g. "npm run dev".
+        #[arg(long, group = "change", conflicts_with = "no_dev")]
+        dev: Option<String>,
+        /// Remove the dev server command.
+        #[arg(long, group = "change")]
+        no_dev: bool,
+        /// Start the dev server after the daemon starts.
+        #[arg(long, group = "change", value_enum)]
+        dev_autostart: Option<project::Switch>,
     },
 }
 
@@ -239,12 +251,27 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Project { command } => {
             let mut client = project::connect(&paths)?;
             match command {
-                ProjectCommand::Add { path, name } => project::add(&mut client, &path, name),
-                ProjectCommand::List => project::list(&mut client),
-                // `--auto-base` is the other member of the required group: `base` is `None`.
-                ProjectCommand::Update { project, base, .. } => {
-                    project::set_base(&mut client, &project, base)
+                ProjectCommand::Add { path, name, dev } => {
+                    project::add(&mut client, &path, name, dev)
                 }
+                ProjectCommand::List => project::list(&mut client),
+                ProjectCommand::Update {
+                    project,
+                    base,
+                    auto_base,
+                    dev,
+                    no_dev,
+                    dev_autostart,
+                } => project::update(
+                    &mut client,
+                    &project,
+                    // clap rejects `--base` with `--auto-base` and `--dev` with `--no-dev`.
+                    project::Changes {
+                        base: (base.is_some() || auto_base).then_some(base),
+                        dev: (dev.is_some() || no_dev).then_some(dev),
+                        dev_autostart: dev_autostart.map(|s| s == project::Switch::On),
+                    },
+                ),
             }
             .map(|()| ExitCode::SUCCESS)
         }

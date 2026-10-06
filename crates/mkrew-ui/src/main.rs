@@ -2567,6 +2567,7 @@ impl Shell {
                 .call::<Project>(Request::ProjectAdd(ProjectAddParams {
                     path: path.to_string_lossy().into_owned(),
                     name: None,
+                    dev_command: None,
                 }))
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {

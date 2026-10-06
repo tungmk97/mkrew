@@ -296,6 +296,7 @@ fn six_attached_floods_keep_the_ui_connection_responsive() {
     let project: Project = block_on(connection.call(Request::ProjectAdd(ProjectAddParams {
         path: project_dir.to_string_lossy().into_owned(),
         name: None,
+        dev_command: None,
     })))
     .unwrap();
 

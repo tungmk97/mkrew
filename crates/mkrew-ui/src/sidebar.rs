@@ -305,6 +305,7 @@ mod tests {
             name: name.to_owned(),
             path: format!("C:\\src\\{name}"),
             dev_command: None,
+            dev_autostart: false,
             default_agent: None,
             review_globs: None,
             created_at: 0,

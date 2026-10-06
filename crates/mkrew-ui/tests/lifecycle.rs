@@ -121,12 +121,15 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
     let project: Project = block_on(first.call(Request::ProjectAdd(ProjectAddParams {
         path: project_dir.to_string_lossy().into_owned(),
         name: None,
+        dev_command: None,
     })))
     .unwrap();
     let _: Project = block_on(first.call(Request::ProjectUpdate(ProjectUpdateParams {
         project_id: project.id,
         name: None,
         default_agent: Some(Some("fake".into())),
+        dev_command: None,
+        dev_autostart: None,
     })))
     .unwrap();
     let tab: TerminalTab = block_on(first.call(Request::TabCreate(TabCreateParams {

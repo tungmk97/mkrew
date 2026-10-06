@@ -86,12 +86,15 @@ fn spawns_the_daemon_once_then_reuses_it() {
     let added: Project = block_on(first.call(Request::ProjectAdd(ProjectAddParams {
         path: project.to_string_lossy().into_owned(),
         name: None,
+        dev_command: None,
     })))
     .unwrap();
     let renamed = first.call::<Project>(Request::ProjectUpdate(ProjectUpdateParams {
         project_id: added.id,
         name: Some("renamed".into()),
         default_agent: None,
+        dev_command: None,
+        dev_autostart: None,
     }));
     let listed = first.call::<Vec<Project>>(Request::ProjectList);
     assert_eq!(block_on(renamed).unwrap().name, "renamed");

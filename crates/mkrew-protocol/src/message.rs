@@ -328,7 +328,11 @@ pub struct Project {
     pub id: Ulid,
     pub name: String,
     pub path: String,
+    /// Dev server command, run in its own tab (SPEC §10).
     pub dev_command: Option<String>,
+    /// Start the dev server after the daemon starts.
+    #[serde(default)]
+    pub dev_autostart: bool,
     pub default_agent: Option<String>,
     /// `None` = default globs (SPEC §12).
     pub review_globs: Option<Vec<String>>,
@@ -532,6 +536,9 @@ pub struct ProjectAddParams {
     /// Defaults to the directory name.
     #[serde(default)]
     pub name: Option<String>,
+    /// Blank = none.
+    #[serde(default)]
+    pub dev_command: Option<String>,
 }
 
 /// `project.update`: fields left out stay unchanged.
@@ -547,6 +554,16 @@ pub struct ProjectUpdateParams {
         deserialize_with = "present"
     )]
     pub default_agent: Option<Option<String>>,
+    /// `Some(None)` (JSON `null`) or a blank command clears the dev command.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub dev_command: Option<Option<String>>,
+    /// Start the dev server after the daemon starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev_autostart: Option<bool>,
 }
 
 /// Deserializes a field that is present (possibly `null`) as `Some`; with
@@ -1124,6 +1141,7 @@ mod tests {
             Request::ProjectAdd(ProjectAddParams {
                 path: r"C:\work\demo".into(),
                 name: None,
+                dev_command: Some("npm run dev".into()),
             }),
             Request::ProjectList,
             Request::SessionSpawn(SessionSpawnParams {
@@ -1139,6 +1157,8 @@ mod tests {
                 project_id: sid(),
                 name: Some("demo".into()),
                 default_agent: Some(None),
+                dev_command: Some(Some("cargo run".into())),
+                dev_autostart: Some(true),
             }),
             Request::TabList(TabListParams { project_id: sid() }),
             Request::TabCreate(TabCreateParams {
@@ -1312,11 +1332,21 @@ mod tests {
             parse(json!({"project_id": id, "default_agent": "claude"})).default_agent,
             Some(Some("claude".into()))
         );
+        assert_eq!(parse(json!({"project_id": id})).dev_command, None);
+        assert_eq!(
+            parse(json!({"project_id": id, "dev_command": null})).dev_command,
+            Some(None)
+        );
+        let autostart = parse(json!({"project_id": id, "dev_autostart": true}));
+        assert_eq!(autostart.dev_autostart, Some(true));
+        assert_eq!(autostart.dev_command, None);
         // Unchanged fields are left out on the wire, a cleared one is `null`.
         let keep = ProjectUpdateParams {
             project_id: sid(),
             name: None,
             default_agent: None,
+            dev_command: None,
+            dev_autostart: None,
         };
         assert_eq!(
             serde_json::to_value(&keep).unwrap(),
@@ -1500,7 +1530,8 @@ mod tests {
             id: sid(),
             name: "demo".into(),
             path: "/tmp/demo".into(),
-            dev_command: None,
+            dev_command: Some("npm run dev".into()),
+            dev_autostart: true,
             default_agent: Some("claude".into()),
             review_globs: Some(vec!["docs/**/*.md".into()]),
             created_at: 1,

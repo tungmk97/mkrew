@@ -327,6 +327,56 @@ fn project_update_sets_and_clears_the_git_base() {
 }
 
 #[test]
+fn project_dev_server_is_configured_on_add_and_update() {
+    let env = Env::new();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    let path = repo.to_str().unwrap();
+    env.ok(&[
+        "project",
+        "add",
+        path,
+        "--name",
+        "demo",
+        "--dev",
+        "npm run dev",
+    ]);
+
+    let on = env.ok(&["project", "update", "demo", "--dev-autostart", "on"]);
+    assert_eq!(on.trim(), "dev server of demo: npm run dev (auto-start on)");
+    let changed = env.ok(&["project", "update", "demo", "--dev", "cargo run"]);
+    assert_eq!(
+        changed.trim(),
+        "dev server of demo: cargo run (auto-start on)"
+    );
+    // Base and dev settings change together.
+    let both = env.ok(&[
+        "project",
+        "update",
+        "demo",
+        "--auto-base",
+        "--no-dev",
+        "--dev-autostart",
+        "off",
+    ]);
+    let lines: Vec<_> = both.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "base of demo: auto-detect",
+            "dev server of demo: none (auto-start off)"
+        ]
+    );
+
+    let conflict = env.mk(&["project", "update", "demo", "--dev", "x", "--no-dev"]);
+    assert!(!conflict.status.success());
+    let bad = env.mk(&["project", "update", "demo", "--dev-autostart", "maybe"]);
+    assert!(!bad.status.success());
+    env.ok(&["daemon", "stop"]);
+}
+
+#[test]
 fn attach_detach_and_reattach_restores_the_screen() {
     let env = Env::new();
     env.write_fake_profile();

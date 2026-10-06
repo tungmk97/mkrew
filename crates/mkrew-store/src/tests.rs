@@ -333,21 +333,100 @@ fn project_update_sets_and_clears_fields() {
     let p = store.add_project(dir.path(), None).unwrap();
 
     let set = store
-        .update_project(p.id, Some("renamed"), Some(Some("claude")))
+        .update_project(
+            p.id,
+            ProjectChanges {
+                name: Some("renamed"),
+                default_agent: Some(Some("claude")),
+                ..ProjectChanges::default()
+            },
+        )
         .unwrap();
     assert_eq!(set.name, "renamed");
     assert_eq!(set.default_agent.as_deref(), Some("claude"));
     // Untouched fields stay; the change persists.
-    let kept = store.update_project(p.id, None, None).unwrap();
+    let kept = store
+        .update_project(p.id, ProjectChanges::default())
+        .unwrap();
     assert_eq!(kept, set);
     assert_eq!(open(&dir).get_project(p.id).unwrap(), set);
 
-    let cleared = store.update_project(p.id, None, Some(None)).unwrap();
+    let cleared = store
+        .update_project(
+            p.id,
+            ProjectChanges {
+                default_agent: Some(None),
+                ..ProjectChanges::default()
+            },
+        )
+        .unwrap();
     assert_eq!(cleared.default_agent, None);
     assert_eq!(cleared.name, "renamed");
 
-    let missing = store.update_project(Ulid::new(), Some("x"), None);
+    let missing = store.update_project(
+        Ulid::new(),
+        ProjectChanges {
+            name: Some("x"),
+            ..ProjectChanges::default()
+        },
+    );
     assert!(matches!(missing, Err(StoreError::ProjectNotFound(_))));
+}
+
+#[test]
+fn project_dev_server_settings_are_set_trimmed_and_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store
+        .add_project_with_dev(dir.path(), None, Some("  npm run dev "))
+        .unwrap();
+    assert_eq!(p.dev_command.as_deref(), Some("npm run dev"));
+    assert!(!p.dev_autostart);
+    assert_eq!(open(&dir).get_project(p.id).unwrap(), p);
+
+    let on = store
+        .update_project(
+            p.id,
+            ProjectChanges {
+                dev_command: Some(Some("cargo run")),
+                dev_autostart: Some(true),
+                ..ProjectChanges::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(on.dev_command.as_deref(), Some("cargo run"));
+    assert!(on.dev_autostart);
+    assert_eq!(open(&dir).get_project(p.id).unwrap(), on);
+
+    // A blank command clears like `null`; auto-start is kept.
+    let blank = store
+        .update_project(
+            p.id,
+            ProjectChanges {
+                dev_command: Some(Some("  ")),
+                ..ProjectChanges::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(blank.dev_command, None);
+    assert!(blank.dev_autostart);
+    let cleared = store
+        .update_project(
+            p.id,
+            ProjectChanges {
+                dev_command: Some(None),
+                dev_autostart: Some(false),
+                ..ProjectChanges::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(cleared.dev_command, None);
+    assert!(!cleared.dev_autostart);
+
+    let other = dir.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    let none = store.add_project_with_dev(&other, None, Some("")).unwrap();
+    assert_eq!(none.dev_command, None);
 }
 
 #[test]
@@ -361,7 +440,15 @@ fn project_base_is_set_kept_and_cleared_to_auto() {
     assert_eq!(set.base_ref.as_deref(), Some("develop"));
     assert_eq!(open(&dir).get_project(p.id).unwrap(), set);
     // Other updates keep the base.
-    let renamed = store.update_project(p.id, Some("renamed"), None).unwrap();
+    let renamed = store
+        .update_project(
+            p.id,
+            ProjectChanges {
+                name: Some("renamed"),
+                ..ProjectChanges::default()
+            },
+        )
+        .unwrap();
     assert_eq!(renamed.base_ref.as_deref(), Some("develop"));
 
     let auto = store.set_project_base(p.id, None).unwrap();

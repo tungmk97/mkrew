@@ -15,7 +15,7 @@ use mkrew_protocol::{
     TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
     TerminalTab, encode,
 };
-use mkrew_store::{Store, StoreError};
+use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -718,8 +718,12 @@ impl Daemon {
         }
         let updated = self.store().update_project(
             params.project_id,
-            params.name.as_deref(),
-            params.default_agent.as_ref().map(Option::as_deref),
+            ProjectChanges {
+                name: params.name.as_deref(),
+                default_agent: params.default_agent.as_ref().map(Option::as_deref),
+                dev_command: params.dev_command.as_ref().map(Option::as_deref),
+                dev_autostart: params.dev_autostart,
+            },
         );
         if let Ok(project) = &updated {
             let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));
@@ -982,9 +986,11 @@ impl Daemon {
     }
 
     fn project_add(&self, params: ProjectAddParams) -> Outcome {
-        let added = self
-            .store()
-            .add_project(std::path::Path::new(&params.path), params.name.as_deref());
+        let added = self.store().add_project_with_dev(
+            std::path::Path::new(&params.path),
+            params.name.as_deref(),
+            params.dev_command.as_deref(),
+        );
         if let Ok(project) = &added {
             tracing::info!(id = %project.id, path = %project.path, "project added");
             let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));

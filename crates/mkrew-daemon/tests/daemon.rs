@@ -237,6 +237,7 @@ impl Client {
         self.call(Request::ProjectAdd(ProjectAddParams {
             path: path.to_string_lossy().into_owned(),
             name: None,
+            dev_command: None,
         }))
         .into_result()
         .unwrap()
@@ -423,6 +424,7 @@ fn projects_are_added_and_listed() {
         client.call(Request::ProjectAdd(ProjectAddParams {
             path: path.to_string_lossy().into_owned(),
             name: Some("demo".into()),
+            dev_command: None,
         }))
     };
     let project: Project = add(&mut client, &repo).into_result().unwrap();
@@ -2015,6 +2017,8 @@ fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
         project_id: project.id,
         name: None,
         default_agent: Some(agent.map(str::to_owned)),
+        dev_command: None,
+        dev_autostart: None,
     })
 }
 
@@ -2692,6 +2696,45 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
         .unwrap();
     assert_eq!(status.upstream.as_deref(), Some("origin/main"));
     assert_eq!((status.ahead, status.behind), (0, 1));
+    client.stop();
+}
+
+#[test]
+fn project_dev_server_settings_are_added_updated_and_cleared() {
+    let env = Env::new();
+    let (_daemon, mut client) = env.start();
+    let project: Project = client
+        .call(Request::ProjectAdd(ProjectAddParams {
+            path: env.repo().to_string_lossy().into_owned(),
+            name: None,
+            dev_command: Some(" npm run dev ".into()),
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(project.dev_command.as_deref(), Some("npm run dev"));
+    assert!(!project.dev_autostart);
+    client.wait_event(&Event::ProjectUpdated(project.clone()));
+
+    let update = |dev_command, dev_autostart| {
+        Request::ProjectUpdate(ProjectUpdateParams {
+            project_id: project.id,
+            name: None,
+            default_agent: None,
+            dev_command,
+            dev_autostart,
+        })
+    };
+    let on: Project = client.call(update(None, Some(true))).into_result().unwrap();
+    assert_eq!(on.dev_command.as_deref(), Some("npm run dev"));
+    assert!(on.dev_autostart);
+    client.wait_event(&Event::ProjectUpdated(on.clone()));
+
+    let cleared: Project = client.call(update(Some(None), None)).into_result().unwrap();
+    assert_eq!(cleared.dev_command, None);
+    assert!(cleared.dev_autostart);
+    client.wait_event(&Event::ProjectUpdated(cleared.clone()));
+    let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
+    assert_eq!(listed, vec![cleared]);
     client.stop();
 }
 

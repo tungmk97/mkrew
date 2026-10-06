@@ -1313,6 +1313,12 @@ _Decisions the agent made on its own. Override them here if you disagree._
   margin; the hover bar (`border`) is faint on add/del rows; Staged and Unstaged diffs of one
   file share its threads although their line numbers differ; Git buttons reuse the
   `doc-comment` / `doc-send` ids.
+- (T8.1) **Dev server config choices:** the dev command is trimmed and a blank one counts as
+  "none" (same as `null` / `--no-dev`); auto-start is only set via `project.update` / `mk project
+  update --dev-autostart on|off` (not on add) and is kept when the command is cleared (it does
+  nothing without one). `mk project update` accepts base and dev flags together (two requests,
+  base first); `--base`/`--auto-base` and `--dev`/`--no-dev` conflict pairwise. `mk project list`
+  does not show the dev command.
 
 ## Done
 

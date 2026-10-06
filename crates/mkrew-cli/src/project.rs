@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Context;
 use mkrew_core::Paths;
-use mkrew_protocol::{GitSetBaseParams, Project, ProjectAddParams, Request};
+use mkrew_protocol::{GitSetBaseParams, Project, ProjectAddParams, ProjectUpdateParams, Request};
 
 use crate::client::Client;
 use crate::session::resolve_project;
@@ -17,12 +17,18 @@ pub fn connect(paths: &Paths) -> anyhow::Result<Client> {
     }
 }
 
-pub fn add(client: &mut Client, path: &Path, name: Option<String>) -> anyhow::Result<()> {
+pub fn add(
+    client: &mut Client,
+    path: &Path,
+    name: Option<String>,
+    dev: Option<String>,
+) -> anyhow::Result<()> {
     // The daemon has its own working directory, so send an absolute path.
     let path = std::path::absolute(path).with_context(|| format!("resolve {}", path.display()))?;
     let project: Project = client.call(Request::ProjectAdd(ProjectAddParams {
         path: path.to_string_lossy().into_owned(),
         name,
+        dev_command: dev,
     }))?;
     println!(
         "added project {} ({}) at {}",
@@ -31,10 +37,54 @@ pub fn add(client: &mut Client, path: &Path, name: Option<String>) -> anyhow::Re
     Ok(())
 }
 
-/// `mk project update <project> --base <ref> | --auto-base`; `None` = auto-detect.
-pub fn set_base(client: &mut Client, project: &str, base: Option<String>) -> anyhow::Result<()> {
+/// `--dev-autostart on|off`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Switch {
+    On,
+    Off,
+}
+
+/// `mk project update` changes; `None` = unchanged, `Some(None)` = auto-detect base /
+/// no dev command.
+pub struct Changes {
+    pub base: Option<Option<String>>,
+    pub dev: Option<Option<String>>,
+    pub dev_autostart: Option<bool>,
+}
+
+/// `mk project update <project> [--base <ref> | --auto-base] [--dev "…" | --no-dev]
+/// [--dev-autostart on|off]`.
+pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::Result<()> {
     let projects: Vec<Project> = client.call(Request::ProjectList)?;
     let project = resolve_project(&projects, project)?;
+    if let Some(base) = changes.base {
+        set_base(client, &project, base)?;
+    }
+    if changes.dev.is_some() || changes.dev_autostart.is_some() {
+        let updated: Project = client.call(Request::ProjectUpdate(ProjectUpdateParams {
+            project_id: project.id,
+            name: None,
+            default_agent: None,
+            dev_command: changes.dev,
+            dev_autostart: changes.dev_autostart,
+        }))?;
+        let autostart = if updated.dev_autostart { "on" } else { "off" };
+        match &updated.dev_command {
+            Some(command) => println!(
+                "dev server of {}: {command} (auto-start {autostart})",
+                updated.name
+            ),
+            None => println!(
+                "dev server of {}: none (auto-start {autostart})",
+                updated.name
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// `None` = auto-detect.
+fn set_base(client: &mut Client, project: &Project, base: Option<String>) -> anyhow::Result<()> {
     let () = client.call(Request::GitSetBase(GitSetBaseParams {
         project_id: project.id,
         base_ref: base.clone(),

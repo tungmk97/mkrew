@@ -21,6 +21,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0004_checkpoint_at.sql"),
     include_str!("../migrations/0005_doc_review.sql"),
     include_str!("../migrations/0006_files_git.sql"),
+    include_str!("../migrations/0007_dev_server.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +58,16 @@ pub enum StoreError {
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 
+/// `Store::update_project` changes: `None` leaves a field unchanged, `Some(None)` clears it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProjectChanges<'a> {
+    pub name: Option<&'a str>,
+    pub default_agent: Option<Option<&'a str>>,
+    /// A blank command clears it too.
+    pub dev_command: Option<Option<&'a str>>,
+    pub dev_autostart: Option<bool>,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -91,6 +102,16 @@ impl Store {
     /// Adds a project for the directory at `path` (canonicalized with `dunce`). `name`
     /// defaults to the directory name.
     pub fn add_project(&self, path: &Path, name: Option<&str>) -> Result<Project> {
+        self.add_project_with_dev(path, name, None)
+    }
+
+    /// `add_project` with a dev server command (blank = none).
+    pub fn add_project_with_dev(
+        &self,
+        path: &Path,
+        name: Option<&str>,
+        dev_command: Option<&str>,
+    ) -> Result<Project> {
         // canonicalize returns the on-disk casing, which makes the UNIQUE path column
         // case-insensitive in effect on Windows (SPEC §17).
         let canonical = dunce::canonicalize(path).map_err(|source| StoreError::Path {
@@ -112,7 +133,8 @@ impl Store {
             id: Ulid::new(),
             name,
             path: path_str,
-            dev_command: None,
+            dev_command: non_blank(dev_command),
+            dev_autostart: false,
             default_agent: None,
             review_globs: None,
             created_at: now_ms(),
@@ -120,11 +142,13 @@ impl Store {
             base_ref: None,
         };
         let inserted = self.conn.execute(
-            "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO project (id, name, path, dev_command, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 project.id.to_string(),
                 project.name,
                 project.path,
+                project.dev_command,
                 project.created_at
             ],
         );
@@ -143,7 +167,7 @@ impl Store {
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived,
-                    base_ref
+                    base_ref, dev_autostart
              FROM project ORDER BY created_at, id",
         )?;
         let rows = stmt.query_map([], RawProject::from_row)?;
@@ -153,7 +177,7 @@ impl Store {
     pub fn get_project(&self, id: Ulid) -> Result<Project> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived,
-                    base_ref
+                    base_ref, dev_autostart
              FROM project WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id.to_string()], RawProject::from_row)?;
@@ -163,24 +187,31 @@ impl Store {
         }
     }
 
-    /// Sets the given fields; `None` leaves a field unchanged, `Some(None)` clears
-    /// `default_agent`.
-    pub fn update_project(
-        &self,
-        id: Ulid,
-        name: Option<&str>,
-        default_agent: Option<Option<&str>>,
-    ) -> Result<Project> {
+    /// Applies `changes` and returns the updated project.
+    pub fn update_project(&self, id: Ulid, changes: ProjectChanges<'_>) -> Result<Project> {
         let mut project = self.get_project(id)?;
-        if let Some(name) = name {
+        if let Some(name) = changes.name {
             project.name = name.to_owned();
         }
-        if let Some(default_agent) = default_agent {
+        if let Some(default_agent) = changes.default_agent {
             project.default_agent = default_agent.map(str::to_owned);
         }
+        if let Some(dev_command) = changes.dev_command {
+            project.dev_command = non_blank(dev_command);
+        }
+        if let Some(dev_autostart) = changes.dev_autostart {
+            project.dev_autostart = dev_autostart;
+        }
         self.conn.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3 WHERE id = ?1",
-            params![id.to_string(), project.name, project.default_agent],
+            "UPDATE project SET name = ?2, default_agent = ?3, dev_command = ?4, dev_autostart = ?5
+             WHERE id = ?1",
+            params![
+                id.to_string(),
+                project.name,
+                project.default_agent,
+                project.dev_command,
+                project.dev_autostart
+            ],
         )?;
         Ok(project)
     }
@@ -858,6 +889,13 @@ fn migrate(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
+/// Trimmed; blank = `None`.
+fn non_blank(text: Option<&str>) -> Option<String> {
+    text.map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1003,6 +1041,7 @@ struct RawProject {
     created_at: i64,
     archived: bool,
     base_ref: Option<String>,
+    dev_autostart: bool,
 }
 
 impl RawProject {
@@ -1017,6 +1056,7 @@ impl RawProject {
             created_at: row.get(6)?,
             archived: row.get(7)?,
             base_ref: row.get(8)?,
+            dev_autostart: row.get(9)?,
         })
     }
 
@@ -1032,6 +1072,7 @@ impl RawProject {
             name: self.name,
             path: self.path,
             dev_command: self.dev_command,
+            dev_autostart: self.dev_autostart,
             default_agent: self.default_agent,
             review_globs,
             created_at: self.created_at,
