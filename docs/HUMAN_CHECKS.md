@@ -419,6 +419,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   to 0; a rejected push shows git's message wrapped under the header; Push is faded on a
   branch without upstream. Check the layout (box at the bottom of the left column, long
   messages scroll at ~8 lines) in dark + light.
+- [ ] (T7.10b) **Git History** (state covered by `git_view.rs` / `git_history.rs` unit tests;
+  the UI was never seen): press `h` or click "History" → the last 50 commits, the newest
+  expanded with its files and the first file's diff; click another commit / file; j k walk
+  across commits; hover a commit → full message + author; commit in a terminal → it appears
+  on top while the selection stays; `b` / `h` go back. Check the 3 header segments fit
+  without cutting (Windows font), row heights stay uniform, dark + light.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1206,6 +1212,21 @@ _Decisions the agent made on its own. Override them here if you disagree._
   actions at the end of the upstream line; one runs at a time ("Fetching…"); Push is faded
   without a branch + upstream (no `push -u` in v1). Errors are wrapped under the header (push)
   or under the box (commit); every outcome re-reads the status.
+- (T7.10b) **History choices:** a third header segment "History" (labels shortened to
+  "Working" / "Against base" / "History", sized from their text so all fit the 300 px column)
+  and a new `h` key (`git_toggle_history`, GIT_CONTEXT; SPEC §13 row added — an addition, no
+  ADR). The list shows the last 50 commits (summary, then short hash · age muted; message +
+  author in the tooltip); the selected commit expands in place with its files indented under
+  it, and its first file's diff opens. ↑↓ / j k walk the expanded commit's files and continue
+  into the previous / next commit (its first file). `b` from History returns to the changes
+  section it left; `h` toggles back too. Commit files have no Stage / Discard. `git.changed`
+  re-reads the log (selection kept if still listed) but not the commit's diff (immutable).
+  Merge commits list whatever `git.show` gives (not checked in the UI); an unborn branch shows
+  "Cannot read the history." with git's error rather than "No commits yet." (not checked).
+  Open review NITs: "Open in Zed" on a commit's file opens the working-tree file (may be gone
+  or moved); ↑ from a commit's first file lands on the previous commit's first file (not its
+  last); the segment says "Working" while SPEC §12B/§13 say "Working changes" (tooltip has
+  the full name) — check in the §14 design pass.
 
 ## Done
 

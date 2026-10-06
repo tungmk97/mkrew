@@ -758,6 +758,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Next / previous hunk | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |
 | Git | Toggle Working changes / Against base | b |
+| Git | Toggle History | h |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 

@@ -19,13 +19,14 @@ use gpui::{
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    AgentProfilesResult, ChangeKind, CommentId, CommentListParams, CommentRef, DiffLineKind,
-    DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff, FsContent,
-    FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus,
-    Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory,
-    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
-    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
-    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    AgentProfilesResult, ChangeKind, CommentId, CommentListParams, CommentRef, Commit,
+    CommitDetail, DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams,
+    Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult,
+    GitMarker, GitMode, GitStatus, Outcome, Project, ProjectAddParams, Request, Session,
+    SessionAttachResult, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
+    SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams,
+    TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
+    TerminalTab, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -37,6 +38,7 @@ use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
+use mkrew_ui::git_history::{self, Commits};
 use mkrew_ui::git_view::{self, GitView};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
@@ -1211,7 +1213,100 @@ impl Shell {
         if let Some(target) = requests.diff {
             self.load_git_diff(project_id, target, window, cx);
         }
+        if requests.log {
+            self.load_git_log(project_id, window, cx);
+        }
+        if let Some(hash) = requests.show {
+            self.load_git_show(project_id, hash, window, cx);
+        }
         cx.notify();
+    }
+
+    /// `git.log` of the History of `project_id`; while one is in flight, it is read once more
+    /// after it answers.
+    fn load_git_log(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(params) = self.git_view(project_id).begin_log() else {
+            return;
+        };
+        let loaded = connection.call::<Vec<Commit>>(Request::GitLog(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = loaded.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &loaded {
+                    tracing::warn!(%project_id, "git.log failed: {error}");
+                }
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                let requests = view.logged(loaded);
+                shell.git_requests(project_id, requests, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// `git.show` of History commit `hash`: its files, then its first file's diff.
+    fn load_git_show(
+        &mut self,
+        project_id: Ulid,
+        hash: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let params = self.git_view(project_id).show_params(hash.clone());
+        let loaded = connection.call::<CommitDetail>(Request::GitShow(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = loaded.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &loaded {
+                    tracing::warn!(%project_id, commit = hash, "git.show failed: {error}");
+                }
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                let requests = view.commit_shown(&hash, loaded);
+                shell.git_requests(project_id, requests, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// A click on a History commit: lists its files (its first file's diff follows).
+    fn select_git_commit(
+        &mut self,
+        project_id: Ulid,
+        hash: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.git_focus, cx);
+        let show = self.git_view(project_id).select_commit(hash);
+        self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        let requests = git_view::Requests {
+            show,
+            ..git_view::Requests::default()
+        };
+        self.git_requests(project_id, requests, window, cx);
+    }
+
+    /// A click on a section of the Git header (Working changes / Against base / History).
+    fn show_git_section(
+        &mut self,
+        project_id: Ulid,
+        section: git_view::Section,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.git_focus, cx);
+        let requests = self.git_view(project_id).show(section);
+        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.git_requests(project_id, requests, window, cx);
     }
 
     /// `git.status` of the Git view of `project_id` in its shown mode (also keeps the daemon
@@ -1315,8 +1410,8 @@ impl Shell {
         let diff = self.git_view(project_id).select(target);
         self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
         let requests = git_view::Requests {
-            status: false,
             diff,
+            ..git_view::Requests::default()
         };
         self.git_requests(project_id, requests, window, cx);
     }
@@ -1350,9 +1445,11 @@ impl Shell {
         let view = self.git_view(project_id);
         let requests = view.key(key);
         let selected = view.selected.clone();
-        let file_row = view.list_rows().iter().position(|row| {
-            matches!(row, git_view::ListRow::File(group, file)
-                if selected.as_ref().is_some_and(|s| s.group == *group && s.path == file.path))
+        // The selected file, else (History, files loading) the expanded commit.
+        let file_row = view.list_rows().iter().position(|row| match row {
+            git_view::ListRow::File(target, _) => selected.as_ref() == Some(target),
+            git_view::ListRow::Commit { expanded, .. } => selected.is_none() && *expanded,
+            git_view::ListRow::Header(..) | git_view::ListRow::Note(_) => false,
         });
         let hunk_row = match (&view.diff, view.hunk) {
             (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk),
@@ -1368,7 +1465,9 @@ impl Shell {
                     self.git_diff_scroll.scroll_to_item(at, ScrollStrategy::Top);
                 }
             }
-            git_view::Key::Up | git_view::Key::Down if requests.diff.is_some() => {
+            git_view::Key::Up | git_view::Key::Down
+                if requests.diff.is_some() || requests.show.is_some() =>
+            {
                 self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
             }
             _ => {}
@@ -3395,6 +3494,7 @@ impl Shell {
             Command::QuickOpen => self.open_quick_open(window, cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
+            Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
             Command::GitNextHunk => self.git_key(git_view::Key::NextHunk, window, cx),
             Command::GitPreviousHunk => self.git_key(git_view::Key::PreviousHunk, window, cx),
             Command::GitStage => {
@@ -4871,9 +4971,45 @@ impl Shell {
             .child(self.git_header(project_id, view, status, theme, cx));
         let rows = view.list_rows();
         let any_files = !rows.is_empty();
-        let list = match &view.status {
-            git_view::Status::Loading => empty("Loading changes…".into(), None).into_any_element(),
-            git_view::Status::Failed(error) => {
+        let commits = view.history.as_ref().map(|history| &history.commits);
+        let list = match (commits, &view.status) {
+            (Some(Commits::Loading), _) => {
+                empty("Loading history…".into(), None).into_any_element()
+            }
+            (Some(Commits::Failed(error)), _) => {
+                empty("Cannot read the history.".into(), Some(error.clone()))
+                    .child(
+                        button("git-history-retry", "Retry", theme, true).on_click(cx.listener(
+                            move |shell, _, window, cx| shell.refresh_git(project_id, window, cx),
+                        )),
+                    )
+                    .into_any_element()
+            }
+            (Some(Commits::Loaded(_)), _) if !any_files => empty(
+                "No commits yet.".into(),
+                Some("Commits on this branch show here.".into()),
+            )
+            .child(
+                button("git-history-back", "Show changes", theme, true)
+                    .tooltip(tooltip(
+                        theme,
+                        "Back to the changes",
+                        self.keymap.label(Command::GitToggleHistory),
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        window.focus(&shell.git_focus, cx);
+                        let requests = shell.git_view(project_id).toggle_history();
+                        shell.git_requests(project_id, requests, window, cx);
+                    })),
+            )
+            .into_any_element(),
+            (Some(Commits::Loaded(_)), _) => {
+                self.git_list(project_id, view, rows, theme, window, cx)
+            }
+            (None, git_view::Status::Loading) => {
+                empty("Loading changes…".into(), None).into_any_element()
+            }
+            (None, git_view::Status::Failed(error)) => {
                 empty("Cannot read the git status.".into(), Some(error.clone()))
                     .child(
                         button("git-retry", "Retry", theme, true).on_click(cx.listener(
@@ -4882,7 +5018,7 @@ impl Shell {
                     )
                     .into_any_element()
             }
-            git_view::Status::Loaded(status) if !any_files => {
+            (None, git_view::Status::Loaded(status)) if !any_files => {
                 // No merge-base with a commit checked out: the base names nothing usable.
                 let unusable = status.head.is_some() && status.merge_base.is_none();
                 let no_base = view.mode == GitMode::Base && (status.base_ref.is_none() || unusable);
@@ -4930,35 +5066,8 @@ impl Shell {
                     );
                 empty(sentence, detail).child(buttons).into_any_element()
             }
-            git_view::Status::Loaded(_) => {
-                let rows = Rc::new(rows);
-                let selected = view.selected.clone();
-                let focused = self.git_focus.is_focused(window);
-                let row_theme = theme.clone();
-                uniform_list(
-                    "git-file-list",
-                    rows.len(),
-                    cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
-                        range
-                            .filter_map(|index| rows.get(index))
-                            .map(|row| {
-                                git_file_row(
-                                    project_id,
-                                    row,
-                                    selected.as_ref(),
-                                    focused,
-                                    &row_theme,
-                                    cx,
-                                )
-                            })
-                            .collect()
-                    }),
-                )
-                .track_scroll(&self.git_files_scroll)
-                .flex_1()
-                .min_h_0()
-                .px(px(space::S))
-                .into_any_element()
+            (None, git_view::Status::Loaded(_)) => {
+                self.git_list(project_id, view, rows, theme, window, cx)
             }
         };
         div()
@@ -4985,8 +5094,50 @@ impl Shell {
             .into_any_element()
     }
 
-    /// Branch, upstream and ahead/behind, then the Working changes / Against base toggle and
-    /// the base it compares to.
+    /// The changed-file list (in the History: the commits, the expanded one with its files).
+    fn git_list(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        rows: Vec<git_view::ListRow>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let rows = Rc::new(rows);
+        let selected = view.selected.clone();
+        let focused = self.git_focus.is_focused(window);
+        let row_theme = theme.clone();
+        let now = status::now_ms();
+        uniform_list(
+            "git-file-list",
+            rows.len(),
+            cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .filter_map(|index| rows.get(index))
+                    .map(|row| {
+                        git_file_row(
+                            project_id,
+                            row,
+                            selected.as_ref(),
+                            focused,
+                            now,
+                            &row_theme,
+                            cx,
+                        )
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(&self.git_files_scroll)
+        .flex_1()
+        .min_h_0()
+        .px(px(space::S))
+        .into_any_element()
+    }
+
+    /// Branch, upstream and ahead/behind, then the Working changes / Against base / History
+    /// switch and the base it compares to.
     fn git_header(
         &self,
         project_id: Ulid,
@@ -5036,13 +5187,25 @@ impl Shell {
                 }))
         });
         let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
+        let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
         // Lighter than the active segment's fill, so hovering never looks selected.
         let hover = theme.surface;
-        let segment = |mode: GitMode, id: &'static str, label: &'static str, tip: &'static str| {
-            let active = view.mode == mode;
+        let shown = view.section();
+        let segment = |section: git_view::Section,
+                       id: &'static str,
+                       label: &'static str,
+                       tip: &'static str| {
+            let active = shown == section;
+            let keys = if section == git_view::Section::History {
+                history_keys.clone()
+            } else {
+                toggle_keys.clone()
+            };
+            // Sized from the label: three equal segments would cut "Against base".
             div()
                 .id(id)
-                .flex_1()
+                .flex_auto()
+                .whitespace_nowrap()
                 .flex()
                 .justify_center()
                 .px(px(space::S))
@@ -5060,12 +5223,10 @@ impl Shell {
                         .hover(move |style| style.bg(rgb(hover)))
                         .active(|style| style.opacity(opacity::ACTIVE))
                         .on_click(cx.listener(move |shell, _, window, cx| {
-                            window.focus(&shell.git_focus, cx);
-                            let requests = shell.git_view(project_id).toggle_mode();
-                            shell.git_requests(project_id, requests, window, cx);
+                            shell.show_git_section(project_id, section, window, cx);
                         }))
                 })
-                .tooltip(tooltip(theme, tip, toggle_keys.clone()))
+                .tooltip(tooltip(theme, tip, keys))
                 .child(label)
         };
         div()
@@ -5099,16 +5260,22 @@ impl Shell {
                     .flex()
                     .gap(px(space::XS))
                     .child(segment(
-                        GitMode::Working,
+                        git_view::Section::Working,
                         "git-mode-working",
-                        "Working changes",
+                        "Working",
                         "Uncommitted changes: staged, unstaged, untracked",
                     ))
                     .child(segment(
-                        GitMode::Base,
+                        git_view::Section::Base,
                         "git-mode-base",
                         "Against base",
                         "Everything on this branch since it left the base",
+                    ))
+                    .child(segment(
+                        git_view::Section::History,
+                        "git-mode-history",
+                        "History",
+                        "The last 50 commits and their changes",
                     )),
             )
             .children(base.map(|base| {
@@ -5299,14 +5466,35 @@ impl Shell {
             .overflow_hidden()
             .bg(rgb(theme.surface));
         let Some(selected) = view.selected.clone() else {
+            let history = view.history.as_ref();
+            let (sentence, detail) = match history.map(|history| &history.detail) {
+                Some(git_history::Detail::Loading) => ("Loading this commit's files…", None),
+                Some(git_history::Detail::Loaded(_)) => ("This commit changed no files.", None),
+                Some(git_history::Detail::Failed(error)) => {
+                    ("Cannot list this commit's files.", Some(error.clone()))
+                }
+                Some(git_history::Detail::None) => (
+                    "Select a commit to see its files.",
+                    Some("Use ↑ ↓ (or j k) to move between commits.".to_owned()),
+                ),
+                None => (
+                    "Select a file to see its changes.",
+                    Some("Use ↑ ↓ (or j k) to move between files.".to_owned()),
+                ),
+            };
+            let retry = history
+                .filter(|history| matches!(history.detail, git_history::Detail::Failed(_)))
+                .and_then(|history| history.selected.clone());
             return panel.child(
-                message(
-                    theme,
-                    None,
-                    "Select a file to see its changes.".into(),
-                    Some("Use ↑ ↓ (or j k) to move between files.".into()),
-                )
-                .flex_1(),
+                message(theme, None, sentence.into(), detail.map(Into::into))
+                    .flex_1()
+                    .children(retry.map(|hash| {
+                        button("git-show-retry", "Retry", theme, true).on_click(cx.listener(
+                            move |shell, _, window, cx| {
+                                shell.select_git_commit(project_id, hash.clone(), window, cx);
+                            },
+                        ))
+                    })),
             );
         };
         let zed_keys = self.keymap.label(Command::OpenInZed);
@@ -5424,8 +5612,8 @@ impl Shell {
                     move |shell, _, window, cx| {
                         let diff = shell.git_view(project_id).select(selected.clone());
                         let requests = git_view::Requests {
-                            status: false,
                             diff,
+                            ..git_view::Requests::default()
                         };
                         shell.git_requests(project_id, requests, window, cx);
                     },
@@ -6446,8 +6634,8 @@ impl Shell {
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 let diff = shell.git_view(project_id).select(target.clone());
                                 let requests = git_view::Requests {
-                                    status: false,
                                     diff,
+                                    ..git_view::Requests::default()
                                 };
                                 shell.git_requests(project_id, requests, window, cx);
                             })),
@@ -8078,18 +8266,21 @@ fn change_counts(added: u32, removed: u32, theme: &Theme) -> gpui::Div {
         )
 }
 
-/// One row of the Git changed-file list: a group title with its count, or a file (change
-/// letter, name, folder muted, +/− counts). Every row is one body line high (uniform list);
-/// the selected file is raised, with a focus ring while the list has the keyboard.
+/// One row of the Git changed-file list: a group title with its count, a file (change letter,
+/// name, folder muted, +/− counts; indented under its History commit), a History commit
+/// ([`git_commit_row`], ages at `now`) or a note under it. Every row is one body line high
+/// (uniform list); the selected file is raised, with a focus ring while the list has the
+/// keyboard.
 fn git_file_row(
     project_id: Ulid,
     row: &git_view::ListRow,
     selected: Option<&git_view::Target>,
     focused: bool,
+    now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
-    let (group, file) = match row {
+    let (target, file) = match row {
         git_view::ListRow::Header(group, count) => {
             // The same box as a file row (uniform list: rows are sized from the first one).
             return div()
@@ -8107,12 +8298,34 @@ fn git_file_row(
                 .child(count.to_string())
                 .into_any_element();
         }
-        git_view::ListRow::File(group, file) => (*group, file),
+        git_view::ListRow::Note(note) => {
+            // Indented under its commit, like the commit's files.
+            return div()
+                .flex()
+                .items_center()
+                .px(px(space::S))
+                .pl(px(space::S + space::M))
+                .py(px(space::XS))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.bg))
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(theme.text_muted))
+                .child(note.clone())
+                .into_any_element();
+        }
+        git_view::ListRow::File(target, file) => (target.clone(), file),
+        git_view::ListRow::Commit { commit, expanded } => {
+            // Raised while none of its files is selected (they are listing).
+            let picked = *expanded && selected.is_none();
+            return git_commit_row(
+                project_id, commit, *expanded, picked, focused, now, theme, cx,
+            );
+        }
     };
-    let target = git_view::Target {
-        group,
-        path: file.path.clone(),
-    };
+    let group = target.group;
     let picked = selected == Some(&target);
     let (letter, color, what) = match file.kind {
         ChangeKind::Added => ("A", theme.diff_add_text, "Added"),
@@ -8144,6 +8357,7 @@ fn git_file_row(
         .gap(px(space::S))
         .px(px(space::S))
         .py(px(space::XS))
+        .when(group == git_view::Group::Commit, |el| el.ml(px(space::M)))
         .rounded(px(radius::SMALL))
         .border(px(theme::BORDER_WIDTH))
         // The border is always there (so rows never shift); it only shows as the focus ring.
@@ -8227,6 +8441,90 @@ fn git_file_row(
         }))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.select_git_file(project_id, target.clone(), window, cx);
+        }))
+        .into_any_element()
+}
+
+/// One History commit row: a chevron (open on the expanded commit), the summary, then its
+/// short hash and age muted; the full message and author in the tooltip. Raised (with the
+/// focus ring while the list has the keyboard) while it is `picked`.
+#[allow(clippy::too_many_arguments)]
+fn git_commit_row(
+    project_id: Ulid,
+    commit: &Commit,
+    expanded: bool,
+    picked: bool,
+    focused: bool,
+    now: i64,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let fill = if picked {
+        theme.surface_raised
+    } else {
+        theme.bg
+    };
+    let hover = theme.surface_raised;
+    let short = git_history::short_hash(&commit.hash);
+    let meta = format!("{short} · {}", git_history::age(commit.authored_at, now));
+    let message = if commit.body.is_empty() {
+        commit.summary.clone()
+    } else {
+        format!("{}\n\n{}", commit.summary, commit.body.trim_end())
+    };
+    let tip = format!(
+        "{message}\n\n{} <{}> · {short}",
+        commit.author_name, commit.author_email
+    );
+    let hash = commit.hash.clone();
+    div()
+        .id(SharedString::from(format!("git-commit-{}", commit.hash)))
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(if picked && focused {
+            theme.pane_focus_border
+        } else {
+            fill
+        }))
+        .cursor_pointer()
+        .text_size(px(font_size::BODY))
+        .when(picked, |el| el.bg(rgb(fill)))
+        .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .tooltip(tooltip(theme, &tip, ""))
+        .child(
+            div()
+                .flex_none()
+                .w(px(space::M))
+                .text_color(rgb(theme.text_muted))
+                .child(if expanded { "▾" } else { "▸" }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_color(rgb(theme.text))
+                .when(expanded, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                .child(commit.summary.clone()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .whitespace_nowrap()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(meta),
+        )
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.select_git_commit(project_id, hash.clone(), window, cx);
         }))
         .into_any_element()
 }

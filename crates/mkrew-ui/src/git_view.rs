@@ -3,19 +3,22 @@
 //! and its `git.diff` laid out as rows (hunk headers, lines, and "unchanged lines" gaps between
 //! hunks), and the current hunk moved by `n` / `p`. `git.changed` re-asks the status and the
 //! shown diff. Stage / unstage a file or hunk (`s` / `u`) and the discard confirmation; the
-//! commit box and Fetch / Push live in [`crate::git_actions`].
+//! commit box and Fetch / Push live in [`crate::git_actions`]. The History section (`h`)
+//! lists commits instead ([`crate::git_history`]); their files' diffs show here too.
 //! Pure and tested headlessly; `main.rs` does the requests and renders it.
 
 use std::rc::Rc;
 
 use gpui::Keystroke;
 use mkrew_protocol::{
-    ChangeKind, ChangedFile, DiffLine, Event, FileDiff, GitDiffParams, GitDiscardParams, GitMode,
-    GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request,
+    ChangeKind, ChangedFile, Commit, CommitDetail, DiffLine, Event, FileDiff, GitDiffParams,
+    GitDiscardParams, GitLogParams, GitMode, GitShowParams, GitStageParams, GitStatus,
+    GitStatusParams, HunkTarget, Request,
 };
 use ulid::Ulid;
 
 use crate::git_actions::{CommitBox, Remotes};
+use crate::git_history::{Detail, History};
 use crate::highlight::{self, Spans};
 
 /// The group a changed file is listed in.
@@ -26,6 +29,8 @@ pub enum Group {
     Untracked,
     /// Against-base mode's one list.
     Base,
+    /// The files of the History section's selected commit.
+    Commit,
 }
 
 impl Group {
@@ -35,6 +40,7 @@ impl Group {
             Group::Unstaged => "Unstaged",
             Group::Untracked => "Untracked",
             Group::Base => "Changed files",
+            Group::Commit => "Files",
         }
     }
 }
@@ -44,6 +50,8 @@ impl Group {
 pub struct Target {
     pub group: Group,
     pub path: String,
+    /// The commit whose change it is ([`Group::Commit`] only).
+    pub commit: Option<String>,
 }
 
 impl Target {
@@ -58,7 +66,24 @@ impl Target {
                 GitMode::Working
             },
             staged: self.group == Group::Staged,
-            commit: None,
+            commit: self.commit.clone(),
+        }
+    }
+}
+
+/// What the Git view lists: one of the two `git.status` modes, or the History.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Working,
+    Base,
+    History,
+}
+
+impl Section {
+    fn of(mode: GitMode) -> Section {
+        match mode {
+            GitMode::Working => Section::Working,
+            GitMode::Base => Section::Base,
         }
     }
 }
@@ -76,7 +101,14 @@ pub enum Status {
 pub enum ListRow {
     /// A group title with its file count (Working mode only).
     Header(Group, usize),
-    File(Group, ChangedFile),
+    File(Target, ChangedFile),
+    /// A History commit; the selected one is expanded (its files follow it).
+    Commit {
+        commit: Commit,
+        expanded: bool,
+    },
+    /// Why the expanded commit lists no files (loading, failed, none changed).
+    Note(String),
 }
 
 /// One row of the diff viewer.
@@ -162,8 +194,10 @@ pub enum Key {
     NextHunk,
     /// p: previous hunk.
     PreviousHunk,
-    /// b: Working changes ↔ Against base.
+    /// b: Working changes ↔ Against base (from History: back to the one it left).
     ToggleMode,
+    /// h: History ↔ the changes it left.
+    ToggleHistory,
     /// s / u: stage / unstage the selected file, or its current hunk (sent by the shell, see
     /// [`GitView::stage_key`]).
     Stage(Stage),
@@ -177,12 +211,12 @@ pub enum Stage {
 }
 
 impl Stage {
-    /// What a file of `group` can do; Against-base files can do neither.
+    /// What a file of `group` can do; Against-base and commit files can do neither.
     pub fn of(group: Group) -> Option<Stage> {
         match group {
             Group::Unstaged | Group::Untracked => Some(Stage::Stage),
             Group::Staged => Some(Stage::Unstage),
-            Group::Base => None,
+            Group::Base | Group::Commit => None,
         }
     }
 
@@ -254,11 +288,14 @@ impl Discard {
 /// The discard dialog shows at most this many diff rows.
 pub const DISCARD_PREVIEW_ROWS: usize = 500;
 
-/// What a change asks of the shell: a `git.status` of the shown mode, a `git.diff`.
+/// What a change asks of the shell: a `git.status` of the shown mode, a `git.diff`, the
+/// History's `git.log`, a commit's `git.show`.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Requests {
     pub status: bool,
     pub diff: Option<Target>,
+    pub log: bool,
+    pub show: Option<String>,
 }
 
 /// One workspace's Git view.
@@ -281,6 +318,8 @@ pub struct GitView {
     pub commit: CommitBox,
     /// Fetch / Push.
     pub remotes: Remotes,
+    /// The History section, while shown (`mode` is the changes it goes back to).
+    pub history: Option<History>,
     /// A stage / unstage is in flight (another is not sent meanwhile).
     staging: bool,
     /// A status was ever asked for (the view loads when first shown).
@@ -291,6 +330,10 @@ pub struct GitView {
     /// A `git.diff` is in flight, and another was asked for meanwhile.
     reading: bool,
     read_again: bool,
+    /// A History `git.log` is in flight (kept here: it outlives leaving the History), and
+    /// another was asked for meanwhile.
+    logging: bool,
+    log_again: bool,
 }
 
 impl GitView {
@@ -307,12 +350,15 @@ impl GitView {
             stage_error: None,
             commit: CommitBox::default(),
             remotes: Remotes::default(),
+            history: None,
             staging: false,
             started: false,
             loading: None,
             load_again: false,
             reading: false,
             read_again: false,
+            logging: false,
+            log_again: false,
         }
     }
 
@@ -342,7 +388,7 @@ impl GitView {
         if mode != Some(self.mode) {
             return Requests {
                 status: true,
-                diff: None,
+                ..Requests::default()
             };
         }
         let status = match loaded {
@@ -351,31 +397,43 @@ impl GitView {
                 self.refresh_error = Some(error);
                 return Requests {
                     status: again,
-                    diff: None,
+                    ..Requests::default()
                 };
             }
             Err(error) => {
                 self.status = Status::Failed(error);
-                self.select_none();
+                if self.history.is_none() {
+                    self.select_none();
+                }
                 return Requests {
                     status: again,
-                    diff: None,
+                    ..Requests::default()
                 };
             }
         };
         self.status = Status::Loaded(Box::new(status));
+        // The History lists commits; the status only feeds the header there.
+        if self.history.is_some() {
+            return Requests {
+                status: again,
+                ..Requests::default()
+            };
+        }
         self.refresh_error = None;
         let files = self.files();
         let kept = self.selected.as_ref().and_then(|selected| {
             files
                 .iter()
-                .find(|(group, file)| *group == selected.group && file.path == selected.path)
-                .or_else(|| files.iter().find(|(_, file)| file.path == selected.path))
+                .find(|(target, _)| target == selected)
+                .or_else(|| {
+                    files
+                        .iter()
+                        .find(|(target, _)| target.path == selected.path)
+                })
         });
-        let next = kept.or_else(|| files.first()).map(|(group, file)| Target {
-            group: *group,
-            path: file.path.clone(),
-        });
+        let next = kept
+            .or_else(|| files.first())
+            .map(|(target, _)| target.clone());
         let diff = match next {
             Some(next) if Some(&next) == self.selected.as_ref() => None,
             Some(next) => self.select(next),
@@ -387,6 +445,7 @@ impl GitView {
         Requests {
             status: again,
             diff,
+            ..Requests::default()
         }
     }
 
@@ -396,15 +455,77 @@ impl GitView {
         self.hunk = None;
     }
 
-    /// The changed files of the shown mode, in list order (Staged, Unstaged, Untracked).
-    pub fn files(&self) -> Vec<(Group, ChangedFile)> {
+    /// The listed section.
+    pub fn section(&self) -> Section {
+        if self.history.is_some() {
+            Section::History
+        } else {
+            Section::of(self.mode)
+        }
+    }
+
+    /// Lists `section` (nothing if it is listed already): the status of a changes mode, or
+    /// the History's log.
+    pub fn show(&mut self, section: Section) -> Requests {
+        if section == self.section() {
+            return Requests::default();
+        }
+        self.select_none();
+        if section == Section::History {
+            self.history = Some(History::default());
+            return Requests {
+                log: true,
+                ..Requests::default()
+            };
+        }
+        self.history = None;
+        let mode = match section {
+            Section::Base => GitMode::Base,
+            Section::Working | Section::History => GitMode::Working,
+        };
+        // Back to the same mode: the kept status lists at once; its refresh selects a file.
+        if mode != self.mode {
+            self.mode = mode;
+            self.status = Status::Loading;
+        }
+        self.refresh_error = None;
+        Requests {
+            status: true,
+            ..Requests::default()
+        }
+    }
+
+    /// The changed files of the shown section with their diff targets, in list order (Staged,
+    /// Unstaged, Untracked; in the History, the selected commit's).
+    pub fn files(&self) -> Vec<(Target, ChangedFile)> {
+        if let Some(history) = &self.history {
+            return history
+                .files()
+                .iter()
+                .map(|file| {
+                    let target = Target {
+                        group: Group::Commit,
+                        path: file.path.clone(),
+                        commit: history.selected.clone(),
+                    };
+                    (target, file.clone())
+                })
+                .collect();
+        }
         let Status::Loaded(status) = &self.status else {
             return vec![];
         };
         let group = |group: Group, files: &[ChangedFile]| {
             files
                 .iter()
-                .map(move |file| (group, file.clone()))
+                .map(move |file| {
+                    let target = Target {
+                        group,
+                        path: file.path.clone(),
+                        commit: None,
+                    };
+                    (target, file.clone())
+                })
                 .collect::<Vec<_>>()
         };
         match self.mode {
@@ -421,23 +542,56 @@ impl GitView {
     /// Whether the commit box is on screen: Working changes of a loaded status, with changes
     /// listed or a draft typed.
     pub fn commit_box_shown(&self) -> bool {
-        self.mode == GitMode::Working
+        self.section() == Section::Working
             && matches!(self.status, Status::Loaded(_))
             && (!self.files().is_empty() || !self.commit.text.is_empty())
     }
 
-    /// The changed-file list: in Working mode each non-empty group under its title.
+    /// The changed-file list: in Working mode each non-empty group under its title; in the
+    /// History the commits, the selected one followed by its files (or why there are none).
     pub fn list_rows(&self) -> Vec<ListRow> {
         let files = self.files();
+        if let Some(history) = &self.history {
+            let mut rows = Vec::new();
+            for commit in history.commits() {
+                let expanded = history.selected.as_ref() == Some(&commit.hash);
+                rows.push(ListRow::Commit {
+                    commit: commit.clone(),
+                    expanded,
+                });
+                if !expanded {
+                    continue;
+                }
+                match &history.detail {
+                    Detail::Loaded(listed) if listed.is_empty() => {
+                        rows.push(ListRow::Note("No files changed.".into()));
+                    }
+                    Detail::Loaded(_) => rows.extend(
+                        files
+                            .iter()
+                            .map(|(target, file)| ListRow::File(target.clone(), file.clone())),
+                    ),
+                    Detail::None | Detail::Loading => rows.push(ListRow::Note("Loading…".into())),
+                    // The diff panel shows the error and Retry.
+                    Detail::Failed(_) => {
+                        rows.push(ListRow::Note("✕ Cannot list its files.".into()));
+                    }
+                }
+            }
+            return rows;
+        }
         if self.mode == GitMode::Base {
             return files
                 .into_iter()
-                .map(|(group, file)| ListRow::File(group, file))
+                .map(|(target, file)| ListRow::File(target, file))
                 .collect();
         }
         let mut rows = Vec::new();
         for group in [Group::Staged, Group::Unstaged, Group::Untracked] {
-            let members: Vec<_> = files.iter().filter(|(g, _)| *g == group).collect();
+            let members: Vec<_> = files
+                .iter()
+                .filter(|(target, _)| target.group == group)
+                .collect();
             if members.is_empty() {
                 continue;
             }
@@ -445,10 +599,79 @@ impl GitView {
             rows.extend(
                 members
                     .into_iter()
-                    .map(|(group, file)| ListRow::File(*group, file.clone())),
+                    .map(|(target, file)| ListRow::File(target.clone(), file.clone())),
             );
         }
         rows
+    }
+
+    /// Expands History commit `hash`; returns it when its files have to be read.
+    pub fn select_commit(&mut self, hash: String) -> Option<String> {
+        let show = self.history.as_mut()?.select(hash);
+        if show.is_some() {
+            self.select_none();
+        }
+        show
+    }
+
+    /// The History's `git.log` is about to be sent: its params, or `None` when one is in
+    /// flight already (or the History is not shown).
+    pub fn begin_log(&mut self) -> Option<GitLogParams> {
+        self.history.as_ref()?;
+        if self.logging {
+            self.log_again = true;
+            return None;
+        }
+        self.logging = true;
+        Some(GitLogParams {
+            project_id: self.project_id,
+            limit: GitLogParams::DEFAULT_LIMIT,
+            path: None,
+        })
+    }
+
+    /// The `git.log` answer (dropped if the History was left meanwhile). In the History the
+    /// log owns [`Self::refresh_error`] (a status refresh does not clear it there).
+    pub fn logged(&mut self, loaded: Result<Vec<Commit>, String>) -> Requests {
+        self.logging = false;
+        let again = std::mem::take(&mut self.log_again);
+        let Some(history) = &mut self.history else {
+            return Requests::default();
+        };
+        let logged = history.logged(loaded);
+        if logged.show.is_some() || history.selected.is_none() {
+            self.select_none();
+        }
+        self.refresh_error = logged.error;
+        Requests {
+            log: again,
+            show: logged.show,
+            ..Requests::default()
+        }
+    }
+
+    /// The `git.show` of commit `hash`: if it is the expanded commit, its first file's diff
+    /// is shown (unless a file of it is selected already).
+    pub fn commit_shown(&mut self, hash: &str, loaded: Result<CommitDetail, String>) -> Requests {
+        let Some(history) = &mut self.history else {
+            return Requests::default();
+        };
+        if !history.shown(hash, loaded) || self.selected.is_some() {
+            return Requests::default();
+        }
+        let first = self.files().into_iter().next();
+        Requests {
+            diff: first.and_then(|(target, _)| self.select(target)),
+            ..Requests::default()
+        }
+    }
+
+    /// The `git.show` of `hash`.
+    pub fn show_params(&self, hash: String) -> GitShowParams {
+        GitShowParams {
+            project_id: self.project_id,
+            commit: hash,
+        }
     }
 
     /// Shows `target`'s diff. Returns it when it has to be read: another file, or the same
@@ -500,22 +723,25 @@ impl GitView {
         if again { self.selected.clone() } else { None }
     }
 
-    /// Switches Working changes ↔ Against base: the list and diff load again.
+    /// Switches Working changes ↔ Against base (from the History: back to the changes it
+    /// left): the list and diff load again.
     pub fn toggle_mode(&mut self) -> Requests {
-        self.mode = match self.mode {
-            GitMode::Working => GitMode::Base,
-            GitMode::Base => GitMode::Working,
-        };
-        self.status = Status::Loading;
-        self.refresh_error = None;
-        self.select_none();
-        Requests {
-            status: true,
-            diff: None,
-        }
+        self.show(match self.section() {
+            Section::Working => Section::Base,
+            Section::Base => Section::Working,
+            Section::History => Section::of(self.mode),
+        })
     }
 
-    /// Moves the file selection or the current hunk, or toggles the mode.
+    /// Switches to the History, or back to the changes it left.
+    pub fn toggle_history(&mut self) -> Requests {
+        self.show(match self.section() {
+            Section::History => Section::of(self.mode),
+            Section::Working | Section::Base => Section::History,
+        })
+    }
+
+    /// Moves the file selection or the current hunk, or switches the section.
     pub fn key(&mut self, key: Key) -> Requests {
         match key {
             Key::Up => self.step_file(-1),
@@ -529,31 +755,44 @@ impl GitView {
                 Requests::default()
             }
             Key::ToggleMode => self.toggle_mode(),
+            Key::ToggleHistory => self.toggle_history(),
             Key::Stage(_) => Requests::default(),
         }
     }
 
+    /// The next / previous file; in the History, past the expanded commit's first / last file
+    /// the previous / next commit (its first file once listed).
     fn step_file(&mut self, by: isize) -> Requests {
         let files = self.files();
+        let at = self
+            .selected
+            .as_ref()
+            .and_then(|selected| files.iter().position(|(target, _)| target == selected));
+        let past_end = match at {
+            Some(at) => at.checked_add_signed(by).is_none_or(|to| to >= files.len()),
+            None => files.is_empty(),
+        };
+        if past_end && self.history.is_some() {
+            let show = self.history.as_mut().and_then(|history| history.step(by));
+            if show.is_some() {
+                self.select_none();
+            }
+            return Requests {
+                show,
+                ..Requests::default()
+            };
+        }
         if files.is_empty() {
             return Requests::default();
         }
-        let at = self.selected.as_ref().and_then(|selected| {
-            files
-                .iter()
-                .position(|(group, file)| *group == selected.group && file.path == selected.path)
-        });
         let to = match at {
             Some(at) => at.saturating_add_signed(by).min(files.len() - 1),
             None => 0,
         };
-        let (group, file) = &files[to];
+        let target = files[to].0.clone();
         Requests {
-            status: false,
-            diff: self.select(Target {
-                group: *group,
-                path: file.path.clone(),
-            }),
+            diff: self.select(target),
+            ..Requests::default()
         }
     }
 
@@ -586,12 +825,21 @@ impl GitView {
         self.refresh()
     }
 
-    /// The status and the selected file's diff again (shown values stay until they answer).
+    /// The status and the selected file's diff again (shown values stay until they answer);
+    /// in the History the status (for the header) and the log (a commit's diff never changes).
     /// Also used when the view is shown again, since hidden views do not follow `git.changed`.
     pub fn refresh(&mut self) -> Requests {
+        if self.history.is_some() {
+            return Requests {
+                status: true,
+                log: true,
+                ..Requests::default()
+            };
+        }
         Requests {
             status: true,
             diff: self.selected.clone(),
+            ..Requests::default()
         }
     }
 
@@ -599,7 +847,7 @@ impl GitView {
     pub fn file(&self, target: &Target) -> Option<ChangedFile> {
         self.files()
             .into_iter()
-            .find(|(group, file)| *group == target.group && file.path == target.path)
+            .find(|(listed, _)| listed == target)
             .map(|(_, file)| file)
     }
 
@@ -689,6 +937,7 @@ impl GitView {
         let also_staged = self.file(&Target {
             group: Group::Staged,
             path: target.path.clone(),
+            commit: None,
         });
         Some(Discard {
             project_id: self.project_id,
@@ -799,6 +1048,7 @@ mod tests {
         Target {
             group,
             path: path.into(),
+            commit: None,
         }
     }
 
@@ -859,6 +1109,7 @@ mod tests {
             .map(|row| match row {
                 ListRow::Header(group, count) => format!("{} {count}", group.title()),
                 ListRow::File(_, file) => file.path.clone(),
+                ListRow::Commit { .. } | ListRow::Note(_) => unreachable!("not in History"),
             })
             .collect();
         assert_eq!(
@@ -975,7 +1226,10 @@ mod tests {
         assert_eq!(requests.diff, Some(target(Group::Base, "x.rs")));
         assert_eq!(
             view.list_rows(),
-            [ListRow::File(Group::Base, file("x.rs", ChangeKind::Added))]
+            [ListRow::File(
+                target(Group::Base, "x.rs"),
+                file("x.rs", ChangeKind::Added)
+            )]
         );
     }
 
@@ -1074,6 +1328,7 @@ mod tests {
             Requests {
                 status: true,
                 diff: Some(target(Group::Staged, "a.rs")),
+                ..Requests::default()
             }
         );
     }
@@ -1210,6 +1465,7 @@ mod tests {
             Requests {
                 status: true,
                 diff: Some(target(Group::Staged, "a.rs")),
+                ..Requests::default()
             }
         );
     }
@@ -1250,6 +1506,169 @@ mod tests {
         assert_eq!(counts(&binary), Some((1, 0)));
         binary.added = None;
         assert_eq!(counts(&binary), None);
+    }
+
+    fn commit(hash: &str) -> Commit {
+        Commit {
+            hash: hash.into(),
+            parents: vec![],
+            author_name: "Ann".into(),
+            author_email: "ann@example.com".into(),
+            authored_at: 0,
+            summary: format!("commit {hash}"),
+            body: String::new(),
+        }
+    }
+
+    fn detail(hash: &str, paths: &[&str]) -> CommitDetail {
+        CommitDetail {
+            commit: commit(hash),
+            files: paths
+                .iter()
+                .map(|path| file(path, ChangeKind::Modified))
+                .collect(),
+        }
+    }
+
+    fn commit_target(hash: &str, path: &str) -> Target {
+        Target {
+            group: Group::Commit,
+            path: path.into(),
+            commit: Some(hash.into()),
+        }
+    }
+
+    /// [`loaded`] switched to the History, with commits `b` (x, y) and `a` (z) listed and
+    /// `b`'s first file selected.
+    fn history() -> GitView {
+        let mut view = loaded();
+        let requests = view.key(Key::ToggleHistory);
+        assert!(requests.log);
+        assert_eq!(view.section(), Section::History);
+        assert_eq!(view.selected, None);
+        let params = view.begin_log().unwrap();
+        assert_eq!(params.limit, 50);
+        let requests = view.logged(Ok(vec![commit("b"), commit("a")]));
+        assert_eq!(requests.show.as_deref(), Some("b"));
+        let requests = view.commit_shown("b", Ok(detail("b", &["x", "y"])));
+        assert_eq!(requests.diff, Some(commit_target("b", "x")));
+        view
+    }
+
+    fn history_labels(view: &GitView) -> Vec<String> {
+        view.list_rows()
+            .iter()
+            .map(|row| match row {
+                ListRow::Commit { commit, expanded } => format!("{} {expanded}", commit.hash),
+                ListRow::File(target, _) => format!("  {}", target.path),
+                ListRow::Note(note) => format!("  {note}"),
+                ListRow::Header(group, _) => group.title().to_owned(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_history_lists_commits_with_the_selected_ones_files() {
+        let mut view = history();
+        assert_eq!(history_labels(&view), ["b true", "  x", "  y", "a false"]);
+        assert!(!view.commit_box_shown());
+        // The commit's diff asks for that commit's file; nothing stages it.
+        let params = commit_target("b", "x").params(view.project_id);
+        assert_eq!(params.commit.as_deref(), Some("b"));
+        assert_eq!(view.stage_key(Stage::Stage), None);
+        assert_eq!(view.discard(&commit_target("b", "x")), None);
+        // Another commit: loading, then its first file.
+        assert_eq!(view.select_commit("a".into()).as_deref(), Some("a"));
+        assert_eq!(view.selected, None);
+        assert_eq!(history_labels(&view), ["b false", "a true", "  Loading…"]);
+        // A late answer for `b` is dropped.
+        assert_eq!(
+            view.commit_shown("b", Ok(detail("b", &["x"]))),
+            Requests::default()
+        );
+        let requests = view.commit_shown("a", Ok(detail("a", &[])));
+        assert_eq!(requests, Requests::default());
+        assert_eq!(
+            history_labels(&view),
+            ["b false", "a true", "  No files changed."]
+        );
+    }
+
+    #[test]
+    fn moving_past_a_commits_files_moves_to_the_next_commit() {
+        let mut view = history();
+        assert_eq!(view.key(Key::Up), Requests::default(), "already first");
+        assert_eq!(view.key(Key::Down).diff, Some(commit_target("b", "y")));
+        let requests = view.key(Key::Down);
+        assert_eq!(requests.show.as_deref(), Some("a"));
+        assert_eq!(view.selected, None);
+        view.commit_shown("a", Ok(detail("a", &["z"])));
+        assert_eq!(view.key(Key::Down), Requests::default(), "last commit");
+        assert_eq!(view.key(Key::Up).show.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn the_history_refreshes_its_log_and_goes_back_to_the_changes_it_left() {
+        let mut view = history();
+        assert_eq!(
+            view.apply(&Event::GitChanged(GitChangedEvent {
+                project_id: view.project_id
+            })),
+            Requests {
+                status: true,
+                log: true,
+                ..Requests::default()
+            }
+        );
+        // The status only feeds the header: the selection stays.
+        view.begin_status();
+        assert_eq!(view.status_loaded(Ok(working())), Requests::default());
+        assert_eq!(view.selected, Some(commit_target("b", "x")));
+        // A new commit on top: the selection stays.
+        view.begin_log();
+        let requests = view.logged(Ok(vec![commit("c"), commit("b"), commit("a")]));
+        assert_eq!(requests, Requests::default());
+        assert_eq!(view.selected, Some(commit_target("b", "x")));
+        // `b` back to Working changes: the kept status lists at once, its refresh selects.
+        let requests = view.key(Key::ToggleMode);
+        assert_eq!(view.section(), Section::Working);
+        assert!(requests.status);
+        assert!(matches!(view.status, Status::Loaded(_)));
+        view.begin_status();
+        let requests = view.status_loaded(Ok(working()));
+        assert_eq!(requests.diff, Some(target(Group::Staged, "a.rs")));
+        // From Against base, History and back return to Against base.
+        view.show(Section::Base);
+        view.toggle_history();
+        assert_eq!(view.begin_log().map(|params| params.path), Some(None));
+        view.toggle_history();
+        assert_eq!(view.section(), Section::Base);
+        // A late log answer after leaving is dropped.
+        assert_eq!(view.logged(Ok(vec![commit("a")])), Requests::default());
+        // Left and re-entered while a log is in flight: no second log until it answers, then
+        // one more (the answer may predate re-entering).
+        view.toggle_history();
+        assert!(view.begin_log().is_some());
+        view.toggle_history();
+        view.toggle_history();
+        assert_eq!(view.begin_log(), None);
+        let requests = view.logged(Ok(vec![commit("a")]));
+        assert!(requests.log);
+        assert!(view.begin_log().is_some());
+    }
+
+    #[test]
+    fn a_status_refresh_in_the_history_keeps_a_failed_logs_error() {
+        let mut view = history();
+        view.begin_log();
+        view.logged(Err("index.lock".into()));
+        assert_eq!(view.refresh_error.as_deref(), Some("index.lock"));
+        view.begin_status();
+        view.status_loaded(Ok(working()));
+        assert_eq!(view.refresh_error.as_deref(), Some("index.lock"));
+        view.begin_log();
+        view.logged(Ok(vec![commit("b")]));
+        assert_eq!(view.refresh_error, None);
     }
 
     #[test]

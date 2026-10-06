@@ -19,6 +19,7 @@ pub mod docs;
 pub mod files_view;
 pub mod follow_up;
 pub mod git_actions;
+pub mod git_history;
 pub mod git_view;
 pub mod highlight;
 pub mod history;

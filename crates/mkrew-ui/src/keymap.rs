@@ -72,6 +72,8 @@ pub enum Command {
     ShowGit,
     /// Git only: switch between Working changes and Against base.
     GitToggleMode,
+    /// Git only: switch to the commit History and back.
+    GitToggleHistory,
     /// Git only: the next / previous hunk of the shown diff.
     GitNextHunk,
     GitPreviousHunk,
@@ -156,6 +158,7 @@ impl Command {
             Command::ToggleIgnored,
             Command::ShowGit,
             Command::GitToggleMode,
+            Command::GitToggleHistory,
             Command::GitNextHunk,
             Command::GitPreviousHunk,
             Command::GitStage,
@@ -211,6 +214,7 @@ impl Command {
             Command::ToggleIgnored => "toggle_ignored".into(),
             Command::ShowGit => "show_git".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
+            Command::GitToggleHistory => "git_toggle_history".into(),
             Command::GitNextHunk => "git_next_hunk".into(),
             Command::GitPreviousHunk => "git_previous_hunk".into(),
             Command::GitStage => "git_stage".into(),
@@ -271,6 +275,7 @@ impl Command {
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::ShowGit => "ctrl-shift-5".into(),
             Command::GitToggleMode => "b".into(),
+            Command::GitToggleHistory => "h".into(),
             Command::GitNextHunk => "n".into(),
             Command::GitPreviousHunk => "p".into(),
             Command::GitStage => "s".into(),
@@ -296,6 +301,7 @@ impl Command {
             }
             Command::ToggleIgnored => Some(FILES_CONTEXT),
             Command::GitToggleMode
+            | Command::GitToggleHistory
             | Command::GitNextHunk
             | Command::GitPreviousHunk
             | Command::GitStage
@@ -600,6 +606,7 @@ mod tests {
         // SPEC §13 Git single keys, only while the Git list has focus.
         for (keys, command) in [
             ("b", Command::GitToggleMode),
+            ("h", Command::GitToggleHistory),
             ("n", Command::GitNextHunk),
             ("p", Command::GitPreviousHunk),
             ("s", Command::GitStage),
