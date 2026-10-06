@@ -111,6 +111,21 @@ impl Card {
         }
     }
 
+    /// Whether the card offers "Run with…" (SPEC §20B.6): a Todo or Review card without a live
+    /// session.
+    pub fn can_run_with(&self) -> bool {
+        matches!(self.status, TaskStatus::Todo | TaskStatus::Review)
+            && self
+                .session
+                .as_ref()
+                .is_none_or(|session| session.state == SessionState::Exited)
+    }
+
+    /// The profile the card runs with (`None`: neither the task nor the workspace has one).
+    pub fn agent_profile(&self) -> Option<&str> {
+        Some(self.agent.as_str()).filter(|&agent| agent != DEFAULT_AGENT_LABEL)
+    }
+
     /// Whether the card offers "Undo task": a finished (Review / Done) run with a checkpoint.
     pub fn can_undo(&self) -> bool {
         self.checkpoint && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
@@ -354,6 +369,16 @@ impl Board {
     pub fn can_run(&self, task_id: Ulid) -> bool {
         self.task(task_id)
             .is_some_and(|task| task.status == TaskStatus::Todo)
+    }
+
+    /// Whether "Run with…" may still run `task_id` (see [`Card::can_run_with`]).
+    pub fn can_run_with(&self, task_id: Ulid, sessions: &[Session]) -> bool {
+        self.task(task_id).is_some_and(|task| {
+            matches!(task.status, TaskStatus::Todo | TaskStatus::Review)
+                && !sessions.iter().any(|session| {
+                    session.task_id == Some(task_id) && session.state != SessionState::Exited
+                })
+        })
     }
 
     /// The card Ctrl+Enter runs on `project_id`'s board: the selected one, if it is that
@@ -807,6 +832,46 @@ mod tests {
                 vec![false, false]
             ]
         );
+    }
+
+    #[test]
+    fn run_with_is_offered_on_todo_and_review_cards_without_a_live_session() {
+        let api = Ulid::new();
+        let tasks: Vec<Task> = COLUMNS
+            .iter()
+            .map(|&status| task(api, "t", status, 1.0))
+            .collect();
+        let review = tasks[3].clone();
+        let mut board = Board::default();
+        board.load(tasks);
+        let offered = |sessions: &[Session]| -> Vec<bool> {
+            board
+                .columns(api, None, sessions)
+                .iter()
+                .map(|column| column.cards[0].can_run_with())
+                .collect()
+        };
+        assert_eq!(offered(&[]), [true, false, false, true, false]);
+        let first = |default_agent| {
+            board.columns(api, default_agent, &[])[0].cards[0]
+                .agent_profile()
+                .map(str::to_owned)
+        };
+        assert_eq!(first(None), None);
+        assert_eq!(first(Some("codex")), Some("codex".to_owned()));
+        // A Review agent still at its prompt is live.
+        let mut live = session(&review, 1, None);
+        live.state = SessionState::Done;
+        assert_eq!(offered(&[live.clone()]), [true, false, false, false, false]);
+        assert!(!board.can_run_with(review.id, &[live]));
+        let mut exited = session(&review, 1, Some(2));
+        exited.state = SessionState::Exited;
+        assert_eq!(
+            offered(&[exited.clone()]),
+            [true, false, false, true, false]
+        );
+        assert!(board.can_run_with(review.id, &[exited]));
+        assert!(!board.can_run_with(Ulid::new(), &[]));
     }
 
     #[test]

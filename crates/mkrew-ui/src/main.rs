@@ -53,7 +53,7 @@ use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
     GIT_CONTEXT, Keymap, KeymapError, Run,
 };
-use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
+use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::peek::{self, Peek, Place};
 use mkrew_ui::preview;
@@ -223,6 +223,8 @@ struct Shell {
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
     starting: HashSet<Ulid>,
+    /// The open "Run with…" picker of one card (SPEC §20B.6).
+    run_with: Option<RunWith>,
     /// The follow-up draft of one running / needs-input card.
     follow_up: Option<FollowUp>,
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
@@ -505,6 +507,7 @@ impl Shell {
             card_error: None,
             selected_card: None,
             starting: HashSet::new(),
+            run_with: None,
             follow_up: None,
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
@@ -3916,6 +3919,105 @@ impl Shell {
         .detach();
     }
 
+    /// "Run with…" on a card: opens its profile picker (closing any other) and lists the agent
+    /// profiles for it.
+    fn open_run_with(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.selected_card = Some(task_id);
+        self.run_with = Some(RunWith::new(task_id));
+        cx.notify();
+        let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
+        cx.spawn_in(window, async move |this, cx| {
+            let agents = match listed.await {
+                Ok(listed) => Agents::Loaded(listed.profiles),
+                Err(error) => Agents::Failed(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                // Unless the picker closed (or moved to another card) meanwhile.
+                if let Some(menu) = shell
+                    .run_with
+                    .as_mut()
+                    .filter(|menu| menu.task_id == task_id)
+                {
+                    menu.agents = agents;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// A profile picked in "Run with…" (SPEC §20B.6): `task.update` of the task's agent, then
+    /// `task.run`; the run waits for the update, and a failure stops the sequence and shows on
+    /// the board.
+    fn run_task_with(
+        &mut self,
+        task_id: Ulid,
+        profile: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.run_with = None;
+        cx.notify();
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(task) = self
+            .board
+            .task(task_id)
+            .filter(|_| {
+                // A run may have started since the picker opened.
+                self.board.can_run_with(task_id, self.sidebar.sessions())
+                    && !self.starting.contains(&task_id)
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let project_id = task.project_id;
+        let requests = lifecycle::run_with_requests(&task, &profile);
+        self.starting.insert(task_id);
+        self.card_error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let mut failed = None;
+            for request in requests {
+                let result = match request {
+                    Request::TaskUpdate(_) => match connection.call::<Task>(request).await {
+                        Ok(updated) => {
+                            // Shown at once, without waiting for the `task.updated` echo.
+                            let _ = this.update(cx, |shell, cx| {
+                                shell.board.apply(&Event::TaskUpdated(updated));
+                                cx.notify();
+                            });
+                            Ok(())
+                        }
+                        Err(error) => Err(format!("Cannot change the task's agent: {error:#}")),
+                    },
+                    request => connection
+                        .call::<SessionSpawnResult>(request)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| format!("Cannot run the task: {error:#}")),
+                };
+                if let Err(error) = result {
+                    failed = Some(error);
+                    break;
+                }
+            }
+            let _ = this.update(cx, |shell, cx| {
+                shell.starting.remove(&task_id);
+                if let Some(error) = failed {
+                    tracing::warn!(%task_id, "run with {profile} failed: {error}");
+                    shell.card_error = Some((project_id, error));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// A click on a card selects it and shows its session's terminal (none for Todo cards).
     fn card_clicked(
         &mut self,
@@ -5658,82 +5760,20 @@ impl Shell {
             .iter()
             .find(|project| project.id == project_id)
             .and_then(|project| project.default_agent.as_deref());
-        let muted_line = |text: String| {
-            div()
-                .px(px(space::S))
-                .py(px(space::XS))
-                .text_size(px(font_size::META))
-                .text_color(rgb(theme.text_muted))
-                .child(text)
-        };
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
                 .my(px(space::XS))
                 .bg(rgb(theme.border))
         };
-        let agents: Vec<gpui::AnyElement> = match &menu.agents {
-            Agents::Loading => vec![muted_line("Loading agents…".into()).into_any_element()],
-            Agents::Failed(error) => {
-                vec![
-                    div()
-                        .flex()
-                        .pl(px(space::S))
-                        .child(
-                            div()
-                                .py(px(space::XS))
-                                .text_size(px(font_size::META))
-                                .text_color(rgb(theme.status_exited))
-                                .child("✕"),
-                        )
-                        .child(
-                            muted_line(format!("Cannot list the agents: {error}"))
-                                .pl(px(space::XS)),
-                        )
-                        .into_any_element(),
-                ]
-            }
-            Agents::Loaded(profiles) => {
-                let choices = workspace_menu::agent_choices(profiles, current);
-                if choices.is_empty() {
-                    vec![
-                        muted_line("No agent profiles. Add one to the profiles folder.".into())
-                            .into_any_element(),
-                    ]
-                } else {
-                    choices
-                        .into_iter()
-                        .map(|choice| {
-                            let id = SharedString::from(format!("default-agent-{}", choice.id));
-                            let agent = choice.id;
-                            menu_item(id, theme)
-                                .child(
-                                    div()
-                                        .w(px(space::M))
-                                        .text_color(rgb(theme.accent))
-                                        .child(if choice.selected { "✓" } else { "" }),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .when(choice.selected, |el| {
-                                            el.text_color(rgb(theme.text))
-                                                .font_weight(FontWeight(weight::MEDIUM))
-                                        })
-                                        .child(choice.label),
-                                )
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.set_default_agent(project_id, agent.clone(), window, cx);
-                                }))
-                                .into_any_element()
-                        })
-                        .collect()
-                }
-            }
-        };
+        let agents = agent_rows(
+            &menu.agents,
+            current,
+            "default-agent",
+            theme,
+            cx,
+            move |shell, agent, window, cx| shell.set_default_agent(project_id, agent, window, cx),
+        );
         let panel = div()
             .id("workspace-menu")
             .w(px(theme::MENU_WIDTH))
@@ -6209,6 +6249,7 @@ impl Shell {
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
             conflicts: &self.conflicts,
+            run_with: self.run_with.as_ref(),
         };
         div()
             .flex_1()
@@ -11710,6 +11751,86 @@ fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
+/// The rows of an agent-profile list in a menu (`current` checked): loading, the error, an
+/// empty hint or one item per agent; a click calls `pick` with the profile id.
+fn agent_rows(
+    agents: &Agents,
+    current: Option<&str>,
+    id_prefix: &str,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+    pick: impl Fn(&mut Shell, String, &mut Window, &mut Context<'_, Shell>) + Clone + 'static,
+) -> Vec<gpui::AnyElement> {
+    let muted_line = |text: String| {
+        div()
+            .px(px(space::S))
+            .py(px(space::XS))
+            .text_size(px(font_size::META))
+            .text_color(rgb(theme.text_muted))
+            .child(text)
+    };
+    match agents {
+        Agents::Loading => vec![muted_line("Loading agents…".into()).into_any_element()],
+        Agents::Failed(error) => {
+            vec![
+                div()
+                    .flex()
+                    .pl(px(space::S))
+                    .child(
+                        div()
+                            .py(px(space::XS))
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.status_exited))
+                            .child("✕"),
+                    )
+                    .child(muted_line(format!("Cannot list the agents: {error}")).pl(px(space::XS)))
+                    .into_any_element(),
+            ]
+        }
+        Agents::Loaded(profiles) => {
+            let choices = workspace_menu::agent_choices(profiles, current);
+            if choices.is_empty() {
+                vec![
+                    muted_line("No agent profiles. Add one to the profiles folder.".into())
+                        .into_any_element(),
+                ]
+            } else {
+                choices
+                    .into_iter()
+                    .map(|choice| {
+                        let id = SharedString::from(format!("{id_prefix}-{}", choice.id));
+                        let agent = choice.id;
+                        let pick = pick.clone();
+                        menu_item(id, theme)
+                            .child(
+                                div()
+                                    .w(px(space::M))
+                                    .text_color(rgb(theme.accent))
+                                    .child(if choice.selected { "✓" } else { "" }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .when(choice.selected, |el| {
+                                        el.text_color(rgb(theme.text))
+                                            .font_weight(FontWeight(weight::MEDIUM))
+                                    })
+                                    .child(choice.label),
+                            )
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                pick(shell, agent.clone(), window, cx);
+                            }))
+                            .into_any_element()
+                    })
+                    .collect()
+            }
+        }
+    }
+}
+
 fn workspace_row(
     row: WorkspaceRow,
     active: bool,
@@ -11987,6 +12108,7 @@ struct CardContext<'a> {
     /// Shortcut label of Run on the selected card.
     run_keys: String,
     conflicts: &'a Conflicts,
+    run_with: Option<&'a RunWith>,
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
@@ -12121,6 +12243,8 @@ fn task_card(
     let action = card.action();
     let can_undo = card.can_undo();
     let can_view_changes = card.can_view_changes();
+    let can_run_with = card.can_run_with() && !cards.starting.contains(&card.task_id);
+    let current_agent = card.agent_profile().map(str::to_owned);
     let opens = card.opens_session();
     let follow_up_session = card.follow_up_session();
     let task_id = card.task_id;
@@ -12312,11 +12436,24 @@ fn task_card(
                         shell.view_task_changes(task_id, window, cx);
                     }))
             });
+            let run_with = can_run_with.then(|| {
+                run_with_button(
+                    task_id,
+                    current_agent.as_deref(),
+                    group.clone(),
+                    cards,
+                    theme,
+                    cx,
+                )
+            });
             el.child(
                 div()
                     .flex()
+                    // A Review card can show four buttons; a narrow column wraps them.
+                    .flex_wrap()
                     .justify_end()
                     .gap(px(space::S))
+                    .children(run_with)
                     .children(changes)
                     .children(undo)
                     .children(
@@ -12326,6 +12463,82 @@ fn task_card(
             )
         })
         .into_any_element()
+}
+
+/// "Run with…" on a Todo / Review card (SPEC §20B.6): shown on hover (always while its picker
+/// is open); the picker of agent profiles drops down from below it, a click outside closes it.
+fn run_with_button(
+    task_id: Ulid,
+    current: Option<&str>,
+    group: SharedString,
+    cards: &CardContext<'_>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Div {
+    let menu = cards.run_with.filter(|menu| menu.task_id == task_id);
+    // One step above the card's own `surface_raised`, like its other quiet buttons.
+    let button = quiet_button("card-run-with", "Run with…", theme, theme.border)
+        .when(menu.is_none(), |el| {
+            el.opacity(opacity::HIDDEN)
+                .group_hover(group, |style| style.opacity(opacity::FULL))
+        })
+        .tooltip(tooltip(
+            theme,
+            "Run with another agent: changes the task's agent, then runs it",
+            "",
+        ))
+        // An open picker already closed on this mouse down (outside it): the click reopens it.
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            cx.stop_propagation();
+            shell.open_run_with(task_id, window, cx);
+        }));
+    let Some(menu) = menu else {
+        return div().child(button);
+    };
+    let agents = agent_rows(
+        &menu.agents,
+        current,
+        "run-with",
+        theme,
+        cx,
+        move |shell, agent, window, cx| {
+            // Not a click on the card under the menu (which would open its terminal).
+            cx.stop_propagation();
+            shell.run_task_with(task_id, agent, window, cx);
+        },
+    );
+    let panel = div()
+        .id("run-with-menu")
+        .w(px(theme::MENU_WIDTH))
+        .flex()
+        .flex_col()
+        .p(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .bg(rgb(theme.surface_raised))
+        .shadow_md()
+        .font_family(theme::UI_FONT)
+        .occlude()
+        .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+            shell.run_with = None;
+            cx.notify();
+        }))
+        .child(
+            div()
+                .px(px(space::S))
+                .pt(px(space::XS))
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child("Run with"),
+        )
+        .children(agents);
+    div().child(button).child(deferred(
+        anchored()
+            .snap_to_window_with_margin(px(space::S))
+            .child(div().pt(px(space::XS)).child(panel)),
+    ))
 }
 
 /// The button of a card's column (Run / Approve); Run is disabled while its run starts.

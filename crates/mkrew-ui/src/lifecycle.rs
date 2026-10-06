@@ -1,8 +1,13 @@
 //! Pane lifecycle decisions (SPEC §10): what a new pane spawns, what closing a pane does to its
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
-use mkrew_protocol::{Session, SessionKind, SessionSpawnParams, SessionState, TaskRunParams};
+use mkrew_protocol::{
+    Request, Session, SessionKind, SessionSpawnParams, SessionState, Task, TaskRunParams,
+    TaskUpdateParams,
+};
 use ulid::Ulid;
+
+use crate::workspace_menu::Agents;
 
 /// Above this many running sessions in one workspace the tab bar shows a warning.
 pub const RUNNING_WARN_ABOVE: usize = 12;
@@ -38,6 +43,41 @@ pub fn run_params(task_id: Ulid) -> TaskRunParams {
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
     }
+}
+
+/// The open "Run with…" picker of one card (SPEC §20B.6): the agent profiles, fetched when it
+/// opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunWith {
+    pub task_id: Ulid,
+    pub agents: Agents,
+}
+
+impl RunWith {
+    pub fn new(task_id: Ulid) -> Self {
+        Self {
+            task_id,
+            agents: Agents::Loading,
+        }
+    }
+}
+
+/// "Run with `profile`" on `task`'s card, in the order they are sent (each after the previous
+/// one succeeded): `task.update` of its agent (skipped when it already is `profile`), then
+/// `task.run`.
+pub fn run_with_requests(task: &Task, profile: &str) -> Vec<Request> {
+    let update = (task.agent_profile.as_deref() != Some(profile)).then(|| {
+        Request::TaskUpdate(TaskUpdateParams {
+            task_id: task.id,
+            title: None,
+            prompt: None,
+            agent_profile: Some(Some(profile.to_owned())),
+        })
+    });
+    update
+        .into_iter()
+        .chain([Request::TaskRun(run_params(task.id))])
+        .collect()
 }
 
 /// What a split shortcut starts next to the focused pane: the same kind of session (an agent
@@ -147,6 +187,40 @@ mod tests {
         let run = run_params(task);
         assert_eq!(run.task_id, task);
         assert_eq!((run.cols, run.rows), (shell.cols, shell.rows));
+    }
+
+    #[test]
+    fn run_with_updates_the_agent_then_runs() {
+        let mut task = Task {
+            id: Ulid::new(),
+            project_id: Ulid::new(),
+            title: "t".into(),
+            prompt: "p".into(),
+            agent_profile: None,
+            status: mkrew_protocol::TaskStatus::Review,
+            position: 1.0,
+            checkpoint: None,
+            error_flag: false,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let update = Request::TaskUpdate(TaskUpdateParams {
+            task_id: task.id,
+            title: None,
+            prompt: None,
+            agent_profile: Some(Some("codex".into())),
+        });
+        let run = Request::TaskRun(run_params(task.id));
+        assert_eq!(
+            run_with_requests(&task, "codex"),
+            vec![update.clone(), run.clone()]
+        );
+        task.agent_profile = Some("claude".into());
+        assert_eq!(run_with_requests(&task, "codex"), vec![update, run.clone()]);
+        // Already its agent: only the run.
+        task.agent_profile = Some("codex".into());
+        assert_eq!(run_with_requests(&task, "codex"), vec![run]);
+        assert_eq!(RunWith::new(task.id).agents, Agents::Loading);
     }
 
     #[test]
