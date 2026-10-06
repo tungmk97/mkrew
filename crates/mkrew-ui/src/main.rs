@@ -210,6 +210,8 @@ struct Shell {
     /// Keep the selected changed file and the current hunk in view.
     git_files_scroll: UniformListScrollHandle,
     git_diff_scroll: UniformListScrollHandle,
+    /// The open "Discard changes" confirmation of a Git view file (modal).
+    git_discard: Option<git_view::Discard>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
@@ -358,6 +360,7 @@ impl Shell {
                 shell.workspace_menu = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
+                shell.git_discard = None;
                 shell.history = None;
                 shell.history_pane = None;
                 shell.doc_dialog = None;
@@ -423,6 +426,7 @@ impl Shell {
             git_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
             git_diff_scroll: UniformListScrollHandle::new(),
+            git_discard: None,
             task_dialog: None,
             undo_dialog: None,
             history: None,
@@ -1308,6 +1312,12 @@ impl Shell {
             return;
         };
         cx.stop_propagation();
+        if let git_view::Key::Stage(stage) = key {
+            if let Some(change) = self.git_view(project_id).stage_key(stage) {
+                self.stage_git(project_id, change, window, cx);
+            }
+            return;
+        }
         let view = self.git_view(project_id);
         let requests = view.key(key);
         let selected = view.selected.clone();
@@ -1357,6 +1367,127 @@ impl Shell {
         });
         self.git_view(project_id).zed_error = error;
         cx.notify();
+    }
+
+    /// `git.stage` / `git.unstage` of a file or hunk; then the list and diff are read again
+    /// (a failure shows under the diff header).
+    fn stage_git(
+        &mut self,
+        project_id: Ulid,
+        change: git_view::StageRequest,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if !self.git_view(project_id).begin_stage() {
+            return;
+        }
+        cx.notify();
+        let stage = change.stage;
+        let sent = connection.request(change.request());
+        cx.spawn_in(window, async move |this, cx| {
+            let result = match sent.await {
+                Ok(Outcome::Result(_)) => Ok(()),
+                Ok(Outcome::Error(body)) => Err(body.message),
+                Err(error) => Err(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &result {
+                    tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
+                }
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                let requests = view.staged(result);
+                shell.git_requests(project_id, requests, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// "Discard…" on an Unstaged / Untracked file: selects it (so its diff, what is lost,
+    /// loads) and opens the confirmation.
+    fn open_git_discard(
+        &mut self,
+        project_id: Ulid,
+        target: git_view::Target,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(discard) = self.git_view(project_id).discard(&target) else {
+            return;
+        };
+        self.select_git_file(project_id, target, window, cx);
+        self.git_discard = Some(discard);
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    fn close_git_discard(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.git_discard = None;
+        window.focus(&self.git_focus, cx);
+        cx.notify();
+    }
+
+    fn git_discard_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        if undo_dialog::cancels(&event.keystroke) {
+            self.close_git_discard(window, cx);
+        }
+    }
+
+    /// The destructive confirm: `git.discard` of the dialog's file, `confirm: true`.
+    fn confirm_git_discard(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(dialog) = self.git_discard.as_mut().filter(|dialog| !dialog.busy) else {
+            return;
+        };
+        dialog.busy = true;
+        dialog.error = None;
+        let project_id = dialog.project_id;
+        let discarded = connection.request(Request::GitDiscard(dialog.params()));
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let failure = match discarded.await {
+                Ok(Outcome::Result(_)) => None,
+                Ok(Outcome::Error(body)) => Some(body.message),
+                Err(error) => Some(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let open = shell
+                    .git_discard
+                    .as_mut()
+                    .filter(|_| shell.dialog_serial == serial);
+                match failure {
+                    None => {
+                        if open.is_some() {
+                            shell.close_git_discard(window, cx);
+                        }
+                        shell.refresh_git(project_id, window, cx);
+                    }
+                    Some(error) => {
+                        tracing::warn!(%project_id, "git.discard failed: {error}");
+                        if let Some(dialog) = open {
+                            dialog.busy = false;
+                            dialog.error = Some(error);
+                        }
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// "Review in Docs" for an opened `.md` file: the Docs view shows it.
@@ -1846,6 +1977,7 @@ impl Shell {
     fn modal_open(&self) -> bool {
         self.task_dialog.is_some()
             || self.undo_dialog.is_some()
+            || self.git_discard.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.quick_open.is_some()
@@ -4755,6 +4887,33 @@ impl Shell {
                     .tooltip(tooltip(theme, "Next / previous hunk", git_view::HUNK_KEYS))
                     .child(label)
             }))
+            .children(view.file_change(&selected).map(|change| {
+                let stage = change.stage;
+                let (label, tip) = match stage {
+                    git_view::Stage::Stage => ("Stage file", "Stage the whole file"),
+                    git_view::Stage::Unstage => ("Unstage file", "Unstage the whole file"),
+                };
+                button("git-stage-file", label, theme, false)
+                    .flex_none()
+                    .tooltip(tooltip(theme, tip, stage.key()))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        window.focus(&shell.git_focus, cx);
+                        shell.stage_git(project_id, change.clone(), window, cx);
+                    }))
+            }))
+            .children(view.discard(&selected).map(|_| {
+                let target = selected.clone();
+                button("git-discard", "Discard…", theme, false)
+                    .flex_none()
+                    .tooltip(tooltip(
+                        theme,
+                        "Discard this file's changes (asks first)",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.open_git_discard(project_id, target.clone(), window, cx);
+                    }))
+            }))
             .child(zed_button("git-zed", false));
         let body = match &view.diff {
             git_view::Diff::None | git_view::Diff::Loading => {
@@ -4809,17 +4968,32 @@ impl Shell {
             git_view::Diff::Shown(shown) => {
                 let shown = Rc::clone(shown);
                 let current = view.hunk;
+                // Hunk headers get a stage / unstage action when the file can go by hunk.
+                let hunk_stage = view.hunk_change(0).map(|change| change.stage);
                 let line_height = theme.terminal_font_size * theme.terminal_line_height;
                 let row_theme = theme.clone();
-                uniform_list("git-diff", shown.rows.len(), move |range, _, _| {
-                    range
-                        .filter_map(|index| shown.rows.get(index))
-                        .map(|row| {
-                            git_diff_row(&shown, row, current, line_height, &row_theme)
-                                .into_any_element()
-                        })
-                        .collect()
-                })
+                let rows = shown.rows.len();
+                uniform_list(
+                    "git-diff",
+                    rows,
+                    cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                        range
+                            .filter_map(|index| shown.rows.get(index))
+                            .map(|row| {
+                                let frame =
+                                    git_diff_row(&shown, row, current, line_height, &row_theme);
+                                match (row, hunk_stage) {
+                                    (git_view::DiffRow::Hunk(hunk), Some(stage)) => frame
+                                        .child(hunk_stage_button(
+                                            project_id, *hunk, stage, &row_theme, cx,
+                                        ))
+                                        .into_any_element(),
+                                    _ => frame.into_any_element(),
+                                }
+                            })
+                            .collect()
+                    }),
+                )
                 .track_scroll(&self.git_diff_scroll)
                 .flex_1()
                 .min_h_0()
@@ -4833,6 +5007,11 @@ impl Shell {
             .child(header)
             .children(view.zed_error.clone().map(|error| {
                 notice(theme.text, format!("✕ {error}"))
+                    .px(px(space::L))
+                    .pb(px(space::S))
+            }))
+            .children(view.stage_error.clone().map(|error| {
+                notice(theme.text, format!("✕ Staging failed: {error}"))
                     .px(px(space::L))
                     .pb(px(space::S))
             }))
@@ -5677,6 +5856,180 @@ impl Shell {
                     }),
             );
         Self::modal_shade("undo-dialog-shade", panel, cx)
+    }
+
+    /// "Discard changes?" of a Git view file: what is lost (the file's diff), Cancel and the
+    /// danger confirm, enabled once that diff is shown. Looks like the undo dialog.
+    fn render_git_discard(
+        &self,
+        dialog: &git_view::Discard,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let view = self.git.get(&dialog.project_id);
+        let shown = view.and_then(|view| view.shown_diff(&dialog.target));
+        let muted = |text: String| {
+            div()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        // The file left its group meanwhile (e.g. an agent reverted or staged it).
+        let gone = view.is_none_or(|view| view.file(&dialog.target).is_none());
+        let failed = view.and_then(|view| match &view.diff {
+            git_view::Diff::Failed(error) if view.selected.as_ref() == Some(&dialog.target) => {
+                Some(error.clone())
+            }
+            _ => None,
+        });
+        let body = match (&shown, failed) {
+            _ if gone => muted("This file no longer has these changes.".into()).into_any_element(),
+            (Some(shown), _) if shown.diff.binary || shown.diff.too_large => muted(format!(
+                "{} {} lines added, {} removed.",
+                if shown.diff.binary {
+                    "A binary file."
+                } else {
+                    "Too large to show here."
+                },
+                shown.diff.added,
+                shown.diff.removed
+            ))
+            .into_any_element(),
+            (Some(shown), _) => {
+                let line_height = theme.terminal_font_size * theme.terminal_line_height;
+                let more = shown
+                    .rows
+                    .len()
+                    .saturating_sub(git_view::DISCARD_PREVIEW_ROWS);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .child(
+                        // `surface`, so hunk rows (`diff_hunk_header`) show as a band.
+                        div()
+                            .id("git-discard-diff")
+                            .max_h(px(theme::UNDO_DIFF_HEIGHT))
+                            .flex()
+                            .flex_col()
+                            .py(px(space::XS))
+                            .rounded(px(radius::MEDIUM))
+                            .bg(rgb(theme.surface))
+                            .overflow_scroll()
+                            .font_family(theme.terminal_font_family)
+                            .text_size(px(theme.terminal_font_size))
+                            .children(
+                                shown
+                                    .rows
+                                    .iter()
+                                    .take(git_view::DISCARD_PREVIEW_ROWS)
+                                    .map(|row| git_diff_row(shown, row, None, line_height, theme)),
+                            ),
+                    )
+                    .when(more > 0, |el| {
+                        el.child(muted(format!("… and {more} more lines.")))
+                    })
+                    .into_any_element()
+            }
+            (None, Some(error)) => {
+                let project_id = dialog.project_id;
+                let target = dialog.target.clone();
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(
+                        error_row(format!("Cannot show what is lost: {error}"))
+                            .flex_1()
+                            .min_w_0(),
+                    )
+                    .child(
+                        button("git-discard-retry", "Retry", theme, false)
+                            .tooltip(tooltip(theme, "Read the changes again", ""))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                let diff = shell.git_view(project_id).select(target.clone());
+                                let requests = git_view::Requests {
+                                    status: false,
+                                    diff,
+                                };
+                                shell.git_requests(project_id, requests, window, cx);
+                            })),
+                    )
+                    .into_any_element()
+            }
+            (None, None) => muted("Loading the changes…".into()).into_any_element(),
+        };
+        let ready = shown.is_some() && !gone && !dialog.busy;
+        let panel = div()
+            .id("git-discard-dialog")
+            .w(px(theme::UNDO_DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::git_discard_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Discard changes?"),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(dialog.sentence()),
+            )
+            .child(body)
+            .children(dialog.error.clone().map(error_row))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        button("git-discard-cancel", "Cancel", theme, false)
+                            .tooltip(tooltip(theme, "Keep the changes", "Esc"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.close_git_discard(window, cx);
+                            })),
+                    )
+                    .child(if ready {
+                        danger_button("git-discard-confirm", "Discard changes", theme)
+                            .tooltip(tooltip(theme, "Discard the changes shown above", ""))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.confirm_git_discard(window, cx);
+                            }))
+                    } else {
+                        let label = if dialog.busy {
+                            "Discarding…"
+                        } else {
+                            "Discard changes"
+                        };
+                        disabled_button("git-discard-confirm", label, theme, false)
+                            .bg(rgb(theme.diff_del_bg))
+                            .text_color(rgb(theme.diff_del_text))
+                    }),
+            );
+        Self::modal_shade("git-discard-shade", panel, cx)
     }
 
     /// A Docs dialog: its title, a sentence, its body and the buttons, in the shared modal
@@ -7190,8 +7543,10 @@ fn git_file_row(
     };
     let hover = theme.surface_raised;
     let id = format!("git-file-{group:?}-{}", file.path);
+    let id = SharedString::from(id);
     div()
-        .id(SharedString::from(id.clone()))
+        .id(id.clone())
+        .group(id.clone())
         .flex()
         .items_center()
         .gap(px(space::S))
@@ -7249,10 +7604,86 @@ fn git_file_row(
         .children(
             git_view::counts(file).map(|(added, removed)| change_counts(added, removed, theme)),
         )
+        // Shown on hover and on the selected file (SPEC §14 progressive disclosure).
+        .children(git_view::Stage::of(group).map(|stage| {
+            let target = target.clone();
+            row_action(
+                SharedString::from(format!("{id}-stage")),
+                stage.label(),
+                theme,
+            )
+            .when(!picked, |el| {
+                el.opacity(opacity::HIDDEN)
+                    .group_hover(id.clone(), |style| style.opacity(opacity::FULL))
+            })
+            .tooltip(tooltip(
+                theme,
+                match stage {
+                    git_view::Stage::Stage => "Stage this file",
+                    git_view::Stage::Unstage => "Unstage this file",
+                },
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                // Not a click on the row (which would select it).
+                cx.stop_propagation();
+                window.focus(&shell.git_focus, cx);
+                if let Some(change) = shell.git_view(project_id).file_change(&target) {
+                    shell.stage_git(project_id, change, window, cx);
+                }
+            }))
+        }))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.select_git_file(project_id, target.clone(), window, cx);
         }))
         .into_any_element()
+}
+
+/// A small text action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk
+/// header): no vertical padding, so the row keeps its height.
+fn row_action(id: SharedString, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    // One step above the rows' own `surface_raised` hover / selection fill.
+    let hover = theme.border;
+    div()
+        .id(id)
+        .flex_none()
+        .px(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .cursor_pointer()
+        .font_family(theme::UI_FONT)
+        .text_size(px(font_size::META))
+        .text_color(rgb(theme.text_muted))
+        .hover(move |style| style.bg(rgb(hover)))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .child(label)
+}
+
+/// "Stage hunk" / "Unstage hunk" at the right end of a hunk header.
+fn hunk_stage_button(
+    project_id: Ulid,
+    hunk: usize,
+    stage: git_view::Stage,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let (label, tip) = match stage {
+        git_view::Stage::Stage => ("Stage hunk", "Stage this hunk"),
+        git_view::Stage::Unstage => ("Unstage hunk", "Unstage this hunk"),
+    };
+    row_action(
+        SharedString::from(format!("git-hunk-stage-{hunk}")),
+        label,
+        theme,
+    )
+    .ml_auto()
+    // No key: `s` / `u` act on the current hunk (n / p), not the hovered one.
+    .tooltip(tooltip(theme, tip, ""))
+    .on_click(cx.listener(move |shell, _, window, cx| {
+        window.focus(&shell.git_focus, cx);
+        if let Some(change) = shell.git_view(project_id).hunk_change(hunk) {
+            shell.stage_git(project_id, change, window, cx);
+        }
+    }))
 }
 
 /// One row of the Git diff viewer, `line_height` high: a collapsed gap of unchanged lines, a
@@ -7303,7 +7734,15 @@ fn git_diff_row(
             frame
                 .bg(rgb(theme.diff_hunk_header))
                 .text_color(rgb(if at { theme.accent } else { theme.text_muted }))
-                .child(text)
+                // Shrinks, so a hunk action after it stays on screen.
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(text),
+                )
         }
         git_view::DiffRow::Line(line) => {
             let (bg, fg, sign) = match line.kind {
@@ -8368,6 +8807,11 @@ impl Render for Shell {
                 self.undo_dialog
                     .as_ref()
                     .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.git_discard
+                    .as_ref()
+                    .map(|dialog| self.render_git_discard(dialog, &theme, cx)),
             )
             .children(
                 self.history

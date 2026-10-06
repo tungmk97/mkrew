@@ -2,13 +2,15 @@
 //! changes grouped Staged / Unstaged / Untracked, or Against base), the selected changed file
 //! and its `git.diff` laid out as rows (hunk headers, lines, and "unchanged lines" gaps between
 //! hunks), and the current hunk moved by `n` / `p`. `git.changed` re-asks the status and the
-//! shown diff. Pure and tested headlessly; `main.rs` does the requests and renders it.
+//! shown diff. Stage / unstage a file or hunk (`s` / `u`) and the discard confirmation.
+//! Pure and tested headlessly; `main.rs` does the requests and renders it.
 
 use std::rc::Rc;
 
 use gpui::Keystroke;
 use mkrew_protocol::{
-    ChangedFile, DiffLine, Event, FileDiff, GitDiffParams, GitMode, GitStatus, GitStatusParams,
+    ChangeKind, ChangedFile, DiffLine, Event, FileDiff, GitDiffParams, GitDiscardParams, GitMode,
+    GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request,
 };
 use ulid::Ulid;
 
@@ -139,7 +141,103 @@ pub enum Key {
     PreviousHunk,
     /// b: Working changes ↔ Against base.
     ToggleMode,
+    /// s / u: stage / unstage the selected file, or its current hunk (sent by the shell, see
+    /// [`GitView::stage_key`]).
+    Stage(Stage),
 }
+
+/// Staging moves a file (or hunk) from Unstaged / Untracked to Staged, unstaging back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    Stage,
+    Unstage,
+}
+
+impl Stage {
+    /// What a file of `group` can do; Against-base files can do neither.
+    pub fn of(group: Group) -> Option<Stage> {
+        match group {
+            Group::Unstaged | Group::Untracked => Some(Stage::Stage),
+            Group::Staged => Some(Stage::Unstage),
+            Group::Base => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Stage::Stage => "Stage",
+            Stage::Unstage => "Unstage",
+        }
+    }
+
+    /// The key [`key`] reads for it (tooltips).
+    pub fn key(self) -> &'static str {
+        match self {
+            Stage::Stage => "s",
+            Stage::Unstage => "u",
+        }
+    }
+}
+
+/// A `git.stage` / `git.unstage` of a file or one hunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StageRequest {
+    pub stage: Stage,
+    pub params: GitStageParams,
+}
+
+impl StageRequest {
+    pub fn request(self) -> Request {
+        match self.stage {
+            Stage::Stage => Request::GitStage(self.params),
+            Stage::Unstage => Request::GitUnstage(self.params),
+        }
+    }
+}
+
+/// The discard confirmation of one Unstaged / Untracked file; the dialog shows the file's diff
+/// (the view's shown diff once the file is selected) as what is lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Discard {
+    pub project_id: Ulid,
+    pub target: Target,
+    /// The same path also has staged changes (they stay).
+    pub also_staged: bool,
+    pub busy: bool,
+    pub error: Option<String>,
+}
+
+impl Discard {
+    /// What confirming does, in one sentence.
+    pub fn sentence(&self) -> String {
+        let path = &self.target.path;
+        if self.target.group == Group::Untracked {
+            return format!(
+                "“{path}” is deleted. It was never committed, so it cannot be recovered."
+            );
+        }
+        let staged = if self.also_staged {
+            " Its staged changes stay."
+        } else {
+            ""
+        };
+        format!(
+            "The unstaged changes to “{path}” below are discarded and cannot be recovered.{staged}"
+        )
+    }
+
+    /// The `git.discard` to send (only ever after the user confirmed).
+    pub fn params(&self) -> GitDiscardParams {
+        GitDiscardParams {
+            project_id: self.project_id,
+            paths: vec![self.target.path.clone()],
+            confirm: true,
+        }
+    }
+}
+
+/// The discard dialog shows at most this many diff rows.
+pub const DISCARD_PREVIEW_ROWS: usize = 500;
 
 /// What a change asks of the shell: a `git.status` of the shown mode, a `git.diff`.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -162,6 +260,10 @@ pub struct GitView {
     pub zed_error: Option<String>,
     /// Why the last refresh of the shown (kept) status failed.
     pub refresh_error: Option<String>,
+    /// Why the last stage / unstage failed.
+    pub stage_error: Option<String>,
+    /// A stage / unstage is in flight (another is not sent meanwhile).
+    staging: bool,
     /// A status was ever asked for (the view loads when first shown).
     started: bool,
     /// The mode of the `git.status` in flight, and whether another was asked for meanwhile.
@@ -183,6 +285,8 @@ impl GitView {
             hunk: None,
             zed_error: None,
             refresh_error: None,
+            stage_error: None,
+            staging: false,
             started: false,
             loading: None,
             load_again: false,
@@ -328,6 +432,7 @@ impl GitView {
         self.diff = Diff::Loading;
         self.hunk = None;
         self.zed_error = None;
+        self.stage_error = None;
         Some(target)
     }
 
@@ -394,6 +499,7 @@ impl GitView {
                 Requests::default()
             }
             Key::ToggleMode => self.toggle_mode(),
+            Key::Stage(_) => Requests::default(),
         }
     }
 
@@ -458,6 +564,119 @@ impl GitView {
             diff: self.selected.clone(),
         }
     }
+
+    /// The listed file `target` stands for.
+    pub fn file(&self, target: &Target) -> Option<ChangedFile> {
+        self.files()
+            .into_iter()
+            .find(|(group, file)| *group == target.group && file.path == target.path)
+            .map(|(_, file)| file)
+    }
+
+    /// Stages / unstages the whole listed file `target` (new, deleted and untracked files can
+    /// only go by path). A rename also takes its old path (else its deletion stays staged).
+    pub fn file_change(&self, target: &Target) -> Option<StageRequest> {
+        let stage = Stage::of(target.group)?;
+        let file = self.file(target)?;
+        Some(StageRequest {
+            stage,
+            params: GitStageParams {
+                project_id: self.project_id,
+                paths: [Some(file.path), file.old_path]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                hunk: None,
+            },
+        })
+    }
+
+    /// Stages / unstages hunk `hunk` of the shown diff. Only modified files go by hunk: the
+    /// daemon's patch has no file-mode headers (new / deleted / renamed files go by path).
+    pub fn hunk_change(&self, hunk: usize) -> Option<StageRequest> {
+        let selected = self.selected.as_ref()?;
+        let stage = Stage::of(selected.group)?;
+        if self.file(selected)?.kind != ChangeKind::Modified {
+            return None;
+        }
+        let Diff::Shown(shown) = &self.diff else {
+            return None;
+        };
+        let hunk = shown.diff.hunks.get(hunk)?.clone();
+        Some(StageRequest {
+            stage,
+            params: GitStageParams {
+                project_id: self.project_id,
+                paths: vec![],
+                hunk: Some(HunkTarget {
+                    path: selected.path.clone(),
+                    hunk,
+                }),
+            },
+        })
+    }
+
+    /// `s` / `u`: the current hunk if there is one (and it can go by hunk), else the selected
+    /// file; nothing if the selected file cannot go that way or a change is in flight.
+    pub fn stage_key(&self, stage: Stage) -> Option<StageRequest> {
+        let selected = self.selected.as_ref()?;
+        if self.staging || Stage::of(selected.group) != Some(stage) {
+            return None;
+        }
+        self.hunk
+            .and_then(|hunk| self.hunk_change(hunk))
+            .or_else(|| self.file_change(selected))
+    }
+
+    /// A stage / unstage is about to be sent; `false` = one is in flight already.
+    pub fn begin_stage(&mut self) -> bool {
+        if self.staging {
+            return false;
+        }
+        self.staging = true;
+        self.stage_error = None;
+        true
+    }
+
+    /// The stage / unstage answered: on success the status and diff are read again.
+    pub fn staged(&mut self, result: Result<(), String>) -> Requests {
+        self.staging = false;
+        match result {
+            Ok(()) => self.refresh(),
+            Err(error) => {
+                self.stage_error = Some(error);
+                Requests::default()
+            }
+        }
+    }
+
+    /// The discard confirmation of the listed Unstaged / Untracked file `target`.
+    pub fn discard(&self, target: &Target) -> Option<Discard> {
+        if !matches!(target.group, Group::Unstaged | Group::Untracked) {
+            return None;
+        }
+        self.file(target)?;
+        let also_staged = self.file(&Target {
+            group: Group::Staged,
+            path: target.path.clone(),
+        });
+        Some(Discard {
+            project_id: self.project_id,
+            target: target.clone(),
+            also_staged: also_staged.is_some(),
+            busy: false,
+            error: None,
+        })
+    }
+
+    /// The shown diff of `target`, if it is the selected file and its diff is loaded (what a
+    /// discard of it loses).
+    pub fn shown_diff(&self, target: &Target) -> Option<Rc<Shown>> {
+        match &self.diff {
+            Diff::Shown(shown) if self.selected.as_ref() == Some(target) => Some(Rc::clone(shown)),
+            _ => None,
+        }
+    }
 }
 
 /// The diff viewer rows of `diff`: each hunk's header then its lines, with a gap row for the
@@ -519,6 +738,8 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         "n" => Some(Key::NextHunk),
         "p" => Some(Key::PreviousHunk),
         "b" => Some(Key::ToggleMode),
+        "s" => Some(Key::Stage(Stage::Stage)),
+        "u" => Some(Key::Stage(Stage::Unstage)),
         _ => None,
     }
 }
@@ -840,6 +1061,114 @@ mod tests {
         assert_eq!(rows(&diff(vec![hunk(5, 2, 5, 2)]))[0], DiffRow::Gap(4));
     }
 
+    fn paths(request: &StageRequest) -> (Stage, Vec<String>, Option<u32>) {
+        let hunk = request.params.hunk.as_ref().map(|target| {
+            assert_eq!(target.path, "a.rs");
+            target.hunk.old_start
+        });
+        (request.stage, request.params.paths.clone(), hunk)
+    }
+
+    #[test]
+    fn files_stage_and_unstage_by_path_from_their_group() {
+        let view = loaded();
+        let staged = view.file_change(&target(Group::Staged, "a.rs")).unwrap();
+        assert_eq!(paths(&staged), (Stage::Unstage, vec!["a.rs".into()], None));
+        assert!(matches!(staged.request(), Request::GitUnstage(_)));
+        let untracked = view
+            .file_change(&target(Group::Untracked, "new.txt"))
+            .unwrap();
+        assert_eq!(untracked.stage, Stage::Stage);
+        assert!(matches!(untracked.request(), Request::GitStage(_)));
+        assert_eq!(view.file_change(&target(Group::Unstaged, "gone.rs")), None);
+        assert_eq!(view.file_change(&target(Group::Base, "a.rs")), None);
+
+        // A staged rename unstages both paths.
+        let mut view = GitView::new(Ulid::new());
+        view.begin_status();
+        let mut status = working();
+        status.staged = vec![ChangedFile {
+            old_path: Some("old.rs".into()),
+            ..file("new.rs", ChangeKind::Renamed)
+        }];
+        view.status_loaded(Ok(status));
+        let renamed = view.file_change(&target(Group::Staged, "new.rs")).unwrap();
+        assert_eq!(renamed.params.paths, ["new.rs", "old.rs"]);
+    }
+
+    #[test]
+    fn keys_stage_the_current_hunk_of_a_modified_file_else_the_file() {
+        let mut view = loaded();
+        let a = target(Group::Staged, "a.rs");
+        // The selection is staged: `s` does nothing, `u` unstages the file.
+        assert_eq!(view.stage_key(Stage::Stage), None);
+        let file = view.stage_key(Stage::Unstage).unwrap();
+        assert_eq!(paths(&file), (Stage::Unstage, vec!["a.rs".into()], None));
+        // With a current hunk, only that hunk.
+        view.begin_diff();
+        view.diff_loaded(&a, Ok(diff(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
+        view.key(Key::PreviousHunk);
+        let current = view.stage_key(Stage::Unstage).unwrap();
+        assert_eq!(paths(&current), (Stage::Unstage, vec![], Some(20)));
+        assert_eq!(view.hunk_change(5), None);
+        // A deleted file goes by path even with a current hunk.
+        let b = target(Group::Unstaged, "b.rs");
+        view.select(b.clone());
+        view.begin_diff();
+        view.diff_loaded(&b, Ok(diff(vec![hunk(1, 1, 0, 0)])));
+        view.key(Key::NextHunk);
+        assert_eq!(view.hunk_change(0), None);
+        let file = view.stage_key(Stage::Stage).unwrap();
+        assert_eq!(paths(&file), (Stage::Stage, vec!["b.rs".into()], None));
+    }
+
+    #[test]
+    fn one_stage_at_a_time_and_failures_are_shown() {
+        let mut view = loaded();
+        assert!(view.begin_stage());
+        assert!(!view.begin_stage());
+        assert_eq!(view.stage_key(Stage::Unstage), None, "in flight");
+        assert_eq!(
+            view.staged(Err("patch does not apply".into())),
+            Requests::default()
+        );
+        assert_eq!(view.stage_error.as_deref(), Some("patch does not apply"));
+        assert!(view.begin_stage());
+        assert_eq!(view.stage_error, None);
+        assert_eq!(
+            view.staged(Ok(())),
+            Requests {
+                status: true,
+                diff: Some(target(Group::Staged, "a.rs")),
+            }
+        );
+    }
+
+    #[test]
+    fn only_unstaged_and_untracked_files_can_be_discarded() {
+        let mut view = loaded();
+        assert_eq!(view.discard(&target(Group::Staged, "a.rs")), None);
+        assert_eq!(view.discard(&target(Group::Unstaged, "gone.rs")), None);
+        let a = view.discard(&target(Group::Unstaged, "a.rs")).unwrap();
+        assert!(a.also_staged);
+        assert!(a.sentence().contains("Its staged changes stay."));
+        let params = a.params();
+        assert!(params.confirm);
+        assert_eq!(params.paths, ["a.rs"]);
+        let b = view.discard(&target(Group::Unstaged, "b.rs")).unwrap();
+        assert!(!b.also_staged);
+        let new = view.discard(&target(Group::Untracked, "new.txt")).unwrap();
+        assert!(new.sentence().contains("is deleted"));
+        // What is lost: the shown diff, once the file is selected and its diff loaded.
+        let target_b = target(Group::Unstaged, "b.rs");
+        assert_eq!(view.shown_diff(&target_b), None);
+        view.select(target_b.clone());
+        view.begin_diff();
+        view.diff_loaded(&target_b, Ok(diff(vec![hunk(1, 1, 0, 0)])));
+        assert!(view.shown_diff(&target_b).is_some());
+        assert_eq!(view.shown_diff(&target(Group::Staged, "a.rs")), None);
+    }
+
     #[test]
     fn labels() {
         let mut status = GitStatus::default();
@@ -863,6 +1192,9 @@ mod tests {
         assert_eq!(parse("n"), Some(Key::NextHunk));
         assert_eq!(parse("p"), Some(Key::PreviousHunk));
         assert_eq!(parse("b"), Some(Key::ToggleMode));
+        assert_eq!(parse("s"), Some(Key::Stage(Stage::Stage)));
+        assert_eq!(parse("u"), Some(Key::Stage(Stage::Unstage)));
+        assert_eq!(parse("ctrl-s"), None);
         assert_eq!(parse("ctrl-n"), None);
         assert_eq!(parse("x"), None);
     }

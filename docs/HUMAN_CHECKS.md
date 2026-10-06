@@ -385,6 +385,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   or > 1 MB diff → notice + "Open in Zed". Clean repo → "No uncommitted changes." + "Against
   base" button. Group-title rows and file rows are the same height (scrolling a long list
   lands on the right file). Dark + light screenshots for §14.
+- [ ] (T7.9b) **Git stage / unstage / discard** (logic covered by `git_view.rs` unit tests;
+  daemon `git.stage/unstage/discard` by daemon e2e; the UI was never seen): in Git, hover an
+  Unstaged file → "Stage" appears (always on the selected file), a click moves it to Staged;
+  `s` / `u` stage / unstage the selected file, or after `n` / `p` only the current hunk of a
+  modified file; "Stage hunk" / "Unstage hunk" on hunk headers do the same; a new/untracked
+  file stages by path. "Discard…" on an Unstaged/Untracked file → "Discard changes?" dialog
+  shows the file's diff, confirm is disabled until it loads, Esc/Cancel keep the file, the red
+  confirm discards it (untracked file deleted). A failed stage shows "✕ Staging failed: …".
+  Row heights stay uniform with the hover action. Dark + light screenshots for §14.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1126,6 +1135,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   column); long diff lines are clipped (no horizontal scroll, like the Files viewer);
   `GIT_FILE_LIST_WIDTH` 300 vs `FILE_TREE_WIDTH` 280; M/R/C/T letters use the accent like
   Files' markers; "↑2 ↓1" has no tooltip; CRLF lines are not marked.
+- (T7.9b) **Git actions split + choices:** T7.9b was split again: T7.9b = stage/unstage +
+  discard; T7.9c = base menu, diff syntax highlighting, palette commands. Choices: `s`/`u`
+  act on the current hunk (after `n`/`p`) else the whole file; only `Modified` files go by
+  hunk (the daemon's patch has no file-mode headers), others by path. Discard is only on
+  Unstaged/Untracked files (restore from the index; staged changes stay, the sentence says
+  so), via a "Discard…" button in the diff header — no key (SPEC §13 lists none). Opening it
+  selects the file so its diff (what is lost, ≤ 500 rows) shows; confirm stays disabled until
+  then (a failed diff = cannot confirm). One stage at a time; after any stage/discard the
+  status+diff are re-read (also `git.changed`). A stage error clears on the next stage or file
+  selection. A rename stages/unstages both its paths. Open review items: stage actions do not
+  look disabled while a stage is in flight (extra clicks are ignored); "✕ Staging failed"
+  uses the plain notice style (like the Zed error) while dialogs color the ✕; clicking a row
+  action briefly dims the whole row (`.active`); no palette command for "Discard…".
 
 ## Done
 
