@@ -31,7 +31,7 @@ use mkrew_protocol::{
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
-use mkrew_ui::comments::{self, Selection, Thread};
+use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
@@ -926,7 +926,7 @@ impl Shell {
             .get_mut(&project_id)
             .and_then(|docs| docs.comments.begin_list(&file_path));
         if let Some(file_path) = list {
-            self.load_comments(project_id, file_path, window, cx);
+            self.load_comments(project_id, CommentContext::Doc, file_path, window, cx);
         }
         let read = connection.call::<DocContent>(Request::DocRead(DocReadParams {
             project_id,
@@ -1212,6 +1212,10 @@ impl Shell {
         }
         if let Some(target) = requests.diff {
             self.load_git_diff(project_id, target, window, cx);
+            // Another file: its diff comments are listed too.
+            if let Some(path) = self.git_view(project_id).begin_comments() {
+                self.load_comments(project_id, CommentContext::Diff, path, window, cx);
+            }
         }
         if requests.log {
             self.load_git_log(project_id, window, cx);
@@ -1843,10 +1847,31 @@ impl Shell {
         self.show_view(View::Docs, window, cx);
     }
 
-    /// `comment.list` of the shown doc; `comment.updated` keeps it live afterwards.
+    /// The comments of `project_id`'s Docs view (doc comments) or Git view (diff comments).
+    fn comments_mut(&mut self, project_id: Ulid, context: CommentContext) -> Option<&mut Comments> {
+        match context {
+            CommentContext::Doc => self
+                .docs
+                .get_mut(&project_id)
+                .map(|docs| &mut docs.comments),
+            CommentContext::Diff => self.git.get_mut(&project_id).map(|view| &mut view.comments),
+        }
+    }
+
+    /// Whose comments the shown view has: the Docs view's or the Git view's.
+    fn comment_context(&self) -> Option<CommentContext> {
+        match self.view() {
+            View::Docs => Some(CommentContext::Doc),
+            View::Git => Some(CommentContext::Diff),
+            _ => None,
+        }
+    }
+
+    /// `comment.list` of the shown doc or diff; `comment.updated` keeps it live afterwards.
     fn load_comments(
         &mut self,
         project_id: Ulid,
+        context: CommentContext,
         file_path: String,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -1857,7 +1882,7 @@ impl Shell {
         let listed = connection.call::<Vec<DocComment>>(Request::CommentList(CommentListParams {
             project_id,
             file_path: Some(file_path.clone()),
-            context: Some(CommentContext::Doc),
+            context: Some(context),
         }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await.map_err(|error| format!("{error:#}"));
@@ -1865,8 +1890,8 @@ impl Shell {
                 if let Err(error) = &listed {
                     tracing::warn!(%project_id, file_path, "comment.list failed: {error}");
                 }
-                if let Some(docs) = shell.docs.get_mut(&project_id) {
-                    docs.comments.listed(&file_path, listed);
+                if let Some(comments) = shell.comments_mut(project_id, context) {
+                    comments.listed(&file_path, listed);
                 }
                 cx.notify();
             });
@@ -1874,66 +1899,113 @@ impl Shell {
         .detach();
     }
 
-    /// The comment or reply being typed in the active workspace's Docs view, while its field is
-    /// on screen (the margin shows with the doc, also while it is re-read).
+    /// The comment or reply being typed in the active workspace's Docs or Git view, while its
+    /// field is on screen (the Docs margin shows with the doc, also while it is re-read).
     fn comment_draft(&self) -> Option<&comments::Draft> {
-        if self.view() != View::Docs {
-            return None;
+        let project_id = self.workspace?;
+        match self.comment_context()? {
+            CommentContext::Doc => {
+                let docs = self.docs.get(&project_id)?;
+                if !margin_shown(&docs.doc) {
+                    return None;
+                }
+                docs.comments.draft.as_ref()
+            }
+            CommentContext::Diff => {
+                let view = self.git.get(&project_id)?;
+                if !view.comments_shown() {
+                    return None;
+                }
+                view.comments.draft.as_ref()
+            }
         }
-        let docs = self.docs.get(&self.workspace?)?;
-        if !margin_shown(&docs.doc) {
-            return None;
-        }
-        docs.comments.draft.as_ref()
     }
 
-    /// A click on lines `start..=end` of the shown doc (Shift extends the selection).
-    fn pick_doc_lines(
+    /// A click on lines `start..=end` of the shown doc or diff (Shift extends the selection).
+    fn pick_lines(
         &mut self,
         project_id: Ulid,
+        context: CommentContext,
         start: u32,
         end: u32,
         extend: bool,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(docs) = self.docs.get_mut(&project_id) {
-            docs.comments.pick(start, end, extend);
+        if let Some(comments) = self.comments_mut(project_id, context) {
+            comments.pick(start, end, extend);
             cx.notify();
         }
     }
 
-    /// "Add comment" (Ctrl+Alt+M): a draft in the margin for the selected lines.
-    fn start_comment(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(Docs { doc, comments, .. }) = self.docs.get_mut(&project_id) else {
-            return;
-        };
-        if let Doc::Shown(shown) = doc
-            && comments.start_comment(&shown.lines)
-        {
-            window.focus(&self.comment_focus, cx);
-            cx.notify();
+    /// A click on a diff line (new-side line `line`): picks it, and the Git list takes the
+    /// keyboard so Ctrl+Alt+M comments (an open draft keeps it, so typing never stages).
+    fn pick_diff_line(
+        &mut self,
+        project_id: Ulid,
+        line: u32,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.git_view(project_id).comments.draft.is_none() {
+            window.focus(&self.git_focus, cx);
         }
+        self.pick_lines(project_id, CommentContext::Diff, line, line, extend, cx);
+    }
+
+    /// "Add comment" (Ctrl+Alt+M): a draft in the margin for the selected lines.
+    fn start_comment(
+        &mut self,
+        project_id: Ulid,
+        context: CommentContext,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let started = match context {
+            CommentContext::Doc => match self.docs.get_mut(&project_id) {
+                Some(Docs {
+                    doc: Doc::Shown(shown),
+                    comments,
+                    ..
+                }) => comments.start_comment(&shown.lines),
+                _ => false,
+            },
+            CommentContext::Diff => self
+                .git
+                .get_mut(&project_id)
+                .is_some_and(GitView::start_comment),
+        };
+        if started {
+            window.focus(&self.comment_focus, cx);
+        }
+        cx.notify();
     }
 
     fn start_reply(
         &mut self,
         project_id: Ulid,
+        context: CommentContext,
         root: CommentId,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(docs) = self.docs.get_mut(&project_id) {
-            docs.comments.start_reply(root);
+        if let Some(comments) = self.comments_mut(project_id, context) {
+            comments.start_reply(root);
             window.focus(&self.comment_focus, cx);
             cx.notify();
         }
     }
 
     fn close_comment_draft(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
-            docs.comments.draft = None;
+        let shown = self.workspace.zip(self.comment_context());
+        if let Some(comments) = shown.and_then(|(id, context)| self.comments_mut(id, context)) {
+            comments.draft = None;
         }
-        window.focus(&self.focus_handle, cx);
+        if self.view() == View::Git {
+            window.focus(&self.git_focus, cx);
+        } else {
+            window.focus(&self.focus_handle, cx);
+        }
         cx.notify();
     }
 
@@ -1951,13 +2023,12 @@ impl Shell {
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
-        let Some(project_id) = self.workspace else {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
             return;
         };
         let Some(draft) = self
-            .docs
-            .get_mut(&project_id)
-            .and_then(|docs| docs.comments.draft.as_mut())
+            .comments_mut(project_id, context)
+            .and_then(|comments| comments.draft.as_mut())
         else {
             return;
         };
@@ -1967,7 +2038,7 @@ impl Shell {
         match draft.key(key) {
             comments::Outcome::Edited => cx.notify(),
             comments::Outcome::Cancel => self.close_comment_draft(window, cx),
-            comments::Outcome::Submit => self.submit_comment(project_id, window, cx),
+            comments::Outcome::Submit => self.submit_comment(project_id, context, window, cx),
         }
     }
 
@@ -1975,17 +2046,14 @@ impl Shell {
     fn submit_comment(
         &mut self,
         project_id: Ulid,
+        context: CommentContext,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let Some(comments) = self
-            .docs
-            .get_mut(&project_id)
-            .map(|docs| &mut docs.comments)
-        else {
+        let Some(comments) = self.comments_mut(project_id, context) else {
             return;
         };
         let Some(serial) = comments.draft.as_ref().map(|draft| draft.serial) else {
@@ -2003,12 +2071,16 @@ impl Shell {
                     tracing::warn!(%project_id, "saving a comment failed: {error}");
                 }
                 let ok = saved.is_ok();
-                if let Some(docs) = shell.docs.get_mut(&project_id) {
+                if let Some(comments) = shell.comments_mut(project_id, context) {
                     let saved = saved.map_err(|error| format!("Cannot save: {error}"));
-                    docs.comments.submitted(serial, saved);
+                    comments.submitted(serial, saved);
                 }
                 if ok && shell.comment_focus.is_focused(window) && shell.comment_draft().is_none() {
-                    window.focus(&shell.focus_handle, cx);
+                    if shell.view() == View::Git {
+                        window.focus(&shell.git_focus, cx);
+                    } else {
+                        window.focus(&shell.focus_handle, cx);
+                    }
                 }
                 cx.notify();
             });
@@ -2020,6 +2092,7 @@ impl Shell {
     fn set_comment_status(
         &mut self,
         project_id: Ulid,
+        context: CommentContext,
         root: CommentId,
         resolve: bool,
         window: &mut Window,
@@ -2038,18 +2111,18 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let changed = changed.await;
             let _ = this.update(cx, |shell, cx| {
-                let Some(docs) = shell.docs.get_mut(&project_id) else {
+                let Some(comments) = shell.comments_mut(project_id, context) else {
                     return;
                 };
                 match changed {
                     Ok(comment) => {
-                        docs.comments.error = None;
-                        docs.comments.apply_event(project_id, &comment);
+                        comments.error = None;
+                        comments.apply_event(project_id, &comment);
                     }
                     Err(error) => {
                         tracing::warn!(%project_id, %root, "comment status change failed: {error:#}");
                         let what = if resolve { "resolve" } else { "reopen" };
-                        docs.comments.error = Some(format!("Cannot {what}: {error:#}"));
+                        comments.error = Some(format!("Cannot {what}: {error:#}"));
                     }
                 }
                 cx.notify();
@@ -2058,32 +2131,48 @@ impl Shell {
         .detach();
     }
 
-    /// "Send to agent" (Ctrl+Shift+S): the shown doc's open comments (only the selected ones
-    /// if the selection covers some) go to the session picked in a modal dialog.
+    /// "Send to agent" (Ctrl+Shift+S): the shown doc's or diff's open comments (only the
+    /// selected ones if the selection covers some) go to the session picked in a modal dialog.
+    /// It offers the doc's last modifying session first, or in a task's changes the task's.
     fn open_send_dialog(
         &mut self,
         project_id: Ulid,
+        context: CommentContext,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(docs) = self.docs.get(&project_id) else {
+        let (comments, file_path, last) = match context {
+            CommentContext::Doc => {
+                let Some(docs) = self.docs.get(&project_id) else {
+                    return;
+                };
+                let Doc::Shown(_) = &docs.doc else {
+                    return;
+                };
+                let last = docs.selected_file().and_then(|file| file.last_session_id);
+                (&docs.comments, docs.selected.clone(), last)
+            }
+            CommentContext::Diff => {
+                let Some(view) = self.git.get(&project_id) else {
+                    return;
+                };
+                let last = view.task_session(self.sidebar.sessions());
+                let path = view.selected.as_ref().map(|target| target.path.clone());
+                (&view.comments, path, last)
+            }
+        };
+        let (comments::List::Loaded(list), Some(file_path)) = (&comments.list, file_path) else {
             return;
         };
-        let (Doc::Shown(_), comments::List::Loaded(list), Some(file_path)) =
-            (&docs.doc, &docs.comments.list, docs.selected.clone())
-        else {
-            return;
-        };
-        let comment_ids = doc_dialog::sendable(list, docs.comments.selection);
+        let comment_ids = doc_dialog::sendable(list, comments.selection);
         if comment_ids.is_empty() || self.connection.is_none() {
             return;
         }
-        let last = docs.selected_file().and_then(|file| file.last_session_id);
-        self.open_doc_dialog(
-            DocDialog::Send(SendDialog::new(project_id, file_path, comment_ids, last)),
-            window,
-            cx,
-        );
+        let dialog = SendDialog {
+            task: context == CommentContext::Diff && last.is_some(),
+            ..SendDialog::new(project_id, file_path, comment_ids, last)
+        };
+        self.open_doc_dialog(DocDialog::Send(dialog), window, cx);
     }
 
     /// "View changes" of a sent thread: its file as sent vs as shown now.
@@ -2174,9 +2263,12 @@ impl Shell {
                     && matches!(shell.doc_dialog, Some(DocDialog::Send(_)));
                 match sent {
                     Ok(comments) => {
-                        if let Some(docs) = shell.docs.get_mut(&project_id) {
-                            for comment in &comments {
-                                docs.comments.apply_event(project_id, comment);
+                        // Each view keeps only its own context's comments.
+                        for context in [CommentContext::Doc, CommentContext::Diff] {
+                            if let Some(list) = shell.comments_mut(project_id, context) {
+                                for comment in &comments {
+                                    list.apply_event(project_id, comment);
+                                }
                             }
                         }
                         if open {
@@ -3557,15 +3649,17 @@ impl Shell {
                 }
             }
             Command::AddComment => {
-                // Only bound while Docs are shown.
-                if let Some(project_id) = self.workspace {
-                    self.start_comment(project_id, window, cx);
+                // Only bound while Docs are shown or the Git list has focus.
+                if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
+                {
+                    self.start_comment(project_id, context, window, cx);
                 }
             }
             Command::SendComments => {
-                // Only bound while Docs are shown.
-                if let Some(project_id) = self.workspace {
-                    self.open_send_dialog(project_id, window, cx);
+                // Only bound while Docs are shown or the Git list has focus.
+                if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
+                {
+                    self.open_send_dialog(project_id, context, window, cx);
                 }
             }
             Command::NewTask => {
@@ -3873,6 +3967,12 @@ impl Shell {
                 }
                 if matches!(event, Event::DocChanged(_) | Event::CommentUpdated(_)) {
                     self.doc_event(event, window, cx);
+                }
+                if let Event::CommentUpdated(comment) = event {
+                    for view in self.git.values_mut() {
+                        view.comments.apply_event(view.project_id, comment);
+                    }
+                    cx.notify();
                 }
                 if matches!(event, Event::GitChanged(_)) {
                     self.files_event(event, window, cx);
@@ -4568,8 +4668,20 @@ impl Shell {
                     .child(file_path.clone()),
             )
             .child(self.doc_mode_toggle(project_id, docs.mode, theme, cx))
-            .child(self.add_comment_button(project_id, docs, theme, cx))
-            .child(self.send_comments_button(project_id, docs, theme, cx))
+            .child(self.add_comment_button(
+                project_id,
+                CommentContext::Doc,
+                matches!(docs.doc, Doc::Shown(_)) && docs.comments.selection.is_some(),
+                theme,
+                cx,
+            ))
+            .child(self.send_comments_button(
+                project_id,
+                CommentContext::Doc,
+                matches!(docs.doc, Doc::Shown(_)).then_some(&docs.comments),
+                theme,
+                cx,
+            ))
             .child(
                 button("doc-zed", "Open in Zed", theme, false)
                     .flex_none()
@@ -4617,7 +4729,14 @@ impl Shell {
                     let this = cx.entity().downgrade();
                     let on_line: preview::OnLine = Rc::new(move |line, extend, _, cx| {
                         let _ = this.update(cx, |shell, cx| {
-                            shell.pick_doc_lines(project_id, line, line, extend, cx);
+                            shell.pick_lines(
+                                project_id,
+                                CommentContext::Doc,
+                                line,
+                                line,
+                                extend,
+                                cx,
+                            );
                         });
                     });
                     preview::source(
@@ -4659,7 +4778,7 @@ impl Shell {
             },
         };
         let margin = margin_shown(&docs.doc)
-            .then(|| self.render_comments(project_id, docs, theme, window, cx));
+            .then(|| self.render_comments(project_id, &docs.comments, theme, window, cx));
         panel
             .child(header)
             .children(docs.zed_error.clone().map(|error| {
@@ -5144,7 +5263,7 @@ impl Shell {
                     }),
             )
             .when(any_files, |el| {
-                el.child(self.render_git_diff(project_id, view, theme, cx))
+                el.child(self.render_git_diff(project_id, view, theme, window, cx))
             })
             .into_any_element()
     }
@@ -5542,6 +5661,7 @@ impl Shell {
         project_id: Ulid,
         view: &GitView,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         let panel = div()
@@ -5587,6 +5707,20 @@ impl Shell {
                     })),
             );
         };
+        let comment_button = self.add_comment_button(
+            project_id,
+            CommentContext::Diff,
+            matches!(view.diff, git_view::Diff::Shown(_)) && view.comments.selection.is_some(),
+            theme,
+            cx,
+        );
+        let send_button = self.send_comments_button(
+            project_id,
+            CommentContext::Diff,
+            Some(&view.comments),
+            theme,
+            cx,
+        );
         let zed_keys = self.keymap.label(Command::OpenInZed);
         let zed_button = |id: &'static str, primary: bool| {
             button(id, "Open in Zed", theme, primary)
@@ -5683,6 +5817,10 @@ impl Shell {
                         shell.open_git_discard(project_id, target.clone(), window, cx);
                     }))
             }))
+            // No comments on a past commit's lines: no dead buttons in the History.
+            .when(view.can_comment(), |header| {
+                header.child(comment_button).child(send_button)
+            })
             .child(zed_button("git-zed", false));
         let body = match &view.diff {
             git_view::Diff::None | git_view::Diff::Loading => {
@@ -5739,6 +5877,8 @@ impl Shell {
                 let current = view.hunk;
                 // Hunk headers get a stage / unstage action when the file can go by hunk.
                 let hunk_stage = view.hunk_change(0).map(|change| change.stage);
+                let picked = view.comments.selection;
+                let can_comment = view.can_comment();
                 let line_height = theme.terminal_font_size * theme.terminal_line_height;
                 let row_theme = theme.clone();
                 let rows = shown.rows.len();
@@ -5749,14 +5889,57 @@ impl Shell {
                         range
                             .filter_map(|index| Some((index, shown.rows.get(index)?)))
                             .map(|(index, row)| {
-                                let frame =
-                                    git_diff_row(&shown, index, current, line_height, &row_theme);
+                                let frame = git_diff_row(
+                                    &shown,
+                                    index,
+                                    current,
+                                    picked,
+                                    line_height,
+                                    &row_theme,
+                                );
                                 match (row, hunk_stage) {
                                     (git_view::DiffRow::Hunk(hunk), Some(stage)) => frame
                                         .child(hunk_stage_button(
                                             project_id, *hunk, stage, &row_theme, cx,
                                         ))
                                         .into_any_element(),
+                                    // New-side lines can be picked for a comment; hover
+                                    // previews the pick bar.
+                                    (git_view::DiffRow::Line(line), _) => match line
+                                        .new_line
+                                        .filter(|_| can_comment)
+                                    {
+                                        Some(number) => frame
+                                            .cursor_pointer()
+                                            .when(
+                                                !picked.is_some_and(|p| p.contains(number, number)),
+                                                |el| {
+                                                    let border = row_theme.border;
+                                                    el.hover(move |style| {
+                                                        style.border_color(rgb(border))
+                                                    })
+                                                },
+                                            )
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |shell,
+                                                          event: &gpui::MouseDownEvent,
+                                                          window,
+                                                          cx| {
+                                                        shell.pick_diff_line(
+                                                            project_id,
+                                                            number,
+                                                            event.modifiers.shift,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ),
+                                            )
+                                            .into_any_element(),
+                                        None => frame.into_any_element(),
+                                    },
                                     _ => frame.into_any_element(),
                                 }
                             })
@@ -5784,19 +5967,38 @@ impl Shell {
                     .px(px(space::L))
                     .pb(px(space::S))
             }))
-            .child(body)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    // Thread cards never touch the tinted diff rows.
+                    .gap(px(space::M))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(body),
+                    )
+                    .children(view.comments_shown().then(|| {
+                        self.render_comments(project_id, &view.comments, theme, window, cx)
+                    })),
+            )
     }
 
     /// "Comment" (Ctrl+Alt+M): enabled once lines are selected.
     fn add_comment_button(
         &self,
         project_id: Ulid,
-        docs: &Docs,
+        context: CommentContext,
+        ready: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let keys = self.keymap.label(Command::AddComment);
-        let ready = matches!(docs.doc, Doc::Shown(_)) && docs.comments.selection.is_some();
         if !ready {
             return disabled_button("doc-comment", "Comment", theme, false)
                 .flex_none()
@@ -5806,7 +6008,7 @@ impl Shell {
             .flex_none()
             .tooltip(tooltip(theme, "Comment on the selected lines", keys))
             .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.start_comment(project_id, window, cx);
+                shell.start_comment(project_id, context, window, cx);
             }))
     }
 
@@ -5815,14 +6017,15 @@ impl Shell {
     fn send_comments_button(
         &self,
         project_id: Ulid,
-        docs: &Docs,
+        context: CommentContext,
+        comments: Option<&Comments>,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let keys = self.keymap.label(Command::SendComments);
-        let count = match (&docs.doc, &docs.comments.list) {
-            (Doc::Shown(_), comments::List::Loaded(list)) => {
-                doc_dialog::sendable(list, docs.comments.selection).len()
+        let count = match comments.map(|comments| (&comments.list, comments.selection)) {
+            Some((comments::List::Loaded(list), selection)) => {
+                doc_dialog::sendable(list, selection).len()
             }
             _ => 0,
         };
@@ -5840,21 +6043,21 @@ impl Shell {
             .flex_none()
             .tooltip(tooltip(theme, &what, keys))
             .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.open_send_dialog(project_id, window, cx);
+                shell.open_send_dialog(project_id, context, window, cx);
             }))
     }
 
-    /// The right margin (SPEC §12): the new-comment draft, then every thread of the file in
-    /// anchor order with its replies, Reply and Resolve / Reopen.
+    /// The right margin (SPEC §12, §12B): the new-comment draft, then every thread of the file
+    /// in anchor order with its replies, Reply and Resolve / Reopen.
     fn render_comments(
         &self,
         project_id: Ulid,
-        docs: &Docs,
+        comments: &Comments,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let comments = &docs.comments;
+        let context = comments.context;
         let focused = self.comment_focus.is_focused(window);
         let margin = div()
             .id("doc-comments")
@@ -5912,11 +6115,10 @@ impl Shell {
                         .child(button("comments-retry", "Retry", theme, false).on_click(
                             cx.listener(move |shell, _, window, cx| {
                                 let list = shell
-                                    .docs
-                                    .get_mut(&project_id)
-                                    .and_then(|docs| docs.comments.begin_list(&file_path));
+                                    .comments_mut(project_id, context)
+                                    .and_then(|comments| comments.begin_list(&file_path));
                                 if let Some(file_path) = list {
-                                    shell.load_comments(project_id, file_path, window, cx);
+                                    shell.load_comments(project_id, context, file_path, window, cx);
                                 }
                             }),
                         ));
@@ -5932,15 +6134,19 @@ impl Shell {
         );
         if threads.is_empty() && new_draft.is_none() {
             let keys = self.keymap.label(Command::AddComment);
-            return margin.child(meta_line(
-                theme,
-                format!("Select lines, then comment ({keys}).").into(),
-            ));
+            let hint = match comments.selection {
+                Some(picked) => format!(
+                    "{} selected. Comment on them ({keys}).",
+                    comments::lines_label(picked.start, picked.end)
+                ),
+                None => format!("Select lines, then comment ({keys})."),
+            };
+            return margin.child(meta_line(theme, hint.into()));
         }
         margin.children(
-            threads
-                .into_iter()
-                .map(|thread| self.comment_thread(project_id, &thread, docs, focused, theme, cx)),
+            threads.into_iter().map(|thread| {
+                self.comment_thread(project_id, &thread, comments, focused, theme, cx)
+            }),
         )
     }
 
@@ -5950,11 +6156,12 @@ impl Shell {
         &self,
         project_id: Ulid,
         thread: &Thread<'_>,
-        docs: &Docs,
+        comments: &Comments,
         focused: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
+        let context = comments.context;
         let root = thread.root;
         let root_id = root.id;
         let group = SharedString::from(format!("thread-{root_id}"));
@@ -5964,10 +6171,9 @@ impl Shell {
         let anchor = lines.map_or_else(String::new, |(start, end)| {
             comments::lines_label(start, end)
         });
-        let picked = lines
-            .is_some_and(|(start, end)| docs.comments.selection == Some(Selection { start, end }));
-        let reply_draft = docs
-            .comments
+        let picked =
+            lines.is_some_and(|(start, end)| comments.selection == Some(Selection { start, end }));
+        let reply_draft = comments
             .draft
             .as_ref()
             .filter(|draft| draft.target == comments::Target::Reply(root_id));
@@ -6010,20 +6216,24 @@ impl Shell {
                 el.child(
                     button("comment-reply", "Reply", theme, false).on_click(cx.listener(
                         move |shell, _, window, cx| {
-                            shell.start_reply(project_id, root_id, window, cx)
+                            shell.start_reply(project_id, context, root_id, window, cx)
                         },
                     )),
                 )
             })
-            .when(root.sent_snapshot.is_some(), |el| {
-                el.child(
-                    button("comment-changes", "View changes", theme, false)
-                        .tooltip(tooltip(theme, "Compare the file as sent with now", ""))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.open_changes(project_id, root_id, window, cx);
-                        })),
-                )
-            })
+            // Diff comments have no whole-file text to compare with the snapshot.
+            .when(
+                root.sent_snapshot.is_some() && context == CommentContext::Doc,
+                |el| {
+                    el.child(
+                        button("comment-changes", "View changes", theme, false)
+                            .tooltip(tooltip(theme, "Compare the file as sent with now", ""))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                shell.open_changes(project_id, root_id, window, cx);
+                            })),
+                    )
+                },
+            )
             .child(
                 button(
                     "comment-status",
@@ -6036,7 +6246,7 @@ impl Shell {
                     false,
                 )
                 .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.set_comment_status(project_id, root_id, !resolved, window, cx);
+                    shell.set_comment_status(project_id, context, root_id, !resolved, window, cx);
                 })),
             );
         div()
@@ -6065,7 +6275,7 @@ impl Shell {
                     .cursor_pointer()
                     .when_some(lines, |el, (start, end)| {
                         el.on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.pick_doc_lines(project_id, start, end, false, cx);
+                            shell.pick_lines(project_id, context, start, end, false, cx);
                         }))
                     })
                     .child(
@@ -6697,7 +6907,9 @@ impl Shell {
                             .text_size(px(theme.terminal_font_size))
                             .children(
                                 (0..shown.rows.len().min(git_view::DISCARD_PREVIEW_ROWS)).map(
-                                    |index| git_diff_row(shown, index, None, line_height, theme),
+                                    |index| {
+                                        git_diff_row(shown, index, None, None, line_height, theme)
+                                    },
                                 ),
                             ),
                     )
@@ -7030,7 +7242,7 @@ impl Shell {
                                 .flex_none()
                                 .text_size(px(font_size::META))
                                 .text_color(rgb(theme.text_muted))
-                                .child("edited this file"),
+                                .child(dialog.last_label()),
                         )
                     })
                     .child(
@@ -8159,7 +8371,8 @@ fn preview_blocks(
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
-                        shell.pick_doc_lines(project_id, start, end, event.modifiers.shift, cx);
+                        let extend = event.modifiers.shift;
+                        shell.pick_lines(project_id, CommentContext::Doc, start, end, extend, cx);
                     }),
                 )
                 .child(element);
@@ -8668,14 +8881,17 @@ fn hunk_stage_button(
 
 /// One row of the Git diff viewer, `line_height` high: a collapsed gap of unchanged lines, a
 /// hunk header (the current hunk in the accent), or a line with its old / new numbers, its
-/// `+` / `−` sign, the diff colors and syntax colors.
+/// `+` / `−` sign, the diff colors and syntax colors. Lines whose new-side number is `picked`
+/// (for a comment) get an accent bar and an accent number.
 fn git_diff_row(
     shown: &git_view::Shown,
     index: usize,
     current: Option<usize>,
+    picked: Option<Selection>,
     line_height: f32,
     theme: &Theme,
 ) -> gpui::Div {
+    // Every row has the bar's width, so the gutters line up.
     let frame = div()
         .w_full()
         .h(px(line_height))
@@ -8683,6 +8899,8 @@ fn git_diff_row(
         .items_center()
         .gap(px(space::M))
         .px(px(space::L))
+        .border_l(px(theme::DIFF_PICK_BAR_WIDTH))
+        .border_color(gpui::transparent_black())
         .whitespace_nowrap();
     let Some(row) = shown.rows.get(index) else {
         return frame;
@@ -8737,8 +8955,13 @@ fn git_diff_row(
             // In a highlighted diff, text outside tokens is plain text (the sign and background
             // still tell added from removed); unhighlighted diffs keep the diff text colors.
             let text_color = if shown.highlighted { theme.text } else { fg };
+            let is_picked = line
+                .new_line
+                .zip(picked)
+                .is_some_and(|(n, picked)| picked.contains(n, n));
             frame
                 .when_some(bg, |el, bg| el.bg(rgb(bg)))
+                .when(is_picked, |el| el.border_color(rgb(theme.accent)))
                 .child(
                     div()
                         .flex_none()
@@ -8746,7 +8969,11 @@ fn git_diff_row(
                         .gap(px(space::S))
                         .text_color(rgb(theme.text_muted))
                         .child(number(line.old_line))
-                        .child(number(line.new_line)),
+                        .child(
+                            div()
+                                .when(is_picked, |el| el.text_color(rgb(theme.accent)))
+                                .child(number(line.new_line)),
+                        ),
                 )
                 .child(
                     div()

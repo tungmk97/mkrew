@@ -432,6 +432,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   uncommitted, untracked) with "Since abc1234 · task: …" and "Close"; no segment is active
   then — check that reads clearly; `h` and back returns to the task's list; `b` / Close → Working.
   Check the card footer (Changes / Undo / Approve) at the narrowest column width, dark + light.
+- [ ] (T7.11b) **Diff-line comments in the Git view** (model covered by `git_view.rs` /
+  `comments.rs` unit tests, the backend by `fake_agent_fixes_code_for_diff_comments_and_replies`;
+  the UI was never seen). Restart the daemon first (protocol v14). In a task's "Changes", click a
+  `+` line, Shift+click a later one → accent bar + accent numbers; Ctrl+Alt+M (or "Comment") →
+  margin opens with the draft; Enter saves; reply / resolve / reopen; Ctrl+Shift+S → the task's
+  session is offered first ("ran this task"); send to a real Claude / Codex → it fixes the code
+  and `mk comment reply` shows "↩ Addressed" live. Check the margin + diff width at 1280 px,
+  that typing in the draft never stages (`s`), and that Docs never lists the diff threads. Dark
+  + light.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1253,6 +1262,23 @@ _Decisions the agent made on its own. Override them here if you disagree._
   files are never re-anchored / outdated when the code changes (only watched `.md` files are),
   so their lines can go stale after the agent's fix (SPEC §12B says so; backlog);
   `Store::create_comment` has 7 args (`allow(clippy::too_many_arguments)`).
+- (T7.11b) **Diff comment UI choices:** only lines with a new-side number can be picked
+  (removed lines cannot); the quote is the picked lines the diff shows, so a Shift+click across
+  a collapsed gap quotes only the shown lines (the daemon may then mark it outdated). Comments
+  are allowed in Working, Staged, Against base and task changes, not in History (a past
+  commit's line numbers are not the current file's); the anchor is always "new side" of that
+  diff, which for Staged is the index, not the working tree file. The comment margin shows only while the file has threads, picked lines, a draft or
+  a list failure (a diff keeps its full width otherwise). Ctrl+Alt+M / Ctrl+Shift+S bind with
+  the context `Docs || Git` (the Git list must have focus; clicking a diff line gives it focus).
+  Default "Send to agent" session in a task's changes = the task's newest session ("ran this
+  task"), else the newest live one (no per-file "last session" for code files). Diff threads
+  have no "View changes" (no whole-file text to compare). Open review items (not fixed):
+  picked diff lines use an accent bar + accent numbers while Docs uses a selection fill and the
+  thread card a focus border (maybe one `comment_pick` token); the "N lines selected" margin hint
+  has no primary "Comment" button (Docs neither); the first pick narrows the diff by the 300 px
+  margin; the hover bar (`border`) is faint on add/del rows; Staged and Unstaged diffs of one
+  file share its threads although their line numbers differ; Git buttons reuse the
+  `doc-comment` / `doc-send` ids.
 
 ## Done
 

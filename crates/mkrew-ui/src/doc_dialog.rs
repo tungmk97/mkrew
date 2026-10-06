@@ -83,8 +83,11 @@ pub struct SendDialog {
     pub project_id: Ulid,
     pub file_path: String,
     pub comment_ids: Vec<CommentId>,
-    /// The session the file watcher last saw change the file (the default target).
+    /// The session the file watcher last saw change the file (the default target), or for
+    /// diff comments in a task's changes the task's session.
     pub last_session_id: Option<Ulid>,
+    /// `last_session_id` is the task's session.
+    pub task: bool,
     /// The session the user picked.
     pub picked: Option<Ulid>,
     /// The send is in flight.
@@ -104,6 +107,7 @@ impl SendDialog {
             file_path,
             comment_ids,
             last_session_id,
+            task: false,
             picked: None,
             busy: false,
             error: None,
@@ -174,6 +178,15 @@ impl SendDialog {
             comment_ids: self.comment_ids.clone(),
             session_id,
         })
+    }
+
+    /// Why the default session is offered first (shown next to it).
+    pub fn last_label(&self) -> &'static str {
+        if self.task {
+            "ran this task"
+        } else {
+            "edited this file"
+        }
     }
 
     /// The send failed: the dialog stays with the reason.
@@ -318,6 +331,12 @@ mod tests {
         let open =
             |last| SendDialog::new(Ulid(1), "PLAN.md".into(), vec![CommentId(Ulid(9))], last);
         let dialog = open(Some(Ulid(1)));
+        assert_eq!(dialog.last_label(), "edited this file");
+        let task = SendDialog {
+            task: true,
+            ..open(Some(Ulid(1)))
+        };
+        assert_eq!(task.last_label(), "ran this task");
         let choices = dialog.choices(&sessions);
         let order: Vec<_> = choices.iter().map(|c| c.session_id.0).collect();
         assert_eq!(

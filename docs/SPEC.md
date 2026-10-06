@@ -709,8 +709,10 @@ Windows (tens of ms, worse with antivirus), so:
 - **History:** last 50 commits; select one to see its files and diffs.
 - **Task changes:** from a Review-column task card, "View changes" opens the Git view with the diff
   from `task.checkpoint` to now (ties into M5).
-- **Diff comments → agent:** select diff lines → comment, reusing the M6 comment system
-  (`context = 'diff'`, anchored to new-side lines + quote). "Send to agent" delivers them to the
+- **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in
+  ADR 0006) → comment, reusing the M6 comment system (`context = 'diff'`, anchored to new-side
+  lines + quote = the picked lines shown; not in History). Threads are listed in a margin beside
+  the diff while the file has any (or lines are picked, a draft is open, or listing failed). "Send to agent" delivers them to the
   task's session (or a chosen one); the agent fixes the code and answers via `mk comment reply`.
   The prompt is the §12 template with `Fix the code in <file>` instead of `Update <file>`,
   `Line numbers are of the current file.` instead of `Only edit this file.`, and
@@ -765,6 +767,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Toggle History | h |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
+| Git | Send comments to agent | Ctrl+Shift+S |
 
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 

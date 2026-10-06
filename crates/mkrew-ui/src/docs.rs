@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use mkrew_protocol::{DocContent, DocFile, Event};
+use mkrew_protocol::{CommentContext, DocContent, DocFile, Event};
 use ulid::Ulid;
 
 use crate::comments::Comments;
@@ -173,7 +173,8 @@ impl Docs {
         };
     }
 
-    /// Follows `doc.changed` / `comment.updated` of this workspace.
+    /// Follows `doc.changed` / `comment.updated` of this workspace (diff comments are the Git
+    /// view's).
     pub fn apply(&mut self, event: &Event) -> Reaction {
         match event {
             Event::DocChanged(changed) if changed.project_id == self.project_id => {
@@ -198,7 +199,11 @@ impl Docs {
                 }
                 reaction
             }
-            Event::CommentUpdated(comment) if comment.project_id == self.project_id => {
+            // `Comments` ignores diff comments too; checked here so they never relist.
+            Event::CommentUpdated(comment)
+                if comment.project_id == self.project_id
+                    && comment.context == CommentContext::Doc =>
+            {
                 self.comments.apply_event(self.project_id, comment);
                 Reaction {
                     relist: true,
@@ -381,15 +386,15 @@ mod tests {
     }
 
     #[test]
-    fn comment_updates_relist_for_their_workspace_only() {
+    fn comment_updates_relist_for_their_workspace_and_docs_only() {
         let project = Ulid::new();
         let mut docs = Docs::new(project);
-        let comment = |project_id| {
+        let event = |project_id, context| {
             Event::CommentUpdated(Box::new(DocComment {
                 id: CommentId(Ulid::new()),
                 project_id,
                 file_path: "a.md".into(),
-                context: Default::default(),
+                context,
                 parent_id: None,
                 author: DocComment::USER.into(),
                 body: "Why?".into(),
@@ -403,8 +408,14 @@ mod tests {
                 updated_at: 1,
             }))
         };
+        let comment = |project_id| event(project_id, CommentContext::Doc);
         assert!(docs.apply(&comment(project)).relist);
         assert_eq!(docs.apply(&comment(Ulid::new())), Reaction::default());
+        assert_eq!(
+            docs.apply(&event(project, CommentContext::Diff)),
+            Reaction::default(),
+            "a diff comment on the same file"
+        );
     }
 
     #[test]

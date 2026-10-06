@@ -133,6 +133,9 @@ pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
 /// Width of the bar left of a Markdown quote.
 pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
 
+/// Width of the accent bar left of diff lines picked for a comment.
+pub const DIFF_PICK_BAR_WIDTH: f32 = 2.0;
+
 /// Width of the Docs view's comment margin (right of the preview / source).
 pub const DOC_MARGIN_WIDTH: f32 = 300.0;
 

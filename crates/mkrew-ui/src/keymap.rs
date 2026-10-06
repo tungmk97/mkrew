@@ -106,6 +106,9 @@ pub const FILES_CONTEXT: &str = "Files";
 /// shortcuts never reach a text field).
 pub const GIT_CONTEXT: &str = "Git";
 
+/// Comment commands work in the Docs view and in the Git view's list (diff comments).
+pub const COMMENTS_CONTEXT: &str = "Docs || Git";
+
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
 #[derive(Debug, Clone, PartialEq, gpui::Action)]
@@ -296,9 +299,8 @@ impl Command {
             | Command::PageDown
             | Command::Find => Some(TERMINAL_CONTEXT),
             Command::RunTask => Some(BOARD_CONTEXT),
-            Command::ToggleDocSource | Command::AddComment | Command::SendComments => {
-                Some(DOCS_CONTEXT)
-            }
+            Command::ToggleDocSource => Some(DOCS_CONTEXT),
+            Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
             Command::ToggleIgnored => Some(FILES_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
@@ -452,7 +454,7 @@ impl Keymap {
             .map(|(command, keystroke)| {
                 // `KeyBinding::new` panics on an unparsable keystroke or context; neither can
                 // happen: the keystroke was parsed and is unparsed back, the context is a
-                // plain identifier.
+                // plain identifier or `COMMENTS_CONTEXT` (parsed in the tests).
                 gpui::KeyBinding::new(&keystroke.unparse(), Run(*command), command.context())
             })
             .collect()
@@ -599,10 +601,18 @@ mod tests {
         assert_eq!(Command::RunTask.context(), Some(BOARD_CONTEXT));
         // Ctrl+Shift+E only toggles while Docs are shown; terminals still get it.
         assert_eq!(Command::ToggleDocSource.context(), Some(DOCS_CONTEXT));
-        assert_eq!(Command::AddComment.context(), Some(DOCS_CONTEXT));
+        // Comments: in Docs, and on diff lines while the Git list has focus.
+        for command in [Command::AddComment, Command::SendComments] {
+            assert_eq!(command.context(), Some(COMMENTS_CONTEXT), "{command:?}");
+            let predicate = gpui::KeyBindingContextPredicate::parse(COMMENTS_CONTEXT).unwrap();
+            for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Files", false)]
+            {
+                let stack = [gpui::KeyContext::parse(context).unwrap()];
+                assert_eq!(predicate.eval(&stack), matches, "{context}");
+            }
+        }
         // Ctrl+Shift+H only toggles ignored files while Files are shown.
         assert_eq!(Command::ToggleIgnored.context(), Some(FILES_CONTEXT));
-        assert_eq!(Command::SendComments.context(), Some(DOCS_CONTEXT));
         // SPEC §13 Git single keys, only while the Git list has focus.
         for (keys, command) in [
             ("b", Command::GitToggleMode),

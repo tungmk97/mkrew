@@ -1,10 +1,11 @@
-//! Review comments of the shown doc (SPEC §12): the line selection a new comment anchors to,
-//! the file's threads (`comment.list`, kept live by `comment.updated`), and the one draft being
-//! typed (a new comment or a reply). Pure and tested headlessly; `main.rs` sends the requests
-//! and renders the threads in the right margin.
+//! Review comments of the shown doc (SPEC §12) or diff (SPEC §12B, `context = diff`): the line
+//! selection a new comment anchors to, the file's threads (`comment.list`, kept live by
+//! `comment.updated`), and the one draft being typed (a new comment or a reply). Pure and
+//! tested headlessly; `main.rs` sends the requests and renders the threads in the right margin.
 
 use mkrew_protocol::{
-    CommentCreateParams, CommentId, CommentReplyParams, CommentStatus, DocComment, Request,
+    CommentContext, CommentCreateParams, CommentId, CommentReplyParams, CommentStatus, DocComment,
+    Request,
 };
 use ulid::Ulid;
 
@@ -182,9 +183,12 @@ impl Draft {
     }
 }
 
-/// The comments of one doc (the selected file of a Docs view) and the draft.
+/// The comments of one doc (the selected file of a Docs view) or of one diff (the selected
+/// file of a Git view), and the draft.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comments {
+    /// Which comments of the file these are (the others are ignored).
+    pub context: CommentContext,
     /// The file `list` belongs to.
     pub file_path: Option<String>,
     pub list: List,
@@ -200,7 +204,14 @@ pub struct Comments {
 
 impl Default for Comments {
     fn default() -> Self {
+        Comments::new(CommentContext::Doc)
+    }
+}
+
+impl Comments {
+    pub fn new(context: CommentContext) -> Comments {
         Comments {
+            context,
             file_path: None,
             list: List::Loading,
             selection: None,
@@ -210,9 +221,7 @@ impl Default for Comments {
             serial: 0,
         }
     }
-}
 
-impl Comments {
     /// Starts over for `file_path` when it is not this one's, or its listing failed; returns
     /// it when `comment.list` has to be sent.
     pub fn begin_list(&mut self, file_path: &str) -> Option<String> {
@@ -223,7 +232,7 @@ impl Comments {
         if !same {
             *self = Comments {
                 serial: self.serial,
-                ..Comments::default()
+                ..Comments::new(self.context)
             };
         }
         self.file_path = Some(file_path.to_owned());
@@ -245,10 +254,10 @@ impl Comments {
         }
     }
 
-    /// A `comment.updated` (or a request's answer) of `project_id`: added, or replacing an
-    /// older copy.
+    /// A `comment.updated` (or a request's answer) of `project_id` in this context: added, or
+    /// replacing an older copy.
     pub fn apply_event(&mut self, project_id: Ulid, comment: &DocComment) {
-        if comment.project_id == project_id {
+        if comment.project_id == project_id && comment.context == self.context {
             self.apply(comment);
         }
     }
@@ -277,14 +286,25 @@ impl Comments {
     /// Opens a draft for a new comment on the selection of the shown `lines`, quoting them;
     /// `false` = nothing selected (a selection past the end, after an edit, is dropped).
     pub fn start_comment(&mut self, lines: &[String]) -> bool {
+        let quoted = self
+            .selection
+            .filter(|selection| selection.end as usize <= lines.len())
+            .map(|selection| quote(lines, selection));
+        self.start_quoted(quoted)
+    }
+
+    /// Opens a draft for a new comment on the selection quoting `quoted` (what the caller
+    /// read off the shown lines); `false` = nothing selected, or `quoted` is `None` (the
+    /// selection is not shown any more: it is dropped).
+    pub fn start_quoted(&mut self, quoted: Option<String>) -> bool {
         let Some(selection) = self.selection else {
             return false;
         };
-        if selection.end as usize > lines.len() {
+        let Some(quoted) = quoted else {
             self.selection = None;
             return false;
-        }
-        self.open(Target::New(selection), quote(lines, selection));
+        };
+        self.open(Target::New(selection), quoted);
         true
     }
 
@@ -318,7 +338,7 @@ impl Comments {
                 end_line: selection.end,
                 quote: draft.quote.clone(),
                 body: body.to_owned(),
-                context: Default::default(),
+                context: self.context,
             }),
             Target::Reply(comment_id) => Request::CommentReply(CommentReplyParams {
                 comment_id,
@@ -522,6 +542,39 @@ mod tests {
         comments.submitted(serial, Ok(comment(1, None, Some((3, 3)), 1)));
         assert_eq!((comments.draft.as_ref(), comments.selection), (None, None));
         assert!(matches!(&comments.list, List::Loaded(list) if list.len() == 1));
+    }
+
+    #[test]
+    fn diff_comments_ignore_doc_comments_and_save_as_diff() {
+        let mut comments = Comments::new(CommentContext::Diff);
+        comments.pick(2, 2, false);
+        assert!(comments.begin_list("src/a.rs").is_some());
+        assert_eq!(comments.context, CommentContext::Diff, "kept across files");
+        comments.listed("src/a.rs", Ok(vec![]));
+        let mut doc = comment(1, None, Some((1, 1)), 1);
+        doc.file_path = "src/a.rs".into();
+        comments.apply_event(Ulid(1), &doc);
+        let mut diff = doc.clone();
+        diff.id = CommentId(Ulid(2));
+        diff.context = CommentContext::Diff;
+        comments.apply_event(Ulid(1), &diff);
+        assert_eq!(comments.list, List::Loaded(vec![diff]));
+
+        assert!(!comments.start_quoted(Some("x".into())), "nothing selected");
+        comments.pick(4, 5, false);
+        assert!(!comments.start_quoted(None), "lines not shown");
+        assert_eq!(comments.selection, None);
+        comments.pick(4, 5, false);
+        assert!(comments.start_quoted(Some("let a = 1;\nlet b = 2;".into())));
+        comments.draft.as_mut().unwrap().insert("Rename");
+        let Some(Request::CommentCreate(params)) = comments.submit(Ulid(1)) else {
+            panic!("no create");
+        };
+        assert_eq!(
+            (params.context, params.start_line, params.end_line),
+            (CommentContext::Diff, 4, 5)
+        );
+        assert_eq!(params.quote, "let a = 1;\nlet b = 2;");
     }
 
     #[test]

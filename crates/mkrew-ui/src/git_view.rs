@@ -11,12 +11,13 @@ use std::rc::Rc;
 
 use gpui::Keystroke;
 use mkrew_protocol::{
-    ChangeKind, ChangedFile, Commit, CommitDetail, DiffLine, Event, FileDiff, GitDiffParams,
-    GitDiscardParams, GitLogParams, GitMode, GitShowParams, GitStageParams, GitStatus,
-    GitStatusParams, HunkTarget, Request,
+    ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, Event, FileDiff,
+    GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitShowParams, GitStageParams,
+    GitStatus, GitStatusParams, HunkTarget, Request, Session, SessionState,
 };
 use ulid::Ulid;
 
+use crate::comments::{self, Comments, Selection};
 use crate::git_actions::{CommitBox, Remotes};
 use crate::git_history::{Detail, History};
 use crate::highlight::{self, Spans};
@@ -188,6 +189,23 @@ impl Shown {
     pub fn hunk_row(&self, hunk: usize) -> Option<usize> {
         self.rows.iter().position(|row| *row == DiffRow::Hunk(hunk))
     }
+
+    /// What a diff comment on new-side lines `selection` quotes: the shown new-side lines in
+    /// it (added and unchanged ones, in order), trimmed; `None` when none is shown.
+    pub fn quote(&self, selection: Selection) -> Option<String> {
+        let lines: Vec<&str> = self
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                DiffRow::Line(line) => line
+                    .new_line
+                    .filter(|&n| selection.contains(n, n))
+                    .map(|_| line.text.as_str()),
+                DiffRow::Gap(_) | DiffRow::Hunk(_) => None,
+            })
+            .collect();
+        (!lines.is_empty()).then(|| lines.join("\n").trim().to_owned())
+    }
 }
 
 /// The selected file's diff.
@@ -340,6 +358,10 @@ pub struct GitView {
     /// The task whose changes are listed (`mode` is then [`GitMode::Base`]); kept while the
     /// History is shown, so leaving it goes back to them.
     pub task: Option<TaskChanges>,
+    /// The diff comments of the selected file (anchored to new-side lines).
+    pub comments: Comments,
+    /// The diff `comments.selection` was picked on.
+    commented: Option<Target>,
     /// A stage / unstage is in flight (another is not sent meanwhile).
     staging: bool,
     /// A status was ever asked for (the view loads when first shown).
@@ -373,6 +395,8 @@ impl GitView {
             remotes: Remotes::default(),
             history: None,
             task: None,
+            comments: Comments::new(CommentContext::Diff),
+            commented: None,
             staging: false,
             started: false,
             loading: None,
@@ -1014,6 +1038,70 @@ impl GitView {
             Diff::Shown(shown) if self.selected.as_ref() == Some(target) => Some(Rc::clone(shown)),
             _ => None,
         }
+    }
+
+    /// The selected file's diff comments start over when it is another file: returns its path
+    /// when `comment.list` has to be sent. Picked lines go with another diff of the same file
+    /// too (staged vs unstaged numbers differ). The History keeps the comments it left.
+    pub fn begin_comments(&mut self) -> Option<String> {
+        if !self.can_comment() {
+            return None;
+        }
+        let target = self.selected.clone()?;
+        if self.commented.as_ref() != Some(&target) {
+            self.comments.selection = None;
+        }
+        let path = target.path.clone();
+        self.commented = Some(target);
+        self.comments.begin_list(&path)
+    }
+
+    /// Diff lines can be commented on (and threads show) outside the History: a past
+    /// commit's line numbers are not the current file's.
+    pub fn can_comment(&self) -> bool {
+        self.section() != Section::History
+    }
+
+    /// Opens a draft for a diff comment on the picked new-side lines, quoting them from the
+    /// shown diff; `false` = nothing picked, no diff shown, or in the History.
+    pub fn start_comment(&mut self) -> bool {
+        if !self.can_comment() {
+            return false;
+        }
+        let quoted = match (&self.diff, self.comments.selection) {
+            (Diff::Shown(shown), Some(selection)) => shown.quote(selection),
+            (Diff::Shown(_), None) => None,
+            _ => return false,
+        };
+        self.comments.start_quoted(quoted)
+    }
+
+    /// The comment margin shows beside the diff of a selected file while it has something to
+    /// show: picked lines, a draft, threads, or why they cannot be listed (a diff keeps its
+    /// full width otherwise).
+    pub fn comments_shown(&self) -> bool {
+        let listed = match &self.comments.list {
+            comments::List::Loaded(list) => !list.is_empty(),
+            comments::List::Failed(_) => true,
+            comments::List::Loading => false,
+        };
+        self.selected.is_some()
+            && self.can_comment()
+            && (listed || self.comments.selection.is_some() || self.comments.draft.is_some())
+    }
+
+    /// The session "Send to agent" offers first: in a task's changes, the task's newest live
+    /// session, else its newest one (the dialog falls back to the newest live session then).
+    pub fn task_session(&self, sessions: &[Session]) -> Option<Ulid> {
+        if self.section() != Section::Task {
+            return None;
+        }
+        let task_id = self.task.as_ref()?.task_id;
+        sessions
+            .iter()
+            .filter(|session| session.task_id == Some(task_id))
+            .max_by_key(|session| (session.state != SessionState::Exited, session.started_at))
+            .map(|session| session.id)
     }
 }
 
@@ -1817,6 +1905,122 @@ mod tests {
         view.begin_log();
         view.logged(Ok(vec![commit("b")]));
         assert_eq!(view.refresh_error, None);
+    }
+
+    fn text_line(kind: DiffLineKind, old: Option<u32>, new: Option<u32>, text: &str) -> DiffLine {
+        DiffLine {
+            text: text.into(),
+            ..line(kind, old, new)
+        }
+    }
+
+    #[test]
+    fn diff_comments_quote_the_picked_new_side_lines() {
+        let mut first = hunk(1, 2, 1, 2);
+        first.lines = vec![
+            text_line(DiffLineKind::Context, Some(1), Some(1), "  fn a() {"),
+            text_line(DiffLineKind::Del, Some(2), None, "old();"),
+            text_line(DiffLineKind::Add, None, Some(2), "new();  "),
+        ];
+        let mut second = hunk(9, 1, 9, 1);
+        second.lines = vec![text_line(DiffLineKind::Add, None, Some(9), "end();")];
+        let shown = laid_out(vec![first, second]);
+        let pick = |start, end| Selection { start, end };
+        assert_eq!(
+            shown.quote(pick(1, 2)).as_deref(),
+            Some("fn a() {\nnew();"),
+            "removed lines are not new-side lines"
+        );
+        assert_eq!(
+            shown.quote(pick(2, 9)).as_deref(),
+            Some("new();  \nend();"),
+            "only shown lines"
+        );
+        assert_eq!(shown.quote(pick(4, 8)), None);
+
+        let mut view = loaded();
+        assert_eq!(view.begin_comments().as_deref(), Some("a.rs"));
+        assert_eq!(view.begin_comments(), None, "same file");
+        view.comments.listed("a.rs", Ok(vec![]));
+        assert!(
+            !view.comments_shown(),
+            "nothing to show: the diff keeps its width"
+        );
+        view.comments.pick(2, 2, false);
+        assert!(view.comments_shown());
+        assert!(!view.start_comment(), "diff still loading");
+        assert!(view.begin_diff());
+        view.diff_loaded(&target(Group::Staged, "a.rs"), Ok(shown));
+        assert!(view.start_comment());
+        let draft = view.comments.draft.as_ref().unwrap();
+        assert_eq!(draft.quote, "new();");
+        assert_eq!(view.comments.context, CommentContext::Diff);
+
+        // The same file's other diff keeps its threads but not the picked lines.
+        view.comments.draft = None;
+        view.comments.pick(2, 2, false);
+        view.select(target(Group::Unstaged, "a.rs"));
+        assert_eq!(view.begin_comments(), None, "same file: listed already");
+        assert_eq!(view.comments.selection, None);
+
+        // In the History no line is commented on.
+        view.comments.pick(2, 2, false);
+        view.toggle_history();
+        assert!(!view.comments_shown() && !view.start_comment());
+        assert_eq!(view.begin_comments(), None, "not listed in the History");
+        view.toggle_history();
+        assert_eq!(
+            view.comments.selection,
+            Some(Selection { start: 2, end: 2 })
+        );
+
+        // Another file starts its comments over.
+        view.select(target(Group::Unstaged, "b.rs"));
+        assert_eq!(view.begin_comments().as_deref(), Some("b.rs"));
+        assert_eq!(view.comments.selection, None);
+        assert!(!view.comments_shown());
+    }
+
+    #[test]
+    fn send_to_agent_offers_the_tasks_newest_session_first() {
+        use mkrew_protocol::{SessionKind, SessionState, StateSource};
+        let session = |id: u128, task: Option<u128>, started_at, state| Session {
+            id: Ulid(id),
+            task_id: task.map(Ulid),
+            project_id: Ulid(1),
+            agent_profile: "fake".into(),
+            kind: SessionKind::Agent,
+            title: None,
+            native_session_id: None,
+            state,
+            state_source: StateSource::Screen,
+            state_changed_at: 0,
+            exit_code: None,
+            cols: 80,
+            rows: 24,
+            started_at,
+            ended_at: None,
+        };
+        let (idle, exited) = (SessionState::Idle, SessionState::Exited);
+        let mut sessions = vec![
+            session(1, Some(7), 1, idle),
+            session(2, Some(7), 5, idle),
+            session(3, None, 9, idle),
+        ];
+        let mut view = GitView::new(Ulid(1));
+        assert_eq!(view.task_session(&sessions), None, "not a task's changes");
+        view.show_task(TaskChanges {
+            task_id: Ulid(7),
+            title: "Fix it".into(),
+            checkpoint: "abc".into(),
+        });
+        assert_eq!(view.task_session(&sessions), Some(Ulid(2)));
+        sessions[1].state = exited;
+        assert_eq!(view.task_session(&sessions), Some(Ulid(1)), "live first");
+        sessions[0].state = exited;
+        assert_eq!(view.task_session(&sessions), Some(Ulid(2)), "else newest");
+        view.toggle_history();
+        assert_eq!(view.task_session(&sessions), None, "in the History");
     }
 
     #[test]
