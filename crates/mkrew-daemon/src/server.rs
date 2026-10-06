@@ -31,6 +31,7 @@ use crate::{backup, session_log, undo};
 
 mod comment;
 mod doc;
+mod fs;
 mod git;
 mod resume;
 
@@ -339,6 +340,9 @@ impl Daemon {
             Request::GitShow(params) => (self.git_show(params).await, After::Continue),
             Request::GitFetch(params) => (self.git_remote(params, false).await, After::Continue),
             Request::GitPush(params) => (self.git_remote(params, true).await, After::Continue),
+            Request::FsList(params) => (self.fs_list(params).await, After::Continue),
+            Request::FsRead(params) => (self.fs_read(params).await, After::Continue),
+            Request::FsFind(params) => (self.fs_find(params).await, After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

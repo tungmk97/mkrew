@@ -15,8 +15,9 @@ use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
     CommentReplyParams, CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult,
     DocChangedEvent, DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode,
-    Event, FileDiff, Frame, FrameDecoder, GitChangedEvent, GitCommitParams, GitCommitResult,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitSetBaseParams, GitShowParams,
+    Event, FileDiff, Frame, FrameDecoder, FsContent, FsEntry, FsFindParams, FsListParams, FsMatch,
+    FsReadParams, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
+    GitDiscardParams, GitLogParams, GitMarker, GitMode, GitSetBaseParams, GitShowParams,
     GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
     HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef,
     ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
@@ -3146,6 +3147,101 @@ fn task_run_passes_metacharacter_prompts_through_npm_cmd_shims() {
     let log = session_log(&env, run.session_id);
     assert!(log.contains(&format!("Task: {prompt}")), "{log:?}");
     client.stop();
+}
+
+#[test]
+fn fs_list_read_and_find_follow_file_changes() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
+    git(&repo, &["config", "commit.gpgsign", "false"]);
+    std::fs::create_dir(repo.join("src")).unwrap();
+    std::fs::write(repo.join(".gitignore"), "out/\n").unwrap();
+    std::fs::write(repo.join("src/main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("src/main.rs"), "fn main() { run() }\n").unwrap();
+    std::fs::create_dir(repo.join("out")).unwrap();
+    std::fs::write(repo.join("out/app.bin"), b"\0\x01").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let list = |client: &mut Client, dir: &str, show_ignored| -> Vec<FsEntry> {
+        let request = Request::FsList(FsListParams {
+            project_id: id,
+            dir: dir.into(),
+            show_ignored,
+        });
+        client.call(request).into_result().unwrap()
+    };
+    let find = |client: &mut Client, query: &str| -> Vec<String> {
+        let request = Request::FsFind(FsFindParams {
+            project_id: id,
+            query: query.into(),
+            limit: 10,
+        });
+        let found: Vec<FsMatch> = client.call(request).into_result().unwrap();
+        found.into_iter().map(|m| m.path).collect()
+    };
+    let read = |path: &str| {
+        Request::FsRead(FsReadParams {
+            project_id: id,
+            path: path.into(),
+        })
+    };
+
+    let top = list(&mut client, "", false);
+    let names: Vec<&str> = top.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["src", ".gitignore"]);
+    assert!(top[0].has_changes);
+    let shown = list(&mut client, "", true);
+    assert!(shown.iter().any(|e| e.name == "out" && e.ignored));
+    let src = list(&mut client, "src", false);
+    assert_eq!(src[0].path, "src/main.rs");
+    assert_eq!(src[0].marker, Some(GitMarker::Modified));
+
+    let content: FsContent = client.call(read("src\\main.rs")).into_result().unwrap();
+    assert_eq!(content.content.as_deref(), Some("fn main() { run() }\n"));
+    assert_eq!(content.language.as_deref(), Some("rust"));
+    let binary: FsContent = client.call(read("out/app.bin")).into_result().unwrap();
+    assert!(binary.binary && binary.content.is_none());
+    assert_eq!(
+        error_code(client.call(read("../x"))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(read(".git/HEAD"))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(read("nope.rs"))),
+        ErrorCode::NotFound
+    );
+    let missing = Request::FsList(FsListParams {
+        project_id: id,
+        dir: "nope".into(),
+        show_ignored: false,
+    });
+    assert_eq!(error_code(client.call(missing)), ErrorCode::NotFound);
+
+    // The cached file list follows the watcher.
+    assert_eq!(find(&mut client, "main"), ["src/main.rs"]);
+    assert!(
+        find(&mut client, "app").is_empty(),
+        "ignored files are not found"
+    );
+    // Let any batch from earlier writes pass, so the event waited for is this file's.
+    std::thread::sleep(Duration::from_millis(500));
+    client.call(Request::DaemonStatus);
+    client.events.clear();
+    std::fs::write(repo.join("src/maintenance.rs"), "").unwrap();
+    client.wait_event(&Event::GitChanged(GitChangedEvent { project_id: id }));
+    assert_eq!(
+        find(&mut client, "main"),
+        ["src/main.rs", "src/maintenance.rs"]
+    );
 }
 
 fn session_log(env: &Env, id: Ulid) -> String {

@@ -22,6 +22,8 @@ mkrew-store = { version = "0.1.0", path = "../mkrew-store" }
 notify = "8.2.0"
 # OS notifications on needs_input/done (SPEC §8); default `z` = pure-Rust zbus on Linux.
 notify-rust = "4.18.1"
+# Quick open ranking for `fs.find` (SPEC §12A).
+nucleo-matcher = "0.3.1"
 portable-pty = "0.9"
 serde = "1"
 serde_json = "1"

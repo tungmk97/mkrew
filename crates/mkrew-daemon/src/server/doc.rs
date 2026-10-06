@@ -78,7 +78,7 @@ impl Daemon {
     }
 
     /// The project, now watched for doc changes.
-    fn watched_project(&self, project_id: ulid::Ulid) -> Result<Project, Outcome> {
+    pub(super) fn watched_project(&self, project_id: ulid::Ulid) -> Result<Project, Outcome> {
         let project = self
             .store()
             .get_project(project_id)

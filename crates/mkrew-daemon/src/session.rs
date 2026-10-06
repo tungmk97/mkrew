@@ -25,6 +25,7 @@ use ulid::Ulid;
 use crate::attach::Attachment;
 use crate::docs;
 use crate::emulator::Emulator;
+use crate::files::FileIndex;
 use crate::launch;
 use crate::session_log::SessionLog;
 use crate::watch::{self, Watch};
@@ -75,6 +76,8 @@ pub struct Hub {
     /// Recent file editors per project (SPEC §7 `conflict.detected`). Lock order: `watches`,
     /// then `conflicts`; never held with `live` or `store`.
     conflicts: Mutex<HashMap<Ulid, conflict::Tracker<Ulid>>>,
+    /// `fs.find`'s file lists; a watcher batch with changed files invalidates its project's.
+    pub file_index: FileIndex,
     tasks: Mutex<JoinSet<()>>,
     /// Set by [`Hub::shutdown`]; refuses new sessions.
     stopping: AtomicBool,
@@ -242,6 +245,7 @@ impl Hub {
             watches: Mutex::default(),
             doc_hashes: Mutex::default(),
             conflicts: Mutex::default(),
+            file_index: FileIndex::default(),
             tasks: Mutex::default(),
             stopping: AtomicBool::new(false),
             flood_turn: tokio::sync::Mutex::default(),
@@ -467,6 +471,7 @@ impl Hub {
         let started = watch::watch(root, move |batch| {
             if let Some(hub) = hub.upgrade() {
                 if !batch.files.is_empty() {
+                    hub.file_index.invalidate(project_id);
                     hub.files_changed(project_id, &batch.files);
                 }
                 let _ = hub

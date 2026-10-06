@@ -22,6 +22,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
       and a second target dir filled it up during T7.4 (LNK1318). T7.5: still locked (4.9 GB
       free); renamed it to `target\debug\mkrew-fakeagent.locked-old.exe` (allowed while it
       runs) so verify could relink — delete that file once the process is gone.
+      T7.6: drive C: was full (313 MB free, LNK1318/LNK1140). `cargo clean --release` and
+      `cargo clean --target x86_64-unknown-linux-gnu` (the latter also emptied `target\debug`)
+      freed it to ~91 GB; only build output inside `target\` was removed (rebuilt by verify).
 
 - [ ] (T0.1) Run `pwsh scripts/verify.ps1` once. The headless session was not allowed to run
   `pwsh`; `bash scripts/verify.sh` (same fmt/clippy/test steps) passed on Windows.
@@ -1023,6 +1026,31 @@ _Decisions the agent made on its own. Override them here if you disagree._
   test (`status_of_a_10000_file_repo_meets_the_budget`) asserts < 150 ms only under
   `cargo test --release`; debug run here: median ≈ 87–117 ms. The view's status never writes the
   index (`GIT_OPTIONAL_LOCKS=0`), so it is slower until the user's own git refreshes it.
+- (T7.6) **fs.list/read/find:** `.gitignore` (+ `.git/info/exclude`, global excludes) applies
+  only inside a git repo (`ignore` crate default; the watcher applies the root `.gitignore`
+  everywhere); hidden files are shown; `.git` is never listed; children of an ignored folder
+  are all `ignored`; `node_modules`/`target` count as ignored (shown only with `show_ignored`) and are
+  never searched by `fs.find`, like the watcher. **Markers** come from one `git status` per
+  `fs.list` (not cached): untracked `?` > deleted `D` (either side) > added `A` > `M` (also
+  renames, type changes, conflicts). **Deleted files** still known to git are listed as
+  entries with marker `D` (only in an existing folder). Folder dot = any marker below it.
+  Symlinks are followed when telling folders from files. **fs.read**: binary = a NUL byte in
+  the first 8,000 bytes or not UTF-8 (so Latin-1 text counts as binary); files > 2 MiB come
+  without content (`too_large`, binary sniffed from the head); `language` = a fixed extension
+  map (`rust`, `typescript`, `python`, …, plus `Makefile`/`Dockerfile`) for T7.7's syntect
+  lookup. **fs.find**: the file list is walked once per project and dropped on any watcher
+  batch with changed files (so the watcher's misses = stale results until the next change);
+  empty query = first `limit` files by path; ties = shorter path first. Perf test
+  `files::tests::find_over_10000_files_meets_the_budget` (warm list) asserts < 100 ms only in
+  release; debug here: median ≈ 47 ms, first walk ≈ 140 ms. `dir`/`path` with a `.git` part
+  = `invalid_request`. Open review items: a deleted *folder* shows only its parent's dot (no
+  phantom folder, listing it = `not_found`); every content edit drops the find cache (the
+  next quick open re-walks, ≈ 140 ms debug on 10k files); symlinks may list/read outside
+  the root (like `doc.read`); FileIndex entries of removed projects are never dropped;
+  `fs.find` caches the walk even when the watcher failed to start (stale until restart); a
+  folder moved in from outside only yields a directory event, which does not invalidate the
+  find cache; e2e `fs_list_read_and_find_follow_file_changes` uses a 500 ms sleep to drain
+  watcher batches (could poll `fs.find` with a deadline instead).
 
 ## Done
 

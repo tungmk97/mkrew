@@ -7,6 +7,7 @@ mod attach;
 mod backup;
 mod docs;
 mod emulator;
+mod files;
 mod git;
 mod git_view;
 pub mod ipc;
