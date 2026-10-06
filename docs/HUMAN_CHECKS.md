@@ -1471,6 +1471,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   To verify: with `notify.sound = true`, a needs_input toast plays the sound on Windows (and on
   macOS/Linux if you have them). With `sound = false` it is silent. With `notify.done = false`,
   no toast appears on done.
+- (T9.7) **Keep awake details:** `awake.keep_awake` is read on each session state event, so
+  turning it off while agents work releases at the next state change (+5 s), not instantly.
+  The Linux/macOS backend could not be compiled on this Windows box (reviewed by reading only).
+  Linux limits: if the daemon is killed, `systemd-inhibit … sleep infinity` is orphaned and keeps
+  blocking sleep (no parent-death signal; that needs `unsafe pre_exec`); if `systemd-inhibit`
+  exits at once (no logind / polkit denial), nothing is logged. macOS `-w <pid>` has neither issue.
+  To verify: `cargo clippy` on Linux/macOS; on Windows run a fake agent that works for a while
+  and check `powercfg /requests` (as admin) lists `mkrew-daemon` under SYSTEM, and that it is gone
+  ~5 s after the agent stops; a shell session running a command never appears there.
 
 ## Done
 

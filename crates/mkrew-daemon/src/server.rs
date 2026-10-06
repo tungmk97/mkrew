@@ -28,7 +28,7 @@ use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
-use crate::{backup, session_log, undo};
+use crate::{awake, backup, session_log, undo};
 
 mod comment;
 mod dev;
@@ -84,8 +84,8 @@ impl Daemon {
         })
     }
 
-    /// Watches `settings.toml`, starts daily DB backups, resumes interrupted tasks, auto-starts
-    /// dev servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
+    /// Watches `settings.toml`, starts keep awake and daily DB backups, resumes interrupted
+    /// tasks, auto-starts dev servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
     /// OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let _settings_watch = settings::watch(Arc::clone(&self.settings))
@@ -93,11 +93,17 @@ impl Daemon {
             .ok();
         let notifications =
             notifier.map(|n| notify::start(Arc::clone(&self.hub), Arc::clone(&self.settings), n));
+        let keep_awake = awake::start(
+            Arc::clone(&self.hub),
+            Arc::clone(&self.settings),
+            awake::os::inhibitor(),
+        );
         let backups = backup::start(Arc::clone(&self.hub), self.paths.backups_dir());
         self.resume_tasks();
         self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
         backups.abort();
+        keep_awake.abort();
         if let Some(task) = notifications {
             task.abort();
         }
