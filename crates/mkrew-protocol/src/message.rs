@@ -1170,6 +1170,25 @@ pub struct TurnFile {
     pub removed: Option<u32>,
 }
 
+/// A persisted turn of a session (SPEC §20C, table `turn`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Turn {
+    /// Per session, from 1.
+    pub n: u32,
+    /// Unix ms.
+    pub started_at: i64,
+    /// Unix ms; `None` while the turn runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<i64>,
+    /// Git tree of the working state at turn start; `None` outside a git repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_tree: Option<String>,
+    /// Git tree when the turn ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_tree: Option<String>,
+    pub files: Vec<TurnFile>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDeletedEvent {
     pub task_id: Ulid,
@@ -1254,6 +1273,21 @@ mod tests {
         let back: Message = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(&back, message);
         value
+    }
+
+    #[test]
+    fn turn_wire_shape_omits_absent_fields() {
+        let turn = Turn {
+            n: 1,
+            started_at: 5,
+            ended_at: None,
+            start_tree: None,
+            end_tree: None,
+            files: vec![],
+        };
+        let value = serde_json::to_value(&turn).unwrap();
+        assert_eq!(value, json!({ "n": 1, "started_at": 5, "files": [] }));
+        assert_eq!(serde_json::from_value::<Turn>(value).unwrap(), turn);
     }
 
     #[test]

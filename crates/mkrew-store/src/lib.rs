@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use mkrew_protocol::{
     CommentContext, CommentId, CommentStatus, DocComment, Project, Session, SessionKind,
-    SessionState, StateSource, Task, TaskStatus, TerminalTab,
+    SessionState, StateSource, Task, TaskStatus, TerminalTab, Turn, TurnFile,
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use ulid::Ulid;
@@ -22,6 +22,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0005_doc_review.sql"),
     include_str!("../migrations/0006_files_git.sql"),
     include_str!("../migrations/0007_dev_server.sql"),
+    include_str!("../migrations/0008_turns.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +55,8 @@ pub enum StoreError {
     TaskHasLiveSession(Ulid),
     #[error("comment {0} not found")]
     CommentNotFound(CommentId),
+    #[error("turn {n} of session {session_id} not found")]
+    TurnNotFound { session_id: Ulid, n: u32 },
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
@@ -677,6 +680,100 @@ impl Store {
         .collect()
     }
 
+    /// Records the start of turn `n` of a session (SPEC §20C.1); `start_tree` is `None`
+    /// outside a git repo.
+    pub fn start_turn(
+        &self,
+        session_id: Ulid,
+        n: u32,
+        started_at: i64,
+        start_tree: Option<&str>,
+    ) -> Result<Turn> {
+        self.get_session(session_id)?;
+        self.conn.execute(
+            "INSERT INTO turn (session_id, n, started_at, start_tree) VALUES (?1, ?2, ?3, ?4)",
+            params![session_id.to_string(), n, started_at, start_tree],
+        )?;
+        self.get_turn(session_id, n)
+    }
+
+    /// Records the end of turn `n` with its end snapshot and the files changed during it.
+    pub fn end_turn(
+        &self,
+        session_id: Ulid,
+        n: u32,
+        ended_at: i64,
+        end_tree: Option<&str>,
+        files: &[TurnFile],
+    ) -> Result<Turn> {
+        // Infallible: `TurnFile` is plain strings and integers.
+        let files = serde_json::to_string(files).unwrap_or_else(|_| "[]".to_owned());
+        let changed = self.conn.execute(
+            "UPDATE turn SET ended_at = ?3, end_tree = ?4, files = ?5
+             WHERE session_id = ?1 AND n = ?2",
+            params![session_id.to_string(), n, ended_at, end_tree, files],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::TurnNotFound { session_id, n });
+        }
+        self.get_turn(session_id, n)
+    }
+
+    pub fn get_turn(&self, session_id: Ulid, n: u32) -> Result<Turn> {
+        self.conn
+            .query_row(
+                &format!("SELECT {TURN_COLUMNS} FROM turn WHERE session_id = ?1 AND n = ?2"),
+                params![session_id.to_string(), n],
+                RawTurn::from_row,
+            )
+            .optional()?
+            .ok_or(StoreError::TurnNotFound { session_id, n })?
+            .into_turn()
+    }
+
+    /// A session's turns, oldest first.
+    pub fn list_turns(&self, session_id: Ulid) -> Result<Vec<Turn>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TURN_COLUMNS} FROM turn WHERE session_id = ?1 ORDER BY n"
+        ))?;
+        let rows = stmt.query_map([session_id.to_string()], RawTurn::from_row)?;
+        rows.map(|r| r?.into_turn()).collect()
+    }
+
+    /// Sessions that ended before `cutoff` (Unix ms) and still have turn trees, with their
+    /// project: their `refs/mkrew/turns/<sid>/*` refs are due for deletion (SPEC §20C.1).
+    pub fn sessions_with_expired_turns(&self, cutoff: i64) -> Result<Vec<(Ulid, Ulid)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.project_id FROM session s
+             WHERE s.ended_at IS NOT NULL AND s.ended_at < ?1
+               AND EXISTS (SELECT 1 FROM turn t WHERE t.session_id = s.id
+                           AND (t.start_tree IS NOT NULL OR t.end_tree IS NOT NULL))
+             ORDER BY s.ended_at, s.id",
+        )?;
+        let rows = stmt.query_map([cutoff], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.map(|r| {
+            let (session, project) = r?;
+            Ok((
+                parse_ulid("session.id", session)?,
+                parse_ulid("session.project_id", project)?,
+            ))
+        })
+        .collect()
+    }
+
+    /// Clears the trees of a session's turns once their refs are deleted (the trees may be
+    /// garbage-collected); the turns stay as history and, like turns outside git, cannot be
+    /// restored.
+    pub fn forget_turn_trees(&self, session_id: Ulid) -> Result<()> {
+        self.conn.execute(
+            "UPDATE turn SET start_tree = NULL, end_tree = NULL WHERE session_id = ?1",
+            [session_id.to_string()],
+        )?;
+        Ok(())
+    }
+
     /// Review comments of a project, optionally of one file: thread roots and replies in the
     /// order they were written.
     pub fn list_comments(
@@ -1293,6 +1390,43 @@ impl RawComment {
             sent_snapshot: self.sent_snapshot,
             created_at: self.created_at,
             updated_at: self.updated_at,
+        })
+    }
+}
+
+const TURN_COLUMNS: &str = "n, started_at, ended_at, start_tree, end_tree, files";
+
+struct RawTurn {
+    n: u32,
+    started_at: i64,
+    ended_at: Option<i64>,
+    start_tree: Option<String>,
+    end_tree: Option<String>,
+    files: String,
+}
+
+impl RawTurn {
+    fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            n: row.get(0)?,
+            started_at: row.get(1)?,
+            ended_at: row.get(2)?,
+            start_tree: row.get(3)?,
+            end_tree: row.get(4)?,
+            files: row.get(5)?,
+        })
+    }
+
+    fn into_turn(self) -> Result<Turn> {
+        let files =
+            serde_json::from_str(&self.files).map_err(|_| corrupt("turn.files", self.files))?;
+        Ok(Turn {
+            n: self.n,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+            start_tree: self.start_tree,
+            end_tree: self.end_tree,
+            files,
         })
     }
 }

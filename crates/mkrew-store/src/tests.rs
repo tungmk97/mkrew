@@ -832,6 +832,115 @@ fn project_session_events_span_sessions_since_a_time() {
 }
 
 #[test]
+fn turns_start_end_list_and_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let (a, b) = (session(p.id, 1), session(p.id, 2));
+    store.insert_session(&a).unwrap();
+    store.insert_session(&b).unwrap();
+
+    let t1 = store.start_turn(a.id, 1, 100, Some("tree1")).unwrap();
+    assert_eq!(
+        t1,
+        Turn {
+            n: 1,
+            started_at: 100,
+            ended_at: None,
+            start_tree: Some("tree1".into()),
+            end_tree: None,
+            files: vec![],
+        }
+    );
+    let files = vec![
+        TurnFile {
+            path: "src/a.rs".into(),
+            added: Some(3),
+            removed: Some(1),
+        },
+        TurnFile {
+            path: "b.md".into(),
+            added: None,
+            removed: None,
+        },
+    ];
+    let ended = store.end_turn(a.id, 1, 200, Some("tree2"), &files).unwrap();
+    assert_eq!(ended.ended_at, Some(200));
+    assert_eq!(ended.end_tree.as_deref(), Some("tree2"));
+    assert_eq!(ended.files, files);
+    store.start_turn(a.id, 2, 300, Some("tree2")).unwrap();
+    // Outside a git repo: no trees.
+    store.start_turn(b.id, 1, 150, None).unwrap();
+    let b1 = store.end_turn(b.id, 1, 160, None, &[]).unwrap();
+    assert_eq!((b1.start_tree, b1.end_tree), (None, None));
+
+    drop(store);
+    let store = open(&dir);
+    let turns = store.list_turns(a.id).unwrap();
+    assert_eq!(turns.iter().map(|t| t.n).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(turns[0], ended);
+    assert_eq!(turns[1].ended_at, None);
+    assert_eq!(store.list_turns(b.id).unwrap().len(), 1);
+    assert!(store.list_turns(Ulid::new()).unwrap().is_empty());
+}
+
+#[test]
+fn turn_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let s = session(p.id, 1);
+    store.insert_session(&s).unwrap();
+    let missing = Ulid::new();
+    assert!(matches!(
+        store.start_turn(missing, 1, 1, None),
+        Err(StoreError::SessionNotFound(id)) if id == missing
+    ));
+    assert!(matches!(
+        store.end_turn(s.id, 1, 2, None, &[]),
+        Err(StoreError::TurnNotFound { session_id, n: 1 }) if session_id == s.id
+    ));
+    assert!(matches!(
+        store.get_turn(s.id, 7),
+        Err(StoreError::TurnNotFound { n: 7, .. })
+    ));
+    store.start_turn(s.id, 1, 1, None).unwrap();
+    // A turn number is recorded once.
+    assert!(store.start_turn(s.id, 1, 5, None).is_err());
+}
+
+#[test]
+fn expired_turn_sessions_are_listed_until_their_trees_are_forgotten() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let ended = |started_at: i64, ended_at: Option<i64>| {
+        let mut s = session(p.id, started_at);
+        s.ended_at = ended_at;
+        store.insert_session(&s).unwrap();
+        s
+    };
+    let old = ended(1, Some(10));
+    let old_no_git = ended(2, Some(10));
+    let _old_no_turns = ended(3, Some(10));
+    let recent = ended(4, Some(1_000));
+    let live = ended(5, None);
+    store.start_turn(old.id, 1, 5, Some("t")).unwrap();
+    store.start_turn(old_no_git.id, 1, 5, None).unwrap();
+    store.start_turn(recent.id, 1, 5, Some("t")).unwrap();
+    store.start_turn(live.id, 1, 5, Some("t")).unwrap();
+
+    assert_eq!(
+        store.sessions_with_expired_turns(500).unwrap(),
+        vec![(old.id, p.id)]
+    );
+    store.forget_turn_trees(old.id).unwrap();
+    assert!(store.sessions_with_expired_turns(500).unwrap().is_empty());
+    let kept = store.list_turns(old.id).unwrap();
+    assert_eq!((kept.len(), kept[0].start_tree.clone()), (1, None));
+}
+
+#[test]
 fn comment_errors() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

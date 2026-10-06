@@ -1313,7 +1313,7 @@ Attachments of sessions that ended more than 7 days ago are deleted by the hourl
 
 | Method / event | Params | Returns / data |
 | --- | --- | --- |
-| `turn.list` | `session_id` | `Turn[]`: `n`, `started_at`, `ended_at?`, `start_tree`, `end_tree?`, `files[]` |
+| `turn.list` | `session_id` | `Turn[]`: `n`, `started_at`, `ended_at?`, `start_tree?` (absent outside git), `end_tree?`, `files[]` |
 | `turn.restore_preview` | `session_id`, `n` | like `task.undo_preview` (checkpoint = `start_tree`) |
 | `turn.restore` | `session_id`, `n`, `confirm: true`, `created[]`, `fingerprint` | ok — rules as `task.undo` |
 | `session.files` | `project_id`, `since_ms` | `{session_id → paths[]}` |
