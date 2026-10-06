@@ -147,6 +147,11 @@ impl TerminalPane {
         self.focus_handle.contains_focused(window, cx)
     }
 
+    /// The selected text, for "Send selection" (§20B.4).
+    pub fn selection_text(&self) -> Option<String> {
+        self.emulator.selection_text()
+    }
+
     /// Feeds output bytes. The caller notifies once per batch (≤ one repaint per frame).
     pub fn feed(&mut self, bytes: &[u8]) {
         self.emulator.advance(bytes);

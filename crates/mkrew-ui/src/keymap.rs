@@ -56,6 +56,9 @@ pub enum Command {
     Peek,
     /// Open the prompt composer of the focused agent pane (§20B.1).
     OpenComposer,
+    /// Send the picked lines (Files, Git diff) or the terminal selection to an agent's
+    /// composer (§20B.4).
+    SendSelection,
     /// Show the active workspace's task board.
     ShowBoard,
     /// Show the active workspace's terminal tabs.
@@ -161,6 +164,7 @@ impl Command {
             Command::NextInbox,
             Command::Peek,
             Command::OpenComposer,
+            Command::SendSelection,
             Command::ShowBoard,
             Command::ShowTerminals,
             Command::ShowDocs,
@@ -221,6 +225,7 @@ impl Command {
             Command::NextInbox => "next_inbox".into(),
             Command::Peek => "peek".into(),
             Command::OpenComposer => "open_composer".into(),
+            Command::SendSelection => "send_selection".into(),
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
             Command::ShowDocs => "show_docs".into(),
@@ -286,6 +291,7 @@ impl Command {
             Command::NextInbox => "ctrl-shift-i".into(),
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
+            Command::SendSelection => "ctrl-shift-l".into(),
             Command::ShowBoard => "ctrl-shift-1".into(),
             Command::ShowTerminals => "ctrl-shift-2".into(),
             Command::ShowDocs => "ctrl-shift-3".into(),
@@ -634,6 +640,7 @@ mod tests {
         assert_eq!(bound("ctrl-shift-space"), Some(Command::Peek));
         assert_eq!(keymap.label(Command::Peek), "Ctrl+Shift+Space");
         assert_eq!(bound("ctrl-shift-enter"), Some(Command::OpenComposer));
+        assert_eq!(bound("ctrl-shift-l"), Some(Command::SendSelection));
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowBoard));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
         assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowDocs));

@@ -193,6 +193,13 @@ impl Shown {
     /// What a diff comment on new-side lines `selection` quotes: the shown new-side lines in
     /// it (added and unchanged ones, in order), trimmed; `None` when none is shown.
     pub fn quote(&self, selection: Selection) -> Option<String> {
+        self.new_side_text(selection)
+            .map(|text| text.trim().to_owned())
+    }
+
+    /// The shown new-side lines in `selection` as they are (indent kept), for "Send
+    /// selection" (§20B.4); `None` when none is shown.
+    pub fn new_side_text(&self, selection: Selection) -> Option<String> {
         let lines: Vec<&str> = self
             .rows
             .iter()
@@ -204,7 +211,7 @@ impl Shown {
                 DiffRow::Gap(_) | DiffRow::Hunk(_) => None,
             })
             .collect();
-        (!lines.is_empty()).then(|| lines.join("\n").trim().to_owned())
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 }
 
@@ -1937,6 +1944,11 @@ mod tests {
             "only shown lines"
         );
         assert_eq!(shown.quote(pick(4, 8)), None);
+        assert_eq!(
+            shown.new_side_text(pick(1, 2)).as_deref(),
+            Some("  fn a() {\nnew();  "),
+            "sent selections keep the indent"
+        );
 
         let mut view = loaded();
         assert_eq!(view.begin_comments().as_deref(), Some("a.rs"));

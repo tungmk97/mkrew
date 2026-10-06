@@ -168,6 +168,7 @@ pub fn title(command: Command) -> String {
         Command::NextInbox => "Inbox: Jump to next item needing attention".into(),
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
         Command::OpenComposer => "Agent: Open the prompt composer".into(),
+        Command::SendSelection => "Agent: Send selection to an agent".into(),
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
@@ -228,6 +229,9 @@ pub fn available(command: Command, context: &Context) -> bool {
             on_panes && context.terminal
         }
         Command::OpenComposer => on_panes && context.agent_pane,
+        Command::SendSelection => {
+            in_view(View::Files) || in_view(View::Git) || (on_panes && context.terminal)
+        }
         Command::RunTask => in_view(View::Board),
         Command::ToggleDocSource => in_view(View::Docs),
         Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Git),
@@ -662,6 +666,11 @@ mod tests {
         });
         assert!(focused.contains(&Command::Copy));
         assert!(focused.contains(&Command::Find));
+        assert!(focused.contains(&Command::SendSelection));
+        assert!(
+            !terminals.contains(&Command::SendSelection),
+            "no terminal focused"
+        );
         assert!(!focused.contains(&Command::OpenComposer), "a shell pane");
         let agent = commands(&Context {
             terminal: true,
@@ -673,6 +682,7 @@ mod tests {
         let git = commands(&context(View::Git));
         assert!(git.contains(&Command::GitStage));
         assert!(git.contains(&Command::AddComment));
+        assert!(git.contains(&Command::SendSelection));
         assert!(
             !git.contains(&Command::ClosePane),
             "panes are not on screen"

@@ -594,6 +594,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T10.6) **Send selection (Ctrl+Shift+L):** the session picker is §12's "Send to agent"
+  dialog in a selection mode (title `Send selection · path:a-b`, confirm "Open composer").
+  Files picks only one line (§12A), so it sends that line (`` `path:n-n` ``); multi-line picks
+  in Files (Shift+click) would be a follow-up. "Most recently active" = the live agent whose
+  state changed last. Git sends the picked new-side lines with their indent; Files sends tab-
+  expanded lines (as shown). The prefill is typed after the draft on a new line. Nothing picked
+  → the key does nothing (the palette still lists it in Files/Git). `{selection}` in prompts =
+  the raw picked lines of the shown view (Files or Git), not fenced.
+
 - (T10.5) The three prompt entry points ("Insert prompt…" in the palette, "Prompts…" in the
   composer, "From prompt…" in the task dialog) open one modal picker (list + rendered preview +
   muted "left empty" note), not dropdown menus. A pick is appended to the composer draft / task

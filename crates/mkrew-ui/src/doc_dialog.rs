@@ -1,6 +1,7 @@
 //! The Docs view's two dialogs (SPEC §12): "Send to agent" (which open comments go to which
-//! live agent session) and "View changes" (the file as it was when sent vs now). Pure and
-//! tested headlessly; `main.rs` sends `comment.send_to_agent` and renders them.
+//! live agent session; also the session picker of "Send selection", §20B.4) and "View
+//! changes" (the file as it was when sent vs now). Pure and tested headlessly; `main.rs` sends
+//! `comment.send_to_agent` and renders them.
 
 use gpui::Keystroke;
 use mkrew_protocol::{
@@ -88,6 +89,9 @@ pub struct SendDialog {
     pub last_session_id: Option<Ulid>,
     /// `last_session_id` is the task's session.
     pub task: bool,
+    /// "Send selection" (§20B.4): the text the picked session's composer opens with
+    /// (`comment_ids` is then empty).
+    pub prefill: Option<String>,
     /// The session the user picked.
     pub picked: Option<Ulid>,
     /// The send is in flight.
@@ -108,9 +112,33 @@ impl SendDialog {
             comment_ids,
             last_session_id,
             task: false,
+            prefill: None,
             picked: None,
             busy: false,
             error: None,
+        }
+    }
+
+    /// "Send selection" of `prefill` from `file_path` (`path:a-b`; empty for a terminal), offering
+    /// `task_session` (Git task changes) first, else the most recently active agent.
+    pub fn selection(
+        project_id: Ulid,
+        file_path: String,
+        prefill: String,
+        task_session: Option<Ulid>,
+        sessions: &[Session],
+    ) -> SendDialog {
+        // The task's session counts only while it is live (else it is not offered).
+        let task_session = task_session.filter(|&id| {
+            sessions
+                .iter()
+                .any(|s| s.id == id && s.state != SessionState::Exited)
+        });
+        let last = task_session.or_else(|| most_recently_active(sessions, project_id));
+        SendDialog {
+            task: task_session.is_some(),
+            prefill: Some(prefill),
+            ..SendDialog::new(project_id, file_path, Vec::new(), last)
         }
     }
 
@@ -164,11 +192,16 @@ impl SendDialog {
         self.pick(choices[next].session_id);
     }
 
+    /// The selected session, if any.
+    pub fn target(&self, sessions: &[Session]) -> Option<Ulid> {
+        let choices = self.choices(sessions);
+        Some(choices.get(self.selected(&choices)?)?.session_id)
+    }
+
     /// The request sending the comments to the selected session, marking the dialog busy;
     /// `None` while one is in flight, or with no session or comment to send.
     pub fn send(&mut self, sessions: &[Session]) -> Option<CommentSendParams> {
-        let choices = self.choices(sessions);
-        let session_id = choices.get(self.selected(&choices)?)?.session_id;
+        let session_id = self.target(sessions)?;
         if self.busy || self.comment_ids.is_empty() {
             return None;
         }
@@ -184,6 +217,8 @@ impl SendDialog {
     pub fn last_label(&self) -> &'static str {
         if self.task {
             "ran this task"
+        } else if self.prefill.is_some() {
+            "active last"
         } else {
             "edited this file"
         }
@@ -194,6 +229,19 @@ impl SendDialog {
         self.busy = false;
         self.error = Some(error);
     }
+}
+
+/// The workspace's live agent session whose state changed last (§20B.4's default target).
+pub fn most_recently_active(sessions: &[Session], project_id: Ulid) -> Option<Ulid> {
+    sessions
+        .iter()
+        .filter(|s| {
+            s.project_id == project_id
+                && s.kind == SessionKind::Agent
+                && s.state != SessionState::Exited
+        })
+        .max_by_key(|s| (s.state_changed_at, s.started_at))
+        .map(|s| s.id)
 }
 
 /// "View changes" of a sent thread: its file as sent vs as shown now.
@@ -349,6 +397,45 @@ mod tests {
         // The last modifying session exited (or is unknown): the newest.
         assert_eq!(open(Some(Ulid(4))).selected(&choices), Some(0));
         assert_eq!(open(None).selected(&[]), None);
+    }
+
+    #[test]
+    fn a_selection_goes_to_the_task_session_else_the_most_recently_active_agent() {
+        let at = |mut session: Session, changed| {
+            session.state_changed_at = changed;
+            session
+        };
+        let sessions = vec![
+            at(session(1, SessionKind::Agent, SessionState::Idle, 10), 500),
+            at(
+                session(2, SessionKind::Agent, SessionState::Working, 30),
+                100,
+            ),
+            at(session(3, SessionKind::Shell, SessionState::Idle, 40), 900),
+            at(
+                session(4, SessionKind::Agent, SessionState::Exited, 50),
+                950,
+            ),
+        ];
+        assert_eq!(most_recently_active(&sessions, Ulid(1)), Some(Ulid(1)));
+        assert_eq!(most_recently_active(&sessions, Ulid(2)), None);
+
+        let open =
+            |task| SendDialog::selection(Ulid(1), "src/a.rs".into(), "x".into(), task, &sessions);
+        let dialog = open(None);
+        assert_eq!(dialog.last_session_id, Some(Ulid(1)));
+        assert_eq!(dialog.last_label(), "active last");
+        assert_eq!(dialog.target(&sessions), Some(Ulid(1)));
+        assert!(dialog.comment_ids.is_empty());
+        assert_eq!(dialog.prefill.as_deref(), Some("x"));
+        let task = open(Some(Ulid(2)));
+        assert_eq!(task.last_label(), "ran this task");
+        assert_eq!(task.target(&sessions), Some(Ulid(2)));
+        let exited = open(Some(Ulid(4)));
+        assert!(!exited.task, "an exited task session is not offered");
+        assert_eq!(exited.target(&sessions), Some(Ulid(1)));
+        // No comments to send: only `target` acts.
+        assert_eq!(open(None).send(&sessions), None);
     }
 
     #[test]

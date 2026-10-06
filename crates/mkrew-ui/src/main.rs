@@ -2335,7 +2335,7 @@ impl Shell {
                 cx.notify();
             }
             (Some(DocDialog::Send(_)), Some(doc_dialog::Key::Send)) => {
-                self.send_comments(window, cx);
+                self.confirm_send_dialog(window, cx);
             }
             _ => {}
         }
@@ -4155,12 +4155,133 @@ impl Shell {
                     .and_then(|view| view.selected.as_ref())
                     .map(|target| target.path.clone())
             });
+        // The shown view's pick first (one picked earlier elsewhere may linger).
+        let views = if self.view() == View::Git {
+            [View::Git, View::Files]
+        } else {
+            [View::Files, View::Git]
+        };
+        let selection = views
+            .into_iter()
+            .find_map(|view| self.picked_lines(project_id, view))
+            .map(|(_, _, _, text)| text);
         PromptVars {
             file,
-            selection: None,
+            selection,
             task,
             project,
         }
+    }
+
+    /// The lines picked in `project_id`'s Files view (one line, §12A) or Git diff (new side):
+    /// the file, first and last line, and their text (§20B.4).
+    fn picked_lines(&self, project_id: Ulid, view: View) -> Option<(String, u32, u32, String)> {
+        match view {
+            View::Files => {
+                let files = self.files.get(&project_id)?;
+                let (Some(path), Some(line), files_view::Content::Shown(code)) =
+                    (&files.file, files.line, &files.content)
+                else {
+                    return None;
+                };
+                let text = code
+                    .lines
+                    .get(usize::try_from(line).ok()?.checked_sub(1)?)?;
+                Some((path.clone(), line, line, text.clone()))
+            }
+            View::Git => {
+                let git = self.git.get(&project_id)?;
+                let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
+                    (&git.selected, git.comments.selection, &git.diff)
+                else {
+                    return None;
+                };
+                let text = shown.new_side_text(selection)?;
+                Some((target.path.clone(), selection.start, selection.end, text))
+            }
+            _ => None,
+        }
+    }
+
+    /// "Send selection" (Ctrl+Shift+L, §20B.4): the picked lines of Files or the Git diff, or
+    /// the focused terminal's selected text, go to a session picked in the send dialog (the
+    /// task's session for Git task changes, else the most recently active agent).
+    fn open_selection_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
+            return;
+        };
+        let sessions = self.sidebar.sessions();
+        let (file_path, prefill, task) = match self.view() {
+            view @ (View::Files | View::Git) => {
+                let picked = self
+                    .picked_lines(project_id, view)
+                    .filter(|(_, _, _, text)| !text.trim().is_empty());
+                let Some((path, start, end, text)) = picked else {
+                    return;
+                };
+                let task = self
+                    .git
+                    .get(&project_id)
+                    .filter(|_| view == View::Git)
+                    .and_then(|git| git.task_session(sessions));
+                let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
+                (format!("{path}:{start}-{end}"), prefill, task)
+            }
+            View::Terminals => {
+                let text = self
+                    .focused_session()
+                    .and_then(|session| self.panes.get(&session))
+                    .and_then(|pane| pane.read(cx).selection_text())
+                    .filter(|text| !text.trim().is_empty());
+                let Some(text) = text else {
+                    return;
+                };
+                (
+                    String::new(),
+                    composer::selection_prefill(None, &text),
+                    None,
+                )
+            }
+            _ => return,
+        };
+        let dialog = SendDialog::selection(project_id, file_path, prefill, task, sessions);
+        self.open_doc_dialog(DocDialog::Send(dialog), window, cx);
+    }
+
+    /// The send dialog's Send: comments go out, a selection opens the picked session's
+    /// composer with it.
+    fn confirm_send_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        match &self.doc_dialog {
+            Some(DocDialog::Send(dialog)) if dialog.prefill.is_some() => {
+                self.send_selection(window, cx);
+            }
+            _ => self.send_comments(window, cx),
+        }
+    }
+
+    /// Shows the selected session's pane with its composer, the selection typed after its
+    /// draft; the user adds the instruction and sends.
+    fn send_selection(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(DocDialog::Send(dialog)) = &self.doc_dialog else {
+            return;
+        };
+        let (Some(prefill), Some(session)) = (
+            dialog.prefill.clone(),
+            dialog.target(self.sidebar.sessions()),
+        ) else {
+            return;
+        };
+        self.doc_dialog = None;
+        self.composers.open(session);
+        let before = self.composers.shown(session).map_or("", |d| d.text.text());
+        let text = prompt_picker::on_new_line(before, &prefill);
+        self.composers.insert(session, &text);
+        self.composer_scroll.scroll_to_bottom();
+        self.open_session(session, window, cx);
+        if self.composer_session() == Some(session) {
+            window.focus(&self.composer_focus, cx);
+        }
+        cx.notify();
     }
 
     /// Opens the prompt picker typing into `target`; the library is read (seeded the first
@@ -4541,6 +4662,7 @@ impl Shell {
                 }
             }
             Command::OpenComposer => self.open_composer(window, cx),
+            Command::SendSelection => self.open_selection_dialog(window, cx),
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
@@ -9093,14 +9215,21 @@ impl Shell {
     ) -> gpui::AnyElement {
         let choices = dialog.choices(self.sidebar.sessions());
         let selected = dialog.selected(&choices);
+        let selection = dialog.prefill.is_some();
         let count = dialog.comment_ids.len();
-        let what = if count == 1 {
+        let what = if selection {
+            "the selection".to_owned()
+        } else if count == 1 {
             "1 open comment".to_owned()
         } else {
             format!("{count} open comments")
         };
         let sentence = if choices.is_empty() {
             format!("No agent is running in this workspace to take {what}.")
+        } else if selection {
+            "Adds the selection to the composer of the session below; type your \
+             instruction, then send."
+                .to_owned()
         } else {
             format!(
                 "Types {what} into the session below as one prompt (queued while it is \
@@ -9211,13 +9340,31 @@ impl Shell {
             footer
                 .child(
                     button("send-cancel", "Cancel", theme, false)
-                        .tooltip(tooltip(theme, "Keep the comments open", "Esc"))
+                        .tooltip(tooltip(
+                            theme,
+                            if selection {
+                                "Close without sending"
+                            } else {
+                                "Keep the comments open"
+                            },
+                            "Esc",
+                        ))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);
                         })),
                 )
                 .child(if dialog.busy {
                     disabled_button("send-confirm", "Sending…", theme, true)
+                } else if selection {
+                    button("send-confirm", "Open composer", theme, true)
+                        .tooltip(tooltip(
+                            theme,
+                            "Add the selection to this session's composer",
+                            "Enter",
+                        ))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.send_selection(window, cx);
+                        }))
                 } else {
                     button("send-confirm", "Send", theme, true)
                         .tooltip(tooltip(theme, "Send to the selected session", "Enter"))
@@ -9230,7 +9377,11 @@ impl Shell {
             .doc_dialog_panel(
                 "send-dialog",
                 theme::DIALOG_WIDTH,
-                format!("Send to agent · {}", dialog.file_path),
+                match (selection, dialog.file_path.as_str()) {
+                    (true, "") => "Send selection · terminal".to_owned(),
+                    (true, path) => format!("Send selection · {path}"),
+                    (false, path) => format!("Send to agent · {path}"),
+                },
                 sentence,
                 theme,
                 cx,

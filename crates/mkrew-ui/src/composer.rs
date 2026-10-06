@@ -136,6 +136,26 @@ pub fn file_ref(template: &str, path: &str) -> String {
     template.replace("{path}", &path)
 }
 
+/// What "Send selection" (§20B.4) opens the composer with: `` `<path>:<a>-<b>` `` for picked
+/// lines `a..=b` of a file (`lines`; `None` = terminal text), then `text` in a fenced block
+/// (fenced longer than any backtick run inside), ending on a new line for the instruction.
+pub fn selection_prefill(lines: Option<(&str, u32, u32)>, text: &str) -> String {
+    let mut prefill = String::new();
+    if let Some((path, start, end)) = lines {
+        let path = path.replace('\\', "/");
+        prefill.push_str(&format!("`{path}:{start}-{end}`\n"));
+    }
+    let text = without_blank_edges(text);
+    let longest = text
+        .split(|c| c != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default();
+    let fence = "`".repeat(longest.max(2) + 1);
+    prefill.push_str(&format!("{fence}\n{text}\n{fence}\n"));
+    prefill
+}
+
 /// The first line of a queued text, as listed in the composer.
 pub fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
@@ -242,6 +262,25 @@ mod tests {
         );
         assert_eq!(file_ref("{path}", "a b\\c.txt"), "\"a b/c.txt\"");
         assert_eq!(file_ref("see {path} ", "x.rs"), "see x.rs ");
+    }
+
+    #[test]
+    fn selection_prefills_cite_the_lines_then_fence_the_text() {
+        assert_eq!(
+            selection_prefill(Some(("src\\ui\\app.rs", 3, 5)), "    let a = 1;\n    a\n\n"),
+            "`src/ui/app.rs:3-5`\n```\n    let a = 1;\n    a\n```\n"
+        );
+        assert_eq!(
+            selection_prefill(Some(("a.md", 7, 7)), "x"),
+            "`a.md:7-7`\n```\nx\n```\n"
+        );
+        // A terminal: the fenced block only.
+        assert_eq!(selection_prefill(None, "\n$ ls\n"), "```\n$ ls\n```\n");
+        // A fence inside the text gets a longer one around it.
+        assert_eq!(
+            selection_prefill(None, "```rs\nfn f() {}\n```"),
+            "````\n```rs\nfn f() {}\n```\n````\n"
+        );
     }
 
     #[test]
