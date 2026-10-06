@@ -33,7 +33,8 @@ use mkrew_store::Store;
 use serde_json::{Value, json};
 use ulid::Ulid;
 
-const TIMEOUT: Duration = Duration::from_secs(15);
+// Generous: the flood test alone takes ~13 s on Windows, longer under parallel test load.
+const TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Env {
     dir: tempfile::TempDir,
@@ -1732,6 +1733,60 @@ fn session_read_shows_the_prompt_line_and_the_answer_goes_through() {
     assert_eq!(
         error_code(client.call(read(id, 1))),
         ErrorCode::InvalidState
+    );
+    client.stop();
+}
+
+/// A fake agent edits two files (one twice, with hooks) and writes a third (no hook) in one
+/// turn; at `done`, `session.turn` carries each path once, relative, sorted (SPEC §20A.3).
+#[test]
+fn a_turn_that_edits_two_files_reports_both() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("editor.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\n\n\
+         [[step]]\naction = \"write_file\"\npath = \"notes.txt\"\ncontent = \"x\"\n\n\
+         [[step]]\naction = \"edit_files\"\npaths = [\"src/b.rs\", \"a.rs\", \"a.rs\"]\n\n\
+         [[step]]\naction = \"sleep\"\nms = 1500\n\n\
+         [[step]]\naction = \"hook\"\nevent = \"done\"\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "editor",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    // Hooks decide the states: a slow `mk hook` run must not look like a quiet (idle) period.
+    let path = env.dir.path().join("config/agents/editor.toml");
+    let profile = std::fs::read_to_string(&path).unwrap();
+    let hooks = profile.replace("mode = \"screen\"", "mode = \"hook+screen\"");
+    assert_ne!(hooks, profile);
+    env.write_profile("editor", &hooks);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
+    let id = spawned.session_id;
+
+    let event =
+        client.wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id));
+    let Event::SessionTurn(turn) = event else {
+        unreachable!()
+    };
+    assert_eq!(turn.n, 1);
+    assert!(turn.started_at <= turn.ended_at, "{turn:?}");
+    // The turn ended when the `done` hook arrived.
+    client.wait_event_where(|e| {
+        matches!(e, Event::SessionState(s) if s.session_id == id
+            && s.state == SessionState::Done && s.changed_at == turn.ended_at)
+    });
+    let paths: Vec<&str> = turn.files.iter().map(|f| f.path.as_str()).collect();
+    // `notes.txt` was written without a hook: only the file watcher saw it.
+    assert_eq!(paths, ["a.rs", "notes.txt", "src/b.rs"]);
+    assert!(
+        turn.files
+            .iter()
+            .all(|f| f.added.is_none() && f.removed.is_none())
     );
     client.stop();
 }

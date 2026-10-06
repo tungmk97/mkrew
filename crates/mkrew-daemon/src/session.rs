@@ -11,11 +11,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use mkrew_core::turn::{TurnEvent, TurnTracker};
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
-    Session, SessionAttachResult, SessionExitedEvent, SessionReadResult, SessionState,
-    SessionStateEvent, StateSource,
+    Session, SessionAttachResult, SessionExitedEvent, SessionKind, SessionReadResult, SessionState,
+    SessionStateEvent, SessionTurnEvent, StateSource, TurnFile,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -211,6 +212,8 @@ pub enum Command {
         agent: HookAgent,
         report: HookReportParams,
     },
+    /// A watcher batch attributed to this session (relative paths): goes to its open turn.
+    TurnFiles(Vec<String>),
 }
 
 /// What a session task receives from its PTY threads.
@@ -424,6 +427,7 @@ impl Hub {
             queue,
             log,
             attachments: Vec::new(),
+            turns: TurnTracker::default(),
         };
         lock(&self.tasks).spawn(actor.run(rx, commands));
         Ok(())
@@ -553,6 +557,10 @@ impl Hub {
         };
         if let [editor] = working[..] {
             self.record_edits(project_id, paths, editor, at);
+            // A batch flushed after the turn ended is dropped by the tracker (HUMAN_CHECKS T9.5).
+            if !self.command(editor, Command::TurnFiles(paths.to_vec())) {
+                tracing::debug!(%editor, "changed files not added to the turn");
+            }
         }
     }
 
@@ -628,14 +636,15 @@ impl Hub {
     }
 
     /// A hook of session `session_id` named files its agent edited (`hook::edited_paths`):
-    /// attributes the ones inside the project and not ignored by the watcher. The project path
-    /// is the watch root too: sessions run with `cwd` = project path (SPEC §8).
-    fn hook_edits(&self, project_id: Ulid, session_id: Ulid, reported: &[String]) {
+    /// attributes the ones inside the project and not ignored by the watcher, and returns them
+    /// relative to the project. The project path is the watch root too: sessions run with
+    /// `cwd` = project path (SPEC §8).
+    fn hook_edits(&self, project_id: Ulid, session_id: Ulid, reported: &[String]) -> Vec<String> {
         let root = match self.store().get_project(project_id) {
             Ok(project) => PathBuf::from(project.path),
             Err(e) => {
                 tracing::warn!(%project_id, "hook edits not attributed: {e}");
-                return;
+                return Vec::new();
             }
         };
         let filter = watch::Filter::new(&root);
@@ -648,6 +657,7 @@ impl Hub {
             })
             .collect();
         self.record_edits(project_id, &paths, session_id, crate::server::now_ms());
+        paths
     }
 
     /// Records that `editor` changed `paths` at `at` and announces each new conflict.
@@ -758,6 +768,8 @@ struct Actor {
     log: SessionLog,
     /// Attached clients; closed ones are dropped on the next output.
     attachments: Vec<Arc<Attachment>>,
+    /// Agent sessions only; each ended turn is broadcast as `session.turn` (SPEC §20A.3).
+    turns: TurnTracker,
 }
 
 impl Actor {
@@ -848,6 +860,7 @@ impl Actor {
                     }
                     Some(Command::SendWritten) => self.send_writing = false,
                     Some(Command::Hook { agent, report }) => self.on_hook(agent, report),
+                    Some(Command::TurnFiles(paths)) => self.turns.add_files(paths),
                     None => commands_open = false,
                 },
                 () = sleep_until(tick_at), if tick_at.is_some() => {
@@ -915,8 +928,10 @@ impl Actor {
         }
         let edited = mkrew_core::hook::edited_paths(&report.payload);
         if !edited.is_empty() {
-            self.hub
+            let paths = self
+                .hub
                 .hook_edits(self.session.project_id, self.session.id, &edited);
+            self.turns.add_files(paths);
         }
         let native_changed = native.is_some() && native != self.session.native_session_id;
         if native_changed {
@@ -995,6 +1010,34 @@ impl Actor {
         if let Some(task_id) = self.session.task_id {
             self.hub.follow_task(task_id, state, self.session.exit_code);
         }
+        self.track_turn(state);
+    }
+
+    /// Feeds the turn tracker and broadcasts `session.turn` when a turn ends.
+    fn track_turn(&mut self, state: SessionState) {
+        if self.session.kind != SessionKind::Agent {
+            return;
+        }
+        let at = self.session.state_changed_at;
+        let Some(TurnEvent::Ended(turn)) = self.turns.on_state(state, at) else {
+            return;
+        };
+        let files = turn
+            .files
+            .into_iter()
+            .map(|path| TurnFile {
+                path,
+                added: None,
+                removed: None,
+            })
+            .collect();
+        let _ = self.hub.events.send(Event::SessionTurn(SessionTurnEvent {
+            session_id: self.session.id,
+            n: turn.n,
+            started_at: turn.started_at,
+            ended_at: at,
+            files,
+        }));
     }
 
     fn save(&self) {

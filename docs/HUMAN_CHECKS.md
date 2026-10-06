@@ -1458,6 +1458,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   start and files; it ends (and is sent) again later. A `needs_input` with no turn open (e.g. a
   startup trust prompt, or after `done`) then `working` starts a new turn. Files are attributed
   only while a turn is open.
+- (T9.5) **Late file-watcher batches:** the watcher flushes ~300 ms after the last change, so an
+  edit made right before `done` can arrive after the turn ended. Chosen: such a batch is dropped
+  (not added to the ended turn, not to the next one), matching M5, where only a session in
+  `working` gets batches attributed. Hook-reported edits arrive before the `done` hook, so
+  agents with hooks (Claude, fake) lose nothing. Only agent sessions have turns (shells: none).
 
 ## Done
 

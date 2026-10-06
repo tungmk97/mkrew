@@ -286,6 +286,10 @@ pub enum Event {
     /// The git state of a workspace changed (debounced, ≤ once per 300 ms; SPEC §12B).
     #[serde(rename = "git.changed")]
     GitChanged(GitChangedEvent),
+    /// A turn of an agent session ended (SPEC §20A.3). A turn resumed after `needs_input` ends
+    /// again with the same `n`; the later event replaces the earlier one.
+    #[serde(rename = "session.turn")]
+    SessionTurn(SessionTurnEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -1087,6 +1091,32 @@ pub struct SessionExitedEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTurnEvent {
+    pub session_id: Ulid,
+    /// Per session, from 1.
+    pub n: u32,
+    /// Unix ms.
+    pub started_at: i64,
+    /// Unix ms.
+    pub ended_at: i64,
+    /// Files attributed to the session during the turn, sorted, no duplicates.
+    pub files: Vec<TurnFile>,
+}
+
+/// One file of a [`SessionTurnEvent`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnFile {
+    /// Relative to the project root, `/` separators.
+    pub path: String,
+    /// Lines added during the turn (from M11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<u32>,
+    /// Lines removed during the turn (from M11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskDeletedEvent {
     pub task_id: Ulid,
     pub project_id: Ulid,
@@ -1714,6 +1744,19 @@ mod tests {
         })));
         assert_eq!(doc["event"], "doc.changed");
         assert_eq!(doc["data"]["hash"], serde_json::Value::Null);
+        let turn = round_trip(&Message::Event(Event::SessionTurn(SessionTurnEvent {
+            session_id: sid(),
+            n: 2,
+            started_at: 10,
+            ended_at: 20,
+            files: vec![TurnFile {
+                path: "src/a.rs".into(),
+                added: None,
+                removed: None,
+            }],
+        })));
+        assert_eq!(turn["event"], "session.turn");
+        assert_eq!(turn["data"]["files"], json!([{ "path": "src/a.rs" }]));
     }
 
     #[test]
