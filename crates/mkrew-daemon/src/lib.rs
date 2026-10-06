@@ -20,6 +20,11 @@ mod server;
 mod session;
 mod session_log;
 mod settings;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired into turn starts by T11.3")
+)]
+mod snapshot;
 pub mod spawn;
 mod undo;
 mod watch;

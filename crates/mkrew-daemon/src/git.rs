@@ -86,6 +86,17 @@ pub trait GitBackend: Send + Sync {
 
     /// Pushes `branch` to `upstream`, fast-forward only (network). Never forces.
     fn push(&self, dir: &Path, branch: &str, upstream: &Upstream) -> io::Result<()>;
+
+    /// The index file of the (worktree of the) repo containing `dir`.
+    fn index_path(&self, dir: &Path) -> io::Result<PathBuf>;
+
+    /// A tree of the whole working state of the repo containing `dir` (tracked and untracked,
+    /// not ignored), written through a temp copy of its `index`: HEAD, branches, the real index
+    /// and the files are untouched (SPEC §20C.1).
+    fn snapshot(&self, dir: &Path, index: &Path) -> io::Result<String>;
+
+    /// Points `name` (a full ref outside `refs/heads`) at `object`, keeping it reachable.
+    fn update_ref(&self, dir: &Path, name: &str, object: &str) -> io::Result<()>;
 }
 
 /// A local branch: its full ref name (`refs/heads/…`) and where it pushes.
@@ -455,6 +466,64 @@ impl GitBackend for GitCli {
             .arg(&upstream.remote)
             .arg(format!("{branch}:{}", upstream.merge));
         run(command).map(drop)
+    }
+
+    fn index_path(&self, dir: &Path) -> io::Result<PathBuf> {
+        // `--git-path` follows worktrees; relative output is relative to `dir` (joining an
+        // absolute path keeps it as is).
+        let mut command = git(dir);
+        command
+            .env_remove("GIT_INDEX_FILE")
+            .args(["rev-parse", "--git-path", "index"]);
+        Ok(dir.join(String::from_utf8_lossy(&run(command)?).trim()))
+    }
+
+    fn snapshot(&self, dir: &Path, index: &Path) -> io::Result<String> {
+        let temp = TempIndex::copy_of(index)?;
+        let with_temp = || {
+            let mut command = git(dir);
+            command.env("GIT_INDEX_FILE", &temp.0);
+            command
+        };
+        let mut add = with_temp();
+        // `:/` = the whole repo, whatever folder `dir` is.
+        add.args(["add", "-A", "--", ":/"]);
+        run(add)?;
+        let mut write = with_temp();
+        write.arg("write-tree");
+        Ok(String::from_utf8_lossy(&run(write)?).trim().to_owned())
+    }
+
+    fn update_ref(&self, dir: &Path, name: &str, object: &str) -> io::Result<()> {
+        let mut command = git(dir);
+        command.args(["update-ref", name, object]);
+        run(command).map(drop)
+    }
+}
+
+/// A private copy of an index next to it, deleted on drop.
+struct TempIndex(PathBuf);
+
+impl TempIndex {
+    /// Copies `index` (a missing one, e.g. a fresh repo, stays missing: git starts empty).
+    fn copy_of(index: &Path) -> io::Result<Self> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut name = index.as_os_str().to_owned();
+        name.push(format!(".mkrew-snapshot-{}-{n}", std::process::id()));
+        let temp = Self(PathBuf::from(name));
+        match std::fs::copy(index, &temp.0) {
+            Ok(_) => Ok(temp),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(temp),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+impl Drop for TempIndex {
+    fn drop(&mut self) {
+        // Missing when git never wrote it; nothing else to do on failure.
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 

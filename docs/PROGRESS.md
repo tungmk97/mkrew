@@ -15,12 +15,12 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
       any file (real-git test asserts all four); the `hook.report` reply for a turn-start hook waits for it.
 - [ ] `turn.list`, `turn.restore_preview`, `turn.restore`: preview lists changed/created/deleted
       files; restore only with `confirm` and a matching fingerprint; e2e with the fake agent over 2 turns.
-- [ ] Snapshot on the generated 10,000-file repo < 300 ms on Windows (perf test like §15).
+- [x] Snapshot on the generated 10,000-file repo < 300 ms on Windows (perf test like §15).
 - [ ] Git view: "Changes since turn n" (`since` accepts a turn's tree) and the "Changed by" session filter.
 - [ ] Follow in Zed: debouncer unit-tested; manual check with a real agent.
 
 ### Task queue
-- [ ] T11.1 Daemon git snapshot primitive: `snapshot(dir) -> tree` via a temp copy of the index (`git rev-parse --git-path index`, works in worktrees) + `GIT_INDEX_FILE` + `add -A` + `write-tree`, temp index removed; `update-ref refs/mkrew/turns/<sid>/<n>`; per-project one-at-a-time lock; real-git test asserting HEAD, branch, index and files unchanged (incl. ignored files excluded); perf test on the generated 10,000-file repo < 300 ms (like `git_view.rs` budget test); covers: snapshot, perf. (spec: §20C.1, §15, §20F)
+- [x] T11.1 Daemon git snapshot primitive: `snapshot(dir) -> tree` via a temp copy of the index (`git rev-parse --git-path index`, works in worktrees) + `GIT_INDEX_FILE` + `add -A` + `write-tree`, temp index removed; `update-ref refs/mkrew/turns/<sid>/<n>`; per-project one-at-a-time lock; real-git test asserting HEAD, branch, index and files unchanged (incl. ignored files excluded); perf test on the generated 10,000-file repo < 300 ms (like `git_view.rs` budget test); covers: snapshot, perf. (spec: §20C.1, §15, §20F) — feat(daemon): git turn snapshot primitive
 - [ ] T11.2 Migration `0008_turns.sql` + store API (start turn, end turn with end_tree/files, list by session, sessions ended > 7 days for ref cleanup); store tests; covers: persistence for turn.list. (spec: §20C protocol, §5, §20.0)
 - [ ] T11.3 Daemon wiring: snapshot in `spawn_blocking` at each agent turn start (git repos only), end snapshot when the turn ends done/idle/exited, persist the turn row with per-file +/− (numstat start→end tree) and fill `session.turn` counts; `hook.report` for `UserPromptSubmit` replies after the snapshot; startup deletes `refs/mkrew/turns/<sid>/*` of sessions ended > 7 days; tests (fake agent `edit_files`); covers: snapshot at turn start, hook reply waits. (spec: §20C.1, §20.0, §20A.3, §8)
 - [ ] T11.4 Protocol `turn.list`, `turn.restore_preview`, `turn.restore` (reuse `undo.rs`: temp-index `read-tree` + `checkout-index -a -f`, delete listed still-new files, fingerprint check, refused while `working`, real index untouched); PROTOCOL_VERSION 20; CLI/UI clients adapt; e2e with the fake agent over 2 turns; covers: turn.* methods. (spec: §20C.2, §20C protocol, §7, ADR 0005)
@@ -43,6 +43,7 @@ T7.7–T7.12, T8.3–T8.10). If one fails, add a fix task to the current milesto
 
 ## Notes for the next session
 
+- T11.1: `crate::snapshot::{Snapshots, turn_ref}` (`take(git, project, dir, ref)` → tree; blocking, per-project lock, caches index paths per folder); `GitBackend::{index_path, snapshot, update_ref}`. Drop the `expect(dead_code)` on `mod snapshot` (`lib.rs`) when wiring it in T11.3. A locked file makes `add -A` fail: log + skip that snapshot. ~250 ms release on Windows (each git spawn ~50 ms): add no git calls to `take`.
 - M11 builds on M9 turns (`mkrew_ui::turn::Turns`, daemon `session.turn`, fake agent `edit_files`) and M10's composer (`mkrew_ui::composer::Composers`; main `composer_typed(session, text)` prefills a composer, `send_selection` shows the pattern).
 - Protocol is v19 (`attachment.save`). Settings: daemon `crate::settings::SettingsHolder`; `mkrew_core::settings::Settings` holds every §20.0 key. Measurements: `crates/mkrew-ui/tests/measure.rs` (ADR 0009).
 - Ideas left from M10 reviewers: Esc/arrows in the Run with… picker, one "…" card menu, visible error for unsupported images, drag-over highlight, multi-line Files picks.

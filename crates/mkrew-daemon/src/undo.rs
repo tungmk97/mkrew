@@ -213,6 +213,15 @@ mod tests {
         fn push(&self, _: &Path, _: &str, _: &Upstream) -> io::Result<()> {
             unreachable!()
         }
+        fn index_path(&self, _: &Path) -> io::Result<std::path::PathBuf> {
+            unreachable!()
+        }
+        fn snapshot(&self, _: &Path, _: &Path) -> io::Result<String> {
+            unreachable!()
+        }
+        fn update_ref(&self, _: &Path, _: &str, _: &str) -> io::Result<()> {
+            unreachable!()
+        }
     }
 
     #[test]

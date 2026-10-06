@@ -1628,6 +1628,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   pane → both absolute paths typed, the spaced one quoted, no Enter. Win+Shift+S screenshot, then
   Ctrl+Shift+V in the pane → a path under `<data>/mkrew/attachments/<session>/` is typed and
   Claude picks the image up; repeat with an image copied from a browser.
+- (T11.1) **Turn snapshot cost:** every git process costs ~50 ms on this Windows machine, so a
+  snapshot (`add -A` + `write-tree` + `update-ref` on a temp index copy) is ~250 ms on the
+  10,000-file repo (release, budget 300 ms). To stay under it the index path of each folder is
+  resolved once and cached per project (re-resolved after a failed snapshot). The temp index sits
+  next to the real one (`index.mkrew-snapshot-<pid>-<n>`); a daemon killed mid-snapshot leaves it
+  behind. A file locked by another process makes `add -A` fail and that turn has no snapshot
+  (T11.3 logs and skips it rather than failing the turn).
 
 ## Done
 
