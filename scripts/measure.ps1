@@ -16,8 +16,10 @@ function Step($log, [string[]]$cargoArgs) {
   if ($LASTEXITCODE -ne 0) { Write-Host "measure: FAILED: cargo $cargoArgs"; exit $LASTEXITCODE }
 }
 
-# The tests start the daemon and fake agent from the target dir.
+# The tests start the daemon, the fake agent and the empty GPUI window from the target dir.
 cargo build --release -p mkrew-daemon -p mkrew-fakeagent
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+cargo build --release -p mkrew-ui --example idle_floor
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Step 'window.log' @('test', '--release', '-p', 'mkrew-ui', '--test', 'measure', '--', '--ignored', '--nocapture')

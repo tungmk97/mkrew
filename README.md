@@ -179,7 +179,7 @@ Measured on Windows 11 with release builds (`bash scripts/measure.sh`, Windows:
 | | Target | Measured |
 | --- | --- | --- |
 | Window first frame (daemon running) | < 500 ms | 370 ms |
-| Idle CPU, 6 sessions open | < 1% | UI ~2%, daemon 0% (being fixed) |
+| Idle CPU, 6 sessions open | < 1% of the machine | 0.14% of 16 threads: UI ~2% of one core (an empty GPUI window alone is 1.25–2%), daemon 0% |
 | Memory, 6 sessions open | UI < 150 MB, daemon < 50 MB | UI 60–109 MiB, daemon 19–24 MiB |
 | 6 panes flooding output | input < 16 ms, flat RAM, daemon < 1 core | p95 0.5 ms round trip / 8.5 ms per output batch, flat RAM, 0.8 core |
 | Git status, 10,000-file repo | < 150 ms | 98 ms |

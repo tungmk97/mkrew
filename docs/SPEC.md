@@ -853,7 +853,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone.
 | --- | --- |
 | UI startup | first frame < 500 ms with the daemon running |
 | Input latency | key press → glyph on screen < 16 ms (local) |
-| Idle CPU | UI + daemon < 1% with no output |
+| Idle CPU | UI + daemon < 1% of the machine with no output (GPUI's Windows vsync floor alone is 1–2% of one core) |
 | Memory | UI < 150 MB, daemon < 50 MB with 6 sessions (agents excluded) |
 | Security | IPC endpoint accessible by the current user only; no network listeners; `hook.report` rejected unless the session id belongs to a live session |
 | Data | SQLite WAL; daily DB backup, keep 7 |

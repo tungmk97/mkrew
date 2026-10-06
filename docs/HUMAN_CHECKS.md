@@ -1430,6 +1430,11 @@ _Decisions the agent made on its own. Override them here if you disagree._
   the measure test (includes process start); also reported once connected. Measurements report
   only — no new assertions, so noisy machines do not fail `verify`. Idle UI CPU measured 1.9–2.5%
   with six panes (budget 1%); recorded as over budget with fix task T8.9a rather than relaxing §15.
+- (T8.9a) **Idle CPU judged per machine**, the reading accepted at T0.9: 0.14% of 16 threads
+  (UI ~2% of one core). Profiling showed no idle repaints; an empty GPUI window alone costs
+  1.25–2.03% of a core (vsync thread invalidates every window each vblank), now measured by
+  `examples/idle_floor.rs` next to Mkrew. SPEC §15's row now says "of the machine". Lowering the
+  per-core number would need a patched gpui — say so if you want that.
 
 ## Done
 

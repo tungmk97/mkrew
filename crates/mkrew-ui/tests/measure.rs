@@ -1,10 +1,12 @@
 //! SPEC §15 measurements that need the real window: UI startup (launch → first frame, and →
 //! first frame connected to a running daemon), idle CPU and memory of the UI and the daemon with
-//! six fake sessions on screen (agents excluded). Reports only; `scripts/measure.*` runs it in
-//! release next to the flood stress test and the 10,000-file git status test, and the results
+//! six fake sessions on screen (agents excluded), and the idle CPU of an empty GPUI window
+//! (`examples/idle_floor.rs`) as the framework's floor. Reports only; `scripts/measure.*` runs it
+//! in release next to the flood stress test and the 10,000-file git status test, and the results
 //! are recorded in `docs/decisions/0009-non-functional-measurements.md`.
 //!
 //! Opens a real window, so it is `#[ignore]`d (needs a desktop session):
+//! `cargo build --release -p mkrew-ui --example idle_floor` then
 //! `cargo test --release -p mkrew-ui --test measure -- --ignored --nocapture`.
 
 // Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
@@ -146,9 +148,63 @@ fn wait_for(lines: &mpsc::Receiver<String>, text: &str, launched: Instant) -> Du
     }
 }
 
+/// Starts a window process with its stderr lines on a channel.
+fn launch(command: &mut Command) -> (Child, mpsc::Receiver<String>) {
+    let mut window = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = window.stderr.take().unwrap();
+    let (tx, lines) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    (window, lines)
+}
+
+/// Idle CPU % of an empty GPUI window: what the framework costs before Mkrew draws anything.
+fn idle_floor_cpu() -> f32 {
+    let exe = Path::new(env!("CARGO_BIN_EXE_mkrew")).with_file_name(format!(
+        "examples/idle_floor{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    assert!(
+        exe.is_file(),
+        "{} is missing; run `cargo build --release -p mkrew-ui --example idle_floor` (same \
+         profile as this test)",
+        exe.display()
+    );
+    let launched = Instant::now();
+    let (window, lines) = launch(&mut Command::new(exe));
+    let window = KillOnDrop(window);
+    wait_for(&lines, "first frame", launched);
+    std::thread::sleep(SETTLE);
+    let mut probe = Probe::new(window.0.id());
+    std::thread::sleep(IDLE_WINDOW);
+    probe.sample().1
+}
+
+/// Closes the empty window even when an assertion fails.
+struct KillOnDrop(Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 #[ignore = "opens a real window; run by scripts/measure.*"]
 fn startup_idle_cpu_and_memory_with_six_sessions() {
+    let floor_cpu = idle_floor_cpu();
+
     let dir = tempfile::tempdir().unwrap();
     let paths = paths(dir.path());
     write_fake_profile(&paths);
@@ -190,28 +246,16 @@ fn startup_idle_cpu_and_memory_with_six_sessions() {
 
     // UI startup with the daemon running: launch → first frame / first connected frame.
     let launched = Instant::now();
-    let mut window = Command::new(env!("CARGO_BIN_EXE_mkrew"))
-        .env(ENV_DATA_DIR, &paths.data_dir)
-        .env(ENV_CONFIG_DIR, &paths.config_dir)
-        .env(ENV_SOCKET, &paths.socket)
-        .env("MKREW_LOG", "info")
-        .env("NO_COLOR", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stderr = window.stderr.take().unwrap();
+    let (window, lines) = launch(
+        Command::new(env!("CARGO_BIN_EXE_mkrew"))
+            .env(ENV_DATA_DIR, &paths.data_dir)
+            .env(ENV_CONFIG_DIR, &paths.config_dir)
+            .env(ENV_SOCKET, &paths.socket)
+            .env("MKREW_LOG", "info")
+            .env("NO_COLOR", "1"),
+    );
     let window_pid = window.id();
     stop.1 = Some(window);
-    let (tx, lines) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
     let first_frame = wait_for(&lines, "first frame", launched);
     let connected_frame = wait_for(&lines, "first connected frame", launched);
 
@@ -223,14 +267,19 @@ fn startup_idle_cpu_and_memory_with_six_sessions() {
     let (ui_rss, ui_cpu) = ui.sample();
     let (daemon_rss, daemon_cpu) = daemon.sample();
 
+    // §15 idle CPU is % of the machine (HUMAN_CHECKS T0.9: GPUI's Windows vsync floor alone is
+    // over 1% of one core); `sysinfo` reports % of one core.
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let machine_cpu = (ui_cpu + daemon_cpu) / threads as f32;
     let verdict = |ok: bool| if ok { "ok" } else { "OVER BUDGET" };
     eprintln!(
         "measure: first frame {first_frame:?} ({}), first connected frame {connected_frame:?} \
          ({}); idle cpu over {IDLE_WINDOW:?} ui {ui_cpu:.2}% + daemon {daemon_cpu:.2}% of a \
-         core ({}); memory with {PANES} sessions ui {} MiB ({}), daemon {} MiB ({})",
+         core, empty GPUI window {floor_cpu:.2}%, {machine_cpu:.2}% of {threads} threads ({}); \
+         memory with {PANES} sessions ui {} MiB ({}), daemon {} MiB ({})",
         verdict(first_frame < Duration::from_millis(500)),
         verdict(connected_frame < Duration::from_millis(500)),
-        verdict(ui_cpu + daemon_cpu < 1.0),
+        verdict(machine_cpu < 1.0),
         mib(ui_rss),
         verdict(ui_rss < 150 * 1024 * 1024),
         mib(daemon_rss),

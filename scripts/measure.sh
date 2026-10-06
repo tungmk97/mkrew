@@ -10,8 +10,9 @@ cd "$(dirname "$0")/.."
 out=target/measure
 mkdir -p "$out"
 
-# The tests start the daemon and fake agent from the target dir.
+# The tests start the daemon, the fake agent and the empty GPUI window from the target dir.
 cargo build --release -p mkrew-daemon -p mkrew-fakeagent
+cargo build --release -p mkrew-ui --example idle_floor
 
 cargo test --release -p mkrew-ui --test measure -- --ignored --nocapture 2>&1 | tee "$out/window.log"
 cargo test --release -p mkrew-ui --test stress -- --nocapture 2>&1 | tee "$out/flood.log"
