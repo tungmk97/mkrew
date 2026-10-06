@@ -11,18 +11,21 @@ use std::rc::Rc;
 use alacritty_terminal::index::Side;
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, Entity, FocusHandle,
-    Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, KeyDownEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
-    ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowAppearance,
-    div, fill, font, point, px, relative, rgb, size,
+    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId, Entity,
+    ExternalPaths, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
+    InspectorElementId, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextAlign,
+    TextRun, UnderlineStyle, Window, WindowAppearance, div, fill, font, point, px, relative, rgb,
+    size,
 };
 use mkrew_protocol::{
-    Outcome, Request, ScreenSnapshot, Session, SessionInputParams, SessionResizeParams,
+    AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
+    SessionInputParams, SessionResizeParams,
 };
 use ulid::Ulid;
 
 use crate::client::Connection;
+use crate::composer::{attachment_ext, typed_paths};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindStatus, find_key};
@@ -32,6 +35,9 @@ use crate::theme::{self, Theme, font_size, radius, space};
 
 /// Cell width guess used only until the terminal font is resolved.
 const CELL_WIDTH_ESTIMATE: f32 = 0.6;
+
+/// `attachment.save` refuses larger images (§20B.5); not worth sending.
+const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 
 /// One attached session: the UI-side emulator plus its shaped-row cache.
 pub struct TerminalPane {
@@ -327,12 +333,23 @@ impl TerminalPane {
                 cx.notify();
             }
             Command::Paste => {
-                let text = cx.read_from_clipboard().and_then(|item| item.text());
-                if let Some(text) = text
-                    && self.exited.is_none()
-                {
+                let Some(item) = cx.read_from_clipboard() else {
+                    return;
+                };
+                if self.exited.is_some() {
+                    return;
+                }
+                if let Some(text) = item.text() {
                     let data = paste_bytes(&text, self.emulator.input_mode());
                     self.input(data, cx);
+                } else if let Some((ext, bytes)) = item.into_entries().find_map(|entry| match entry
+                {
+                    ClipboardEntry::Image(image) => {
+                        attachment_ext(image.format).map(|ext| (ext, image.bytes))
+                    }
+                    _ => None,
+                }) {
+                    self.paste_image(ext, bytes, cx);
                 }
             }
             _ => cx.propagate(),
@@ -462,6 +479,59 @@ impl TerminalPane {
         )
     }
 
+    /// Stores a clipboard image through `attachment.save`, then types its path (§20B.5).
+    fn paste_image(&mut self, ext: &str, data: Vec<u8>, cx: &mut Context<'_, Self>) {
+        let session_id = self.session_id;
+        if data.len() > MAX_ATTACHMENT_BYTES {
+            tracing::warn!(%session_id, size = data.len(), "pasted image over 10 MiB, not saved");
+            return;
+        }
+        let saved = self
+            .connection
+            .call::<AttachmentSaveResult>(Request::AttachmentSave(AttachmentSaveParams {
+                session_id,
+                ext: ext.to_owned(),
+                data,
+            }));
+        cx.spawn(async move |this, cx| match saved.await {
+            Ok(saved) => {
+                let _ = this.update(cx, |pane, cx| pane.type_paths([saved.path.as_str()], cx));
+            }
+            Err(error) => tracing::warn!(%session_id, "attachment.save failed: {error:#}"),
+        })
+        .detach();
+    }
+
+    /// Files dropped from the OS: their absolute paths are typed, without Enter (§20B.5).
+    fn drop_paths(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let paths: Vec<_> = paths
+            .paths()
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        self.type_paths(paths.iter().map(String::as_str), cx);
+        self.focus(window, cx);
+    }
+
+    /// Types `paths` (formatted by [`typed_paths`]) as one paste into a live session.
+    fn type_paths<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a str>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let text = typed_paths(paths);
+        if self.exited.is_some() || text.is_empty() {
+            return;
+        }
+        let data = paste_bytes(&text, self.emulator.input_mode());
+        self.input(data, cx);
+    }
+
     /// Sends typed or pasted bytes; a scrolled-back view returns to the live screen first.
     fn input(&mut self, data: Vec<u8>, cx: &mut Context<'_, Self>) {
         if self.emulator.display_offset() > 0 {
@@ -514,6 +584,7 @@ impl Render for TerminalPane {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::key_down))
             .on_action(cx.listener(Self::run))
+            .on_drop(cx.listener(Self::drop_paths))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))

@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use gpui::ImageFormat;
 use mkrew_protocol::{Event, QueuedSend, SessionSendParams};
 use ulid::Ulid;
 
@@ -156,6 +157,34 @@ pub fn selection_prefill(lines: Option<(&str, u32, u32)>, text: &str) -> String 
     prefill
 }
 
+/// How dropped files and pasted images are typed into a pane (§20B.5): the absolute paths,
+/// each quoted with `"` if it contains whitespace, separated by spaces, no Enter.
+pub fn typed_paths<'a>(paths: impl IntoIterator<Item = &'a str>) -> String {
+    paths
+        .into_iter()
+        .map(|path| {
+            if path.contains(char::is_whitespace) {
+                format!("\"{path}\"")
+            } else {
+                path.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The `attachment.save` extension of a clipboard image (§20B.5); `None` for formats the
+/// daemon does not store (svg, bmp, tiff, …).
+pub fn attachment_ext(format: ImageFormat) -> Option<&'static str> {
+    match format {
+        ImageFormat::Png => Some("png"),
+        ImageFormat::Jpeg => Some("jpg"),
+        ImageFormat::Gif => Some("gif"),
+        ImageFormat::Webp => Some("webp"),
+        _ => None,
+    }
+}
+
 /// The first line of a queued text, as listed in the composer.
 pub fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
@@ -262,6 +291,30 @@ mod tests {
         );
         assert_eq!(file_ref("{path}", "a b\\c.txt"), "\"a b/c.txt\"");
         assert_eq!(file_ref("see {path} ", "x.rs"), "see x.rs ");
+    }
+
+    #[test]
+    fn typed_paths_are_space_separated_and_quoted_with_whitespace() {
+        assert_eq!(typed_paths([]), "");
+        assert_eq!(typed_paths(["C:\\work\\a.png"]), "C:\\work\\a.png");
+        assert_eq!(
+            typed_paths(["C:\\my docs\\a.txt", "/tmp/b.rs", "/x/tab\there"]),
+            "\"C:\\my docs\\a.txt\" /tmp/b.rs \"/x/tab\there\""
+        );
+        assert!(
+            !typed_paths(["/a", "/b c"]).contains('\n'),
+            "never an Enter"
+        );
+    }
+
+    #[test]
+    fn only_images_the_daemon_stores_get_an_attachment_ext() {
+        assert_eq!(attachment_ext(ImageFormat::Png), Some("png"));
+        assert_eq!(attachment_ext(ImageFormat::Jpeg), Some("jpg"));
+        assert_eq!(attachment_ext(ImageFormat::Gif), Some("gif"));
+        assert_eq!(attachment_ext(ImageFormat::Webp), Some("webp"));
+        assert_eq!(attachment_ext(ImageFormat::Svg), None);
+        assert_eq!(attachment_ext(ImageFormat::Bmp), None);
     }
 
     #[test]

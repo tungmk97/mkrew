@@ -1584,6 +1584,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   To verify: composer → `@` → pick `docs/my notes.md` → `@"docs/my notes.md"` typed; make the
   agent work, send twice → both listed with ✕ and the header shows `⧗ 2 queued`; ✕ one → it is
   never typed.
+- (T10.8) **Drop files / paste image:** works on every live terminal pane (agent or plain
+  shell), not only agent panes. Paths are typed as one paste (bracketed when the program asked
+  for it), quoted with `"` only when they contain whitespace (a `"` inside a Unix path is not
+  escaped). If the clipboard has text AND an image (e.g. Excel cells), the text wins. Images in
+  other formats (bmp, tiff, svg…) or over 10 MiB, and `attachment.save` errors, are only logged
+  (no visible message yet). No drag-over highlight on the pane.
+  To verify (Windows): drag 2 files (one with a space in its path) from Explorer onto Claude's
+  pane → both absolute paths typed, the spaced one quoted, no Enter. Win+Shift+S screenshot, then
+  Ctrl+Shift+V in the pane → a path under `<data>/mkrew/attachments/<session>/` is typed and
+  Claude picks the image up; repeat with an image copied from a browser.
 
 ## Done
 
