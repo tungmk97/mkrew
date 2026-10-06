@@ -94,8 +94,8 @@ Never push. Never amend or rewrite earlier commits.
 3. `git tag <milestone-lowercase>-done` (e.g. `m1-done`).
 4. Set `milestone:` to the next one and replace the milestone section with an empty queue
    (the next session plans it).
-5. Gates: after M0 set `status: WAITING_HUMAN` (UI framework decision). After M8 set
-   `status: DONE`. Otherwise keep `RUNNING`.
+5. Gates: after M0 set `status: WAITING_HUMAN` (UI framework decision). After M13 (the last
+   milestone in SPEC §18) set `status: DONE`. Otherwise keep `RUNNING`.
 6. Commit `chore(progress): complete <milestone>` and STOP.
 
 ## Step 9 — Stop

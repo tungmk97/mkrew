@@ -1,28 +1,25 @@
 # Mkrew build progress
 
 <!-- loop-state: machine-readable, keep these exact keys on their own lines -->
-status: DONE
-milestone: M8
+status: RUNNING
+milestone: M9
 <!-- /loop-state -->
 
 Status values: `RUNNING` (loop continues) · `WAITING_HUMAN` (see docs/HUMAN_CHECKS.md, then set back to RUNNING) · `BLOCKED` (no task can progress) · `DONE`.
 Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (see note).
 
-## All milestones complete (M0–M8, SPEC §18)
+## Current milestone: M9 — Attention (SPEC §18, §20.0, §20A)
 
-_M0–M8 tasks moved to `docs/progress-archive.md` (tags `m1-done` … `m8-done`; unticked criteria are in HUMAN_CHECKS)._
+_Queue empty: the next session plans M9 with the `mkrew-plan-milestone` skill._
 
-The build loop is finished. What is left is the human's: the "To verify" list in
-`docs/HUMAN_CHECKS.md` (every milestone's wrap-up entry, T3.x … T8.10) and the
-"Questions with assumed defaults". If a check fails, add a fix task here (e.g. a new
-"M9 — Fixes" section with a queue) and set `status: RUNNING`.
+v1 (M0–M8) is complete (tags `m1-done` … `m8-done`, tasks in `docs/progress-archive.md`).
+v2 = M9–M13 in SPEC §20 (ADR 0010 for the git exceptions). The loop ends after M13.
 
 ### Carried over
 
-M8 left 4 of 5 criteria unticked; all wait on the T8.3–T8.9 and T8.10 manual checks in
-HUMAN_CHECKS (command palette + keymap settings, dev server with a real command, MSI on a clean
-Windows, tar.gz on Linux, key → glyph latency, §14 design check). M3–M7's unticked criteria
-(T3.4–T3.9, T4.7–T4.10, T5.4–T5.11, T6.8–T6.11, T7.7–T7.12 manual checks) still wait too.
+M3–M8 left criteria unticked; all wait on manual checks in HUMAN_CHECKS (T3.4–T3.9, T4.7–T4.10,
+T5.4–T5.11, T6.8–T6.11, T7.7–T7.12, T8.3–T8.10). If one fails, add a fix task to the current
+milestone first.
 
 ## Notes for the next session
 

@@ -27,6 +27,7 @@
 - §17 Conventions & Windows notes
 - §18 Milestones & acceptance criteria
 - §19 Risks, open questions, backlog
+- §20 v2: working with agents (M9–M13)
 
 ---
 
@@ -57,6 +58,9 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
   against a base branch (default `main`, configurable per workspace) like Orca; comment on diff
   lines and send the comments to an agent.
 - Simple, calm, beautiful UI — soft, not rigid.
+- v2 (§20, M9–M13): make the daily loop with agents faster — notice who needs you, answer
+  without switching, instruct precisely, review and undo per turn, leave agents running safely,
+  and isolate parallel work in worktrees when asked.
 
 **Non-goals**
 
@@ -94,6 +98,9 @@ When the spec is silent, decide by these principles, in priority order.
 5. **Never lose user data.** Never delete files, never auto-commit in the user's projects, never
    run branch-changing git commands on its own. Git actions (stage, commit, push) happen only when
    the user triggers them; destructive actions (discard) always require confirmation; never force-push.
+   Read-only snapshots (`git write-tree` with a temporary index, §20C) and task worktrees on their
+   own `mkrew/…` branch (§20E) are allowed: neither changes the user's branch, HEAD, index or files
+   (ADR 0010).
 6. **Few dependencies.** Every new crate needs a reason; prefer popular, maintained crates.
 
 ---
@@ -287,6 +294,8 @@ ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|d
 -- migrations/0007_dev_server.sql (M8)
 ALTER TABLE project ADD COLUMN dev_autostart INTEGER NOT NULL DEFAULT 0; -- start dev_command after daemon start
 ```
+
+v2 migrations 0008 (M11), 0009 (M12) and 0010 (M13) are listed in §20.
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -500,6 +509,8 @@ double-width (`wide`) chars. Output frames sent after a snapshot continue from i
 
 Rules: on
 `protocol_version` mismatch the daemon replies `version_mismatch` and the UI asks to restart the daemon.
+
+v2 adds requests and events in §20; each milestone that changes the protocol bumps `PROTOCOL_VERSION`.
 
 ---
 
@@ -777,6 +788,10 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
+| Agent (v2) | Peek the first Inbox entry (↑/↓ cycle, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
+| Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
+| Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
+| Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out | command palette only |
 
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 
@@ -911,7 +926,7 @@ checkable end-to-end with it.
 
 ## §18 Milestones & acceptance criteria
 
-Nine milestones, strictly in order. A milestone is done only when all criteria are checked and
+Fourteen milestones, strictly in order: M0–M8 = v1, M9–M13 = v2 (§20). A milestone is done only when all criteria are checked and
 `scripts/verify` is green on the current OS (CI covers the other). M0 is a risk spike and the only
 **blocking human gate**: if GPUI fails, switch the UI to Tauri before investing further.
 
@@ -1025,6 +1040,69 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] README: install, configure agents, uninstall.
 - [ ] Non-functional checks from §15 measured and recorded in `docs/decisions/` or the README.
 
+### M9 — Attention (§20.0, §20A)
+
+- [ ] `settings.toml` (§20.0): defaults when missing, parse errors reported in `daemon.status`
+      with the last good settings kept, re-read after the file changes; unit tests.
+- [ ] `session.read` returns the last screen lines; the peek popover shows them for an Inbox or
+      sidebar row, and its quick reply answers a fake agent's "(y/n)" without leaving the view (e2e
+      for the request + manual check for the popover).
+- [ ] Turns start and end as §20A.3 defines; a fake agent that edits 2 files in one turn produces
+      `session.turn` with both paths (+/− counts arrive in M11); Inbox row and pane header show the summary.
+- [ ] `notify.needs_input` / `notify.done` / `notify.sound` switches are respected (unit tests on
+      the decision; manual check for the sound).
+- [ ] Keep awake: inhibitor held while an agent works and released ≤ 5 s after the last one
+      stops (fake inhibitor test); real backends per OS; manual check (`powercfg /requests`).
+- [ ] Broadcast sends one text to every checked session; each result is shown.
+- [ ] Inbox rows show the last non-blank screen line (§20A.4).
+
+### M10 — Instructing (§20B)
+
+- [ ] Composer: a multi-line send arrives as one bracketed paste; `@` inserts `file_ref`-formatted
+      paths; drafts survive switching panes.
+- [ ] Send queue: `session.send` returns `{send_id, queued}`, `session.queue` events, `session.unqueue`;
+      e2e with the fake agent: a text queued while working and removed is never typed.
+- [ ] Prompt library: samples seeded on first run, variables rendered (unit tests), insertable from
+      the palette, the composer and the task dialog.
+- [ ] Send selection from Files, Git diff and a terminal opens the right session's composer, prefilled.
+- [ ] Dropping files types their paths; pasting an image stores it via `attachment.save` and types
+      the path; attachments of sessions ended > 7 days ago are deleted.
+- [ ] "Run with…" on a Todo/Review card updates the task's agent and runs it.
+
+### M11 — Reviewing per turn (§20C)
+
+- [ ] A turn snapshot is taken at each turn start without changing HEAD, branches, the index or
+      any file (real-git test asserts all four); the `hook.report` reply for a turn-start hook waits for it.
+- [ ] `turn.list`, `turn.restore_preview`, `turn.restore`: preview lists changed/created/deleted
+      files; restore only with `confirm` and a matching fingerprint; e2e with the fake agent over 2 turns.
+- [ ] Snapshot on the generated 10,000-file repo < 300 ms on Windows (perf test like §15).
+- [ ] Git view: "Changes since turn n" (`since` accepts a turn's tree) and the "Changed by" session filter.
+- [ ] Follow in Zed: debouncer unit-tested; manual check with a real agent.
+
+### M12 — Leaving agents running (§20D)
+
+- [ ] Webhook: notification triggers run the fake `MKREW_CURL` with the expected arguments; the
+      `notify.*` switches and the 30 s limit apply; no test touches the network.
+- [ ] Rate limit: fake `rate_limit` step → `session.rate_limited` with the parsed reset time;
+      `continue_text` is sent at that time (clock injected in tests); user input clears it.
+- [ ] Task chains: B (after A) runs when A reaches Review, not when A has `error_flag`; cycles and
+      cross-project links refused; `max_running` delays automatic runs only.
+- [ ] `mk session read`, `mk session spawn --prompt` from inside a session (parent recorded, nested
+      spawn refused), `mk --skill` prints the bundled skill.
+- [ ] `mk task add` inside a session defaults to its project and records the creator; the card shows it.
+
+### M13 — Isolation & usage (§20E)
+
+- [ ] Worktree task: Run creates the worktree and `mkrew/…` branch from HEAD, copies
+      `.worktreeinclude` entries, runs the agent inside; the main folder's branch, HEAD, index and
+      files are unchanged (real-git test). Resume after a daemon restart uses the worktree.
+- [ ] Git and Files views work on a task worktree; Merge only when both sides are clean and aborts
+      cleanly on conflict; Remove keeps an unmerged branch (real-git tests).
+- [ ] Fan-out runs 2–5 agents in their own worktrees; Compare and Pick work; e2e with fake profiles.
+- [ ] Usage: fixture transcripts in the current Claude and Codex formats give the expected
+      input/output/context tokens, read incrementally; shown on pane header, card and sidebar.
+- [ ] M9–M13 manual checks listed in HUMAN_CHECKS.
+
 ---
 
 ## §19 Risks, open questions, backlog
@@ -1041,10 +1119,327 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 
 - [x] Name: **Mkrew**, CLI `mk`.
 - [x] GPUI straight away vs Tauri first — **GPUI** (M0 gate, ADR 0001).
-- [ ] Optional per-task worktree in a later version?
+- [x] Optional per-task worktree — yes, opt-in per task (§20E, M13).
 - [ ] Comments on unchanged code files (diff-line comments exist since M7)?
 - [ ] License if the repo goes public.
 
-**Backlog after v1:** token/cost tracking per task and workspace; tray icon; remote workspaces
-over SSH; task templates; side-by-side diff; compact density; `gix` git backend; pull/rebase/merge/branch switching and conflict resolution in-app; GitHub (PR/issue → task); optional per-task worktree;
-remote control via web/phone.
+**Backlog after v2:** tray icon / taskbar badge; "mark unread" in the Inbox; remote workspaces
+over SSH; side-by-side diff; compact density; `gix` git backend; pull/rebase/branch switching and
+conflict resolution in-app; GitHub (PR/issue → task); remote control via web/phone; money
+estimates from token usage.
+
+---
+
+## §20 v2: working with agents (M9–M13)
+
+Goal: make the daily loop with agents fast — notice who needs you, answer without switching
+views, instruct precisely, review and undo per turn, leave agents running safely, and isolate
+parallel work when asked. Inspired by herdr (peek, agent-driven CLI), Zed's agent panel (queue,
+follow, per-turn checkpoints, keep awake) and Orca (worktrees, fan-out, usage). §1 non-goals still
+hold: no editor, no LLM API calls, no cloud, no mobile app.
+
+Every v2 feature keeps §2: agent differences live in TOML profiles; the daemon owns state; it
+works on native Windows; nothing touches the user's branch, index or files without a confirmed
+action (ADR 0010).
+
+### §20.0 Shared pieces
+
+**Settings file** `<config>/mkrew/settings.toml` (`Paths::settings_file()`), read by the daemon
+at start and re-read after it changes (the daemon watches its own config dir, debounced 300 ms).
+Missing file = all defaults. A parse error keeps the last good settings and is reported in
+`daemon.status` (`settings_error`) and by the palette like keymap errors. The UI reads it the
+same way. Unknown keys are errors (same rule as profiles). Full shape with defaults:
+
+```toml
+[notify]
+needs_input = true          # OS notification on needs_input
+done = true                 # OS notification on done
+sound = true                # notification plays the OS default sound
+webhook = ""                # §20D.1; "" = off
+
+[awake]
+keep_awake = true           # §20A.5
+
+[composer]
+file_ref = "@{path}"        # §20B.1; how a picked file is typed; "{path}" alone for agents without @
+
+[zed]
+follow_debounce_ms = 1500   # §20C.4
+
+[tasks]
+max_running = 0             # §20D.3; per workspace, 0 = no limit
+```
+
+**Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
+enters `working` from `starting`, `idle`, `done` or `needs_input` after user input; it **ends** at
+the next `done`, `idle`, `needs_input` or `exited`. A `needs_input` → `working` resume (approval)
+continues the same turn. Turns are numbered per session from 1. Pure model in
+`mkrew_core::turn` (unit-tested on state sequences); the daemon's actor owns one per session.
+
+**Profile keys added in v2** (all optional; unknown keys stay errors):
+
+```toml
+[state]
+rate_limit_patterns = ['(?i)limit reached.*resets (?P<reset>\d{1,2}(:\d{2})?\s*[ap]m)']  # §20D.2
+continue_text = "continue"     # §20D.2; typed + Enter when the limit resets
+
+[usage]                        # §20E.3
+format = "claude_jsonl"        # "claude_jsonl" | "codex_jsonl"; absent = no usage
+context_window = 200000        # tokens, for the % shown
+```
+
+Shipped profiles get the patterns once a real recording exists (test fixture under
+`crates/mkrew-core/tests/fixtures/`); until then they ship without `rate_limit_patterns` and the
+feature is simply off for them (HUMAN_CHECKS).
+
+### §20A Attention (M9)
+
+1. **Peek + quick reply.** Hovering an Inbox or sidebar session row for 300 ms, or `Ctrl+Shift+Space`
+   (first Inbox entry; ↑/↓ cycles entries, Esc closes), opens a popover with the last 8 non-blank
+   screen lines (monospace, colors kept), the state and its age, and a one-line input. Enter sends
+   the text with submit (`session.send`); for a `needs_input` session the popover also shows
+   buttons `y` and `n` that send that letter with submit. Focus returns where it was. Data comes
+   from the new request `session.read` (below), never from attaching.
+2. **Sound.** OS notifications (§8) play the OS default sound when `notify.sound` (notify-rust
+   `sound_name`, Windows/macOS; Linux hint). `notify.needs_input` / `notify.done` switch each kind
+   off. The 30 s per-session limit stays.
+3. **Turn summary.** When a turn ends the daemon broadcasts `session.turn` with `n`, `started_at`,
+   `ended_at` and `files` = paths attributed to the session during the turn (the hook-reported
+   edits and file-watcher batches already attributed in M5, deduplicated, relative). From M11 each
+   file also carries `added`/`removed` (numstat between the turn's start and end snapshots).
+   The Inbox row of a `done` session shows `✓ done · 3 files · 4 min`; the pane header shows the same
+   after the status. The summary text is UI-side; the event carries the data.
+4. **Last line.** The Inbox row also shows the last non-blank screen line (truncated, muted) —
+   taken from `session.read` with `lines = 1` when the entry appears.
+5. **Keep awake.** While at least one agent session (not shell) is `working` and
+   `awake.keep_awake`, the daemon holds a sleep inhibitor; it releases it 5 s after the last one
+   leaves `working`. Display sleep and screen lock stay allowed. Windows:
+   `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` on a dedicated thread (the flag is
+   per thread); macOS: child `caffeinate -i -w <daemon pid>`; Linux: child
+   `systemd-inhibit --what=idle:sleep --why=Mkrew --mode=block sleep infinity` (missing tool → log
+   once, continue). Behind a small `Inhibitor` trait so tests use a fake.
+6. **Broadcast.** Palette command "Broadcast to agents…": a dialog lists the workspace's live agent
+   sessions with checkboxes (all checked), a text input, Send = one `session.send` per checked
+   session (submit). Each row shows sent / queued / failed. No daemon request.
+
+**Protocol (M9):**
+
+| Method / event | Params | Returns / data |
+| --- | --- | --- |
+| `session.read` | `session_id`, `lines` (1–200, default 20) | `lines[]` (plain text, last non-blank rows of the emulator screen, top to bottom), `state`, `state_changed_at` — works for live sessions only (`invalid_state` otherwise) |
+| event `session.turn` | – | `session_id`, `n`, `started_at`, `ended_at`, `files[]` (`path`, `added?`, `removed?`) |
+
+`daemon.status` gains `settings_error?`.
+
+### §20B Instructing (M10)
+
+1. **Prompt composer.** `Ctrl+Shift+Enter` on a focused agent pane opens a composer docked at the
+   pane's bottom: a multi-line text box (Enter = newline, Ctrl+Enter = send, Esc = hide and keep
+   the draft; these keys are local to the composer like dialog keys, so they never reach the
+   terminal or Run task). Send = `session.send` with submit; multi-line text already goes as one bracketed
+   paste (§7). Typing `@` opens the quick-open file picker (§12A); the pick inserts
+   `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"`
+   if it contains spaces. Drafts are kept per session in UI memory (lost on UI restart — fine).
+   Task create/edit and the Board follow-up input reuse the same multi-line text box.
+2. **Send queue visible.** While a send waits (session working), the composer lists queued texts
+   (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`
+   returns `{send_id, queued: bool}`; `session.unqueue` removes a not-yet-written text (`not_found`
+   once written); event `session.queue` carries the session's current queue after every change.
+   The pane header shows `⧗ 2 queued`.
+3. **Prompt library.** Markdown files in `<config>/mkrew/prompts/*.md`; file stem = name; optional
+   first line `# Title`. Variables: `{file}` (current file of Files/Git, project-relative),
+   `{selection}` (picked lines, as quoted text), `{task}` (task title), `{project}` (name). An unknown
+   or unavailable variable renders as empty and is listed in a muted note under the preview. Pure
+   `mkrew_core::prompt::render(template, vars)`. Entry points: palette "Insert prompt…" (into the
+   open composer, else opens one on the focused agent pane), a "Prompts" menu in the composer,
+   and a "From prompt…" menu in the task dialog. Three samples are seeded on first run if the dir
+   is missing: `review.md`, `explain.md`, `fix-tests.md`. Read by the UI directly (config, not state).
+4. **Send selection to agent.** `Ctrl+Shift+L` in Files (picked lines), Git diff (picked new-side
+   lines) and a terminal (selected text) opens a session picker (default: the task's session for
+   Git task changes, else the workspace's most recently active agent session; same list as
+   §12's send dialog), then that session's composer prefilled with
+   `` `<path>:<a>-<b>` `` + a fenced block of the text (terminal: fenced block only). The user edits
+   and sends.
+5. **Drop files / paste images.** Dropping files from the OS onto an agent pane (gpui
+   `ExternalPaths`) types their absolute paths, each quoted with `"` if needed, separated by spaces,
+   with no Enter. `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`)
+   saves it through `attachment.save` and types the returned path the same way. Text clipboard
+   behaves as before.
+6. **Run with…** A task card's menu offers "Run with…" (pick a profile): updates the task's agent,
+   then runs it. Only for Todo or Review cards without a live session.
+
+**Protocol (M10):**
+
+| Method / event | Params | Returns / data |
+| --- | --- | --- |
+| `session.send` (changed) | as before | `send_id`, `queued` |
+| `session.unqueue` | `session_id`, `send_id` | ok |
+| event `session.queue` | – | `session_id`, `items[]` (`send_id`, `text`) |
+| `attachment.save` | `session_id`, `ext` (`png`/`jpg`/`gif`/`webp`), `data` (base64, ≤ 10 MiB) | `path` — `<data>/mkrew/attachments/<session_id>/<ulid>.<ext>` |
+
+Attachments of sessions that ended more than 7 days ago are deleted by the hourly backup check (§8).
+
+### §20C Reviewing per turn (M11)
+
+1. **Turn snapshots.** At each turn start (§20.0) in a git repo, the daemon records a tree of the
+   whole working state without touching the user's index, HEAD or branches: copy `.git/index` to
+   a temp file, then with `GIT_INDEX_FILE=<temp>` run `git add -A` and `git write-tree`, delete the
+   temp index. Untracked-but-ignored files are not included. The tree stays reachable through
+   `refs/mkrew/turns/<session_id>/<n>` (`git update-ref`, a ref outside `refs/heads`, so no branch);
+   refs of sessions ended > 7 days ago are deleted at startup. A turn's **end snapshot** is the next
+   turn's start snapshot, or one taken when the turn ends with the session done/idle/exited.
+   Snapshots run in `spawn_blocking`, one at a time per project (later requests wait). For a hook
+   turn start (`UserPromptSubmit`) the `hook.report` reply is sent after the snapshot, so the agent
+   has not edited yet; screen-detected starts are best effort (the snapshot may include the first
+   edits — documented in ADR 0010).
+2. **Restore to before turn n.** Pane header menu "Turns…" lists the session's turns (n, time,
+   files, +/−). "Restore before turn n" opens a preview like task undo (§5, ADR 0005):
+   files to restore/delete and the diff, then confirm. Restore = `git read-tree` into a temp index +
+   `git checkout-index -a -f` for tracked content, and deletes files created since the snapshot
+   that the preview listed (still new). Refused while the session is `working`. The user's real
+   index is untouched. `turn.restore` uses the same fingerprint check as `task.undo`.
+3. **Diff per turn.** The Git view gains a mode chooser entry "Since turn…" (from the pane menu or
+   the Turns dialog): base mode with `since` = the turn's start tree (git diffs between a tree and
+   the working tree work like a commit). Header shows `Since turn 3 of claude #2`.
+4. **Changed by.** The Git view's file list gains a filter "Changed by: All | <session>…" listing
+   sessions that have `files_changed`/hook edits in this project in the last 24 h; it keeps only
+   files attributed to that session (data: `session.files`, below).
+5. **Follow in Zed.** Pane header toggle "Follow in Zed" (also a palette command). While on, each
+   hook-reported edit by that session runs `zed <path>:<line?>` (line from the hook payload when
+   present), debounced by `zed.follow_debounce_ms` (the last path wins). Off by default; resets on
+   UI restart. UI-side; it reacts to the `session.edited` event.
+
+**Protocol (M11):**
+
+| Method / event | Params | Returns / data |
+| --- | --- | --- |
+| `turn.list` | `session_id` | `Turn[]`: `n`, `started_at`, `ended_at?`, `start_tree`, `end_tree?`, `files[]` |
+| `turn.restore_preview` | `session_id`, `n` | like `task.undo_preview` (checkpoint = `start_tree`) |
+| `turn.restore` | `session_id`, `n`, `confirm: true`, `created[]`, `fingerprint` | ok — rules as `task.undo` |
+| `session.files` | `project_id`, `since_ms` | `{session_id → paths[]}` |
+| `git.status` / `git.diff` (changed) | `since` also accepts a tree id | as before |
+| event `session.edited` | – | `session_id`, `path` (project-relative), `line?` — sent for every hook-reported edit |
+
+Migration `0008_turns.sql`:
+
+```sql
+CREATE TABLE turn (
+  session_id TEXT NOT NULL REFERENCES session(id),
+  n          INTEGER NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at   INTEGER,
+  start_tree TEXT,            -- NULL outside a git repo
+  end_tree   TEXT,
+  files      TEXT NOT NULL DEFAULT '[]',  -- JSON [{path, added?, removed?}]
+  PRIMARY KEY (session_id, n)
+);
+```
+
+Turns are recorded from M9 in memory; M11 persists them (M9's `session.turn` does not need the table).
+
+### §20D Leaving agents running (M12)
+
+1. **Webhook.** When `notify.webhook` is set, every OS notification the daemon fires (same
+   triggers, switches and 30 s limit) also POSTs plain text `"<project> · <agent>: <Needs input|Done>"`
+   with header `Title: Mkrew` (ntfy-compatible; others ignore it), by spawning
+   `curl -fsS -m 10 -H "Title: Mkrew" -d <text> <url>` (curl ships with Windows 10 1803+, macOS
+   and most Linux; env `MKREW_CURL` overrides the binary — tests point it at a fake). Failures are
+   logged, never retried, never block. No new crate.
+2. **Rate-limit auto-continue.** If the last screen lines match a profile's
+   `rate_limit_patterns` (checked with needs_input patterns), the session gets the flag
+   `rate_limited_until` from the named group `reset` (`h[:mm] am|pm` local time, next occurrence;
+   unparsable → 5 h from now). The state stays as detected; the UI shows `⏸ resumes 14:00` on the
+   pane header, tab and Inbox. At that time + 60 s the daemon sends `continue_text` with submit
+   (once), then clears the flag. Any user input or `session.send` clears it earlier. Event
+   `session.rate_limited` (`session_id`, `until?`, `null` = cleared). Time parsing uses `chrono`
+   (already in the dependency tree) in `mkrew-core`, with the clock passed in.
+3. **Task chains.** A task may name `after_task_id` (same project, no cycles; `invalid_request`
+   otherwise). When a task moves to Review without `error_flag`, every Todo task with
+   `after_task_id` = it is run automatically (daemon `task.run` with the last used pane size, else
+   120×40). `tasks.max_running` > 0 limits running+needs_input tasks per workspace for automatic
+   runs only: excess chained runs wait and start when a slot frees (FIFO by position). Manual Run is
+   never blocked. The card shows `⛓ after <title>`; the task dialog gets an "After" picker.
+4. **Agents driving Mkrew.** CLI additions (all work for users too):
+   - `mk session read <id> [--lines N]` prints `session.read`.
+   - `mk session spawn <project> --agent P [--prompt "…"] [--title T]` — prompt delivered per
+     `prompt_mode` like `task.run`; inside a Mkrew session the parent is recorded
+     (`session.parent_id`) and the new pane is split next to the parent's pane. A session that has
+     a parent cannot spawn (`invalid_state`, one level only).
+   - `mk task add` inside a session: project defaults to the session's, `created_by` = session id;
+     the card shows "by <agent>".
+   - `mk --skill` prints a bundled `skills/mkrew/SKILL.md` (`include_str!`) teaching an agent these
+     commands plus `mk send`/`mk wait`, starting with "only use if `MKREW_SESSION_ID` is set".
+     `mk integration install claude` does not install it; README explains copying it.
+
+**Protocol (M12):** `task.create/update` accept `after_task_id?`; Task carries `after_task_id?`
+and `created_by?`; `session.spawn` accepts `prompt?`, `parent_session_id?`; Session carries
+`parent_id?`; event `session.rate_limited`.
+
+Migration `0009_agent_runs.sql`:
+
+```sql
+ALTER TABLE task ADD COLUMN after_task_id TEXT REFERENCES task(id);
+ALTER TABLE task ADD COLUMN created_by TEXT;          -- session id of the creating agent, NULL = user
+ALTER TABLE session ADD COLUMN parent_id TEXT REFERENCES session(id);
+```
+
+### §20E Isolation & usage (M13)
+
+1. **Task worktrees (opt-in).** The task dialog gets "Run in a worktree" (default off; per task).
+   On Run in a git repo: `git worktree add -b mkrew/<slug>-<short ulid> <data>/mkrew/worktrees/<project_id>/<task_id> HEAD`
+   (slug = task title, ASCII lowercase, `-` separated, ≤ 30 chars). The user's checkout, branch,
+   index and files stay untouched. Then every path in `<repo>/.worktreeinclude` (one literal
+   relative path per line, `#` comments; must exist and be git-ignored, else skipped with a warning
+   in the session's first output line) is copied into the worktree. The session runs with `cwd` =
+   the worktree; `task.checkpoint` = HEAD as before. Resume uses the same folder.
+   - The task card shows `⎇ mkrew/<branch>`. Files and Git views gain a target chooser
+     "Project | <task worktree>…" — all §12A/§12B features work on a worktree (the daemon resolves
+     `project_id` + `worktree_task_id?` to a folder).
+   - **Merge back** (card menu, Review/Done cards): allowed only when the worktree has no
+     uncommitted changes and the main checkout has none either; the user must commit inside the
+     worktree first (Git view on the worktree). Runs `git merge --no-ff --no-edit <branch>` in
+     the main checkout after a confirmation that shows the commit list; on conflict runs
+     `git merge --abort` and reports the conflicting files. Never on a detached HEAD.
+   - **Remove worktree** (card menu, confirm): `git worktree remove` (refused with uncommitted
+     changes — the dialog shows them, discard is a separate confirmed step), then
+     `git branch -d` (never `-D`; an unmerged branch is kept and named in the result).
+   - Deleting a task with a worktree requires removing the worktree first.
+2. **Fan-out & compare.** Task menu "Run with several agents…" (pick 2–5 profiles): creates one
+   child task per profile (`fanout_of` = the original, same title + ` · <agent>`, worktree on), runs
+   them, and moves the original to Running as a group card showing its children's states. When all
+   children are in Review, "Compare" opens a view: one column per child with files changed, +/−,
+   run time, and a button to open its Git view. "Pick" on one child = Merge back that child
+   (rules above) and offers to remove the others' worktrees; the original moves to Review.
+3. **Usage.** For profiles with `[usage]`, the daemon finds the session's transcript file by
+   `native_session_id` — `claude_jsonl`: `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/*/<id>.jsonl`;
+   `codex_jsonl`: `<CODEX_HOME or ~/.codex>/sessions/**/*<id>*.jsonl` — and reads only appended
+   bytes on each turn end. It sums input/output tokens and takes the context size of the newest
+   message (field names checked against the CURRENT formats when implementing; fixtures recorded
+   from real files). Event `session.usage` (`input`, `output`, `context`, `context_window?`); the pane
+   header shows `ctx 62%` (warning color ≥ 80 %), task cards and sidebar workspace rows show total
+   tokens. No money estimate. Unknown/changed format → no usage, one warning in the log.
+
+**Protocol (M13):** `task.create/update` accept `worktree: bool`; Task carries `worktree`,
+`worktree_path?`, `branch?`, `fanout_of?`; new `task.merge` (`task_id`, `confirm: true`) →
+`merged: bool`, `conflicts[]`; `task.remove_worktree` (`task_id`, `confirm: true`) → `branch_kept: bool`;
+`task.fanout` (`task_id`, `agent_profiles[]`) → child Task[]; `fs.*` and `git.*` accept
+`worktree_task_id?`; event `session.usage`.
+
+Migration `0010_worktrees.sql`:
+
+```sql
+ALTER TABLE task ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE task ADD COLUMN worktree_path TEXT;
+ALTER TABLE task ADD COLUMN branch TEXT;
+ALTER TABLE task ADD COLUMN fanout_of TEXT REFERENCES task(id);
+```
+
+### §20F Testing v2
+
+- `mkrew-fakeagent` gains steps: `rate_limit { reset = "3pm" }` (prints a Claude-like limit line),
+  `edit_files { paths = [...] }` (writes files and reports `PostToolUse` hooks), and honors
+  `--prompt`/positional prompt as today.
+- Real-git tests (temp repos) for snapshots, restore, worktree add/merge/remove, always asserting
+  that HEAD, branch, index and untouched files are unchanged.
+- No test calls the network or a real agent: webhook through `MKREW_CURL`, keep-awake through the
+  fake `Inhibitor`, usage through fixture transcripts.
