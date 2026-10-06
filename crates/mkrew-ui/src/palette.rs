@@ -151,6 +151,7 @@ pub fn title(command: Command) -> String {
         Command::Find => "Terminal: Find in scrollback".into(),
         Command::OpenInZed => "Zed: Open workspace or current file in Zed".into(),
         Command::NextInbox => "Inbox: Jump to next item needing attention".into(),
+        Command::Peek => "Agent: Peek the first Inbox entry".into(),
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
@@ -182,7 +183,10 @@ pub fn available(command: Command, context: &Context) -> bool {
     match command {
         // Already open.
         Command::CommandPalette => false,
-        Command::AddWorkspace | Command::NextInbox | Command::OpenKeymapSettings => true,
+        Command::AddWorkspace
+        | Command::NextInbox
+        | Command::Peek
+        | Command::OpenKeymapSettings => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -677,6 +681,7 @@ mod tests {
             [
                 Command::AddWorkspace,
                 Command::NextInbox,
+                Command::Peek,
                 Command::OpenKeymapSettings
             ]
         );

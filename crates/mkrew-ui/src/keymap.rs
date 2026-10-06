@@ -52,6 +52,8 @@ pub enum Command {
     OpenInZed,
     /// Jump to the next Inbox entry (after the focused session, wrapping).
     NextInbox,
+    /// Peek the first Inbox entry (↑ / ↓ cycle, Esc closes; §20A.1).
+    Peek,
     /// Show the active workspace's task board.
     ShowBoard,
     /// Show the active workspace's terminal tabs.
@@ -155,6 +157,7 @@ impl Command {
             Command::Find,
             Command::OpenInZed,
             Command::NextInbox,
+            Command::Peek,
             Command::ShowBoard,
             Command::ShowTerminals,
             Command::ShowDocs,
@@ -213,6 +216,7 @@ impl Command {
             Command::Find => "find".into(),
             Command::OpenInZed => "open_in_zed".into(),
             Command::NextInbox => "next_inbox".into(),
+            Command::Peek => "peek".into(),
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
             Command::ShowDocs => "show_docs".into(),
@@ -276,6 +280,7 @@ impl Command {
             Command::Find => "ctrl-shift-f".into(),
             Command::OpenInZed => "ctrl-shift-z".into(),
             Command::NextInbox => "ctrl-shift-i".into(),
+            Command::Peek => "ctrl-shift-space".into(),
             Command::ShowBoard => "ctrl-shift-1".into(),
             Command::ShowTerminals => "ctrl-shift-2".into(),
             Command::ShowDocs => "ctrl-shift-3".into(),
@@ -621,6 +626,8 @@ mod tests {
         assert_eq!(bound("ctrl-shift-m"), Some(Command::ZoomPane));
         assert_eq!(bound("ctrl-shift-z"), Some(Command::OpenInZed));
         assert_eq!(bound("ctrl-shift-i"), Some(Command::NextInbox));
+        assert_eq!(bound("ctrl-shift-space"), Some(Command::Peek));
+        assert_eq!(keymap.label(Command::Peek), "Ctrl+Shift+Space");
         assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowBoard));
         assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
         assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowDocs));

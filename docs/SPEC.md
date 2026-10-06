@@ -1196,7 +1196,7 @@ feature is simply off for them (HUMAN_CHECKS).
 
 1. **Peek + quick reply.** Hovering an Inbox or sidebar session row for 300 ms, or `Ctrl+Shift+Space`
    (first Inbox entry; ↑/↓ cycles entries, Esc closes), opens a popover with the last 8 non-blank
-   screen lines (monospace, colors kept), the state and its age, and a one-line input. Enter sends
+   screen lines (monospace plain text, ADR 0012), the state and its age, and a one-line input. Enter sends
    the text with submit (`session.send`); for a `needs_input` session the popover also shows
    buttons `y` and `n` that send that letter with submit. Focus returns where it was. Data comes
    from the new request `session.read` (below), never from attaching.

@@ -167,6 +167,15 @@ pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 
+/// Width of the peek popover next to a session row (§20A.1).
+pub const PEEK_WIDTH: f32 = 480.0;
+
+/// How long the mouse rests on a session row before it peeks (§20A.1).
+pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
+
+/// How long a hover peek stays after the mouse left its row, so it can reach the popover.
+pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
+
 /// The shade behind a modal dialog (RGBA: black at ~35 %), in both appearances.
 pub const DIALOG_SCRIM: u32 = 0x0000_0059;
 

@@ -1487,6 +1487,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   grows by one line when the read returns. To verify: run a fake agent `ask` scenario → the
   Inbox row shows the `(y/n)` line under the name; a fake agent that edits 2 files → Inbox row
   and pane header show `✓ done · 2 files · …`.
+- (T9.9, ADR 0012) **Peek popover:** the lines are plain monospace text (`session.read` has no
+  colors; SPEC said "colors kept"). ↑/↓ cycle only from an Inbox peek. A hover peek does not take the keyboard (a terminal
+  keeps typing); clicking its reply field does. It closes ~150 ms after the mouse leaves both the
+  row and the popover, unless a reply is typed or it has the keyboard. Ctrl+Shift+Space opens the
+  first Inbox entry with the keyboard in it (pressed again: closes); ↑/↓ cycle the Inbox; Esc or
+  a click outside closes and the keyboard goes back. The lines are read again on each state change
+  of the peeked session (not while it streams output). Only live sessions peek (not exited ones).
+  An Inbox peek whose session leaves the Inbox moves to the session's sidebar row if it holds a
+  reply or the keyboard (else it closes); ↑/↓ to another entry drops a typed reply. The popover
+  is anchored to its row; a row scrolled out of the Inbox list is not scrolled into view.
+  To verify: fake agent `ask` → hover its Inbox row 300 ms → popover with the `(y/n)` line,
+  state and age; click `y` → the agent continues, the popover shows the new screen; Ctrl+Shift+Space
+  from a focused terminal, type a reply + Enter, Esc → the terminal has the keyboard again.
 
 ## Done
 
