@@ -70,6 +70,14 @@ pub enum Command {
     ToggleIgnored,
     /// Show the active workspace's Git view.
     ShowGit,
+    /// Git only: switch between Working changes and Against base.
+    GitToggleMode,
+    /// Git only: the next / previous hunk of the shown diff.
+    GitNextHunk,
+    GitPreviousHunk,
+    /// Git only: stage / unstage the selected file, or its current hunk.
+    GitStage,
+    GitUnstage,
     /// Fuzzy-find a file of the active workspace and open it in the Files view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
@@ -89,6 +97,10 @@ pub const DOCS_CONTEXT: &str = "Docs";
 
 /// Key context of the window while a Files view is shown.
 pub const FILES_CONTEXT: &str = "Files";
+
+/// Key context of the Git view's changed-file list while it has focus (so its single-key
+/// shortcuts never reach a text field).
+pub const GIT_CONTEXT: &str = "Git";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
@@ -141,6 +153,11 @@ impl Command {
             Command::ShowFiles,
             Command::ToggleIgnored,
             Command::ShowGit,
+            Command::GitToggleMode,
+            Command::GitNextHunk,
+            Command::GitPreviousHunk,
+            Command::GitStage,
+            Command::GitUnstage,
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
@@ -190,6 +207,11 @@ impl Command {
             Command::ShowFiles => "show_files".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
             Command::ShowGit => "show_git".into(),
+            Command::GitToggleMode => "git_toggle_mode".into(),
+            Command::GitNextHunk => "git_next_hunk".into(),
+            Command::GitPreviousHunk => "git_previous_hunk".into(),
+            Command::GitStage => "git_stage".into(),
+            Command::GitUnstage => "git_unstage".into(),
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
@@ -244,6 +266,11 @@ impl Command {
             Command::ShowFiles => "ctrl-shift-4".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::ShowGit => "ctrl-shift-5".into(),
+            Command::GitToggleMode => "b".into(),
+            Command::GitNextHunk => "n".into(),
+            Command::GitPreviousHunk => "p".into(),
+            Command::GitStage => "s".into(),
+            Command::GitUnstage => "u".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
@@ -263,6 +290,11 @@ impl Command {
                 Some(DOCS_CONTEXT)
             }
             Command::ToggleIgnored => Some(FILES_CONTEXT),
+            Command::GitToggleMode
+            | Command::GitNextHunk
+            | Command::GitPreviousHunk
+            | Command::GitStage
+            | Command::GitUnstage => Some(GIT_CONTEXT),
             _ => None,
         }
     }
@@ -559,6 +591,18 @@ mod tests {
         // Ctrl+Shift+H only toggles ignored files while Files are shown.
         assert_eq!(Command::ToggleIgnored.context(), Some(FILES_CONTEXT));
         assert_eq!(Command::SendComments.context(), Some(DOCS_CONTEXT));
+        // SPEC §13 Git single keys, only while the Git list has focus.
+        for (keys, command) in [
+            ("b", Command::GitToggleMode),
+            ("n", Command::GitNextHunk),
+            ("p", Command::GitPreviousHunk),
+            ("s", Command::GitStage),
+            ("u", Command::GitUnstage),
+        ] {
+            assert_eq!(bound(keys), Some(command), "{keys}");
+            assert_eq!(command.context(), Some(GIT_CONTEXT), "{command:?}");
+        }
+        assert_eq!(keymap.label(Command::GitNextHunk), "N");
     }
 
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted

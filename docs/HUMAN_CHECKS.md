@@ -394,6 +394,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   shows the file's diff, confirm is disabled until it loads, Esc/Cancel keep the file, the red
   confirm discards it (untracked file deleted). A failed stage shows "✕ Staging failed: …".
   Row heights stay uniform with the hover action. Dark + light screenshots for §14.
+- [ ] (T7.9c) **Git base menu + Git keys** (logic covered by `base_dialog.rs`/`keymap.rs` unit
+  tests; daemon `git.set_base` by e2e; the UI was never seen): "Change…" next to "Base: …" in
+  the Git header opens "Base branch" with the current base, the field prefilled when set by
+  hand (empty when auto-detected); type `develop` + Enter → header "Base: develop", Against
+  base re-lists; "Auto-detect" → "Base: main (auto-detected)"; an invalid ref (`a..b`) shows
+  "✕ …" and keeps the dialog; Esc/Cancel keep the base; typing b/n/p/s/u in the field types
+  them. A repo with no main/master/origin → Against base shows "No base branch found." with
+  a primary "Set base…". With the file list focused, b/n/p/s/u still work and their tooltips
+  show the keys; rebinding e.g. `git_next_hunk = "alt-n"` in keymap.toml works. Screenshots
+  dark + light for §14.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1148,6 +1158,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   look disabled while a stage is in flight (extra clicks are ignored); "✕ Staging failed"
   uses the plain notice style (like the Zed error) while dialogs color the ✕; clicking a row
   action briefly dims the whole row (`.active`); no palette command for "Discard…".
+- (T7.9c) **Base menu + Git keys choices:** diff syntax highlighting moved to a new task
+  T7.9d. The Git single keys (b, n, p, s, u) are now keymap commands (`git_toggle_mode`,
+  `git_next_hunk`, `git_previous_hunk`, `git_stage`, `git_unstage`) in a `Git` key context
+  set on the changed-file column only (not the window root), so they only act while the
+  list has focus — as before — and never reach a dialog's text field; ↑↓/j k stay hard-coded.
+  The base menu has no shortcut (SPEC §13 lists none) and is a small modal, not a dropdown of
+  branches: a free-text ref (validated by the daemon's `check_ref`; a ref that does not exist
+  is accepted; Against base then says "Cannot compare with <ref>." + "Set base…"), Enter on an empty field =
+  auto-detect. After saving, the Git view re-reads its status (mode kept).
 
 ## Done
 

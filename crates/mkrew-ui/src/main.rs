@@ -27,6 +27,7 @@ use mkrew_protocol::{
     TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams,
     TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
 };
+use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Selection, Thread};
@@ -39,7 +40,9 @@ use mkrew_ui::git_view::{self, GitView};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
-use mkrew_ui::keymap::{BOARD_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, Keymap, Run};
+use mkrew_ui::keymap::{
+    BOARD_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, GIT_CONTEXT, Keymap, Run,
+};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::preview;
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
@@ -212,6 +215,8 @@ struct Shell {
     git_diff_scroll: UniformListScrollHandle,
     /// The open "Discard changes" confirmation of a Git view file (modal).
     git_discard: Option<git_view::Discard>,
+    /// The open base menu of a Git view (modal).
+    git_base: Option<BaseDialog>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
@@ -361,6 +366,7 @@ impl Shell {
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
                 shell.git_discard = None;
+                shell.git_base = None;
                 shell.history = None;
                 shell.history_pane = None;
                 shell.doc_dialog = None;
@@ -427,6 +433,7 @@ impl Shell {
             git_files_scroll: UniformListScrollHandle::new(),
             git_diff_scroll: UniformListScrollHandle::new(),
             git_discard: None,
+            git_base: None,
             task_dialog: None,
             undo_dialog: None,
             history: None,
@@ -1299,19 +1306,26 @@ impl Shell {
         self.git_requests(project_id, requests, window, cx);
     }
 
-    /// ↑ ↓ / j k move between files (kept in view), n / p between hunks (scrolled to the
-    /// top), b toggles Working changes / Against base.
+    /// ↑ ↓ / j k move between files; the other Git keys are keymap commands ([`Self::git_key`]).
     fn git_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (Some(key), Some(project_id)) = (git_view::key(&event.keystroke), self.workspace)
-        else {
+        let Some(key) = git_view::key(&event.keystroke) else {
             return;
         };
         cx.stop_propagation();
+        self.git_key(key, window, cx);
+    }
+
+    /// A Git key of the active workspace: files move (kept in view), hunks move (scrolled to
+    /// the top), the mode toggles, or the selected file / current hunk is (un)staged.
+    fn git_key(&mut self, key: git_view::Key, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
         if let git_view::Key::Stage(stage) = key {
             if let Some(change) = self.git_view(project_id).stage_key(stage) {
                 self.stage_git(project_id, change, window, cx);
@@ -1481,6 +1495,102 @@ impl Shell {
                         if let Some(dialog) = open {
                             dialog.busy = false;
                             dialog.error = Some(error);
+                        }
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The base menu of the Git view of `project_id`, prefilled with its configured base.
+    fn open_git_base(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let status = match self.git.get(&project_id).map(|view| &view.status) {
+            Some(git_view::Status::Loaded(status)) => Some(&**status),
+            _ => None,
+        };
+        self.git_base = Some(BaseDialog::new(project_id, status));
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    fn close_git_base(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.git_base = None;
+        window.focus(&self.git_focus, cx);
+        cx.notify();
+    }
+
+    /// Typing edits the ref, Enter uses it (empty = auto-detect), Esc closes.
+    fn git_base_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = base_dialog::key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == base_dialog::Key::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(dialog) = self.git_base.as_mut() else {
+            return;
+        };
+        match key {
+            base_dialog::Key::Close => return self.close_git_base(window, cx),
+            base_dialog::Key::Save => return self.set_git_base(false, window, cx),
+            base_dialog::Key::Paste => {
+                if let Some(text) = paste {
+                    dialog.insert(&text);
+                }
+            }
+            base_dialog::Key::Backspace | base_dialog::Key::Insert(_) => {
+                dialog.key(&key);
+            }
+        }
+        cx.notify();
+    }
+
+    /// `git.set_base` with the typed ref, or back to auto-detection (`auto`); on success the
+    /// menu closes and the Git view reads its status again.
+    fn set_git_base(&mut self, auto: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(params) = self.git_base.as_mut().and_then(|dialog| dialog.begin(auto)) else {
+            return;
+        };
+        let project_id = params.project_id;
+        let sent = connection.request(Request::GitSetBase(params));
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let failure = match sent.await {
+                Ok(Outcome::Result(_)) => None,
+                Ok(Outcome::Error(body)) => Some(body.message),
+                Err(error) => Some(format!("{error:#}")),
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let open = shell
+                    .git_base
+                    .as_mut()
+                    .filter(|_| shell.dialog_serial == serial);
+                match failure {
+                    None => {
+                        if open.is_some() {
+                            shell.close_git_base(window, cx);
+                        }
+                        if shell.git.contains_key(&project_id) {
+                            shell.refresh_git(project_id, window, cx);
+                        }
+                    }
+                    Some(error) => {
+                        tracing::warn!(%project_id, "git.set_base failed: {error}");
+                        if let Some(dialog) = open {
+                            dialog.failed(error);
                         }
                         cx.notify();
                     }
@@ -1978,6 +2088,7 @@ impl Shell {
         self.task_dialog.is_some()
             || self.undo_dialog.is_some()
             || self.git_discard.is_some()
+            || self.git_base.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.quick_open.is_some()
@@ -3144,6 +3255,16 @@ impl Shell {
             Command::ShowFiles => self.show_view(View::Files, window, cx),
             Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
+            // Only bound while the Git list has focus.
+            Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
+            Command::GitNextHunk => self.git_key(git_view::Key::NextHunk, window, cx),
+            Command::GitPreviousHunk => self.git_key(git_view::Key::PreviousHunk, window, cx),
+            Command::GitStage => {
+                self.git_key(git_view::Key::Stage(git_view::Stage::Stage), window, cx);
+            }
+            Command::GitUnstage => {
+                self.git_key(git_view::Key::Stage(git_view::Stage::Unstage), window, cx);
+            }
             Command::ToggleIgnored => {
                 // Only bound while Files are shown.
                 if let Some(project_id) = self.workspace {
@@ -4602,6 +4723,7 @@ impl Shell {
             .gap(px(space::S))
             .pb(px(space::S))
             .track_focus(&self.git_focus)
+            .key_context(GIT_CONTEXT)
             .on_key_down(cx.listener(Self::git_key_down))
             .child(self.git_header(project_id, view, status, theme, cx));
         let rows = view.list_rows();
@@ -4618,14 +4740,18 @@ impl Shell {
                     .into_any_element()
             }
             git_view::Status::Loaded(status) if !any_files => {
+                // No merge-base with a commit checked out: the base names nothing usable.
+                let unusable = status.head.is_some() && status.merge_base.is_none();
+                let no_base = view.mode == GitMode::Base && (status.base_ref.is_none() || unusable);
                 let (sentence, detail) = match (view.mode, &status.base_ref) {
                     (GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
                     (GitMode::Base, None) => (
                         "No base branch found.".to_owned(),
-                        Some(
-                            "Set one with: mk project update <workspace> --base <branch>"
-                                .to_owned(),
-                        ),
+                        Some("None of origin/HEAD, main or master exists here.".to_owned()),
+                    ),
+                    (GitMode::Base, Some(base)) if unusable => (
+                        format!("Cannot compare with {base}."),
+                        Some("It names no commit here, or shares no history with HEAD.".to_owned()),
                     ),
                     (GitMode::Base, Some(base)) => (format!("No changes against {base}."), None),
                 };
@@ -4633,17 +4759,33 @@ impl Shell {
                     GitMode::Working => ("Against base", "Show everything on this branch"),
                     GitMode::Base => ("Working changes", "Show uncommitted changes"),
                 };
-                empty(sentence, detail)
+                // Without a base, picking one is the primary action.
+                let buttons = div()
+                    .flex()
+                    .gap(px(space::S))
+                    .when(no_base, |el| {
+                        el.child(
+                            button("git-empty-base", "Set base…", theme, true)
+                                .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.open_git_base(project_id, window, cx);
+                                })),
+                        )
+                    })
                     .child(
-                        button("git-empty-mode", label, theme, true)
-                            .tooltip(tooltip(theme, tip, git_view::TOGGLE_MODE_KEY))
+                        button("git-empty-mode", label, theme, !no_base)
+                            .tooltip(tooltip(
+                                theme,
+                                tip,
+                                self.keymap.label(Command::GitToggleMode),
+                            ))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 window.focus(&shell.git_focus, cx);
                                 let requests = shell.git_view(project_id).toggle_mode();
                                 shell.git_requests(project_id, requests, window, cx);
                             })),
-                    )
-                    .into_any_element()
+                    );
+                empty(sentence, detail).child(buttons).into_any_element()
             }
             git_view::Status::Loaded(_) => {
                 let rows = Rc::new(rows);
@@ -4720,7 +4862,7 @@ impl Shell {
             (Some(base), false) => format!("Base: {base}"),
             (None, _) => "No base branch".to_owned(),
         });
-        let toggle_keys = SharedString::from(git_view::TOGGLE_MODE_KEY);
+        let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
         // Lighter than the active segment's fill, so hovering never looks selected.
         let hover = theme.surface;
         let segment = |mode: GitMode, id: &'static str, label: &'static str, tip: &'static str| {
@@ -4789,7 +4931,37 @@ impl Shell {
                         "Everything on this branch since it left the base",
                     )),
             )
-            .children(base.map(|base| meta_line(theme, base.into())))
+            .children(base.map(|base| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(
+                        meta_line(theme, base.into())
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap(),
+                    )
+                    .child(
+                        row_action(
+                            "git-base-change".into(),
+                            if status.is_some_and(|status| status.base_ref.is_some()) {
+                                "Change…"
+                            } else {
+                                "Set base…"
+                            },
+                            theme,
+                        )
+                        .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
+                        .on_click(cx.listener(
+                            move |shell, _, window, cx| {
+                                shell.open_git_base(project_id, window, cx);
+                            },
+                        )),
+                    )
+            }))
             .children(
                 view.refresh_error
                     .clone()
@@ -4879,23 +5051,33 @@ impl Shell {
             .children(renamed.map(|renamed| meta_line(theme, renamed.into()).flex_none()))
             .children(counts.map(|(added, removed)| change_counts(added, removed, theme)))
             .children(hunk_label.map(|label| {
+                let keys = format!(
+                    "{} / {}",
+                    self.keymap.label(Command::GitNextHunk),
+                    self.keymap.label(Command::GitPreviousHunk)
+                );
                 div()
                     .id("git-hunks")
                     .flex_none()
                     .text_size(px(font_size::META))
                     .text_color(rgb(theme.text_muted))
-                    .tooltip(tooltip(theme, "Next / previous hunk", git_view::HUNK_KEYS))
+                    .tooltip(tooltip(theme, "Next / previous hunk", keys))
                     .child(label)
             }))
             .children(view.file_change(&selected).map(|change| {
-                let stage = change.stage;
-                let (label, tip) = match stage {
-                    git_view::Stage::Stage => ("Stage file", "Stage the whole file"),
-                    git_view::Stage::Unstage => ("Unstage file", "Unstage the whole file"),
+                let (label, tip, command) = match change.stage {
+                    git_view::Stage::Stage => {
+                        ("Stage file", "Stage the whole file", Command::GitStage)
+                    }
+                    git_view::Stage::Unstage => (
+                        "Unstage file",
+                        "Unstage the whole file",
+                        Command::GitUnstage,
+                    ),
                 };
                 button("git-stage-file", label, theme, false)
                     .flex_none()
-                    .tooltip(tooltip(theme, tip, stage.key()))
+                    .tooltip(tooltip(theme, tip, self.keymap.label(command)))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         window.focus(&shell.git_focus, cx);
                         shell.stage_git(project_id, change.clone(), window, cx);
@@ -6030,6 +6212,109 @@ impl Shell {
                     }),
             );
         Self::modal_shade("git-discard-shade", panel, cx)
+    }
+
+    /// The Git base menu: the base in use, a field for another ref, then Cancel, "Auto-detect"
+    /// and "Use this base" (Enter; an empty field also auto-detects).
+    fn render_git_base(
+        &self,
+        dialog: &BaseDialog,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        let use_label = if dialog.busy {
+            "Saving…"
+        } else {
+            "Use this base"
+        };
+        let panel = div()
+            .id("git-base-dialog")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::git_base_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Base branch"),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(
+                        "“Against base” shows everything on this branch since it left the base.",
+                    ),
+            )
+            .when(!dialog.current.is_empty(), |el| {
+                el.child(meta_line(theme, dialog.current.clone().into()))
+            })
+            .child(text_field(
+                "git-base-ref",
+                &dialog.text,
+                "A branch or ref, e.g. develop or origin/main",
+                true,
+                theme,
+            ))
+            .children(dialog.error.clone().map(error_row))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        button("git-base-cancel", "Cancel", theme, false)
+                            .tooltip(tooltip(theme, "Keep the current base", "Esc"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.close_git_base(window, cx);
+                            })),
+                    )
+                    // Both look disabled while a save is in flight.
+                    .child(if dialog.busy {
+                        disabled_button("git-base-auto", "Auto-detect", theme, false)
+                    } else {
+                        button("git-base-auto", "Auto-detect", theme, false)
+                            .tooltip(tooltip(
+                                theme,
+                                "Use origin/HEAD, else main, else master",
+                                "",
+                            ))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.set_git_base(true, window, cx);
+                            }))
+                    })
+                    .child(if dialog.busy {
+                        disabled_button("git-base-use", use_label, theme, true)
+                    } else {
+                        button("git-base-use", use_label, theme, true)
+                            .tooltip(tooltip(theme, "Compare with the typed ref", "Enter"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.set_git_base(false, window, cx);
+                            }))
+                    }),
+            );
+        Self::modal_shade("git-base-shade", panel, cx)
     }
 
     /// A Docs dialog: its title, a sentence, its body and the buttons, in the shared modal
@@ -8812,6 +9097,11 @@ impl Render for Shell {
                 self.git_discard
                     .as_ref()
                     .map(|dialog| self.render_git_discard(dialog, &theme, cx)),
+            )
+            .children(
+                self.git_base
+                    .as_ref()
+                    .map(|dialog| self.render_git_base(dialog, &theme, cx)),
             )
             .children(
                 self.history

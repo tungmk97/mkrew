@@ -169,14 +169,6 @@ impl Stage {
             Stage::Unstage => "Unstage",
         }
     }
-
-    /// The key [`key`] reads for it (tooltips).
-    pub fn key(self) -> &'static str {
-        match self {
-            Stage::Stage => "s",
-            Stage::Unstage => "u",
-        }
-    }
 }
 
 /// A `git.stage` / `git.unstage` of a file or one hunk.
@@ -723,11 +715,8 @@ pub fn ahead_behind(status: &GitStatus) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
-/// Tooltip labels of the keys [`key`] reads (unmodified letters).
-pub const TOGGLE_MODE_KEY: &str = "b";
-pub const HUNK_KEYS: &str = "n / p";
-
-/// The Git key `keystroke` stands for (unmodified arrows and letters).
+/// The file-moving key `keystroke` stands for (unmodified arrows, j / k). The other Git keys
+/// are keymap commands (`keymap::GIT_CONTEXT`).
 pub fn key(keystroke: &Keystroke) -> Option<Key> {
     if keystroke.modifiers.modified() {
         return None;
@@ -735,11 +724,6 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
     match keystroke.key.as_str() {
         "up" | "k" => Some(Key::Up),
         "down" | "j" => Some(Key::Down),
-        "n" => Some(Key::NextHunk),
-        "p" => Some(Key::PreviousHunk),
-        "b" => Some(Key::ToggleMode),
-        "s" => Some(Key::Stage(Stage::Stage)),
-        "u" => Some(Key::Stage(Stage::Unstage)),
         _ => None,
     }
 }
@@ -1183,19 +1167,17 @@ mod tests {
     }
 
     #[test]
-    fn keys_are_unmodified_arrows_and_letters() {
+    fn keys_are_unmodified_arrows_and_j_k() {
         let parse = |keys: &str| key(&Keystroke::parse(keys).unwrap());
         assert_eq!(parse("up"), Some(Key::Up));
         assert_eq!(parse("k"), Some(Key::Up));
         assert_eq!(parse("down"), Some(Key::Down));
         assert_eq!(parse("j"), Some(Key::Down));
-        assert_eq!(parse("n"), Some(Key::NextHunk));
-        assert_eq!(parse("p"), Some(Key::PreviousHunk));
-        assert_eq!(parse("b"), Some(Key::ToggleMode));
-        assert_eq!(parse("s"), Some(Key::Stage(Stage::Stage)));
-        assert_eq!(parse("u"), Some(Key::Stage(Stage::Unstage)));
-        assert_eq!(parse("ctrl-s"), None);
-        assert_eq!(parse("ctrl-n"), None);
+        // Keymap commands now (they would act twice otherwise).
+        for keys in ["n", "p", "b", "s", "u"] {
+            assert_eq!(parse(keys), None, "{keys}");
+        }
+        assert_eq!(parse("ctrl-k"), None);
         assert_eq!(parse("x"), None);
     }
 }
