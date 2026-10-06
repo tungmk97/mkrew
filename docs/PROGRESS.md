@@ -10,7 +10,24 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ## Current milestone: M8 — Polish & packaging (SPEC §18)
 
-_No task queue yet — the next session plans M8 (`mkrew-plan-milestone`)._
+### Acceptance criteria
+- [ ] Full command palette; keymap customization via `keymap.toml` with duplicate detection.
+- [ ] Dev server per workspace: run `dev_command` in its own tab; optional auto-start after daemon start.
+- [ ] Windows installer (MSI or similar) and tar.gz for Linux/macOS.
+- [ ] README: install, configure agents, uninstall.
+- [ ] Non-functional checks from §15 measured and recorded in `docs/decisions/` or the README.
+
+### Task queue
+- [ ] T8.1 Dev server config: migration `0007` `project.dev_autostart`, protocol `ProjectAddParams.dev_command` + `ProjectUpdateParams.{dev_command (null clears), dev_autostart}` (bump `PROTOCOL_VERSION`), store, CLI `mk project add --dev` / `update --dev "…" | --no-dev`, `--dev-autostart on|off`; SPEC §5/§7/§9 rows updated; covers: dev server (config). (spec: §5, §7, §9)
+- [ ] T8.2 Daemon dev server: `project.dev_start/dev_stop` spawns `dev_command` through the shell profile as a shell session titled "dev" in its own tab (one per project; start twice → the running one), auto-start for `dev_autostart` projects after daemon start; CLI `mk project dev <p> [--stop]`; E2E with a fake command; ADR if the protocol shape is new; covers: dev server (run in own tab, auto-start). (spec: §7, §8, §9, §10)
+- [ ] T8.3 UI dev server: workspace settings get dev command + auto-start fields; sidebar/tab-bar "Start dev server"/"Stop" action and running indicator; dev tab labelled; covers: dev server (UI). (spec: §10, §11, §14)
+- [ ] T8.4 Command palette model: pure `palette.rs` — entries = every `keymap::Command` with title, shortcut label and availability in the current view/context, plus "Go to" workspace / session / task items (§13 quick open of those), fuzzy filter + ranking, key handling; `Command::CommandPalette` (ctrl-shift-p); unit tests; covers: full command palette. (spec: §13, §14)
+- [ ] T8.5 Command palette UI: dialog (like quick open), runs the picked command through the shell's `run`; palette-only commands for actions without keys (Git fetch/push/discard, task "View changes", dev server start/stop, open keymap settings); covers: full command palette. (spec: §13, §14)
+- [ ] T8.6 Keymap settings: `Command::OpenKeymapSettings` (ctrl-,) creates `keymap.toml` with every command commented at its default when missing and opens it in Zed; palette lists keymap errors (duplicates, unknown, invalid) with the entry; tests for template round trip + duplicate detection; covers: keymap customization with duplicate detection. (spec: §13)
+- [ ] T8.7 Packaging: release scripts `scripts/package.ps1` (Windows installer — MSI via cargo-wix/WiX or similar, look up via `researcher`; installs `mkrew`, `mk`, daemon, agent profiles) and `scripts/package.sh` (tar.gz for Linux/macOS), CI release job on tags (no publishing); test that the archive layout lists the expected files; covers: installer + tar.gz. (spec: §4, §17)
+- [ ] T8.8 README: install (MSI / tar.gz / from source), configure agents (profiles TOML, `mk integration install claude|codex`, default agent, dev command), daily use pointers, uninstall (installer, `mk integration uninstall`, data/config dirs); covers: README. (spec: §1, §6, §9)
+- [ ] T8.9 §15 measurements: `scripts/measure.*` for UI first frame, idle CPU, memory with 6 fake sessions, flood throughput, git status 10k repo (reuse existing perf tests); record results in ADR `0008-non-functional-measurements.md` + README table; unmeasurable-here items → HUMAN_CHECKS; covers: non-functional checks. (spec: §15, §16)
+- [ ] T8.10 M8 manual checks + wrap-up: add M8 visual/manual checks (palette, keymap settings, dev server, installer on a clean Windows, tar.gz on Linux) to HUMAN_CHECKS, map unticked criteria, full verify; covers: all (manual parts). (spec: §14, §18)
 
 ### Done (last 10)
 
@@ -26,7 +43,8 @@ unticked criteria (T3.4–T3.9, T4.7–T4.10, T5.4–T5.11, T6.8–T6.11 manual 
 
 ## Notes for the next session
 
-- M7 done (tag `m7-done`, T7.12 wrap-up maps every unticked criterion in HUMAN_CHECKS; full verify green). Next: plan M8 (§18 Polish & packaging). `PROTOCOL_VERSION = 14`.
+- M8 planned (T8.1–T8.10). Already there: `keymap.toml` loading with duplicate/unknown/invalid detection (`keymap::KeymapError`, T2.7a) — T8.6 only adds the template + Ctrl+, + palette listing. `project.dev_command` exists in DB/protocol `Project` but no add/update param, CLI flag or runner yet. No palette/`OpenKeymapSettings` command yet. Next: T8.1.
+- M7 done (tag `m7-done`, T7.12 wrap-up maps every unticked criterion in HUMAN_CHECKS; full verify green). `PROTOCOL_VERSION = 14`.
 - T7.11b: `Comments.context` (`Comments::new(ctx)`, `apply_event` filters by context, `start_quoted`); `Docs::apply` skips diff comments. `GitView.{comments (Diff), commented}` + `begin_comments` (no-op in History), `can_comment` (not History), `start_comment`, `comments_shown`, `task_session(sessions)`; `Shown::quote(selection)` (shown new-side lines only). `SendDialog.task` + `last_label()`. Keymap `COMMENTS_CONTEXT = "Docs || Git"` for AddComment/SendComments. main.rs `pick_diff_line` (focuses the Git list unless a draft is open), margin in `render_git_diff`. Theme `DIFF_PICK_BAR_WIDTH`. Choices + manual check in HUMAN_CHECKS T7.11b; open ui-review SHOULDs there too. Diff-comments criterion waits for the real-agent check (T7.12). Stray `target/debug/mkrew-fakeagent.locked-t711.exe` can be deleted when unlocked.
 - T7.11a: protocol `CommentContext::{Doc, Diff}` on comments, `PROTOCOL_VERSION = 14`; core `review::prompt` code variant; E2E `fake_agent_fixes_code_for_diff_comments_and_replies`.
 - T7.10c: protocol `GitStatusParams.since` / `GitDiffParams.since` (base mode only: replaces the merge-base; status `merge_base` = the resolved commit), `PROTOCOL_VERSION = 13`, SPEC §7 rows updated. Daemon `git_view::status(.., mode, since)`, `diff` → `Target::Since(commit_id)`, shared `commit_id` (→ `UnknownCommit` = `not_found`); server `check_ref`s `since`. UI: `git_view::{Section::Task, Group::Task, TaskChanges{task_id, title, checkpoint}}`, `GitView.task` (kept while History shows; `listed() = (mode, since)` keys the in-flight status), `show_task`, private `changes()`/`list()`; `Target.commit` = checkpoint for `Group::Task` (→ `params().since`). `board::Card::can_view_changes` (Review + checkpoint). main.rs `view_task_changes`, card "Changes" quiet button, header line "Since <hash> · task: …" + Close, task empty/failed states. Task-changes criterion waits for the T7.10c manual check. T7.11 next (diff-line comments).
