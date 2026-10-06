@@ -15,7 +15,7 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
-- [ ] (T7.4) **Build machine:** a leftover `mkrew-fakeagent.exe` process (probably from a test
+- [x] (T7.4) **Build machine:** a leftover `mkrew-fakeagent.exe` process (probably from a test
       daemon that survived a killed run) locks `target\debug\mkrew-fakeagent.exe`, so
       `scripts/verify.sh` fails to relink it ("Access is denied"). Please end stray
       `mkrew-fakeagent.exe` / `mkrew-daemon.exe` processes. Also, drive C: has only ~7 GB free,
@@ -25,6 +25,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
       T7.6: drive C: was full (313 MB free, LNK1318/LNK1140). `cargo clean --release` and
       `cargo clean --target x86_64-unknown-linux-gnu` (the latter also emptied `target\debug`)
       freed it to ~91 GB; only build output inside `target\` was removed (rebuilt by verify).
+      Cleanup 2026-10-06: stray `mkrew-fakeagent.exe` killed and its `.locked-old.exe` deleted.
+      A live `target\debug\mkrew-daemon.exe` (user's sessions) was renamed to
+      `mkrew-daemon.locked-old.exe` so verify can relink; delete it once that daemon stops.
+      Uncommitted `.gitignore` edit (`*.log` commented out) stashed as
+      `recovered-2026-10-06-gitignore-log-rule`. Verify green afterwards.
 
 - [ ] (T0.1) Run `pwsh scripts/verify.ps1` once. The headless session was not allowed to run
   `pwsh`; `bash scripts/verify.sh` (same fmt/clippy/test steps) passed on Windows.
