@@ -14,7 +14,8 @@ use anyhow::Context as _;
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
-    Session, SessionAttachResult, SessionExitedEvent, SessionState, SessionStateEvent, StateSource,
+    Session, SessionAttachResult, SessionExitedEvent, SessionReadResult, SessionState,
+    SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -189,6 +190,11 @@ pub enum Command {
     Attach {
         attachment: Arc<Attachment>,
         reply: oneshot::Sender<SessionAttachResult>,
+    },
+    /// `session.read`: the last `lines` non-blank screen rows and the state.
+    Read {
+        lines: usize,
+        reply: oneshot::Sender<SessionReadResult>,
     },
     /// The attachment overflowed: give it a fresh snapshot.
     Resnapshot(Arc<Attachment>),
@@ -823,6 +829,14 @@ impl Actor {
                         if reply.send(result).is_ok() {
                             self.attachments.push(attachment);
                         }
+                    }
+                    Some(Command::Read { lines, reply }) => {
+                        // The caller may have gone away; nothing to do then.
+                        let _ = reply.send(SessionReadResult {
+                            lines: self.emulator().last_lines(lines),
+                            state: self.session.state,
+                            state_changed_at: self.session.state_changed_at,
+                        });
                     }
                     Some(Command::Resnapshot(attachment)) => {
                         attachment.resnapshot(self.emulator().snapshot());

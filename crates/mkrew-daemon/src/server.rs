@@ -10,7 +10,7 @@ use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, CommentStatus, DaemonStatusResult, ErrorCode, Event,
     Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
     PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
-    Session, SessionHistory, SessionKillParams, SessionKind, SessionSpawnParams,
+    Session, SessionHistory, SessionKillParams, SessionKind, SessionReadParams, SessionSpawnParams,
     SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource, Task,
     TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
     TerminalTab, encode,
@@ -288,6 +288,11 @@ impl Daemon {
                 });
                 (store_outcome(history), After::Continue)
             }
+            Request::SessionRead(params) if !(1..=200).contains(&params.lines) => (
+                Outcome::error(ErrorCode::InvalidRequest, "lines must be 1–200"),
+                After::Continue,
+            ),
+            Request::SessionRead(params) => (self.session_read(params).await, After::Continue),
             Request::SessionAttach(params) => {
                 let outcome = self.session_attach(conn, params.session_id).await;
                 (outcome, After::Continue)
@@ -871,6 +876,26 @@ impl Daemon {
             session,
         });
         ok(&result)
+    }
+
+    /// Asks the session task for its last screen lines; never attaches.
+    async fn session_read(&self, params: SessionReadParams) -> Outcome {
+        let Some(session) = self.hub.sender(params.session_id) else {
+            return self.not_live(params.session_id);
+        };
+        let (reply, result) = oneshot::channel();
+        let command = Command::Read {
+            lines: usize::from(params.lines),
+            reply,
+        };
+        if session.send(command).await.is_err() {
+            return self.not_live(params.session_id);
+        }
+        // Dropped unanswered when the session exits first.
+        match result.await {
+            Ok(result) => ok(&result),
+            Err(_) => self.not_live(params.session_id),
+        }
     }
 
     /// Delivers `command` to a live session, waiting for room in its queue.

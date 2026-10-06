@@ -22,12 +22,12 @@ use mkrew_protocol::{
     GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome,
     PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, Request,
     ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
-    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionRef,
-    SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams, TabListParams,
-    TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams,
-    TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus,
-    TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionReadParams,
+    SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult, StateSource,
+    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
+    Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef,
+    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -1679,6 +1679,58 @@ fn send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish() {
     );
     assert_eq!(
         error_code(client.call(send(id, "y"))),
+        ErrorCode::InvalidState
+    );
+    client.stop();
+}
+
+fn read(session_id: Ulid, lines: u16) -> Request {
+    Request::SessionRead(SessionReadParams { session_id, lines })
+}
+
+#[test]
+fn session_read_shows_the_prompt_line_and_the_answer_goes_through() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    let session = client.wait_state(id, SessionState::NeedsInput);
+
+    // Read without attaching: the last non-blank line is the agent's question.
+    let last: SessionReadResult = client.call(read(id, 1)).into_result().unwrap();
+    assert_eq!(last.lines.len(), 1, "{last:?}");
+    assert!(last.lines[0].contains("(y/n)"), "{last:?}");
+    assert_eq!(last.state, SessionState::NeedsInput);
+    assert_eq!(last.state_changed_at, session.state_changed_at);
+    // More lines than the screen has: every non-blank row, top to bottom.
+    let all: SessionReadResult = client.call(read(id, 200)).into_result().unwrap();
+    assert!(all.lines.iter().all(|l| !l.trim().is_empty()), "{all:?}");
+    assert_eq!(
+        all.lines.first().map(String::as_str),
+        Some("Fake agent ready.")
+    );
+    assert_eq!(all.lines.last(), last.lines.last());
+
+    for lines in [0, 201] {
+        assert_eq!(
+            error_code(client.call(read(id, lines))),
+            ErrorCode::InvalidRequest
+        );
+    }
+    assert_eq!(
+        error_code(client.call(read(Ulid::new(), 1))),
+        ErrorCode::NotFound
+    );
+
+    // Quick reply: the answer reaches the agent, which finishes and exits.
+    client.call(send(id, "y")).into_result::<()>().unwrap();
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    assert!(session_log(&env, id).contains("Done."));
+    assert_eq!(
+        error_code(client.call(read(id, 1))),
         ErrorCode::InvalidState
     );
     client.stop();

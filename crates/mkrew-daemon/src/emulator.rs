@@ -83,6 +83,32 @@ impl Emulator {
             .collect()
     }
 
+    /// The last `count` non-blank rows of the visible screen as plain text, top to bottom,
+    /// trailing blanks trimmed (`session.read`, SPEC §20A).
+    pub fn last_lines(&self, count: usize) -> Vec<String> {
+        let grid = self.term.grid();
+        let mut lines: Vec<String> = (0..self.term.screen_lines())
+            .rev()
+            .map(|row| {
+                let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
+                let text: String = (0..self.term.columns())
+                    .map(|c| &line[Column(c)])
+                    .filter(|cell| {
+                        !cell
+                            .flags
+                            .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                    })
+                    .map(|cell| cell.c)
+                    .collect();
+                text.trim_end().to_owned()
+            })
+            .filter(|text| !text.is_empty())
+            .take(count)
+            .collect();
+        lines.reverse();
+        lines
+    }
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.term
             .resize(TermSize::new(usize::from(cols), usize::from(rows)));
@@ -217,6 +243,16 @@ mod tests {
         assert_eq!(emu.lines_to_cursor(), ["one", "two", "three"]);
         emu.advance(b"\x1b[1;1H");
         assert_eq!(emu.lines_to_cursor(), ["one"]);
+    }
+
+    #[test]
+    fn last_lines_skip_blank_rows_and_keep_order() {
+        let mut emu = Emulator::new(20, 8);
+        emu.advance(b"one\r\n\r\n\x1b[32mtwo\x1b[0m  \r\n   \r\n\xe5\xbd\xa2x\r\nthree\r\n\r\n");
+        assert_eq!(emu.last_lines(1), ["three"]);
+        assert_eq!(emu.last_lines(3), ["two", "形x", "three"]);
+        assert_eq!(emu.last_lines(200), ["one", "two", "形x", "three"]);
+        assert!(Emulator::new(20, 8).last_lines(5).is_empty());
     }
 
     #[test]

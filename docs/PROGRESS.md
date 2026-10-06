@@ -22,7 +22,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 ### Task queue
 - [x] T9.1 `mkrew_core::settings`: `Settings` struct with every §20.0 key + defaults, `deny_unknown_fields`, `Paths::settings_file()`, `load(path)` (missing file = defaults); unit tests (missing, partial, unknown key, bad type); covers: settings defaults/parse errors. (spec: §20.0, §17) — feat(core): settings.toml model and loader
 - [x] T9.2 Daemon settings holder: load at start, watch the config dir (debounced 300 ms) and re-read, keep last good on error, `daemon.status.settings_error?`; protocol field + test that edits the file (good → bad → good); covers: settings re-read + status error. (spec: §20.0, §7, §8) — feat(daemon): watch settings.toml and report errors in daemon.status
-- [ ] T9.3 `session.read` request (protocol + daemon: last N non-blank emulator rows as plain text, `state`, `state_changed_at`, 1–200 range, `invalid_state` for non-live sessions); e2e with fake agent `ask` scenario reading the "(y/n)" line, then `session.send y`; covers: session.read e2e. (spec: §20A.1, §20A protocol, §7)
+- [x] T9.3 `session.read` request (protocol + daemon: last N non-blank emulator rows as plain text, `state`, `state_changed_at`, 1–200 range, `invalid_state` for non-live sessions); e2e with fake agent `ask` scenario reading the "(y/n)" line, then `session.send y`; covers: session.read e2e. (spec: §20A.1, §20A protocol, §7) — feat(daemon): session.read returns the last screen lines
 - [ ] T9.4 `mkrew_core::turn` pure model (start/end/resume rules, numbering) with unit tests on state sequences; fakeagent `edit_files { paths }` step (writes files + PostToolUse hooks). (spec: §20.0 Turn, §20A.3, §20F)
 - [ ] T9.5 Daemon turn tracking: actor owns a turn per session, collects attributed paths (hook edits + watcher batches, dedup, relative), broadcasts event `session.turn`; e2e: fake agent edits 2 files in one turn → event with both paths; covers: session.turn event. (spec: §20A.3, §7, §8)
 - [ ] T9.6 Notification switches + sound: pure decision fn (kind × settings × 30 s throttle) with unit tests, notify-rust `sound_name` on Windows/macOS, Linux hint; daemon uses current settings; covers: notify switches. (spec: §20A.2, §8)
@@ -46,6 +46,8 @@ milestone first.
 ## Notes for the next session
 
 - Settings: daemon `crate::settings::SettingsHolder` (`Daemon.settings: Arc<_>`; `current()` = last good, `error()`). T9.6/T9.7 pass the Arc to notify/awake and drop the `allow(dead_code)` on `current`. PROTOCOL_VERSION is 17 for M9 (no further bump needed this milestone).
+- `session.read`: `Request::SessionRead` → `SessionReadResult`; daemon `Command::Read` in the session actor, `Emulator::last_lines(n)` (visible screen only, no scrollback). T9.8/T9.9 call it from the UI.
+- Full `verify.ps1` occasionally times out an e2e test (cli `task_add_list_run…`, daemon `big_paste…`) under parallel load; green when re-run. If it recurs, consider raising `TIMEOUT` in the test helpers.
 
 - Measurements: `crates/mkrew-ui/tests/measure.rs` (`#[ignore]`, real window; first `cargo build --release -p mkrew-ui --example idle_floor`, then `cargo test --release -p mkrew-ui --test measure -- --ignored --nocapture`); results in ADR 0009.
 - Headless sessions here can't run new scripts directly (approval); run them through a temporary `cargo test` if needed.

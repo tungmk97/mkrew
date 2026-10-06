@@ -113,6 +113,9 @@ pub enum Request {
     /// Returns [`SessionHistory`]; works for exited sessions too.
     #[serde(rename = "session.history")]
     SessionHistory(SessionRef),
+    /// Returns [`SessionReadResult`]; live sessions only (SPEC §20A).
+    #[serde(rename = "session.read")]
+    SessionRead(SessionReadParams),
     #[serde(rename = "hook.report")]
     HookReport(HookReportParams),
     #[serde(rename = "agent.profiles")]
@@ -782,6 +785,28 @@ pub struct SessionHistory {
     pub files: Vec<PathBuf>,
 }
 
+/// `session.read`: the last `lines` non-blank rows of a live session's screen (SPEC §20A).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionReadParams {
+    pub session_id: Ulid,
+    /// 1–200.
+    #[serde(default = "default_read_lines")]
+    pub lines: u16,
+}
+
+fn default_read_lines() -> u16 {
+    20
+}
+
+/// `session.read` result: plain text rows, top to bottom, and the session's current state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionReadResult {
+    pub lines: Vec<String>,
+    pub state: SessionState,
+    /// Unix ms.
+    pub state_changed_at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInputParams {
     pub session_id: Ulid,
@@ -1275,6 +1300,10 @@ mod tests {
             Request::SessionAttach(SessionRef { session_id: sid() }),
             Request::SessionDetach(SessionRef { session_id: sid() }),
             Request::SessionHistory(SessionRef { session_id: sid() }),
+            Request::SessionRead(SessionReadParams {
+                session_id: sid(),
+                lines: 8,
+            }),
             Request::SessionInput(SessionInputParams {
                 session_id: sid(),
                 data: vec![0x1b, b'[', b'A', 0, 0xff],
@@ -1370,6 +1399,21 @@ mod tests {
         assert_eq!(params.kind, SessionKind::Agent);
         assert_eq!(params.title, None);
         assert_eq!(params.agent_profile.as_deref(), Some("shell"));
+    }
+
+    #[test]
+    fn session_read_lines_default_to_20() {
+        let request: Request = serde_json::from_value(json!({
+            "method": "session.read", "params": {"session_id": sid().to_string()}
+        }))
+        .unwrap();
+        assert_eq!(
+            request,
+            Request::SessionRead(SessionReadParams {
+                session_id: sid(),
+                lines: 20
+            })
+        );
     }
 
     #[test]
