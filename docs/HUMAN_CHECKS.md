@@ -1542,6 +1542,13 @@ _Decisions the agent made on its own. Override them here if you disagree._
   is fixed when the dialog opens (an agent exiting meanwhile shows "failed: …" on send).
   To verify: two fake agents (one working, one idle) → palette → Broadcast → both checked →
   type + Enter → rows show "queued" / "sent"; kill one agent and send again → "failed: …".
+- (T10.2) **Prompt templates:** a variable is `{name}` with `name` made of ASCII letters,
+  digits, `_` or `-`; any other brace (`{}`, `{ a }`, a lone `{`) stays literal. An identifier in
+  braces inside code (`format!("{name}")`, `${HOME}`) IS treated as a variable, blanked and
+  listed; there is no escape for a literal `{file}`. CRLF in prompt files becomes `\n`. A first line `# Title` is removed
+  from the body (with the blank lines after it); without one the title is the file stem.
+  Values are not expanded again. The three seeded samples' wording is the agent's choice
+  (`mkrew_core::prompt::SAMPLES`); they are written only when `prompts/` does not exist.
 
 ## Done
 

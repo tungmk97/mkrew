@@ -89,6 +89,11 @@ impl Paths {
     pub fn settings_file(&self) -> PathBuf {
         self.config_dir.join("settings.toml")
     }
+
+    /// Prompt library, one `*.md` per prompt (SPEC §20B.3).
+    pub fn prompts_dir(&self) -> PathBuf {
+        self.config_dir.join("prompts")
+    }
 }
 
 /// `\\.\pipe\mkrew-<username>`, with anything but ASCII letters and digits in the name
@@ -141,6 +146,7 @@ mod tests {
             paths.settings_file(),
             Path::new("/tmp/c").join("settings.toml")
         );
+        assert_eq!(paths.prompts_dir(), Path::new("/tmp/c").join("prompts"));
     }
 
     #[test]
