@@ -532,6 +532,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] (T8.7) **tar.gz.** Built and listed only with fake binaries (test). Check the Release
   workflow artifacts on Linux and macOS (macOS is not in CI, so gpui may not build there):
   unpack, `bin/mk --help`, `bin/mkrew` starts and spawns `bin/mkrew-daemon`.
+- [ ] (T8.8) **README walkthrough.** Follow README "Install" → "Configure agents" → "Uninstall"
+  once on a clean machine (MSI on Windows, tar.gz on Linux) and fix any step that does not match.
 
 ## Questions with assumed defaults
 
@@ -1410,6 +1412,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   6.0.2 if you disagree. The release job runs on `v*` tags and by hand, uploads workflow artifacts
   only (no GitHub release). Archives ship `agents/*.toml` as reference copies (the daemon seeds
   the config dir itself) and README.md; no code signing.
+- (T8.8) **README is now the product README** (install, configure agents, daily use, uninstall,
+  files and folders); the former build-kit README moved to `docs/BUILD_KIT.md` (linked from the
+  README's "Development" section) because the README ships inside the MSI/tar.gz. The tar.gz
+  section suggests `~/.local/opt/mkrew` + a `PATH` line (no installer script); "From source" uses
+  `cargo install --path` for the three crates. Linux build dependencies are only described as
+  "the system libraries GPUI needs (the same ones as building Zed)" — add an exact package list
+  if you want one. `crates/mkrew-cli/tests/readme.rs` checks the sections and that every `mk`
+  command and flag in the README exists.
 
 ## Done
 
