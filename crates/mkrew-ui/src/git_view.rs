@@ -14,6 +14,8 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::highlight::{self, Spans};
+
 /// The group a changed file is listed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Group {
@@ -90,13 +92,30 @@ pub enum DiffRow {
 pub struct Shown {
     pub diff: FileDiff,
     pub rows: Vec<DiffRow>,
+    /// Per row, the syntax spans of its line (tabs expanded; empty for other rows).
+    pub spans: Vec<Spans>,
+    /// Some line has syntax spans (its other text is then drawn as plain text).
+    pub highlighted: bool,
     /// Digits of the largest line number (both gutter columns are this wide).
     pub number_width: usize,
 }
 
 impl Shown {
+    /// Lays out and syntax-highlights `diff` (slow on big diffs: run it off the UI thread).
     pub fn new(diff: FileDiff) -> Shown {
         let rows = rows(&diff);
+        let mut lines = highlight::diff_spans(&diff.path, &diff.hunks)
+            .into_iter()
+            .flatten();
+        // `rows` lists every hunk line once, in order.
+        let spans: Vec<Spans> = rows
+            .iter()
+            .map(|row| match row {
+                DiffRow::Line(_) => lines.next().unwrap_or_default(),
+                DiffRow::Gap(_) | DiffRow::Hunk(_) => Vec::new(),
+            })
+            .collect();
+        let highlighted = spans.iter().any(|line| !line.is_empty());
         let largest = diff
             .hunks
             .iter()
@@ -109,6 +128,8 @@ impl Shown {
             number_width: largest.to_string().len(),
             diff,
             rows,
+            spans,
+            highlighted,
         }
     }
 
@@ -439,22 +460,23 @@ impl GitView {
         true
     }
 
-    /// The `git.diff` answer for `target`; shown if `target` is still selected (the current
-    /// hunk stays if it still exists). Returns the file to read again (asked for meanwhile).
+    /// The `git.diff` answer for `target` (laid out by [`Shown::new`]); shown if `target` is
+    /// still selected (the current hunk stays if it still exists). Returns the file to read
+    /// again (asked for meanwhile).
     pub fn diff_loaded(
         &mut self,
         target: &Target,
-        loaded: Result<FileDiff, String>,
+        loaded: Result<Shown, String>,
     ) -> Option<Target> {
         self.reading = false;
         let again = std::mem::take(&mut self.read_again);
         if self.selected.as_ref() == Some(target) {
             self.diff = match loaded {
-                Ok(diff) => {
-                    if self.hunk.is_some_and(|hunk| hunk >= diff.hunks.len()) {
+                Ok(shown) => {
+                    if self.hunk.is_some_and(|hunk| hunk >= shown.diff.hunks.len()) {
                         self.hunk = None;
                     }
-                    Diff::Shown(Rc::new(Shown::new(diff)))
+                    Diff::Shown(Rc::new(shown))
                 }
                 Err(error) => Diff::Failed(error),
             };
@@ -731,6 +753,7 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::highlight::Token;
     use mkrew_protocol::{ChangeKind, DiffLineKind, GitChangedEvent, Hunk};
 
     fn file(path: &str, kind: ChangeKind) -> ChangedFile {
@@ -795,6 +818,11 @@ mod tests {
             hunks,
             ..FileDiff::default()
         }
+    }
+
+    /// [`diff`] laid out, as `diff_loaded` gets it.
+    fn laid_out(hunks: Vec<Hunk>) -> Shown {
+        Shown::new(diff(hunks))
     }
 
     /// A Working view with [`working`] loaded and its first file selected.
@@ -945,7 +973,7 @@ mod tests {
         let b = target(Group::Unstaged, "b.rs");
         assert_eq!(view.select(b.clone()), Some(b.clone()));
         assert!(!view.begin_diff());
-        assert_eq!(view.diff_loaded(&a, Ok(diff(vec![]))), Some(b.clone()));
+        assert_eq!(view.diff_loaded(&a, Ok(laid_out(vec![]))), Some(b.clone()));
         assert_eq!(view.diff, Diff::Loading, "a's answer is not shown");
         assert!(view.begin_diff());
         assert_eq!(view.diff_loaded(&b, Err("gone".into())), None);
@@ -975,7 +1003,10 @@ mod tests {
         assert_eq!(view.hunk, None);
         let shown = target(Group::Unstaged, "b.rs");
         view.begin_diff();
-        view.diff_loaded(&shown, Ok(diff(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
+        view.diff_loaded(
+            &shown,
+            Ok(laid_out(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])),
+        );
         view.key(Key::PreviousHunk);
         assert_eq!(view.hunk, Some(1));
         view.key(Key::NextHunk);
@@ -986,7 +1017,7 @@ mod tests {
         // A refreshed diff with fewer hunks drops a hunk that no longer exists.
         view.key(Key::NextHunk);
         view.begin_diff();
-        view.diff_loaded(&shown, Ok(diff(vec![hunk(1, 1, 1, 1)])));
+        view.diff_loaded(&shown, Ok(laid_out(vec![hunk(1, 1, 1, 1)])));
         assert_eq!(view.hunk, None);
         // Another file clears it.
         view.key(Key::NextHunk);
@@ -1045,6 +1076,29 @@ mod tests {
         assert_eq!(rows(&diff(vec![hunk(5, 2, 5, 2)]))[0], DiffRow::Gap(4));
     }
 
+    #[test]
+    fn line_rows_carry_their_syntax_spans() {
+        let mut first = hunk(1, 1, 1, 1);
+        first.lines[0].text = "// one".into();
+        let mut second = hunk(10, 1, 10, 1);
+        second.lines[0].text = "fn two() {}".into();
+        let shown = Shown::new(diff(vec![first, second]));
+        assert_eq!(shown.spans.len(), shown.rows.len());
+        assert!(shown.highlighted);
+        assert!(
+            !Shown::new(diff(vec![hunk(1, 1, 1, 1)])).highlighted,
+            "\"x\" has no tokens"
+        );
+        // hunk 0, line, gap, hunk 1, line.
+        assert!(shown.spans[0].is_empty() && shown.spans[2].is_empty());
+        assert_eq!(shown.spans[1], [(0..6, Token::Comment)]);
+        assert!(
+            shown.spans[4].contains(&(0..2, Token::Keyword)),
+            "{:?}",
+            shown.spans[4]
+        );
+    }
+
     fn paths(request: &StageRequest) -> (Stage, Vec<String>, Option<u32>) {
         let hunk = request.params.hunk.as_ref().map(|target| {
             assert_eq!(target.path, "a.rs");
@@ -1090,7 +1144,7 @@ mod tests {
         assert_eq!(paths(&file), (Stage::Unstage, vec!["a.rs".into()], None));
         // With a current hunk, only that hunk.
         view.begin_diff();
-        view.diff_loaded(&a, Ok(diff(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
+        view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
         view.key(Key::PreviousHunk);
         let current = view.stage_key(Stage::Unstage).unwrap();
         assert_eq!(paths(&current), (Stage::Unstage, vec![], Some(20)));
@@ -1099,7 +1153,7 @@ mod tests {
         let b = target(Group::Unstaged, "b.rs");
         view.select(b.clone());
         view.begin_diff();
-        view.diff_loaded(&b, Ok(diff(vec![hunk(1, 1, 0, 0)])));
+        view.diff_loaded(&b, Ok(laid_out(vec![hunk(1, 1, 0, 0)])));
         view.key(Key::NextHunk);
         assert_eq!(view.hunk_change(0), None);
         let file = view.stage_key(Stage::Stage).unwrap();
@@ -1148,7 +1202,7 @@ mod tests {
         assert_eq!(view.shown_diff(&target_b), None);
         view.select(target_b.clone());
         view.begin_diff();
-        view.diff_loaded(&target_b, Ok(diff(vec![hunk(1, 1, 0, 0)])));
+        view.diff_loaded(&target_b, Ok(laid_out(vec![hunk(1, 1, 0, 0)])));
         assert!(view.shown_diff(&target_b).is_some());
         assert_eq!(view.shown_diff(&target(Group::Staged, "a.rs")), None);
     }

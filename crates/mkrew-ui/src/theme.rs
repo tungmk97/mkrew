@@ -210,7 +210,7 @@ pub struct Theme {
     pub diff_del_bg: u32,
     pub diff_del_text: u32,
     pub diff_hunk_header: u32,
-    /// Files viewer syntax colors (harmonized with the ANSI palette; comments use
+    /// Files and diff viewer syntax colors (harmonized with the ANSI palette; comments use
     /// `text_muted`).
     pub syntax_keyword: u32,
     pub syntax_string: u32,
@@ -296,7 +296,7 @@ impl Theme {
             status_idle: 0x9A9CA6,
             diff_add_bg: 0xE6F4EA,
             diff_add_text: 0x1E6B3A,
-            diff_del_bg: 0xFCE8E8,
+            diff_del_bg: 0xFDEEEE,
             diff_del_text: 0xA61B1B,
             diff_hunk_header: 0xF3F3F1,
             // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
@@ -415,6 +415,27 @@ mod tests {
             ] {
                 // `surface_raised` = the Files viewer's selected line.
                 for bg in [theme.bg, theme.surface, theme.surface_raised] {
+                    let ratio = contrast(fg, bg);
+                    assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn highlighted_diff_lines_stay_readable() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for fg in [
+                theme.syntax_keyword,
+                theme.syntax_string,
+                theme.syntax_number,
+                theme.syntax_type,
+                theme.syntax_function,
+                theme.text,
+                // Comments and line numbers.
+                theme.text_muted,
+            ] {
+                for bg in [theme.diff_add_bg, theme.diff_del_bg] {
                     let ratio = contrast(fg, bg);
                     assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
                 }

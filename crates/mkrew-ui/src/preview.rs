@@ -293,6 +293,21 @@ pub fn token_color(token: Token, theme: &Theme) -> u32 {
     }
 }
 
+/// One line of code with its syntax `spans` colored (other text keeps the parent's color).
+pub fn code_line(text: String, spans: &[(Range<usize>, Token)], theme: &Theme) -> StyledText {
+    let highlights: Vec<_> = spans
+        .iter()
+        .map(|(range, token)| {
+            let style = HighlightStyle {
+                color: Some(Hsla::from(rgb(token_color(*token, theme)))),
+                ..HighlightStyle::default()
+            };
+            (range.clone(), style)
+        })
+        .collect();
+    StyledText::new(text).with_highlights(highlights)
+}
+
 /// The Files viewer (SPEC §12A): `code` with line numbers and syntax colors; a click on a line
 /// calls `on_line` (Shift is ignored), `selected` is shown like a selection.
 pub fn code_view(
@@ -311,17 +326,6 @@ pub fn code_view(
             .map(|index| {
                 let line = code.lines.get(index).map(String::as_str).unwrap_or("");
                 let spans = code.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
-                let highlights: Vec<_> = spans
-                    .iter()
-                    .map(|(range, token)| {
-                        let color = Hsla::from(rgb(token_color(*token, &theme)));
-                        let style = HighlightStyle {
-                            color: Some(color),
-                            ..HighlightStyle::default()
-                        };
-                        (range.clone(), style)
-                    })
-                    .collect();
                 let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
                 let on_line = Rc::clone(&on_line);
                 let picked = selected == Some(number);
@@ -348,11 +352,11 @@ pub fn code_view(
                             }))
                             .child(gutter(index + 1, total)),
                     )
-                    .child(
-                        div()
-                            .text_color(rgb(theme.text))
-                            .child(StyledText::new(line.to_owned()).with_highlights(highlights)),
-                    )
+                    .child(div().text_color(rgb(theme.text)).child(code_line(
+                        line.to_owned(),
+                        spans,
+                        &theme,
+                    )))
             })
             .collect()
     })

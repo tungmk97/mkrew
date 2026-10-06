@@ -1257,8 +1257,15 @@ impl Shell {
             return;
         }
         let loaded = connection.call::<FileDiff>(Request::GitDiff(target.params(project_id)));
+        let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
-            let loaded = loaded.await.map_err(|error| format!("{error:#}"));
+            // Syntax highlighting is slow on big diffs: lay out off the UI thread.
+            let loaded = match loaded.await {
+                Ok(diff) => Ok(background
+                    .spawn(async move { git_view::Shown::new(diff) })
+                    .await),
+                Err(error) => Err(format!("{error:#}")),
+            };
             let _ = this.update_in(cx, |shell, window, cx| {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
@@ -5160,10 +5167,10 @@ impl Shell {
                     rows,
                     cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
                         range
-                            .filter_map(|index| shown.rows.get(index))
-                            .map(|row| {
+                            .filter_map(|index| Some((index, shown.rows.get(index)?)))
+                            .map(|(index, row)| {
                                 let frame =
-                                    git_diff_row(&shown, row, current, line_height, &row_theme);
+                                    git_diff_row(&shown, index, current, line_height, &row_theme);
                                 match (row, hunk_stage) {
                                     (git_view::DiffRow::Hunk(hunk), Some(stage)) => frame
                                         .child(hunk_stage_button(
@@ -6109,11 +6116,9 @@ impl Shell {
                             .font_family(theme.terminal_font_family)
                             .text_size(px(theme.terminal_font_size))
                             .children(
-                                shown
-                                    .rows
-                                    .iter()
-                                    .take(git_view::DISCARD_PREVIEW_ROWS)
-                                    .map(|row| git_diff_row(shown, row, None, line_height, theme)),
+                                (0..shown.rows.len().min(git_view::DISCARD_PREVIEW_ROWS)).map(
+                                    |index| git_diff_row(shown, index, None, line_height, theme),
+                                ),
                             ),
                     )
                     .when(more > 0, |el| {
@@ -7973,10 +7978,10 @@ fn hunk_stage_button(
 
 /// One row of the Git diff viewer, `line_height` high: a collapsed gap of unchanged lines, a
 /// hunk header (the current hunk in the accent), or a line with its old / new numbers, its
-/// `+` / `−` sign and the diff colors.
+/// `+` / `−` sign, the diff colors and syntax colors.
 fn git_diff_row(
     shown: &git_view::Shown,
-    row: &git_view::DiffRow,
+    index: usize,
     current: Option<usize>,
     line_height: f32,
     theme: &Theme,
@@ -7989,6 +7994,9 @@ fn git_diff_row(
         .gap(px(space::M))
         .px(px(space::L))
         .whitespace_nowrap();
+    let Some(row) = shown.rows.get(index) else {
+        return frame;
+    };
     let width = shown.number_width;
     let number = |n: Option<u32>| match n {
         Some(n) => format!("{n:>width$}"),
@@ -8035,6 +8043,10 @@ fn git_diff_row(
                 DiffLineKind::Del => (Some(theme.diff_del_bg), theme.diff_del_text, "−"),
                 DiffLineKind::Context => (None, theme.text, " "),
             };
+            let spans = shown.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
+            // In a highlighted diff, text outside tokens is plain text (the sign and background
+            // still tell added from removed); unhighlighted diffs keep the diff text colors.
+            let text_color = if shown.highlighted { theme.text } else { fg };
             frame
                 .when_some(bg, |el, bg| el.bg(rgb(bg)))
                 .child(
@@ -8050,9 +8062,12 @@ fn git_diff_row(
                     div()
                         .flex()
                         .gap(px(space::S))
-                        .text_color(rgb(fg))
-                        .child(sign)
-                        .child(line.text.replace('\t', highlight::TAB)),
+                        .child(div().text_color(rgb(fg)).child(sign))
+                        .child(div().text_color(rgb(text_color)).child(preview::code_line(
+                            line.text.replace('\t', highlight::TAB),
+                            spans,
+                            theme,
+                        ))),
                 )
                 .when(line.no_newline, |el| {
                     el.child(

@@ -1,4 +1,5 @@
-//! Syntax highlighting for the Files viewer (SPEC §12A): `syntect` with its bundled syntaxes
+//! Syntax highlighting for the Files viewer (SPEC §12A) and the Git diff viewer (SPEC §12B,
+//! [`diff_spans`]): `syntect` with its bundled syntaxes
 //! (pure-Rust `fancy-regex`, loaded once on first use) turns a file into lines of [`Token`]
 //! spans. Colors are not decided here: the renderer maps tokens to theme tokens (SPEC §14).
 //! Slow on big files, so the shell runs [`Code::new`] off the UI thread.
@@ -6,7 +7,7 @@
 use std::ops::Range;
 use std::sync::OnceLock;
 
-use mkrew_protocol::FsContent;
+use mkrew_protocol::{DiffLineKind, FsContent, Hunk};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{
     Color, ScopeSelectors, StyleModifier, Theme, ThemeItem, ThemeSettings,
@@ -61,6 +62,9 @@ impl Token {
         }
     }
 }
+
+/// The highlighted byte ranges of one line.
+pub type Spans = Vec<(Range<usize>, Token)>;
 
 /// A file as the viewer shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +121,51 @@ impl Code {
             syntax: None,
         }
     }
+}
+
+/// Token spans of every line of `hunks` (SPEC §12B), per hunk then per line, over the line's
+/// text with tabs expanded to [`TAB`]. Each hunk side is highlighted as one run of code (old =
+/// context + deleted lines, new = context + added lines), so a deleted line reads as it did
+/// and multi-line strings / comments inside a hunk keep their colors; context lines take the
+/// new side's spans. Each hunk starts with no state (the file before it is not known), so a
+/// hunk opening inside a block comment or string is colored wrongly. Unknown languages, and
+/// diffs over the highlighting limits, stay plain.
+/// Slow on big diffs: run it off the UI thread.
+pub fn diff_spans(path: &str, hunks: &[Hunk]) -> Vec<Vec<Spans>> {
+    let mut spans: Vec<Vec<Spans>> = hunks
+        .iter()
+        .map(|hunk| vec![Vec::new(); hunk.lines.len()])
+        .collect();
+    let lines = || hunks.iter().flat_map(|hunk| &hunk.lines);
+    let bytes: usize = lines().map(|line| line.text.len()).sum();
+    let long = lines().any(|line| line.text.len() > HIGHLIGHT_MAX_LINE);
+    if bytes > HIGHLIGHT_MAX_BYTES || long {
+        return spans;
+    }
+    let Some(syntax) = find_syntax(path, None) else {
+        return spans;
+    };
+    for (hunk, hunk_spans) in hunks.iter().zip(&mut spans) {
+        for side in [DiffLineKind::Del, DiffLineKind::Add] {
+            // This side's lines: (index in the hunk, kind), expanded text.
+            let (at, texts): (Vec<(usize, DiffLineKind)>, Vec<String>) = hunk
+                .lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| line.kind == side || line.kind == DiffLineKind::Context)
+                .map(|(index, line)| ((index, line.kind), line.text.replace('\t', TAB)))
+                .unzip();
+            for ((index, kind), line_spans) in at.into_iter().zip(highlight(&texts, syntax)) {
+                // Context lines are highlighted on both sides; the new side's spans are kept.
+                if (kind == side || side == DiffLineKind::Add)
+                    && let Some(slot) = hunk_spans.get_mut(index)
+                {
+                    *slot = line_spans;
+                }
+            }
+        }
+    }
+    spans
 }
 
 fn syntaxes() -> &'static SyntaxSet {
@@ -320,6 +369,76 @@ mod tests {
         assert!(code.binary && code.too_large);
         assert_eq!(code.size, 3_000_000);
         assert!(code.lines.is_empty());
+    }
+
+    fn hunk(lines: &[(DiffLineKind, &str)]) -> Hunk {
+        Hunk {
+            lines: lines
+                .iter()
+                .map(|(kind, text)| mkrew_protocol::DiffLine {
+                    kind: *kind,
+                    text: (*text).into(),
+                    old_line: None,
+                    new_line: None,
+                    no_newline: false,
+                    crlf: false,
+                })
+                .collect(),
+            ..Hunk::default()
+        }
+    }
+
+    #[test]
+    fn diff_sides_are_highlighted_as_their_own_code() {
+        use DiffLineKind::{Add, Context, Del};
+        // The old side opens a block comment that the new side does not have.
+        let hunks = [
+            hunk(&[
+                (Del, "/* old"),
+                (Add, "\tlet s = \"x\";"),
+                (Context, "let n = 1;"),
+            ]),
+            hunk(&[(Context, "fn f() {}")]),
+        ];
+        let spans = diff_spans("src/a.rs", &hunks);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].len(), 3);
+        assert_eq!(spans[0][0], [(0..6, Token::Comment)]);
+        // The added line's spans are over its tab-expanded text.
+        assert!(
+            spans[0][1].contains(&(12..15, Token::String)),
+            "{:?}",
+            spans[0][1]
+        );
+        // The context line is not inside the old side's open comment: new side's spans.
+        assert!(
+            spans[0][2].contains(&(0..3, Token::Keyword)),
+            "{:?}",
+            spans[0][2]
+        );
+        assert!(
+            spans[0][2]
+                .iter()
+                .all(|(_, token)| *token != Token::Comment)
+        );
+        // Each hunk starts fresh.
+        assert!(
+            spans[1][0].contains(&(0..2, Token::Keyword)),
+            "{:?}",
+            spans[1][0]
+        );
+    }
+
+    #[test]
+    fn unknown_or_oversized_diffs_stay_plain() {
+        let plain = diff_spans("LICENSE", &[hunk(&[(DiffLineKind::Add, "MIT")])]);
+        assert_eq!(plain, [vec![Vec::new()]]);
+        let long = "a".repeat(HIGHLIGHT_MAX_LINE + 1);
+        let hunks = [hunk(&[
+            (DiffLineKind::Add, "let x = 1;"),
+            (DiffLineKind::Add, &long),
+        ])];
+        assert_eq!(diff_spans("a.rs", &hunks), [vec![Vec::new(), Vec::new()]]);
     }
 
     #[test]

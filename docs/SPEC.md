@@ -804,7 +804,7 @@ The terminal is the hero; everything else steps back.
 | `status-idle` | #6E7079 | #9A9CA6 |
 | `diff-add-bg` | #1E3A2B | #E6F4EA |
 | `diff-add-text` | #7DD3A0 | #1E6B3A |
-| `diff-del-bg` | #3D2226 | #FCE8E8 |
+| `diff-del-bg` | #3D2226 | #FDEEEE |
 | `diff-del-text` | #F2A0A4 | #A61B1B |
 | `diff-hunk-header` | #25262C | #F3F3F1 |
 

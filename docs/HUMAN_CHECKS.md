@@ -404,6 +404,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   a primary "Set base…". With the file list focused, b/n/p/s/u still work and their tooltips
   show the keys; rebinding e.g. `git_next_hunk = "alt-n"` in keymap.toml works. Screenshots
   dark + light for §14.
+- [ ] (T7.9d) **Git diff syntax highlighting** (spans covered by `highlight.rs`/`git_view.rs`
+  unit tests; the UI was never seen): open a `.rs`/`.ts` change in the Git view → keywords,
+  strings, comments, numbers colored on context, added and deleted lines (on the green/red
+  line backgrounds; check contrast dark + light); a deleted line inside a removed block
+  comment stays comment-colored; a big diff (thousands of lines) opens without freezing the
+  UI; an unknown file type (`LICENSE`) stays plain; the discard dialog's preview is colored
+  too.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1167,6 +1174,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   branches: a free-text ref (validated by the daemon's `check_ref`; a ref that does not exist
   is accepted; Against base then says "Cannot compare with <ref>." + "Set base…"), Enter on an empty field =
   auto-detect. After saving, the Git view re-reads its status (mode kept).
+- (T7.9d) **Diff highlighting choices:** each hunk side is highlighted as one run (old =
+  context + deleted, new = context + added; context lines use the new side), starting with
+  no state at each hunk (the rest of the file is not read), so a hunk that opens inside a
+  block comment/string is miscolored. Syntax is chosen by file extension only (the diff has
+  no language field). Same limits as the Files viewer (512 KB of diff text, 4096-char
+  lines). In a highlighted diff, text outside tokens is `text` (not green/red); the `+`/`−`
+  sign and the line background keep the diff colors. Light `diff-del-bg` lightened
+  #FCE8E8 → #FDEEEE (SPEC §14 table updated; no ADR, token tweak only) so comments /
+  line numbers (`text-muted`) reach 4.5:1 on deleted lines (was 4.38); new test
+  `highlighted_diff_lines_stay_readable`. Dark `text-muted` on `diff-add-bg` is 4.53:1 —
+  little headroom (ui-reviewer SHOULD, left as is).
 
 ## Done
 
