@@ -366,6 +366,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   binary file." + size + "Open in Zed"; a > 2 MB log → "too large" notice; a 1 MB text file
   shows plain and scrolls smoothly. A `.md` → "Review in Docs" switches to Docs with it
   selected. Dark + light screenshots for §14.
+- [ ] (T7.8) **Quick open** (logic covered by `quick_open.rs` / `files_view.rs` `reveal` unit
+  tests; speed by the daemon `fs.find` perf test; the finder was never seen): Ctrl+Shift+O →
+  "Open file · <workspace>" dialog listing files; type `mainrs` → fuzzy matches with matched
+  chars in the accent color, the best one ringed; ↑ ↓ move (wraps, list scrolls along), Enter
+  or a click opens it in Files with its folders opened and the cursor on it; Esc closes and
+  the pane gets the keyboard back. Ctrl+V pastes into the query. In a 10,000-file repo typing
+  feels instant. Dark + light screenshots for §14.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1084,6 +1091,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   adds line picking in the Git diff). Open review NITs: `rows()` is rebuilt per
   click/key/frame (O(n) of the visible tree); code lines have no hover state; the "Select a
   file" empty state has a key hint but no button (Quick open lands in T7.8).
+- (T7.8) **Quick open:** finds files only. SPEC §13 also lists workspaces, sessions and tasks
+  for Ctrl+Shift+O; that part is not built yet (no task queued, decide if it is wanted). Every
+  query edit sends one `fs.find` (no debounce; the daemon's cached index answers in < 100 ms);
+  late answers are dropped. Ctrl+Shift+O does nothing with no workspace or no connection, and
+  cannot open on top of another dialog. Opening a pick switches to its workspace, shows Files,
+  opens its folders and reads it. Open review items: the tree only scrolls to the revealed
+  file if its folders were already listed (otherwise it may end up off-screen in a long tree);
+  removing the workspace while the finder is open is not handled (finder stays); no "pick a
+  workspace first" note.
 
 ## Done
 

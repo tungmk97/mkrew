@@ -263,6 +263,27 @@ impl FilesView {
         Some(path.to_owned())
     }
 
+    /// Opens file `path` from outside the tree (quick open): its folders open (listed as
+    /// needed), the cursor moves to it and it shows in the viewer.
+    pub fn reveal(&mut self, path: &str) -> Requests {
+        let mut list = Vec::new();
+        let mut dir = String::new();
+        let mut parts: Vec<&str> = path.split('/').collect();
+        parts.pop();
+        for part in parts {
+            if !dir.is_empty() {
+                dir.push('/');
+            }
+            dir.push_str(part);
+            list.extend(self.expand(&dir).list);
+        }
+        self.cursor = Some(path.to_owned());
+        Requests {
+            list,
+            read: self.open(path),
+        }
+    }
+
     /// An `fs.read` of the opened file is about to be sent; `false` = one is in flight already
     /// (the opened file is read again once that one answers).
     pub fn begin_read(&mut self) -> bool {
@@ -496,6 +517,30 @@ mod tests {
         assert_eq!(paths(&view), ["src", "README.md"]);
         assert_eq!(view.click("src"), Requests::default());
         assert_eq!(paths(&view), ["src/", "  src/main.rs", "README.md"]);
+    }
+
+    #[test]
+    fn revealing_a_file_opens_its_folders_and_shows_it() {
+        let mut view = listed();
+        let revealed = view.reveal("src/app/main.rs");
+        assert_eq!(revealed.list, ["src", "src/app"]);
+        assert_eq!(revealed.read.as_deref(), Some("src/app/main.rs"));
+        assert_eq!(view.cursor.as_deref(), Some("src/app/main.rs"));
+        // The deeper folder may answer first.
+        assert!(view.begin_list("src/app"));
+        assert!(view.begin_list("src"));
+        view.listed("src/app", Ok(vec![file("src/app/main.rs", None)]));
+        assert!(view.listed("src", Ok(vec![dir("src/app")])).is_empty());
+        assert_eq!(
+            paths(&view),
+            ["src/", "  src/app/", "    src/app/main.rs", "README.md"]
+        );
+        // Again: everything is open and listed, the file is already shown.
+        assert_eq!(view.reveal("src/app/main.rs"), Requests::default());
+        // A file at the root opens no folder.
+        let root = view.reveal("README.md");
+        assert!(root.list.is_empty());
+        assert_eq!(root.read.as_deref(), Some("README.md"));
     }
 
     #[test]

@@ -152,6 +152,9 @@ pub const FILE_TREE_INDENT: f32 = space::M;
 /// Side of the dot on a Files tree folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
+/// Height of the quick open match list (it scrolls past that).
+pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
+
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
 

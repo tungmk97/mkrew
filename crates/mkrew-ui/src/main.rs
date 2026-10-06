@@ -20,11 +20,12 @@ use gpui::{
 use mkrew_core::Paths;
 use mkrew_protocol::{
     AgentProfilesResult, CommentId, CommentListParams, CommentRef, DocComment, DocContent, DocFile,
-    DocListParams, DocReadParams, Event, FsContent, FsEntry, FsListParams, FsReadParams, GitMarker,
-    Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult, SessionHistory,
-    SessionKillParams, SessionKind, SessionListParams, SessionRef, SessionSpawnResult,
-    SessionState, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
-    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, UndoPreview,
+    DocListParams, DocReadParams, Event, FsContent, FsEntry, FsListParams, FsMatch, FsReadParams,
+    GitMarker, Outcome, Project, ProjectAddParams, Request, Session, SessionAttachResult,
+    SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionRef,
+    SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams, TabRef,
+    TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
+    UndoPreview,
 };
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::client::{Connection, Incoming};
@@ -40,6 +41,7 @@ use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::keymap::{BOARD_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT, Keymap, Run};
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice};
 use mkrew_ui::preview;
+use mkrew_ui::quick_open::{self, QuickOpen, Results};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
@@ -210,6 +212,10 @@ struct Shell {
     history_pane: Option<Entity<TerminalPane>>,
     /// The open Docs "Send to agent" / "View changes" dialog (modal).
     doc_dialog: Option<DocDialog>,
+    /// The open quick open finder (modal).
+    quick_open: Option<QuickOpen>,
+    /// Keeps the quick open pick in view.
+    quick_open_scroll: ScrollHandle,
     /// Focused while a dialog is open; the task dialog's keys edit the draft.
     dialog_focus: FocusHandle,
     /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
@@ -347,6 +353,7 @@ impl Shell {
                 shell.history = None;
                 shell.history_pane = None;
                 shell.doc_dialog = None;
+                shell.quick_open = None;
                 shell.follow_up = None;
                 shell.docs.clear();
                 shell.files.clear();
@@ -408,6 +415,8 @@ impl Shell {
             history: None,
             history_pane: None,
             doc_dialog: None,
+            quick_open: None,
+            quick_open_scroll: ScrollHandle::new(),
             dialog_focus: cx.focus_handle(),
             prompt_scroll: ScrollHandle::new(),
             dialog_serial: 0,
@@ -1508,12 +1517,127 @@ impl Shell {
         .detach();
     }
 
+    /// Quick open (Ctrl+Shift+O): a fuzzy finder over the active workspace's files.
+    fn open_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
+            return;
+        };
+        self.workspace_menu = None;
+        self.quick_open = Some(QuickOpen::new(project_id));
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        self.find_files(window, cx);
+        cx.notify();
+    }
+
+    fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.quick_open = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// `fs.find` for the finder's query; a reply to an older query or finder is dropped.
+    fn find_files(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let dialog = self.dialog_serial;
+        let Some(open) = self.quick_open.as_mut() else {
+            return;
+        };
+        let (serial, params) = open.search();
+        let project_id = params.project_id;
+        let found = connection.call::<Vec<FsMatch>>(Request::FsFind(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let found = found.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update(cx, |shell, cx| {
+                if let Err(error) = &found {
+                    tracing::warn!(%project_id, "fs.find failed: {error}");
+                }
+                if shell.dialog_serial != dialog {
+                    return;
+                }
+                if let Some(open) = shell.quick_open.as_mut()
+                    && open.found(serial, found)
+                {
+                    shell.quick_open_scroll.scroll_to_item(0);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Typing searches again, ↑ / ↓ move the pick (kept in view), Enter opens it, Esc closes.
+    fn quick_open_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = quick_open::key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == quick_open::Key::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(open) = self.quick_open.as_mut() else {
+            return;
+        };
+        match key {
+            quick_open::Key::Close => return self.close_quick_open(window, cx),
+            quick_open::Key::Open => return self.open_quick_pick(window, cx),
+            quick_open::Key::Move(_) => {
+                open.key(key);
+                self.quick_open_scroll.scroll_to_item(open.selected);
+            }
+            quick_open::Key::Paste => {
+                if paste.is_some_and(|text| open.insert(&text)) {
+                    self.find_files(window, cx);
+                }
+            }
+            quick_open::Key::Backspace | quick_open::Key::Insert(_) => {
+                if open.key(key) {
+                    self.find_files(window, cx);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Opens the picked file in the Files view (its folders open, the cursor lands on it).
+    fn open_quick_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(open) = self.quick_open.take() else {
+            return;
+        };
+        let Some(path) = open.picked().map(str::to_owned) else {
+            self.quick_open = Some(open);
+            return;
+        };
+        let project_id = open.project_id;
+        if self.workspace != Some(project_id) {
+            self.activate_workspace(project_id, window, cx);
+        }
+        self.show_view(View::Files, window, cx);
+        let requests = self.files_view(project_id).reveal(&path);
+        let at = self.files_view(project_id).rows().iter().position(
+            |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
+        );
+        if let Some(at) = at {
+            self.files_scroll
+                .scroll_to_item(at, ScrollStrategy::Nearest);
+        }
+        self.files_requests(project_id, requests, window, cx);
+    }
+
     /// Whether a modal dialog is open (it keeps the keyboard).
     fn modal_open(&self) -> bool {
         self.task_dialog.is_some()
             || self.undo_dialog.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
+            || self.quick_open.is_some()
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
@@ -2665,6 +2789,7 @@ impl Shell {
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
             Command::ShowFiles => self.show_view(View::Files, window, cx),
+            Command::QuickOpen => self.open_quick_open(window, cx),
             Command::ToggleIgnored => {
                 // Only bound while Files are shown.
                 if let Some(project_id) = self.workspace {
@@ -5152,6 +5277,150 @@ impl Shell {
         Self::modal_shade("send-dialog-shade", panel, cx)
     }
 
+    /// Quick open: the query field over the best matches (matched chars in the accent color,
+    /// the pick ringed); a click or Enter opens one in the Files view.
+    fn render_quick_open(
+        &self,
+        open: &QuickOpen,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let workspace = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|project| project.id == open.project_id)
+            .map_or_else(String::new, |project| format!(" · {}", project.name));
+        let note = match &open.results {
+            Results::Loading => Some("Searching…".to_owned()),
+            Results::Loaded(matches) if matches.is_empty() && open.query.trim().is_empty() => {
+                Some("This workspace has no files yet.".to_owned())
+            }
+            Results::Loaded(matches) if matches.is_empty() => {
+                Some(format!("No file matches “{}”.", open.query.trim()))
+            }
+            Results::Loaded(_) => None,
+            Results::Failed(error) => Some(format!("Cannot search the files: {error}")),
+        };
+        let accent = gpui::Hsla::from(rgb(theme.accent));
+        let hover = theme.surface_raised;
+        let rows: Vec<gpui::AnyElement> = open
+            .matches()
+            .iter()
+            .enumerate()
+            .map(|(index, found)| {
+                let picked = index == open.selected;
+                let highlights = quick_open::match_ranges(&found.path, &found.indices)
+                    .into_iter()
+                    .map(|range| {
+                        let style = gpui::HighlightStyle {
+                            color: Some(accent),
+                            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+                            ..gpui::HighlightStyle::default()
+                        };
+                        (range, style)
+                    });
+                div()
+                    .id(("quick-open-match", index))
+                    .flex_none()
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    // The pick has a focus-colored ring, so it stays visible under hover.
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(if picked {
+                        theme.pane_focus_border
+                    } else {
+                        theme.surface
+                    }))
+                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
+                    .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
+                    .cursor_pointer()
+                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        if let Some(open) = shell.quick_open.as_mut() {
+                            open.pick(index);
+                            shell.open_quick_pick(window, cx);
+                        }
+                    }))
+                    .child(gpui::StyledText::new(found.path.clone()).with_highlights(highlights))
+                    .into_any_element()
+            })
+            .collect();
+        let panel = div()
+            .id("quick-open")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::quick_open_key_down))
+            .child(
+                div()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(format!("Open file{workspace}")),
+            )
+            .child(text_field(
+                "quick-open-query",
+                &open.query,
+                "Type part of a file name or path",
+                true,
+                theme,
+            ))
+            .when(!rows.is_empty(), |el| {
+                el.child(
+                    div()
+                        .id("quick-open-matches")
+                        .max_h(px(theme::QUICK_OPEN_LIST_HEIGHT))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.quick_open_scroll)
+                        .flex()
+                        .flex_col()
+                        .gap(px(space::XS))
+                        .children(rows),
+                )
+            })
+            .children(note.map(|note| {
+                let failed = matches!(open.results, Results::Failed(_));
+                div()
+                    .flex()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .when(failed, |el| {
+                        el.child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                    })
+                    .child(
+                        div()
+                            .text_color(rgb(if failed { theme.text } else { theme.text_muted }))
+                            .child(note),
+                    )
+            }))
+            .child(
+                div()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child("↑ ↓ to pick · Enter opens it in Files · Esc closes"),
+            );
+        Self::modal_shade("quick-open-shade", panel, cx)
+    }
+
     /// "View changes": the sent thread's file as sent vs as shown now.
     fn render_changes(
         &self,
@@ -7259,5 +7528,10 @@ impl Render for Shell {
                 DocDialog::Send(dialog) => self.render_send_dialog(dialog, now, &theme, cx),
                 DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
             }))
+            .children(
+                self.quick_open
+                    .as_ref()
+                    .map(|open| self.render_quick_open(open, &theme, cx)),
+            )
     }
 }
