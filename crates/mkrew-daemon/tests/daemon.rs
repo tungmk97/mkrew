@@ -1968,6 +1968,74 @@ fn a_turn_that_edits_two_files_reports_both() {
     client.stop();
 }
 
+/// In a git repo the `hook.report` that starts a turn is answered after the start snapshot:
+/// the agent's first write (right after its hook returns) is not in it. The turn's files get
+/// line counts from start to end snapshot; branch and index stay as they were (SPEC §20C.1).
+#[test]
+fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let scenario = env.dir.path().join("editor.toml");
+    // The agent's start output is screen-detected as turn 1; the `done` hook ends it, so the
+    // `busy` hook starts turn 2.
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"hook\"\nevent = \"done\"\n\n\
+         [[step]]\naction = \"hook\"\nevent = \"busy\"\n\n\
+         [[step]]\naction = \"write_file\"\npath = \"notes.txt\"\ncontent = \"x\\n\"\n\n\
+         [[step]]\naction = \"edit_files\"\npaths = [\"a.txt\", \"a.txt\"]\n\n\
+         [[step]]\naction = \"sleep\"\nms = 1500\n\n\
+         [[step]]\naction = \"hook\"\nevent = \"done\"\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "editor",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let path = env.dir.path().join("config/agents/editor.toml");
+    let profile = std::fs::read_to_string(&path).unwrap();
+    env.write_profile(
+        "editor",
+        &profile.replace("mode = \"screen\"", "mode = \"hook+screen\""),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
+    let id = spawned.session_id;
+
+    let event = client
+        .wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id && t.n == 2));
+    let Event::SessionTurn(turn) = event else {
+        unreachable!()
+    };
+    let counts: Vec<_> = turn
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.added, f.removed))
+        .collect();
+    assert_eq!(
+        counts,
+        [("a.txt", Some(2), Some(0)), ("notes.txt", Some(1), Some(0))]
+    );
+    let start = format!("refs/mkrew/turns/{id}/2");
+    assert_eq!(git(&repo, &["ls-tree", "--name-only", &start]), "a.txt");
+    assert_eq!(git(&repo, &["show", &format!("{start}:a.txt")]), "one");
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git(&repo, &["branch", "--format=%(refname)"]),
+        "refs/heads/main"
+    );
+    assert_eq!(git(&repo, &["diff", "--cached", "--name-only"]), "");
+    client.stop();
+}
+
 fn send_comments(comment_ids: &[CommentId], session_id: Ulid) -> Request {
     Request::CommentSendToAgent(CommentSendParams {
         comment_ids: comment_ids.to_vec(),

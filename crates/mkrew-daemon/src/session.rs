@@ -16,7 +16,7 @@ use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
     QueuedSend, Session, SessionAttachResult, SessionExitedEvent, SessionKind, SessionQueueEvent,
-    SessionReadResult, SessionState, SessionStateEvent, SessionTurnEvent, StateSource, TurnFile,
+    SessionReadResult, SessionState, SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -28,8 +28,11 @@ use crate::attach::Attachment;
 use crate::docs;
 use crate::emulator::Emulator;
 use crate::files::FileIndex;
+use crate::git::{GitBackend, GitCli};
 use crate::launch;
 use crate::session_log::SessionLog;
+use crate::snapshot::Snapshots;
+use crate::turns;
 use crate::watch::{self, Watch};
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
@@ -85,6 +88,9 @@ pub struct Hub {
     stopping: AtomicBool,
     /// Held by a flooding session task while it handles one output batch; see [`take_turn`].
     flood_turn: tokio::sync::Mutex<Pacer>,
+    pub git: Arc<dyn GitBackend>,
+    /// Turn snapshots (SPEC §20C.1), one at a time per project.
+    pub snapshots: Snapshots,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -218,9 +224,12 @@ pub enum Command {
     /// The send-writer task has queued a delivered text for the PTY.
     SendWritten,
     /// `hook.report` from inside the session (SPEC §6); `agent` is `report.agent` parsed.
+    /// `reply` is dropped once handled; for a hook that started a turn, after its start
+    /// snapshot (SPEC §20C.1).
     Hook {
         agent: HookAgent,
         report: HookReportParams,
+        reply: oneshot::Sender<()>,
     },
     /// A watcher batch attributed to this session (relative paths): goes to its open turn.
     TurnFiles(Vec<String>),
@@ -268,6 +277,8 @@ impl Hub {
             tasks: Mutex::default(),
             stopping: AtomicBool::new(false),
             flood_turn: tokio::sync::Mutex::default(),
+            git: Arc::new(GitCli),
+            snapshots: Snapshots::default(),
         }
     }
 
@@ -419,6 +430,15 @@ impl Hub {
         self.watch_project(session.project_id, &cwd, false);
         let (sends, sends_rx) = mpsc::unbounded_channel();
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
+        let (turn_jobs, jobs) = mpsc::unbounded_channel();
+        // In `tasks`, so shutdown waits for the end snapshot of turns cut off by the exit.
+        lock(&self.tasks).spawn(turns::record(
+            Arc::clone(self),
+            session.id,
+            session.project_id,
+            cwd,
+            jobs,
+        ));
         let mut queue = SendQueue::default();
         if let Some(text) = typed {
             queue.push(Ulid::new(), text);
@@ -438,6 +458,8 @@ impl Hub {
             log,
             attachments: Vec::new(),
             turns: TurnTracker::default(),
+            turn_jobs,
+            hook_reply: None,
         };
         lock(&self.tasks).spawn(actor.run(rx, commands));
         Ok(())
@@ -780,6 +802,10 @@ struct Actor {
     attachments: Vec<Arc<Attachment>>,
     /// Agent sessions only; each ended turn is broadcast as `session.turn` (SPEC §20A.3).
     turns: TurnTracker,
+    /// To the session's [`turns::record`] task.
+    turn_jobs: mpsc::UnboundedSender<turns::Job>,
+    /// The reply of the hook being handled; a turn it starts keeps it until the snapshot.
+    hook_reply: Option<oneshot::Sender<()>>,
 }
 
 impl Actor {
@@ -885,7 +911,11 @@ impl Actor {
                         let _ = reply.send(removed);
                     }
                     Some(Command::SendWritten) => self.send_writing = false,
-                    Some(Command::Hook { agent, report }) => self.on_hook(agent, report),
+                    Some(Command::Hook { agent, report, reply }) => {
+                        self.hook_reply = Some(reply);
+                        self.on_hook(agent, report);
+                        self.hook_reply = None;
+                    }
                     Some(Command::TurnFiles(paths)) => self.turns.add_files(paths),
                     None => commands_open = false,
                 },
@@ -1059,31 +1089,27 @@ impl Actor {
         self.track_turn(state);
     }
 
-    /// Feeds the turn tracker and broadcasts `session.turn` when a turn ends.
+    /// Feeds the turn tracker and hands starts and ends to the turn recorder, which snapshots,
+    /// persists and broadcasts `session.turn` when a turn ends.
     fn track_turn(&mut self, state: SessionState) {
         if self.session.kind != SessionKind::Agent {
             return;
         }
         let at = self.session.state_changed_at;
-        let Some(TurnEvent::Ended(turn)) = self.turns.on_state(state, at) else {
-            return;
+        let job = match self.turns.on_state(state, at) {
+            Some(TurnEvent::Started(n)) => turns::Job::Start {
+                n,
+                at,
+                reply: self.hook_reply.take(),
+            },
+            Some(TurnEvent::Ended(turn)) => turns::Job::End {
+                turn,
+                snapshot: state != SessionState::NeedsInput,
+            },
+            Some(TurnEvent::Resumed(_)) | None => return,
         };
-        let files = turn
-            .files
-            .into_iter()
-            .map(|path| TurnFile {
-                path,
-                added: None,
-                removed: None,
-            })
-            .collect();
-        let _ = self.hub.events.send(Event::SessionTurn(SessionTurnEvent {
-            session_id: self.session.id,
-            n: turn.n,
-            started_at: turn.started_at,
-            ended_at: at,
-            files,
-        }));
+        // The recorder lives until this sender is dropped.
+        let _ = self.turn_jobs.send(job);
     }
 
     fn save(&self) {

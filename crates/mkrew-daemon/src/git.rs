@@ -97,6 +97,9 @@ pub trait GitBackend: Send + Sync {
 
     /// Points `name` (a full ref outside `refs/heads`) at `object`, keeping it reachable.
     fn update_ref(&self, dir: &Path, name: &str, object: &str) -> io::Result<()>;
+
+    /// Deletes every ref under `prefix` (a full ref prefix ending in `/`).
+    fn delete_refs(&self, dir: &Path, prefix: &str) -> io::Result<()>;
 }
 
 /// A local branch: its full ref name (`refs/heads/…`) and where it pushes.
@@ -136,6 +139,8 @@ pub enum Side<'a> {
     Since(&'a str),
     /// What a commit introduced (first parent for merges).
     Commit(&'a str),
+    /// One tree (or commit) → another.
+    Between(&'a str, &'a str),
 }
 
 /// A tracked file that differs from a commit.
@@ -499,6 +504,18 @@ impl GitBackend for GitCli {
         command.args(["update-ref", name, object]);
         run(command).map(drop)
     }
+
+    fn delete_refs(&self, dir: &Path, prefix: &str) -> io::Result<()> {
+        let mut list = git(dir);
+        list.args(["for-each-ref", "--format=delete %(refname)", prefix]);
+        let deletes = run(list)?;
+        if deletes.is_empty() {
+            return Ok(());
+        }
+        let mut delete = git(dir);
+        delete.args(["update-ref", "--stdin"]);
+        run_with_input(delete, &deletes).map(drop)
+    }
 }
 
 /// A private copy of an index next to it, deleted on drop.
@@ -599,6 +616,9 @@ fn diff_command(dir: &Path, side: Side<'_>) -> Command {
         }
         Side::Since(commit) | Side::Commit(commit) => {
             command.arg(commit);
+        }
+        Side::Between(from, to) => {
+            command.args([from, to]);
         }
     }
     command

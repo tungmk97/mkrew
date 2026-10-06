@@ -1635,6 +1635,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   next to the real one (`index.mkrew-snapshot-<pid>-<n>`); a daemon killed mid-snapshot leaves it
   behind. A file locked by another process makes `add -A` fail and that turn has no snapshot
   (T11.3 logs and skips it rather than failing the turn).
+- (T11.3) **Turn recording:** the `hook.report` reply waits for the start snapshot of any
+  hook-started turn (not only `UserPromptSubmit`; a superset of §20C.1). A turn the screen
+  starts (e.g. the agent's start-up output) is snapshotted best effort and can include the first
+  edits. End snapshots are kept by `refs/mkrew/turns/<sid>/<n>-end` (deleted with the others
+  after 7 days). A turn ended at `needs_input` gets the next turn's start tree as its end tree,
+  or an end snapshot when the session closes. Line counts are kept only for files attributed to
+  the session (watcher/hooks), matched against `git diff --numstat` run in the session's cwd
+  (cwd-relative paths; equal to project-relative except in worktrees). Daemon shutdown waits
+  for exit-turn snapshots within the existing session budget (5 s grace + 2 s); past it they are
+  lost.
 
 ## Done
 

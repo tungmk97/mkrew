@@ -222,6 +222,9 @@ mod tests {
         fn update_ref(&self, _: &Path, _: &str, _: &str) -> io::Result<()> {
             unreachable!()
         }
+        fn delete_refs(&self, _: &Path, _: &str) -> io::Result<()> {
+            unreachable!()
+        }
     }
 
     #[test]

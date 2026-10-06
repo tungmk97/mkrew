@@ -22,7 +22,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use ulid::Ulid;
 
 use crate::attach::{self, Attachment};
-use crate::git::{GitBackend, GitCli};
+use crate::git::GitBackend;
 use crate::git_view::GitCache;
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
@@ -73,11 +73,12 @@ enum After {
 
 impl Daemon {
     pub fn new(store: Store, paths: Paths) -> Arc<Self> {
+        let hub = Arc::new(Hub::new(store));
         Arc::new(Self {
-            hub: Arc::new(Hub::new(store)),
+            git: Arc::clone(&hub.git),
+            hub,
             settings: Arc::new(SettingsHolder::load(paths.settings_file())),
             paths,
-            git: Arc::new(GitCli),
             git_cache: Arc::default(),
             started_at: now_ms(),
             shutdown: watch::channel(false).0,
@@ -85,7 +86,8 @@ impl Daemon {
         })
     }
 
-    /// Watches `settings.toml`, starts keep awake and daily DB backups, resumes interrupted
+    /// Watches `settings.toml`, starts keep awake and daily DB backups, deletes expired turn
+    /// refs (in the background), resumes interrupted
     /// tasks, auto-starts dev servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
     /// OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
@@ -104,6 +106,8 @@ impl Daemon {
             self.paths.backups_dir(),
             self.paths.attachments_dir(),
         );
+        let hub = Arc::clone(&self.hub);
+        tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
         self.resume_tasks();
         self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
@@ -972,8 +976,21 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         };
         let session_id = report.mkrew_session_id;
-        self.session_command(session_id, Command::Hook { agent, report })
-            .await
+        let (reply, handled) = oneshot::channel();
+        let outcome = self
+            .session_command(
+                session_id,
+                Command::Hook {
+                    agent,
+                    report,
+                    reply,
+                },
+            )
+            .await;
+        // Dropped (never sent) once handled: after the start snapshot of a turn the hook
+        // started, so the agent has not edited yet (SPEC §20C.1).
+        let _ = handled.await;
+        outcome
     }
 
     /// Queues `data` for the session's PTY writer thread. A child that does not read its
