@@ -446,8 +446,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
 | `fs.read` | `project_id`, `path` | content (≤ 2 MB), binary flag, language |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
-| `git.status` | `project_id`, `mode` (`working`/`base`) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
-| `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?` | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
+| `git.status` | `project_id`, `mode` (`working`/`base`), `since?` (base mode: compare from this commit instead of the merge-base, e.g. `task.checkpoint`; `merge_base` = it) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
+| `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
 | `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
 | `git.discard` | `paths[]`, `confirm: true` | ok (destructive; UI always confirms first) |
 | `git.commit` | `message` | new commit hash |

@@ -425,6 +425,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   across commits; hover a commit → full message + author; commit in a terminal → it appears
   on top while the selection stays; `b` / `h` go back. Check the 3 header segments fit
   without cutting (Windows font), row heights stay uniform, dark + light.
+- [ ] (T7.10c) **Task "View changes"** (model covered by `git_view.rs` unit tests, daemon
+  `since` by `git_view`/`daemon.rs` tests; the UI was never seen). Restart the daemon first
+  (protocol v13). Run a task in a git workspace, let the agent edit + commit something, card in
+  Review → hover → "Changes" → the Git view lists everything since the checkpoint (committed,
+  uncommitted, untracked) with "Since abc1234 · task: …" and "Close"; no segment is active
+  then — check that reads clearly; `h` and back returns to the task's list; `b` / Close → Working.
+  Check the card footer (Changes / Undo / Approve) at the narrowest column width, dark + light.
 - [ ] (T6.11) **M6 wrap-up — the unticked M6 criteria.** The fake-agent E2E criterion is ticked
   (automated: `fake_agent_addresses_sent_comments_and_replies_to_each`). The backend of every
   other criterion is covered by daemon/CLI e2e (`docs_are_listed_read_and_external_edits_reanchor_comments`,
@@ -1227,6 +1234,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   or moved); ↑ from a commit's first file lands on the previous commit's first file (not its
   last); the segment says "Working" while SPEC §12B/§13 say "Working changes" (tooltip has
   the full name) — check in the §14 design pass.
+- (T7.10c) **Task changes choices:** `git.status`/`git.diff` gained `since?` (base mode only,
+  replaces the merge-base; SPEC §7 rows updated, protocol v13) rather than a third `GitMode`.
+  The card action "Changes" is a hover-shown quiet button on **Review** cards only (SPEC §12B
+  says Review column; Done cards still have Undo), left of Undo. In the Git view it is a fourth
+  section with no header segment; the base line is replaced by "Since <short hash> · task:
+  <title>" + "Close" (→ Working, like `b`); no stage/discard on its files; a failed status
+  (e.g. checkpoint gc'd) offers "Working changes" instead of Retry. Open review items: like
+  Undo, "Changes" has no keyboard / palette path (§14 "keyboard = mouse") — add a "View task
+  changes" command for the selected card later; `Target.commit` carries both a History commit
+  and the task checkpoint (told apart by `group`).
 
 ## Done
 

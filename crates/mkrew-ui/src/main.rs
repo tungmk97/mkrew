@@ -39,7 +39,7 @@ use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
 use mkrew_ui::git_history::{self, Commits};
-use mkrew_ui::git_view::{self, GitView};
+use mkrew_ui::git_view::{self, GitView, TaskChanges};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
@@ -3057,6 +3057,38 @@ impl Shell {
         self.move_cards(task_id, moves, "Cannot approve the task", window, cx);
     }
 
+    /// "Changes" on a Review card: the Git view with the task's changes since its checkpoint.
+    fn view_task_changes(
+        &mut self,
+        task_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(task) = self.board.task(task_id) else {
+            return;
+        };
+        let Some(checkpoint) = task.checkpoint.clone() else {
+            return;
+        };
+        let project_id = task.project_id;
+        // The board only shows the active workspace's cards.
+        if self.workspace != Some(project_id) {
+            return;
+        }
+        let changes = TaskChanges {
+            task_id,
+            title: task.title.clone(),
+            checkpoint,
+        };
+        let requests = self.git_view(project_id).show_task(changes);
+        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        // Showing the Git view refreshes it (the same requests) unless it is shown already.
+        if self.view() == View::Git {
+            self.git_requests(project_id, requests, window, cx);
+        }
+        self.show_view(View::Git, window, cx);
+    }
+
     /// Sends the `task.move`s of one action on `task_id`'s card; a failure shows `what` and
     /// the error on its board.
     fn move_cards(
@@ -5009,6 +5041,22 @@ impl Shell {
             (None, git_view::Status::Loading) => {
                 empty("Loading changes…".into(), None).into_any_element()
             }
+            (None, git_view::Status::Failed(error)) if view.task.is_some() => {
+                // Most likely the checkpoint is gone (gc, rewritten history): Retry won't help.
+                empty(
+                    "Cannot read the task's changes.".into(),
+                    Some(error.clone()),
+                )
+                .child(
+                    button("git-task-back", "Working changes", theme, true).on_click(cx.listener(
+                        move |shell, _, window, cx| {
+                            let working = git_view::Section::Working;
+                            shell.show_git_section(project_id, working, window, cx);
+                        },
+                    )),
+                )
+                .into_any_element()
+            }
             (None, git_view::Status::Failed(error)) => {
                 empty("Cannot read the git status.".into(), Some(error.clone()))
                     .child(
@@ -5021,8 +5069,14 @@ impl Shell {
             (None, git_view::Status::Loaded(status)) if !any_files => {
                 // No merge-base with a commit checked out: the base names nothing usable.
                 let unusable = status.head.is_some() && status.merge_base.is_none();
-                let no_base = view.mode == GitMode::Base && (status.base_ref.is_none() || unusable);
+                let no_base = view.task.is_none()
+                    && view.mode == GitMode::Base
+                    && (status.base_ref.is_none() || unusable);
                 let (sentence, detail) = match (view.mode, &status.base_ref) {
+                    _ if view.task.is_some() => (
+                        "No changes since the task's run started.".to_owned(),
+                        Some("Its changes may have been undone or committed elsewhere.".to_owned()),
+                    ),
                     (GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
                     (GitMode::Base, None) => (
                         "No base branch found.".to_owned(),
@@ -5168,6 +5222,21 @@ impl Shell {
             (Some(base), false) => format!("Base: {base}"),
             (None, _) => "No base branch".to_owned(),
         });
+        // A task's changes: what is compared replaces the base line.
+        let task = view
+            .task
+            .as_ref()
+            .filter(|_| view.section() == git_view::Section::Task);
+        let base = match task {
+            // The hash first: a long title is cut, never what is compared.
+            Some(task) => Some(format!(
+                "Since {} · task: {}",
+                git_history::short_hash(&task.checkpoint),
+                task.title
+            )),
+            None => base,
+        };
+        let shows_task = task.is_some();
         // The upstream line ends with Fetch and Push.
         let tracking = tracking.map(|tracking| {
             div()
@@ -5291,23 +5360,43 @@ impl Shell {
                             .text_ellipsis()
                             .whitespace_nowrap(),
                     )
-                    .child(
-                        row_action(
-                            "git-base-change".into(),
-                            if status.is_some_and(|status| status.base_ref.is_some()) {
-                                "Change…"
-                            } else {
-                                "Set base…"
-                            },
-                            theme,
+                    .when(shows_task, |el| {
+                        el.child(
+                            row_action("git-task-close".into(), "Close", theme)
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Back to the working changes",
+                                    toggle_keys.clone(),
+                                ))
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.show_git_section(
+                                        project_id,
+                                        git_view::Section::Working,
+                                        window,
+                                        cx,
+                                    );
+                                })),
                         )
-                        .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
-                        .on_click(cx.listener(
-                            move |shell, _, window, cx| {
-                                shell.open_git_base(project_id, window, cx);
-                            },
-                        )),
-                    )
+                    })
+                    .when(!shows_task, |el| {
+                        el.child(
+                            row_action(
+                                "git-base-change".into(),
+                                if status.is_some_and(|status| status.base_ref.is_some()) {
+                                    "Change…"
+                                } else {
+                                    "Set base…"
+                                },
+                                theme,
+                            )
+                            .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
+                            .on_click(cx.listener(
+                                move |shell, _, window, cx| {
+                                    shell.open_git_base(project_id, window, cx);
+                                },
+                            )),
+                        )
+                    })
             }))
             .children(
                 view.refresh_error
@@ -9153,6 +9242,7 @@ fn task_card(
     let shows_error_row = card.shows_error_row();
     let action = card.action();
     let can_undo = card.can_undo();
+    let can_view_changes = card.can_view_changes();
     let opens = card.opens_session();
     let follow_up_session = card.follow_up_session();
     let task_id = card.task_id;
@@ -9317,7 +9407,7 @@ fn task_card(
             let undo = can_undo.then(|| {
                 quiet_button("card-undo", "Undo", theme, edit_hover)
                     .opacity(opacity::HIDDEN)
-                    .group_hover(group, |style| style.opacity(opacity::FULL))
+                    .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
                     .tooltip(tooltip(
                         theme,
                         "Undo task: review and discard its changes",
@@ -9329,11 +9419,27 @@ fn task_card(
                         shell.open_undo_dialog(task_id, window, cx);
                     }))
             });
+            let changes = can_view_changes.then(|| {
+                quiet_button("card-changes", "Changes", theme, edit_hover)
+                    .opacity(opacity::HIDDEN)
+                    .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                    .tooltip(tooltip(
+                        theme,
+                        "View changes: the task's diff since its run started",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.selected_card = Some(task_id);
+                        shell.view_task_changes(task_id, window, cx);
+                    }))
+            });
             el.child(
                 div()
                     .flex()
                     .justify_end()
                     .gap(px(space::S))
+                    .children(changes)
                     .children(undo)
                     .children(
                         action

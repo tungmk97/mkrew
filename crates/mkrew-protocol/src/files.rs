@@ -30,6 +30,10 @@ pub struct GitStatusParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub mode: GitMode,
+    /// [`GitMode::Base`] only: compare from this commit instead of the merge-base (a task's
+    /// "View changes" from `task.checkpoint`); `merge_base` is then this commit.
+    #[serde(default)]
+    pub since: Option<String>,
 }
 
 /// `git.status` result: the Git view header plus the changed files of the requested mode.
@@ -104,6 +108,10 @@ pub struct GitDiffParams {
     /// The diff this commit introduced (history); `mode`/`staged` are then ignored.
     #[serde(default)]
     pub commit: Option<String>,
+    /// [`GitMode::Base`] only: the diff from this commit to the working tree instead of from
+    /// the merge-base (a task's "View changes").
+    #[serde(default)]
+    pub since: Option<String>,
 }
 
 /// `git.diff` result.
@@ -405,6 +413,7 @@ mod tests {
             Request::GitStatus(GitStatusParams {
                 project_id,
                 mode: GitMode::Base,
+                since: Some("abc".into()),
             }),
             Request::GitDiff(GitDiffParams {
                 project_id,
@@ -412,6 +421,7 @@ mod tests {
                 mode: GitMode::Working,
                 staged: true,
                 commit: Some("abc".into()),
+                since: None,
             }),
             Request::GitStage(GitStageParams {
                 project_id,

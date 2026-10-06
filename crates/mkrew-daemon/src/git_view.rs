@@ -135,13 +135,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// `git.status` of the folder `dir` (paths relative to it). `configured` = `project.base_ref`.
 /// The status, the base lookup and (working mode) the staged/unstaged line counts run in
 /// parallel; base mode then adds the cached merge-base and the diff since it. Untracked files
-/// are part of the working tree, so base mode lists them too.
+/// are part of the working tree, so base mode lists them too. `since` (base mode) replaces the
+/// merge-base with that commit.
 pub fn status(
     git: &dyn GitBackend,
     cache: &GitCache,
     dir: &Path,
     configured: Option<&str>,
     mode: GitMode,
+    since: Option<&str>,
 ) -> Result<GitStatus, ViewError> {
     let repo = cache.repo(git, dir)?;
     let (status, base, counts) = thread::scope(|s| {
@@ -175,7 +177,9 @@ pub fn status(
         add_counts(&mut status.unstaged, &unstaged?);
     }
     if mode == GitMode::Base {
-        if let (Some(head), Some((_, base))) = (&status.head, &base) {
+        if let Some(since) = since {
+            status.merge_base = Some(commit_id(git, dir, since)?);
+        } else if let (Some(head), Some((_, base))) = (&status.head, &base) {
             status.merge_base = cache.merge_base(git, dir, head, base)?;
         }
         if let Some(merge_base) = &status.merge_base {
@@ -204,18 +208,14 @@ pub fn diff(
     let (target, stamp) = match &params.commit {
         // Resolved first: a moving name (`HEAD~1`) must not hit a stale entry, and ranges or
         // trees are refused.
-        Some(commit) => {
-            let id = git
-                .commit_of(dir, commit)?
-                .ok_or_else(|| ViewError::UnknownCommit(commit.clone()))?;
-            (Target::Commit(id), None)
-        }
+        Some(commit) => (Target::Commit(commit_id(git, dir, commit)?), None),
         None => {
             let head = git.head(dir)?;
-            let target = match (params.mode, params.staged) {
-                (GitMode::Working, false) => Target::Unstaged,
-                (GitMode::Working, true) => Target::Staged,
-                (GitMode::Base, _) => {
+            let target = match (params.mode, params.staged, &params.since) {
+                (GitMode::Working, false, _) => Target::Unstaged,
+                (GitMode::Working, true, _) => Target::Staged,
+                (GitMode::Base, _, Some(since)) => Target::Since(commit_id(git, dir, since)?),
+                (GitMode::Base, _, None) => {
                     let head = head.as_deref().ok_or(ViewError::NoMergeBase)?;
                     let (_, base) =
                         resolve_base(git, dir, configured)?.ok_or(ViewError::NoMergeBase)?;
@@ -286,9 +286,7 @@ pub fn show(
     commit: &str,
 ) -> Result<CommitDetail, ViewError> {
     cache.repo(git, dir)?;
-    let id = git
-        .commit_of(dir, commit)?
-        .ok_or_else(|| ViewError::UnknownCommit(commit.to_owned()))?;
+    let id = commit_id(git, dir, commit)?;
     let (info, files) = thread::scope(|s| {
         let files = s.spawn(|| git.changes(dir, Side::Commit(&id)));
         (git.commit_info(dir, &id), joined(files))
@@ -340,6 +338,12 @@ fn file_diff(text: &str, path: &str) -> FileDiff {
             path: path.to_owned(),
             ..FileDiff::default()
         })
+}
+
+/// The full id of the commit `name` names.
+fn commit_id(git: &dyn GitBackend, dir: &Path, name: &str) -> Result<String, ViewError> {
+    git.commit_of(dir, name)?
+        .ok_or_else(|| ViewError::UnknownCommit(name.to_owned()))
 }
 
 /// The configured base (if it names a commit) or the auto-detected one: name and commit.
@@ -422,11 +426,11 @@ mod tests {
     }
 
     fn working(cache: &GitCache, dir: &Path) -> GitStatus {
-        status(&GitCli, cache, dir, None, GitMode::Working).unwrap()
+        status(&GitCli, cache, dir, None, GitMode::Working, None).unwrap()
     }
 
     fn base(cache: &GitCache, dir: &Path, configured: Option<&str>) -> GitStatus {
-        status(&GitCli, cache, dir, configured, GitMode::Base).unwrap()
+        status(&GitCli, cache, dir, configured, GitMode::Base, None).unwrap()
     }
 
     fn summary(files: &[ChangedFile]) -> Vec<String> {
@@ -473,7 +477,7 @@ mod tests {
 
         // Not a repo; a folder that becomes one is found on the next call.
         let plain = tempfile::tempdir().unwrap();
-        let error = super::status(&GitCli, &cache, plain.path(), None, GitMode::Working);
+        let error = super::status(&GitCli, &cache, plain.path(), None, GitMode::Working, None);
         assert!(matches!(error, Err(ViewError::NotARepo)), "{error:?}");
         git(plain.path(), &["init", "-q", "-b", "main"]);
         let fresh = working(&cache, plain.path());
@@ -545,6 +549,7 @@ mod tests {
             mode,
             staged,
             commit: commit.map(str::to_owned),
+            since: None,
         }
     }
 
@@ -634,6 +639,65 @@ mod tests {
                 "{error:?}"
             );
         }
+    }
+
+    #[test]
+    fn since_a_commit_lists_and_diffs_everything_up_to_the_working_tree() {
+        let (repo, dir) = repo();
+        let root = repo.path();
+        let checkpoint = git(root, &["rev-parse", "HEAD"]);
+        // A task's run: one commit, then uncommitted and untracked changes.
+        std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+        git(root, &["commit", "-q", "-am", "task"]);
+        std::fs::write(dir.join("b.txt"), "b\nmore\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "n\n").unwrap();
+
+        let cache = GitCache::default();
+        let since = |name: &str| status(&GitCli, &cache, &dir, None, GitMode::Base, Some(name));
+        let status = since(&checkpoint).unwrap();
+        assert_eq!(status.merge_base.as_deref(), Some(checkpoint.as_str()));
+        assert_eq!(
+            summary(&status.against_base),
+            [
+                "Modified a.txt +1 -1",
+                "Modified b.txt +1 -0",
+                "Untracked new.txt"
+            ]
+        );
+        // Names resolve to their commit; unknown ones are refused.
+        assert_eq!(
+            since("HEAD~1").unwrap().merge_base,
+            Some(checkpoint.clone())
+        );
+        let error = since("nope");
+        assert!(
+            matches!(error, Err(ViewError::UnknownCommit(_))),
+            "{error:?}"
+        );
+        // Working mode ignores it.
+        let working = super::status(&GitCli, &cache, &dir, None, GitMode::Working, Some("nope"));
+        assert_eq!(working.unwrap().merge_base, None);
+
+        let diff = |path: &str, since: &str| {
+            let params = GitDiffParams {
+                since: Some(since.to_owned()),
+                ..params(GitMode::Base, false, None)
+            };
+            super::diff(&GitCli, &cache, &dir, None, &params, path)
+        };
+        assert_eq!(
+            lines(&diff("a.txt", &checkpoint).unwrap()),
+            [" one", "-two", "+TWO"]
+        );
+        assert_eq!(lines(&diff("b.txt", &checkpoint).unwrap()), [" b", "+more"]);
+        assert_eq!(lines(&diff("new.txt", &checkpoint).unwrap()), ["+n"]);
+        // Since HEAD: only the uncommitted part.
+        assert_eq!(diff("a.txt", "HEAD").unwrap().hunks, []);
+        let error = diff("a.txt", "nope");
+        assert!(
+            matches!(error, Err(ViewError::UnknownCommit(_))),
+            "{error:?}"
+        );
     }
 
     #[test]

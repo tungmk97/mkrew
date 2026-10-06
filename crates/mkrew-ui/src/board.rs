@@ -116,6 +116,12 @@ impl Card {
         self.checkpoint && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
     }
 
+    /// Whether the card offers "View changes" (since the checkpoint, in the Git view): a
+    /// Review card with a checkpoint (SPEC §12B).
+    pub fn can_view_changes(&self) -> bool {
+        self.checkpoint && self.status == TaskStatus::Review
+    }
+
     /// The session a click on the card shows: its newest one, except on a Todo card (a card
     /// dragged back to Todo is about to run again; clicking it only selects it).
     pub fn opens_session(&self) -> Option<Ulid> {
@@ -755,33 +761,45 @@ mod tests {
     }
 
     #[test]
-    fn finished_cards_with_a_checkpoint_offer_undo() {
+    fn finished_cards_with_a_checkpoint_offer_undo_and_review_ones_their_changes() {
         let api = Ulid::new();
         let mut tasks: Vec<Task> = COLUMNS
             .iter()
             .map(|&status| task(api, "t", status, 1.0))
             .collect();
-        let mut without = task(api, "no checkpoint", TaskStatus::Done, 2.0);
         for task in &mut tasks {
             task.checkpoint = Some("abc".to_owned());
         }
-        without.checkpoint = None;
-        tasks.push(without);
+        for status in [TaskStatus::Review, TaskStatus::Done] {
+            tasks.push(task(api, "no checkpoint", status, 2.0));
+        }
         let mut board = Board::default();
         board.load(tasks);
-        let undoable: Vec<Vec<bool>> = board
-            .columns(api, None, &[])
-            .iter()
-            .map(|column| column.cards.iter().map(Card::can_undo).collect())
-            .collect();
+        let offered = |offers: fn(&Card) -> bool| -> Vec<Vec<bool>> {
+            board
+                .columns(api, None, &[])
+                .iter()
+                .map(|column| column.cards.iter().map(offers).collect())
+                .collect()
+        };
         assert_eq!(
-            undoable,
+            offered(Card::can_undo),
             [
                 vec![false],
                 vec![false],
                 vec![false],
-                vec![true],
+                vec![true, false],
                 vec![true, false]
+            ]
+        );
+        assert_eq!(
+            offered(Card::can_view_changes),
+            [
+                vec![false],
+                vec![false],
+                vec![false],
+                vec![true, false],
+                vec![false, false]
             ]
         );
     }

@@ -18,6 +18,11 @@ use crate::git_view::{self, ViewError};
 
 impl Daemon {
     pub(super) async fn git_status(&self, params: GitStatusParams) -> Outcome {
+        if let Some(since) = &params.since
+            && let Err(reason) = check_ref(since)
+        {
+            return Outcome::error(ErrorCode::InvalidRequest, reason);
+        }
         let project = match self.store().get_project(params.project_id) {
             Ok(project) => project,
             Err(e) => return store_outcome::<()>(Err(e)),
@@ -34,6 +39,7 @@ impl Daemon {
                 &PathBuf::from(path),
                 base_ref.as_deref(),
                 params.mode,
+                params.since.as_deref(),
             )
         })
         .await;
@@ -48,7 +54,7 @@ impl Daemon {
             );
             return Outcome::error(ErrorCode::InvalidRequest, message);
         };
-        if let Some(commit) = &params.commit
+        if let Some(commit) = params.commit.as_ref().or(params.since.as_ref())
             && let Err(reason) = check_ref(commit)
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);

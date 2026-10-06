@@ -2206,6 +2206,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         Request::GitStatus(GitStatusParams {
             project_id: project.id,
             mode,
+            since: None,
         })
     };
     let diff = |path: &str, mode, commit: Option<&str>| {
@@ -2215,6 +2216,24 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
             mode,
             staged: false,
             commit: commit.map(str::to_owned),
+            since: None,
+        })
+    };
+    let since_status = |since: &str| {
+        Request::GitStatus(GitStatusParams {
+            project_id: project.id,
+            mode: GitMode::Base,
+            since: Some(since.into()),
+        })
+    };
+    let since_diff = |since: &str| {
+        Request::GitDiff(GitDiffParams {
+            project_id: project.id,
+            path: "a.txt".into(),
+            mode: GitMode::Base,
+            staged: false,
+            commit: None,
+            since: Some(since.into()),
         })
     };
 
@@ -2234,7 +2253,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         .call(status(&project, GitMode::Base))
         .into_result()
         .unwrap();
-    assert_eq!(against.merge_base, Some(fork));
+    assert_eq!(against.merge_base, Some(fork.clone()));
     assert_eq!(against.against_base.len(), 1);
     let shown: FileDiff = client
         .call(diff("a.txt", GitMode::Base, None))
@@ -2267,6 +2286,16 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         error_code(client.call(diff("a.txt", GitMode::Base, None))),
         ErrorCode::InvalidState
     );
+    // A task's checkpoint needs no base: changes since it to the working tree.
+    let since: GitStatus = client.call(since_status(&fork)).into_result().unwrap();
+    assert_eq!(since.merge_base.as_deref(), Some(fork.as_str()));
+    assert_eq!(since.against_base.len(), 1);
+    let shown: FileDiff = client.call(since_diff(&fork)).into_result().unwrap();
+    assert_eq!((shown.added, shown.hunks.len()), (1, 1));
+    assert_eq!(
+        error_code(client.call(since_status("nope"))),
+        ErrorCode::NotFound
+    );
     assert_eq!(
         error_code(client.call(status(&outside, GitMode::Working))),
         ErrorCode::InvalidState
@@ -2274,12 +2303,15 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     for bad in [
         diff("../a.txt", GitMode::Working, None),
         diff("a.txt", GitMode::Working, Some("--output=x")),
+        since_status("--output=x"),
+        since_diff("--output=x"),
     ] {
         assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
     }
     let missing = Request::GitStatus(GitStatusParams {
         project_id: Ulid::new(),
         mode: GitMode::Working,
+        since: None,
     });
     assert_eq!(error_code(client.call(missing)), ErrorCode::NotFound);
     client.stop();
@@ -2314,6 +2346,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         let request = Request::GitStatus(GitStatusParams {
             project_id: id,
             mode: GitMode::Working,
+            since: None,
         });
         client.call(request).into_result().unwrap()
     };
@@ -2340,6 +2373,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
             mode: GitMode::Working,
             staged,
             commit: None,
+            since: None,
         });
         client.call(request).into_result().unwrap()
     };
@@ -2527,6 +2561,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
         .call(Request::GitStatus(GitStatusParams {
             project_id: id,
             mode: GitMode::Working,
+            since: None,
         }))
         .into_result()
         .unwrap();

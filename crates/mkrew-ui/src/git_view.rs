@@ -31,6 +31,8 @@ pub enum Group {
     Base,
     /// The files of the History section's selected commit.
     Commit,
+    /// A task's changes since its checkpoint.
+    Task,
 }
 
 impl Group {
@@ -39,7 +41,7 @@ impl Group {
             Group::Staged => "Staged",
             Group::Unstaged => "Unstaged",
             Group::Untracked => "Untracked",
-            Group::Base => "Changed files",
+            Group::Base | Group::Task => "Changed files",
             Group::Commit => "Files",
         }
     }
@@ -50,33 +52,48 @@ impl Group {
 pub struct Target {
     pub group: Group,
     pub path: String,
-    /// The commit whose change it is ([`Group::Commit`] only).
+    /// The commit whose change it is ([`Group::Commit`]), or the task checkpoint it is
+    /// compared from ([`Group::Task`]).
     pub commit: Option<String>,
 }
 
 impl Target {
     /// The `git.diff` showing this file.
     pub fn params(&self, project_id: Ulid) -> GitDiffParams {
+        let commit = |group| self.commit.clone().filter(|_| self.group == group);
         GitDiffParams {
             project_id,
             path: self.path.clone(),
-            mode: if self.group == Group::Base {
+            mode: if matches!(self.group, Group::Base | Group::Task) {
                 GitMode::Base
             } else {
                 GitMode::Working
             },
             staged: self.group == Group::Staged,
-            commit: self.commit.clone(),
+            commit: commit(Group::Commit),
+            since: commit(Group::Task),
         }
     }
 }
 
-/// What the Git view lists: one of the two `git.status` modes, or the History.
+/// What the Git view lists: one of the two `git.status` modes, the History, or a task's
+/// changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Working,
     Base,
     History,
+    /// A task's "View changes" ([`GitView::task`]): from its checkpoint to the working tree.
+    Task,
+}
+
+/// The task whose changes the Git view shows (SPEC §12B "Task changes").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskChanges {
+    pub task_id: Ulid,
+    pub title: String,
+    /// `task.checkpoint`: the HEAD before the task's run.
+    pub checkpoint: String,
 }
 
 impl Section {
@@ -211,12 +228,12 @@ pub enum Stage {
 }
 
 impl Stage {
-    /// What a file of `group` can do; Against-base and commit files can do neither.
+    /// What a file of `group` can do; Against-base, commit and task files can do neither.
     pub fn of(group: Group) -> Option<Stage> {
         match group {
             Group::Unstaged | Group::Untracked => Some(Stage::Stage),
             Group::Staged => Some(Stage::Unstage),
-            Group::Base | Group::Commit => None,
+            Group::Base | Group::Commit | Group::Task => None,
         }
     }
 
@@ -320,12 +337,16 @@ pub struct GitView {
     pub remotes: Remotes,
     /// The History section, while shown (`mode` is the changes it goes back to).
     pub history: Option<History>,
+    /// The task whose changes are listed (`mode` is then [`GitMode::Base`]); kept while the
+    /// History is shown, so leaving it goes back to them.
+    pub task: Option<TaskChanges>,
     /// A stage / unstage is in flight (another is not sent meanwhile).
     staging: bool,
     /// A status was ever asked for (the view loads when first shown).
     started: bool,
-    /// The mode of the `git.status` in flight, and whether another was asked for meanwhile.
-    loading: Option<GitMode>,
+    /// The mode (and task checkpoint) of the `git.status` in flight, and whether another was
+    /// asked for meanwhile.
+    loading: Option<(GitMode, Option<String>)>,
     load_again: bool,
     /// A `git.diff` is in flight, and another was asked for meanwhile.
     reading: bool,
@@ -351,6 +372,7 @@ impl GitView {
             commit: CommitBox::default(),
             remotes: Remotes::default(),
             history: None,
+            task: None,
             staging: false,
             started: false,
             loading: None,
@@ -370,22 +392,30 @@ impl GitView {
             self.load_again = true;
             return None;
         }
-        self.loading = Some(self.mode);
+        let listed = self.listed();
+        self.loading = Some(listed.clone());
         Some(GitStatusParams {
             project_id: self.project_id,
-            mode: self.mode,
+            mode: listed.0,
+            since: listed.1,
         })
     }
 
-    /// The `git.status` answer. An answer for another mode than the shown one is dropped (and
-    /// the status asked again). The selection stays on the same file if it is still listed
-    /// (in its group, else in another), else moves to the first file; a moved selection asks
-    /// for its diff. A failed refresh of a loaded status keeps it (e.g. git's index lock while
+    /// The `git.status` the shown changes come from: the mode and the task checkpoint.
+    fn listed(&self) -> (GitMode, Option<String>) {
+        let since = self.task.as_ref().map(|task| task.checkpoint.clone());
+        (self.mode, since)
+    }
+
+    /// The `git.status` answer. An answer for other changes than the shown ones (another mode
+    /// or task) is dropped (and the status asked again). The selection stays on the same file
+    /// if it is still listed (in its group, else in another), else moves to the first file; a
+    /// moved selection asks for its diff. A failed refresh of a loaded status keeps it (e.g. git's index lock while
     /// an agent commits) and only notes the error in [`Self::refresh_error`].
     pub fn status_loaded(&mut self, loaded: Result<GitStatus, String>) -> Requests {
-        let mode = self.loading.take();
+        let listed = self.loading.take();
         let again = std::mem::take(&mut self.load_again);
-        if mode != Some(self.mode) {
+        if listed != Some(self.listed()) {
             return Requests {
                 status: true,
                 ..Requests::default()
@@ -460,12 +490,22 @@ impl GitView {
         if self.history.is_some() {
             Section::History
         } else {
+            self.changes()
+        }
+    }
+
+    /// The changes section the History goes back to.
+    fn changes(&self) -> Section {
+        if self.task.is_some() {
+            Section::Task
+        } else {
             Section::of(self.mode)
         }
     }
 
     /// Lists `section` (nothing if it is listed already): the status of a changes mode, or
-    /// the History's log.
+    /// the History's log. [`Section::Task`] goes back to the kept task (else Against base);
+    /// [`Self::show_task`] picks one.
     pub fn show(&mut self, section: Section) -> Requests {
         if section == self.section() {
             return Requests::default();
@@ -478,14 +518,31 @@ impl GitView {
                 ..Requests::default()
             };
         }
-        self.history = None;
-        let mode = match section {
-            Section::Base => GitMode::Base,
-            Section::Working | Section::History => GitMode::Working,
+        let (mode, task) = match section {
+            Section::Working | Section::History => (GitMode::Working, None),
+            Section::Base => (GitMode::Base, None),
+            Section::Task => (GitMode::Base, self.task.clone()),
         };
-        // Back to the same mode: the kept status lists at once; its refresh selects a file.
-        if mode != self.mode {
-            self.mode = mode;
+        self.list(mode, task)
+    }
+
+    /// Lists `task`'s changes since its checkpoint (a Review card's "View changes").
+    pub fn show_task(&mut self, task: TaskChanges) -> Requests {
+        if self.section() == Section::Task && self.task.as_ref() == Some(&task) {
+            return Requests::default();
+        }
+        self.select_none();
+        self.list(GitMode::Base, Some(task))
+    }
+
+    /// Lists the changes of `mode` (and `task`, base mode only) instead of the History.
+    fn list(&mut self, mode: GitMode, task: Option<TaskChanges>) -> Requests {
+        let listed = self.listed();
+        self.history = None;
+        self.mode = mode;
+        self.task = task;
+        // Back to the same changes: the kept status lists at once; its refresh selects a file.
+        if listed != self.listed() {
             self.status = Status::Loading;
         }
         self.refresh_error = None;
@@ -515,27 +572,29 @@ impl GitView {
         let Status::Loaded(status) = &self.status else {
             return vec![];
         };
+        let checkpoint = self.task.as_ref().map(|task| task.checkpoint.clone());
         let group = |group: Group, files: &[ChangedFile]| {
             files
                 .iter()
-                .map(move |file| {
+                .map(|file| {
                     let target = Target {
                         group,
                         path: file.path.clone(),
-                        commit: None,
+                        commit: checkpoint.clone().filter(|_| group == Group::Task),
                     };
                     (target, file.clone())
                 })
                 .collect::<Vec<_>>()
         };
-        match self.mode {
-            GitMode::Working => [
+        match (self.mode, &self.task) {
+            (GitMode::Working, _) => [
                 group(Group::Staged, &status.staged),
                 group(Group::Unstaged, &status.unstaged),
                 group(Group::Untracked, &status.untracked),
             ]
             .concat(),
-            GitMode::Base => group(Group::Base, &status.against_base),
+            (GitMode::Base, None) => group(Group::Base, &status.against_base),
+            (GitMode::Base, Some(_)) => group(Group::Task, &status.against_base),
         }
     }
 
@@ -723,21 +782,21 @@ impl GitView {
         if again { self.selected.clone() } else { None }
     }
 
-    /// Switches Working changes ↔ Against base (from the History: back to the changes it
-    /// left): the list and diff load again.
+    /// Switches Working changes ↔ Against base (from a task's changes: Working; from the
+    /// History: back to the changes it left): the list and diff load again.
     pub fn toggle_mode(&mut self) -> Requests {
         self.show(match self.section() {
             Section::Working => Section::Base,
-            Section::Base => Section::Working,
-            Section::History => Section::of(self.mode),
+            Section::Base | Section::Task => Section::Working,
+            Section::History => self.changes(),
         })
     }
 
     /// Switches to the History, or back to the changes it left.
     pub fn toggle_history(&mut self) -> Requests {
         self.show(match self.section() {
-            Section::History => Section::of(self.mode),
-            Section::Working | Section::Base => Section::History,
+            Section::History => self.changes(),
+            Section::Working | Section::Base | Section::Task => Section::History,
         })
     }
 
@@ -1135,6 +1194,7 @@ mod tests {
         assert_eq!(staged.mode, GitMode::Working);
         assert!(!target(Group::Untracked, "a").params(project).staged);
         assert_eq!(target(Group::Base, "a").params(project).mode, GitMode::Base);
+        assert_eq!(target(Group::Base, "a").params(project).since, None);
     }
 
     #[test]
@@ -1231,6 +1291,94 @@ mod tests {
                 file("x.rs", ChangeKind::Added)
             )]
         );
+    }
+
+    fn task_changes(checkpoint: &str) -> TaskChanges {
+        TaskChanges {
+            task_id: Ulid::new(),
+            title: "Fix login".into(),
+            checkpoint: checkpoint.into(),
+        }
+    }
+
+    fn since(files: &[&str]) -> GitStatus {
+        GitStatus {
+            merge_base: Some("abc".into()),
+            against_base: files
+                .iter()
+                .map(|path| file(path, ChangeKind::Modified))
+                .collect(),
+            ..GitStatus::default()
+        }
+    }
+
+    #[test]
+    fn a_tasks_changes_list_and_diff_since_its_checkpoint() {
+        let mut view = loaded();
+        let task = task_changes("abc");
+        let requests = view.show_task(task.clone());
+        assert!(requests.status);
+        assert_eq!(view.section(), Section::Task);
+        assert_eq!(
+            (view.status.clone(), view.selected.clone()),
+            (Status::Loading, None)
+        );
+        assert_eq!(view.show_task(task.clone()), Requests::default());
+        let params = view.begin_status().unwrap();
+        assert_eq!(
+            (params.mode, params.since.as_deref()),
+            (GitMode::Base, Some("abc"))
+        );
+        assert!(!view.commit_box_shown());
+
+        let requests = view.status_loaded(Ok(since(&["a.rs"])));
+        let shown = Target {
+            group: Group::Task,
+            path: "a.rs".into(),
+            commit: Some("abc".into()),
+        };
+        assert_eq!(requests.diff, Some(shown.clone()));
+        let diff = shown.params(view.project_id);
+        assert_eq!(diff.mode, GitMode::Base);
+        assert_eq!((diff.commit, diff.since.as_deref()), (None, Some("abc")));
+        assert_eq!(Stage::of(Group::Task), None);
+        assert!(view.discard(&shown).is_none());
+
+        // The History goes back to the task's kept list; the mode key leaves the task.
+        view.toggle_history();
+        assert_eq!(view.section(), Section::History);
+        assert!(view.task.is_some());
+        let requests = view.toggle_history();
+        assert_eq!((view.section(), requests.status), (Section::Task, true));
+        assert!(matches!(view.status, Status::Loaded(_)));
+        view.toggle_mode();
+        assert_eq!(
+            (view.section(), view.task.clone()),
+            (Section::Working, None)
+        );
+        assert_eq!(view.status, Status::Loading);
+    }
+
+    #[test]
+    fn answers_for_another_task_or_against_base_are_dropped() {
+        let mut view = GitView::new(Ulid::new());
+        view.show(Section::Base);
+        view.begin_status();
+        // Against base was in flight: dropped, the task's status asked again.
+        view.show_task(task_changes("abc"));
+        assert!(view.status_loaded(Ok(since(&["base.rs"]))).status);
+        assert_eq!(view.status, Status::Loading);
+        view.begin_status();
+        // Another task meanwhile: its own checkpoint.
+        view.show_task(task_changes("def"));
+        assert_eq!(view.status, Status::Loading);
+        assert!(view.status_loaded(Ok(since(&["old.rs"]))).status);
+        assert_eq!(view.begin_status().unwrap().since.as_deref(), Some("def"));
+        view.status_loaded(Ok(since(&["new.rs"])));
+        assert_eq!(view.files()[0].0.commit.as_deref(), Some("def"));
+        // Against base from a task: no checkpoint any more.
+        view.show(Section::Base);
+        assert_eq!(view.begin_status().unwrap().since, None);
     }
 
     #[test]
