@@ -214,6 +214,14 @@ enum ProjectCommand {
         #[arg(long, group = "change", value_enum)]
         dev_autostart: Option<project::Switch>,
     },
+    /// Start the dev server in its own "dev" tab (prints its session id), or stop it.
+    Dev {
+        /// Project id or name.
+        project: String,
+        /// Stop the running dev server.
+        #[arg(long)]
+        stop: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -272,6 +280,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                         dev_autostart: dev_autostart.map(|s| s == project::Switch::On),
                     },
                 ),
+                ProjectCommand::Dev { project, stop } => project::dev(&mut client, &project, stop),
             }
             .map(|()| ExitCode::SUCCESS)
         }

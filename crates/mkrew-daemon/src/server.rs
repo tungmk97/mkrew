@@ -30,6 +30,7 @@ use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::{backup, session_log, undo};
 
 mod comment;
+mod dev;
 mod doc;
 mod fs;
 mod git;
@@ -45,6 +46,8 @@ pub struct Daemon {
     git_cache: Arc<GitCache>,
     started_at: i64,
     shutdown: watch::Sender<bool>,
+    /// Serializes `project.dev_start`, so a project never gets two dev servers.
+    dev_starting: std::sync::Mutex<()>,
 }
 
 /// Where and to what `task.undo` resets (ADR 0005).
@@ -74,16 +77,19 @@ impl Daemon {
             git_cache: Arc::default(),
             started_at: now_ms(),
             shutdown: watch::channel(false).0,
+            dev_starting: std::sync::Mutex::new(()),
         })
     }
 
-    /// Starts daily DB backups, resumes interrupted tasks, then serves `listener` until
+    /// Starts daily DB backups, resumes interrupted tasks, auto-starts dev servers, then serves
+    /// `listener` until
     /// `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
     /// OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let notifications = notifier.map(|n| notify::start(Arc::clone(&self.hub), n));
         let backups = backup::start(Arc::clone(&self.hub), self.paths.backups_dir());
         self.resume_tasks();
+        self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
         backups.abort();
         if let Some(task) = notifications {
@@ -211,6 +217,8 @@ impl Daemon {
                 (store_outcome(projects), After::Continue)
             }
             Request::ProjectUpdate(params) => (self.project_update(params), After::Continue),
+            Request::ProjectDevStart(params) => (self.dev_start(params), After::Continue),
+            Request::ProjectDevStop(params) => (self.dev_stop(params.project_id), After::Continue),
             Request::TabList(params) => {
                 let tabs = self.store().list_tabs(params.project_id);
                 (store_outcome(tabs), After::Continue)

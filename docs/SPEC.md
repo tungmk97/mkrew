@@ -424,6 +424,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
 | `project.list/add/update/archive` | `path`, `name`, `dev_command`, `dev_autostart` (update only), `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `dev_command` is trimmed, blank = cleared; `default_agent` must be an agent profile) |
+| `project.dev_start` | `project_id`, `cols`/`rows` (default 120×30) | `session_id`, `tab_id?`, `started` — the dev server (ADR 0008) = the project's live shell session titled `dev`: the running one (`started: false`), else `dev_command` typed into a new `shell`-profile session shown alone in the project's `dev` tab (reused when empty or holding one exited pane, else created); `invalid_state` without a dev command |
+| `project.dev_stop` | `project_id` | ok — asks the dev server to terminate; ok when none runs |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
@@ -523,6 +525,8 @@ Rules: on
 - **Resume:** on startup, for each task in running/needs_input whose last session has a
   `native_session_id` and whose profile has `resume`, spawn the resume command. Otherwise set the
   task to needs_input with the note "session stopped — run again?".
+- **Dev servers:** after resume, `project.dev_start` for every non-archived project with
+  `dev_autostart` and a `dev_command` (ADR 0008).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
   session per 30 s. Clicking it emits `notification.clicked`.
 - **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB.
@@ -540,6 +544,7 @@ mk daemon start | stop | status
 mk project add <path> [--name N] [--dev "npm run dev"]
 mk project list
 mk project update <project> [--base develop | --auto-base] [--dev "..." | --no-dev] [--dev-autostart on|off]
+mk project dev <project> [--stop]      # starts the dev server in its "dev" tab (prints its session id)
 mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>

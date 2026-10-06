@@ -1319,6 +1319,19 @@ _Decisions the agent made on its own. Override them here if you disagree._
   nothing without one). `mk project update` accepts base and dev flags together (two requests,
   base first); `--base`/`--auto-base` and `--dev`/`--no-dev` conflict pairwise. `mk project list`
   does not show the dev command.
+- (T8.2, ADR 0008) **Dev server choices:** `dev_command` is typed into a `shell`-profile session
+  (not run as `sh -c`/`cmd /c`), so it starts after the shell's first quiet period (~3 s with the
+  sample `idle_after_ms`) and the pane keeps a prompt when the server stops. "The" dev server =
+  the project's live shell titled `dev` (no DB column); auto-started ones use 120×30 until the UI
+  resizes them. The `dev` tab is reused only when empty or holding one exited pane, else a new
+  `dev` tab is created. `dev_stop` terminates gracefully (like `session.kill` without force) and
+  leaves the tab with its exited pane. Manual check (with T8.3): a real `npm run dev` starts,
+  serves, stops with `mk project dev <p> --stop` on Windows (ConPTY: does the child tree die?)
+  and Linux; auto-start after `mk daemon stop` + start. Open review SHOULDs: `dev_stop` only
+  queues a graceful kill, so an immediate `dev_start` returns the dying session (`started: false`)
+  — a UI "Restart" must wait for `session.exited` first (or the daemon should skip stopping
+  sessions); a running dev server whose pane was closed comes back with `tab_id: None` (not
+  re-placed in the `dev` tab).
 
 ## Done
 

@@ -1,10 +1,13 @@
-//! `mk project add | list | update` (SPEC §9).
+//! `mk project add | list | update | dev` (SPEC §9).
 
 use std::path::Path;
 
 use anyhow::Context;
 use mkrew_core::Paths;
-use mkrew_protocol::{GitSetBaseParams, Project, ProjectAddParams, ProjectUpdateParams, Request};
+use mkrew_protocol::{
+    DevServer, DevStartParams, GitSetBaseParams, Project, ProjectAddParams, ProjectRef,
+    ProjectUpdateParams, Request,
+};
 
 use crate::client::Client;
 use crate::session::resolve_project;
@@ -80,6 +83,29 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
             ),
         }
     }
+    Ok(())
+}
+
+/// `mk project dev <project> [--stop]`: starting prints the dev server's session id.
+pub fn dev(client: &mut Client, project: &str, stop: bool) -> anyhow::Result<()> {
+    let projects: Vec<Project> = client.call(Request::ProjectList)?;
+    let project = resolve_project(&projects, project)?;
+    if stop {
+        let () = client.call(Request::ProjectDevStop(ProjectRef {
+            project_id: project.id,
+        }))?;
+        println!("dev server of {} stopped", project.name);
+        return Ok(());
+    }
+    let dev: DevServer = client.call(Request::ProjectDevStart(DevStartParams {
+        project_id: project.id,
+        cols: DevStartParams::COLS,
+        rows: DevStartParams::ROWS,
+    }))?;
+    if !dev.started {
+        eprintln!("dev server of {} is already running", project.name);
+    }
+    println!("{}", dev.session_id);
     Ok(())
 }
 

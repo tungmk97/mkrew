@@ -55,6 +55,12 @@ pub enum Request {
     ProjectList,
     #[serde(rename = "project.update")]
     ProjectUpdate(ProjectUpdateParams),
+    /// Returns [`DevServer`]: the running dev server, else a new one.
+    #[serde(rename = "project.dev_start")]
+    ProjectDevStart(DevStartParams),
+    /// Returns nothing (`null`); also when no dev server runs.
+    #[serde(rename = "project.dev_stop")]
+    ProjectDevStop(ProjectRef),
     #[serde(rename = "tab.list")]
     TabList(TabListParams),
     #[serde(rename = "tab.create")]
@@ -566,6 +572,30 @@ pub struct ProjectUpdateParams {
     pub dev_autostart: Option<bool>,
 }
 
+/// `project.dev_start`: the terminal size of a newly started dev server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevStartParams {
+    pub project_id: Ulid,
+    #[serde(default = "DevStartParams::default_cols")]
+    pub cols: u16,
+    #[serde(default = "DevStartParams::default_rows")]
+    pub rows: u16,
+}
+
+impl DevStartParams {
+    /// Size used when the client has no pane yet (CLI, auto-start).
+    pub const COLS: u16 = 120;
+    pub const ROWS: u16 = 30;
+
+    fn default_cols() -> u16 {
+        Self::COLS
+    }
+
+    fn default_rows() -> u16 {
+        Self::ROWS
+    }
+}
+
 /// Deserializes a field that is present (possibly `null`) as `Some`; with
 /// `#[serde(default)]` a missing field stays `None`.
 fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
@@ -889,6 +919,21 @@ pub struct SessionSpawnResult {
     pub session_id: Ulid,
 }
 
+/// A project's dev server: its live shell session titled [`DevServer::TITLE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevServer {
+    pub session_id: Ulid,
+    /// The tab showing it; `None` when no tab layout holds the session any more.
+    pub tab_id: Option<Ulid>,
+    /// False when the dev server was already running.
+    pub started: bool,
+}
+
+impl DevServer {
+    /// Title of the dev server's session and of its tab.
+    pub const TITLE: &'static str = "dev";
+}
+
 /// `session.attach`: the current screen; output frames that follow continue from it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionAttachResult {
@@ -1160,6 +1205,12 @@ mod tests {
                 dev_command: Some(Some("cargo run".into())),
                 dev_autostart: Some(true),
             }),
+            Request::ProjectDevStart(DevStartParams {
+                project_id: sid(),
+                cols: 100,
+                rows: 20,
+            }),
+            Request::ProjectDevStop(ProjectRef { project_id: sid() }),
             Request::TabList(TabListParams { project_id: sid() }),
             Request::TabCreate(TabCreateParams {
                 project_id: sid(),
@@ -1315,6 +1366,24 @@ mod tests {
         assert_eq!(params.kind, SessionKind::Agent);
         assert_eq!(params.title, None);
         assert_eq!(params.agent_profile.as_deref(), Some("shell"));
+    }
+
+    #[test]
+    fn dev_start_size_defaults_when_left_out() {
+        let id = sid();
+        let request: Request = serde_json::from_value(json!({
+            "method": "project.dev_start",
+            "params": {"project_id": id.to_string()}
+        }))
+        .unwrap();
+        assert_eq!(
+            request,
+            Request::ProjectDevStart(DevStartParams {
+                project_id: id,
+                cols: DevStartParams::COLS,
+                rows: DevStartParams::ROWS,
+            })
+        );
     }
 
     #[test]

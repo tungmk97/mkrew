@@ -14,20 +14,20 @@ use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
     AgentProfilesResult, ClientKind, CommentContext, CommentCreateParams, CommentId,
     CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
-    CommitDetail, DaemonStatusResult, DocChangedEvent, DocComment, DocContent, DocFile,
-    DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent,
-    FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams, GitChangedEvent, GitCommitParams,
-    GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode,
-    GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams,
-    HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project,
-    ProjectAddParams, ProjectRef, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
-    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
-    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
-    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
-    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
-    encode,
+    CommitDetail, DaemonStatusResult, DevServer, DevStartParams, DocChangedEvent, DocComment,
+    DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame,
+    FrameDecoder, FsContent, FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams,
+    GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
+    GitLogParams, GitMarker, GitMode, GitSetBaseParams, GitShowParams, GitStageParams, GitStatus,
+    GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome,
+    PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, Request,
+    ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionRef,
+    SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams, TabListParams,
+    TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams,
+    TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus,
+    TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2735,6 +2735,140 @@ fn project_dev_server_settings_are_added_updated_and_cleared() {
     client.wait_event(&Event::ProjectUpdated(cleared.clone()));
     let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
     assert_eq!(listed, vec![cleared]);
+    client.stop();
+}
+
+fn dev_start(project: &Project) -> Request {
+    Request::ProjectDevStart(DevStartParams {
+        project_id: project.id,
+        cols: 80,
+        rows: 24,
+    })
+}
+
+fn dev_stop(project: &Project) -> Request {
+    Request::ProjectDevStop(ProjectRef {
+        project_id: project.id,
+    })
+}
+
+fn update_dev(project: &Project, command: Option<&str>, autostart: Option<bool>) -> Request {
+    Request::ProjectUpdate(ProjectUpdateParams {
+        project_id: project.id,
+        name: None,
+        default_agent: None,
+        dev_command: command.map(|c| Some(c.to_owned())),
+        dev_autostart: autostart,
+    })
+}
+
+/// Waits until `path` exists (written by a command typed into a shell).
+fn wait_file(path: &Path) {
+    let deadline = Instant::now() + TIMEOUT;
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} never appeared",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The project's live shell sessions titled "dev".
+fn dev_sessions(client: &mut Client, project: &Project) -> Vec<Session> {
+    let all: Vec<Session> = client
+        .call(Request::SessionList(SessionListParams {
+            project_id: Some(project.id),
+        }))
+        .into_result()
+        .unwrap();
+    all.into_iter()
+        .filter(|s| s.title.as_deref() == Some("dev") && s.state != SessionState::Exited)
+        .collect()
+}
+
+#[test]
+fn dev_server_runs_once_in_its_own_tab_stops_and_auto_starts_after_a_restart() {
+    let env = Env::new();
+    let repo = env.repo();
+    let marker = repo.join("dev-started.txt");
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    assert_eq!(
+        error_code(client.call(dev_start(&project))),
+        ErrorCode::InvalidState
+    );
+    // Nothing runs: stopping is still fine; an unknown project is not.
+    client.call(dev_stop(&project)).into_result::<()>().unwrap();
+    let unknown = Project {
+        id: Ulid::new(),
+        ..project.clone()
+    };
+    assert_eq!(
+        error_code(client.call(dev_stop(&unknown))),
+        ErrorCode::NotFound
+    );
+    // A fake dev server: works in cmd, pwsh and sh alike.
+    let command = "echo started> dev-started.txt";
+    client
+        .call(update_dev(&project, Some(command), None))
+        .into_result::<Project>()
+        .unwrap();
+
+    let first: DevServer = client.call(dev_start(&project)).into_result().unwrap();
+    assert!(first.started);
+    let session = client.session(first.session_id);
+    assert_eq!(
+        (
+            session.kind,
+            session.agent_profile.as_str(),
+            session.title.as_deref()
+        ),
+        (SessionKind::Shell, "shell", Some("dev"))
+    );
+    let tabs = list_tabs(&mut client, &project);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(Some(tabs[0].id), first.tab_id);
+    assert_eq!(tabs[0].title, "dev");
+    assert_eq!(
+        tabs[0].layout,
+        json!({"session": first.session_id.to_string()})
+    );
+    client.wait_event(&Event::TabUpdated(tabs[0].clone()));
+    wait_file(&marker);
+
+    // Starting again answers with the running one.
+    let again: DevServer = client.call(dev_start(&project)).into_result().unwrap();
+    assert_eq!(
+        again,
+        DevServer {
+            started: false,
+            ..first.clone()
+        }
+    );
+    client.call(dev_stop(&project)).into_result::<()>().unwrap();
+    client.wait_state(first.session_id, SessionState::Exited);
+    assert!(dev_sessions(&mut client, &project).is_empty());
+
+    // Auto-start: the next daemon starts it in the same tab (its pane had exited).
+    client
+        .call(update_dev(&project, None, Some(true)))
+        .into_result::<Project>()
+        .unwrap();
+    std::fs::remove_file(&marker).unwrap();
+    client.stop();
+    daemon.wait_exit();
+    let (_daemon, mut client) = env.start();
+    wait_file(&marker);
+    let running = dev_sessions(&mut client, &project);
+    assert_eq!(running.len(), 1);
+    let tabs = list_tabs(&mut client, &project);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(
+        tabs[0].layout,
+        json!({"session": running[0].id.to_string()})
+    );
     client.stop();
 }
 

@@ -373,6 +373,23 @@ fn project_dev_server_is_configured_on_add_and_update() {
     assert!(!conflict.status.success());
     let bad = env.mk(&["project", "update", "demo", "--dev-autostart", "maybe"]);
     assert!(!bad.status.success());
+
+    // `mk project dev`: needs a dev command; a second start prints the running one.
+    let none = env.mk(&["project", "dev", "demo"]);
+    assert!(!none.status.success());
+    env.ok(&[
+        "project",
+        "update",
+        "demo",
+        "--dev",
+        "echo started> dev.txt",
+    ]);
+    let started = env.ok(&["project", "dev", "demo"]);
+    let session_id = started.trim();
+    assert_eq!(session_id.len(), 26, "not a session id: {started}");
+    assert_eq!(env.ok(&["project", "dev", "demo"]).trim(), session_id);
+    let stopped = env.ok(&["project", "dev", "demo", "--stop"]);
+    assert_eq!(stopped.trim(), "dev server of demo stopped");
     env.ok(&["daemon", "stop"]);
 }
 
