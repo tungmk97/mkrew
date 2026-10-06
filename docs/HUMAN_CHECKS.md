@@ -589,6 +589,40 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - **§14 design check**: dark + light screenshots of the peek popover (needs_input with `y`/`n`
     and a plain one), the broadcast dialog after a send with mixed results, an Inbox row with last
     line + turn summary, and a pane header with the summary.
+- [ ] (T10.10) **M10 wrap-up — the unticked M10 criteria.** The send queue criterion is ticked.
+  The backend of every other criterion is covered by automated tests (daemon e2e
+  `a_queued_text_removed_while_working_is_never_typed`,
+  `attachments_are_saved_per_session_and_bad_ones_rejected`; `attachment::tests::cleanup_*`;
+  core `prompt::tests` (seed + render); UI `composer::tests` (`file_ref`, `selection_prefill`,
+  `typed_paths`, `attachment_ext`, drafts), `lifecycle::tests::run_with_updates_the_agent_then_runs`,
+  `board::tests::run_with_is_offered_on_todo_and_review_cards_without_a_live_session`); no M10
+  view was ever seen and no real agent received a composer send. Restart the daemon first
+  (protocol v19), with `mk` on PATH. Details of each check: the "Questions with assumed defaults"
+  entries T10.2–T10.8.
+  - **Composer feel** (criterion 1): Claude pane → Ctrl+Shift+Enter → type 3 lines (Enter) →
+    Ctrl+Enter → Claude receives one paste (one prompt, not 3) + Enter. Type a draft, Esc, focus
+    another pane and come back, Ctrl+Shift+Enter → draft intact. Send while Claude works → the
+    text is listed with ✕, header `⧗ 1 queued`, typed once Claude is idle.
+  - **`@` picker** (criterion 1): in the composer type `@` → quick-open over the workspace → pick
+    a file with a space in its path → `@"dir/my file.md"` typed; Esc on the picker types `@`;
+    `composer.file_ref = "{path}"` in `settings.toml` → the next pick types the bare path.
+  - **Prompts** (criterion 3): delete/rename `<config>/mkrew/prompts/` → the next pick re-seeds
+    the 3 samples; insert one from the palette ("Insert prompt…"), the composer ("Prompts…") and
+    the task dialog ("From prompt…"); a prompt with `{file}` while no file is open shows the
+    muted "left empty" note.
+  - **Send selection** (criterion 4): Ctrl+Shift+L with a picked line in Files, picked new-side
+    lines in Git and selected text in a terminal → the dialog defaults to the most recently
+    active agent → Enter → that session's composer opens prefilled (`` `path:a-b` `` for
+    Files/Git, then the fenced text).
+  - **Drop/paste** (criterion 5): the T10.8 entry below (Explorer drop, Win+Shift+S +
+    Ctrl+Shift+V, browser image); after a session has ended > 7 days ago (or set its `ended_at`
+    back in the DB) its `<data>/mkrew/attachments/<session>/` dir is gone within an hour.
+  - **Run with…** (criterion 6): hover a Todo card → "Run with…" → pick Codex → the card's agent
+    becomes Codex and a Codex session starts; on a Review card with no live session too; a card
+    with a live session shows no button.
+  - **§14 design check**: dark + light screenshots of the docked composer (draft + 2 queued
+    rows), the prompt picker with preview + "left empty" note, the send-selection dialog, the
+    task dialog multi-line prompt, and the "Run with…" picker anchored on a card.
 
 ## Questions with assumed defaults
 

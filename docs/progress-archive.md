@@ -2,6 +2,31 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M10 — Instructing (tag `m10-done`)
+
+Acceptance criteria at completion (unticked ones wait on the T10.10 manual checks in
+HUMAN_CHECKS "To verify" and the T10.2–T10.8 "Questions with assumed defaults" entries):
+
+- [ ] Composer: a multi-line send arrives as one bracketed paste; `@` inserts `file_ref`-formatted paths; drafts survive switching panes.
+- [x] Send queue: `session.send` returns `{send_id, queued}`, `session.queue` events, `session.unqueue`; e2e with the fake agent: a text queued while working and removed is never typed.
+- [ ] Prompt library: samples seeded on first run, variables rendered (unit tests), insertable from the palette, the composer and the task dialog.
+- [ ] Send selection from Files, Git diff and a terminal opens the right session's composer, prefilled.
+- [ ] Dropping files types their paths; pasting an image stores it via `attachment.save` and types the path; attachments of sessions ended > 7 days ago are deleted.
+- [ ] "Run with…" on a Todo/Review card updates the task's agent and runs it.
+
+Tasks:
+
+- [x] T10.1 Daemon send queue — feat(daemon): visible send queue with unqueue
+- [x] T10.2 Prompt library — feat(core): prompt library with render and seeded samples
+- [x] T10.3 Composer + text box — feat(ui): prompt composer docked on agent panes
+- [x] T10.4 Composer `@` + queue list — feat(ui): composer @ file refs and send queue list
+- [x] T10.5 Prompt picker + task text boxes — feat(ui): prompt picker and multi-line task/follow-up text boxes
+- [x] T10.6 Send selection — feat(ui): send selection to an agent's composer
+- [x] T10.7 `attachment.save` + cleanup — feat(daemon): attachment.save with 7-day cleanup
+- [x] T10.8 Drop files / paste image — feat(ui): drop files and paste images into terminal panes
+- [x] T10.9 Run with… — feat(ui): Run with… profile picker on board cards
+- [x] T10.10 M10 manual checks + wrap-up — chore(progress): complete M10
+
 ## M9 — Attention (tag `m9-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T9.6–T9.10 and T9.11 manual checks
