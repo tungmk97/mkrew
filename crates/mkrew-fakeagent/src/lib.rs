@@ -271,8 +271,8 @@ pub struct Review {
     pub comments: Vec<(String, String)>,
 }
 
-/// Reads lines until the `Update <file> according to …` line, `count` comment headers
-/// (`[c_…] lines …:`) and the last one's body have arrived. A Windows console drops the `\n`s
+/// Reads lines until the `Update <file> according to …` (or `Fix the code in <file> …`) line,
+/// `count` comment headers (`[c_…] lines …:`) and the last one's body have arrived. A Windows console drops the `\n`s
 /// between the typed lines, so the prompt is parsed as one text, not line by line.
 pub fn read_review(input: &mut impl BufRead, count: usize) -> Result<Review, Error> {
     let mut typed = String::new();
@@ -293,8 +293,12 @@ pub fn read_review(input: &mut impl BufRead, count: usize) -> Result<Review, Err
 /// indent of a reply glued on by a Windows console, so a body with a double space is cut),
 /// an escape (paste end marker) or the next header.
 fn parse_review(typed: &str, count: usize) -> Option<Review> {
-    // `find`, not `strip_prefix`: paste markers or other noise may come first.
-    let start = typed.find("Update ")? + "Update ".len();
+    // `find`, not `strip_prefix`: paste markers or other noise may come first. Doc reviews
+    // say `Update <file>`, diff comments `Fix the code in <file>` (SPEC §12B).
+    let start = ["Update ", "Fix the code in "]
+        .iter()
+        .filter_map(|lead| typed.find(lead).map(|at| at + lead.len()))
+        .min()?;
     let (file, mut rest) = typed[start..].split_once(" according to")?;
     let mut comments = Vec::new();
     while comments.len() < count {
@@ -302,7 +306,11 @@ fn parse_review(typed: &str, count: usize) -> Option<Review> {
         let (id, header) = rest[at + 1..].split_once(']')?;
         let colon = header.find(':')?;
         // A quoted passage may hold colons: then the header ends at `":`.
-        let body_at = match header.find(", passage \"").filter(|&p| p < colon) {
+        let quoted = [", passage \"", ", code \""]
+            .iter()
+            .filter_map(|q| header.find(q))
+            .min();
+        let body_at = match quoted.filter(|&p| p < colon) {
             Some(p) => p + header[p..].find("\":")? + 2,
             None => colon + 1,
         };
@@ -606,6 +614,16 @@ mod tests {
         ));
         let review = read_review(&mut format!("{header_only}  Keep it\n").as_bytes(), 1).unwrap();
         assert_eq!(review.comments, [("c_1".into(), "Keep it".into())]);
+    }
+
+    #[test]
+    fn read_review_takes_diff_comment_prompts() {
+        let typed = "Fix the code in src/lib.rs according to the review comments below.\n\
+            Line numbers are of the current file. When done, for EACH comment run:\n\
+            [c_1] lines 3–4, code \"match x { a: b }\":\n  Handle None\n";
+        let review = read_review(&mut typed.as_bytes(), 1).unwrap();
+        assert_eq!(review.file, PathBuf::from("src/lib.rs"));
+        assert_eq!(review.comments, [("c_1".into(), "Handle None".into())]);
     }
 
     #[test]

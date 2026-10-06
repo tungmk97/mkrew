@@ -245,6 +245,7 @@ mod tests {
             id: CommentId(Ulid(id)),
             project_id: Ulid(1),
             file_path: "PLAN.md".into(),
+            context: Default::default(),
             parent_id: lines.is_none().then_some(CommentId(Ulid(1))),
             author: DocComment::USER.into(),
             body: format!("body {id}"),

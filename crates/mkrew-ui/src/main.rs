@@ -19,14 +19,14 @@ use gpui::{
 };
 use mkrew_core::Paths;
 use mkrew_protocol::{
-    AgentProfilesResult, ChangeKind, CommentId, CommentListParams, CommentRef, Commit,
-    CommitDetail, DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams,
-    Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult,
-    GitMarker, GitMode, GitStatus, Outcome, Project, ProjectAddParams, Request, Session,
-    SessionAttachResult, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
-    SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams, TabListParams,
-    TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus,
-    TerminalTab, UndoPreview,
+    AgentProfilesResult, ChangeKind, CommentContext, CommentId, CommentListParams, CommentRef,
+    Commit, CommitDetail, DiffLineKind, DocComment, DocContent, DocFile, DocListParams,
+    DocReadParams, Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch, FsReadParams,
+    GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project, ProjectAddParams, Request,
+    Session, SessionAttachResult, SessionHistory, SessionKillParams, SessionKind,
+    SessionListParams, SessionRef, SessionSpawnResult, SessionState, StateSource, TabCreateParams,
+    TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef,
+    TaskStatus, TerminalTab, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -1857,6 +1857,7 @@ impl Shell {
         let listed = connection.call::<Vec<DocComment>>(Request::CommentList(CommentListParams {
             project_id,
             file_path: Some(file_path.clone()),
+            context: Some(CommentContext::Doc),
         }));
         cx.spawn_in(window, async move |this, cx| {
             let listed = listed.await.map_err(|error| format!("{error:#}"));

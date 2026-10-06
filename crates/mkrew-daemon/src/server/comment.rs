@@ -1,5 +1,6 @@
-//! `comment.*` handlers (SPEC §7, §12): review threads on Markdown files. Every change goes
-//! out as `comment.updated`; status changes always land on the thread root.
+//! `comment.*` handlers (SPEC §7, §12, §12B): review threads on Markdown files and diff
+//! lines. Every change goes out as `comment.updated`; status changes always land on the thread
+//! root.
 
 use std::path::PathBuf;
 
@@ -18,10 +19,15 @@ use crate::session::Command;
 impl Daemon {
     pub(super) fn comment_list(&self, params: CommentListParams) -> Outcome {
         let file = params.file_path.as_deref().map(normalize);
-        store_outcome(
-            self.store()
-                .list_comments(params.project_id, file.as_deref()),
-        )
+        let listed = self
+            .store()
+            .list_comments(params.project_id, file.as_deref());
+        store_outcome(listed.map(|mut comments| {
+            if let Some(context) = params.context {
+                comments.retain(|c| c.context == context);
+            }
+            comments
+        }))
     }
 
     pub(super) fn comment_create(&self, params: CommentCreateParams) -> Outcome {
@@ -42,6 +48,7 @@ impl Daemon {
         let created = self.store().create_comment(
             params.project_id,
             &file,
+            params.context,
             params.start_line,
             params.end_line,
             &params.quote,
@@ -206,6 +213,12 @@ fn sending(
         .any(|r| r.project_id != project_id || r.file_path != file)
     {
         return Ok(Err("the comments must all be on one file".to_owned()));
+    }
+    // One prompt asks either to edit the document or to fix the code.
+    if roots.iter().any(|r| r.context != first.context) {
+        return Ok(Err(
+            "doc and diff comments cannot be sent together".to_owned()
+        ));
     }
     let session = store.get_session(params.session_id)?;
     if session.project_id != project_id {

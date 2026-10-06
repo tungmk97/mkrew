@@ -1,0 +1,10 @@
+---
+source: crates/mkrew-core/src/review.rs
+expression: "prompt(\"src/lib.rs\", &[root])"
+---
+Fix the code in src/lib.rs according to the review comments below.
+Line numbers are of the current file. When done, for EACH comment run:
+  mk comment reply <id> "<what you changed, or why you did not>"
+
+[c_01JX0000000000000000000001] lines 3–4, code "fn add(a: i32, b: i32) -> i32 { a - b":
+  This subtracts.

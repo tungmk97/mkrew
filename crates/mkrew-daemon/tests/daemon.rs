@@ -12,21 +12,22 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
-    AgentProfilesResult, ClientKind, CommentCreateParams, CommentId, CommentListParams, CommentRef,
-    CommentReplyParams, CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult,
-    DocChangedEvent, DocComment, DocContent, DocFile, DocListParams, DocReadParams, ErrorCode,
-    Event, FileDiff, Frame, FrameDecoder, FsContent, FsEntry, FsFindParams, FsListParams, FsMatch,
-    FsReadParams, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
-    GitDiscardParams, GitLogParams, GitMarker, GitMode, GitSetBaseParams, GitShowParams,
-    GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
-    HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef,
-    ProjectUpdateParams, Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult,
-    SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
-    SessionRef, SessionResizeParams, SessionSendParams, SessionSpawnParams, SessionSpawnResult,
-    SessionState, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
-    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
-    TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams,
-    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    AgentProfilesResult, ClientKind, CommentContext, CommentCreateParams, CommentId,
+    CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
+    CommitDetail, DaemonStatusResult, DocChangedEvent, DocComment, DocContent, DocFile,
+    DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent,
+    FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams, GitChangedEvent, GitCommitParams,
+    GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode,
+    GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams,
+    HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project,
+    ProjectAddParams, ProjectRef, ProjectUpdateParams, Request, ResponseError, ScreenSnapshot,
+    Session, SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams,
+    SessionKind, SessionListParams, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
+    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
+    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
+    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
+    encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -472,6 +473,7 @@ fn comment_threads_reply_resolve_reopen_and_agent_replies_address_them() {
             end_line,
             quote: "Use Redis".into(),
             body: body.into(),
+            context: CommentContext::Doc,
         })
     };
     for bad in [
@@ -528,6 +530,7 @@ fn comment_threads_reply_resolve_reopen_and_agent_replies_address_them() {
             .call(Request::CommentList(CommentListParams {
                 project_id: project.id,
                 file_path: file.map(Into::into),
+                context: None,
             }))
             .into_result()
             .unwrap()
@@ -1214,6 +1217,7 @@ fn docs_are_listed_read_and_external_edits_reanchor_comments() {
             end_line: start_line,
             quote: quote.into(),
             body: "why?".into(),
+            context: CommentContext::Doc,
         };
         let created: DocComment = client
             .call(Request::CommentCreate(params))
@@ -1290,6 +1294,7 @@ fn docs_are_listed_read_and_external_edits_reanchor_comments() {
         .call(Request::CommentList(CommentListParams {
             project_id: project.id,
             file_path: None,
+            context: None,
         }))
         .into_result()
         .unwrap();
@@ -1670,6 +1675,7 @@ fn comments_sent_to_a_working_agent_are_typed_once_it_asks() {
             end_line: line,
             quote: quote.into(),
             body: body.into(),
+            context: CommentContext::Doc,
         };
         let created: DocComment = client
             .call(Request::CommentCreate(params))
@@ -1785,6 +1791,7 @@ fn fake_agent_addresses_sent_comments_and_replies_to_each() {
             end_line: line,
             quote: quote.into(),
             body: body.into(),
+            context: CommentContext::Doc,
         };
         let created: DocComment = client
             .call(Request::CommentCreate(params))
@@ -1817,6 +1824,7 @@ fn fake_agent_addresses_sent_comments_and_replies_to_each() {
         .call(Request::CommentList(CommentListParams {
             project_id: project.id,
             file_path: Some("docs/plan.md".into()),
+            context: None,
         }))
         .into_result()
         .unwrap();
@@ -1833,6 +1841,123 @@ fn fake_agent_addresses_sent_comments_and_replies_to_each() {
             .collect();
         assert_eq!(replies, [("reviewer", body)]);
     }
+    client.stop();
+}
+
+/// Diff-line comments (M7 E2E): a comment on new-side lines of a code file is sent with the
+/// "fix the code" prompt; the fake edits the file and answers with `mk comment reply`.
+#[test]
+fn fake_agent_fixes_code_for_diff_comments_and_replies() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    let code = "pub fn add(a: i32, b: i32) -> i32 {\n    a - b\n}\n";
+    let scenario = env.dir.path().join("fixer.toml");
+    std::fs::write(
+        &scenario,
+        format!(
+            "[[step]]\naction = \"write_file\"\npath = \"src/lib.rs\"\ncontent = '''{code}'''\n\n\
+             [[step]]\naction = \"spinner\"\ntext = \"coding\"\nms = 600\n\n\
+             [[step]]\naction = \"reply_comments\"\ncomments = 1\n\n\
+             [[step]]\naction = \"print\"\ntext = \"Fixed src/lib.rs\"\n"
+        ),
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "fixer",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "fixer").into_result().unwrap();
+    let id = spawned.session_id;
+    let deadline = Instant::now() + TIMEOUT;
+    while std::fs::read_to_string(repo.join("src/lib.rs"))
+        .ok()
+        .as_deref()
+        != Some(code)
+    {
+        assert!(Instant::now() < deadline, "the fake never wrote the code");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let mut create = |file: &str, context| {
+        let params = CommentCreateParams {
+            project_id: project.id,
+            file_path: file.into(),
+            start_line: 2,
+            end_line: 2,
+            quote: "a - b".into(),
+            body: "This subtracts.".into(),
+            context,
+        };
+        let created: DocComment = client
+            .call(Request::CommentCreate(params))
+            .into_result()
+            .unwrap();
+        created
+    };
+    let diff = create("src/lib.rs", CommentContext::Diff);
+    assert_eq!(diff.context, CommentContext::Diff);
+    // One prompt cannot both edit a document and fix code.
+    let doc = create("src/lib.rs", CommentContext::Doc);
+    assert_eq!(
+        error_code(client.call(send_comments(&[diff.id, doc.id], id))),
+        ErrorCode::InvalidRequest
+    );
+    client
+        .call(Request::CommentResolve(CommentRef { comment_id: doc.id }))
+        .into_result::<DocComment>()
+        .unwrap();
+
+    let sent: Vec<DocComment> = client
+        .call(send_comments(&[diff.id], id))
+        .into_result()
+        .unwrap();
+    assert_eq!(sent[0].sent_snapshot.as_deref(), Some(code));
+    wait_comment(&mut client, diff.id, CommentStatus::Addressed);
+    let session = client.wait_state(id, SessionState::Exited);
+    assert_eq!(session.exit_code, Some(0));
+    assert_eq!(
+        std::fs::read_to_string(repo.join("src/lib.rs")).unwrap(),
+        format!("{code}Addressed {}: This subtracts.\n", diff.id)
+    );
+
+    let list = |context| CommentListParams {
+        project_id: project.id,
+        file_path: Some("src/lib.rs".into()),
+        context,
+    };
+    let diffs: Vec<DocComment> = client
+        .call(Request::CommentList(list(Some(CommentContext::Diff))))
+        .into_result()
+        .unwrap();
+    let replies: Vec<_> = diffs
+        .iter()
+        .map(|c| (c.parent_id, c.context, c.author.as_str(), c.body.as_str()))
+        .collect();
+    assert_eq!(
+        replies,
+        [
+            (
+                None,
+                CommentContext::Diff,
+                DocComment::USER,
+                "This subtracts."
+            ),
+            (
+                Some(diff.id),
+                CommentContext::Diff,
+                "fixer",
+                "Addressed: This subtracts."
+            ),
+        ]
+    );
+    let all: Vec<DocComment> = client
+        .call(Request::CommentList(list(None)))
+        .into_result()
+        .unwrap();
+    assert_eq!(all.len(), 3);
     client.stop();
 }
 

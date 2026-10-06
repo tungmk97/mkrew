@@ -318,6 +318,7 @@ impl Comments {
                 end_line: selection.end,
                 quote: draft.quote.clone(),
                 body: body.to_owned(),
+                context: Default::default(),
             }),
             Target::Reply(comment_id) => Request::CommentReply(CommentReplyParams {
                 comment_id,
@@ -363,6 +364,7 @@ mod tests {
             id: CommentId(Ulid(id)),
             project_id: Ulid(1),
             file_path: "PLAN.md".into(),
+            context: Default::default(),
             parent_id: parent.map(|p| CommentId(Ulid(p))),
             author: DocComment::USER.into(),
             body: format!("body {id}"),
@@ -504,6 +506,7 @@ mod tests {
                 end_line: 3,
                 quote: "Use Redis".into(),
                 body: "Why?".into(),
+                context: Default::default(),
             }))
         );
         assert_eq!(comments.submit(Ulid(1)), None, "in flight");

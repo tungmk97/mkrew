@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mkrew_protocol::{
-    CommentId, CommentStatus, DocComment, Project, Session, SessionKind, SessionState, StateSource,
-    Task, TaskStatus, TerminalTab,
+    CommentContext, CommentId, CommentStatus, DocComment, Project, Session, SessionKind,
+    SessionState, StateSource, Task, TaskStatus, TerminalTab,
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use ulid::Ulid;
@@ -678,10 +678,12 @@ impl Store {
 
     /// Starts an `open` thread by the user, anchored to lines `start_line..=end_line`
     /// (1-based) quoting `quote`.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_comment(
         &self,
         project_id: Ulid,
         file_path: &str,
+        context: CommentContext,
         start_line: u32,
         end_line: u32,
         quote: &str,
@@ -693,6 +695,7 @@ impl Store {
             id: CommentId::new(),
             project_id,
             file_path: file_path.to_owned(),
+            context,
             parent_id: None,
             author: DocComment::USER.to_owned(),
             body: body.to_owned(),
@@ -718,6 +721,7 @@ impl Store {
             id: CommentId::new(),
             project_id: parent.project_id,
             file_path: parent.file_path,
+            context: parent.context,
             parent_id: Some(parent.parent_id.unwrap_or(parent.id)),
             author: author.to_owned(),
             body: body.to_owned(),
@@ -785,12 +789,13 @@ impl Store {
         self.conn.execute(
             &format!(
                 "INSERT INTO doc_comment ({COMMENT_COLUMNS})
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
             ),
             params![
                 c.id.to_string(),
                 c.project_id.to_string(),
                 c.file_path,
+                comment_context_str(c.context),
                 c.parent_id.map(|id| id.to_string()),
                 c.author,
                 c.body,
@@ -956,6 +961,21 @@ fn parse_comment_status(s: String) -> Result<CommentStatus> {
         "resolved" => CommentStatus::Resolved,
         "outdated" => CommentStatus::Outdated,
         _ => return Err(corrupt("doc_comment.status", s)),
+    })
+}
+
+fn comment_context_str(context: CommentContext) -> &'static str {
+    match context {
+        CommentContext::Doc => "doc",
+        CommentContext::Diff => "diff",
+    }
+}
+
+fn parse_comment_context(s: String) -> Result<CommentContext> {
+    Ok(match s.as_str() {
+        "doc" => CommentContext::Doc,
+        "diff" => CommentContext::Diff,
+        _ => return Err(corrupt("doc_comment.context", s)),
     })
 }
 
@@ -1167,13 +1187,14 @@ impl RawTask {
     }
 }
 
-const COMMENT_COLUMNS: &str = "id, project_id, file_path, parent_id, author, body, start_line,
-    end_line, quote, status, sent_to, sent_snapshot, created_at, updated_at";
+const COMMENT_COLUMNS: &str = "id, project_id, file_path, context, parent_id, author, body,
+    start_line, end_line, quote, status, sent_to, sent_snapshot, created_at, updated_at";
 
 struct RawComment {
     id: String,
     project_id: String,
     file_path: String,
+    context: String,
     parent_id: Option<String>,
     author: String,
     body: String,
@@ -1193,17 +1214,18 @@ impl RawComment {
             id: row.get(0)?,
             project_id: row.get(1)?,
             file_path: row.get(2)?,
-            parent_id: row.get(3)?,
-            author: row.get(4)?,
-            body: row.get(5)?,
-            start_line: row.get(6)?,
-            end_line: row.get(7)?,
-            quote: row.get(8)?,
-            status: row.get(9)?,
-            sent_to: row.get(10)?,
-            sent_snapshot: row.get(11)?,
-            created_at: row.get(12)?,
-            updated_at: row.get(13)?,
+            context: row.get(3)?,
+            parent_id: row.get(4)?,
+            author: row.get(5)?,
+            body: row.get(6)?,
+            start_line: row.get(7)?,
+            end_line: row.get(8)?,
+            quote: row.get(9)?,
+            status: row.get(10)?,
+            sent_to: row.get(11)?,
+            sent_snapshot: row.get(12)?,
+            created_at: row.get(13)?,
+            updated_at: row.get(14)?,
         })
     }
 
@@ -1212,6 +1234,7 @@ impl RawComment {
             id: parse_comment_id("doc_comment.id", self.id)?,
             project_id: parse_ulid("doc_comment.project_id", self.project_id)?,
             file_path: self.file_path,
+            context: parse_comment_context(self.context)?,
             parent_id: self
                 .parent_id
                 .map(|id| parse_comment_id("doc_comment.parent_id", id))

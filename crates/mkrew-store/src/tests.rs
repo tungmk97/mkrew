@@ -1,5 +1,7 @@
 use super::*;
 
+const DOC: CommentContext = CommentContext::Doc;
+
 fn open(dir: &tempfile::TempDir) -> Store {
     Store::open(&dir.path().join("mkrew.db")).unwrap()
 }
@@ -371,18 +373,36 @@ fn project_base_is_set_kept_and_cleared_to_auto() {
 }
 
 #[test]
-fn doc_comments_default_to_the_doc_context() {
+fn comment_contexts_persist_and_replies_inherit_them() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let p = store.add_project(dir.path(), None).unwrap();
     store
-        .create_comment(p.id, "a.md", 1, 1, "quote", "body")
+        .create_comment(p.id, "a.md", CommentContext::Doc, 1, 1, "quote", "body")
         .unwrap();
     let context: String = store
         .conn
         .query_row("SELECT context FROM doc_comment", [], |row| row.get(0))
         .unwrap();
     assert_eq!(context, "doc");
+
+    let diff = store
+        .create_comment(
+            p.id,
+            "src/lib.rs",
+            CommentContext::Diff,
+            3,
+            4,
+            "fn a()",
+            "Rename",
+        )
+        .unwrap();
+    let reply = store.reply_comment(diff.id, "claude", "Done").unwrap();
+    assert_eq!(reply.context, CommentContext::Diff);
+    drop(store);
+    let store = open(&dir);
+    let listed = store.list_comments(p.id, Some("src/lib.rs")).unwrap();
+    assert_eq!(listed, vec![diff, reply]);
 }
 
 #[test]
@@ -609,14 +629,14 @@ fn comment_threads_are_created_replied_and_persist() {
     let p = store.add_project(&repo, None).unwrap();
 
     let first = store
-        .create_comment(p.id, "docs/plan.md", 12, 14, "Use Redis", "Why Redis?")
+        .create_comment(p.id, "docs/plan.md", DOC, 12, 14, "Use Redis", "Why Redis?")
         .unwrap();
     assert_eq!(first.author, DocComment::USER);
     assert_eq!(first.status, CommentStatus::Open);
     assert_eq!((first.start_line, first.end_line), (Some(12), Some(14)));
     assert_eq!(first.quote.as_deref(), Some("Use Redis"));
     let other = store
-        .create_comment(p.id, "README.md", 1, 1, "# Demo", "Rename")
+        .create_comment(p.id, "README.md", DOC, 1, 1, "# Demo", "Rename")
         .unwrap();
 
     let reply = store
@@ -652,7 +672,7 @@ fn comment_status_and_sent_fields_update() {
     let store = open(&dir);
     let p = store.add_project(&repo, None).unwrap();
     let c = store
-        .create_comment(p.id, "plan.md", 3, 3, "x", "fix")
+        .create_comment(p.id, "plan.md", DOC, 3, 3, "x", "fix")
         .unwrap();
     let s = session(p.id, 1);
     store.insert_session(&s).unwrap();
@@ -742,7 +762,7 @@ fn comment_errors() {
         Err(StoreError::CommentNotFound(_))
     ));
     assert!(matches!(
-        store.create_comment(Ulid::new(), "a.md", 1, 1, "", "x"),
+        store.create_comment(Ulid::new(), "a.md", DOC, 1, 1, "", "x"),
         Err(StoreError::ProjectNotFound(_))
     ));
 
@@ -755,7 +775,9 @@ fn comment_errors() {
         store.mark_comment_sent(missing, s.id, ""),
         Err(StoreError::CommentNotFound(_))
     ));
-    let c = store.create_comment(p.id, "a.md", 1, 1, "", "x").unwrap();
+    let c = store
+        .create_comment(p.id, "a.md", DOC, 1, 1, "", "x")
+        .unwrap();
     assert!(matches!(
         store.mark_comment_sent(c.id, Ulid::new(), ""),
         Err(StoreError::SessionNotFound(_))

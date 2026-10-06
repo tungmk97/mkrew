@@ -99,6 +99,7 @@ impl Ui {
                     .call(Request::CommentList(CommentListParams {
                         project_id: self.docs.project_id,
                         file_path: Some(file_path.clone()),
+                        context: None,
                     })),
             )
             .map_err(|error| format!("{error:#}"));
@@ -235,6 +236,7 @@ fn docs_list_render_and_follow_external_edits_and_comments() {
             end_line: 3,
             quote: "Ship".into(),
             body: "When?".into(),
+            context: Default::default(),
         },
     )))
     .unwrap();
@@ -264,6 +266,7 @@ fn docs_list_render_and_follow_external_edits_and_comments() {
     let saved: DocComment = block_on(ui.connection.call(Request::CommentList(CommentListParams {
         project_id: project.id,
         file_path: Some("PLAN.md".into()),
+        context: None,
     })))
     .map(|list: Vec<DocComment>| list.into_iter().find(|c| c.body == "Rename it?").unwrap())
     .unwrap();

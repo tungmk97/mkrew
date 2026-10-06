@@ -469,14 +469,28 @@ pub enum CommentStatus {
     Outdated,
 }
 
-/// A review comment on a Markdown file (SPEC §5 `doc_comment`): a thread root anchored to
-/// lines, or a reply (`parent_id` set, no anchor).
+/// Where a comment was written (SPEC §5 `doc_comment.context`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommentContext {
+    /// On a Markdown file in the Docs view (SPEC §12).
+    #[default]
+    Doc,
+    /// On new-side lines of a diff in the Git view (SPEC §12B): the agent fixes the code.
+    Diff,
+}
+
+/// A review comment (SPEC §5 `doc_comment`) on a Markdown file or on diff lines of any file:
+/// a thread root anchored to lines, or a reply (`parent_id` set, no anchor).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocComment {
     pub id: CommentId,
     pub project_id: Ulid,
     /// Relative to the project root, `/` separators.
     pub file_path: String,
+    /// Replies carry their thread root's.
+    #[serde(default)]
+    pub context: CommentContext,
     /// The thread root this reply belongs to; `None` = a thread root.
     pub parent_id: Option<CommentId>,
     /// [`DocComment::USER`] or the agent profile id of the replying session.
@@ -785,6 +799,9 @@ pub struct CommentListParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub file_path: Option<String>,
+    /// Only comments written in this context; `None` = all.
+    #[serde(default)]
+    pub context: Option<CommentContext>,
 }
 
 /// `comment.create`: a new thread anchored to a selection.
@@ -792,11 +809,13 @@ pub struct CommentListParams {
 pub struct CommentCreateParams {
     pub project_id: Ulid,
     pub file_path: String,
-    /// 1-based, inclusive.
+    /// 1-based, inclusive. Diff comments: new-side lines.
     pub start_line: u32,
     pub end_line: u32,
     pub quote: String,
     pub body: String,
+    #[serde(default)]
+    pub context: CommentContext,
 }
 
 /// `comment.reply`: a reply to a thread (a reply to a reply joins the same thread).
@@ -1214,6 +1233,7 @@ mod tests {
             Request::CommentList(CommentListParams {
                 project_id: sid(),
                 file_path: Some("docs/plan.md".into()),
+                context: Some(CommentContext::Diff),
             }),
             Request::CommentCreate(CommentCreateParams {
                 project_id: sid(),
@@ -1222,6 +1242,7 @@ mod tests {
                 end_line: 14,
                 quote: "Use Redis for caching".into(),
                 body: "Why not in-memory?".into(),
+                context: CommentContext::Doc,
             }),
             Request::CommentReply(CommentReplyParams {
                 comment_id: CommentId(sid()),
@@ -1565,6 +1586,7 @@ mod tests {
             id: CommentId(sid()),
             project_id: sid(),
             file_path: "docs/plan.md".into(),
+            context: CommentContext::Diff,
             parent_id: None,
             author: DocComment::USER.into(),
             body: "Add a rollback step.".into(),
@@ -1588,7 +1610,7 @@ mod tests {
             .unwrap()
             .into_result()
             .unwrap();
-        assert_eq!(decoded, vec![comment]);
+        assert_eq!(decoded, vec![comment.clone()]);
 
         let id = sid().to_string();
         let list: CommentListParams = serde_json::from_value(json!({"project_id": id})).unwrap();
@@ -1597,6 +1619,20 @@ mod tests {
             serde_json::from_value(json!({"comment_id": format!("c_{id}"), "body": "ok"})).unwrap();
         assert_eq!(reply.mkrew_session_id, None);
         assert_eq!(reply.comment_id, CommentId(sid()));
+
+        // `context` defaults to `doc` everywhere, so pre-M7 clients keep working.
+        assert_eq!(list.context, None);
+        assert_eq!(value["data"]["context"], "diff");
+        let create: CommentCreateParams = serde_json::from_value(json!({
+            "project_id": id, "file_path": "a.md", "start_line": 1, "end_line": 1,
+            "quote": "", "body": "x",
+        }))
+        .unwrap();
+        assert_eq!(create.context, CommentContext::Doc);
+        let mut old = serde_json::to_value(&comment).unwrap();
+        old.as_object_mut().unwrap().remove("context");
+        let old: DocComment = serde_json::from_value(old).unwrap();
+        assert_eq!(old.context, CommentContext::Doc);
     }
 
     #[test]

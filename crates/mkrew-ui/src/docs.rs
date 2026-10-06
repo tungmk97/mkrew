@@ -389,6 +389,7 @@ mod tests {
                 id: CommentId(Ulid::new()),
                 project_id,
                 file_path: "a.md".into(),
+                context: Default::default(),
                 parent_id: None,
                 author: DocComment::USER.into(),
                 body: "Why?".into(),

@@ -804,6 +804,7 @@ impl Env {
                 end_line: lines.1,
                 quote: "Use Redis".into(),
                 body: body.into(),
+                context: Default::default(),
             }),
         )
         .into_result()

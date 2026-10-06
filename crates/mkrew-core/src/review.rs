@@ -2,7 +2,7 @@
 //! changed, and the prompt typed into an agent session. Pure.
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-use mkrew_protocol::DocComment;
+use mkrew_protocol::{CommentContext, DocComment};
 
 /// `review_globs` of a workspace that has none configured.
 pub const DEFAULT_REVIEW_GLOBS: [&str; 3] = ["*.md", "docs/**/*.md", ".claude/plans/**/*.md"];
@@ -77,14 +77,26 @@ fn collapse_with_lines(content: &str) -> (String, Vec<u32>) {
 
 /// The prompt that asks a session to address the review comments on `file` (SPEC §12
 /// template). `comments` holds thread roots, in order, and may hold their replies too: those
-/// follow their comment so a resent thread carries the conversation so far.
+/// follow their comment so a resent thread carries the conversation so far. Diff comments
+/// (SPEC §12B) ask to fix the code instead, which may touch other files too.
 pub fn prompt(file: &str, comments: &[DocComment]) -> String {
+    let roots = || comments.iter().filter(|c| c.parent_id.is_none());
+    let code = roots().any(|c| c.context == CommentContext::Diff);
+    let (task, scope, quoted) = if code {
+        (
+            "Fix the code in",
+            "Line numbers are of the current file.",
+            "code",
+        )
+    } else {
+        ("Update", "Only edit this file.", "passage")
+    };
     let mut out = format!(
-        "Update {file} according to the review comments below.\n\
-         Only edit this file. When done, for EACH comment run:\n  \
+        "{task} {file} according to the review comments below.\n\
+         {scope} When done, for EACH comment run:\n  \
          mk comment reply <id> \"<what you changed, or why you did not>\"\n\n"
     );
-    for root in comments.iter().filter(|c| c.parent_id.is_none()) {
+    for root in roots() {
         out.push_str(&format!("[{}] {}", root.id, lines_label(root)));
         if let Some(quote) = root
             .quote
@@ -92,7 +104,7 @@ pub fn prompt(file: &str, comments: &[DocComment]) -> String {
             .map(collapse)
             .filter(|q| !q.is_empty())
         {
-            out.push_str(&format!(", passage \"{quote}\""));
+            out.push_str(&format!(", {quoted} \"{quote}\""));
         }
         out.push_str(":\n");
         push_indented(&mut out, "", "  ", &root.body);
@@ -304,6 +316,21 @@ mod tests {
             ),
         ];
         insta::assert_snapshot!(prompt("docs/plan.md", &comments));
+    }
+
+    #[test]
+    fn prompt_for_diff_comments_asks_to_fix_the_code() {
+        let mut root = comment(
+            "c_01JX0000000000000000000001",
+            None,
+            Some((3, 4)),
+            Some("fn add(a: i32, b: i32) -> i32 {\n    a - b"),
+            DocComment::USER,
+            "This subtracts.",
+        );
+        root.file_path = "src/lib.rs".to_owned();
+        root.context = CommentContext::Diff;
+        insta::assert_snapshot!(prompt("src/lib.rs", &[root]));
     }
 
     #[test]

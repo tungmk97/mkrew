@@ -1244,6 +1244,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   Undo, "Changes" has no keyboard / palette path (§14 "keyboard = mouse") — add a "View task
   changes" command for the selected card later; `Target.commit` carries both a History commit
   and the task checkpoint (told apart by `group`).
+- (T7.11a) **Diff comment choices:** `DocComment.context` / `CommentCreateParams.context`
+  (default `doc`) and a `CommentListParams.context?` filter (protocol v14); replies take their
+  root's context. Code prompt = §12 template with "Fix the code in <file>", "Line numbers are of
+  the current file." (no "Only edit this file": a fix may touch other files) and `code "…"`.
+  Doc and diff threads cannot be sent together (`invalid_request`). `doc.list` ignores diff
+  comments, the Docs view lists only `doc` ones. Open review items: comments on non-Markdown
+  files are never re-anchored / outdated when the code changes (only watched `.md` files are),
+  so their lines can go stale after the agent's fix (SPEC §12B says so; backlog);
+  `Store::create_comment` has 7 args (`allow(clippy::too_many_arguments)`).
 
 ## Done
 

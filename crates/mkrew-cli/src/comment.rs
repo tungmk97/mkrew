@@ -31,6 +31,7 @@ pub fn list(
     let comments: Vec<DocComment> = client.call(Request::CommentList(CommentListParams {
         project_id: project.id,
         file_path,
+        context: None,
     }))?;
     if comments.is_empty() {
         println!("no review comments");
@@ -151,6 +152,7 @@ mod tests {
             id,
             project_id: Ulid::nil(),
             file_path: "docs/plan.md".into(),
+            context: Default::default(),
             parent_id: parent,
             author: author.into(),
             body: body.into(),

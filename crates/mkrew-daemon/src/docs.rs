@@ -6,7 +6,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::path::{Component, Path, PathBuf};
 
 use mkrew_core::review::{self, Anchor, ReviewGlobs};
-use mkrew_protocol::{CommentId, CommentStatus, DocComment, DocFile};
+use mkrew_protocol::{CommentContext, CommentId, CommentStatus, DocComment, DocFile};
 use mkrew_store::SessionEvent;
 use ulid::Ulid;
 
@@ -132,9 +132,12 @@ pub fn doc_files(
             file.last_changed_at = Some(at);
         }
     }
-    let open = comments
-        .iter()
-        .filter(|c| c.parent_id.is_none() && c.status != CommentStatus::Resolved);
+    // Diff comments (SPEC §12B) belong to the Git view.
+    let open = comments.iter().filter(|c| {
+        c.parent_id.is_none()
+            && c.context == CommentContext::Doc
+            && c.status != CommentStatus::Resolved
+    });
     for comment in open {
         if files.contains_key(&comment.file_path) || exist(&comment.file_path) {
             entry(&mut files, &comment.file_path).open_comments += 1;
@@ -195,6 +198,7 @@ mod tests {
             id: CommentId::new(),
             project_id: Ulid::nil(),
             file_path: file.into(),
+            context: Default::default(),
             parent_id: parent,
             author: DocComment::USER.into(),
             body: "b".into(),
@@ -285,7 +289,14 @@ mod tests {
             changed(old, 30, &["gone.md"]),
         ];
         let root = comment("docs/a.md", (1, 1), "x", CommentStatus::Open, None);
+        let diff = |file: &str| DocComment {
+            context: CommentContext::Diff,
+            ..comment(file, (1, 1), "q", CommentStatus::Open, None)
+        };
         let comments = [
+            // Diff comments neither count nor list their file.
+            diff("docs/a.md"),
+            diff("src/lib.rs"),
             root.clone(),
             comment("docs/a.md", (1, 1), "", CommentStatus::Open, Some(root.id)),
             comment("docs/a.md", (2, 2), "y", CommentStatus::Outdated, None),
