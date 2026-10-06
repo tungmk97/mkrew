@@ -27,6 +27,7 @@ use crate::git_view::GitCache;
 use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
+use crate::settings::{self, SettingsHolder};
 use crate::{backup, session_log, undo};
 
 mod comment;
@@ -42,6 +43,7 @@ const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub struct Daemon {
     hub: Arc<Hub>,
     paths: Paths,
+    settings: Arc<SettingsHolder>,
     git: Arc<dyn GitBackend>,
     git_cache: Arc<GitCache>,
     started_at: i64,
@@ -72,6 +74,7 @@ impl Daemon {
     pub fn new(store: Store, paths: Paths) -> Arc<Self> {
         Arc::new(Self {
             hub: Arc::new(Hub::new(store)),
+            settings: Arc::new(SettingsHolder::load(paths.settings_file())),
             paths,
             git: Arc::new(GitCli),
             git_cache: Arc::default(),
@@ -81,11 +84,13 @@ impl Daemon {
         })
     }
 
-    /// Starts daily DB backups, resumes interrupted tasks, auto-starts dev servers, then serves
-    /// `listener` until
-    /// `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
+    /// Watches `settings.toml`, starts daily DB backups, resumes interrupted tasks, auto-starts
+    /// dev servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
     /// OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
+        let _settings_watch = settings::watch(Arc::clone(&self.settings))
+            .inspect_err(|e| tracing::warn!("settings.toml is not watched: {e}"))
+            .ok();
         let notifications = notifier.map(|n| notify::start(Arc::clone(&self.hub), n));
         let backups = backup::start(Arc::clone(&self.hub), self.paths.backups_dir());
         self.resume_tasks();
@@ -388,6 +393,7 @@ impl Daemon {
             pid: std::process::id(),
             started_at: self.started_at,
             sessions: u32::try_from(self.hub.live_count()).unwrap_or(u32::MAX),
+            settings_error: self.settings.error(),
         })
     }
 

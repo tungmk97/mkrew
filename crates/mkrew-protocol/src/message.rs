@@ -912,6 +912,10 @@ pub struct DaemonStatusResult {
     /// Unix ms.
     pub started_at: i64,
     pub sessions: u32,
+    /// Why `settings.toml` could not be loaded (`file:line:col: message`); the daemon keeps
+    /// its last good settings meanwhile (SPEC §20.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

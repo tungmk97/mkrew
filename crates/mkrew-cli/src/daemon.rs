@@ -115,6 +115,9 @@ pub fn status(paths: &Paths) -> anyhow::Result<ExitCode> {
     println!("  version:   {}", status.daemon_version);
     println!("  protocol:  {}", status.protocol_version);
     println!("  sessions:  {}", status.sessions);
+    if let Some(error) = &status.settings_error {
+        println!("  settings:  {error}");
+    }
     println!("  socket:    {}", paths.socket);
     println!("  data dir:  {}", paths.data_dir.display());
     Ok(ExitCode::SUCCESS)

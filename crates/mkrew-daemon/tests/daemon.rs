@@ -390,6 +390,45 @@ fn starting_twice_never_yields_two_daemons() {
 }
 
 #[test]
+fn settings_are_reread_and_errors_reported_in_status() {
+    // No config dir yet: the daemon creates it (seeding profiles) and watches it.
+    let env = Env::new();
+    let file = env.dir.path().join("config").join("settings.toml");
+    let (_daemon, mut client) = env.start();
+    assert_eq!(wait_error(&mut client, false), None);
+    std::fs::write(&file, "[notify]\nsound = \"loud\"\n").unwrap();
+    assert!(wait_error(&mut client, true).is_some());
+    std::fs::write(&file, "[notify]\nsound = false\n").unwrap();
+
+    /// Polls `daemon.status` until `settings_error` is (not) set; returns it.
+    fn wait_error(client: &mut Client, wanted: bool) -> Option<String> {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let status: DaemonStatusResult =
+                client.call(Request::DaemonStatus).into_result().unwrap();
+            if status.settings_error.is_some() == wanted {
+                return status.settings_error;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "settings_error stayed {:?}",
+                status.settings_error
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    assert_eq!(wait_error(&mut client, false), None);
+
+    std::fs::write(&file, "[notify]\nsound = \"loud\"\n").unwrap();
+    let error = wait_error(&mut client, true).unwrap();
+    assert!(error.contains("settings.toml:2:"), "{error}");
+
+    std::fs::write(&file, "[notify]\nsound = true\n").unwrap();
+    assert_eq!(wait_error(&mut client, false), None);
+    client.call(Request::DaemonStop);
+}
+
+#[test]
 fn hello_is_required_and_version_checked() {
     let env = Env::new();
     let (_daemon, mut client) = env.start();

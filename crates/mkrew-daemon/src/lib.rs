@@ -17,6 +17,7 @@ mod notify;
 mod server;
 mod session;
 mod session_log;
+mod settings;
 pub mod spawn;
 mod undo;
 mod watch;

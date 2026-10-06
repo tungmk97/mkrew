@@ -11,7 +11,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 ## Current milestone: M9 — Attention (SPEC §18, §20.0, §20A)
 
 ### Acceptance criteria
-- [ ] `settings.toml` (§20.0): defaults when missing, parse errors reported in `daemon.status` with the last good settings kept, re-read after the file changes; unit tests.
+- [x] `settings.toml` (§20.0): defaults when missing, parse errors reported in `daemon.status` with the last good settings kept, re-read after the file changes; unit tests.
 - [ ] `session.read` returns the last screen lines; the peek popover shows them for an Inbox or sidebar row, and its quick reply answers a fake agent's "(y/n)" without leaving the view (e2e for the request + manual check for the popover).
 - [ ] Turns start and end as §20A.3 defines; a fake agent that edits 2 files in one turn produces `session.turn` with both paths (+/− counts arrive in M11); Inbox row and pane header show the summary.
 - [ ] `notify.needs_input` / `notify.done` / `notify.sound` switches are respected (unit tests on the decision; manual check for the sound).
@@ -21,7 +21,7 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ### Task queue
 - [x] T9.1 `mkrew_core::settings`: `Settings` struct with every §20.0 key + defaults, `deny_unknown_fields`, `Paths::settings_file()`, `load(path)` (missing file = defaults); unit tests (missing, partial, unknown key, bad type); covers: settings defaults/parse errors. (spec: §20.0, §17) — feat(core): settings.toml model and loader
-- [ ] T9.2 Daemon settings holder: load at start, watch the config dir (debounced 300 ms) and re-read, keep last good on error, `daemon.status.settings_error?`; protocol field + test that edits the file (good → bad → good); covers: settings re-read + status error. (spec: §20.0, §7, §8)
+- [x] T9.2 Daemon settings holder: load at start, watch the config dir (debounced 300 ms) and re-read, keep last good on error, `daemon.status.settings_error?`; protocol field + test that edits the file (good → bad → good); covers: settings re-read + status error. (spec: §20.0, §7, §8) — feat(daemon): watch settings.toml and report errors in daemon.status
 - [ ] T9.3 `session.read` request (protocol + daemon: last N non-blank emulator rows as plain text, `state`, `state_changed_at`, 1–200 range, `invalid_state` for non-live sessions); e2e with fake agent `ask` scenario reading the "(y/n)" line, then `session.send y`; covers: session.read e2e. (spec: §20A.1, §20A protocol, §7)
 - [ ] T9.4 `mkrew_core::turn` pure model (start/end/resume rules, numbering) with unit tests on state sequences; fakeagent `edit_files { paths }` step (writes files + PostToolUse hooks). (spec: §20.0 Turn, §20A.3, §20F)
 - [ ] T9.5 Daemon turn tracking: actor owns a turn per session, collects attributed paths (hook edits + watcher batches, dedup, relative), broadcasts event `session.turn`; e2e: fake agent edits 2 files in one turn → event with both paths; covers: session.turn event. (spec: §20A.3, §7, §8)
@@ -45,10 +45,10 @@ milestone first.
 
 ## Notes for the next session
 
-- Settings: `mkrew_core::settings::{load, parse, Settings, SettingsError}` (`Settings: Clone + Eq`; `SettingsError` displays `file:line:col: msg`). T9.2 keeps the last good value when `load` errs.
+- Settings: daemon `crate::settings::SettingsHolder` (`Daemon.settings: Arc<_>`; `current()` = last good, `error()`). T9.6/T9.7 pass the Arc to notify/awake and drop the `allow(dead_code)` on `current`. PROTOCOL_VERSION is 17 for M9 (no further bump needed this milestone).
 
 - Measurements: `crates/mkrew-ui/tests/measure.rs` (`#[ignore]`, real window; first `cargo build --release -p mkrew-ui --example idle_floor`, then `cargo test --release -p mkrew-ui --test measure -- --ignored --nocapture`); results in ADR 0009.
 - Headless sessions here can't run new scripts directly (approval); run them through a temporary `cargo test` if needed.
 - Gotcha: `match self.store().x() { … self.store() … }` deadlocks (the guard lives through the arms).
-- Stray locked exes `target/debug/mkrew-daemon.locked-t81.exe`, `mkrew-fakeagent.locked-t711.exe` can be deleted when unlocked.
+- Stray locked exes `target/debug/mkrew-daemon.locked-t81.exe`, `mkrew-fakeagent.locked-t711.exe`, `mkrew-fakeagent.locked-t92.exe` can be deleted when unlocked. A build failing with "Access is denied" on an exe: `mv` it aside like these.
 - Per-task notes of every milestone are in git history (`git log -p docs/PROGRESS.md`).
