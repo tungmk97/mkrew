@@ -12,23 +12,24 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
-    AgentProfilesResult, ClientKind, CommentContext, CommentCreateParams, CommentId,
-    CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
-    CommitDetail, DaemonStatusResult, DevServer, DevStartParams, DocChangedEvent, DocComment,
-    DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame,
-    FrameDecoder, FsContent, FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams,
-    GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
-    GitLogParams, GitMarker, GitMode, GitSetBaseParams, GitShowParams, GitStageParams, GitStatus,
-    GitStatusParams, HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome,
-    PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend,
-    Request, ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent,
-    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent,
-    SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams,
-    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
-    SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams, TabListParams,
-    TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams,
-    TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus,
-    TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview, encode,
+    AgentProfilesResult, AttachmentSaveParams, AttachmentSaveResult, ClientKind, CommentContext,
+    CommentCreateParams, CommentId, CommentListParams, CommentRef, CommentReplyParams,
+    CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult, DevServer,
+    DevStartParams, DocChangedEvent, DocComment, DocContent, DocFile, DocListParams, DocReadParams,
+    ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent, FsEntry, FsFindParams,
+    FsListParams, FsMatch, FsReadParams, GitChangedEvent, GitCommitParams, GitCommitResult,
+    GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitSetBaseParams,
+    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult,
+    HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
+    ProjectRef, ProjectUpdateParams, QueuedSend, Request, ResponseError, ScreenSnapshot, Session,
+    SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind,
+    SessionListParams, SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef,
+    SessionResizeParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams, SessionWaitResult,
+    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
+    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
+    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
+    encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -787,6 +788,52 @@ fn fake_agent_session_reaches_needs_input_and_is_killed() {
 
     let log = session_log(&env, id);
     assert!(log.contains("Do you want to proceed? (y/n)"), "{log}");
+    client.stop();
+}
+
+fn save_attachment(session_id: Ulid, ext: &str, data: Vec<u8>) -> Request {
+    Request::AttachmentSave(AttachmentSaveParams {
+        session_id,
+        ext: ext.into(),
+        data,
+    })
+}
+
+/// A pasted image lands in the session's attachments dir; bad params are rejected
+/// (SPEC §20B.5).
+#[test]
+fn attachments_are_saved_per_session_and_bad_ones_rejected() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+
+    let image = vec![0x89, b'P', b'N', b'G', 0, 1, 2];
+    let saved: AttachmentSaveResult = client
+        .call(save_attachment(id, "png", image.clone()))
+        .into_result()
+        .unwrap();
+    let path = PathBuf::from(&saved.path);
+    let dir = env.data_dir().join("attachments").join(id.to_string());
+    assert_eq!(path.parent().unwrap(), dir);
+    assert_eq!(path.extension().unwrap(), "png");
+    assert_eq!(std::fs::read(&path).unwrap(), image);
+
+    let too_big = vec![0; 10 * 1024 * 1024 + 1];
+    for request in [
+        save_attachment(id, "exe", vec![1]),
+        save_attachment(id, "png", Vec::new()),
+        save_attachment(id, "png", too_big),
+    ] {
+        assert_eq!(error_code(client.call(request)), ErrorCode::InvalidRequest);
+    }
+    assert_eq!(
+        error_code(client.call(save_attachment(Ulid::new(), "png", vec![1]))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(dir.read_dir().unwrap().count(), 1);
     client.stop();
 }
 

@@ -185,6 +185,9 @@ pub enum Request {
     /// Returns `FsMatch[]`, best first.
     #[serde(rename = "fs.find")]
     FsFind(FsFindParams),
+    /// Returns [`AttachmentSaveResult`] (SPEC §20B.5).
+    #[serde(rename = "attachment.save")]
+    AttachmentSave(AttachmentSaveParams),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -847,6 +850,23 @@ pub struct SessionUnqueueParams {
     pub send_id: Ulid,
 }
 
+/// `attachment.save`: an image pasted into an agent pane (SPEC §20B.5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentSaveParams {
+    pub session_id: Ulid,
+    /// `png`, `jpg`, `gif` or `webp`.
+    pub ext: String,
+    /// The file content (≤ 10 MiB), base64 on the wire.
+    #[serde(with = "base64_bytes")]
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentSaveResult {
+    /// Absolute path of the saved file.
+    pub path: String,
+}
+
 /// Event `session.queue`: the texts still waiting, in delivery order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionQueueEvent {
@@ -1380,6 +1400,11 @@ mod tests {
             Request::SessionUnqueue(SessionUnqueueParams {
                 session_id: sid(),
                 send_id: sid(),
+            }),
+            Request::AttachmentSave(AttachmentSaveParams {
+                session_id: sid(),
+                ext: "png".into(),
+                data: vec![0x89, b'P', b'N', b'G'],
             }),
             Request::SessionWait(SessionWaitParams {
                 session_id: sid(),

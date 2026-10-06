@@ -15,6 +15,7 @@ use mkrew_store::Store;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
+use crate::attachment;
 use crate::session::Hub;
 
 pub const KEEP: usize = 7;
@@ -22,23 +23,43 @@ pub const EVERY: Duration = Duration::from_secs(60 * 60);
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
-/// Checks for today's backup now and then every [`EVERY`]; runs until aborted.
-pub fn start(hub: Arc<Hub>, dir: PathBuf) -> JoinHandle<()> {
+/// Checks for today's backup now and then every [`EVERY`]; each check also deletes old
+/// attachments in `attachments` ([`attachment::cleanup`], SPEC §20B.5). Runs until aborted.
+pub fn start(hub: Arc<Hub>, dir: PathBuf, attachments: PathBuf) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticks = tokio::time::interval(EVERY);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
-            let (hub, dir) = (Arc::clone(&hub), dir.clone());
+            let (hub, dir, attachments) = (Arc::clone(&hub), dir.clone(), attachments.clone());
             let done = tokio::task::spawn_blocking(move || {
-                run(&hub.store(), &dir, crate::server::now_ms())
+                let now = crate::server::now_ms();
+                let backed_up = run(&hub.store(), &dir, now);
+                let cleaned = attachment::cleanup(&attachments, now, |id| {
+                    hub.store().get_session(id).ok().and_then(|s| s.ended_at)
+                });
+                (backed_up, cleaned)
             })
             .await;
-            match done {
-                Ok(Ok(Some(path))) => tracing::info!(path = %path.display(), "database backed up"),
-                Ok(Ok(None)) => {}
-                Ok(Err(e)) => tracing::warn!("database backup failed: {e:#}"),
-                Err(e) => tracing::warn!("database backup task failed: {e}"),
+            let (backed_up, cleaned) = match done {
+                Ok(done) => done,
+                Err(e) => {
+                    tracing::warn!("database backup task failed: {e}");
+                    continue;
+                }
+            };
+            match backed_up {
+                Ok(Some(path)) => tracing::info!(path = %path.display(), "database backed up"),
+                Ok(None) => {}
+                Err(e) => tracing::warn!("database backup failed: {e:#}"),
+            }
+            match cleaned {
+                Ok(removed) => {
+                    for path in removed {
+                        tracing::info!(path = %path.display(), "old attachments deleted");
+                    }
+                }
+                Err(e) => tracing::warn!("attachment cleanup failed: {e}"),
             }
         }
     })

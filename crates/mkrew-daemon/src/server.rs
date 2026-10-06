@@ -30,6 +30,7 @@ use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
 use crate::{awake, backup, session_log, undo};
 
+mod attachment;
 mod comment;
 mod dev;
 mod doc;
@@ -98,7 +99,11 @@ impl Daemon {
             Arc::clone(&self.settings),
             awake::os::inhibitor(),
         );
-        let backups = backup::start(Arc::clone(&self.hub), self.paths.backups_dir());
+        let backups = backup::start(
+            Arc::clone(&self.hub),
+            self.paths.backups_dir(),
+            self.paths.attachments_dir(),
+        );
         self.resume_tasks();
         self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
@@ -362,6 +367,9 @@ impl Daemon {
             Request::FsList(params) => (self.fs_list(params).await, After::Continue),
             Request::FsRead(params) => (self.fs_read(params).await, After::Continue),
             Request::FsFind(params) => (self.fs_find(params).await, After::Continue),
+            Request::AttachmentSave(params) => {
+                (self.attachment_save(params).await, After::Continue)
+            }
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

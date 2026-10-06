@@ -4,6 +4,7 @@
 //! clients and tests resolve the endpoint exactly like the daemon does.
 
 mod attach;
+mod attachment;
 mod awake;
 mod backup;
 mod docs;

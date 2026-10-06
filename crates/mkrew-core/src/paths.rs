@@ -76,6 +76,11 @@ impl Paths {
         self.data_dir.join("backups")
     }
 
+    /// Pasted images, one dir per session (SPEC §20B.5).
+    pub fn attachments_dir(&self) -> PathBuf {
+        self.data_dir.join("attachments")
+    }
+
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")
     }
@@ -147,6 +152,10 @@ mod tests {
             Path::new("/tmp/c").join("settings.toml")
         );
         assert_eq!(paths.prompts_dir(), Path::new("/tmp/c").join("prompts"));
+        assert_eq!(
+            paths.attachments_dir(),
+            Path::new("/tmp/d").join("attachments")
+        );
     }
 
     #[test]
