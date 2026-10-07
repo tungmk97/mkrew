@@ -11,6 +11,8 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::fanout::Pick;
+
 /// What the dialog does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -105,6 +107,8 @@ pub struct WorktreeDialog {
     pub busy: bool,
     /// Why the last request failed.
     pub error: Option<String>,
+    /// The merge is a fan-out "Pick" (SPEC §20E.2).
+    pub pick: Option<Pick>,
 }
 
 impl WorktreeDialog {
@@ -120,7 +124,23 @@ impl WorktreeDialog {
             step: Step::Loading,
             busy: false,
             error: None,
+            pick: None,
         })
+    }
+
+    /// "Pick" in the Compare view: the Merge back dialog of the picked child.
+    pub fn for_pick(task: &Task, pick: Pick) -> Option<Self> {
+        let mut dialog = Self::new(Kind::Merge, task)?;
+        dialog.pick = Some(pick);
+        Some(dialog)
+    }
+
+    /// The Pick's original, once the pick merged: it moves to Review.
+    pub fn picked_original(&self) -> Option<Ulid> {
+        match (&self.step, &self.pick) {
+            (Step::Done(Done::Merged { .. }), Some(pick)) => Some(pick.original_id),
+            _ => None,
+        }
     }
 
     pub fn heading(&self) -> &'static str {
@@ -592,6 +612,31 @@ mod tests {
         });
         assert!(!dialog.ask_discard());
         assert!(dialog.intro().contains("unstage"));
+    }
+
+    #[test]
+    fn a_pick_moves_its_original_only_once_merged() {
+        let pick = Pick {
+            original_id: Ulid(2),
+            original_title: "Fix login".into(),
+            others: vec![],
+            removing: false,
+        };
+        let mut dialog = WorktreeDialog::for_pick(&task(true), pick).unwrap();
+        assert_eq!(dialog.kind, Kind::Merge);
+        assert_eq!(dialog.picked_original(), None);
+        dialog.merged(TaskMergeResult {
+            merged: false,
+            conflicts: vec!["a.rs".into()],
+        });
+        assert_eq!(dialog.picked_original(), None, "a conflict moves nothing");
+        dialog.merged(TaskMergeResult {
+            merged: true,
+            conflicts: vec![],
+        });
+        assert_eq!(dialog.picked_original(), Some(Ulid(2)));
+        let plain = WorktreeDialog::new(Kind::Merge, &task(true)).unwrap();
+        assert_eq!(plain.pick, None);
     }
 
     #[test]

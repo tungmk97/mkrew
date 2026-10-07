@@ -121,6 +121,9 @@ pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
 pub const UNDO_FILES_HEIGHT: f32 = 120.0;
 pub const UNDO_DIFF_HEIGHT: f32 = 280.0;
 
+/// Width of the fan-out "Compare" dialog: up to five child columns side by side (§20E.2).
+pub const COMPARE_DIALOG_WIDTH: f32 = 880.0;
+
 /// Width of the "Turns" dialog, and the height its list scrolls past (~8 turns).
 pub const TURNS_DIALOG_WIDTH: f32 = 560.0;
 pub const TURNS_LIST_HEIGHT: f32 = 400.0;

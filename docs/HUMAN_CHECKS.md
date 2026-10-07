@@ -657,6 +657,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T13.8b) **Compare and Pick:** "Compare" is an always-visible button on a group card once every
+  child is in Review (accent when selected). The modal shows one column per child: agent, branch,
+  run time, files changed and +/− since the child's checkpoint (`git.status` base mode on its
+  worktree; binary files count as a file with no lines), "Git view" (= the card's Changes) and
+  "Pick". It is read once when opened (not live). Pick opens the normal Merge back dialog for that
+  child; only a successful merge moves the original to the end of Review (a conflict moves
+  nothing). The merged dialog then offers "Remove the other N worktrees" (one confirmed click, no
+  second step): each other child with a worktree gets `task.remove_worktree`; a child whose
+  terminal still runs is skipped with "Close its terminal first", a dirty worktree reports the
+  daemon's refusal; unmerged branches are kept (`branch -d`). The children stay in Review.
 - (T13.8a) **"Run with several agents…" UI:** no "…" card menu yet, so it is a hover-shown
   "Several agents…" button next to "Run with…" on Todo / Review cards (not on fan-out children,
   not on an original that already fanned out), plus the palette entry "Agent: Run selected task

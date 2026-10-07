@@ -1,0 +1,11 @@
+---
+source: crates/mkrew-ui/src/fanout.rs
+expression: "format!(\"{}\\n---\\n{}\", shown_before_codex.join(\"\\n\"), shown.join(\"\\n\"))"
+---
+3 files · +42 −12
+Loading…
+No run to compare
+---
+Claude Code | ⎇ mkrew/fix-login-4 | 3 files · +42 −12 | 2m
+Codex | ⎇ mkrew/fix-login-5 | Cannot read its changes: no such worktree | -
+omp | ⎇ mkrew/fix-login-6 | No run to compare | -

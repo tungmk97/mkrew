@@ -145,6 +145,17 @@ impl Card {
             .filter(|&agent| agent != DEFAULT_AGENT_LABEL && self.children.is_empty())
     }
 
+    /// Whether the group card offers "Compare" (SPEC §20E.2): every child is in Review and
+    /// none was picked yet (a Pick moves the original out of Running).
+    pub fn can_compare(&self) -> bool {
+        matches!(self.status, TaskStatus::Running | TaskStatus::NeedsInput)
+            && !self.children.is_empty()
+            && self
+                .children
+                .iter()
+                .all(|child| child.status == TaskStatus::Review)
+    }
+
     /// Whether the card offers "Undo task": a finished (Review / Done) run with a checkpoint.
     pub fn can_undo(&self) -> bool {
         self.checkpoint && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
@@ -201,7 +212,7 @@ impl Card {
 
 /// Where a run's clock stops: at exit, or when the agent finished its turn (a `done` agent
 /// still waits at its prompt), else it still runs.
-fn run_end(session: &Session, now_ms: i64) -> i64 {
+pub(crate) fn run_end(session: &Session, now_ms: i64) -> i64 {
     match (session.ended_at, session.state) {
         (Some(ended_at), _) => ended_at,
         (None, SessionState::Done) => session.state_changed_at,
@@ -1007,6 +1018,35 @@ mod tests {
         assert_eq!(child_card.fanout_of, Some(original.id));
         assert!(child_card.can_run_with() && !child_card.can_fan_out());
         assert!(!board.can_fan_out(child.id, &[]) && board.can_run_with(child.id, &[]));
+    }
+
+    #[test]
+    fn compare_shows_on_a_running_group_card_once_every_child_is_in_review() {
+        let api = Ulid::new();
+        let mut original = task(api, "Fix", TaskStatus::Running, 1.0);
+        let mut first = task(api, "Fix · Claude", TaskStatus::Review, 2.0);
+        first.fanout_of = Some(original.id);
+        let mut second = task(api, "Fix · Codex", TaskStatus::Running, 3.0);
+        second.fanout_of = Some(original.id);
+        let mut board = Board::default();
+        board.load(vec![original.clone(), first, second.clone()]);
+        let original_id = original.id;
+        let group = |board: &Board, column: usize| {
+            board.columns(api, None, &[])[column]
+                .cards
+                .iter()
+                .find(|card| card.task_id == original_id)
+                .cloned()
+                .unwrap()
+        };
+        assert!(!group(&board, 1).can_compare(), "Codex still runs");
+        second.status = TaskStatus::Review;
+        board.apply(&Event::TaskUpdated(second));
+        assert!(group(&board, 1).can_compare());
+        // Picked: the original moved to Review.
+        original.status = TaskStatus::Review;
+        board.apply(&Event::TaskUpdated(original));
+        assert!(!group(&board, 3).can_compare());
     }
 
     #[test]

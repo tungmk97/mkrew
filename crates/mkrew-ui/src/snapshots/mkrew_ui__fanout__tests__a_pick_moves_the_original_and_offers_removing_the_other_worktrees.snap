@@ -1,0 +1,15 @@
+---
+source: crates/mkrew-ui/src/fanout.rs
+expression: "[offered, before.join(\"\\n\"), in_flight.join(\"\\n\"),\npick.lines().join(\"\\n\")].join(\"\\n---\\n\")"
+---
+Remove the other 2 worktrees
+---
+“Fix login” moves to Review.
+---
+“Fix login” moves to Review.
+… Claude Code — removing…
+✕ omp — not removed: Close its terminal first.
+---
+“Fix login” moves to Review.
+✓ Claude Code — worktree removed, unmerged branch kept
+✕ omp — not removed: Close its terminal first.

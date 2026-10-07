@@ -24,12 +24,12 @@ use mkrew_protocol::{
     Commit, CommitDetail, DevServer, DevStartParams, DiffLineKind, DocComment, DocContent, DocFile,
     DocListParams, DocReadParams, Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch,
     FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project,
-    ProjectAddParams, ProjectRef, Request, Session, SessionAttachResult, SessionFiles,
-    SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionReadParams,
-    SessionReadResult, SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult,
-    SessionState, SessionTurnEvent, SessionUnqueueParams, StateSource, TabCreateParams,
-    TabListParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams,
-    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
+    ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request, Session, SessionAttachResult,
+    SessionFiles, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
+    SessionReadParams, SessionReadResult, SessionRef, SessionSendParams, SessionSendResult,
+    SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams, StateSource,
+    TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
+    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -41,7 +41,7 @@ use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::dev_server::{self, DevDialog};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
-use mkrew_ui::fanout::{self, FanOutPicker};
+use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
@@ -276,6 +276,8 @@ struct Shell {
     undo_dialog: Option<UndoDialog>,
     /// The open "Merge back…" / "Remove worktree…" of a card (modal, SPEC §20E.1).
     worktree_dialog: Option<WorktreeDialog>,
+    /// The open "Compare" of a group card (modal, SPEC §20E.2).
+    compare: Option<Compare>,
     /// The open "Turns…" of an agent pane (modal).
     turns_dialog: Option<TurnsDialog>,
     /// The Turns dialog a "Restore before turn n" left; cancelling the restore goes back to it.
@@ -456,6 +458,7 @@ impl Shell {
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
                 shell.worktree_dialog = None;
+                shell.compare = None;
                 shell.turns_dialog = None;
                 shell.turns_return = None;
                 shell.git_discard = None;
@@ -551,6 +554,7 @@ impl Shell {
             task_dialog: None,
             undo_dialog: None,
             worktree_dialog: None,
+            compare: None,
             turns_dialog: None,
             turns_return: None,
             follow: Follow::default(),
@@ -2977,6 +2981,7 @@ impl Shell {
         self.task_dialog.is_some()
             || self.undo_dialog.is_some()
             || self.worktree_dialog.is_some()
+            || self.compare.is_some()
             || self.turns_dialog.is_some()
             || self.git_discard.is_some()
             || self.git_base.is_some()
@@ -3870,13 +3875,143 @@ impl Shell {
         else {
             return;
         };
+        self.show_worktree_dialog(dialog, window, cx);
+    }
+
+    fn show_worktree_dialog(
+        &mut self,
+        dialog: WorktreeDialog,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.workspace_menu = None;
         self.task_dialog = None;
         self.undo_dialog = None;
+        self.compare = None;
         self.worktree_dialog = Some(dialog);
         self.dialog_serial += 1;
         window.focus(&self.dialog_focus, cx);
         self.load_worktree_dialog(window, cx);
+    }
+
+    /// "Compare" on a group card whose children are all in Review (SPEC §20E.2): the modal
+    /// with one column per child, each reading its changes since its checkpoint.
+    fn open_compare(&mut self, original_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(compare) = self.board.task(original_id).and_then(|original| {
+            Compare::new(original, self.board.tasks(), self.sidebar.sessions())
+        }) else {
+            return;
+        };
+        let requests = compare.status_requests();
+        self.workspace_menu = None;
+        self.task_dialog = None;
+        self.undo_dialog = None;
+        self.worktree_dialog = None;
+        self.compare = Some(compare);
+        self.dialog_serial += 1;
+        let serial = self.dialog_serial;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+        for (task_id, request) in requests {
+            let status = connection.call::<GitStatus>(request);
+            cx.spawn_in(window, async move |this, cx| {
+                let status = status.await.map_err(|error| format!("{error:#}"));
+                let _ = this.update(cx, |shell, cx| {
+                    if let Some(compare) = shell.compare.as_mut()
+                        && shell.dialog_serial == serial
+                    {
+                        compare.counted(task_id, status);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
+    fn close_compare(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.compare = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    fn compare_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        if undo_dialog::cancels(&event.keystroke) {
+            self.close_compare(window, cx);
+        }
+    }
+
+    /// "Git view" of a Compare column: the child's changes since its checkpoint, on its
+    /// worktree (as the card's "Changes").
+    fn compare_git(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.compare = None;
+        self.view_task_changes(task_id, window, cx);
+    }
+
+    /// "Pick" of a Compare column: the Merge back dialog of that child, which then moves the
+    /// original to Review and offers removing the others' worktrees.
+    fn compare_pick(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(pick) = self
+            .compare
+            .as_ref()
+            .and_then(|compare| compare.pick(task_id))
+        else {
+            return;
+        };
+        let Some(dialog) = self
+            .board
+            .task(task_id)
+            .and_then(|task| WorktreeDialog::for_pick(task, pick))
+        else {
+            return;
+        };
+        self.show_worktree_dialog(dialog, window, cx);
+    }
+
+    /// The Pick's offer: `task.remove_worktree` of every other child; each answer is listed.
+    fn remove_other_worktrees(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let sessions = self.sidebar.sessions();
+        let Some(pick) = self
+            .worktree_dialog
+            .as_mut()
+            .and_then(|dialog| dialog.pick.as_mut())
+        else {
+            return;
+        };
+        let requests = pick.start_removal(sessions);
+        cx.notify();
+        for (task_id, request) in requests {
+            let sent = connection.call::<RemoveWorktreeResult>(request);
+            cx.spawn_in(window, async move |this, cx| {
+                let result = sent.await.map_err(|error| format!("{error:#}"));
+                let _ = this.update(cx, |shell, cx| {
+                    if let Err(error) = &result {
+                        tracing::warn!(%task_id, "task.remove_worktree failed: {error}");
+                    }
+                    if let Some(pick) = shell
+                        .open_worktree(serial)
+                        .and_then(|dialog| dialog.pick.as_mut())
+                    {
+                        pick.removed(task_id, result);
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     /// (Re)reads the open worktree dialog's plan: the worktree's status (and, to merge, the
@@ -4006,6 +4141,16 @@ impl Shell {
                         true
                     }
                 };
+                // A merged Pick: the fan-out original moves to Review (SPEC §20E.2).
+                if let Some(original) = dialog.picked_original().filter(|&id| {
+                    shell
+                        .board
+                        .task(id)
+                        .is_some_and(|task| task.status != TaskStatus::Review)
+                }) {
+                    let moves = shell.board.drop_moves(original, TaskStatus::Review, None);
+                    shell.move_cards(original, moves, "Cannot move the task", window, cx);
+                }
                 if reload {
                     shell.load_worktree_dialog(window, cx);
                 }
@@ -9635,6 +9780,16 @@ impl Shell {
                 format!("Conflicting files ({})", conflicts.len()),
                 paths(conflicts),
             )),
+            // A merged Pick: the original's move, then how removing the others went.
+            Step::Done(Done::Merged { .. }) => dialog.pick.as_ref().map(|pick| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .children(pick.lines().into_iter().map(|line| div().child(line)))
+            }),
             Step::Done(_) => None,
         };
         let confirm = dialog.confirm_request(self.sidebar.sessions());
@@ -9676,7 +9831,28 @@ impl Shell {
         let mut buttons: Vec<gpui::AnyElement> = Vec::new();
         buttons.extend(git_button.map(IntoElement::into_any_element));
         match &dialog.step {
-            Step::Done(_) => buttons.push(cancel("worktree-close", "Close").into_any_element()),
+            Step::Done(done) => {
+                let offer = dialog
+                    .pick
+                    .as_ref()
+                    .filter(|_| matches!(done, Done::Merged { .. }))
+                    .and_then(|pick| pick.offer());
+                if let Some(offer) = offer {
+                    buttons.push(
+                        danger_button("worktree-remove-others", offer, theme)
+                            .tooltip(tooltip(
+                                theme,
+                                "Delete the other agents' worktree folders (unmerged branches are kept)",
+                                "",
+                            ))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.remove_other_worktrees(window, cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                buttons.push(cancel("worktree-close", "Close").into_any_element());
+            }
             Step::ConfirmDiscard(_) => {
                 buttons.push(
                     button("worktree-keep", "Keep files", theme, false)
@@ -9798,6 +9974,162 @@ impl Shell {
                     .children(buttons),
             );
         Self::modal_shade("worktree-dialog-shade", panel, cx)
+    }
+
+    /// "Compare" of a group card (SPEC §20E.2): one column per child with its changes since
+    /// its checkpoint, run time, its Git view and "Pick".
+    fn render_compare(
+        &self,
+        compare: &Compare,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let meta = |text: String| {
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let columns = compare.columns.iter().map(|column| {
+            let task_id = column.task_id;
+            let git = if column.checkpoint.is_some() && column.has_worktree {
+                quiet_button("compare-git", "Git view", theme, theme.border)
+                    .tooltip(tooltip(
+                        theme,
+                        "Its changes in the Git view, on its worktree",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.compare_git(task_id, window, cx);
+                    }))
+            } else {
+                let why = if column.has_worktree {
+                    "No run to compare"
+                } else {
+                    "Its worktree was removed"
+                };
+                disabled_button("compare-git", "Git view", theme, false)
+                    .tooltip(tooltip(theme, why, ""))
+            };
+            // Quiet: up to five columns would otherwise show five accent buttons.
+            let pick = if column.has_worktree {
+                quiet_button("compare-pick", "Pick", theme, theme.border)
+                    .tooltip(tooltip(
+                        theme,
+                        "Merge this result back into your checkout",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.compare_pick(task_id, window, cx);
+                    }))
+            } else {
+                disabled_button("compare-pick", "Pick", theme, false).tooltip(tooltip(
+                    theme,
+                    "Its worktree was removed: nothing to merge",
+                    "",
+                ))
+            };
+            let changes_color = match column.changes {
+                fanout::Changes::Counted { .. } => theme.text,
+                _ => theme.text_muted,
+            };
+            let failed = matches!(column.changes, fanout::Changes::Failed(_));
+            div()
+                .id(SharedString::from(format!("compare-{task_id}")))
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .p(px(space::M))
+                .rounded(px(radius::MEDIUM))
+                .bg(rgb(theme.surface_raised))
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_size(px(font_size::BODY))
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text))
+                        .child(column.agent.clone()),
+                )
+                .children(column.branch.clone().map(meta))
+                .child(meta(match column.run_time(now) {
+                    Some(time) => format!("Ran {time}"),
+                    None => "Did not run".into(),
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(space::XS))
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(changes_color))
+                        .when(failed, |el| {
+                            el.child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                        })
+                        .child(column.changes.text()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap(px(space::S))
+                        .pt(px(space::S))
+                        .child(git)
+                        .child(pick),
+                )
+        });
+        let panel = div()
+            .id("compare-dialog")
+            .w(px(theme::COMPARE_DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::compare_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Compare agents"),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(format!(
+                        "“{}”: changes since each run started. Pick one to merge it back into \
+                         your checkout.",
+                        compare.title
+                    )),
+            )
+            .child(div().flex().gap(px(space::M)).children(columns))
+            .child(
+                div().flex().justify_end().pt(px(space::S)).child(
+                    button("compare-close", "Close", theme, false)
+                        .tooltip(tooltip(theme, "Close", "Esc"))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.close_compare(window, cx);
+                        })),
+                ),
+            );
+        Self::modal_shade("compare-dialog-shade", panel, cx)
     }
 
     /// "Turns": the session's turns, newest first, each with "Restore before" (disabled, with
@@ -12268,7 +12600,7 @@ fn detach(connection: &Connection, session_id: Ulid, cx: &mut Context<'_, Shell>
 
 /// The shared frame of [`button`], [`quiet_button`] and [`danger_button`]: no colors, no hover
 /// (gpui allows one `hover` per element).
-fn button_frame(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+fn button_frame(id: &'static str, label: impl Into<SharedString>) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
@@ -12279,13 +12611,13 @@ fn button_frame(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::D
         .rounded(px(radius::SMALL))
         .cursor_pointer()
         .text_size(px(font_size::BODY))
-        .child(label)
+        .child(label.into())
 }
 
 /// A small text button: primary (accent) or quiet (hover shows a surface).
 fn button(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     theme: &Theme,
     primary: bool,
 ) -> gpui::Stateful<gpui::Div> {
@@ -12303,7 +12635,7 @@ fn button(
 /// A quiet [`button`] whose hover shows `hover` (e.g. one step above a raised card).
 fn quiet_button(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     theme: &Theme,
     hover: u32,
 ) -> gpui::Stateful<gpui::Div> {
@@ -12341,7 +12673,7 @@ fn disabled_button(
 /// it never reads as the accent's safe default.
 fn danger_button(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let text = theme.text;
@@ -13662,6 +13994,7 @@ fn task_card(
     let can_undo = card.can_undo();
     let can_view_changes = card.can_view_changes();
     let manages_worktree = card.manages_worktree();
+    let can_compare = card.can_compare();
     let can_run_with = card.can_run_with() && !cards.starting.contains(&card.task_id);
     let can_fan_out = card.can_fan_out() && !cards.starting.contains(&card.task_id);
     let current_agent = card.agent_profile().map(str::to_owned);
@@ -13840,96 +14173,119 @@ fn task_card(
         .when_some(follow_up_session, |el, session_id| {
             el.child(follow_up_field(task_id, session_id, cards, theme, cx))
         })
-        .when(action.is_some() || can_undo || manages_worktree, |el| {
-            // Secondary: shown on hover, left of the column's action (SPEC §14).
-            let undo = can_undo.then(|| {
-                quiet_button("card-undo", "Undo", theme, edit_hover)
-                    .opacity(opacity::HIDDEN)
-                    .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
-                    .tooltip(tooltip(
-                        theme,
-                        "Undo task: review and discard its changes",
-                        "",
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.selected_card = Some(task_id);
-                        shell.open_undo_dialog(task_id, window, cx);
-                    }))
-            });
-            let changes = can_view_changes.then(|| {
-                quiet_button("card-changes", "Changes", theme, edit_hover)
-                    .opacity(opacity::HIDDEN)
-                    .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
-                    .tooltip(tooltip(
-                        theme,
-                        "View changes: the task's diff since its run started",
-                        "",
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.selected_card = Some(task_id);
-                        shell.view_task_changes(task_id, window, cx);
-                    }))
-            });
-            // The worktree's two actions (SPEC §20E.1), hover-shown like Undo.
-            let worktree_actions = manages_worktree.then(|| {
-                [
-                    (
-                        "card-merge",
-                        "Merge back…",
-                        "Merge back: merge the task's branch into your checkout",
-                        worktree_dialog::Kind::Merge,
-                    ),
-                    (
-                        "card-remove-worktree",
-                        "Remove worktree…",
-                        "Remove worktree: delete its folder (an unmerged branch is kept)",
-                        worktree_dialog::Kind::Remove,
-                    ),
-                ]
-                .map(|(id, text, tip, kind)| {
-                    quiet_button(id, text, theme, edit_hover)
+        .when(
+            action.is_some() || can_undo || manages_worktree || can_compare,
+            |el| {
+                // Secondary: shown on hover, left of the column's action (SPEC §14).
+                let undo = can_undo.then(|| {
+                    quiet_button("card-undo", "Undo", theme, edit_hover)
                         .opacity(opacity::HIDDEN)
                         .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
-                        .tooltip(tooltip(theme, tip, ""))
+                        .tooltip(tooltip(
+                            theme,
+                            "Undo task: review and discard its changes",
+                            "",
+                        ))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             cx.stop_propagation();
                             shell.selected_card = Some(task_id);
-                            shell.open_worktree_dialog(kind, task_id, window, cx);
+                            shell.open_undo_dialog(task_id, window, cx);
                         }))
-                })
-            });
-            let run_with = can_run_with.then(|| {
-                run_with_button(
-                    task_id,
-                    current_agent.as_deref(),
-                    group.clone(),
-                    cards,
-                    theme,
-                    cx,
+                });
+                let changes = can_view_changes.then(|| {
+                    quiet_button("card-changes", "Changes", theme, edit_hover)
+                        .opacity(opacity::HIDDEN)
+                        .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                        .tooltip(tooltip(
+                            theme,
+                            "View changes: the task's diff since its run started",
+                            "",
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.selected_card = Some(task_id);
+                            shell.view_task_changes(task_id, window, cx);
+                        }))
+                });
+                // The worktree's two actions (SPEC §20E.1), hover-shown like Undo.
+                let worktree_actions = manages_worktree.then(|| {
+                    [
+                        (
+                            "card-merge",
+                            "Merge back…",
+                            "Merge back: merge the task's branch into your checkout",
+                            worktree_dialog::Kind::Merge,
+                        ),
+                        (
+                            "card-remove-worktree",
+                            "Remove worktree…",
+                            "Remove worktree: delete its folder (an unmerged branch is kept)",
+                            worktree_dialog::Kind::Remove,
+                        ),
+                    ]
+                    .map(|(id, text, tip, kind)| {
+                        quiet_button(id, text, theme, edit_hover)
+                            .opacity(opacity::HIDDEN)
+                            .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                            .tooltip(tooltip(theme, tip, ""))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                cx.stop_propagation();
+                                shell.selected_card = Some(task_id);
+                                shell.open_worktree_dialog(kind, task_id, window, cx);
+                            }))
+                    })
+                });
+                let run_with = can_run_with.then(|| {
+                    run_with_button(
+                        task_id,
+                        current_agent.as_deref(),
+                        group.clone(),
+                        cards,
+                        theme,
+                        cx,
+                    )
+                });
+                let fan_out =
+                    can_fan_out.then(|| fan_out_button(task_id, group.clone(), cards, theme, cx));
+                // Every child finished: the group card's next step (SPEC §20E.2), always shown.
+                let compare = can_compare.then(|| {
+                    // Accent only on the selected card, like Run.
+                    let compare = if selected {
+                        button("card-compare", "Compare", theme, true)
+                    } else {
+                        quiet_button("card-compare", "Compare", theme, edit_hover)
+                    };
+                    compare
+                        .tooltip(tooltip(
+                            theme,
+                            "Compare the agents' results and pick one to merge back",
+                            "",
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.selected_card = Some(task_id);
+                            shell.open_compare(task_id, window, cx);
+                        }))
+                });
+                el.child(
+                    div()
+                        .flex()
+                        // A Review card can show seven buttons; a narrow column wraps them.
+                        .flex_wrap()
+                        .justify_end()
+                        .gap(px(space::S))
+                        .children(run_with)
+                        .children(fan_out)
+                        .children(changes)
+                        .children(worktree_actions.into_iter().flatten())
+                        .children(undo)
+                        .children(compare)
+                        .children(action.map(|action| {
+                            card_action(action, task_id, selected, cards, theme, cx)
+                        })),
                 )
-            });
-            let fan_out =
-                can_fan_out.then(|| fan_out_button(task_id, group.clone(), cards, theme, cx));
-            el.child(
-                div()
-                    .flex()
-                    // A Review card can show seven buttons; a narrow column wraps them.
-                    .flex_wrap()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .children(run_with)
-                    .children(fan_out)
-                    .children(changes)
-                    .children(worktree_actions.into_iter().flatten())
-                    .children(undo)
-                    .children(
-                        action
-                            .map(|action| card_action(action, task_id, selected, cards, theme, cx)),
-                    ),
-            )
-        })
+            },
+        )
         .into_any_element()
 }
 
@@ -14589,6 +14945,11 @@ impl Render for Shell {
                 self.worktree_dialog
                     .as_ref()
                     .map(|dialog| self.render_worktree_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.compare
+                    .as_ref()
+                    .map(|compare| self.render_compare(compare, now, &theme, cx)),
             )
             .children(
                 self.turns_dialog
