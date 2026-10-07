@@ -2,6 +2,35 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M13 — Isolation & usage (tag `m13-done`)
+
+Acceptance criteria at completion (all automated parts ticked; the real-agent and design checks
+wait on T13.11 in HUMAN_CHECKS "To verify" and the T13.3–T13.10b "Questions with assumed
+defaults" entries):
+
+- [x] Worktree task: Run creates the worktree and `mkrew/…` branch from HEAD, copies `.worktreeinclude` entries, runs the agent inside; the main folder's branch, HEAD, index and files are unchanged (real-git test). Resume after a daemon restart uses the worktree.
+- [x] Git and Files views work on a task worktree; Merge only when both sides are clean and aborts cleanly on conflict; Remove keeps an unmerged branch (real-git tests).
+- [x] Fan-out runs 2–5 agents in their own worktrees; Compare and Pick work; e2e with fake profiles.
+- [x] Usage: fixture transcripts in the current Claude and Codex formats give the expected input/output/context tokens, read incrementally; shown on pane header, card and sidebar.
+- [x] M9–M11 and M13 manual checks listed in HUMAN_CHECKS (T9.11, T10.10, T11.9, T13.11).
+
+Tasks:
+
+- [x] T13.1 Task worktree fields + dialog checkbox — feat(store): task worktree fields and dialog checkbox
+- [x] T13.2 Git worktree primitives — feat(daemon): git worktree primitives
+- [x] T13.3 Run and resume in the worktree — feat(daemon): run and resume worktree tasks in their worktree
+- [x] T13.4a `fs.*` / `git.*` on a task worktree — feat(daemon): fs and git requests on a task worktree
+- [x] T13.4b Worktree target chooser — feat(ui): worktree target chooser in Files and Git views
+- [x] T13.5 `task.merge` / `task.remove_worktree` — feat(daemon): merge back and remove task worktrees
+- [x] T13.6 Merge back / Remove worktree dialogs — feat(ui): merge back and remove worktree dialogs
+- [x] T13.7 `task.fanout` — feat(daemon): fan a task out to several agents
+- [x] T13.8a Run with several agents UI — feat(ui): run a task with several agents
+- [x] T13.8b Compare and Pick — feat(ui): compare fan-out results and pick one
+- [x] T13.9 Usage readers — feat(core): incremental token usage readers for Claude and Codex transcripts
+- [x] T13.10a Daemon usage wiring — feat(daemon): read token usage from agent transcripts at turn ends
+- [x] T13.10b Usage on panes, cards, workspaces — feat(ui): show token usage on panes, cards and workspaces
+- [x] T13.11 M13 manual checks + wrap-up — chore(progress): complete M13
+
 ## M11 — Reviewing per turn (tag `m11-done`)
 
 Acceptance criteria at completion (the unticked one waits on the T11.9 manual checks in

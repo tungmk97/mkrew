@@ -652,6 +652,47 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - **§14 design check**: dark + light screenshots of the Turns dialog (a working session with
     restore disabled, and an idle one), the restore-before-turn preview, the Git view in Since
     turn mode with the Changed by chips, and the pane header with "Following in Zed".
+- [ ] (T13.11) **M13 wrap-up — the M13 views with real agents.** The first four M13 criteria are
+  ticked: their backend is covered by automated tests (daemon real-git tests in the worktree,
+  merge and remove modules, e2e with the fake agent for worktree run/resume, `fs.*`/`git.*` on a
+  worktree and `task.fanout` with 2 fake profiles; core usage readers on fixture transcripts;
+  UI `usage::tests`, compare/fan-out/worktree dialog tests + snapshots). No M13 view was ever
+  seen and no real agent ran in a worktree. Restart the daemon first (protocol v23), with `mk`
+  on PATH. Details: the "Questions with assumed defaults" entries T13.3–T13.10b.
+  - **Worktree run** (criterion 1): in a git project with an ignored `.env` listed in
+    `.worktreeinclude`, create a task with "Run in a worktree" ticked → Run Claude → it works in
+    `<data>/mkrew/worktrees/<project>/<task>` on branch `mkrew/<slug>-…` (card shows `⎇`),
+    `.env` is copied; your checkout's branch, HEAD, `git status` and files are unchanged. Check
+    the `mkrew: .worktreeinclude skipped …` banner line with an unignored entry (a full-screen
+    agent may paint over it). Quit the daemon mid-task and restart → the session resumes in the
+    same worktree.
+  - **Files / Git on a worktree** (criterion 2): the "Showing Project | <task>" chips in Files
+    and Git switch to the worktree; commit the agent's work there from the Git view.
+  - **Merge / Remove** (criterion 2): "Merge back…" on the Review card lists the commits →
+    Merge → `git log` on your branch shows the `--no-ff` merge. Make a conflicting change on
+    both sides → "Merge aborted" + the files, your checkout untouched. Close the agent's terminal
+    (removal is refused while it runs), then "Remove worktree…" with an unstaged/untracked file
+    → listed, "Discard…" → removed (staged files must be unstaged or committed first); with an
+    unmerged branch → "branch kept".
+  - **Fan-out, Compare, Pick** (criterion 3): "Several agents…" on a Todo card → Claude + Codex
+    → two child cards run in their own worktrees, the group card shows both states; once both
+    are in Review → "Compare" shows files/±/run time per child → "Pick" one → merge → original
+    moves to Review; close the other child's terminal → "Remove the other worktree" (plural
+    with more children) removes it.
+  - **Usage** (criterion 4): with the hook-enabled sample profiles (usage needs the native
+    session id from a hook), after a few Claude and Codex turns, the pane header shows `ctx N%`
+    (amber `⚠` from 80 %), cards `12.3k tok`, sidebar rows a total; compare the numbers with
+    Claude's `/cost` / `/context` and Codex's `/status`. Check `context_window` in the sample
+    profiles against your models (T13.9).
+  - **Known M13 UI leftovers** (decide if any needs a fix task): no palette/keyboard for
+    Compare, cancelling the Pick merge does not reopen Compare, Compare is not live; the
+    worktree checkbox and fan-out picker are mouse-only; Merge/Remove are hover buttons (no "…"
+    card menu); no CLI merge/remove; `turn.restore` is refused for worktree tasks; rerunning a
+    task after removal with a kept branch fails (branch exists).
+  - **§14 design check**: dark + light screenshots of the task dialog with the worktree
+    checkbox, a card with `⎇ mkrew/…` and `tok`, the worktree target chips, the Merge back and
+    Remove worktree dialogs (incl. conflict and discard steps), the fan-out picker, a group card,
+    the Compare modal, and a pane header with `ctx` normal and amber.
 
 ## Questions with assumed defaults
 
