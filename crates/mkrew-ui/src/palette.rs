@@ -53,10 +53,11 @@ pub enum Extra {
     StopDevServer,
     Broadcast,
     InsertPrompt,
+    Turns,
 }
 
 impl Extra {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -65,6 +66,7 @@ impl Extra {
         Self::StopDevServer,
         Self::Broadcast,
         Self::InsertPrompt,
+        Self::Turns,
     ];
 
     pub fn title(self) -> &'static str {
@@ -77,6 +79,7 @@ impl Extra {
             Self::StopDevServer => "Dev server: Stop",
             Self::Broadcast => "Agent: Broadcast to agents…",
             Self::InsertPrompt => "Agent: Insert prompt…",
+            Self::Turns => "Agent: Turns…",
         }
     }
 
@@ -92,8 +95,9 @@ impl Extra {
             }
             Self::StopDevServer => context.workspace && context.dev_running,
             Self::Broadcast => context.workspace && context.agents,
-            // Into the focused agent pane's composer (opened if hidden).
-            Self::InsertPrompt => {
+            // Into the focused agent pane's composer (opened if hidden); the focused agent
+            // pane's "Turns…".
+            Self::InsertPrompt | Self::Turns => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
         }
@@ -782,7 +786,7 @@ mod tests {
             agent_pane: true,
             ..context(View::Terminals)
         };
-        assert_eq!(extras(&agent_pane), [Extra::InsertPrompt]);
+        assert_eq!(extras(&agent_pane), [Extra::InsertPrompt, Extra::Turns]);
         let elsewhere = Context {
             agent_pane: true,
             ..context(View::Board)

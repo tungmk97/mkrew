@@ -121,6 +121,10 @@ pub const UNDO_DIALOG_WIDTH: f32 = 720.0;
 pub const UNDO_FILES_HEIGHT: f32 = 120.0;
 pub const UNDO_DIFF_HEIGHT: f32 = 280.0;
 
+/// Width of the "Turns" dialog, and the height its list scrolls past (~8 turns).
+pub const TURNS_DIALOG_WIDTH: f32 = 560.0;
+pub const TURNS_LIST_HEIGHT: f32 = 400.0;
+
 /// Share of the window's width and height the "History" dialog takes (it replays a terminal).
 pub const HISTORY_DIALOG_FRACTION: f32 = 0.9;
 

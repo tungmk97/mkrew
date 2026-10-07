@@ -628,6 +628,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T11.6) **"Turns…" in the pane header:** panes have no header menu yet, so §20C.2's "pane
+  header menu Turns…" is a quiet "Turns…" button on every agent pane header (always shown, not
+  hover-only) plus the palette command "Agent: Turns…". The dialog lists turns newest first
+  (↑/↓, Enter restores before the selected one); "Restore before" opens the task-undo preview
+  and confirm (titled "Restore before turn n?"); Cancel goes back to the list. The "Diff since"
+  entry moves to T11.7, which builds the Git view's "Since turn" mode it opens.
 - (T10.6) **Send selection (Ctrl+Shift+L):** the session picker is §12's "Send to agent"
   dialog in a selection mode (title `Send selection · path:a-b`, confirm "Open composer").
   Files picks only one line (§12A), so it sends that line (`` `path:n-n` ``); multi-line picks

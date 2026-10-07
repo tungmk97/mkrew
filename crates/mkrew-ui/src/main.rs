@@ -29,7 +29,7 @@ use mkrew_protocol::{
     SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
     SessionTurnEvent, SessionUnqueueParams, StateSource, TabCreateParams, TabListParams, TabRef,
     TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
-    UndoPreview,
+    Turn, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -70,6 +70,7 @@ use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::text_box;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
 use mkrew_ui::turn::{self, Turns};
+use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::zed;
@@ -264,8 +265,13 @@ struct Shell {
     git_base: Option<BaseDialog>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
-    /// The open "Undo task" confirmation (modal; never open together with `task_dialog`).
+    /// The open "Undo task" / "Restore before turn" confirmation (modal; never open together
+    /// with `task_dialog` or `turns_dialog`).
     undo_dialog: Option<UndoDialog>,
+    /// The open "Turns…" of an agent pane (modal).
+    turns_dialog: Option<TurnsDialog>,
+    /// The Turns dialog a "Restore before turn n" left; cancelling the restore goes back to it.
+    turns_return: Option<TurnsDialog>,
     /// The open "History" of a workspace (modal; never open together with another dialog).
     history: Option<HistoryDialog>,
     /// The read-only replay of the history's selected session (never attached).
@@ -439,6 +445,8 @@ impl Shell {
                 shell.dev_reveal = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
+                shell.turns_dialog = None;
+                shell.turns_return = None;
                 shell.git_discard = None;
                 shell.git_base = None;
                 shell.history = None;
@@ -530,6 +538,8 @@ impl Shell {
             git_base: None,
             task_dialog: None,
             undo_dialog: None,
+            turns_dialog: None,
+            turns_return: None,
             history: None,
             history_pane: None,
             doc_dialog: None,
@@ -2734,6 +2744,11 @@ impl Shell {
                             self.open_prompt_picker(target, window, cx);
                         }
                     }
+                    Extra::Turns => {
+                        if let Some(session) = self.focused_agent() {
+                            self.open_turns(session, window, cx);
+                        }
+                    }
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
@@ -2760,6 +2775,7 @@ impl Shell {
     fn modal_open(&self) -> bool {
         self.task_dialog.is_some()
             || self.undo_dialog.is_some()
+            || self.turns_dialog.is_some()
             || self.git_discard.is_some()
             || self.git_base.is_some()
             || self.dev_dialog.is_some()
@@ -3546,9 +3562,7 @@ impl Shell {
         let serial = self.dialog_serial;
         dialog.preview = Preview::Loading;
         cx.notify();
-        let previewed = connection.call::<UndoPreview>(Request::TaskUndoPreview(TaskRef {
-            task_id: dialog.task_id,
-        }));
+        let previewed = connection.call::<UndoPreview>(dialog.preview_request());
         cx.spawn_in(window, async move |this, cx| {
             let preview = match previewed.await {
                 Ok(preview) => Preview::loaded(preview),
@@ -3571,8 +3585,10 @@ impl Shell {
             .filter(|_| self.dialog_serial == serial)
     }
 
+    /// Closes the undo dialog, back to the Turns dialog it was opened from, if any.
     fn close_undo_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.undo_dialog = None;
+        self.turns_dialog = self.turns_return.take();
         self.focus_pane(window, cx);
         cx.notify();
     }
@@ -3589,8 +3605,9 @@ impl Shell {
         }
     }
 
-    /// The destructive confirm: `task.undo` with exactly the previewed files. On failure the
-    /// dialog shows why and the preview is read again (the daemon refuses a stale one).
+    /// The destructive confirm: `task.undo` / `turn.restore` with exactly the previewed files.
+    /// On failure the dialog shows why and the preview is read again (the daemon refuses a
+    /// stale one).
     fn confirm_undo(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
@@ -3599,14 +3616,14 @@ impl Shell {
         let Some(dialog) = self.undo_dialog.as_mut() else {
             return;
         };
-        let Ok(params) = dialog.confirm_params(self.sidebar.sessions()) else {
+        let Ok(request) = dialog.confirm_request(self.sidebar.sessions()) else {
             return;
         };
-        let task_id = params.task_id;
+        let target = dialog.target.clone();
         dialog.busy = true;
         dialog.error = None;
         cx.notify();
-        let undone = connection.request(Request::TaskUndo(params));
+        let undone = connection.request(request);
         cx.spawn_in(window, async move |this, cx| {
             let failure = match undone.await {
                 Ok(Outcome::Result(_)) => None,
@@ -3616,11 +3633,13 @@ impl Shell {
             let _ = this.update_in(cx, |shell, window, cx| match failure {
                 None => {
                     if shell.open_undo(serial).is_some() {
+                        // Done: back to the pane, not to the Turns dialog it may have left.
+                        shell.turns_return = None;
                         shell.close_undo_dialog(window, cx);
                     }
                 }
                 Some(error) => {
-                    tracing::warn!(%task_id, "task.undo failed: {error}");
+                    tracing::warn!(?target, "undo failed: {error}");
                     if let Some(dialog) = shell.open_undo(serial) {
                         dialog.undo_failed(&error);
                         shell.load_undo_preview(window, cx);
@@ -3630,6 +3649,121 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// "Turns…" of an agent pane (SPEC §20C.2): lists the session's turns (`turn.list`).
+    fn open_turns(&mut self, session_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(session) = self
+            .sidebar
+            .sessions()
+            .iter()
+            .find(|s| s.id == session_id && s.kind == SessionKind::Agent)
+        else {
+            return;
+        };
+        self.workspace_menu = None;
+        self.task_dialog = None;
+        self.undo_dialog = None;
+        self.turns_dialog = Some(TurnsDialog::new(session));
+        self.dialog_serial += 1;
+        let serial = self.dialog_serial;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+        let listed = connection.call::<Vec<Turn>>(Request::TurnList(SessionRef { session_id }));
+        cx.spawn_in(window, async move |this, cx| {
+            let listed = listed.await;
+            let _ = this.update(cx, |shell, cx| {
+                let Some(dialog) = shell
+                    .turns_dialog
+                    .as_mut()
+                    .filter(|_| shell.dialog_serial == serial)
+                else {
+                    return;
+                };
+                match listed {
+                    Ok(turns) => dialog.loaded(turns),
+                    Err(error) => {
+                        dialog.listing = turns_dialog::Listing::Failed(format!("{error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn close_turns_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.turns_dialog = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    fn turns_dialog_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        match turns_dialog::key(&event.keystroke) {
+            Some(turns_dialog::Key::Close) => self.close_turns_dialog(window, cx),
+            Some(turns_dialog::Key::Move(offset)) => {
+                if let Some(dialog) = self.turns_dialog.as_mut() {
+                    dialog.select_by(offset);
+                    cx.notify();
+                }
+            }
+            Some(turns_dialog::Key::Restore) => {
+                let Some(dialog) = &self.turns_dialog else {
+                    return;
+                };
+                let state = self.session_state(dialog.session_id);
+                let restorable = match &dialog.listing {
+                    turns_dialog::Listing::Loaded(turns) => turns
+                        .get(dialog.selected)
+                        .is_some_and(|turn| turns_dialog::restore_blocked(turn, state).is_none()),
+                    _ => false,
+                };
+                if let Some(n) = dialog.selected_turn().filter(|_| restorable) {
+                    self.restore_before_turn(n, window, cx);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// `session_id`'s state (exited once it is no longer listed).
+    fn session_state(&self, session_id: Ulid) -> SessionState {
+        self.sidebar
+            .sessions()
+            .iter()
+            .find(|s| s.id == session_id)
+            .map_or(SessionState::Exited, |s| s.state)
+    }
+
+    /// "Restore before turn n": replaces the Turns dialog with the undo dialog's preview and
+    /// confirm (`turn.restore_preview` / `turn.restore`).
+    fn restore_before_turn(&mut self, n: u32, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(dialog) = self.turns_dialog.take() else {
+            return;
+        };
+        let Some(session) = self
+            .sidebar
+            .sessions()
+            .iter()
+            .find(|s| s.id == dialog.session_id)
+        else {
+            self.close_turns_dialog(window, cx);
+            return;
+        };
+        self.undo_dialog = Some(UndoDialog::for_turn(session, n));
+        self.turns_return = Some(dialog);
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        self.load_undo_preview(window, cx);
     }
 
     /// "History" in the tab bar: lists the workspace's finished sessions (`session.list`) and
@@ -8424,9 +8558,16 @@ impl Shell {
         let nothing_changed = dialog.nothing_changed();
         let mut body: Vec<gpui::AnyElement> = Vec::new();
         let mut intro = format!(
-            "Restores the workspace folder to how it was before “{}” ran",
-            dialog.title
+            "Restores the workspace folder to how it was before {} ran",
+            dialog.subject
         );
+        // A task's checkpoint is a commit, a turn's a snapshot tree.
+        let (checkpoint, cli) = match &dialog.target {
+            undo_dialog::Target::Task(task_id) => {
+                ("commit", Some(format!("mk task undo {task_id}")))
+            }
+            undo_dialog::Target::Turn(_) => ("snapshot", None),
+        };
         match &dialog.preview {
             Preview::Loading => body.push(label("Loading the changes…".into()).into_any_element()),
             Preview::Failed(error) => body.push(
@@ -8449,11 +8590,11 @@ impl Shell {
                     .into_any_element(),
             ),
             Preview::Loaded(_) if nothing_changed => {
-                intro = format!("Nothing changed since “{}” ran", dialog.title);
+                intro = format!("Nothing changed since {} ran", dialog.subject);
             }
             Preview::Loaded(shown) => {
                 let commit: String = shown.preview.checkpoint.chars().take(7).collect();
-                intro = format!("{intro} (commit {commit})");
+                intro = format!("{intro} ({checkpoint} {commit})");
                 body.push(label(format!("Files ({})", shown.files.len())).into_any_element());
                 body.push(
                     scroll_box("undo-files", theme::UNDO_FILES_HEIGHT)
@@ -8510,19 +8651,19 @@ impl Shell {
                         .into_any_element(),
                 );
                 if shown.cut() {
-                    body.push(
-                        label(format!(
-                            "The diff is cut short here; `mk task undo {}` prints all of it.",
-                            dialog.task_id
-                        ))
-                        .into_any_element(),
-                    );
+                    let more = match cli {
+                        Some(cli) => {
+                            format!("The diff is cut short here; `{cli}` prints all of it.")
+                        }
+                        None => "The diff is cut short here.".to_owned(),
+                    };
+                    body.push(label(more).into_any_element());
                 }
             }
         }
-        let confirm = dialog.confirm_params(self.sidebar.sessions());
-        // Only the reason the user can act on (a live terminal); loading, failures and
-        // "nothing changed" already show in the body, and "Discarding…" on the button.
+        let confirm = dialog.confirm_request(self.sidebar.sessions());
+        // Only the reason the user can act on (a live terminal, a working agent); loading,
+        // failures and "nothing changed" already show in the body, "Discarding…" on the button.
         let hint = confirm.as_ref().err().copied().filter(|_| {
             matches!(dialog.preview, Preview::Loaded(_)) && !dialog.busy && !nothing_changed
         });
@@ -8546,7 +8687,7 @@ impl Shell {
                     .text_size(px(font_size::CARD_TITLE))
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child("Undo task?"),
+                    .child(dialog.heading()),
             )
             .child(
                 div()
@@ -8611,6 +8752,153 @@ impl Shell {
                     }),
             );
         Self::modal_shade("undo-dialog-shade", panel, cx)
+    }
+
+    /// "Turns": the session's turns, newest first, each with "Restore before" (disabled, with
+    /// the reason as its tooltip, while the agent works or without a snapshot).
+    fn render_turns_dialog(
+        &self,
+        dialog: &TurnsDialog,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let muted = |text: String| {
+            div()
+                .text_size(px(font_size::BODY))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let state = self.session_state(dialog.session_id);
+        let hover = theme.surface_raised;
+        let list: gpui::AnyElement = match &dialog.listing {
+            turns_dialog::Listing::Loading => muted("Loading the turns…".into()).into_any_element(),
+            turns_dialog::Listing::Failed(error) => div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(
+                    div()
+                        .text_color(rgb(theme.text))
+                        .child(format!("Cannot list the turns: {error}")),
+                )
+                .into_any_element(),
+            turns_dialog::Listing::Loaded(turns) if turns.is_empty() => {
+                muted("No turns yet: they are recorded as the agent works.".into())
+                    .into_any_element()
+            }
+            turns_dialog::Listing::Loaded(turns) => div()
+                .id("turns-list")
+                .max_h(px(theme::TURNS_LIST_HEIGHT))
+                .flex()
+                .flex_col()
+                .overflow_y_scroll()
+                .children(
+                    turns_dialog::rows(turns, state, now)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, row)| {
+                            let n = row.n;
+                            let selected = index == dialog.selected;
+                            let details = [Some(row.when), Some(row.files), row.lines]
+                                .into_iter()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join(" · ");
+                            let what = format!("Restore the files to before turn {n} (preview)");
+                            let restore = match row.blocked {
+                                None => button("turn-restore", "Restore before", theme, false)
+                                    .tooltip(tooltip(
+                                        theme,
+                                        &what,
+                                        if selected { "Enter" } else { "" },
+                                    ))
+                                    .on_click(cx.listener(move |shell, _, window, cx| {
+                                        shell.restore_before_turn(n, window, cx);
+                                    })),
+                                Some(reason) => {
+                                    disabled_button("turn-restore", "Restore before", theme, false)
+                                        .tooltip(tooltip(theme, reason, ""))
+                                }
+                            };
+                            div()
+                                .id(SharedString::from(format!("turn-{n}")))
+                                .flex()
+                                .items_center()
+                                .gap(px(space::S))
+                                .px(px(space::S))
+                                .py(px(space::XS))
+                                .rounded(px(radius::SMALL))
+                                .when(selected, |el| el.bg(rgb(theme.surface_raised)))
+                                .when(!selected, |el| el.hover(move |style| style.bg(rgb(hover))))
+                                .on_click(cx.listener(move |shell, _, _, cx| {
+                                    if let Some(dialog) = shell.turns_dialog.as_mut() {
+                                        dialog.selected = index;
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(
+                                            div()
+                                                .text_size(px(font_size::BODY))
+                                                .font_weight(FontWeight(weight::MEDIUM))
+                                                .text_color(rgb(theme.text))
+                                                .child(row.title),
+                                        )
+                                        .child(
+                                            div()
+                                                .overflow_hidden()
+                                                .text_ellipsis()
+                                                .whitespace_nowrap()
+                                                .text_size(px(font_size::META))
+                                                .text_color(rgb(theme.text_muted))
+                                                .child(details),
+                                        ),
+                                )
+                                .child(restore.flex_none())
+                        }),
+                )
+                .into_any_element(),
+        };
+        let panel = div()
+            .id("turns-dialog")
+            .w(px(theme::TURNS_DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::turns_dialog_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(format!("Turns of {}", dialog.agent)),
+            )
+            .child(list)
+            .child(
+                div().flex().justify_end().pt(px(space::S)).child(
+                    button("turns-close", "Close", theme, true)
+                        .tooltip(tooltip(theme, "Close", "Esc"))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.close_turns_dialog(window, cx);
+                        })),
+                ),
+            );
+        Self::modal_shade("turns-dialog-shade", panel, cx)
     }
 
     /// "Discard changes?" of a Git view file: what is lost (the file's diff), Cancel and the
@@ -10539,7 +10827,35 @@ impl Shell {
                     )
                 });
                 let queued = self.composers.queue(session).len();
-                pane_header(info, self.turns.get(session), conflict, queued, now, theme)
+                // Keyed by session: several panes share the nearest keyed parent.
+                let turns = (info.kind == SessionKind::Agent).then(|| {
+                    div()
+                        .id(SharedString::from(format!("pane-turns-{session}")))
+                        .flex_none()
+                        .child(
+                            quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
+                                .px(px(space::XS))
+                                .py_0()
+                                .text_size(px(font_size::META))
+                                .tooltip(tooltip(
+                                    theme,
+                                    "The agent's turns: restore the files to before one",
+                                    "",
+                                ))
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.open_turns(session, window, cx);
+                                })),
+                        )
+                });
+                pane_header(
+                    info,
+                    self.turns.get(session),
+                    conflict,
+                    turns,
+                    queued,
+                    now,
+                    theme,
+                )
             }))
             .child(div().flex_1().min_h_0().child(content))
             .children(self.composers.shown(session).map(|draft| {
@@ -12712,11 +13028,14 @@ fn conflict_badge(
 
 /// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
 /// warning, the number of queued sends (§20B.2), status text and time (with the last turn's
-/// summary when done); hovering the status shows its source and last change.
+/// summary when done), and an agent's "Turns…" (§20C.2); hovering the status shows its source
+/// and last change.
+#[allow(clippy::too_many_arguments)]
 fn pane_header(
     session: &Session,
     turn: Option<&SessionTurnEvent>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
+    turns: Option<gpui::Stateful<gpui::Div>>,
     queued: usize,
     now: i64,
     theme: &Theme,
@@ -12786,6 +13105,7 @@ fn pane_header(
                     turn,
                 )),
         )
+        .children(turns)
 }
 
 /// Tooltip of a status: its source and how long ago it changed, aged when it opens (a
@@ -12934,6 +13254,11 @@ impl Render for Shell {
                 self.undo_dialog
                     .as_ref()
                     .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.turns_dialog
+                    .as_ref()
+                    .map(|dialog| self.render_turns_dialog(dialog, now, &theme, cx)),
             )
             .children(
                 self.git_discard

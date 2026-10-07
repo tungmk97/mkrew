@@ -1,9 +1,13 @@
 //! The "Undo task" confirmation of a Review / Done card (SPEC §12B, ADR 0005): the files and
 //! the diff `task.undo_preview` says would be discarded, and the `task.undo` confirming it.
-//! Pure and tested headlessly; `main.rs` renders it.
+//! Also "Restore before turn n" of the Turns dialog (§20C.2: `turn.restore_preview` /
+//! `turn.restore`, same rules). Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
-use mkrew_protocol::{Session, SessionState, Task, TaskUndoParams, UndoPreview};
+use mkrew_protocol::{
+    Request, Session, SessionState, Task, TaskRef, TaskUndoParams, TurnRef, TurnRestoreParams,
+    UndoPreview,
+};
 use ulid::Ulid;
 
 /// Most diff lines the dialog draws; the rest is summarized (`mk task undo` prints it all).
@@ -144,14 +148,23 @@ impl Preview {
     }
 }
 
+/// What the dialog undoes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// A task's run (`task.undo`).
+    Task(Ulid),
+    /// A session's turns from turn `n` on (`turn.restore`, SPEC §20C.2).
+    Turn(TurnRef),
+}
+
 /// The open dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UndoDialog {
-    pub task_id: Ulid,
-    pub project_id: Ulid,
-    pub title: String,
+    pub target: Target,
+    /// What ran, as the intro says it: `“Fix login”`, `turn 3 of claude`.
+    pub subject: String,
     pub preview: Preview,
-    /// The `task.undo` is in flight.
+    /// The `task.undo` / `turn.restore` is in flight.
     pub busy: bool,
     /// Why the last undo failed.
     pub error: Option<String>,
@@ -159,13 +172,43 @@ pub struct UndoDialog {
 
 impl UndoDialog {
     pub fn new(task: &Task) -> Self {
+        Self::with(Target::Task(task.id), format!("“{}”", task.title))
+    }
+
+    /// Restoring the folder to before `session`'s turn `n`.
+    pub fn for_turn(session: &Session, n: u32) -> Self {
+        Self::with(
+            Target::Turn(TurnRef {
+                session_id: session.id,
+                n,
+            }),
+            format!("turn {n} of {}", session.agent_profile),
+        )
+    }
+
+    fn with(target: Target, subject: String) -> Self {
         Self {
-            task_id: task.id,
-            project_id: task.project_id,
-            title: task.title.clone(),
+            target,
+            subject,
             preview: Preview::Loading,
             busy: false,
             error: None,
+        }
+    }
+
+    /// The dialog's title.
+    pub fn heading(&self) -> String {
+        match &self.target {
+            Target::Task(_) => "Undo task?".to_owned(),
+            Target::Turn(turn) => format!("Restore before turn {}?", turn.n),
+        }
+    }
+
+    /// The request reading what the undo would discard.
+    pub fn preview_request(&self) -> Request {
+        match &self.target {
+            Target::Task(task_id) => Request::TaskUndoPreview(TaskRef { task_id: *task_id }),
+            Target::Turn(turn) => Request::TurnRestorePreview(turn.clone()),
         }
     }
 
@@ -175,10 +218,10 @@ impl UndoDialog {
         matches!(&self.preview, Preview::Loaded(shown) if shown.files.is_empty())
     }
 
-    /// The `task.undo` discarding exactly what the preview shows, or why it cannot run now.
-    /// `sessions` = every known session: the daemon refuses while one of the task's sessions
-    /// is live.
-    pub fn confirm_params(&self, sessions: &[Session]) -> Result<TaskUndoParams, &'static str> {
+    /// The `task.undo` / `turn.restore` discarding exactly what the preview shows, or why it
+    /// cannot run now. `sessions` = every known session: the daemon refuses a task undo while
+    /// one of the task's sessions is live, a turn restore while its session is working.
+    pub fn confirm_request(&self, sessions: &[Session]) -> Result<Request, &'static str> {
         let preview = match &self.preview {
             Preview::Loading => return Err("Loading the changes…"),
             Preview::Failed(_) => return Err("The changes could not be listed."),
@@ -188,27 +231,50 @@ impl UndoDialog {
             return Err("Discarding…");
         }
         if self.nothing_changed() {
-            return Err("Nothing changed since the task ran.");
+            return Err("Nothing changed since then.");
         }
-        if sessions
-            .iter()
-            .any(|s| s.task_id == Some(self.task_id) && s.state != SessionState::Exited)
-        {
-            return Err("Close the task's terminal first.");
+        let (created, fingerprint) = (preview.created.clone(), preview.fingerprint.clone());
+        match &self.target {
+            Target::Task(task_id) => {
+                if sessions
+                    .iter()
+                    .any(|s| s.task_id == Some(*task_id) && s.state != SessionState::Exited)
+                {
+                    return Err("Close the task's terminal first.");
+                }
+                Ok(Request::TaskUndo(TaskUndoParams {
+                    task_id: *task_id,
+                    confirm: true,
+                    created,
+                    fingerprint,
+                }))
+            }
+            Target::Turn(turn) => {
+                if sessions
+                    .iter()
+                    .any(|s| s.id == turn.session_id && s.state == SessionState::Working)
+                {
+                    return Err("Wait until the agent finishes its turn.");
+                }
+                Ok(Request::TurnRestore(TurnRestoreParams {
+                    session_id: turn.session_id,
+                    n: turn.n,
+                    confirm: true,
+                    created,
+                    fingerprint,
+                }))
+            }
         }
-        Ok(TaskUndoParams {
-            task_id: self.task_id,
-            confirm: true,
-            created: preview.created.clone(),
-            fingerprint: preview.fingerprint.clone(),
-        })
     }
 
-    /// `task.undo` failed: show why, and drop the preview so it is read again (the daemon
+    /// The undo failed: show why, and drop the preview so it is read again (the daemon
     /// refuses one that went stale; a confirm must match what is shown).
     pub fn undo_failed(&mut self, error: &str) {
         self.busy = false;
-        self.error = Some(format!("Cannot undo the task: {error}"));
+        self.error = Some(match self.target {
+            Target::Task(_) => format!("Cannot undo the task: {error}"),
+            Target::Turn(_) => format!("Cannot restore the files: {error}"),
+        });
         self.preview = Preview::Loading;
     }
 }
@@ -316,19 +382,63 @@ mod tests {
     fn confirm_sends_the_previewed_created_files_and_fingerprint() {
         let task = task();
         let mut dialog = UndoDialog::new(&task);
-        assert_eq!(dialog.confirm_params(&[]), Err("Loading the changes…"));
+        assert_eq!(dialog.heading(), "Undo task?");
+        assert_eq!(dialog.subject, "“Fix login”");
+        assert_eq!(
+            dialog.preview_request(),
+            Request::TaskUndoPreview(TaskRef { task_id: task.id })
+        );
+        assert_eq!(dialog.confirm_request(&[]), Err("Loading the changes…"));
         dialog.preview = Preview::loaded(preview());
         assert_eq!(
-            dialog.confirm_params(&[session(task.id, SessionState::Exited)]),
-            Ok(TaskUndoParams {
+            dialog.confirm_request(&[session(task.id, SessionState::Exited)]),
+            Ok(Request::TaskUndo(TaskUndoParams {
                 task_id: task.id,
                 confirm: true,
                 created: vec!["notes.txt".into()],
                 fingerprint: "f00d".into(),
-            })
+            }))
         );
         dialog.busy = true;
-        assert_eq!(dialog.confirm_params(&[]), Err("Discarding…"));
+        assert_eq!(dialog.confirm_request(&[]), Err("Discarding…"));
+    }
+
+    #[test]
+    fn a_turn_restore_sends_the_preview_and_waits_for_the_turn_to_end() {
+        let mut agent = session(Ulid::new(), SessionState::Working);
+        agent.task_id = None;
+        let mut dialog = UndoDialog::for_turn(&agent, 3);
+        assert_eq!(dialog.heading(), "Restore before turn 3?");
+        assert_eq!(dialog.subject, "turn 3 of claude");
+        let turn = TurnRef {
+            session_id: agent.id,
+            n: 3,
+        };
+        assert_eq!(
+            dialog.preview_request(),
+            Request::TurnRestorePreview(turn.clone())
+        );
+        dialog.preview = Preview::loaded(preview());
+        assert_eq!(
+            dialog.confirm_request(std::slice::from_ref(&agent)),
+            Err("Wait until the agent finishes its turn.")
+        );
+        agent.state = SessionState::Done;
+        assert_eq!(
+            dialog.confirm_request(&[agent]),
+            Ok(Request::TurnRestore(TurnRestoreParams {
+                session_id: turn.session_id,
+                n: 3,
+                confirm: true,
+                created: vec!["notes.txt".into()],
+                fingerprint: "f00d".into(),
+            }))
+        );
+        dialog.undo_failed("stale");
+        assert_eq!(
+            dialog.error.as_deref(),
+            Some("Cannot restore the files: stale")
+        );
     }
 
     #[test]
@@ -343,7 +453,7 @@ mod tests {
             Some("Cannot undo the task: preview again")
         );
         assert_eq!(dialog.preview, Preview::Loading);
-        assert!(dialog.confirm_params(&[]).is_err());
+        assert!(dialog.confirm_request(&[]).is_err());
     }
 
     #[test]
@@ -364,7 +474,7 @@ mod tests {
         let task = task();
         let mut dialog = UndoDialog::new(&task);
         dialog.preview = Preview::Failed("boom".into());
-        assert!(dialog.confirm_params(&[]).is_err());
+        assert!(dialog.confirm_request(&[]).is_err());
         assert!(!dialog.nothing_changed());
         dialog.preview = Preview::loaded(UndoPreview {
             changed: Vec::new(),
@@ -374,14 +484,14 @@ mod tests {
         });
         assert!(dialog.nothing_changed());
         assert_eq!(
-            dialog.confirm_params(&[]),
-            Err("Nothing changed since the task ran.")
+            dialog.confirm_request(&[]),
+            Err("Nothing changed since then.")
         );
         dialog.preview = Preview::loaded(preview());
         let other = session(Ulid::new(), SessionState::Working);
-        assert!(dialog.confirm_params(&[other]).is_ok());
+        assert!(dialog.confirm_request(&[other]).is_ok());
         assert_eq!(
-            dialog.confirm_params(&[session(task.id, SessionState::Done)]),
+            dialog.confirm_request(&[session(task.id, SessionState::Done)]),
             Err("Close the task's terminal first.")
         );
     }

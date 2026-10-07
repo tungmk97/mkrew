@@ -47,6 +47,7 @@ pub mod terminal;
 pub mod text_box;
 pub mod theme;
 pub mod turn;
+pub mod turns_dialog;
 pub mod undo_dialog;
 pub mod workspace_menu;
 pub mod zed;

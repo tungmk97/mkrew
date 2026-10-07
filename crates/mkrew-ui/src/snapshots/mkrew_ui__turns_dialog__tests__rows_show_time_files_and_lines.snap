@@ -1,0 +1,7 @@
+---
+source: crates/mkrew-ui/src/turns_dialog.rs
+expression: "lines.join(\"\\n\")"
+---
+Turn 3 | started 2m ago · running | 1 file | +1 −0 | restorable
+Turn 2 | ended 3m ago · took 5m | 3 files | +12 −3 | restorable
+Turn 1 | ended 10m ago · took 30s | 1 file |  | No snapshot: the workspace is not a git repository.
