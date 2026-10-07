@@ -22,16 +22,16 @@ use mkrew_protocol::{
     GitRemoteParams, GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams,
     HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION,
     Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult,
-    Request, ResponseError, RunCommand, ScreenSnapshot, Session, SessionAttachResult,
-    SessionExitedEvent, SessionFiles, SessionFilesParams, SessionInputParams, SessionKillParams,
-    SessionKind, SessionListParams, SessionQueueEvent, SessionReadParams, SessionReadResult,
-    SessionRef, SessionResizeParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionUsageEvent, SessionWaitParams,
-    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
-    TabRenameParams, TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams,
-    TaskDeletedEvent, TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef,
-    TurnRestoreParams, UndoPreview, encode,
+    Request, ResponseError, RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot,
+    Session, SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent,
+    SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
+    SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
+    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -5070,4 +5070,283 @@ fn ai_generate_reports_what_is_missing() {
         generated(&mut client, id).error.as_deref(),
         Some("No changes to describe.")
     );
+}
+
+fn run_command(name: &str, dir: &str, command: &str) -> RunCommand {
+    RunCommand {
+        name: name.into(),
+        dir: dir.into(),
+        command: command.into(),
+        env_file: None,
+        env: Vec::new(),
+    }
+}
+
+/// A command for the test shell: cmd on Windows, sh elsewhere.
+fn shell_line(windows: &str, unix: &str) -> String {
+    if cfg!(windows) { windows } else { unix }.to_owned()
+}
+
+/// `windows`/`unix`, then stays alive for a minute.
+fn long(windows: &str, unix: &str) -> String {
+    shell_line(
+        &format!("{windows} & ping -n 60 127.0.0.1 > nul"),
+        &format!("{unix}; sleep 60"),
+    )
+}
+
+fn set_runs(project: &Project, commands: Vec<RunCommand>, autostart: Option<bool>) -> Request {
+    Request::ProjectUpdate(ProjectUpdateParams {
+        project_id: project.id,
+        name: None,
+        default_agent: None,
+        run_commands: Some(commands),
+        run_autostart: autostart,
+    })
+}
+
+fn run_params(project: &Project, name: Option<&str>) -> RunStartParams {
+    RunStartParams {
+        project_id: project.id,
+        name: name.map(Into::into),
+        cols: 80,
+        rows: 24,
+    }
+}
+
+fn run_start(project: &Project, name: Option<&str>) -> Request {
+    Request::ProjectRunStart(run_params(project, name))
+}
+
+fn run_restart(project: &Project, name: Option<&str>) -> Request {
+    Request::ProjectRunRestart(run_params(project, name))
+}
+
+fn run_stop(project: &Project, name: Option<&str>) -> Request {
+    Request::ProjectRunStop(RunStopParams {
+        project_id: project.id,
+        name: name.map(Into::into),
+    })
+}
+
+/// Every session of the project titled `run:…`, exited ones too.
+fn run_sessions(client: &mut Client, project: &Project) -> Vec<Session> {
+    let all: Vec<Session> = client
+        .call(Request::SessionList(SessionListParams {
+            project_id: Some(project.id),
+        }))
+        .into_result()
+        .unwrap();
+    all.into_iter()
+        .filter(|s| s.title.as_deref().is_some_and(|t| t.starts_with("run:")))
+        .collect()
+}
+
+/// Waits until `path` has non-blank text and returns it trimmed.
+fn wait_text(path: &Path) -> String {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && !text.trim().is_empty()
+        {
+            return text.trim().to_owned();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} never written",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn pair(a: Ulid, b: Ulid) -> serde_json::Value {
+    json!({"split": "vertical", "ratio": 0.5, "children": [
+        {"session": a.to_string()}, {"session": b.to_string()}
+    ]})
+}
+
+#[test]
+fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() {
+    let env = Env::new();
+    let repo = env.repo();
+    for dir in ["api", "web"] {
+        std::fs::create_dir(repo.join(dir)).unwrap();
+    }
+    std::fs::write(repo.join("api/.env"), "FROM_FILE=file\nBOTH=file\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let be = RunCommand {
+        env_file: Some(".env".into()),
+        env: vec![("BOTH".into(), "override".into())],
+        ..run_command(
+            "BE",
+            "api",
+            &long(
+                "echo %FROM_FILE% %BOTH%> env.txt",
+                "echo $FROM_FILE $BOTH > env.txt",
+            ),
+        )
+    };
+    let fe = run_command(
+        "FE",
+        "web",
+        &long("echo web> web.txt", "echo web > web.txt"),
+    );
+    client
+        .call(set_runs(&project, vec![be, fe], None))
+        .into_result::<Project>()
+        .unwrap();
+
+    let first: RunStarted = client
+        .call(run_start(&project, None))
+        .into_result()
+        .unwrap();
+    let started: Vec<_> = first
+        .sessions
+        .iter()
+        .map(|s| (s.name.as_str(), s.started))
+        .collect();
+    assert_eq!(started, [("BE", true), ("FE", true)]);
+    let (be_id, fe_id) = (first.sessions[0].session_id, first.sessions[1].session_id);
+    let be_session = client.session(be_id);
+    assert_eq!(
+        (be_session.kind, be_session.title.as_deref()),
+        (SessionKind::Shell, Some("run:BE"))
+    );
+    // Env file first, then the overrides; each command in its own folder.
+    assert_eq!(wait_text(&repo.join("api/env.txt")), "file override");
+    assert_eq!(wait_text(&repo.join("web/web.txt")), "web");
+    let tabs = list_tabs(&mut client, &project);
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(
+        (tabs[0].title.as_str(), Some(tabs[0].id)),
+        ("run", first.tab_id)
+    );
+    assert_eq!(tabs[0].layout, pair(be_id, fe_id));
+
+    // Starting again answers with the running ones.
+    let again: RunStarted = client
+        .call(run_start(&project, None))
+        .into_result()
+        .unwrap();
+    let ids: Vec<_> = again
+        .sessions
+        .iter()
+        .map(|s| (s.session_id, s.started))
+        .collect();
+    assert_eq!(ids, [(be_id, false), (fe_id, false)]);
+
+    // Restarting BE replaces it in the first slot; FE keeps running.
+    let restarted: RunStarted = client
+        .call(run_restart(&project, Some("BE")))
+        .into_result()
+        .unwrap();
+    assert_eq!(restarted.sessions.len(), 1);
+    let new_be = restarted.sessions[0].session_id;
+    assert!(restarted.sessions[0].started);
+    assert_ne!(new_be, be_id);
+    assert_eq!(client.session(be_id).state, SessionState::Exited);
+    assert_ne!(client.session(fe_id).state, SessionState::Exited);
+    assert_eq!(
+        list_tabs(&mut client, &project)[0].layout,
+        pair(new_be, fe_id)
+    );
+
+    // A command removed from the setup still stops with "stop all".
+    client
+        .call(set_runs(&project, Vec::new(), None))
+        .into_result::<Project>()
+        .unwrap();
+    client
+        .call(run_stop(&project, None))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(new_be, SessionState::Exited);
+    client.wait_state(fe_id, SessionState::Exited);
+    client.stop();
+}
+
+#[test]
+fn invalid_run_setups_are_refused_before_anything_starts() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::write(repo.join("bad.env"), "not a pair\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    assert_eq!(
+        error_code(client.call(run_start(&project, None))),
+        ErrorCode::InvalidState
+    );
+    client
+        .call(run_stop(&project, None))
+        .into_result::<()>()
+        .unwrap();
+
+    let a = run_command("A", ".", "echo a> a.txt");
+    let broken = [
+        run_command("B", "missing", "echo b"),
+        RunCommand {
+            env_file: Some("nope.env".into()),
+            ..run_command("B", ".", "echo b")
+        },
+        RunCommand {
+            env_file: Some("bad.env".into()),
+            ..run_command("B", ".", "echo b")
+        },
+    ];
+    for b in broken {
+        client
+            .call(set_runs(&project, vec![a.clone(), b.clone()], None))
+            .into_result::<Project>()
+            .unwrap();
+        assert_eq!(
+            error_code(client.call(run_start(&project, None))),
+            ErrorCode::InvalidRequest,
+            "{b:?}"
+        );
+    }
+    assert_eq!(
+        error_code(client.call(run_start(&project, Some("Z")))),
+        ErrorCode::NotFound
+    );
+    assert!(run_sessions(&mut client, &project).is_empty());
+    assert!(!repo.join("a.txt").exists());
+    client.stop();
+}
+
+#[test]
+fn run_commands_auto_start_after_a_daemon_restart_and_end_with_their_command() {
+    let env = Env::new();
+    let repo = env.repo();
+    let marker = repo.join("started.txt");
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    client
+        .call(set_runs(
+            &project,
+            vec![run_command("dev", ".", "echo started> started.txt")],
+            Some(true),
+        ))
+        .into_result::<Project>()
+        .unwrap();
+    client.stop();
+    daemon.wait_exit();
+
+    let (_daemon, mut client) = env.start();
+    wait_file(&marker);
+    let sessions = run_sessions(&mut client, &project);
+    assert_eq!(sessions.len(), 1);
+    // The typed line ends the shell together with the command.
+    client.wait_state(sessions[0].id, SessionState::Exited);
+
+    // Restarting an exited command starts it again.
+    std::fs::remove_file(&marker).unwrap();
+    let again: RunStarted = client
+        .call(run_restart(&project, Some("dev")))
+        .into_result()
+        .unwrap();
+    assert!(again.sessions[0].started);
+    wait_file(&marker);
+    client.stop();
 }

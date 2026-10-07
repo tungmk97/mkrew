@@ -4,7 +4,7 @@
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 
-use mkrew_protocol::{RunCommand, Session, SessionKind};
+use mkrew_protocol::{RunCommand, Session, SessionKind, SessionState};
 use regex::Regex;
 use serde_json::{Value, json};
 use ulid::Ulid;
@@ -214,6 +214,25 @@ pub fn layout(sessions: &[Ulid]) -> Value {
     }
 }
 
+/// The live run sessions of a project in tab order: configured commands in config order, then
+/// the ones whose name left the config (oldest first).
+pub fn ordered_live(commands: &[RunCommand], sessions: &[Session]) -> Vec<Ulid> {
+    let mut live: Vec<(usize, i64, Ulid)> = sessions
+        .iter()
+        .filter(|s| s.state != SessionState::Exited)
+        .filter_map(|s| {
+            let name = command_name(s)?;
+            let position = commands
+                .iter()
+                .position(|c| c.name == name)
+                .unwrap_or(usize::MAX);
+            Some((position, s.started_at, s.id))
+        })
+        .collect();
+    live.sort_unstable();
+    live.into_iter().map(|(_, _, id)| id).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::{Session, SessionKind, SessionState, StateSource};
@@ -358,6 +377,20 @@ mod tests {
             env_file: None,
             env: Vec::new(),
         }
+    }
+
+    #[test]
+    fn live_run_sessions_follow_the_config_order() {
+        let commands = [command("BE", ".", "x"), command("FE", ".", "y")];
+        let mut fe = shell(SessionKind::Shell, Some("run:FE"));
+        let mut be = shell(SessionKind::Shell, Some("run:BE"));
+        let mut gone = shell(SessionKind::Shell, Some("run:old"));
+        let mut exited = shell(SessionKind::Shell, Some("run:BE"));
+        let agent = shell(SessionKind::Agent, Some("run:BE"));
+        (fe.started_at, be.started_at, gone.started_at) = (1, 2, 0);
+        exited.state = SessionState::Exited;
+        let sessions = [gone.clone(), fe.clone(), exited, agent, be.clone()];
+        assert_eq!(ordered_live(&commands, &sessions), [be.id, fe.id, gone.id]);
     }
 
     #[test]

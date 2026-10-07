@@ -55,6 +55,15 @@ pub enum Request {
     ProjectList,
     #[serde(rename = "project.update")]
     ProjectUpdate(ProjectUpdateParams),
+    /// Returns [`RunStarted`] (SPEC §10, ADR 0018).
+    #[serde(rename = "project.run_start")]
+    ProjectRunStart(RunStartParams),
+    /// Returns [`RunStarted`]: stops the targets, waits for them, starts them again.
+    #[serde(rename = "project.run_restart")]
+    ProjectRunRestart(RunStartParams),
+    /// Returns nothing (`null`); also when nothing runs.
+    #[serde(rename = "project.run_stop")]
+    ProjectRunStop(RunStopParams),
     #[serde(rename = "tab.list")]
     TabList(TabListParams),
     #[serde(rename = "tab.create")]
@@ -641,6 +650,43 @@ pub struct ProjectUpdateParams {
     /// Run every command after the daemon starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_autostart: Option<bool>,
+}
+
+/// `project.run_start` / `project.run_restart`: `name` = one command, none = all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunStartParams {
+    pub project_id: Ulid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default = "default_cols")]
+    pub cols: u16,
+    #[serde(default = "default_rows")]
+    pub rows: u16,
+}
+
+/// `project.run_stop`: `name` = one command, none = every run session of the project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunStopParams {
+    pub project_id: Ulid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// Answer of `project.run_start` / `project.run_restart`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunStarted {
+    /// The `run` tab; `None` when it could not be written.
+    pub tab_id: Option<Ulid>,
+    /// The targeted commands in config order.
+    pub sessions: Vec<RunSession>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunSession {
+    pub name: String,
+    pub session_id: Ulid,
+    /// False when it was already running.
+    pub started: bool,
 }
 
 /// Terminal size used when the client has no pane yet (CLI, auto-start, fan-out children).
@@ -1489,6 +1535,22 @@ mod tests {
                 }]),
                 run_autostart: Some(true),
             }),
+            Request::ProjectRunStart(RunStartParams {
+                project_id: sid(),
+                name: Some("BE".into()),
+                cols: 100,
+                rows: 20,
+            }),
+            Request::ProjectRunRestart(RunStartParams {
+                project_id: sid(),
+                name: None,
+                cols: 80,
+                rows: 24,
+            }),
+            Request::ProjectRunStop(RunStopParams {
+                project_id: sid(),
+                name: None,
+            }),
             Request::TabList(TabListParams { project_id: sid() }),
             Request::TabCreate(TabCreateParams {
                 project_id: sid(),
@@ -1661,6 +1723,25 @@ mod tests {
                 request,
             });
         }
+    }
+
+    #[test]
+    fn run_start_size_defaults_when_left_out() {
+        let id = sid();
+        let request: Request = serde_json::from_value(json!({
+            "method": "project.run_start",
+            "params": {"project_id": id.to_string()}
+        }))
+        .unwrap();
+        assert_eq!(
+            request,
+            Request::ProjectRunStart(RunStartParams {
+                project_id: id,
+                name: None,
+                cols: DEFAULT_COLS,
+                rows: DEFAULT_ROWS,
+            })
+        );
     }
 
     #[test]

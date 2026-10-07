@@ -40,6 +40,7 @@ mod fanout;
 mod fs;
 mod git;
 mod resume;
+mod run;
 mod target;
 mod task_worktree;
 mod turn;
@@ -55,6 +56,8 @@ pub struct Daemon {
     git_cache: Arc<GitCache>,
     started_at: i64,
     shutdown: watch::Sender<bool>,
+    /// Serializes run starts and restarts, so a command never runs twice.
+    run_starting: tokio::sync::Mutex<()>,
 }
 
 /// Where and to what `task.undo` resets (ADR 0005).
@@ -88,12 +91,14 @@ impl Daemon {
             git_cache: Arc::default(),
             started_at: now_ms(),
             shutdown: watch::channel(false).0,
+            run_starting: tokio::sync::Mutex::new(()),
         })
     }
 
     /// Watches `settings.toml`, starts keep awake and daily DB backups, deletes expired turn
-    /// refs (in the background), resumes interrupted tasks and agent panes, then serves
-    /// `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8).
+    /// refs (in the background), resumes interrupted tasks and agent panes, auto-starts run
+    /// commands, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every
+    /// session (SPEC §8).
     /// `notifier` = `None` turns OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let _settings_watch = settings::watch(Arc::clone(&self.settings))
@@ -114,6 +119,7 @@ impl Daemon {
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
         self.resume_sessions().await;
+        self.autostart_runs().await;
         Arc::clone(&self).accept(listener).await;
         backups.abort();
         keep_awake.abort();
@@ -242,6 +248,9 @@ impl Daemon {
                 (store_outcome(projects), After::Continue)
             }
             Request::ProjectUpdate(params) => (self.project_update(params), After::Continue),
+            Request::ProjectRunStart(params) => (self.run_start(params).await, After::Continue),
+            Request::ProjectRunRestart(params) => (self.run_restart(params).await, After::Continue),
+            Request::ProjectRunStop(params) => (self.run_stop(params), After::Continue),
             Request::TabList(params) => {
                 let tabs = self.store().list_tabs(params.project_id);
                 (store_outcome(tabs), After::Continue)
