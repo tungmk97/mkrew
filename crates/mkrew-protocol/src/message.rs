@@ -98,6 +98,9 @@ pub enum Request {
     /// Returns [`RemoveWorktreeResult`] (SPEC §20E.1).
     #[serde(rename = "task.remove_worktree")]
     TaskRemoveWorktree(TaskConfirmParams),
+    /// Returns the child `Task[]` (SPEC §20E.2).
+    #[serde(rename = "task.fanout")]
+    TaskFanout(TaskFanoutParams),
     #[serde(rename = "session.spawn")]
     SessionSpawn(SessionSpawnParams),
     #[serde(rename = "session.list")]
@@ -783,6 +786,24 @@ pub struct TaskConfirmParams {
     pub task_id: Ulid,
     #[serde(default)]
     pub confirm: bool,
+}
+
+/// `task.fanout`: run the task with 2–5 agent profiles at once, each in a child task with its
+/// own worktree. `cols`/`rows` = the children's terminal size (no pane exists for them yet).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskFanoutParams {
+    pub task_id: Ulid,
+    pub agent_profiles: Vec<String>,
+    #[serde(default = "DevStartParams::default_cols")]
+    pub cols: u16,
+    #[serde(default = "DevStartParams::default_rows")]
+    pub rows: u16,
+}
+
+impl TaskFanoutParams {
+    /// Fewest and most profiles of one fan-out (SPEC §20E.2).
+    pub const MIN_PROFILES: usize = 2;
+    pub const MAX_PROFILES: usize = 5;
 }
 
 /// `task.merge` result: `merged`, or aborted on `conflicts` (repo-relative paths) with the
@@ -1528,6 +1549,12 @@ mod tests {
             Request::TaskRemoveWorktree(TaskConfirmParams {
                 task_id: sid(),
                 confirm: false,
+            }),
+            Request::TaskFanout(TaskFanoutParams {
+                task_id: sid(),
+                agent_profiles: vec!["claude".into(), "codex".into()],
+                cols: 120,
+                rows: 30,
             }),
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),

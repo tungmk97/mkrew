@@ -1,5 +1,6 @@
 //! Startup resume (SPEC §8): tasks the last daemon left running/needs_input get their agent
-//! conversation back, or are flagged for the user to run again.
+//! conversation back, or are flagged for the user to run again. A fan-out's original task is
+//! left alone.
 
 use std::io;
 use std::path::PathBuf;
@@ -29,9 +30,12 @@ impl Daemon {
                 return;
             }
         };
-        let interrupted = tasks
-            .iter()
-            .filter(|t| matches!(t.status, TaskStatus::Running | TaskStatus::NeedsInput));
+        // A fan-out's original runs nothing itself: its children are resumed (SPEC §20E.2).
+        let fanned_out: Vec<Ulid> = tasks.iter().filter_map(|t| t.fanout_of).collect();
+        let interrupted = tasks.iter().filter(|t| {
+            matches!(t.status, TaskStatus::Running | TaskStatus::NeedsInput)
+                && !fanned_out.contains(&t.id)
+        });
         for task in interrupted {
             let resumed = match last_session(&sessions, task.id) {
                 Some(last) => self.resume(task, last).await,

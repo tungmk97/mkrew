@@ -36,6 +36,7 @@ mod attachment;
 mod comment;
 mod dev;
 mod doc;
+mod fanout;
 mod fs;
 mod git;
 mod resume;
@@ -302,6 +303,7 @@ impl Daemon {
             Request::TaskRemoveWorktree(params) => {
                 (self.task_remove_worktree(params).await, After::Continue)
             }
+            Request::TaskFanout(params) => (self.task_fanout(params).await, After::Continue),
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
@@ -494,7 +496,8 @@ impl Daemon {
 
     /// Runs the task (SPEC §5, §6): its agent, else the project's default, in the project
     /// folder, with the prompt per the profile's `prompt_mode`. Refused while the task already
-    /// has a live session. In a git repo, HEAD before the run becomes `task.checkpoint`.
+    /// has a live session or fan-out children. In a git repo, HEAD before the run becomes
+    /// `task.checkpoint`.
     async fn task_run(&self, params: TaskRunParams) -> Outcome {
         if params.cols == 0 || params.rows == 0 {
             return Outcome::error(ErrorCode::InvalidRequest, "cols and rows must be > 0");
@@ -507,15 +510,20 @@ impl Daemon {
                 let live = sessions
                     .iter()
                     .any(|s| s.task_id == Some(task.id) && s.state != SessionState::Exited);
-                Ok((task, project, live))
+                let fanned_out = !store.list_fanout_children(task.id)?.is_empty();
+                Ok((task, project, live, fanned_out))
             })
         };
-        let (task, project, live) = match found {
+        let (task, project, live, fanned_out) = match found {
             Ok(found) => found,
             Err(e) => return store_outcome::<()>(Err(e)),
         };
         if live {
             let message = format!("task {} is already running", task.id);
+            return Outcome::error(ErrorCode::InvalidState, message);
+        }
+        if fanned_out {
+            let message = format!("task {} fanned out: its children run instead", task.id);
             return Outcome::error(ErrorCode::InvalidState, message);
         }
         let agent_profile = task.agent_profile.clone();

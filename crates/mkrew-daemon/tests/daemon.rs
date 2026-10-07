@@ -28,9 +28,9 @@ use mkrew_protocol::{
     SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
     TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
-    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMergeResult,
-    TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
+    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -4581,6 +4581,128 @@ fn worktree_tasks_merge_back_and_remove_their_worktree() {
     assert!(task.worktree && task.branch.is_none());
     let delete = Request::TaskDelete(TaskRef { task_id: task.id });
     client.call(delete).into_result::<()>().unwrap();
+    client.stop();
+}
+
+/// T13.7 fan-out (SPEC §20E.2): `task.fanout` creates one child task per profile (own
+/// worktree, title ` · <agent>`), runs them all and moves the original to Running; only in a
+/// git repo, with 2–5 distinct profiles, once per task. A restart leaves the original alone.
+#[test]
+fn fanout_runs_each_agent_in_its_own_worktree() {
+    let env = Env::new();
+    for (id, name) in [("fa", "Agent A"), ("fb", "Agent B")] {
+        let scenario = env.dir.path().join(format!("{id}.toml"));
+        std::fs::write(
+            &scenario,
+            format!(
+                "[[step]]\naction = \"write_file\"\npath = \"made.txt\"\ncontent = \"{id}\"\n\
+                 [[step]]\naction = \"ask\"\n"
+            ),
+        )
+        .unwrap();
+        env.write_fake_profile_as(id, &format!("['--scenario', '{}']", scenario.display()));
+        let path = env.dir.path().join(format!("config/agents/{id}.toml"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("Fake agent", name)).unwrap();
+    }
+    let repo = env.repo();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let task: Task = client
+        .call(create_task(&project, "Fix the login", None))
+        .into_result()
+        .unwrap();
+    let fanout = |task_id: Ulid, profiles: &[&str]| {
+        Request::TaskFanout(TaskFanoutParams {
+            task_id,
+            agent_profiles: profiles.iter().map(|p| (*p).to_owned()).collect(),
+            cols: 80,
+            rows: 24,
+        })
+    };
+    let not_git = client.call(fanout(task.id, &["fa", "fb"]));
+    assert_eq!(error_code(not_git), ErrorCode::InvalidState);
+
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let before = git(&repo, &["status", "--porcelain", "--ignored"]);
+    let one = client.call(fanout(task.id, &["fa"]));
+    assert_eq!(error_code(one), ErrorCode::InvalidRequest);
+    let twice = client.call(fanout(task.id, &["fa", "fa"]));
+    assert_eq!(error_code(twice), ErrorCode::InvalidRequest);
+    let unknown = client.call(fanout(task.id, &["fa", "nope"]));
+    assert_eq!(error_code(unknown), ErrorCode::NotFound);
+    assert_eq!(list_tasks(&mut client, &project).len(), 1);
+
+    let children: Vec<Task> = client
+        .call(fanout(task.id, &["fa", "fb"]))
+        .into_result()
+        .unwrap();
+    let titles: Vec<_> = children.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Fix the login · Agent A", "Fix the login · Agent B"]
+    );
+    for (child, id) in children.iter().zip(["fa", "fb"]) {
+        assert_eq!(child.fanout_of, Some(task.id));
+        assert_eq!(child.agent_profile.as_deref(), Some(id));
+        assert!(child.worktree && child.branch.is_some());
+        let root = PathBuf::from(child.worktree_path.clone().unwrap());
+        wait_file(&root.join("made.txt"));
+        assert_eq!(std::fs::read_to_string(root.join("made.txt")).unwrap(), id);
+    }
+    assert_ne!(children[0].worktree_path, children[1].worktree_path);
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let tasks = list_tasks(&mut client, &project);
+        let status = |id: Ulid| tasks.iter().find(|t| t.id == id).unwrap().status;
+        if status(task.id) == TaskStatus::Running
+            && children
+                .iter()
+                .all(|c| status(c.id) == TaskStatus::NeedsInput)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{tasks:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!repo.join("made.txt").exists());
+    assert_eq!(git(&repo, &["status", "--porcelain", "--ignored"]), before);
+    let again = client.call(fanout(task.id, &["fa", "fb"]));
+    assert_eq!(error_code(again), ErrorCode::InvalidState);
+    let nested = client.call(fanout(children[0].id, &["fa", "fb"]));
+    assert_eq!(error_code(nested), ErrorCode::InvalidState);
+    let six = ["fa", "fb", "c", "d", "e", "f"];
+    assert_eq!(
+        error_code(client.call(fanout(task.id, &six))),
+        ErrorCode::InvalidRequest
+    );
+    // The original itself no longer runs: its children do.
+    assert_eq!(
+        error_code(client.call(run_task(task.id))),
+        ErrorCode::InvalidState
+    );
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    // The children (no resume command) are flagged; the original runs nothing to resume.
+    let (_daemon, mut client) = env.start();
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let tasks = list_tasks(&mut client, &project);
+        let found = |id: Ulid| tasks.iter().find(|t| t.id == id).unwrap().clone();
+        if children.iter().all(|c| found(c.id).error_flag) {
+            let original = found(task.id);
+            assert_eq!(original.status, TaskStatus::Running);
+            assert!(!original.error_flag);
+            break;
+        }
+        assert!(Instant::now() < deadline, "{tasks:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     client.stop();
 }
 

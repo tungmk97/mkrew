@@ -657,6 +657,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T13.7) **`task.fanout` rules:** refused outside a git repo (agents would share one folder),
+  for a running task, a fan-out child, a task that already fanned out, and duplicate profiles
+  (two children with the same title). ` · <agent>` is the profile's `name`. Children are created
+  even if some fail to start: the call errors naming the failures, the original moves to Running
+  only if one started. The original can no longer be `task.run` (its children run instead), and
+  startup resume skips it. `cols`/`rows` (default 120×30) added to the request (SPEC updated).
 - (T13.6) **Merge back… / Remove worktree… UI:** there is no "…" card menu yet, so both are
   hover-shown quiet buttons on Review / Done cards whose worktree exists (next to Undo /
   Changes); they move into the "…" menu once it exists (M10 leftover). The merge dialog lists

@@ -1361,7 +1361,10 @@ and milestone numbers are not reused.
 **Protocol (M13):** `task.create/update` accept `worktree: bool`; Task carries `worktree`,
 `worktree_path?`, `branch?`, `fanout_of?`; new `task.merge` (`task_id`, `confirm: true`) →
 `merged: bool`, `conflicts[]`; `task.remove_worktree` (`task_id`, `confirm: true`) → `branch_kept: bool`;
-`task.fanout` (`task_id`, `agent_profiles[]`) → child Task[]; `fs.*` and `git.*` accept
+`task.fanout` (`task_id`, `agent_profiles[]`, `cols`/`rows` default 120×30 for the children's
+terminals) → child Task[] (git repos only; if a child fails to start the call errors naming it,
+the others keep running and the original moves to Running if any started; the original itself
+can no longer be run); `fs.*` and `git.*` accept
 `worktree_task_id?` (not `git.set_base`: the base is per project) and `git.changed` carries it;
 event `session.usage`.
 
