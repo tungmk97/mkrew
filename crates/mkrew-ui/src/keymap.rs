@@ -517,15 +517,31 @@ impl Keymap {
             .map(|(command, _)| *command)
     }
 
-    /// GPUI key bindings for [`Keymap::bindings`].
-    pub fn key_bindings(&self) -> Vec<gpui::KeyBinding> {
+    /// GPUI key bindings for [`Keymap::bindings`], folded by `mapper` the way the platform
+    /// reports typed keys (on Windows Shift folds into digits and punctuation: Ctrl+Shift+2
+    /// arrives as `ctrl-@` on a US layout). Rebuild them when the keyboard layout changes.
+    pub fn key_bindings(&self, mapper: &dyn gpui::PlatformKeyboardMapper) -> Vec<gpui::KeyBinding> {
         self.bindings
             .iter()
-            .map(|(command, keystroke)| {
-                // `KeyBinding::new` panics on an unparsable keystroke or context; neither can
-                // happen: the keystroke was parsed and is unparsed back, the context is a
-                // plain identifier or `COMMENTS_CONTEXT` (parsed in the tests).
-                gpui::KeyBinding::new(&keystroke.unparse(), Run(*command), command.context())
+            .filter_map(|(command, keystroke)| {
+                // Never fails in practice: the keystroke was parsed and is unparsed back, the
+                // contexts are plain identifiers or `COMMENTS_CONTEXT` (all loaded in the tests).
+                let context = match command
+                    .context()
+                    .map(gpui::KeyBindingContextPredicate::parse)
+                {
+                    None => None,
+                    Some(Ok(predicate)) => Some(predicate.into()),
+                    Some(Err(error)) => {
+                        tracing::warn!("{command:?}: bad key context: {error}");
+                        return None;
+                    }
+                };
+                let keys = keystroke.unparse();
+                let run = Box::new(Run(*command));
+                gpui::KeyBinding::load(&keys, run, context, true, None, mapper)
+                    .inspect_err(|error| tracing::warn!("{command:?}: cannot bind {keys}: {error}"))
+                    .ok()
             })
             .collect()
     }
@@ -819,7 +835,44 @@ mod tests {
     #[test]
     fn every_binding_becomes_a_gpui_key_binding() {
         let (keymap, _) = Keymap::parse("split_down = \"ctrl-alt--\"\n");
-        assert_eq!(keymap.key_bindings().len(), Command::all().len());
+        let bindings = keymap.key_bindings(&gpui::DummyKeyboardMapper);
+        assert_eq!(bindings.len(), Command::all().len());
+    }
+
+    /// gpui-pre-windows reports Ctrl+Shift+2 as `ctrl-@` (Shift folded into the digit, layout
+    /// dependent; keyboard.rs `get_keystroke_key`). A binding kept as `ctrl-shift-2` never
+    /// matches, so every shifted digit / `=` / `-` binding must be folded the same way.
+    #[cfg(windows)]
+    #[test]
+    fn shifted_digit_bindings_are_folded_like_windows_reports_them() {
+        let platform = gpui_platform::current_platform(true);
+        let mapper = platform.keyboard_mapper();
+        let keymap = Keymap::defaults();
+        let bindings = keymap.key_bindings(mapper.as_ref());
+        let mut checked = 0;
+        for ((command, keystroke), binding) in keymap.bindings().iter().zip(&bindings) {
+            let folded = keystroke.modifiers.shift
+                && (keystroke.key.chars().all(|c| c.is_ascii_digit())
+                    || keystroke.key == "="
+                    || keystroke.key == "-");
+            if !folded {
+                continue;
+            }
+            let inner = binding.keystrokes()[0].inner();
+            assert!(
+                !inner.modifiers.shift,
+                "{command:?} still needs Shift: {inner:?}"
+            );
+            assert_ne!(
+                inner.key, keystroke.key,
+                "{command:?} kept the unshifted key"
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 7,
+            "Ctrl+Shift+1..5 and Alt+Shift+=/- are shifted defaults"
+        );
     }
 
     #[test]

@@ -3,6 +3,7 @@ name = "Codex"
 command = "codex"
 prompt_mode = "arg"
 resume = "codex resume {session_id}"
+oneshot = "codex exec --sandbox read-only --skip-git-repo-check -"   # prompt on stdin ("-")
 
 [state]
 mode = "hook+screen"

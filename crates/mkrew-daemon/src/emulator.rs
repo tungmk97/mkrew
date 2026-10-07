@@ -83,6 +83,22 @@ impl Emulator {
             .collect()
     }
 
+    /// Hash of the visible screen's characters (no colors, no cursor): unchanged when output
+    /// only moved the cursor, set a title or repainted the same text. The whole screen, not
+    /// [`Self::lines_to_cursor`]: spinners and status rows can sit below the cursor.
+    pub fn text_fingerprint(&self) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let grid = self.term.grid();
+        let mut hasher = DefaultHasher::new();
+        for row in 0..self.term.screen_lines() {
+            let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
+            for column in 0..self.term.columns() {
+                line[Column(column)].c.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
     /// The last `count` non-blank rows of the visible screen as plain text, top to bottom,
     /// trailing blanks trimmed (`session.read`, SPEC §20A).
     pub fn last_lines(&self, count: usize) -> Vec<String> {
@@ -253,6 +269,22 @@ mod tests {
         assert_eq!(emu.last_lines(3), ["two", "形x", "three"]);
         assert_eq!(emu.last_lines(200), ["one", "two", "形x", "three"]);
         assert!(Emulator::new(20, 8).last_lines(5).is_empty());
+    }
+
+    /// TUIs at an idle prompt keep sending bytes that change nothing visible (cursor show/hide,
+    /// OSC title and progress, synchronized-update markers, identical repaints): those must
+    /// not look like work (SPEC §6, ADR 0015).
+    #[test]
+    fn fingerprint_ignores_invisible_output_and_sees_new_text() {
+        let mut emu = Emulator::new(20, 4);
+        emu.advance(b"hello");
+        let print = emu.text_fingerprint();
+        emu.advance(b"\x1b[?25l\x1b[?25h\x1b]0;title\x07\x1b]9;4;3\x07");
+        emu.advance(b"\x1b[?2026h\x1b[H\x1b[2Jhello\x1b[?2026l");
+        emu.advance(b"\x1b[31m\x1b[H\x1b[1Khello\x1b[0m");
+        assert_eq!(emu.text_fingerprint(), print, "nothing visible changed");
+        emu.advance(b"!");
+        assert_ne!(emu.text_fingerprint(), print);
     }
 
     #[test]

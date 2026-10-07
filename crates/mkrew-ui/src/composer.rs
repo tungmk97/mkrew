@@ -20,6 +20,11 @@ pub struct Draft {
     pub shown: bool,
     /// A `session.send` is in flight.
     pub busy: bool,
+    /// The `ai.generate` rewriting this draft (SPEC §20B.1 ✦), by id; typing waits for it.
+    pub enhancing: Option<Ulid>,
+    /// Text inserted (picked prompt or file, selection, paste) while rewriting; added after
+    /// the answer so nothing is lost.
+    pub held: String,
     /// Why the last send failed.
     pub error: Option<String>,
 }
@@ -50,14 +55,15 @@ impl Composers {
         self.drafts.get(&session).filter(|draft| draft.shown)
     }
 
-    /// Applies a key typed in `session`'s composer (ignored while sending, except Esc).
+    /// Applies a key typed in `session`'s composer (ignored while sending or rewriting, except
+    /// Esc).
     pub fn key(&mut self, session: Ulid, key: DialogKey) -> text_box::Outcome {
         let Some(draft) = self.drafts.get_mut(&session) else {
             return text_box::Outcome::Edited;
         };
         match key {
             DialogKey::Cancel => text_box::Outcome::Cancel,
-            _ if draft.busy => text_box::Outcome::Edited,
+            _ if draft.busy || draft.enhancing.is_some() => text_box::Outcome::Edited,
             key => {
                 let outcome = draft.text.key(key);
                 if outcome == text_box::Outcome::Edited {
@@ -68,9 +74,15 @@ impl Composers {
         }
     }
 
-    /// Pastes `text` into `session`'s draft (ignored while sending).
+    /// Pastes `text` into `session`'s draft (ignored while sending; held until the answer
+    /// while rewriting).
     pub fn insert(&mut self, session: Ulid, text: &str) {
-        if let Some(draft) = self.drafts.get_mut(&session).filter(|d| !d.busy) {
+        let Some(draft) = self.drafts.get_mut(&session).filter(|d| !d.busy) else {
+            return;
+        };
+        if draft.enhancing.is_some() {
+            draft.held.push_str(text);
+        } else {
             draft.text.insert(text);
             draft.error = None;
         }
@@ -82,7 +94,7 @@ impl Composers {
         let draft = self
             .drafts
             .get_mut(&session)
-            .filter(|draft| !draft.busy && !draft.text.is_blank())?;
+            .filter(|draft| !draft.busy && draft.enhancing.is_none() && !draft.text.is_blank())?;
         draft.busy = true;
         draft.error = None;
         Some(SessionSendParams {
@@ -90,6 +102,40 @@ impl Composers {
             text: without_blank_edges(draft.text.text()).to_owned(),
             submit: true,
         })
+    }
+
+    /// Starts rewriting `session`'s draft as generation `generation_id`; returns the text to
+    /// improve, or `None` while sending or rewriting or when only blanks were typed.
+    pub fn begin_enhance(&mut self, session: Ulid, generation_id: Ulid) -> Option<String> {
+        let draft = self
+            .drafts
+            .get_mut(&session)
+            .filter(|draft| !draft.busy && draft.enhancing.is_none() && !draft.text.is_blank())?;
+        draft.enhancing = Some(generation_id);
+        draft.error = None;
+        Some(without_blank_edges(draft.text.text()).to_owned())
+    }
+
+    /// The answer of generation `generation_id`: the rewrite replaces its draft, a failure
+    /// keeps the draft and says why. `false` if no draft asked for it.
+    pub fn enhanced(&mut self, generation_id: Ulid, result: Result<String, String>) -> bool {
+        let Some(draft) = self
+            .drafts
+            .values_mut()
+            .find(|draft| draft.enhancing == Some(generation_id))
+        else {
+            return false;
+        };
+        draft.enhancing = None;
+        match result {
+            Ok(text) => {
+                draft.text.clear();
+                draft.text.insert(&text);
+            }
+            Err(error) => draft.error = Some(format!("Cannot improve the prompt: {error}")),
+        }
+        draft.text.insert(&std::mem::take(&mut draft.held));
+        true
     }
 
     /// Keeps the queue of a `session.queue` event. Returns `true` when it changed.
@@ -212,6 +258,87 @@ mod tests {
             }
             composers.key(session, DialogKey::Insert(line.into()));
         }
+    }
+
+    /// Text that arrives while ✦ rewrites (a picked prompt or file, a Docs selection, a
+    /// paste) is never lost: it follows the rewrite, or the kept draft on a failure.
+    #[test]
+    fn text_inserted_during_a_rewrite_is_kept_after_it() {
+        let session = Ulid::new();
+        let mut composers = Composers::default();
+        composers.open(session);
+        composers.insert(session, "fix bug");
+        let id = Ulid::new();
+        composers.begin_enhance(session, id);
+        composers.insert(session, " `src/a.rs`");
+        assert_eq!(composers.shown(session).unwrap().text.text(), "fix bug");
+        assert!(composers.enhanced(id, Ok("Fix the crash".into())));
+        assert_eq!(
+            composers.shown(session).unwrap().text.text(),
+            "Fix the crash `src/a.rs`"
+        );
+
+        let failed = Ulid::new();
+        composers.begin_enhance(session, failed);
+        composers.insert(session, "!");
+        composers.enhanced(failed, Err("no".into()));
+        assert_eq!(
+            composers.shown(session).unwrap().text.text(),
+            "Fix the crash `src/a.rs`!"
+        );
+    }
+
+    #[test]
+    fn an_improved_prompt_replaces_only_its_draft() {
+        let (a, b) = (Ulid::new(), Ulid::new());
+        let mut composers = Composers::default();
+        for session in [a, b] {
+            composers.open(session);
+            composers.insert(session, "fix bug");
+        }
+        let id = Ulid::new();
+        assert_eq!(composers.begin_enhance(a, id).as_deref(), Some("fix bug"));
+        assert_eq!(
+            composers.begin_enhance(a, Ulid::new()),
+            None,
+            "one rewrite at a time"
+        );
+        composers.key(a, DialogKey::Insert("!".into()));
+        composers.key(a, DialogKey::Backspace);
+        assert!(
+            composers.begin_send(a).is_none(),
+            "no send while the agent rewrites"
+        );
+        assert!(composers.enhanced(id, Ok("Fix the crash in parse()".into())));
+        assert_eq!(
+            composers.shown(a).unwrap().text.text(),
+            "Fix the crash in parse()"
+        );
+        assert_eq!(composers.shown(b).unwrap().text.text(), "fix bug");
+        assert!(!composers.enhanced(id, Ok("again".into())), "answered once");
+    }
+
+    #[test]
+    fn a_failed_rewrite_keeps_the_draft_and_blank_drafts_are_not_rewritten() {
+        let session = Ulid::new();
+        let mut composers = Composers::default();
+        composers.open(session);
+        assert_eq!(
+            composers.begin_enhance(session, Ulid::new()),
+            None,
+            "nothing typed"
+        );
+        composers.insert(session, "add tests");
+        let id = Ulid::new();
+        assert!(composers.begin_enhance(session, id).is_some());
+        assert!(composers.enhanced(id, Err("the agent did not answer within 120 s".into())));
+        let draft = composers.shown(session).unwrap();
+        assert_eq!(draft.text.text(), "add tests");
+        assert_eq!(
+            draft.error.as_deref(),
+            Some("Cannot improve the prompt: the agent did not answer within 120 s")
+        );
+        assert_eq!(draft.enhancing, None);
     }
 
     #[test]

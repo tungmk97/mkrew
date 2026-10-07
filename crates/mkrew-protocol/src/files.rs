@@ -294,6 +294,45 @@ pub struct GitChangedEvent {
     pub worktree_task_id: Option<Ulid>,
 }
 
+// ---- ai ----
+
+/// What `ai.generate` writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiKind {
+    /// A Conventional Commits message for the staged changes (else the unstaged ones).
+    CommitMessage,
+    /// A clearer version of `input`, a prompt for a coding agent.
+    EnhancePrompt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiGenerateParams {
+    /// Chosen by the client, so it knows the id before the answer can arrive.
+    pub generation_id: Ulid,
+    pub project_id: Ulid,
+    /// Run in this task's worktree instead of the project folder.
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    /// Agent profile id; `None` = the project's default agent.
+    #[serde(default)]
+    pub agent_profile: Option<String>,
+    pub kind: AiKind,
+    /// The prompt to improve (`enhance_prompt`); unused for `commit_message`.
+    #[serde(default)]
+    pub input: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiGeneratedEvent {
+    pub generation_id: Ulid,
+    pub project_id: Ulid,
+    /// The agent's answer, trimmed; `None` on failure.
+    pub text: Option<String>,
+    /// Why there is no text.
+    pub error: Option<String>,
+}
+
 // ---- fs ----
 
 /// `fs.list`: the direct children of one folder (the tree loads lazily).
@@ -526,6 +565,14 @@ mod tests {
                 query: "mai".into(),
                 limit: 20,
             }),
+            Request::AiGenerate(AiGenerateParams {
+                generation_id: sid(),
+                project_id,
+                worktree_task_id: wt,
+                agent_profile: Some("claude".into()),
+                kind: AiKind::EnhancePrompt,
+                input: "fix it".into(),
+            }),
         ];
         let methods = [
             "git.status",
@@ -542,6 +589,7 @@ mod tests {
             "fs.list",
             "fs.read",
             "fs.find",
+            "ai.generate",
         ];
         assert_eq!(requests.len(), methods.len());
         for (id, (request, method)) in requests.into_iter().zip(methods).enumerate() {
@@ -673,5 +721,23 @@ mod tests {
         assert_eq!(changed["event"], "git.changed");
         assert_eq!(changed["data"]["project_id"], sid().to_string());
         assert_eq!(changed["data"]["worktree_task_id"], json!(null));
+
+        let generated = round_trip(&Message::Event(Event::AiGenerated(AiGeneratedEvent {
+            generation_id: sid(),
+            project_id: sid(),
+            text: Some("feat: x".into()),
+            error: None,
+        })));
+        assert_eq!(generated["event"], "ai.generated");
+        let params: AiGenerateParams = serde_json::from_value(json!({
+            "generation_id": sid().to_string(),
+            "project_id": sid().to_string(),
+            "kind": "commit_message",
+        }))
+        .unwrap();
+        assert_eq!(
+            (params.worktree_task_id, params.agent_profile, params.input),
+            (None, None, String::new())
+        );
     }
 }

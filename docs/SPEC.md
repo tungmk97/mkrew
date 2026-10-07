@@ -343,6 +343,9 @@ env = {}
 # Resume command; {session_id} = native_session_id. Empty = no resume. Split on whitespace,
 # "…" / '…' group words (no escapes); {session_id} is replaced inside each word.
 resume = "claude --resume {session_id}"
+# One-shot text (✦ commit message §12B, ✦ improve prompt §20B.1): non-interactive command,
+# split like `resume`; the prompt goes on stdin, stdout is the answer. Empty = not offered.
+oneshot = "claude -p"
 
 [state]
 mode = "hook+screen"            # "hook" | "screen" | "hook+screen"
@@ -356,6 +359,7 @@ name = "Codex"
 command = "codex"
 prompt_mode = "arg"
 resume = "codex resume {session_id}"
+oneshot = "codex exec --sandbox read-only --skip-git-repo-check -"   # prompt on stdin ("-")
 [state]
 mode = "hook+screen"
 idle_after_ms = 3000
@@ -367,6 +371,7 @@ needs_input_patterns = ['(?i)allow command', '(?i)approve']
 name = "Oh My Pi"
 command = "omp"
 prompt_mode = "type"
+oneshot = "omp -p --no-session"  # one-shot text; prompt on stdin
 [state]
 mode = "screen"
 idle_after_ms = 3000
@@ -377,6 +382,8 @@ needs_input_patterns = []
 (command = `mkrew-fakeagent`, see §16) also ship. Optional key `kind = "agent" | "shell"`
 (default `agent`); a shell profile may omit `command` to use the OS default shell
 (`%COMSPEC%` / `$SHELL`). Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
+Profiles written before `oneshot` existed are not updated (seeding never overwrites); ✦ then
+answers `invalid_state` naming the key and the file.
 
 Patterns above are starting points only. They must be refined by recording real agent output
 (add the recordings as test fixtures under `crates/mkrew-core/tests/fixtures/`).
@@ -386,9 +393,9 @@ Patterns above are starting points only. They must be refined by recording real 
 | State | Meaning | Source |
 | --- | --- | --- |
 | starting | spawned, no output yet | daemon |
-| working | producing output, or hook says busy | hook / screen |
+| working | the visible screen text changed in the last `idle_after_ms`, or hook says busy | hook / screen |
 | needs_input | waiting for the user to answer/approve | hook / pattern |
-| idle | no output for `idle_after_ms`, no pattern match | screen |
+| idle | the visible screen text unchanged for `idle_after_ms` (cursor, title, color or identical-redraw output does not count), no pattern match | screen |
 | done | hook says the turn finished | hook |
 | exited | process exited | daemon |
 | unknown | cannot tell | default |
@@ -468,6 +475,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.commit` | `message` | new commit hash |
 | `git.log` | `limit`, `path?` | Commit[] |
 | `git.show` | `commit` | commit info + changed files |
+| `ai.generate` | `generation_id` (client-chosen), `project_id`, `worktree_task_id?`, `agent_profile?` (none = project `default_agent`), `kind` (`commit_message`/`enhance_prompt`), `input` | `null` at once; runs the profile's `oneshot` (§6) with a 120 s limit in the project/worktree folder, prompt on stdin; answer in `ai.generated` |
 | `git.set_base` | `project_id`, `base_ref` (`null`/blank = auto-detect; trimmed; refused if it starts with `-` or contains whitespace or control characters) | ok — broadcasts `project.updated` (Project carries `base_ref`) |
 | `git.fetch` / `git.push` | `project_id` | ok (push = current branch to its upstream, never force) |
 | `daemon.status/stop` | – | info / ok |
@@ -487,6 +495,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |
 | `notification.clicked` | user clicked an OS notification (UI focuses that pane) |
 | `git.changed` | workspace git state changed (debounced, ≤ once per 300 ms) |
+| `ai.generated` | answer to an `ai.generate` (`generation_id`, `project_id`, `text?` trimmed and unfenced, `error?`) |
 
 **Framing.** Every frame = `u32` big-endian length + `u8` kind + payload. Kind `0x01` = JSON
 (requests, responses, events). Kind `0x02` = terminal output: 16-byte binary ULID of the session
@@ -691,8 +700,9 @@ Only edit this file. When done, for EACH comment run:
 - **Viewer** (right): read-only, line numbers, syntax highlighting via `syntect` (lazy-loaded
   syntax set). Files > 2 MB or binary: show a notice and "Open in Zed".
 - `.md` files offer "Review in Docs".
-- **Quick open** (`Ctrl+Shift+O`) also fuzzy-finds files of the current workspace (`ignore` to
-  walk, `nucleo-matcher` to rank).
+- **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
+  fuzzy-finds files of the current workspace, in the folder the Files view shows (project or
+  task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - Select a line → "Open in Zed" at that line.
 
 ## §12B UI: Git view (inspired by Orca)
@@ -718,12 +728,16 @@ Windows (tens of ms, worse with antivirus), so:
     - **Working changes:** uncommitted changes grouped Staged / Unstaged / Untracked.
     - **Against base:** everything on this branch vs base, from `git merge-base HEAD <base>` to the
       working tree — like a pull request diff.
-- **Changed-file list** with +/− counts; selecting one shows its diff.
+- **Changed-file list** (right of the diff, with the header and commit box) with +/− counts;
+  selecting one shows its diff.
 - **Diff viewer:** unified (side-by-side is backlog), hunk navigation, collapsed unchanged regions, syntax
   highlighting. Diffs > 1 MB show a summary and "Open in Zed".
 - **Stage / unstage** per file or per hunk (daemon builds the patch, runs `git apply --cached`).
 - **Discard** per file: always confirms and shows what will be lost.
-- **Commit:** multi-line message box, Commit button (`Ctrl+Enter`). No amend in v1.
+- **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
+  default agent writes a Conventional Commits message from the staged changes (else the
+  unstaged ones) via `ai.generate` (§7); the answer replaces the draft, nothing is committed
+  until the user commits. No amend in v1.
 - **Fetch / Push:** fetch refreshes the base; push sends the current branch to its upstream only,
   never with force. Pull, rebase, merge and branch switching are backlog.
 - **History:** last 50 commits; select one to see its files and diffs.
@@ -753,7 +767,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Group | Action | Default |
 | --- | --- | --- |
 | Global | Command palette | Ctrl+Shift+P |
-| Global | Quick open workspace / session / task | Ctrl+Shift+O |
+| Global | Quick open a file of the active workspace | Ctrl+Shift+O |
 | Global | Open keymap settings | Ctrl+, |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -844,8 +858,11 @@ The terminal is the hero; everything else steps back.
 - Radius 4 (badges, small buttons), 8 (cards, panes, inputs), 12 (dialogs, palette).
 - UI font = system font (Segoe UI Variable / SF / Inter). Sizes 12 meta, 13 body, 15 card title,
   20 view title. Weights 400/500/600. No all-caps text.
-- Terminal font defaults: Cascadia Code (Windows), SF Mono (macOS), JetBrains Mono (Linux), 13 px;
-  configurable. ANSI palette harmonized with the theme.
+- Terminal font defaults: Cascadia Code → Cascadia Mono → Consolas (Windows), SF Mono → Menlo
+  (macOS), JetBrains Mono → DejaVu Sans Mono (Linux): the first installed one, 13 px. Icons of
+  Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
+  family (`theme::TERMINAL_GLYPH_FALLBACKS`), then the system fallback. ANSI palette
+  harmonized with the theme.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
@@ -1216,6 +1233,11 @@ context_window = 200000        # tokens, for the % shown
    paste (§7). Typing `@` opens the quick-open file picker (§12A); the pick inserts
    `composer.file_ref` with `{path}` = the project-relative path, `/` separators, quoted with `"`
    if it contains spaces. Drafts are kept per session in UI memory (lost on UI restart — fine).
+   ✦ (shown while the composer has the keyboard and the draft is not blank) sends the draft to
+   the session's own agent profile via `ai.generate` (`enhance_prompt`, §7). The agent may read
+   the project folder for context. The rewrite replaces the draft, and the user still sends it.
+   Typing waits until the answer arrives; picked prompts or files, selections and pastes made
+   meanwhile are added after it. A failure keeps the draft and shows why.
    Task create/edit and the Board follow-up input reuse the same multi-line text box.
 2. **Send queue visible.** While a send waits (session working), the composer lists queued texts
    (first line each) with ✕ to remove. Daemon: each queued text gets a `send_id`; `session.send`

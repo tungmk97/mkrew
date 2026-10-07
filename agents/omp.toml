@@ -2,6 +2,7 @@
 name = "Oh My Pi"
 command = "omp"
 prompt_mode = "type"
+oneshot = "omp -p --no-session"  # one-shot text; prompt on stdin
 
 [state]
 mode = "screen"

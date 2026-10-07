@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::files::{
-    FsFindParams, FsListParams, FsReadParams, GitChangedEvent, GitCommitParams, GitDiffParams,
-    GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams, GitShowParams,
-    GitStageParams, GitStatusParams, ProjectRef,
+    AiGenerateParams, AiGeneratedEvent, FsFindParams, FsListParams, FsReadParams, GitChangedEvent,
+    GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams, GitRemoteParams,
+    GitSetBaseParams, GitShowParams, GitStageParams, GitStatusParams, ProjectRef,
 };
 
 /// One JSON frame.
@@ -177,6 +177,10 @@ pub enum Request {
     /// Returns [`CommitDetail`].
     #[serde(rename = "git.show")]
     GitShow(GitShowParams),
+    /// One-shot text from an agent CLI (SPEC §6 `oneshot`, §12B, §20B.1). Returns nothing
+    /// (`null`) once the run started; the answer follows as `ai.generated`.
+    #[serde(rename = "ai.generate")]
+    AiGenerate(AiGenerateParams),
     /// Returns nothing (`null`); broadcasts `project.updated`.
     #[serde(rename = "git.set_base")]
     GitSetBase(GitSetBaseParams),
@@ -318,6 +322,9 @@ pub enum Event {
     /// The git state of a workspace changed (debounced, ≤ once per 300 ms; SPEC §12B).
     #[serde(rename = "git.changed")]
     GitChanged(GitChangedEvent),
+    /// The answer to the `ai.generate` with this `generation_id`.
+    #[serde(rename = "ai.generated")]
+    AiGenerated(AiGeneratedEvent),
     /// A turn of an agent session ended (SPEC §20A.3). A turn resumed after `needs_input` ends
     /// again with the same `n`; the later event replaces the earlier one.
     #[serde(rename = "session.turn")]

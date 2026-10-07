@@ -171,7 +171,7 @@ pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 /// Height of the quick open match list (it scrolls past that).
 pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 
-/// Width of the Git view's header and changed-file list (left of the diff).
+/// Width of the Git view's header and changed-file list (right of the diff).
 pub const GIT_FILE_LIST_WIDTH: f32 = 300.0;
 
 /// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
@@ -199,19 +199,53 @@ pub const DIALOG_SCRIM: u32 = 0x0000_0059;
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 
+/// Terminal font families by preference; the first one installed is used (SPEC §14).
 #[cfg(windows)]
-const TERMINAL_FONT: &str = "Cascadia Code";
+pub const TERMINAL_FONTS: &[&str] = &["Cascadia Code", "Cascadia Mono", "Consolas"];
 #[cfg(target_os = "macos")]
-const TERMINAL_FONT: &str = "SF Mono";
+pub const TERMINAL_FONTS: &[&str] = &["SF Mono", "Menlo"];
 #[cfg(not(any(windows, target_os = "macos")))]
-const TERMINAL_FONT: &str = "JetBrains Mono";
+pub const TERMINAL_FONTS: &[&str] = &["JetBrains Mono", "DejaVu Sans Mono"];
 
-#[cfg(windows)]
-const TERMINAL_FONT_FALLBACK: &str = "Consolas";
-#[cfg(target_os = "macos")]
-const TERMINAL_FONT_FALLBACK: &str = "Menlo";
-#[cfg(not(any(windows, target_os = "macos")))]
-const TERMINAL_FONT_FALLBACK: &str = "DejaVu Sans Mono";
+/// Per-glyph fallbacks of the terminal font, tried before the system fallback. Nerd Font
+/// icons (private-use code points, used by omp and shell prompts) are in no system font.
+/// Missing families are skipped; "Mono" variants keep icons one cell wide.
+pub const TERMINAL_GLYPH_FALLBACKS: &[&str] = &[
+    "Symbols Nerd Font Mono",
+    "CaskaydiaCove Nerd Font Mono",
+    "CaskaydiaMono Nerd Font Mono",
+    "JetBrainsMono Nerd Font Mono",
+    "MesloLGS Nerd Font Mono",
+    "MesloLGM Nerd Font Mono",
+    "Hack Nerd Font Mono",
+    "FiraCode Nerd Font Mono",
+];
+
+/// The terminal family picked from the installed fonts at startup.
+static TERMINAL_FONT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// The first of `preferred` that is `installed`, else the first of `preferred`.
+pub fn pick_family(preferred: &[&'static str], installed: &[String]) -> &'static str {
+    preferred
+        .iter()
+        .copied()
+        .find(|family| installed.iter().any(|name| name == family))
+        .or_else(|| preferred.first().copied())
+        .unwrap_or_default()
+}
+
+/// Picks the terminal family once; call before the first window opens. A family DirectWrite
+/// / CoreText cannot find would silently become a proportional UI font.
+pub fn init_terminal_font(installed: &[String]) {
+    let _ = TERMINAL_FONT.set(pick_family(TERMINAL_FONTS, installed));
+}
+
+fn terminal_font_family() -> &'static str {
+    TERMINAL_FONT
+        .get()
+        .copied()
+        .unwrap_or_else(|| pick_family(TERMINAL_FONTS, &[]))
+}
 
 /// Color tokens for one appearance (dark or light), plus the terminal settings.
 #[derive(Clone, Debug, PartialEq)]
@@ -252,8 +286,6 @@ pub struct Theme {
     /// ANSI 0–15, harmonized with the tokens above.
     pub ansi: [u32; 16],
     pub terminal_font_family: &'static str,
-    /// Used if `terminal_font_family` is not installed.
-    pub terminal_font_fallback: &'static str,
     pub terminal_font_size: f32,
     /// Line height as a multiple of the font size.
     pub terminal_line_height: f32,
@@ -375,8 +407,7 @@ impl Theme {
             syntax_type: 0,
             syntax_function: 0,
             ansi: [0; 16],
-            terminal_font_family: TERMINAL_FONT,
-            terminal_font_fallback: TERMINAL_FONT_FALLBACK,
+            terminal_font_family: terminal_font_family(),
             terminal_font_size: font_size::BODY,
             terminal_line_height: 1.35,
             terminal_padding: space::S,
@@ -407,6 +438,22 @@ pub fn contrast(a: u32, b: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_installed_terminal_family_wins() {
+        let installed = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        let preferred = &["Cascadia Code", "Cascadia Mono", "Consolas"];
+        assert_eq!(
+            pick_family(preferred, &installed(&["Arial", "Consolas"])),
+            "Consolas"
+        );
+        assert_eq!(
+            pick_family(preferred, &installed(&["Consolas", "Cascadia Mono"])),
+            "Cascadia Mono",
+            "preference order, not installation order"
+        );
+        assert_eq!(pick_family(preferred, &installed(&[])), "Cascadia Code");
+    }
 
     #[test]
     fn body_text_contrast_is_at_least_4_5() {

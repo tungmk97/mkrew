@@ -2,4 +2,4 @@
 source: crates/mkrew-core/src/profile.rs
 expression: "parse_err(\"command = \\\"claude\\\"\\npromt_mode = \\\"arg\\\"\\n\")"
 ---
-agents/broken.toml:2:1: unknown field `promt_mode`, expected one of `name`, `kind`, `command`, `args`, `prompt_mode`, `env`, `resume`, `state`, `usage`
+agents/broken.toml:2:1: unknown field `promt_mode`, expected one of `name`, `kind`, `command`, `args`, `prompt_mode`, `env`, `resume`, `oneshot`, `state`, `usage`

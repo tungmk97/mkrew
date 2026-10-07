@@ -216,7 +216,8 @@ If GPUI is confirmed:
 - `mkrew-ui` (M2) inherits from the spike: the row renderer and dirty-row cache, wake-on-output
   draining paced by paint, and the key mapping. It must add: an `InputHandler` for IME/dead
   keys, an optional 60 Hz paint cap during floods, keeping a finished session's last screen,
-  and PTY writes off the UI thread (the daemon owns them from M1).
+  and PTY writes off the UI thread (the daemon owns them from M1). Done 2026-10-07:
+  `mkrew_ui::ime::Typing` is the InputHandler of every text field and terminal.
 - Release builds on Windows need the Windows SDK (`fxc.exe`) or `GPUI_FXC_PATH`; CI must have it.
 - gpui upgrades follow `gpui-component` releases (exact pin); budget time for API churn.
 - Idle CPU (~3.5 % of a core) stays until upstream gpui stops invalidating idle windows each

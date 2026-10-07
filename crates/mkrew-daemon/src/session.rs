@@ -466,6 +466,7 @@ impl Hub {
             pid,
             emulator: None,
             machine,
+            screen_print: None,
             queue,
             log,
             attachments: Vec::new(),
@@ -893,6 +894,9 @@ struct Actor {
     /// Created lazily so a session that never prints costs no grid memory.
     emulator: Option<Emulator>,
     machine: StateMachine,
+    /// [`Emulator::text_fingerprint`] after the last output; output that leaves it unchanged
+    /// is not activity (ADR 0015).
+    screen_print: Option<u64>,
     /// `session.send` texts waiting for the session to be ready.
     queue: SendQueue,
     log: SessionLog,
@@ -1062,10 +1066,16 @@ impl Actor {
         for attachment in &self.attachments {
             attachment.push(bytes);
         }
-        let lines = self.screen_lines();
-        let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
-        if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
-            self.set_state(state, StateSource::Screen);
+        // Only visible changes are work: idle TUIs keep sending cursor/title/progress bytes,
+        // which would otherwise hold the session in `working` forever (ADR 0015). The first
+        // batch always counts, so hook-only profiles still leave `starting`.
+        let print = self.emulator().text_fingerprint();
+        if self.screen_print.replace(print) != Some(print) {
+            let lines = self.screen_lines();
+            let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+            if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
+                self.set_state(state, StateSource::Screen);
+            }
         }
         if !self.send_writing {
             self.queue.on_output();

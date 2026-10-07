@@ -11,6 +11,8 @@ prompt_mode = "arg"
 env = {}
 # Resume command; {session_id} = native_session_id. Empty = no resume.
 resume = "claude --resume {session_id}"
+# One-shot text (✦ commit message / prompt rewrite): non-interactive, prompt on stdin.
+oneshot = "claude -p"
 
 [state]
 mode = "hook+screen"            # "hook" | "screen" | "hook+screen"

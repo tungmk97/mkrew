@@ -15,8 +15,8 @@ use gpui::{
     ExternalPaths, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
     InspectorElementId, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextAlign,
-    TextRun, UnderlineStyle, Window, WindowAppearance, div, fill, font, point, px, relative, rgb,
-    size,
+    TextRun, UnderlineStyle, Window, WindowAppearance, canvas, div, fill, font, point, px,
+    relative, rgb, size,
 };
 use mkrew_protocol::{
     AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
@@ -63,6 +63,8 @@ pub struct TerminalPane {
     /// The mouse-down being dispatched hit the find bar: the terminal must not take focus or
     /// start a selection (the event still bubbles so the shell focuses this pane).
     find_clicked: bool,
+    /// Composing IME chars typed into the PTY or the find bar so far (see `crate::ime`).
+    ime_marked: Rc<crate::ime::Composing<FocusHandle>>,
 }
 
 /// Window position of the grid's top-left cell and the cell size.
@@ -133,6 +135,7 @@ impl TerminalPane {
             find: None,
             find_focus: cx.focus_handle(),
             find_clicked: false,
+            ime_marked: Rc::default(),
         }
     }
 
@@ -475,7 +478,26 @@ impl TerminalPane {
                         .text_color(rgb(theme.text_muted))
                         .child(status),
                 )
-                .child(close),
+                .child(close)
+                .child({
+                    let (focus, view) = (self.find_focus.clone(), cx.entity());
+                    let marked = self.ime_marked.clone();
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, cx| {
+                            let typing = crate::ime::Typing {
+                                view,
+                                on_key: TerminalPane::find_key_down,
+                                marked,
+                                focus: focus.clone(),
+                                caret: bounds,
+                            };
+                            window.handle_input(&focus, typing, cx);
+                        },
+                    )
+                    .absolute()
+                    .size_full()
+                }),
         )
     }
 
@@ -778,6 +800,23 @@ impl Element for TerminalElement {
                 let _ = line.paint(at, line_height, TextAlign::Left, None, window, cx);
             }
         }
+        let pane = self.pane.read(cx);
+        let (focus, marked) = (pane.focus_handle.clone(), pane.ime_marked.clone());
+        let caret = Bounds::new(
+            point(
+                origin.x + cell_width * cursor.col as f32,
+                origin.y + line_height * cursor.row as f32,
+            ),
+            size(cell_width, line_height),
+        );
+        let typing = crate::ime::Typing {
+            view: self.pane.clone(),
+            on_key: TerminalPane::key_down,
+            marked,
+            focus: focus.clone(),
+            caret,
+        };
+        window.handle_input(&focus, typing, cx);
         // Full = a signal is already pending, which is just as good.
         let _ = self.painted.try_send(());
     }
@@ -799,11 +838,19 @@ fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
     (cell_width, font_size * theme.terminal_line_height)
 }
 
+/// Glyph fallbacks built once: the terminal paints every frame.
+static GLYPH_FALLBACKS: std::sync::LazyLock<gpui::FontFallbacks> = std::sync::LazyLock::new(|| {
+    gpui::FontFallbacks::from_fonts(
+        theme::TERMINAL_GLYPH_FALLBACKS
+            .iter()
+            .map(|family| (*family).to_owned())
+            .collect(),
+    )
+});
+
 fn terminal_font(theme: &Theme) -> Font {
     let mut base = font(theme.terminal_font_family);
-    base.fallbacks = Some(gpui::FontFallbacks::from_fonts(vec![
-        theme.terminal_font_fallback.to_string(),
-    ]));
+    base.fallbacks = Some(GLYPH_FALLBACKS.clone());
     base
 }
 

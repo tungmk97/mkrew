@@ -15,21 +15,21 @@ use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, KeyDownEvent,
     MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
     Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance, WindowBounds,
-    WindowOptions, anchored, deferred, div, px, relative, rgb, size, uniform_list,
+    WindowOptions, anchored, canvas, deferred, div, px, relative, rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
 use mkrew_protocol::{
-    AgentProfilesResult, ChangeKind, CommentContext, CommentId, CommentListParams, CommentRef,
-    Commit, CommitDetail, DevServer, DevStartParams, DiffLineKind, DocComment, DocContent, DocFile,
-    DocListParams, DocReadParams, Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch,
-    FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project,
-    ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request, Session, SessionAttachResult,
-    SessionFiles, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
-    SessionReadParams, SessionReadResult, SessionRef, SessionSendParams, SessionSendResult,
-    SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams, SessionUsageEvent,
-    StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
-    TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
+    AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
+    CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DevServer, DevStartParams,
+    DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
+    FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode,
+    GitStatus, Outcome, Project, ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request,
+    Session, SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
+    SessionListParams, SessionReadParams, SessionReadResult, SessionRef, SessionSendParams,
+    SessionSendResult, SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams,
+    SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
+    Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
     UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
@@ -51,6 +51,7 @@ use mkrew_ui::git_history::{self, Commits};
 use mkrew_ui::git_view::{self, GitView, Since};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
+use mkrew_ui::ime;
 use mkrew_ui::inbox::{self, Entry, Jump, LastLines, Viewed};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
@@ -111,7 +112,18 @@ fn main() {
         tracing::warn!("{error}; using the default for it");
     }
     gpui_platform::application().run(move |cx: &mut App| {
-        cx.bind_keys(keymap.key_bindings());
+        let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
+        cx.bind_keys(bindings);
+        // Which char a shifted digit reports depends on the layout: bind again after a switch
+        // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
+        let rebind = keymap.clone();
+        cx.on_keyboard_layout_change(move |cx| {
+            let bindings = rebind.key_bindings(cx.keyboard_mapper().as_ref());
+            cx.clear_key_bindings();
+            cx.bind_keys(bindings);
+        })
+        .detach();
+        theme::init_terminal_font(&cx.text_system().all_font_names());
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -247,6 +259,8 @@ struct Shell {
     composers: Composers,
     /// Focused while the focused pane's composer takes keys.
     composer_focus: FocusHandle,
+    /// Composing IME chars typed into the focused field so far (see `mkrew_ui::ime`).
+    ime_marked: Rc<ime::Composing<FocusHandle>>,
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
@@ -542,6 +556,7 @@ impl Shell {
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             composer_focus: cx.focus_handle(),
+            ime_marked: Rc::default(),
             composer_scroll: ScrollHandle::new(),
             views: HashMap::new(),
             docs: HashMap::new(),
@@ -2033,6 +2048,47 @@ impl Shell {
         .detach();
     }
 
+    /// ✦ in the commit box (SPEC §12B): the workspace's default agent writes a Conventional
+    /// Commits message from the changes; the answer arrives as `ai.generated`.
+    fn generate_commit_message(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let view = self.git_view(project_id);
+        let generation_id = Ulid::new();
+        if !view.commit.begin_generate(generation_id) {
+            return;
+        }
+        let params = AiGenerateParams {
+            generation_id,
+            project_id,
+            worktree_task_id: view.worktree_task_id,
+            agent_profile: None,
+            kind: AiKind::CommitMessage,
+            input: String::new(),
+        };
+        cx.notify();
+        let started = connection.call::<()>(Request::AiGenerate(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let Err(error) = started.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |shell, _, cx| {
+                for view in shell.git.values_mut() {
+                    view.commit
+                        .generated(generation_id, Err(format!("{error:#}")));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Fetch or Push of the Git view header; then the view reads its status again (base,
     /// ahead/behind). A failure shows under the header.
     fn run_git_remote(
@@ -2632,7 +2688,11 @@ impl Shell {
             return;
         };
         self.workspace_menu = None;
-        self.quick_open = Some(QuickOpen::new(project_id));
+        let target = self
+            .files
+            .get(&project_id)
+            .and_then(|view| view.worktree_task_id);
+        self.quick_open = Some(QuickOpen::new(project_id, target));
         self.dialog_serial += 1;
         window.focus(&self.dialog_focus, cx);
         self.find_files(window, cx);
@@ -2669,7 +2729,8 @@ impl Shell {
             cx.notify();
             return;
         };
-        let mut open = QuickOpen::new(project_id);
+        // Project-relative paths for the composer, whatever the Files view shows.
+        let mut open = QuickOpen::new(project_id, None);
         open.composer = Some(session);
         self.quick_open = Some(open);
         self.dialog_serial += 1;
@@ -2790,8 +2851,12 @@ impl Shell {
             self.activate_workspace(project_id, window, cx);
         }
         self.show_view(View::Files, window, cx);
-        let requests = self.files_view(project_id).reveal(&path);
-        let at = self.files_view(project_id).rows().iter().position(
+        // Revealed only while the Files view still shows the folder that was searched.
+        let Some(view) = self.files_at(project_id, open.worktree_task_id) else {
+            return;
+        };
+        let requests = view.reveal(&path);
+        let at = view.rows().iter().position(
             |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
         );
         if let Some(at) = at {
@@ -3070,6 +3135,17 @@ impl Shell {
             }
         }
         self.focus_pane(window, cx);
+    }
+
+    /// Platform text input (IME, Unikey) for the field focused by `focus`, fed to `on_key`.
+    /// Put it inside the field; only the focused field's handler is registered.
+    fn typing(
+        &self,
+        focus: &FocusHandle,
+        on_key: ime::OnKey<Self>,
+        cx: &Context<'_, Self>,
+    ) -> impl IntoElement + use<> {
+        typing_input(focus, on_key, &self.ime_marked, cx)
     }
 
     fn focus_pane(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -5077,6 +5153,44 @@ impl Shell {
         }
     }
 
+    /// ✦ in the composer (SPEC §20B.1): the session's own agent rewrites the draft, reading
+    /// the code in the project folder if it needs to; the answer arrives as `ai.generated`.
+    fn enhance_composer(&mut self, session: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(info) = self.sidebar.sessions().iter().find(|s| s.id == session) else {
+            return;
+        };
+        // ponytail: the project folder even for a worktree session; same code, other branch.
+        let (project_id, agent_profile) = (info.project_id, info.agent_profile.clone());
+        let generation_id = Ulid::new();
+        let Some(input) = self.composers.begin_enhance(session, generation_id) else {
+            return;
+        };
+        cx.notify();
+        let started = connection.call::<()>(Request::AiGenerate(AiGenerateParams {
+            generation_id,
+            project_id,
+            worktree_task_id: None,
+            agent_profile: Some(agent_profile),
+            kind: AiKind::EnhancePrompt,
+            input,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let Err(error) = started.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |shell, _, cx| {
+                shell
+                    .composers
+                    .enhanced(generation_id, Err(format!("{error:#}")));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// `session.send` of `session`'s draft with Enter (one bracketed paste when multi-line,
     /// §7); the draft empties once it is written or queued.
     fn send_composer(&mut self, session: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -6363,6 +6477,14 @@ impl Shell {
                     self.files_event(event, window, cx);
                     self.git_event(event, window, cx);
                 }
+                if let Event::AiGenerated(done) = event {
+                    let result = ai_result(done);
+                    for view in self.git.values_mut() {
+                        view.commit.generated(done.generation_id, result.clone());
+                    }
+                    self.composers.enhanced(done.generation_id, result);
+                    cx.notify();
+                }
             }
             let Some(delivery) = self.router.route(incoming) else {
                 continue;
@@ -6862,6 +6984,10 @@ impl Shell {
             // so a click on a hover peek would steal the keyboard before `take_peek_focus`.
             .when(peek.focused, |el| el.track_focus(&self.peek_focus))
             .on_key_down(cx.listener(Self::peek_key_down))
+            .when(peek.focused, |el| {
+                el.relative()
+                    .child(self.typing(&self.peek_focus, Self::peek_key_down, cx))
+            })
             .on_mouse_down_out(cx.listener(|shell, _, window, cx| {
                 shell.close_peek(window, cx);
             }))
@@ -7123,6 +7249,7 @@ impl Shell {
             follow_up: self.follow_up.as_ref(),
             follow_up_focus: &self.follow_up_focus,
             follow_up_scroll: &self.follow_up_scroll,
+            ime_marked: &self.ime_marked,
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
             conflicts: &self.conflicts,
@@ -7470,10 +7597,25 @@ impl Shell {
             .pb(px(space::XS))
             .child(
                 div()
+                    .id("files-search")
                     .flex_1()
-                    .text_size(px(font_size::META))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Files"),
+                    .min_w_0()
+                    .cursor_pointer()
+                    .child(text_field(
+                        "files-search-field",
+                        "",
+                        "Search files…",
+                        false,
+                        theme,
+                    ))
+                    .tooltip(tooltip(
+                        theme,
+                        "Find a file of this workspace",
+                        self.keymap.label(Command::QuickOpen),
+                    ))
+                    .on_click(
+                        cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)),
+                    ),
             )
             .child(
                 button("files-ignored", ignored_label, theme, false)
@@ -7597,7 +7739,10 @@ impl Shell {
                     theme,
                     None,
                     "Select a file to view it.".into(),
-                    Some("Use ↑ ↓ to move, → to open a folder, Enter to open a file.".into()),
+                    Some(format!(
+                        "Use ↑ ↓ to move, → to open a folder, Enter to open a file · {} to find a file.",
+                        self.keymap.label(Command::QuickOpen)
+                    ).into()),
                 )
                 .flex_1(),
             );
@@ -7725,8 +7870,8 @@ impl Shell {
             .child(body)
     }
 
-    /// The workspace's changes (SPEC §12B): branch header and mode toggle over the
-    /// changed-file list, and the selected file's unified diff.
+    /// The workspace's changes (SPEC §12B): the selected file's unified diff, and on its right
+    /// the branch header and mode toggle over the changed-file list and the commit box.
     fn render_git(
         &self,
         project_id: Ulid,
@@ -7912,7 +8057,12 @@ impl Shell {
             .flex_1()
             .min_h_0()
             .flex()
+            // The list column stays at the right edge even when no diff is shown.
+            .justify_end()
             .font_family(theme::UI_FONT)
+            .when(any_files, |el| {
+                el.child(self.render_git_diff(project_id, view, theme, window, cx))
+            })
             .child(
                 // The commit box sits outside the `GIT_CONTEXT` column: typing never stages.
                 div()
@@ -7926,9 +8076,6 @@ impl Shell {
                         el.child(self.git_commit_box(project_id, view, status, theme, window, cx))
                     }),
             )
-            .when(any_files, |el| {
-                el.child(self.render_git_diff(project_id, view, theme, window, cx))
-            })
             .into_any_element()
     }
 
@@ -8376,6 +8523,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         let draft = &view.commit;
+        let generating = draft.generating.is_some();
         let focused = self.git_commit_focus.is_focused(window);
         let staged = status.staged.len();
         let summary = match staged {
@@ -8388,7 +8536,7 @@ impl Shell {
         } else {
             "Commit"
         };
-        let commit = if draft.busy || staged == 0 {
+        let commit = if draft.busy || generating || staged == 0 {
             disabled_button("git-commit", label, theme, true)
         } else {
             button("git-commit", label, theme, true).on_click(
@@ -8399,6 +8547,16 @@ impl Shell {
             "Stage changes to commit them"
         } else {
             "Commit the staged changes"
+        };
+        let write = if draft.busy || generating {
+            let label = if generating { "✦ Writing…" } else { "✦" };
+            disabled_button("git-commit-generate", label, theme, false)
+        } else {
+            quiet_button("git-commit-generate", "✦", theme, theme.surface_raised).on_click(
+                cx.listener(move |shell, _, window, cx| {
+                    shell.generate_commit_message(project_id, window, cx)
+                }),
+            )
         };
         div()
             .flex_none()
@@ -8418,7 +8576,7 @@ impl Shell {
                 )
                 .max_h(px(theme::GIT_COMMIT_BOX_MAX_HEIGHT))
                 .overflow_y_scroll()
-                .when(draft.busy, |el| el.opacity(opacity::DISABLED))
+                .when(draft.busy || generating, |el| el.opacity(opacity::DISABLED))
                 .tooltip(tooltip(
                     theme,
                     "Message of the next commit (Enter: new line)",
@@ -8426,6 +8584,8 @@ impl Shell {
                 ))
                 .track_focus(&self.git_commit_focus)
                 .on_key_down(cx.listener(Shell::git_commit_key_down))
+                .relative()
+                .child(self.typing(&self.git_commit_focus, Shell::git_commit_key_down, cx))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     window.focus(&shell.git_commit_focus, cx);
                     cx.notify();
@@ -8444,6 +8604,11 @@ impl Shell {
                     .items_center()
                     .gap(px(space::S))
                     .child(meta_line(theme, summary.into()).flex_1().min_w_0())
+                    .child(write.flex_none().tooltip(tooltip(
+                        theme,
+                        "Write the message with the workspace's default agent (Conventional Commits)",
+                        "",
+                    )))
                     .child(commit.tooltip(tooltip(theme, tip, "Ctrl+Enter"))),
             )
     }
@@ -8464,7 +8629,7 @@ impl Shell {
             .h_full()
             .flex()
             .flex_col()
-            .mr(px(space::S))
+            .ml(px(space::S))
             .mb(px(space::S))
             .rounded(px(radius::MEDIUM))
             .overflow_hidden()
@@ -9133,6 +9298,8 @@ impl Shell {
                     .bg(rgb(theme.surface))
                     .track_focus(&self.comment_focus)
                     .on_key_down(cx.listener(Shell::comment_key_down))
+                    .relative()
+                    .child(self.typing(&self.comment_focus, Shell::comment_key_down, cx))
                     .on_click(cx.listener(|shell, _, window, cx| {
                         window.focus(&shell.comment_focus, cx);
                         cx.notify();
@@ -9360,6 +9527,8 @@ impl Shell {
             .when(self.prompt_picker.is_none(), |el| {
                 el.track_focus(&self.dialog_focus)
                     .on_key_down(cx.listener(Self::task_dialog_key_down))
+                    .relative()
+                    .child(self.typing(&self.dialog_focus, Self::task_dialog_key_down, cx))
             })
             .child(
                 div()
@@ -10548,6 +10717,8 @@ impl Shell {
             .font_family(theme::UI_FONT)
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::git_base_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::git_base_key_down, cx))
             .child(
                 div()
                     .text_size(px(font_size::CARD_TITLE))
@@ -10692,6 +10863,8 @@ impl Shell {
             .font_family(theme::UI_FONT)
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::dev_dialog_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::dev_dialog_key_down, cx))
             .child(
                 div()
                     .text_size(px(font_size::CARD_TITLE))
@@ -10879,6 +11052,8 @@ impl Shell {
             .font_family(theme::UI_FONT)
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::broadcast_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::broadcast_key_down, cx))
             .child(
                 div()
                     .text_size(px(font_size::CARD_TITLE))
@@ -11266,6 +11441,8 @@ impl Shell {
             .font_family(theme::UI_FONT)
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::quick_open_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::quick_open_key_down, cx))
             .child(
                 div()
                     .overflow_hidden()
@@ -11420,6 +11597,8 @@ impl Shell {
             .font_family(theme::UI_FONT)
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::palette_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::palette_key_down, cx))
             .child(
                 div()
                     .text_size(px(font_size::CARD_TITLE))
@@ -12132,6 +12311,8 @@ impl Shell {
             .cursor(CursorStyle::IBeam)
             .track_focus(&self.rename_focus)
             .on_key_down(cx.listener(Self::rename_key_down))
+            .relative()
+            .child(self.typing(&self.rename_focus, Self::rename_key_down, cx))
             .child(draft.to_owned())
             .child(
                 div()
@@ -12374,20 +12555,26 @@ impl Shell {
             "composer",
             draft.text.text(),
             "Message the agent…",
-            focused && !draft.busy,
+            focused && !draft.busy && draft.enhancing.is_none(),
             theme,
         )
         .max_h(px(theme::COMPOSER_MAX_HEIGHT))
         .overflow_y_scroll()
-        .when(draft.busy, |el| el.opacity(opacity::DISABLED))
+        .when(draft.busy || draft.enhancing.is_some(), |el| {
+            el.opacity(opacity::DISABLED)
+        })
         .when(is_focused, |el| {
             el.track_focus(&self.composer_focus)
                 .track_scroll(&self.composer_scroll)
                 .on_key_down(cx.listener(Self::composer_key_down))
+                .relative()
+                .child(self.typing(&self.composer_focus, Self::composer_key_down, cx))
         });
         // The keys only while it has the keyboard (they do nothing on other panes).
         let status = if draft.busy {
             Some(("↑", theme.text_muted, "Sending…".to_owned()))
+        } else if draft.enhancing.is_some() {
+            Some(("✦", theme.text_muted, "Improving the prompt…".to_owned()))
         } else if let Some(error) = &draft.error {
             Some(("✕", theme.status_exited, error.clone()))
         } else {
@@ -12508,6 +12695,22 @@ impl Shell {
                                     )
                             })),
                     )
+                    // ✦ (§20B.1): the agent rewrites the draft.
+                    .when(is_focused && !draft.busy && !draft.text.is_blank(), |el| {
+                        let improve = if draft.enhancing.is_some() {
+                            disabled_button("composer-enhance", "✦", theme, false)
+                        } else {
+                            quiet_button("composer-enhance", "✦", theme, theme.surface_raised)
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.enhance_composer(session, window, cx)
+                                }))
+                        };
+                        el.child(improve.flex_none().tooltip(tooltip(
+                            theme,
+                            "Improve this prompt with the agent (it may read the code)",
+                            "",
+                        )))
+                    })
                     // The prompt library (§20B.3), typed into this draft.
                     .when(is_focused && !draft.busy, |el| {
                         el.child(
@@ -12730,6 +12933,32 @@ fn danger_button(
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
+/// Platform text input (IME, Unikey) for the field focused by `focus`, fed to `on_key` (see
+/// [`ime::Typing`]). An invisible layer over the field: only the focused field registers.
+fn typing_input(
+    focus: &FocusHandle,
+    on_key: ime::OnKey<Shell>,
+    marked: &Rc<ime::Composing<FocusHandle>>,
+    cx: &Context<'_, Shell>,
+) -> impl IntoElement + use<> {
+    let (focus, view, marked) = (focus.clone(), cx.entity(), marked.clone());
+    canvas(
+        |_, _, _| (),
+        move |bounds, (), window, cx| {
+            let typing = ime::Typing {
+                view,
+                on_key,
+                marked,
+                focus: focus.clone(),
+                caret: bounds,
+            };
+            window.handle_input(&focus, typing, cx);
+        },
+    )
+    .absolute()
+    .size_full()
+}
+
 /// A text input (task dialog, follow-up, composer): its lines with a caret at the end while `focused`, or a
 /// muted placeholder when empty. Callers make clicks focus it.
 fn text_field(
@@ -12851,6 +13080,14 @@ fn diff_row(line: &undo_dialog::DiffLine, theme: &Theme) -> gpui::Div {
         .text_color(rgb(fg))
         .when_some(bg, |el, bg| el.bg(rgb(bg)))
         .child(text)
+}
+
+/// The text of an `ai.generated`, or why there is none.
+fn ai_result(done: &AiGeneratedEvent) -> Result<String, String> {
+    match (&done.text, &done.error) {
+        (Some(text), _) => Ok(text.clone()),
+        (None, error) => Err(error.clone().unwrap_or_else(|| "no answer".to_owned())),
+    }
 }
 
 /// A muted one-line note (e.g. "Loading comments…").
@@ -13913,6 +14150,8 @@ struct CardContext<'a> {
     follow_up: Option<&'a FollowUp>,
     follow_up_focus: &'a FocusHandle,
     follow_up_scroll: &'a ScrollHandle,
+    /// Composing IME chars of the follow-up field (see [`Shell::typing`]).
+    ime_marked: &'a Rc<ime::Composing<FocusHandle>>,
     /// The follow-up field has the keyboard (shows its caret).
     follow_up_focused: bool,
     /// Shortcut label of Run on the selected card.
@@ -14703,6 +14942,13 @@ fn follow_up_field(
         el.track_focus(cards.follow_up_focus)
             .track_scroll(cards.follow_up_scroll)
             .on_key_down(cx.listener(Shell::follow_up_key_down))
+            .relative()
+            .child(typing_input(
+                cards.follow_up_focus,
+                Shell::follow_up_key_down,
+                cards.ime_marked,
+                cx,
+            ))
     });
     let status = draft.and_then(|draft| {
         if draft.busy {

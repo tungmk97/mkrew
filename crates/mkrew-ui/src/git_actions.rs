@@ -27,6 +27,8 @@ pub struct CommitBox {
     pub busy: bool,
     /// Why the last commit failed, or why the draft cannot be committed.
     pub error: Option<String>,
+    /// The `ai.generate` writing this draft (SPEC §12B ✦), by id; typing waits for it.
+    pub generating: Option<Ulid>,
 }
 
 impl CommitBox {
@@ -37,7 +39,7 @@ impl CommitBox {
             DialogKey::Save => return Outcome::Commit,
             DialogKey::Enter => self.insert("\n"),
             DialogKey::Backspace => {
-                if !self.busy {
+                if !self.busy && self.generating.is_none() {
                     self.text.pop();
                     self.error = None;
                 }
@@ -48,9 +50,9 @@ impl CommitBox {
         Outcome::Edited
     }
 
-    /// Types or pastes `text` (CRLF becomes LF); ignored while committing.
+    /// Types or pastes `text` (CRLF becomes LF); ignored while committing or generating.
     pub fn insert(&mut self, text: &str) {
-        if self.busy {
+        if self.busy || self.generating.is_some() {
             return;
         }
         self.text.push_str(&text.replace("\r\n", "\n"));
@@ -61,7 +63,7 @@ impl CommitBox {
     /// in flight; `None`
     /// while one is in flight or when the draft cannot be committed ([`Self::error`] says why).
     pub fn begin(&mut self, project_id: Ulid, staged: usize) -> Option<GitCommitParams> {
-        if self.busy {
+        if self.busy || self.generating.is_some() {
             return None;
         }
         let message = self.text.trim();
@@ -92,6 +94,31 @@ impl CommitBox {
             Ok(()) => self.text.clear(),
             Err(error) => self.error = Some(format!("Commit failed: {error}")),
         }
+    }
+
+    /// Starts generation `generation_id` of the message; `false` while committing or while
+    /// another generation runs.
+    pub fn begin_generate(&mut self, generation_id: Ulid) -> bool {
+        if self.busy || self.generating.is_some() {
+            return false;
+        }
+        self.generating = Some(generation_id);
+        self.error = None;
+        true
+    }
+
+    /// The answer of generation `generation_id`: the text replaces the draft, a failure keeps
+    /// it and says why. `false` if this box did not ask for it.
+    pub fn generated(&mut self, generation_id: Ulid, result: Result<String, String>) -> bool {
+        if self.generating != Some(generation_id) {
+            return false;
+        }
+        self.generating = None;
+        match result {
+            Ok(text) => self.text = text.replace("\r\n", "\n"),
+            Err(error) => self.error = Some(format!("Cannot write a message: {error}")),
+        }
+        true
     }
 }
 
@@ -169,6 +196,60 @@ mod tests {
         for c in text.chars() {
             draft.key(DialogKey::Insert(c.to_string()));
         }
+    }
+
+    #[test]
+    fn a_generated_message_replaces_the_draft_and_typing_waits_for_it() {
+        let mut commit = CommitBox {
+            text: "wip".into(),
+            ..CommitBox::default()
+        };
+        let (first, second) = (Ulid::new(), Ulid::new());
+        assert!(commit.begin_generate(first));
+        assert!(!commit.begin_generate(second), "one generation at a time");
+        commit.insert("x");
+        commit.key(DialogKey::Backspace);
+        assert_eq!(
+            commit.text, "wip",
+            "typing is ignored while the agent writes"
+        );
+        assert!(
+            commit.begin(Ulid::new(), 1).is_none(),
+            "no commit while the agent writes"
+        );
+        assert!(
+            !commit.generated(second, Ok("other".into())),
+            "not this box's generation"
+        );
+        assert!(commit.generated(first, Ok("feat: add x\r\n\r\nWhy.".into())));
+        assert_eq!(commit.text, "feat: add x\n\nWhy.");
+        assert_eq!(commit.generating, None);
+        assert_eq!(commit.error, None);
+    }
+
+    #[test]
+    fn a_failed_generation_keeps_the_draft_and_says_why() {
+        let mut commit = CommitBox {
+            text: "wip".into(),
+            ..CommitBox::default()
+        };
+        let id = Ulid::new();
+        assert!(commit.begin_generate(id));
+        assert!(commit.generated(id, Err("the agent exited with 3".into())));
+        assert_eq!(commit.text, "wip");
+        assert_eq!(
+            commit.error.as_deref(),
+            Some("Cannot write a message: the agent exited with 3")
+        );
+        assert!(commit.begin_generate(Ulid::new()), "the user can retry");
+        let mut committing = CommitBox {
+            busy: true,
+            ..CommitBox::default()
+        };
+        assert!(
+            !committing.begin_generate(Ulid::new()),
+            "not while committing"
+        );
     }
 
     #[test]

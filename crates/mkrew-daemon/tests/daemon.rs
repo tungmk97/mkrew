@@ -12,23 +12,24 @@ use std::time::{Duration, Instant};
 use interprocess::local_socket::{Stream, prelude::*};
 use mkrew_daemon::EXIT_ALREADY_RUNNING;
 use mkrew_protocol::{
-    AgentProfilesResult, AttachmentSaveParams, AttachmentSaveResult, ClientKind, CommentContext,
-    CommentCreateParams, CommentId, CommentListParams, CommentRef, CommentReplyParams,
-    CommentSendParams, CommentStatus, Commit, CommitDetail, DaemonStatusResult, DevServer,
-    DevStartParams, DocChangedEvent, DocComment, DocContent, DocFile, DocListParams, DocReadParams,
-    ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent, FsEntry, FsFindParams,
-    FsListParams, FsMatch, FsReadParams, GitChangedEvent, GitCommitParams, GitCommitResult,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitRemoteParams,
-    GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams,
-    HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project,
-    ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request,
-    ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionFiles,
-    SessionFilesParams, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
-    SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams,
-    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, AttachmentSaveParams,
+    AttachmentSaveResult, ClientKind, CommentContext, CommentCreateParams, CommentId,
+    CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
+    CommitDetail, DaemonStatusResult, DevServer, DevStartParams, DocChangedEvent, DocComment,
+    DocContent, DocFile, DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame,
+    FrameDecoder, FsContent, FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams,
+    GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
+    GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitShowParams,
+    GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
+    HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef,
+    ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError, ScreenSnapshot,
+    Session, SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent,
+    SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams,
+    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
+    SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
+    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
     TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
     TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
@@ -85,6 +86,17 @@ impl Env {
         let dir = self.dir.path().join("config").join("agents");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(format!("{id}.toml")), toml).unwrap();
+    }
+
+    /// `<id>.toml`: an agent whose `oneshot` runs the built fake agent with `scenario`.
+    fn write_oneshot_profile(&self, id: &str, scenario: &Path) {
+        let fake = built_bin("mkrew-fakeagent");
+        let toml = format!(
+            "command = '{fake}'\noneshot = '\"{fake}\" --scenario \"{scenario}\"'\n",
+            fake = fake.display(),
+            scenario = scenario.display(),
+        );
+        self.write_profile(id, &toml);
     }
 
     /// `agents/fake.toml` with the built `mkrew-fakeagent` instead of a PATH lookup.
@@ -1939,9 +1951,12 @@ fn a_turn_that_edits_two_files_reports_both() {
         &format!("['--scenario', '{}']", scenario.display()),
     );
     // Hooks decide the states: a slow `mk hook` run must not look like a quiet (idle) period.
+    // Spawning `mk` prints nothing visible, so that wait no longer counts as work (ADR 0015).
     let path = env.dir.path().join("config/agents/editor.toml");
     let profile = std::fs::read_to_string(&path).unwrap();
-    let hooks = profile.replace("mode = \"screen\"", "mode = \"hook+screen\"");
+    let hooks = profile
+        .replace("mode = \"screen\"", "mode = \"hook+screen\"")
+        .replace("idle_after_ms = 1000", "idle_after_ms = 8000");
     assert_ne!(hooks, profile);
     env.write_profile("editor", &hooks);
     let (_daemon, mut client) = env.start();
@@ -4927,4 +4942,118 @@ fn fs_list_read_and_find_follow_file_changes() {
 fn session_log(env: &Env, id: Ulid) -> String {
     let path = env.data_dir().join("sessions").join(format!("{id}.log"));
     String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned()
+}
+
+fn generate(project_id: Ulid, profile: Option<&str>, kind: AiKind, input: &str) -> (Ulid, Request) {
+    let generation_id = Ulid::new();
+    let request = Request::AiGenerate(AiGenerateParams {
+        generation_id,
+        project_id,
+        worktree_task_id: None,
+        agent_profile: profile.map(str::to_owned),
+        kind,
+        input: input.into(),
+    });
+    (generation_id, request)
+}
+
+fn generated(client: &mut Client, id: Ulid) -> AiGeneratedEvent {
+    let event =
+        client.wait_event_where(|e| matches!(e, Event::AiGenerated(g) if g.generation_id == id));
+    let Event::AiGenerated(done) = event else {
+        unreachable!("matched above")
+    };
+    done
+}
+
+fn init_repo(repo: &Path) {
+    git(repo, &["init", "-q", "-b", "main"]);
+    git(repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-q", "-m", "one"]);
+}
+
+/// SPEC §6 `oneshot`: the agent's stdout is the answer, without blank edges or a code fence.
+#[test]
+fn ai_generate_answers_with_the_oneshot_output() {
+    let env = Env::new();
+    let repo = env.repo();
+    init_repo(&repo);
+    std::fs::write(repo.join("a.txt"), "a\nb\n").unwrap();
+    git(&repo, &["add", "."]);
+    let scenario = env.dir.path().join("answer.toml");
+    let steps = ["```", "feat: add b", "```"]
+        .map(|text| format!("[[step]]\naction = \"print\"\ntext = \"{text}\"\n"))
+        .join("\n");
+    std::fs::write(&scenario, steps).unwrap();
+    env.write_oneshot_profile("gen", &scenario);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+
+    let (id, request) = generate(project.id, Some("gen"), AiKind::CommitMessage, "");
+    client.call(request).into_result::<()>().unwrap();
+    let done = generated(&mut client, id);
+    assert_eq!(
+        (done.text.as_deref(), done.error),
+        (Some("feat: add b"), None)
+    );
+    assert_eq!(done.project_id, project.id);
+
+    let (id, request) = generate(project.id, Some("gen"), AiKind::EnhancePrompt, "add b");
+    client.call(request).into_result::<()>().unwrap();
+    assert_eq!(
+        generated(&mut client, id).text.as_deref(),
+        Some("feat: add b")
+    );
+}
+
+/// What a user meets with old profiles, no default agent, a failing agent or no changes.
+#[test]
+fn ai_generate_reports_what_is_missing() {
+    let env = Env::new();
+    let repo = env.repo();
+    init_repo(&repo);
+    env.write_fake_profile(); // `fake`: no `oneshot`
+    let failing = env.dir.path().join("fail.toml");
+    std::fs::write(&failing, "[[step]]\naction = \"exit\"\ncode = 3\n").unwrap();
+    env.write_oneshot_profile("broken", &failing);
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+
+    // A profile seeded before `oneshot` existed: the error says what to add, and where.
+    let (_, request) = generate(project.id, Some("fake"), AiKind::EnhancePrompt, "x");
+    let outcome = client.call(request);
+    let message = format!("{outcome:?}");
+    assert_eq!(error_code(outcome), ErrorCode::InvalidState);
+    assert!(
+        message.contains("oneshot") && message.contains("fake.toml"),
+        "{message}"
+    );
+
+    // No profile given and no default agent.
+    let (_, request) = generate(project.id, None, AiKind::EnhancePrompt, "x");
+    assert_eq!(error_code(client.call(request)), ErrorCode::InvalidState);
+
+    // Nothing to improve.
+    let (_, request) = generate(project.id, Some("broken"), AiKind::EnhancePrompt, "  ");
+    assert_eq!(error_code(client.call(request)), ErrorCode::InvalidRequest);
+
+    // The agent fails: the event carries the reason.
+    let (id, request) = generate(project.id, Some("broken"), AiKind::EnhancePrompt, "x");
+    client.call(request).into_result::<()>().unwrap();
+    let done = generated(&mut client, id);
+    assert_eq!(done.text, None);
+    assert!(
+        done.error.as_deref().is_some_and(|e| e.contains('3')),
+        "{done:?}"
+    );
+
+    // A clean repo has nothing to describe; the agent is not even started.
+    let (id, request) = generate(project.id, Some("broken"), AiKind::CommitMessage, "");
+    client.call(request).into_result::<()>().unwrap();
+    assert_eq!(
+        generated(&mut client, id).error.as_deref(),
+        Some("No changes to describe.")
+    );
 }

@@ -192,6 +192,7 @@ impl Sidebar {
                     | Event::NotificationClicked(_)
                     | Event::ConflictDetected(_)
                     | Event::CommentUpdated(_)
+                    | Event::AiGenerated(_)
             )
         {
             since_load.push(event.clone());
@@ -222,7 +223,8 @@ impl Sidebar {
             | Event::SessionTurn(_)
             | Event::SessionQueue(_)
             | Event::SessionEdited(_)
-            | Event::SessionUsage(_) => Change::None,
+            | Event::SessionUsage(_)
+            | Event::AiGenerated(_) => Change::None,
         }
     }
 

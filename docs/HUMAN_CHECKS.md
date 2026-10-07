@@ -15,6 +15,29 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+- [ ] **2026-10-07 daily fixes** (plan `docs/superpowers/plans/2026-10-07-daily-fixes-and-ai-helpers.md`).
+      Stop the old daemon first (`target\debug\mk daemon stop`, protocol v24), then
+      `cargo run -p mkrew-ui`:
+  1. Vietnamese: with Unikey (Telex, default settings) and with Windows "Vietnamese Telex", type
+     `Tiếng Việt có dấu` into a terminal (pwsh, then claude/omp), the composer, the commit box,
+     the palette and quick open. Expected: exact text, no lost or doubled chars.
+  2. Ctrl+Shift+1…5 switch views and Alt+Shift+= / Alt+Shift+- split, with a terminal focused
+     and without (no NUL reaches the agent). Switch the Windows layout US ↔ Vietnamese while the
+     app runs and repeat.
+  3. Spawn omp and leave it at the prompt: after ~3 s the status shows `idle · Ns`. Send a
+     prompt: `working · Ns` counts only during the turn.
+  4. In a terminal (Git Bash): `printf '\ue0b0 \uf015 \U000f0001 ✔ 😀 abc\n'`, then launch omp.
+     Expected: icons instead of boxes, monospaced Latin text.
+  5. Git view: the file list and commit box sit right of the diff, in dark and light themes
+     (retake the §14 screenshots).
+  6. Files view: "Search files…" at the top opens quick open, as Ctrl+Shift+O does. With the
+     Files view switched to a task worktree, picks open the worktree's copy.
+  7. ✦ in the commit box with claude, codex and omp as the default agent: a Conventional
+     Commits message; Commit still needs a click. With an old profile without `oneshot`, the
+     error names the line to add and the file.
+  8. ✦ in the composer rewrites the draft (Vietnamese stays Vietnamese); Send stays manual.
+  9. Confirm `omp -p --no-session` reads the prompt from stdin (item 7 with omp). If not,
+     record the working `oneshot` line in `agents/omp.toml`.
 - [x] (T7.4) **Build machine:** a leftover `mkrew-fakeagent.exe` process (probably from a test
       daemon that survived a killed run) locks `target\debug\mkrew-fakeagent.exe`, so
       `scripts/verify.sh` fails to relink it ("Access is denied"). Please end stray
@@ -105,9 +128,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] (T2.7a) `cargo run -p mkrew-ui`, focus a terminal: Alt+1…9 / Ctrl+Alt+↑↓ switch
   workspaces, Ctrl+Shift+T / Ctrl+Shift+A open a tab with a shell / the default agent,
   Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+Alt+1…9 switch tabs, Ctrl+Shift+W closes the tab (its sessions
-  stay in the sidebar), **Alt+Shift+= / Alt+Shift+-** split right/down (check that GPUI on
-  Windows reports these as `alt-shift-=` / `alt-shift--` on your layout; rebind in keymap.toml
-  if not; also that Ctrl+Tab is not eaten by the OS), Alt+arrows move focus, Ctrl+Shift+V pastes (bracketed in Claude Code). None of these
+  stay in the sidebar), **Alt+Shift+= / Alt+Shift+-** split right/down (fixed 2026-10-07: bindings
+  are mapped through the platform keyboard mapper, so Windows' shift-folded keys match; check with
+  a US and a Vietnamese layout, also after switching layout while the app runs; also that Ctrl+Tab is not eaten by the OS), Alt+arrows move focus, Ctrl+Shift+V pastes (bracketed in Claude Code). None of these
   reach the PTY; **Ctrl+C, Ctrl+R, Esc inside Claude Code** still work. Put
   `close_pane = "ctrl-shift-q"` and `bogus = "x"` in `%APPDATA%\mkrew\keymap.toml`: Ctrl+Shift+Q
   closes panes, the sidebar shows "✕ unknown command `bogus` …", the tooltip says Ctrl+Shift+Q.
@@ -807,8 +830,8 @@ _Decisions the agent made on its own. Override them here if you disagree._
   ANSI colors are darkened (`#8A8C94`, `#55575F`) so they stay readable on `#FAFAF9`. Cursor is
   always an accent block (shape/unfocused style later).
 - (T0.6) Spike input has no IME/`InputHandler`: IME composition (Vietnamese Telex, CJK) and
-  dead keys may not reach the PTY. Default: out of scope for M0; the real terminal view
-  registers an input handler. Paste is Ctrl+Shift+V only (§13); Shift+Insert/right-click later.
+  dead keys may not reach the PTY. Done 2026-10-07: `mkrew_ui::ime::Typing` is the input
+  handler of every text field and terminal. Paste is Ctrl+Shift+V only (§13); Shift+Insert/right-click later.
 - (T0.6) PTY writes (keys, paste) are blocking writes on the UI thread; a huge paste into a
   child that is not reading could stall the window. Default: acceptable for the spike; the
   daemon (M1) owns PTY writes on its own thread.
@@ -1007,7 +1030,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   unless it contains an uppercase letter; an invalid regex shows "✕ Invalid pattern". Each
   query edit jumps to the nearest match up to 1,000 lines above the view's bottom (Enter then
   searches everything). Minimal hand-rolled input: type, Backspace, Ctrl+Shift+V pastes the
-  first line; no caret movement, selection or IME, and a query longer than the field is
+  first line; no caret movement or selection (IME/Unikey text is typed at the end), and a query longer than the field is
   clipped at its end. No "n of m" count. Clicking the terminal keeps the bar open (Esc then
   goes to the agent); close with ✕ or Ctrl+Shift+F → Esc. Matches wrapped across 3+ rows
   starting above the view are not highlighted on its top rows. A match scrolled to the top row
@@ -1018,7 +1041,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   panes hidden by a zoom are **detached** like other invisible panes (§10), so unzooming
   re-attaches them from the daemon snapshot and their UI-side scrollback restarts. Moving
   focus, splitting or closing the zoomed pane ends the zoom; resize is ignored while zoomed.
-  Rename: same minimal input as the find bar (no caret movement/IME); blank or unchanged
+  Rename: same minimal input as the find bar (no caret movement; IME/Unikey text is typed at the end); blank or unchanged
   titles are not sent; the title changes when the daemon's `tab.updated` arrives.
 - (T2.8) Workspace menu = "⋯" on the active workspace row or right-click any row; it holds
   "Open in Zed" (also Ctrl+Shift+Z, opens the workspace folder) and the default-agent list
@@ -1125,9 +1148,10 @@ _Decisions the agent made on its own. Override them here if you disagree._
   task's newest session; run time = its start to its exit, or to its `done` state change while
   the agent waits at its prompt, else now. "Last run failed" shows only when the card's status
   is not already `exited (code)`. The Board/Terminals switcher has no keyboard focus or focus
-  ring yet (deferred with the tab/button focus rings above). Ctrl+Shift+1 / 2 (§13) are
-  bound as `ctrl-shift-1/2`; whether Windows reports shifted digits that way is part of the
-  T4.10 manual board check. The empty board names `mk task add` until T4.7 adds the New task
+  ring yet (deferred with the tab/button focus rings above). Ctrl+Shift+1 / 2 (§13): fixed
+  2026-10-07 by mapping bindings through the platform keyboard mapper (Windows folds Shift into
+  the digit). Check Ctrl+Shift+1…5 with a US and a Vietnamese layout, also after switching the
+  layout while the app runs and with a terminal focused (no NUL must reach the agent). The empty board names `mk task add` until T4.7 adds the New task
   action.
 - (T4.7) Task dialog: modal; clicking the shade does **not** cancel (a stray click never throws
   a draft away; Esc / Cancel do), and shortcuts are ignored while it is open. Enter saves from
@@ -1136,7 +1160,8 @@ _Decisions the agent made on its own. Override them here if you disagree._
   sends only changed fields, diffed against the board's current task. Edit and delete live in
   the dialog, opened from a hover-revealed "Edit" on the card (no keyboard path until T4.9
   adds a selected card; agent chips are mouse-only for now). Text fields only append/backspace
-  at the end (no caret movement, selection or IME composition yet — backlog). A daemon
+  at the end (no caret movement or selection; IME composition and Unikey text are typed in place
+  at the end since 2026-10-07 — backlog for the rest). A daemon
   disconnect drops an open draft (the whole UI resets). Delete confirm text says past sessions
   stay in the sidebar (ADR 0004 detaches them).
 - (T4.8) Drag & drop: a card lands **before** the card under the pointer (the 2 px accent line

@@ -9,7 +9,7 @@
 //! syntax highlighting and quick open, the Git view-model and its base menu, and the
 //! workspace's dev server, the command palette, the turn summaries, the
 //! peek popover, the broadcast dialog, the Files / Git worktree target, fan-out and token
-//! usage.
+//! usage, and platform text input (IME, Unikey) for the fields and terminals.
 
 pub mod base_dialog;
 pub mod board;
@@ -31,6 +31,7 @@ pub mod git_history;
 pub mod git_view;
 pub mod highlight;
 pub mod history;
+pub mod ime;
 pub mod inbox;
 pub mod keymap;
 pub mod lifecycle;

@@ -25,6 +25,9 @@ pub struct AgentProfile {
     pub env: BTreeMap<String, String>,
     /// Resume command template with `{session_id}`; `None` = no resume.
     pub resume: Option<String>,
+    /// Non-interactive command for one-shot text (commit messages, prompt rewrites; SPEC §6):
+    /// split like `resume`, the prompt goes on stdin; `None` = this agent cannot generate.
+    pub oneshot: Option<String>,
     pub state: StateConfig,
     /// `[usage]` (SPEC §20E.3); `None` = no usage for this agent.
     pub usage: Option<UsageConfig>,
@@ -117,6 +120,18 @@ impl AgentProfile {
         let mut words = split_words(self.resume.as_deref()?)
             .into_iter()
             .map(|w| w.replace("{session_id}", native_id));
+        let command = words.next()?;
+        Some(AgentProfile {
+            command,
+            args: words.collect(),
+            ..self.clone()
+        })
+    }
+
+    /// This profile running its `oneshot` command (prompt on stdin, SPEC §6); `None` without
+    /// one. Split like [`Self::resumed`]; env and id stay the profile's.
+    pub fn oneshot_command(&self) -> Option<AgentProfile> {
+        let mut words = split_words(self.oneshot.as_deref()?).into_iter();
         let command = words.next()?;
         Some(AgentProfile {
             command,
@@ -284,6 +299,7 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
         prompt_mode: raw.prompt_mode,
         env: raw.env,
         resume: raw.resume.filter(|r| !r.trim().is_empty()),
+        oneshot: raw.oneshot.filter(|o| !o.trim().is_empty()),
         state: StateConfig {
             mode: raw.state.mode,
             idle_after_ms: raw.state.idle_after_ms,
@@ -310,6 +326,7 @@ struct RawProfile {
     #[serde(default)]
     env: BTreeMap<String, String>,
     resume: Option<String>,
+    oneshot: Option<String>,
     #[serde(default)]
     state: RawState,
     usage: Option<RawUsage>,
@@ -446,6 +463,30 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
     fn empty_resume_means_none() {
         let p = parse("command = \"x\"\nresume = \"\"").unwrap();
         assert_eq!(p.resume, None);
+    }
+
+    #[test]
+    fn oneshot_splits_like_resume_and_blank_means_none() {
+        let p = parse(
+            r#"command = "x"
+oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
+        )
+        .unwrap();
+        let one = p.oneshot_command().unwrap();
+        assert_eq!(one.command, r"C:\Program Files\x.exe");
+        assert_eq!(one.args, ["-p", "--model", "fast"]);
+        assert_eq!(
+            (one.id, one.env),
+            (p.id.clone(), p.env.clone()),
+            "same agent, same env"
+        );
+        assert_eq!(
+            parse("command = \"x\"\noneshot = \"  \"")
+                .unwrap()
+                .oneshot_command(),
+            None
+        );
+        assert_eq!(parse("command = \"x\"").unwrap().oneshot_command(), None);
     }
 
     #[test]

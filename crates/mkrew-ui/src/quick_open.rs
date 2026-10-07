@@ -57,6 +57,9 @@ pub enum Results {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuickOpen {
     pub project_id: Ulid,
+    /// The task worktree the Files view shows (`None` = the project folder): searched and
+    /// revealed there.
+    pub worktree_task_id: Option<Ulid>,
     pub query: String,
     pub results: Results,
     /// Index of the picked match.
@@ -68,9 +71,10 @@ pub struct QuickOpen {
 }
 
 impl QuickOpen {
-    pub fn new(project_id: Ulid) -> Self {
+    pub fn new(project_id: Ulid, worktree_task_id: Option<Ulid>) -> Self {
         Self {
             project_id,
+            worktree_task_id,
             query: String::new(),
             results: Results::Loading,
             selected: 0,
@@ -84,7 +88,7 @@ impl QuickOpen {
         self.sent += 1;
         let params = FsFindParams {
             project_id: self.project_id,
-            worktree_task_id: None,
+            worktree_task_id: self.worktree_task_id,
             query: self.query.clone(),
             limit: FsFindParams::DEFAULT_LIMIT,
         };
@@ -197,7 +201,7 @@ mod tests {
     #[test]
     fn only_the_answer_to_the_latest_query_is_shown() {
         let project = Ulid::new();
-        let mut open = QuickOpen::new(project);
+        let mut open = QuickOpen::new(project, None);
         let (first, params) = open.search();
         assert_eq!(params.project_id, project);
         assert_eq!(params.query, "");
@@ -224,7 +228,7 @@ mod tests {
 
     #[test]
     fn the_pick_wraps_and_resets_on_new_results() {
-        let mut open = QuickOpen::new(Ulid::new());
+        let mut open = QuickOpen::new(Ulid::new(), None);
         open.step(1);
         assert_eq!(open.selected, 0, "nothing to pick yet");
         let (serial, _) = open.search();
@@ -245,7 +249,7 @@ mod tests {
 
     #[test]
     fn editing_the_query() {
-        let mut open = QuickOpen::new(Ulid::new());
+        let mut open = QuickOpen::new(Ulid::new(), None);
         assert!(!open.key(Key::Backspace), "nothing to delete");
         assert!(open.insert("src/\r\nmain"));
         assert_eq!(open.query, "src/main");

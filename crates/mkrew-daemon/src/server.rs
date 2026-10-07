@@ -32,6 +32,7 @@ use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
 use crate::{awake, backup, session_log, undo, worktree};
 
+mod ai;
 mod attachment;
 mod comment;
 mod dev;
@@ -377,6 +378,7 @@ impl Daemon {
             Request::GitUnstage(params) => (self.git_stage(params, true).await, After::Continue),
             Request::GitDiscard(params) => (self.git_discard(params).await, After::Continue),
             Request::GitCommit(params) => (self.git_commit(params).await, After::Continue),
+            Request::AiGenerate(params) => (self.ai_generate(params).await, After::Continue),
             Request::GitLog(params) => (self.git_log(params).await, After::Continue),
             Request::GitShow(params) => (self.git_show(params).await, After::Continue),
             Request::GitFetch(params) => (self.git_remote(params, false).await, After::Continue),
