@@ -1,0 +1,12 @@
+---
+source: crates/mkrew-ui/src/worktree_dialog.rs
+expression: "format!(\"{before}\\n---\\n{}\", shown(&dialog, &[]))"
+---
+Merge back?
+Runs git merge --no-ff mkrew/fix-login-7 on main. On a conflict the merge is aborted and your checkout stays as it is.
+  2222222 Fix the login form
+  1111111 Add a test
+[confirm: "task.merge"]
+---
+Merged
+Merged mkrew/fix-login-7 into main.

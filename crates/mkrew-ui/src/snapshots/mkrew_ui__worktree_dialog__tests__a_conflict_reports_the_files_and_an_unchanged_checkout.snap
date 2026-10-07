@@ -1,0 +1,8 @@
+---
+source: crates/mkrew-ui/src/worktree_dialog.rs
+expression: "shown(&dialog, &[])"
+---
+Merge aborted
+mkrew/fix-login-7 conflicts with your checkout in the files below. The merge was aborted: your checkout is unchanged.
+  src/login.rs
+  README.md

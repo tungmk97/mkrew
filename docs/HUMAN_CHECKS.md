@@ -657,6 +657,18 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T13.6) **Merge back… / Remove worktree… UI:** there is no "…" card menu yet, so both are
+  hover-shown quiet buttons on Review / Done cards whose worktree exists (next to Undo /
+  Changes); they move into the "…" menu once it exists (M10 leftover). The merge dialog lists
+  the worktree's `git.log` minus the checkout's (50 each, so a checkout > 50 commits past the
+  fork may list a few shared ones) and disables Merge while the worktree has any uncommitted
+  file, the checkout has staged/unstaged changes (untracked allowed, as the daemon), HEAD is
+  detached, or there are no new commits; "Open Git view" goes to the worktree. The remove
+  dialog lists uncommitted files; "Discard…" → "Discard files" (Esc / "Keep files" go back)
+  discards unstaged + untracked ones via `git.discard`; staged changes must be unstaged or
+  committed in the Git view. Results: "Merged", "Merge aborted" + conflicting files,
+  "Worktree removed" (+ branch kept or deleted). Hidden card buttons still take layout space.
+
 - (T13.5) **Merge back / Remove worktree rules:** merge is refused (`invalid_state`, files named)
   when the worktree has any uncommitted or untracked file, or the user's checkout has staged or
   unstaged changes; untracked files in the user's checkout are allowed (git itself refuses a

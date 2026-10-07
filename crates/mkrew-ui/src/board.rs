@@ -134,6 +134,12 @@ impl Card {
         self.checkpoint && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
     }
 
+    /// Whether the card offers "Merge back…" and "Remove worktree…" (SPEC §20E.1): a Review /
+    /// Done card whose worktree exists.
+    pub fn manages_worktree(&self) -> bool {
+        self.branch.is_some() && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
+    }
+
     /// Whether the card offers "View changes" (since the checkpoint, in the Git view): a
     /// Review card with a checkpoint (SPEC §12B).
     pub fn can_view_changes(&self) -> bool {
@@ -838,6 +844,41 @@ mod tests {
                 vec![false],
                 vec![true, false],
                 vec![false, false]
+            ]
+        );
+    }
+
+    #[test]
+    fn finished_cards_with_a_worktree_offer_merge_back_and_removal() {
+        let api = Ulid::new();
+        let mut tasks: Vec<Task> = COLUMNS
+            .iter()
+            .map(|&status| task(api, "t", status, 1.0))
+            .collect();
+        for task in &mut tasks {
+            task.worktree = true;
+            task.worktree_path = Some("/data/wt".to_owned());
+            task.branch = Some("mkrew/t-1".to_owned());
+        }
+        // Worktree on, but not created yet (or removed).
+        let mut pending = task(api, "pending", TaskStatus::Review, 2.0);
+        pending.worktree = true;
+        tasks.push(pending);
+        let mut board = Board::default();
+        board.load(tasks);
+        let offered: Vec<Vec<bool>> = board
+            .columns(api, None, &[])
+            .iter()
+            .map(|column| column.cards.iter().map(Card::manages_worktree).collect())
+            .collect();
+        assert_eq!(
+            offered,
+            [
+                vec![false],
+                vec![false],
+                vec![false],
+                vec![true, false],
+                vec![true]
             ]
         );
     }

@@ -51,5 +51,6 @@ pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;
 pub mod workspace_menu;
+pub mod worktree_dialog;
 pub mod worktree_target;
 pub mod zed;

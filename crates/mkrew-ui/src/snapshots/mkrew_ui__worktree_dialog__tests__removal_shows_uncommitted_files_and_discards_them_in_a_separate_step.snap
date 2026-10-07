@@ -1,0 +1,26 @@
+---
+source: crates/mkrew-ui/src/worktree_dialog.rs
+expression: "[listed, asked, empty, live, shown(&dialog, &[])].join(\"\\n---\\n\")"
+---
+Remove worktree?
+The worktree has uncommitted changes (2 files), so it cannot be removed. Commit them in its Git view, or discard them.
+  scratch.txt
+  src/login.rs
+[disabled: The worktree has 2 files uncommitted.]
+---
+Remove worktree?
+Discard the 2 files below? Changed files go back to their committed version, new ones are deleted. This cannot be undone.
+  scratch.txt
+  src/login.rs
+[confirm: "git.discard"]
+---
+Remove worktree?
+Deletes the worktree folder of “Fix login”, then the branch mkrew/fix-login-7 if it is merged (an unmerged branch is kept).
+[confirm: "task.remove_worktree"]
+---
+Remove worktree?
+Deletes the worktree folder of “Fix login”, then the branch mkrew/fix-login-7 if it is merged (an unmerged branch is kept).
+[disabled: Close the task's terminal first.]
+---
+Worktree removed
+Worktree removed. The branch mkrew/fix-login-7 is not merged, so it was kept (git branch -d).

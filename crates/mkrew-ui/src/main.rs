@@ -74,6 +74,7 @@ use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
+use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
 use mkrew_ui::zed;
 use tracing_subscriber::EnvFilter;
@@ -270,6 +271,8 @@ struct Shell {
     /// The open "Undo task" / "Restore before turn" confirmation (modal; never open together
     /// with `task_dialog` or `turns_dialog`).
     undo_dialog: Option<UndoDialog>,
+    /// The open "Merge back…" / "Remove worktree…" of a card (modal, SPEC §20E.1).
+    worktree_dialog: Option<WorktreeDialog>,
     /// The open "Turns…" of an agent pane (modal).
     turns_dialog: Option<TurnsDialog>,
     /// The Turns dialog a "Restore before turn n" left; cancelling the restore goes back to it.
@@ -449,6 +452,7 @@ impl Shell {
                 shell.dev_reveal = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
+                shell.worktree_dialog = None;
                 shell.turns_dialog = None;
                 shell.turns_return = None;
                 shell.git_discard = None;
@@ -542,6 +546,7 @@ impl Shell {
             git_base: None,
             task_dialog: None,
             undo_dialog: None,
+            worktree_dialog: None,
             turns_dialog: None,
             turns_return: None,
             follow: Follow::default(),
@@ -2954,6 +2959,7 @@ impl Shell {
     fn modal_open(&self) -> bool {
         self.task_dialog.is_some()
             || self.undo_dialog.is_some()
+            || self.worktree_dialog.is_some()
             || self.turns_dialog.is_some()
             || self.git_discard.is_some()
             || self.git_base.is_some()
@@ -3828,6 +3834,185 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// "Merge back…" / "Remove worktree…" on a Review / Done card (SPEC §20E.1): shows the
+    /// modal confirmation and reads what it lists.
+    fn open_worktree_dialog(
+        &mut self,
+        kind: worktree_dialog::Kind,
+        task_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(dialog) = self
+            .board
+            .task(task_id)
+            .filter(|_| self.connection.is_some())
+            .and_then(|task| WorktreeDialog::new(kind, task))
+        else {
+            return;
+        };
+        self.workspace_menu = None;
+        self.task_dialog = None;
+        self.undo_dialog = None;
+        self.worktree_dialog = Some(dialog);
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        self.load_worktree_dialog(window, cx);
+    }
+
+    /// (Re)reads the open worktree dialog's plan: the worktree's status (and, to merge, the
+    /// checkout's status and both logs for the commit list).
+    fn load_worktree_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(dialog) = self.worktree_dialog.as_mut() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        dialog.step = worktree_dialog::Step::Loading;
+        cx.notify();
+        let kind = dialog.kind;
+        let worktree = connection.call::<GitStatus>(dialog.status_request(true));
+        let merge = (kind == worktree_dialog::Kind::Merge).then(|| {
+            (
+                connection.call::<GitStatus>(dialog.status_request(false)),
+                connection.call::<Vec<Commit>>(dialog.log_request(true)),
+                connection.call::<Vec<Commit>>(dialog.log_request(false)),
+            )
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let read = async {
+                let worktree = worktree.await?;
+                let Some((checkout, worktree_log, checkout_log)) = merge else {
+                    return anyhow::Ok(worktree_dialog::Step::Remove(
+                        worktree_dialog::remove_plan(&worktree),
+                    ));
+                };
+                let (checkout, worktree_log) = (checkout.await?, worktree_log.await?);
+                Ok(worktree_dialog::Step::Merge(worktree_dialog::merge_plan(
+                    worktree_log,
+                    &checkout_log.await?,
+                    &worktree,
+                    &checkout,
+                )))
+            };
+            let step = read
+                .await
+                .unwrap_or_else(|error| worktree_dialog::Step::Failed(format!("{error:#}")));
+            let _ = this.update(cx, |shell, cx| {
+                if let Some(dialog) = shell.open_worktree(serial) {
+                    dialog.step = step;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The open worktree dialog, if it is still the one opened as `serial`.
+    fn open_worktree(&mut self, serial: u64) -> Option<&mut WorktreeDialog> {
+        self.worktree_dialog
+            .as_mut()
+            .filter(|_| self.dialog_serial == serial)
+    }
+
+    fn close_worktree_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.worktree_dialog = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    fn worktree_dialog_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        if undo_dialog::cancels(&event.keystroke) {
+            // Esc on the discard question goes back to the list, like "Keep files".
+            match self.worktree_dialog.as_mut() {
+                Some(dialog) if matches!(dialog.step, worktree_dialog::Step::ConfirmDiscard(_)) => {
+                    dialog.keep_files();
+                    cx.notify();
+                }
+                _ => self.close_worktree_dialog(window, cx),
+            }
+        }
+    }
+
+    /// The confirmed step: `task.merge`, `task.remove_worktree`, or the discard before a
+    /// removal (then the worktree is read again). A failure shows why and reads it again.
+    fn confirm_worktree(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(dialog) = self.worktree_dialog.as_mut() else {
+            return;
+        };
+        let Ok(request) = dialog.confirm_request(self.sidebar.sessions()) else {
+            return;
+        };
+        let task_id = dialog.task_id;
+        dialog.busy = true;
+        dialog.error = None;
+        cx.notify();
+        let sent = connection.call::<serde_json::Value>(request);
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = sent.await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let Some(dialog) = shell.open_worktree(serial) else {
+                    return;
+                };
+                let failure = answer.and_then(|value| {
+                    match &dialog.step {
+                        worktree_dialog::Step::Merge(_) => {
+                            dialog.merged(serde_json::from_value(value)?);
+                        }
+                        worktree_dialog::Step::Remove(_) => {
+                            dialog.removed(serde_json::from_value(value)?);
+                        }
+                        // Discarded: the worktree is listed again.
+                        _ => dialog.busy = false,
+                    }
+                    anyhow::Ok(())
+                });
+                let reload = match failure {
+                    Ok(()) => !matches!(dialog.step, worktree_dialog::Step::Done(_)),
+                    Err(error) => {
+                        tracing::warn!(%task_id, "worktree action failed: {error:#}");
+                        dialog.failed(&format!("{error:#}"));
+                        true
+                    }
+                };
+                if reload {
+                    shell.load_worktree_dialog(window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// "Open Git view" of the worktree dialog: the Git view on the task's worktree, to commit
+    /// or unstage there.
+    fn worktree_dialog_git(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(dialog) = self
+            .worktree_dialog
+            .take_if(|dialog| self.workspace == Some(dialog.project_id))
+        else {
+            return;
+        };
+        let project_id = dialog.project_id;
+        self.retarget_git(project_id, Some(dialog.task_id));
+        if self.view() == View::Git {
+            self.refresh_git(project_id, window, cx);
+        }
+        self.show_view(View::Git, window, cx);
     }
 
     /// "Follow in Zed" of an agent pane (SPEC §20C.5): turns following its edits on or off.
@@ -9236,6 +9421,282 @@ impl Shell {
         Self::modal_shade("undo-dialog-shade", panel, cx)
     }
 
+    /// "Merge back…" / "Remove worktree…" (SPEC §20E.1): the commits to merge or the
+    /// uncommitted files blocking the removal, the confirm of the current step, then the result.
+    fn render_worktree_dialog(
+        &self,
+        dialog: &WorktreeDialog,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        use worktree_dialog::{Done, Kind, Step};
+        let label = |text: String| {
+            div()
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        // One row per file or commit: a muted mono marker, then the text (ellipsized).
+        let row = |marker: Option<String>, text: String| {
+            div()
+                .flex()
+                .gap(px(space::S))
+                .px(px(space::S))
+                .text_size(px(font_size::META))
+                .children(marker.map(|marker| {
+                    div()
+                        .flex_none()
+                        .font_family(theme.terminal_font_family)
+                        .text_color(rgb(theme.text_muted))
+                        .child(marker)
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_color(rgb(theme.text))
+                        .child(text),
+                )
+        };
+        // No border: the raised surface sets the list apart inside the dialog (§14).
+        let list = |title: String, rows: Vec<gpui::Div>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .child(label(title))
+                .child(
+                    div()
+                        .id("worktree-list")
+                        .max_h(px(theme::UNDO_FILES_HEIGHT))
+                        .flex()
+                        .flex_col()
+                        .py(px(space::XS))
+                        .rounded(px(radius::MEDIUM))
+                        .bg(rgb(theme.surface_raised))
+                        .overflow_scroll()
+                        .children(rows),
+                )
+        };
+        let paths = |paths: &[String]| -> Vec<gpui::Div> {
+            paths.iter().map(|path| row(None, path.clone())).collect()
+        };
+        let body = match &dialog.step {
+            Step::Loading => Some(label("Loading…".into())),
+            Step::Failed(error) => Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(error_row(format!("Cannot read the worktree: {error}")).flex_1())
+                    .child(
+                        button("worktree-retry", "Retry", theme, false)
+                            .tooltip(tooltip(theme, "Read the worktree again", ""))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.load_worktree_dialog(window, cx);
+                            })),
+                    ),
+            ),
+            Step::Merge(plan) => Some(list(
+                format!("Commits ({})", plan.commits.len()),
+                plan.commits
+                    .iter()
+                    .map(|commit| {
+                        let short: String = commit.hash.chars().take(7).collect();
+                        row(Some(short), commit.summary.clone())
+                    })
+                    .collect(),
+            )),
+            Step::Remove(plan) if plan.uncommitted.is_empty() => None,
+            Step::Remove(plan) => Some(list(
+                format!("Uncommitted ({})", plan.uncommitted.len()),
+                paths(&plan.uncommitted),
+            )),
+            Step::ConfirmDiscard(plan) => Some(list(
+                format!("Discarded ({})", plan.discardable.len()),
+                paths(&plan.discardable),
+            )),
+            Step::Done(Done::Conflicts(conflicts)) => Some(list(
+                format!("Conflicting files ({})", conflicts.len()),
+                paths(conflicts),
+            )),
+            Step::Done(_) => None,
+        };
+        let confirm = dialog.confirm_request(self.sidebar.sessions());
+        // Why the confirm is off, when the user can act on it.
+        let hint = confirm
+            .as_ref()
+            .err()
+            .filter(|why| !why.is_empty() && !dialog.busy)
+            // A removal blocked by files already says so in the intro.
+            .filter(|_| match &dialog.step {
+                Step::Merge(_) => true,
+                Step::Remove(plan) => plan.uncommitted.is_empty(),
+                _ => false,
+            })
+            .cloned();
+        // Commits and unstaging happen in the worktree's Git view.
+        let open_git = match &dialog.step {
+            Step::Merge(plan) => !plan.worktree_dirty.is_empty(),
+            Step::Remove(plan) => !plan.uncommitted.is_empty(),
+            _ => false,
+        };
+        let git_button = open_git.then(|| {
+            button("worktree-git", "Open Git view", theme, false)
+                .tooltip(tooltip(theme, "The Git view on this task's worktree", ""))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.worktree_dialog_git(window, cx);
+                }))
+        });
+        let cancel = |id: &'static str, text: &'static str| {
+            button(id, text, theme, false)
+                .tooltip(tooltip(theme, "Close", "Esc"))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.close_worktree_dialog(window, cx);
+                }))
+        };
+        let confirm_listener = cx.listener(|shell, _, window, cx| {
+            shell.confirm_worktree(window, cx);
+        });
+        let mut buttons: Vec<gpui::AnyElement> = Vec::new();
+        buttons.extend(git_button.map(IntoElement::into_any_element));
+        match &dialog.step {
+            Step::Done(_) => buttons.push(cancel("worktree-close", "Close").into_any_element()),
+            Step::ConfirmDiscard(_) => {
+                buttons.push(
+                    button("worktree-keep", "Keep files", theme, false)
+                        .tooltip(tooltip(theme, "Back to the list; nothing is discarded", ""))
+                        .on_click(cx.listener(|shell, _, _, cx| {
+                            if let Some(dialog) = shell.worktree_dialog.as_mut() {
+                                dialog.keep_files();
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+                buttons.push(if confirm.is_ok() {
+                    danger_button("worktree-confirm", "Discard files", theme)
+                        .tooltip(tooltip(theme, "Discard every file listed above", ""))
+                        .on_click(confirm_listener)
+                        .into_any_element()
+                } else {
+                    disabled_button("worktree-confirm", "Discarding…", theme, false)
+                        .bg(rgb(theme.diff_del_bg))
+                        .text_color(rgb(theme.diff_del_text))
+                        .into_any_element()
+                });
+            }
+            Step::Remove(plan) if !plan.uncommitted.is_empty() => {
+                buttons.push(cancel("worktree-cancel", "Cancel").into_any_element());
+                if !plan.discardable.is_empty() {
+                    buttons.push(
+                        danger_button("worktree-discard", "Discard…", theme)
+                            .tooltip(tooltip(theme, "Choose to discard these changes", ""))
+                            .on_click(cx.listener(|shell, _, _, cx| {
+                                if let Some(dialog) = shell.worktree_dialog.as_mut() {
+                                    dialog.ask_discard();
+                                }
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            step => {
+                buttons.push(cancel("worktree-cancel", "Cancel").into_any_element());
+                let remove = dialog.kind == Kind::Remove;
+                let text = match (remove, dialog.busy) {
+                    (false, false) => "Merge",
+                    (false, true) => "Merging…",
+                    (true, false) => "Remove worktree",
+                    (true, true) => "Removing…",
+                };
+                let ready = confirm.is_ok() && !matches!(step, Step::Loading | Step::Failed(_));
+                buttons.push(match (ready, remove) {
+                    (true, true) => danger_button("worktree-confirm", text, theme)
+                        .tooltip(tooltip(theme, "Delete the worktree folder", ""))
+                        .on_click(confirm_listener)
+                        .into_any_element(),
+                    (true, false) => button("worktree-confirm", text, theme, true)
+                        .tooltip(tooltip(
+                            theme,
+                            "Merge the commits above into your checkout",
+                            "",
+                        ))
+                        .on_click(confirm_listener)
+                        .into_any_element(),
+                    // A disabled removal keeps the destructive tint, like Undo's.
+                    (false, true) => disabled_button("worktree-confirm", text, theme, false)
+                        .bg(rgb(theme.diff_del_bg))
+                        .text_color(rgb(theme.diff_del_text))
+                        .into_any_element(),
+                    (false, false) => {
+                        disabled_button("worktree-confirm", text, theme, true).into_any_element()
+                    }
+                });
+            }
+        }
+        let panel = div()
+            .id("worktree-dialog")
+            .w(px(theme::UNDO_DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::worktree_dialog_key_down))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(dialog.heading()),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(dialog.intro()),
+            )
+            .children(body)
+            .children(dialog.error.clone().map(error_row))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.text_muted))
+                            .children(hint),
+                    )
+                    .children(buttons),
+            );
+        Self::modal_shade("worktree-dialog-shade", panel, cx)
+    }
+
     /// "Turns": the session's turns, newest first, each with "Restore before" (disabled, with
     /// the reason as its tooltip, while the agent works or without a snapshot).
     fn render_turns_dialog(
@@ -13096,6 +13557,7 @@ fn task_card(
     let action = card.action();
     let can_undo = card.can_undo();
     let can_view_changes = card.can_view_changes();
+    let manages_worktree = card.manages_worktree();
     let can_run_with = card.can_run_with() && !cards.starting.contains(&card.task_id);
     let current_agent = card.agent_profile().map(str::to_owned);
     let opens = card.opens_session();
@@ -13267,7 +13729,7 @@ fn task_card(
         .when_some(follow_up_session, |el, session_id| {
             el.child(follow_up_field(task_id, session_id, cards, theme, cx))
         })
-        .when(action.is_some() || can_undo, |el| {
+        .when(action.is_some() || can_undo || manages_worktree, |el| {
             // Secondary: shown on hover, left of the column's action (SPEC §14).
             let undo = can_undo.then(|| {
                 quiet_button("card-undo", "Undo", theme, edit_hover)
@@ -13299,6 +13761,34 @@ fn task_card(
                         shell.view_task_changes(task_id, window, cx);
                     }))
             });
+            // The worktree's two actions (SPEC §20E.1), hover-shown like Undo.
+            let worktree_actions = manages_worktree.then(|| {
+                [
+                    (
+                        "card-merge",
+                        "Merge back…",
+                        "Merge back: merge the task's branch into your checkout",
+                        worktree_dialog::Kind::Merge,
+                    ),
+                    (
+                        "card-remove-worktree",
+                        "Remove worktree…",
+                        "Remove worktree: delete its folder (an unmerged branch is kept)",
+                        worktree_dialog::Kind::Remove,
+                    ),
+                ]
+                .map(|(id, text, tip, kind)| {
+                    quiet_button(id, text, theme, edit_hover)
+                        .opacity(opacity::HIDDEN)
+                        .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                        .tooltip(tooltip(theme, tip, ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.selected_card = Some(task_id);
+                            shell.open_worktree_dialog(kind, task_id, window, cx);
+                        }))
+                })
+            });
             let run_with = can_run_with.then(|| {
                 run_with_button(
                     task_id,
@@ -13312,12 +13802,13 @@ fn task_card(
             el.child(
                 div()
                     .flex()
-                    // A Review card can show four buttons; a narrow column wraps them.
+                    // A Review card can show six buttons; a narrow column wraps them.
                     .flex_wrap()
                     .justify_end()
                     .gap(px(space::S))
                     .children(run_with)
                     .children(changes)
+                    .children(worktree_actions.into_iter().flatten())
                     .children(undo)
                     .children(
                         action
@@ -13801,6 +14292,11 @@ impl Render for Shell {
                 self.undo_dialog
                     .as_ref()
                     .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
+            )
+            .children(
+                self.worktree_dialog
+                    .as_ref()
+                    .map(|dialog| self.render_worktree_dialog(dialog, &theme, cx)),
             )
             .children(
                 self.turns_dialog
