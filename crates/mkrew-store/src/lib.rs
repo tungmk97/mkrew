@@ -23,6 +23,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0006_files_git.sql"),
     include_str!("../migrations/0007_dev_server.sql"),
     include_str!("../migrations/0008_turns.sql"),
+    include_str!("../migrations/0009_worktrees.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -365,7 +366,8 @@ impl Store {
     }
 
     /// Adds a Todo task; `position` defaults to after the project's last Todo task.
-    /// `agent_profile` `None` = the project's default agent at run time.
+    /// `agent_profile` `None` = the project's default agent at run time; `worktree` = run in a
+    /// git worktree (SPEC §20E.1).
     pub fn create_task(
         &self,
         project_id: Ulid,
@@ -373,6 +375,7 @@ impl Store {
         prompt: &str,
         agent_profile: Option<&str>,
         position: Option<f64>,
+        worktree: bool,
     ) -> Result<Task> {
         self.get_project(project_id)?;
         let position = match position {
@@ -395,13 +398,17 @@ impl Store {
             position,
             checkpoint: None,
             error_flag: false,
+            worktree,
+            worktree_path: None,
+            branch: None,
+            fanout_of: None,
             created_at: now,
             updated_at: now,
         };
         self.conn.execute(
             "INSERT INTO task (id, project_id, title, prompt, agent_profile, status, position,
-                error_flag, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8)",
+                error_flag, created_at, updated_at, worktree)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?8, ?9)",
             params![
                 task.id.to_string(),
                 project_id.to_string(),
@@ -411,6 +418,7 @@ impl Store {
                 task_status_str(task.status),
                 task.position,
                 now,
+                worktree,
             ],
         )?;
         Ok(task)
@@ -424,6 +432,7 @@ impl Store {
         title: Option<&str>,
         prompt: Option<&str>,
         agent_profile: Option<Option<&str>>,
+        worktree: Option<bool>,
     ) -> Result<Task> {
         let mut task = self.get_task(id)?;
         if let Some(title) = title {
@@ -435,19 +444,63 @@ impl Store {
         if let Some(agent_profile) = agent_profile {
             task.agent_profile = agent_profile.map(str::to_owned);
         }
+        if let Some(worktree) = worktree {
+            task.worktree = worktree;
+        }
         task.updated_at = now_ms();
         self.conn.execute(
-            "UPDATE task SET title = ?2, prompt = ?3, agent_profile = ?4, updated_at = ?5
+            "UPDATE task SET title = ?2, prompt = ?3, agent_profile = ?4, updated_at = ?5,
+                worktree = ?6
              WHERE id = ?1",
             params![
                 id.to_string(),
                 task.title,
                 task.prompt,
                 task.agent_profile.as_deref().unwrap_or(""),
-                task.updated_at
+                task.updated_at,
+                task.worktree
             ],
         )?;
         Ok(task)
+    }
+
+    /// Records the task's created worktree folder and branch (SPEC §20E.1); `None` = removed.
+    pub fn set_task_worktree(&self, id: Ulid, worktree: Option<(&str, &str)>) -> Result<Task> {
+        let changed = self.conn.execute(
+            "UPDATE task SET worktree_path = ?2, branch = ?3, updated_at = ?4 WHERE id = ?1",
+            params![
+                id.to_string(),
+                worktree.map(|(path, _)| path),
+                worktree.map(|(_, branch)| branch),
+                now_ms()
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::TaskNotFound(id));
+        }
+        self.get_task(id)
+    }
+
+    /// Makes the task a fan-out child of `parent` (SPEC §20E.2).
+    pub fn set_task_fanout_of(&self, id: Ulid, parent: Ulid) -> Result<Task> {
+        self.get_task(parent)?;
+        let changed = self.conn.execute(
+            "UPDATE task SET fanout_of = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id.to_string(), parent.to_string(), now_ms()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::TaskNotFound(id));
+        }
+        self.get_task(id)
+    }
+
+    /// The fan-out children of `parent`, oldest first.
+    pub fn list_fanout_children(&self, parent: Ulid) -> Result<Vec<Task>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TASK_COLUMNS} FROM task WHERE fanout_of = ?1 ORDER BY created_at, id"
+        ))?;
+        let rows = stmt.query_map([parent.to_string()], RawTask::from_row)?;
+        rows.map(|r| r?.into_task()).collect()
     }
 
     /// Puts the task into column `status` at `position`.
@@ -507,6 +560,7 @@ impl Store {
 
     /// Deletes the task and returns it. Refused while one of its sessions has not exited;
     /// exited sessions are kept (history) and become free terminals (`task_id` = NULL).
+    /// Fan-out children stay as ordinary tasks.
     pub fn delete_task(&self, id: Ulid) -> Result<Task> {
         let task = self.get_task(id)?;
         let tx = self.conn.unchecked_transaction()?;
@@ -520,6 +574,10 @@ impl Store {
         }
         tx.execute(
             "UPDATE session SET task_id = NULL WHERE task_id = ?1",
+            [id.to_string()],
+        )?;
+        tx.execute(
+            "UPDATE task SET fanout_of = NULL WHERE fanout_of = ?1",
             [id.to_string()],
         )?;
         tx.execute("DELETE FROM task WHERE id = ?1", [id.to_string()])?;
@@ -1293,7 +1351,7 @@ impl RawTab {
 }
 
 const TASK_COLUMNS: &str = "id, project_id, title, prompt, agent_profile, status, position,
-    checkpoint, error_flag, created_at, updated_at";
+    checkpoint, error_flag, created_at, updated_at, worktree, worktree_path, branch, fanout_of";
 
 struct RawTask {
     id: String,
@@ -1308,6 +1366,10 @@ struct RawTask {
     error_flag: bool,
     created_at: i64,
     updated_at: i64,
+    worktree: bool,
+    worktree_path: Option<String>,
+    branch: Option<String>,
+    fanout_of: Option<String>,
 }
 
 impl RawTask {
@@ -1324,6 +1386,10 @@ impl RawTask {
             error_flag: row.get(8)?,
             created_at: row.get(9)?,
             updated_at: row.get(10)?,
+            worktree: row.get(11)?,
+            worktree_path: row.get(12)?,
+            branch: row.get(13)?,
+            fanout_of: row.get(14)?,
         })
     }
 
@@ -1338,6 +1404,13 @@ impl RawTask {
             position: self.position,
             checkpoint: self.checkpoint,
             error_flag: self.error_flag,
+            worktree: self.worktree,
+            worktree_path: self.worktree_path,
+            branch: self.branch,
+            fanout_of: self
+                .fanout_of
+                .map(|id| parse_ulid("task.fanout_of", id))
+                .transpose()?,
             created_at: self.created_at,
             updated_at: self.updated_at,
         })

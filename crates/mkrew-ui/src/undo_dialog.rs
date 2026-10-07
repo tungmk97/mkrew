@@ -301,6 +301,10 @@ mod tests {
             position: 1.0,
             checkpoint: Some("abc".into()),
             error_flag: false,
+            worktree: false,
+            worktree_path: None,
+            branch: None,
+            fanout_of: None,
             created_at: 1,
             updated_at: 1,
         }

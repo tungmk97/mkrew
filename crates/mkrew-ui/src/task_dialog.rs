@@ -12,7 +12,7 @@ use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
     New { project_id: Ulid },
-    Edit(Task),
+    Edit(Box<Task>),
 }
 
 /// The text field keys go to.
@@ -81,6 +81,8 @@ pub struct TaskDialog {
     pub prompt: TextBox,
     /// `None` = the workspace's default agent at run time.
     pub agent: Option<String>,
+    /// "Run in a worktree" (§20E.1, default off).
+    pub worktree: bool,
     pub field: Field,
     /// The agent profiles (`agent.profiles`, fetched when the dialog opens).
     pub agents: Agents,
@@ -101,7 +103,11 @@ impl TaskDialog {
             task.prompt.clone(),
             task.agent_profile.clone(),
         );
-        Self::open(Mode::Edit(task), title, prompt, agent)
+        let worktree = task.worktree;
+        Self {
+            worktree,
+            ..Self::open(Mode::Edit(Box::new(task)), title, prompt, agent)
+        }
     }
 
     fn open(mode: Mode, title: String, text: String, agent: Option<String>) -> Self {
@@ -112,6 +118,7 @@ impl TaskDialog {
             title,
             prompt,
             agent,
+            worktree: false,
             field: Field::Title,
             agents: Agents::Loading,
             busy: false,
@@ -208,7 +215,18 @@ impl TaskDialog {
         self.agent = (!id.is_empty()).then(|| id.to_owned());
     }
 
-    /// The request saving the draft: `Ok(None)` = nothing changed (just close); `Err` = an
+    /// "Run in a worktree" can't change while saving or once the task's worktree exists.
+    pub fn worktree_locked(&self) -> bool {
+        self.busy || matches!(&self.mode, Mode::Edit(task) if task.worktree_path.is_some())
+    }
+
+    pub fn toggle_worktree(&mut self) {
+        if !self.worktree_locked() {
+            self.worktree = !self.worktree;
+        }
+    }
+
+    /// The request saving the draft:`Ok(None)` = nothing changed (just close); `Err` = an
     /// invalid draft, to show in the dialog.
     pub fn save_request(&self) -> Result<Option<Request>, &'static str> {
         let title = self.title.trim();
@@ -223,6 +241,7 @@ impl TaskDialog {
                 prompt: prompt.to_owned(),
                 agent_profile: self.agent.clone(),
                 position: None,
+                worktree: self.worktree,
             })),
             Mode::Edit(task) => {
                 let params = TaskUpdateParams {
@@ -230,10 +249,12 @@ impl TaskDialog {
                     title: (title != task.title).then(|| title.to_owned()),
                     prompt: (prompt != task.prompt).then(|| prompt.to_owned()),
                     agent_profile: (self.agent != task.agent_profile).then(|| self.agent.clone()),
+                    worktree: (self.worktree != task.worktree).then_some(self.worktree),
                 };
                 let changed = params.title.is_some()
                     || params.prompt.is_some()
-                    || params.agent_profile.is_some();
+                    || params.agent_profile.is_some()
+                    || params.worktree.is_some();
                 changed.then_some(Request::TaskUpdate(params))
             }
         })
@@ -273,6 +294,10 @@ mod tests {
             position: 1.0,
             checkpoint: None,
             error_flag: false,
+            worktree: false,
+            worktree_path: None,
+            branch: None,
+            fanout_of: None,
             created_at: 1,
             updated_at: 1,
         }
@@ -362,13 +387,41 @@ mod tests {
                 prompt: "go".into(),
                 agent_profile: Some("claude".into()),
                 position: None,
+                worktree: false,
             })))
         );
         dialog.choose_agent("");
+        dialog.worktree = true;
         let Ok(Some(Request::TaskCreate(params))) = dialog.save_request() else {
             panic!("expected task.create");
         };
         assert_eq!(params.agent_profile, None);
+        assert!(params.worktree);
+    }
+
+    #[test]
+    fn the_worktree_box_starts_from_the_task_and_is_sent_when_changed() {
+        let mut task = task();
+        task.worktree = true;
+        let mut dialog = TaskDialog::edit(task.clone());
+        assert!(dialog.worktree);
+        assert!(!TaskDialog::new(Ulid::new()).worktree);
+        dialog.toggle_worktree();
+        let Ok(Some(Request::TaskUpdate(params))) = dialog.save_request() else {
+            panic!("expected task.update");
+        };
+        assert_eq!(params.worktree, Some(false));
+        assert_eq!(params.title, None);
+
+        dialog.busy = true;
+        dialog.toggle_worktree();
+        assert!(!dialog.worktree);
+        // Once the worktree exists the box stays as it is.
+        task.worktree_path = Some("/wt".into());
+        let mut dialog = TaskDialog::edit(task);
+        assert!(dialog.worktree_locked());
+        dialog.toggle_worktree();
+        assert!(dialog.worktree);
     }
 
     #[test]
@@ -387,6 +440,7 @@ mod tests {
                 title: Some("Fix login!".into()),
                 prompt: None,
                 agent_profile: Some(None),
+                worktree: None,
             })))
         );
     }

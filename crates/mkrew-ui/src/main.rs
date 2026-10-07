@@ -3492,7 +3492,7 @@ impl Shell {
         };
         // Diff against the task as it is now (`mk` or a run may have changed it meanwhile).
         if let Some(task) = dialog.task_id().and_then(|id| self.board.task(id)) {
-            dialog.mode = task_dialog::Mode::Edit(task.clone());
+            dialog.mode = task_dialog::Mode::Edit(Box::new(task.clone()));
         }
         let request = match dialog.save_request() {
             Ok(Some(request)) => request,
@@ -8601,6 +8601,53 @@ impl Shell {
                 })
                 .collect(),
         };
+        let hover = theme.surface_raised;
+        let locked = dialog.worktree_locked();
+        let worktree = div()
+            .id("task-worktree")
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::XS))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .text_size(px(font_size::BODY))
+            .tooltip(tooltip(
+                theme,
+                if locked && !dialog.busy {
+                    "This task already has its worktree"
+                } else {
+                    "The agent works on its own branch; your checkout stays untouched"
+                },
+                "",
+            ))
+            .when(locked, |el| el.text_color(rgb(theme.text_muted)))
+            .when(!locked, |el| {
+                el.cursor_pointer()
+                    .text_color(rgb(theme.text))
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        if let Some(dialog) = shell.task_dialog.as_mut() {
+                            dialog.toggle_worktree();
+                        }
+                        cx.notify();
+                    }))
+            })
+            .child(
+                div()
+                    .size(px(space::M))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(radius::SMALL))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.border))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.accent))
+                    .child(if dialog.worktree { "✓" } else { "" }),
+            )
+            .child(div().flex_1().child("Run in a worktree"));
         let save_label = match (dialog.busy, editing) {
             (true, _) => "Saving…",
             (false, true) => "Save",
@@ -8693,6 +8740,7 @@ impl Shell {
                     .child(label("Agent"))
                     .child(div().flex().flex_wrap().gap(px(space::XS)).children(agents)),
             )
+            .child(worktree)
             .children(dialog.error.clone().map(|error| {
                 div()
                     .flex()

@@ -244,6 +244,7 @@ fn mk_task_changes_reach_the_board_and_ui_tasks_reach_mk() {
         prompt: String::new(),
         agent_profile: None,
         position: None,
+        worktree: false,
     })))
     .unwrap();
     let list = mk(&paths, &["task", "list", "--project", "demo"]);

@@ -553,11 +553,13 @@ fn tasks_are_created_edited_moved_and_persist() {
     std::fs::create_dir(&repo_b).unwrap();
     let b = store.add_project(&repo_b, None).unwrap();
 
-    let first = store.create_task(a.id, "one", "", None, None).unwrap();
-    let second = store
-        .create_task(a.id, "two", "do it", Some("claude"), None)
+    let first = store
+        .create_task(a.id, "one", "", None, None, false)
         .unwrap();
-    let other = store.create_task(b.id, "b", "", None, None).unwrap();
+    let second = store
+        .create_task(a.id, "two", "do it", Some("claude"), None, true)
+        .unwrap();
+    let other = store.create_task(b.id, "b", "", None, None, false).unwrap();
     assert_eq!((first.position, second.position), (0.0, 1.0));
     assert_eq!(other.position, 0.0);
     assert_eq!(first.status, TaskStatus::Todo);
@@ -565,7 +567,7 @@ fn tasks_are_created_edited_moved_and_persist() {
     assert_eq!(second.agent_profile.as_deref(), Some("claude"));
     assert!(!first.error_flag);
     let front = store
-        .create_task(a.id, "front", "", None, Some(-1.0))
+        .create_task(a.id, "front", "", None, Some(-1.0), false)
         .unwrap();
 
     let titles = |store: &Store, status: Option<TaskStatus>| -> Vec<String> {
@@ -581,18 +583,22 @@ fn tasks_are_created_edited_moved_and_persist() {
     assert_eq!(titles(&store, Some(TaskStatus::Todo)), ["one", "two"]);
     assert_eq!(titles(&store, Some(TaskStatus::Review)), ["front"]);
     // A new Todo card goes after the last Todo card, ignoring other columns.
-    let third = store.create_task(a.id, "three", "", None, None).unwrap();
+    let third = store
+        .create_task(a.id, "three", "", None, None, false)
+        .unwrap();
     assert_eq!(third.position, 2.0);
 
     let edited = store
-        .update_task(second.id, Some("deux"), None, Some(None))
+        .update_task(second.id, Some("deux"), None, Some(None), None)
         .unwrap();
     assert_eq!(edited.title, "deux");
+    assert!(edited.worktree);
     assert_eq!(edited.prompt, "do it");
     assert_eq!(edited.agent_profile, None);
     let edited = store
-        .update_task(second.id, None, Some(""), Some(Some("codex")))
+        .update_task(second.id, None, Some(""), Some(Some("codex")), Some(false))
         .unwrap();
+    assert!(!edited.worktree);
     assert_eq!(
         (edited.title.as_str(), edited.prompt.as_str()),
         ("deux", "")
@@ -609,11 +615,11 @@ fn tasks_are_created_edited_moved_and_persist() {
         Err(StoreError::TaskNotFound(_))
     ));
     assert!(matches!(
-        store.update_task(Ulid::new(), Some("x"), None, None),
+        store.update_task(Ulid::new(), Some("x"), None, None, None),
         Err(StoreError::TaskNotFound(_))
     ));
     assert!(matches!(
-        store.create_task(Ulid::new(), "x", "", None, None),
+        store.create_task(Ulid::new(), "x", "", None, None, false),
         Err(StoreError::ProjectNotFound(_))
     ));
 }
@@ -623,7 +629,9 @@ fn run_lifecycle_sets_status_and_error_flag_in_place() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let p = store.add_project(dir.path(), None).unwrap();
-    let task = store.create_task(p.id, "t", "", None, Some(3.5)).unwrap();
+    let task = store
+        .create_task(p.id, "t", "", None, Some(3.5), false)
+        .unwrap();
     let failed = store
         .set_task_status(task.id, TaskStatus::NeedsInput, true)
         .unwrap();
@@ -647,7 +655,7 @@ fn checkpoint_is_set_and_cleared() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let p = store.add_project(dir.path(), None).unwrap();
-    let task = store.create_task(p.id, "t", "", None, None).unwrap();
+    let task = store.create_task(p.id, "t", "", None, None, false).unwrap();
     let head = "0123456789abcdef0123456789abcdef01234567";
     assert_eq!(store.task_checkpoint_at(task.id).unwrap(), None);
     let set = store
@@ -671,11 +679,66 @@ fn checkpoint_is_set_and_cleared() {
 }
 
 #[test]
+fn worktree_and_fanout_fields_persist() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let parent = store
+        .create_task(p.id, "fix", "", None, None, false)
+        .unwrap();
+    assert!(!parent.worktree);
+    assert_eq!(
+        (parent.worktree_path.clone(), parent.branch.clone()),
+        (None, None)
+    );
+    assert_eq!(parent.fanout_of, None);
+
+    let child = store
+        .create_task(p.id, "fix · a", "", None, None, true)
+        .unwrap();
+    let other = store
+        .create_task(p.id, "fix · b", "", None, None, true)
+        .unwrap();
+    let set = store
+        .set_task_worktree(child.id, Some(("/wt/p/t", "mkrew/fix-01jx")))
+        .unwrap();
+    assert_eq!(set.worktree_path.as_deref(), Some("/wt/p/t"));
+    assert_eq!(set.branch.as_deref(), Some("mkrew/fix-01jx"));
+    let child = store.set_task_fanout_of(child.id, parent.id).unwrap();
+    assert_eq!(child.fanout_of, Some(parent.id));
+    let other = store.set_task_fanout_of(other.id, parent.id).unwrap();
+
+    let reopened = open(&dir);
+    assert_eq!(reopened.get_task(child.id).unwrap(), child);
+    assert_eq!(
+        reopened.list_fanout_children(parent.id).unwrap(),
+        vec![child.clone(), other.clone()]
+    );
+    assert!(reopened.list_fanout_children(child.id).unwrap().is_empty());
+
+    let removed = store.set_task_worktree(child.id, None).unwrap();
+    assert_eq!((removed.worktree_path, removed.branch), (None, None));
+    assert!(removed.worktree);
+    assert!(matches!(
+        store.set_task_worktree(Ulid::new(), None),
+        Err(StoreError::TaskNotFound(_))
+    ));
+    assert!(matches!(
+        store.set_task_fanout_of(child.id, Ulid::new()),
+        Err(StoreError::TaskNotFound(_))
+    ));
+
+    // Deleting the original keeps its children as ordinary tasks.
+    store.delete_task(parent.id).unwrap();
+    assert_eq!(store.get_task(other.id).unwrap().fanout_of, None);
+}
+
+#[test]
 fn delete_task_refuses_live_sessions_and_detaches_exited_ones() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
     let p = store.add_project(dir.path(), None).unwrap();
-    let task = store.create_task(p.id, "t", "", None, None).unwrap();
+    let task = store.create_task(p.id, "t", "", None, None, false).unwrap();
     let mut old = session(p.id, 1);
     old.task_id = Some(task.id);
     old.state = SessionState::Exited;

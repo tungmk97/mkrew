@@ -25,6 +25,7 @@ pub fn add(
         prompt: prompt.unwrap_or_default(),
         agent_profile: agent,
         position: None,
+        worktree: false,
     }))?;
     println!("{}", task.id);
     Ok(())

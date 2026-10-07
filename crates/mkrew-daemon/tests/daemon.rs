@@ -2755,6 +2755,7 @@ fn create_task(project: &Project, title: &str, agent_profile: Option<&str>) -> R
         prompt: format!("prompt for {title}"),
         agent_profile: agent_profile.map(Into::into),
         position: None,
+        worktree: false,
     })
 }
 
@@ -2798,6 +2799,7 @@ fn tasks_crud_and_order_persist_across_daemon_restart() {
             title: Some("deux".into()),
             prompt: None,
             agent_profile: Some(None),
+            worktree: Some(true),
         }))
         .into_result()
         .unwrap();
@@ -2806,6 +2808,11 @@ fn tasks_crud_and_order_persist_across_daemon_restart() {
         ("deux", None)
     );
     assert_eq!(edited.prompt, "prompt for two");
+    assert!(edited.worktree && !first.worktree);
+    assert_eq!(
+        (edited.worktree_path.as_deref(), edited.branch.as_deref()),
+        (None, None)
+    );
     client.wait_event(&Event::TaskUpdated(edited.clone()));
 
     // Drop "one" into Review, then "deux" in front of it.
@@ -2887,6 +2894,7 @@ fn tasks_crud_and_order_persist_across_daemon_restart() {
         title: None,
         prompt: None,
         agent_profile: Some(Some("shell".into())),
+        worktree: None,
     });
     assert_eq!(error_code(client.call(bad_edit)), ErrorCode::InvalidRequest);
 
@@ -4099,6 +4107,7 @@ fn task_run_passes_metacharacter_prompts_through_npm_cmd_shims() {
             prompt: prompt.into(),
             agent_profile: Some("shimmed".into()),
             position: None,
+            worktree: false,
         }))
         .into_result()
         .unwrap();

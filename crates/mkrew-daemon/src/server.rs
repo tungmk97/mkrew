@@ -796,6 +796,7 @@ impl Daemon {
             &params.prompt,
             params.agent_profile.as_deref(),
             params.position,
+            params.worktree,
         );
         self.task_updated(task)
     }
@@ -814,6 +815,7 @@ impl Daemon {
             params.title.as_deref(),
             params.prompt.as_deref(),
             params.agent_profile.as_ref().map(Option::as_deref),
+            params.worktree,
         );
         self.task_updated(task)
     }

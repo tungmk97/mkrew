@@ -72,6 +72,7 @@ pub fn run_with_requests(task: &Task, profile: &str) -> Vec<Request> {
             title: None,
             prompt: None,
             agent_profile: Some(Some(profile.to_owned())),
+            worktree: None,
         })
     });
     update
@@ -201,6 +202,10 @@ mod tests {
             position: 1.0,
             checkpoint: None,
             error_flag: false,
+            worktree: false,
+            worktree_path: None,
+            branch: None,
+            fanout_of: None,
             created_at: 0,
             updated_at: 0,
         };
@@ -209,6 +214,7 @@ mod tests {
             title: None,
             prompt: None,
             agent_profile: Some(Some("codex".into())),
+            worktree: None,
         });
         let run = Request::TaskRun(run_params(task.id));
         assert_eq!(

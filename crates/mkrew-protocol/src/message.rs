@@ -444,6 +444,18 @@ pub struct Task {
     pub checkpoint: Option<String>,
     /// The last run exited non-zero (SPEC §5).
     pub error_flag: bool,
+    /// Runs in its own git worktree (SPEC §20E.1).
+    #[serde(default)]
+    pub worktree: bool,
+    /// The task's worktree folder once created.
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    /// The worktree's branch (`mkrew/…`) once created.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// The original task of a fan-out (SPEC §20E.2).
+    #[serde(default)]
+    pub fanout_of: Option<Ulid>,
     /// Unix ms.
     pub created_at: i64,
     /// Unix ms.
@@ -697,6 +709,9 @@ pub struct TaskCreateParams {
     /// Defaults to after the last Todo card of the project.
     #[serde(default)]
     pub position: Option<f64>,
+    /// Run in a git worktree (SPEC §20E.1).
+    #[serde(default)]
+    pub worktree: bool,
 }
 
 /// `task.update`: fields left out stay unchanged.
@@ -714,6 +729,8 @@ pub struct TaskUpdateParams {
         deserialize_with = "present"
     )]
     pub agent_profile: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<bool>,
 }
 
 /// `task.move`: drop a card into a column at a position (drag & drop, approve).
@@ -1448,12 +1465,14 @@ mod tests {
                 prompt: "make it work".into(),
                 agent_profile: Some("claude".into()),
                 position: None,
+                worktree: true,
             }),
             Request::TaskUpdate(TaskUpdateParams {
                 task_id: sid(),
                 title: None,
                 prompt: Some("".into()),
                 agent_profile: Some(None),
+                worktree: Some(false),
             }),
             Request::TaskMove(TaskMoveParams {
                 task_id: sid(),
@@ -1898,10 +1917,16 @@ mod tests {
             position: 1.5,
             checkpoint: None,
             error_flag: true,
+            worktree: true,
+            worktree_path: Some("/data/mkrew/worktrees/p/t".into()),
+            branch: Some("mkrew/fix-login-01jx".into()),
+            fanout_of: Some(sid()),
             created_at: 1,
             updated_at: 2,
         })));
         assert_eq!(task["event"], "task.updated");
+        assert_eq!(task["data"]["worktree"], true);
+        assert_eq!(task["data"]["branch"], "mkrew/fix-login-01jx");
         assert_eq!(task["data"]["status"], "needs_input");
         assert_eq!(task["data"]["agent_profile"], serde_json::Value::Null);
         let deleted = round_trip(&Message::Event(Event::TaskDeleted(TaskDeletedEvent {
@@ -2025,6 +2050,7 @@ mod tests {
         assert_eq!(create.prompt, "");
         assert_eq!(create.agent_profile, None);
         assert_eq!(create.position, None);
+        assert!(!create.worktree);
         let list: TaskListParams = serde_json::from_value(json!({})).unwrap();
         assert_eq!(list, TaskListParams::default());
 
@@ -2037,7 +2063,12 @@ mod tests {
             Some(None)
         );
         let keep = parse(json!({"task_id": id}));
+        assert_eq!(keep.worktree, None);
         assert_eq!(serde_json::to_value(&keep).unwrap(), json!({"task_id": id}));
+        assert_eq!(
+            parse(json!({"task_id": id, "worktree": true})).worktree,
+            Some(true)
+        );
 
         // Undo is refused unless the client says otherwise.
         let undo: TaskUndoParams = serde_json::from_value(json!({"task_id": id})).unwrap();
