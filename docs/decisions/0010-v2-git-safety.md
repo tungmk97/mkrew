@@ -57,3 +57,9 @@ deleted with `-d` only, never `-D`.
 - Merge back and removal (T13.5): `git merge --no-ff --no-edit <branch>` and on conflict
   `git merge --abort`, in the main checkout; `git worktree remove` (never `--force`) and
   `git branch -d` (never `-D`).
+- Run (T13.3): the session's `cwd` is the project's folder inside the worktree (the worktree
+  root when the project is the repo root; the same subfolder otherwise), so a project that is a
+  repo subfolder sees the same layout. A worktree task whose project is not in a git repo runs in
+  the project folder like any task (first output line says so). Undo of a worktree task and turn
+  restore only ever write inside the worktree (turn restore is refused for worktree tasks until
+  T13.4), never the user's checkout.

@@ -4077,6 +4077,161 @@ fn restart_resumes_running_tasks_with_their_native_session_id() {
     client.stop();
 }
 
+/// M13 worktree task (SPEC §20E.1): the first run adds the task's worktree and branch from
+/// HEAD, copies `.worktreeinclude` entries, names the skipped ones in the session's first
+/// line and runs the agent in the project's folder inside the worktree; the user's checkout
+/// is untouched. The task keeps its worktree (no turning it off, no delete), and a daemon
+/// restart resumes the agent in the same folder.
+#[test]
+fn worktree_tasks_run_and_resume_in_their_own_worktree() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("worktree.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"write_file\"\npath = \"made.txt\"\ncontent = \"run\"\n\
+         [[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-wt\"\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    let resumed_scenario = env.dir.path().join("resumed.toml");
+    std::fs::write(
+        &resumed_scenario,
+        "[[step]]\naction = \"write_file\"\npath = \"resumed.txt\"\ncontent = \"again\"\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    let args = format!("['--scenario', '{}']", scenario.display());
+    env.write_fake_profile_as("wt", &args);
+    let path = env.dir.path().join("config/agents/wt.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let resume = format!(
+        "resume = '\"{}\" --resume {{session_id}} --scenario \"{}\"'\n",
+        built_bin("mkrew-fakeagent").display(),
+        resumed_scenario.display()
+    );
+    std::fs::write(
+        &path,
+        text.replace("[state]", &format!("{resume}\n[state]")),
+    )
+    .unwrap();
+
+    let repo = env.repo();
+    let app = repo.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join(".gitignore"), ".env\n").unwrap();
+    std::fs::write(app.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join(".env"), "SECRET=1\n").unwrap();
+    std::fs::write(repo.join(".worktreeinclude"), ".env\nmissing.txt\n").unwrap();
+    std::fs::write(app.join("a.txt"), "uncommitted\n").unwrap();
+    let main_state = |repo: &Path| {
+        [
+            git(repo, &["rev-parse", "HEAD"]),
+            git(repo, &["symbolic-ref", "HEAD"]),
+            git(repo, &["status", "--porcelain", "--ignored"]),
+        ]
+    };
+    let before = main_state(&repo);
+
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&app);
+    let task: Task = client
+        .call(Request::TaskCreate(TaskCreateParams {
+            project_id: project.id,
+            title: "Fix the login".into(),
+            prompt: String::new(),
+            agent_profile: Some("wt".into()),
+            position: None,
+            worktree: true,
+        }))
+        .into_result()
+        .unwrap();
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    let task = wait_task(&mut client, task.id, |t| {
+        t.worktree_path.is_some() && t.checkpoint.is_some()
+    });
+    let root = PathBuf::from(task.worktree_path.clone().unwrap());
+    assert!(
+        root.ends_with(Path::new(&project.id.to_string()).join(task.id.to_string())),
+        "{}",
+        root.display()
+    );
+    let branch = task.branch.clone().unwrap();
+    assert!(branch.starts_with("mkrew/fix-the-login-"), "{branch}");
+    assert_eq!(task.checkpoint.as_deref(), Some(before[0].as_str()));
+    assert_eq!(
+        git(&root, &["symbolic-ref", "HEAD"]),
+        format!("refs/heads/{branch}")
+    );
+    let deadline = Instant::now() + TIMEOUT;
+    while client.session(run.session_id).native_session_id.is_none() {
+        assert!(Instant::now() < deadline, "no native session id reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+    // The agent worked in the project's folder of the worktree, with the copied `.env`.
+    assert_eq!(
+        std::fs::read_to_string(root.join("app/made.txt")).unwrap(),
+        "run"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("app/a.txt")).unwrap(),
+        "a\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".env")).unwrap(),
+        "SECRET=1\n"
+    );
+    assert!(!app.join("made.txt").exists());
+    assert_eq!(main_state(&repo), before);
+    let banner = "mkrew: .worktreeinclude skipped missing.txt: not found";
+    let attached: SessionAttachResult = client.attach(run.session_id).into_result().unwrap();
+    let screen = screen_text(&attached.snapshot);
+    assert!(screen.contains(banner), "{screen}");
+
+    // Undo looks at the worktree, not at the user's uncommitted `a.txt`.
+    let preview: UndoPreview = client
+        .call(Request::TaskUndoPreview(TaskRef { task_id: task.id }))
+        .into_result()
+        .unwrap();
+    assert!(preview.changed.is_empty(), "{preview:?}");
+    assert_eq!(preview.created, ["made.txt"]);
+    // Turn snapshots are of the worktree: never restored into the project folder (T13.4).
+    let restore = Request::TurnRestorePreview(TurnRef {
+        session_id: run.session_id,
+        n: 1,
+    });
+    assert_eq!(error_code(client.call(restore)), ErrorCode::InvalidState);
+
+    let turn_off = Request::TaskUpdate(TaskUpdateParams {
+        task_id: task.id,
+        title: None,
+        prompt: None,
+        agent_profile: None,
+        worktree: Some(false),
+    });
+    assert_eq!(error_code(client.call(turn_off)), ErrorCode::InvalidState);
+    let delete = Request::TaskDelete(TaskRef { task_id: task.id });
+    assert_eq!(error_code(client.call(delete)), ErrorCode::InvalidState);
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let log = session_log(&env, run.session_id);
+    assert!(log.starts_with(&format!("{banner}\r\n")), "{log}");
+    let (_daemon, mut client) = env.start();
+    // Resumed in the same folder: no second worktree, the resumed agent writes there too.
+    wait_file(&root.join("app/resumed.txt"));
+    assert!(!app.join("resumed.txt").exists());
+    let tasks = list_tasks(&mut client, &project);
+    assert_eq!(tasks[0].worktree_path, task.worktree_path);
+    assert_eq!(tasks[0].branch, task.branch);
+    assert_eq!(main_state(&repo), before);
+    client.stop();
+}
+
 /// npm installs `claude`/`codex` as `.cmd` shims; an `arg` prompt full of cmd.exe
 /// metacharacters must still reach the agent verbatim (HUMAN_CHECKS T1.8). The `.js` →
 /// node shim form needs a real node, so it is covered by `launch.rs` unit tests (argv) only.

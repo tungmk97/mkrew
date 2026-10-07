@@ -65,6 +65,8 @@ impl Daemon {
             // Typed once the shell is ready, so it works whatever the shell is.
             typed: Some(format!("{command}\r")),
             native_session_id: None,
+            dir: None,
+            banner: None,
         };
         let session_id = match self.start_session(start) {
             Ok(session_id) => session_id,

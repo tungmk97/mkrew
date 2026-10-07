@@ -246,12 +246,17 @@ pub struct SpawnSpec {
     pub session: Session,
     pub profile: AgentProfile,
     pub cwd: PathBuf,
+    /// The project folder, which the project's file watcher covers (`cwd` may be a task
+    /// worktree instead, SPEC §20E.1).
+    pub project_dir: PathBuf,
     /// `MKREW_SOCKET` inside the PTY.
     pub socket: String,
     pub log_file: PathBuf,
     /// Text queued like a `session.send` before the session starts (`prompt_mode = "type"`):
     /// written once the agent is first ready.
     pub typed: Option<String>,
+    /// A line of mkrew's own shown before the program's output (and kept in its log).
+    pub banner: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -297,9 +302,11 @@ impl Hub {
             session,
             profile,
             cwd,
+            project_dir,
             socket,
             log_file,
             typed,
+            banner,
         } = spec;
         let mut cmd = launch::command(&profile).map_err(SpawnError::Launch)?;
         cmd.cwd(&cwd);
@@ -427,7 +434,7 @@ impl Hub {
             }
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
-        self.watch_project(session.project_id, &cwd, false);
+        self.watch_project(session.project_id, &project_dir, false);
         let (sends, sends_rx) = mpsc::unbounded_channel();
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let (turn_jobs, jobs) = mpsc::unbounded_channel();
@@ -443,7 +450,7 @@ impl Hub {
         if let Some(text) = typed {
             queue.push(Ulid::new(), text);
         }
-        let actor = Actor {
+        let mut actor = Actor {
             hub: std::sync::Arc::clone(self),
             session,
             master: Some(pair.master),
@@ -461,6 +468,9 @@ impl Hub {
             turn_jobs,
             hook_reply: None,
         };
+        if let Some(banner) = banner {
+            actor.on_banner(&banner);
+        }
         lock(&self.tasks).spawn(actor.run(rx, commands));
         Ok(())
     }
@@ -960,6 +970,16 @@ impl Actor {
             }
         };
         self.finish(exit_code);
+    }
+
+    /// Shows mkrew's own `line` before any program output: logged and on the screen, but not
+    /// the program's, so the state machine and the send queue do not see it.
+    fn on_banner(&mut self, line: &str) {
+        let bytes = format!("{line}\r\n").into_bytes();
+        if let Err(e) = self.log.write(&bytes) {
+            tracing::warn!(id = %self.session.id, "session log write failed: {e}");
+        }
+        self.emulator().advance(&bytes);
     }
 
     fn on_output(&mut self, bytes: &[u8]) {

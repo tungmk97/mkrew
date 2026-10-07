@@ -119,16 +119,13 @@ pub trait GitBackend: Send + Sync {
     ) -> io::Result<()>;
 
     /// The root folder of the (worktree of the) repo containing `dir`.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
     fn toplevel(&self, dir: &Path) -> io::Result<PathBuf>;
 
     /// `git worktree add -b <branch> <path> HEAD` from the repo containing `dir`: a new branch
     /// checked out in a new folder; the user's checkout is untouched (SPEC §20E.1, ADR 0010).
-    #[cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
     fn worktree_add(&self, dir: &Path, path: &Path, branch: &str) -> io::Result<()>;
 
     /// The `paths` (relative to `dir`) that `.gitignore` rules ignore; tracked files never are.
-    #[cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
     fn ignored(&self, dir: &Path, paths: &[String]) -> io::Result<Vec<String>>;
 }
 

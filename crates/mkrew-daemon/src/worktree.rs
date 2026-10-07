@@ -1,7 +1,6 @@
 //! Task worktrees (SPEC §20E.1, ADR 0010): a `mkrew/…` branch checked out in its own folder
 //! under the data dir, plus copies of the git-ignored files `.worktreeinclude` names.
-//! Blocking: callers run [`create`] in `spawn_blocking`.
-#![cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
+//! Blocking: callers run [`create`] and [`project_dir`] in `spawn_blocking`.
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -112,6 +111,23 @@ pub fn create(
         }
     }
     Ok(warnings)
+}
+
+/// The project's folder inside the worktree at `root`: the same subfolder of the repo as
+/// `project_dir` is of the user's checkout; `None` when `project_dir` is not in a repo.
+pub fn project_dir(
+    git: &dyn GitBackend,
+    project_dir: &Path,
+    root: &Path,
+) -> io::Result<Option<PathBuf>> {
+    let Some(repo) = git.repo(project_dir)? else {
+        return Ok(None);
+    };
+    // One component at a time: no `/` inside a Windows path.
+    let parts = repo.prefix.split('/').filter(|part| !part.is_empty());
+    Ok(Some(
+        parts.fold(root.to_path_buf(), |dir, part| dir.join(part)),
+    ))
 }
 
 /// Relative, with only normal components: it cannot leave the folder it is joined to.
@@ -305,6 +321,14 @@ mod tests {
 
         // From the project folder (a subfolder of the repo).
         let warnings = create(&GitCli, &app, &dest, branch).unwrap();
+        assert_eq!(
+            project_dir(&GitCli, &app, &dest).unwrap(),
+            Some(dest.join("app"))
+        );
+        assert_eq!(
+            project_dir(&GitCli, &root, &dest).unwrap(),
+            Some(dest.clone())
+        );
 
         assert_eq!(state(&root), before);
         assert_eq!(

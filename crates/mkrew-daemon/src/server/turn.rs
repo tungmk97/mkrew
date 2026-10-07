@@ -140,10 +140,19 @@ impl Daemon {
             store.get_session(turn.session_id).and_then(|session| {
                 let project = store.get_project(session.project_id)?;
                 let start = store.get_turn(turn.session_id, turn.n)?.start_tree;
-                Ok((session, project, start))
+                let worktree = match session.task_id {
+                    Some(task_id) => store.get_task(task_id)?.worktree,
+                    None => false,
+                };
+                Ok((session, project, start, worktree))
             })
         };
-        let (session, project, start) = found.map_err(|e| store_outcome::<()>(Err(e)))?;
+        let (session, project, start, worktree) = found.map_err(|e| store_outcome::<()>(Err(e)))?;
+        // Its snapshots may be of the task's worktree: never write them to the project folder.
+        if worktree {
+            let message = "restoring turns of a worktree task is not supported yet";
+            return Err(Outcome::error(ErrorCode::InvalidState, message));
+        }
         // A stored value is never handed to git unless it is a full object id.
         let Some(start_tree) = start.filter(|t| undo::is_commit_id(t)) else {
             let message = format!(

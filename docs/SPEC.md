@@ -1328,7 +1328,9 @@ and milestone numbers are not reused.
    index and files stay untouched. Then every path in `<repo>/.worktreeinclude` (one literal
    relative path per line, `#` comments; must exist and be git-ignored, else skipped with a warning
    in the session's first output line) is copied into the worktree. The session runs with `cwd` =
-   the worktree; `task.checkpoint` = HEAD as before. Resume uses the same folder.
+   the worktree (the project's subfolder of it when the project is a repo subfolder);
+   `task.checkpoint` = HEAD as before. Resume uses the same folder. Outside a git repo the task
+   runs in the project folder, saying so in the first output line (ADR 0010).
    - The task card shows `⎇ mkrew/<branch>`. Files and Git views gain a target chooser
      "Project | <task worktree>…" — all §12A/§12B features work on a worktree (the daemon resolves
      `project_id` + `worktree_task_id?` to a folder).

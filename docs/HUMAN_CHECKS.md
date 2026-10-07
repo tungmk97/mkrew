@@ -1698,6 +1698,21 @@ _Decisions the agent made on its own. Override them here if you disagree._
   palette command / key yet); `session.files` is re-read with every `git.status`. Sessions no
   longer listed show as `ended session` (numbered when several). Renamed files match on the new
   path only. The "Send to agent" default label is now "made these changes" (tasks and turns).
+- (T13.3) **Worktree runs:** a worktree task whose project is not in a git repo runs in the
+  project folder, with the first output line `mkrew: not a git repository; running in the
+  project folder` (SPEC only says "on Run in a git repo"). Skipped `.worktreeinclude` entries
+  show as one line `mkrew: .worktreeinclude skipped <entry: reason>; …` before the agent's output.
+  A failed `worktree add` (e.g. a repo without commits) refuses the run (`invalid_state`); a
+  recorded worktree whose folder was deleted refuses the run and is not resumed. Undo of a
+  worktree task resets the worktree's copy of the project folder and is refused once the task has
+  no worktree (its checkpoint may be a worktree commit). Turn snapshots of a worktree session
+  are of the worktree, so `turn.restore` is refused for worktree tasks until T13.4; the file
+  watcher and hook-edit attribution still cover the project folder only. Two simultaneous first
+  Runs of one worktree task: the second fails on `worktree add` (branch exists), nothing moves.
+  If `worktree add` succeeds but recording it in the store fails, the run errors naming the
+  folder and branch to remove by hand. The banner line is written before the agent's first frame,
+  so a full-screen agent (claude, codex) may paint over it on screen (it stays in the session log)
+  — check with a real agent.
 
 ## Done
 

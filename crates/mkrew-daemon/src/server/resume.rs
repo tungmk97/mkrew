@@ -1,17 +1,21 @@
 //! Startup resume (SPEC §8): tasks the last daemon left running/needs_input get their agent
 //! conversation back, or are flagged for the user to run again.
 
+use std::io;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use mkrew_protocol::{Event, Session, Task, TaskStatus};
 use serde_json::Value;
 use ulid::Ulid;
 
-use super::{Daemon, Start};
+use super::{Daemon, Start, task_dir};
 
 impl Daemon {
     /// For each running/needs_input task: relaunch its last session with the profile's
     /// `resume` command when the agent reported its own id, else move the card to needs_input
     /// with `error_flag` ("session stopped — run again?").
-    pub(super) fn resume_tasks(&self) {
+    pub(super) async fn resume_tasks(&self) {
         let found = {
             let store = self.store();
             store
@@ -29,7 +33,10 @@ impl Daemon {
             .iter()
             .filter(|t| matches!(t.status, TaskStatus::Running | TaskStatus::NeedsInput));
         for task in interrupted {
-            let resumed = last_session(&sessions, task.id).and_then(|last| self.resume(task, last));
+            let resumed = match last_session(&sessions, task.id) {
+                Some(last) => self.resume(task, last).await,
+                None => None,
+            };
             if resumed.is_none() {
                 self.mark_stopped(task.id);
             }
@@ -37,7 +44,7 @@ impl Daemon {
     }
 
     /// Spawns `last`'s resume command as a new session of `task` in `last`'s pane slot.
-    fn resume(&self, task: &Task, last: &Session) -> Option<Ulid> {
+    async fn resume(&self, task: &Task, last: &Session) -> Option<Ulid> {
         let native = last.native_session_id.as_deref()?;
         let profile = match self.load_profile(&last.agent_profile) {
             Ok(profile) => profile.resumed(native)?,
@@ -54,6 +61,25 @@ impl Daemon {
             }
         };
         let project_id = project.id;
+        // A worktree task resumes in its worktree (SPEC §20E.1), never in the project folder.
+        let dir = match &task.worktree_path {
+            Some(root) => {
+                let git = Arc::clone(&self.git);
+                let (project_dir, root) = (PathBuf::from(&project.path), PathBuf::from(root));
+                let found =
+                    tokio::task::spawn_blocking(move || task_dir(&*git, &project_dir, Some(&root)))
+                        .await
+                        .unwrap_or_else(|e| Err(io::Error::other(e)));
+                match found {
+                    Ok(dir) => Some(dir),
+                    Err(e) => {
+                        tracing::warn!(task_id = %task.id, "cannot resume: {e}");
+                        return None;
+                    }
+                }
+            }
+            None => None,
+        };
         let start = Start {
             project,
             profile,
@@ -64,6 +90,8 @@ impl Daemon {
             typed: None,
             // Resumable again even if the daemon stops before the agent's next hook.
             native_session_id: Some(native.to_owned()),
+            dir,
+            banner: None,
         };
         match self.start_session(start) {
             Ok(session_id) => {

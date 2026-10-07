@@ -1,6 +1,8 @@
 //! Accept loop and per-connection request handling (SPEC §7, §8).
 
 use std::collections::HashMap;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,7 +30,7 @@ use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
-use crate::{awake, backup, session_log, undo};
+use crate::{awake, backup, session_log, undo, worktree};
 
 mod attachment;
 mod comment;
@@ -56,7 +58,9 @@ pub struct Daemon {
 
 /// Where and to what `task.undo` resets (ADR 0005).
 struct UndoTarget {
-    dir: std::path::PathBuf,
+    project_dir: PathBuf,
+    /// The task's worktree; its copy of the project folder is reset instead.
+    worktree: Option<PathBuf>,
     checkpoint: String,
     /// Unix ms the checkpoint was taken.
     since: i64,
@@ -109,7 +113,7 @@ impl Daemon {
         );
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
-        self.resume_tasks();
+        self.resume_tasks().await;
         self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
         backups.abort();
@@ -468,6 +472,8 @@ impl Daemon {
             rows: params.rows,
             typed: None,
             native_session_id: None,
+            dir: None,
+            banner: None,
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -506,7 +512,8 @@ impl Daemon {
             let message = format!("task {} is already running", task.id);
             return Outcome::error(ErrorCode::InvalidState, message);
         }
-        let Some(profile_id) = task.agent_profile.or(project.default_agent.clone()) else {
+        let agent_profile = task.agent_profile.clone();
+        let Some(profile_id) = agent_profile.or(project.default_agent.clone()) else {
             let message = format!(
                 "task has no agent and project {} has no default agent",
                 project.name
@@ -521,6 +528,10 @@ impl Daemon {
             }
             Err(outcome) => return outcome,
         };
+        let (dir, banner) = match self.run_dir(&project, &task).await {
+            Ok(found) => found,
+            Err(outcome) => return outcome,
+        };
         // An empty prompt starts the agent without one, whatever the mode.
         let mut typed = None;
         if !task.prompt.is_empty() {
@@ -532,7 +543,7 @@ impl Daemon {
         }
         // Taken before HEAD is read, so every file the run creates is newer (undo).
         let checkpoint_at = now_ms();
-        let checkpoint = self.head(&project.path).await;
+        let checkpoint = self.head(&dir).await;
         let start = Start {
             project,
             profile,
@@ -542,6 +553,8 @@ impl Daemon {
             rows: params.rows,
             typed,
             native_session_id: None,
+            dir: Some(dir),
+            banner,
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -555,6 +568,75 @@ impl Daemon {
         }
     }
 
+    /// Where a run of `task` works (SPEC §20E.1): the project folder, or for a worktree task in
+    /// a git repo the project's folder inside the task's worktree, which the first run creates
+    /// (and records on the task). Also the line to show first in the session: the
+    /// `.worktreeinclude` entries that were skipped.
+    async fn run_dir(
+        &self,
+        project: &Project,
+        task: &Task,
+    ) -> Result<(PathBuf, Option<String>), Outcome> {
+        let project_dir = PathBuf::from(&project.path);
+        if !task.worktree {
+            return Ok((project_dir, None));
+        }
+        let git = Arc::clone(&self.git);
+        let existing = task.worktree_path.as_ref().map(PathBuf::from);
+        let root = worktree::dir(&self.paths, project.id, task.id);
+        let branch = worktree::branch_name(&task.title, task.id);
+        let (dest, new_branch) = (root.clone(), branch.clone());
+        // The folder to run in, the skipped includes, whether the worktree is new.
+        type Prepared = (PathBuf, Vec<String>, bool);
+        let prepared = tokio::task::spawn_blocking(move || -> io::Result<Option<Prepared>> {
+            if let Some(root) = existing {
+                let dir = task_dir(&*git, &project_dir, Some(&root))?;
+                return Ok(Some((dir, Vec::new(), false)));
+            }
+            let Some(dir) = worktree::project_dir(&*git, &project_dir, &dest)? else {
+                return Ok(None);
+            };
+            let warnings = worktree::create(&*git, &project_dir, &dest, &new_branch)?;
+            Ok(Some((dir, warnings, true)))
+        })
+        .await;
+        let (dir, warnings, created) = match prepared {
+            Ok(Ok(Some(prepared))) => prepared,
+            // Not a git repo: the task runs in the project folder like any other.
+            Ok(Ok(None)) => {
+                let banner = "mkrew: not a git repository; running in the project folder";
+                return Ok((PathBuf::from(&project.path), Some(banner.to_owned())));
+            }
+            Ok(Err(e)) => {
+                let message = format!("cannot prepare the task's worktree: {e}");
+                return Err(Outcome::error(ErrorCode::InvalidState, message));
+            }
+            Err(e) => {
+                let message = format!("worktree task failed: {e}");
+                return Err(Outcome::error(ErrorCode::Internal, message));
+            }
+        };
+        if created {
+            tracing::info!(task_id = %task.id, %branch, root = %root.display(), "worktree added");
+            let recorded = self
+                .store()
+                .set_task_worktree(task.id, Some((&root.to_string_lossy(), &branch)));
+            if let Err(e) = &recorded {
+                tracing::error!(task_id = %task.id, "worktree not recorded: {e}");
+                let message = format!(
+                    "worktree {} (branch {branch}) was added but not recorded: {e}; \
+                     remove that folder and branch by hand before running again",
+                    root.display()
+                );
+                return Err(Outcome::error(ErrorCode::Internal, message));
+            }
+            self.task_updated(recorded);
+        }
+        let banner = (!warnings.is_empty())
+            .then(|| format!("mkrew: .worktreeinclude skipped {}", warnings.join("; ")));
+        Ok((dir, banner))
+    }
+
     /// What `task.undo` would discard (ADR 0005).
     async fn task_undo_preview(&self, task_id: Ulid) -> Outcome {
         let target = match self.undo_target(task_id) {
@@ -563,7 +645,8 @@ impl Daemon {
         };
         let git = Arc::clone(&self.git);
         let previewed = tokio::task::spawn_blocking(move || {
-            undo::preview(&*git, &target.dir, &target.checkpoint, target.since)
+            let dir = task_dir(&*git, &target.project_dir, target.worktree.as_deref())?;
+            undo::preview(&*git, &dir, &target.checkpoint, target.since)
         })
         .await;
         match previewed {
@@ -590,9 +673,10 @@ impl Daemon {
         }
         let git = Arc::clone(&self.git);
         let undone = tokio::task::spawn_blocking(move || {
-            let (dir, checkpoint) = (&target.dir, &target.checkpoint);
+            let dir = task_dir(&*git, &target.project_dir, target.worktree.as_deref())?;
             let (previewed, created) = (&params.fingerprint, &params.created);
-            undo::undo(&*git, dir, checkpoint, target.since, previewed, created)
+            let checkpoint = &target.checkpoint;
+            undo::undo(&*git, &dir, checkpoint, target.since, previewed, created)
         })
         .await;
         match undone {
@@ -628,8 +712,15 @@ impl Daemon {
             let message = format!("task {task_id} has no checkpoint; run it in a git repo first");
             return Err(Outcome::error(ErrorCode::InvalidState, message));
         };
+        // Its checkpoint may be a commit of the worktree's branch: never reset the project
+        // folder to it.
+        if task.worktree && task.worktree_path.is_none() {
+            let message = format!("task {task_id} has no worktree to undo in");
+            return Err(Outcome::error(ErrorCode::InvalidState, message));
+        }
         Ok(UndoTarget {
-            dir: std::path::PathBuf::from(project.path),
+            project_dir: PathBuf::from(project.path),
+            worktree: task.worktree_path.map(PathBuf::from),
             checkpoint,
             // A checkpoint from before `checkpoint_at` existed: delete no untracked file.
             since: since.unwrap_or(i64::MAX),
@@ -639,9 +730,9 @@ impl Daemon {
 
     /// HEAD of the repo holding `dir` (SPEC §12B: no network); `None` outside a repo or when
     /// git cannot run, which only costs the task its checkpoint.
-    async fn head(&self, dir: &str) -> Option<String> {
+    async fn head(&self, dir: &Path) -> Option<String> {
         let git = Arc::clone(&self.git);
-        let dir = std::path::PathBuf::from(dir);
+        let dir = dir.to_path_buf();
         match tokio::task::spawn_blocking(move || git.head(&dir)).await {
             Ok(Ok(head)) => head,
             Ok(Err(e)) => {
@@ -680,9 +771,13 @@ impl Daemon {
             log_file: session_log::path(&self.paths.sessions_dir(), session_id),
             session,
             profile: start.profile,
-            cwd: start.project.path.into(),
+            cwd: start
+                .dir
+                .unwrap_or_else(|| start.project.path.clone().into()),
+            project_dir: start.project.path.into(),
             socket: self.paths.socket.clone(),
             typed: start.typed,
+            banner: start.banner,
         };
         match self.hub.spawn(spec) {
             Ok(()) => Ok(session_id),
@@ -810,19 +905,42 @@ impl Daemon {
         {
             return outcome;
         }
-        let task = self.store().update_task(
-            params.task_id,
-            params.title.as_deref(),
-            params.prompt.as_deref(),
-            params.agent_profile.as_ref().map(Option::as_deref),
-            params.worktree,
-        );
+        let task = {
+            // One lock for check and update.
+            let store = self.store();
+            match store.get_task(params.task_id) {
+                Ok(task) if params.worktree == Some(false) && task.worktree_path.is_some() => {
+                    let message = "the task has a worktree; remove it before turning it off";
+                    return Outcome::error(ErrorCode::InvalidState, message);
+                }
+                Ok(_) => store.update_task(
+                    params.task_id,
+                    params.title.as_deref(),
+                    params.prompt.as_deref(),
+                    params.agent_profile.as_ref().map(Option::as_deref),
+                    params.worktree,
+                ),
+                Err(e) => Err(e),
+            }
+        };
         self.task_updated(task)
     }
 
-    /// Deletes the task (refused while it has a live session) and announces `task.deleted`.
+    /// Deletes the task (refused while it has a live session or a worktree, SPEC §20E.1) and
+    /// announces `task.deleted`.
     fn task_delete(&self, task_id: Ulid) -> Outcome {
-        let deleted = self.store().delete_task(task_id);
+        let deleted = {
+            // One lock for check and delete.
+            let store = self.store();
+            match store.get_task(task_id) {
+                Ok(task) if task.worktree_path.is_some() => {
+                    let message = "the task has a worktree; remove it before deleting the task";
+                    return Outcome::error(ErrorCode::InvalidState, message);
+                }
+                Ok(_) => store.delete_task(task_id),
+                Err(e) => Err(e),
+            }
+        };
         match deleted {
             Ok(task) => {
                 let event = TaskDeletedEvent {
@@ -1156,6 +1274,31 @@ struct Start {
     typed: Option<String>,
     /// Known up front only for a resumed conversation.
     native_session_id: Option<String>,
+    /// The `cwd`; `None` = the project folder.
+    dir: Option<PathBuf>,
+    banner: Option<String>,
+}
+
+/// The folder a task's agent works in (blocking): the project folder, or the project's folder
+/// inside the task's `worktree` (SPEC §20E.1), which must still exist.
+fn task_dir(
+    git: &dyn GitBackend,
+    project_dir: &Path,
+    worktree: Option<&Path>,
+) -> io::Result<PathBuf> {
+    let Some(root) = worktree else {
+        return Ok(project_dir.to_path_buf());
+    };
+    if !root.is_dir() {
+        let message = format!("worktree {} is missing", root.display());
+        return Err(io::Error::new(io::ErrorKind::NotFound, message));
+    }
+    worktree::project_dir(git, project_dir, root)?.ok_or_else(|| {
+        io::Error::other(format!(
+            "{} is not in a git repository",
+            project_dir.display()
+        ))
+    })
 }
 
 /// Per-connection state kept by the read loop.
