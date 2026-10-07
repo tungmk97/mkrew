@@ -42,6 +42,7 @@ use mkrew_ui::dev_server::{self, DevDialog};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
+use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
 use mkrew_ui::git_history::{self, Commits};
@@ -272,6 +273,8 @@ struct Shell {
     turns_dialog: Option<TurnsDialog>,
     /// The Turns dialog a "Restore before turn n" left; cancelling the restore goes back to it.
     turns_return: Option<TurnsDialog>,
+    /// The agent sessions followed in Zed (§20C.5; UI memory only).
+    follow: Follow,
     /// The open "History" of a workspace (modal; never open together with another dialog).
     history: Option<HistoryDialog>,
     /// The read-only replay of the history's selected session (never attached).
@@ -540,6 +543,7 @@ impl Shell {
             undo_dialog: None,
             turns_dialog: None,
             turns_return: None,
+            follow: Follow::default(),
             history: None,
             history_pane: None,
             doc_dialog: None,
@@ -2797,6 +2801,11 @@ impl Shell {
                             self.open_turns(session, window, cx);
                         }
                     }
+                    Extra::FollowInZed => {
+                        if let Some(session) = self.focused_agent() {
+                            self.toggle_follow(session, cx);
+                        }
+                    }
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
@@ -3693,6 +3702,45 @@ impl Shell {
                         shell.load_undo_preview(window, cx);
                     }
                     cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// "Follow in Zed" of an agent pane (SPEC §20C.5): turns following its edits on or off.
+    /// The wait is read from `settings.toml` when it turns on.
+    fn toggle_follow(&mut self, session_id: Ulid, cx: &mut Context<'_, Self>) {
+        // A missing or broken settings file waits the default (the daemon reports it).
+        let debounce_ms = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .zed
+            .follow_debounce_ms;
+        self.follow.toggle(session_id, debounce_ms);
+        cx.notify();
+    }
+
+    /// Opens a followed session's edit in Zed once `wait` passed without a later edit; a
+    /// failure is logged (following stays on).
+    fn follow_wait(&mut self, wait: follow::Wait, window: &mut Window, cx: &mut Context<'_, Self>) {
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(wait.delay).await;
+            let _ = this.update(cx, |shell, _| {
+                let Some(edit) = shell.follow.due(wait) else {
+                    return;
+                };
+                let session_id = wait.session_id;
+                let Some(full) = shell
+                    .sidebar
+                    .sessions()
+                    .iter()
+                    .find(|s| s.id == session_id)
+                    .and_then(|s| shell.workspace_file(s.project_id, &edit.path))
+                else {
+                    return;
+                };
+                if let Err(error) = zed::open(&full, edit.line) {
+                    tracing::warn!(%session_id, path = edit.path, "follow in Zed failed: {error}");
                 }
             });
         })
@@ -5658,6 +5706,9 @@ impl Shell {
                 }
                 if self.composers.apply(event) {
                     cx.notify();
+                }
+                if let Some(wait) = self.follow.apply(event) {
+                    self.follow_wait(wait, window, cx);
                 }
                 if let Event::SessionState(state) = event {
                     inbox_changed = true;
@@ -11013,10 +11064,49 @@ impl Shell {
                 });
                 let queued = self.composers.queue(session).len();
                 // Keyed by session: several panes share the nearest keyed parent.
+                let following = self.follow.is_on(session);
                 let turns = (info.kind == SessionKind::Agent).then(|| {
+                    let follow_tip = if following {
+                        "Following this agent's edits in Zed: click to stop"
+                    } else {
+                        "Open each file this agent edits in Zed"
+                    };
                     div()
                         .id(SharedString::from(format!("pane-turns-{session}")))
                         .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .child(
+                            button_frame(
+                                "pane-follow",
+                                if following {
+                                    "Following in Zed"
+                                } else {
+                                    "Follow in Zed"
+                                },
+                            )
+                            .px(px(space::XS))
+                            .py_0()
+                            .text_size(px(font_size::META))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .when(following, |el| {
+                                el.bg(rgb(theme.surface_raised))
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                                    .text_color(rgb(theme.text))
+                            })
+                            .when(!following, |el| {
+                                let hover = theme.surface_raised;
+                                el.text_color(rgb(theme.text_muted))
+                                    .hover(move |style| style.bg(rgb(hover)))
+                            })
+                            .tooltip(tooltip(theme, follow_tip, ""))
+                            .on_click(cx.listener(
+                                move |shell, _, _, cx| {
+                                    shell.toggle_follow(session, cx);
+                                },
+                            )),
+                        )
                         .child(
                             quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
                                 .px(px(space::XS))
@@ -13213,8 +13303,8 @@ fn conflict_badge(
 
 /// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
 /// warning, the number of queued sends (§20B.2), status text and time (with the last turn's
-/// summary when done), and an agent's "Turns…" (§20C.2); hovering the status shows its source
-/// and last change.
+/// summary when done), and an agent's "Follow in Zed" and "Turns…" (§20C.5, §20C.2);
+/// hovering the status shows its source and last change.
 #[allow(clippy::too_many_arguments)]
 fn pane_header(
     session: &Session,

@@ -22,6 +22,7 @@ pub mod dev_server;
 pub mod doc_dialog;
 pub mod docs;
 pub mod files_view;
+pub mod follow;
 pub mod follow_up;
 pub mod git_actions;
 pub mod git_history;
