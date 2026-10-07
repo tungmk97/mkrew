@@ -28,8 +28,8 @@ use mkrew_protocol::{
     SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams, SessionWaitResult,
     StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
     TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
-    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, UndoPreview,
-    encode,
+    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn,
+    TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2033,6 +2033,126 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
         "refs/heads/main"
     );
     assert_eq!(git(&repo, &["diff", "--cached", "--name-only"]), "");
+    client.stop();
+}
+
+/// M11 restore (SPEC §20C.2) over 2 turns of the fake agent, driven by hooks (no screen
+/// detection, so turn numbers do not depend on timing): `turn.list` returns both;
+/// `turn.restore` is refused while the agent works, without `confirm` or with a stale
+/// fingerprint; it puts back the files from before turn 2, then before turn 1, and leaves
+/// HEAD and the index.
+#[test]
+fn turns_are_listed_previewed_and_restored() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let scenario = env.dir.path().join("idle.toml");
+    std::fs::write(&scenario, "[[step]]\naction = \"sleep\"\nms = 60000\n").unwrap();
+    env.write_fake_profile_as(
+        "editor",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let path = env.dir.path().join("config/agents/editor.toml");
+    let profile = std::fs::read_to_string(&path).unwrap();
+    env.write_profile(
+        "editor",
+        &profile.replace("mode = \"screen\"", "mode = \"hook\""),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
+    let id = spawned.session_id;
+    let hook = |client: &mut Client, event: &str| {
+        client
+            .hook(id, "fake", event, Value::Null)
+            .into_result::<()>()
+            .unwrap();
+    };
+    let restore = |n, confirm, created: &[String], fingerprint: &str| {
+        Request::TurnRestore(TurnRestoreParams {
+            session_id: id,
+            n,
+            confirm,
+            created: created.to_vec(),
+            fingerprint: fingerprint.into(),
+        })
+    };
+    let preview = |n| Request::TurnRestorePreview(TurnRef { session_id: id, n });
+
+    let read = |path: &str| std::fs::read_to_string(repo.join(path)).unwrap();
+
+    // Turn 1 edits a.txt. The `busy` reply comes after the start snapshot.
+    hook(&mut client, "busy");
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    hook(&mut client, "done");
+    // Turn 2 creates notes.txt and edits a.txt again; restoring is refused meanwhile.
+    hook(&mut client, "busy");
+    std::fs::write(repo.join("a.txt"), "three\n").unwrap();
+    std::fs::write(repo.join("notes.txt"), "x\n").unwrap();
+    match client.call(restore(1, true, &[], "")).into_result::<()>() {
+        Err(ResponseError::Daemon(body)) => {
+            assert_eq!(body.code, ErrorCode::InvalidState);
+            assert!(body.message.contains("working"), "{}", body.message);
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    hook(&mut client, "done");
+    client
+        .wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id && t.n == 2));
+
+    let turns: Vec<Turn> = client
+        .call(Request::TurnList(SessionRef { session_id: id }))
+        .into_result()
+        .unwrap();
+    assert_eq!(turns.iter().map(|t| t.n).collect::<Vec<_>>(), [1, 2]);
+    let start = git(&repo, &["rev-parse", &format!("refs/mkrew/turns/{id}/2")]);
+    assert_eq!(turns[1].start_tree.as_deref(), Some(start.as_str()));
+    assert!(
+        turns
+            .iter()
+            .all(|t| t.ended_at.is_some() && t.end_tree.is_some())
+    );
+
+    let shown: UndoPreview = client.call(preview(2)).into_result().unwrap();
+    assert_eq!(shown.checkpoint, start);
+    assert_eq!(shown.changed, ["a.txt"]);
+    assert_eq!(shown.created, ["notes.txt"]);
+    assert!(shown.added.is_empty());
+    assert!(shown.diff.contains("-two") && shown.diff.contains("+three"));
+    let unconfirmed = client.call(restore(2, false, &shown.created, &shown.fingerprint));
+    assert_eq!(error_code(unconfirmed), ErrorCode::InvalidRequest);
+    let stale = client.call(restore(2, true, &shown.created, "stale"));
+    assert_eq!(error_code(stale), ErrorCode::InvalidState);
+    assert_eq!(error_code(client.call(preview(9))), ErrorCode::NotFound);
+
+    client
+        .call(restore(2, true, &shown.created, &shown.fingerprint))
+        .into_result::<()>()
+        .unwrap();
+    assert_eq!(read("a.txt"), "two\n");
+    assert!(!repo.join("notes.txt").exists());
+
+    let shown: UndoPreview = client.call(preview(1)).into_result().unwrap();
+    assert_eq!(
+        (shown.changed.as_slice(), shown.created.len()),
+        (&["a.txt".to_owned()][..], 0)
+    );
+    client
+        .call(restore(1, true, &shown.created, &shown.fingerprint))
+        .into_result::<()>()
+        .unwrap();
+    assert_eq!(read("a.txt"), "one\n");
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head);
+    assert_eq!(git(&repo, &["status", "--porcelain"]), "");
+    let unknown = client.call(Request::TurnList(SessionRef {
+        session_id: Ulid::new(),
+    }));
+    assert_eq!(error_code(unknown), ErrorCode::NotFound);
     client.stop();
 }
 

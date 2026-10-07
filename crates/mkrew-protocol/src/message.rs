@@ -188,6 +188,15 @@ pub enum Request {
     /// Returns [`AttachmentSaveResult`] (SPEC §20B.5).
     #[serde(rename = "attachment.save")]
     AttachmentSave(AttachmentSaveParams),
+    /// Returns `Turn[]`, oldest first (SPEC §20C).
+    #[serde(rename = "turn.list")]
+    TurnList(SessionRef),
+    /// Returns [`UndoPreview`] with `checkpoint` = the turn's start tree (SPEC §20C.2).
+    #[serde(rename = "turn.restore_preview")]
+    TurnRestorePreview(TurnRef),
+    /// Returns nothing (`null`).
+    #[serde(rename = "turn.restore")]
+    TurnRestore(TurnRestoreParams),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -734,6 +743,29 @@ pub struct TaskUndoParams {
     pub created: Vec<String>,
     /// The previewed [`UndoPreview::fingerprint`]: refused (`invalid_state`) when the tracked
     /// changes no longer match it, so nothing unseen is restored away.
+    #[serde(default)]
+    pub fingerprint: String,
+}
+
+/// A turn of a session (`turn.restore_preview`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnRef {
+    pub session_id: Ulid,
+    pub n: u32,
+}
+
+/// `turn.restore`: put the project folder back to how it was before turn `n`. Same rules as
+/// [`TaskUndoParams`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnRestoreParams {
+    pub session_id: Ulid,
+    pub n: u32,
+    #[serde(default)]
+    pub confirm: bool,
+    /// The previewed [`UndoPreview::created`]: only these files are deleted.
+    #[serde(default)]
+    pub created: Vec<String>,
+    /// The previewed [`UndoPreview::fingerprint`].
     #[serde(default)]
     pub fingerprint: String,
 }
@@ -1439,6 +1471,18 @@ mod tests {
                 session_id: sid(),
                 ext: "png".into(),
                 data: vec![0x89, b'P', b'N', b'G'],
+            }),
+            Request::TurnList(SessionRef { session_id: sid() }),
+            Request::TurnRestorePreview(TurnRef {
+                session_id: sid(),
+                n: 2,
+            }),
+            Request::TurnRestore(TurnRestoreParams {
+                session_id: sid(),
+                n: 2,
+                confirm: true,
+                created: vec!["new.txt".into()],
+                fingerprint: "00ff".into(),
             }),
             Request::SessionWait(SessionWaitParams {
                 session_id: sid(),

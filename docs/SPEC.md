@@ -1271,7 +1271,8 @@ Attachments of sessions that ended more than 7 days ago are deleted by the hourl
 2. **Restore to before turn n.** Pane header menu "Turns…" lists the session's turns (n, time,
    files, +/−). "Restore before turn n" opens a preview like task undo (§5, ADR 0005):
    files to restore/delete and the diff, then confirm. Restore = `git read-tree` into a temp index +
-   `git checkout-index -a -f` for tracked content, and deletes files created since the snapshot
+   `git checkout-index -f` of the paths under the project folder that differ from the start tree
+   (ADR 0014), and deletes files created since the snapshot
    that the preview listed (still new). Refused while the session is `working`. The user's real
    index is untouched. `turn.restore` uses the same fingerprint check as `task.undo`.
 3. **Diff per turn.** The Git view gains a mode chooser entry "Since turn…" (from the pane menu or

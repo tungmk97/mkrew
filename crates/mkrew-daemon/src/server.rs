@@ -37,6 +37,7 @@ mod doc;
 mod fs;
 mod git;
 mod resume;
+mod turn;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -374,6 +375,11 @@ impl Daemon {
             Request::AttachmentSave(params) => {
                 (self.attachment_save(params).await, After::Continue)
             }
+            Request::TurnList(params) => (self.turn_list(params.session_id), After::Continue),
+            Request::TurnRestorePreview(params) => {
+                (self.turn_restore_preview(params).await, After::Continue)
+            }
+            Request::TurnRestore(params) => (self.turn_restore(params).await, After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (
@@ -1221,7 +1227,8 @@ fn store_outcome<T: Serialize>(result: Result<T, StoreError>) -> Outcome {
                 | StoreError::ProjectNotFound(_)
                 | StoreError::TabNotFound(_)
                 | StoreError::TaskNotFound(_)
-                | StoreError::CommentNotFound(_) => ErrorCode::NotFound,
+                | StoreError::CommentNotFound(_)
+                | StoreError::TurnNotFound { .. } => ErrorCode::NotFound,
                 StoreError::TaskHasLiveSession(_) => ErrorCode::InvalidState,
                 _ => {
                     tracing::error!("store error: {e}");

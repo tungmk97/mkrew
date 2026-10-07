@@ -7,8 +7,10 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use mkrew_protocol::{UNDO_DIFF_LIMIT, UndoPreview};
+use ulid::Ulid;
 
 use crate::git::{Changed, GitBackend};
+use crate::snapshot::Snapshots;
 
 /// What [`undo`] would discard. `since` = Unix ms the checkpoint was taken.
 pub fn preview(
@@ -17,17 +19,10 @@ pub fn preview(
     checkpoint: &str,
     since: i64,
 ) -> io::Result<UndoPreview> {
-    let mut diff = git.diff(dir, checkpoint)?;
-    let files = git.changed_files(dir, checkpoint)?;
+    let diff = git.diff(dir, checkpoint, None)?;
+    let files = git.changed_files(dir, checkpoint, None)?;
     let fingerprint = fingerprint(&files, &diff);
-    let diff_truncated = diff.len() > UNDO_DIFF_LIMIT;
-    if diff_truncated {
-        let mut end = UNDO_DIFF_LIMIT;
-        while !diff.is_char_boundary(end) {
-            end -= 1;
-        }
-        diff.truncate(end);
-    }
+    let (diff, diff_truncated) = cut(diff);
     let (added, changed): (Vec<_>, Vec<_>) = files.into_iter().partition(|c| c.added);
     Ok(UndoPreview {
         checkpoint: checkpoint.to_owned(),
@@ -38,6 +33,93 @@ pub fn preview(
         diff,
         diff_truncated,
     })
+}
+
+/// What [`restore_turn`] would discard (SPEC §20C.2): everything that differs between the
+/// turn's start snapshot `start` and a snapshot of the folder now. Files absent from `start`
+/// are all `created` (tracked or not: snapshots hold untracked files too); `added` is empty.
+pub fn preview_turn(
+    git: &dyn GitBackend,
+    snapshots: &Snapshots,
+    project: Ulid,
+    dir: &Path,
+    start: &str,
+) -> io::Result<UndoPreview> {
+    let (files, diff) = since_turn(git, snapshots, project, dir, start)?;
+    let fingerprint = fingerprint(&files, &diff);
+    let (diff, diff_truncated) = cut(diff);
+    let (created, changed): (Vec<_>, Vec<_>) = files.into_iter().partition(|c| c.added);
+    Ok(UndoPreview {
+        checkpoint: start.to_owned(),
+        fingerprint,
+        changed: changed.into_iter().map(|c| c.path).collect(),
+        added: Vec::new(),
+        created: created.into_iter().map(|c| c.path).collect(),
+        diff,
+        diff_truncated,
+    })
+}
+
+/// Writes the files changed or deleted since `start` back from it, through a temp index
+/// (the real index and HEAD are untouched), if the changes still match the previewed
+/// `fingerprint`; then deletes the files created since that are also in `confirmed`.
+pub fn restore_turn(
+    git: &dyn GitBackend,
+    snapshots: &Snapshots,
+    project: Ulid,
+    dir: &Path,
+    start: &str,
+    previewed: &str,
+    confirmed: &[String],
+) -> io::Result<Undone> {
+    let (files, diff) = since_turn(git, snapshots, project, dir, start)?;
+    if fingerprint(&files, &diff) != previewed {
+        return Ok(Undone::Stale);
+    }
+    let (created, changed): (Vec<_>, Vec<_>) = files.into_iter().partition(|c| c.added);
+    let changed: Vec<String> = changed.into_iter().map(|c| c.path).collect();
+    snapshots.checkout(git, project, dir, start, &changed)?;
+    for path in created.iter().filter(|c| confirmed.contains(&c.path)) {
+        // `git clean` would keep files the agent staged; these paths come from git, inside
+        // `dir`.
+        match std::fs::remove_file(dir.join(&path.path)) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                return Err(io::Error::other(format!(
+                    "files restored; deleting {} failed: {e}",
+                    path.path
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(Undone::Done)
+}
+
+/// The files and diff from `start` to a snapshot of the folder now.
+fn since_turn(
+    git: &dyn GitBackend,
+    snapshots: &Snapshots,
+    project: Ulid,
+    dir: &Path,
+    start: &str,
+) -> io::Result<(Vec<Changed>, String)> {
+    let now = snapshots.tree(git, project, dir)?;
+    let files = git.changed_files(dir, start, Some(&now))?;
+    let diff = git.diff(dir, start, Some(&now))?;
+    Ok((files, diff))
+}
+
+/// `diff` cut at [`UNDO_DIFF_LIMIT`] on a char boundary; whether it was cut.
+fn cut(mut diff: String) -> (String, bool) {
+    let truncated = diff.len() > UNDO_DIFF_LIMIT;
+    if truncated {
+        let mut end = UNDO_DIFF_LIMIT;
+        while !diff.is_char_boundary(end) {
+            end -= 1;
+        }
+        diff.truncate(end);
+    }
+    (diff, truncated)
 }
 
 /// What [`undo`] did.
@@ -59,8 +141,8 @@ pub fn undo(
     previewed: &str,
     confirmed: &[String],
 ) -> io::Result<Undone> {
-    let files = git.changed_files(dir, checkpoint)?;
-    if fingerprint(&files, &git.diff(dir, checkpoint)?) != previewed {
+    let files = git.changed_files(dir, checkpoint, None)?;
+    if fingerprint(&files, &git.diff(dir, checkpoint, None)?) != previewed {
         return Ok(Undone::Stale);
     }
     git.restore(dir, checkpoint)?;
@@ -117,7 +199,7 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::*;
-    use crate::git::{Branch, Repo, Side, Upstream};
+    use crate::git::{Branch, GitCli, Repo, Side, Upstream};
     use mkrew_protocol::{ChangedFile, Commit, GitStatus};
 
     fn now_ms() -> i64 {
@@ -137,14 +219,14 @@ mod tests {
         fn head(&self, _: &Path) -> io::Result<Option<String>> {
             Ok(None)
         }
-        fn changed_files(&self, _: &Path, _: &str) -> io::Result<Vec<Changed>> {
+        fn changed_files(&self, _: &Path, _: &str, _: Option<&str>) -> io::Result<Vec<Changed>> {
             let changed = |path: &str, added| Changed {
                 path: path.into(),
                 added,
             };
             Ok(vec![changed("a.txt", false), changed("b.txt", true)])
         }
-        fn diff(&self, _: &Path, _: &str) -> io::Result<String> {
+        fn diff(&self, _: &Path, _: &str, _: Option<&str>) -> io::Result<String> {
             Ok(format!("{}é", "x".repeat(self.0 - 2)))
         }
         fn untracked_files(&self, _: &Path) -> io::Result<Vec<String>> {
@@ -225,6 +307,9 @@ mod tests {
         fn delete_refs(&self, _: &Path, _: &str) -> io::Result<()> {
             unreachable!()
         }
+        fn checkout_tree(&self, _: &Path, _: &Path, _: &str, _: &[String]) -> io::Result<()> {
+            unreachable!()
+        }
     }
 
     #[test]
@@ -253,6 +338,114 @@ mod tests {
         std::fs::write(dir.path().join("new.txt"), "").unwrap();
         let paths = vec!["old.txt".into(), "new.txt".into(), "gone.txt".into()];
         assert_eq!(created_since(dir.path(), paths, since), ["new.txt"]);
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?} failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// SPEC §20C.2: the project is a subfolder of the repo; restore puts back edited, deleted
+    /// and created files (tracked or not) of that folder only, leaves HEAD and the real index
+    /// alone, keeps created files the preview did not list, and refuses a stale preview.
+    #[test]
+    fn restoring_a_turn_puts_the_folder_back_without_touching_the_index() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let dir = root.join("app");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        git(root, &["init", "-q", "-b", "main"]);
+        git(root, &["config", "core.autocrlf", "false"]);
+        std::fs::write(root.join("outside.txt"), "a\n").unwrap();
+        std::fs::write(dir.join("edited.txt"), "one\n").unwrap();
+        std::fs::write(dir.join("sub").join("deleted.txt"), "keep\n").unwrap();
+        std::fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "-q", "-m", "one"]);
+        // Untracked before the turn: part of the snapshot, so it comes back.
+        std::fs::write(dir.join("notes.txt"), "draft\n").unwrap();
+        let (snapshots, project) = (Snapshots::default(), Ulid::new());
+        let start = snapshots.tree(&GitCli, project, &dir).unwrap();
+
+        std::fs::write(root.join("outside.txt"), "b\n").unwrap();
+        std::fs::write(dir.join("edited.txt"), "two\n").unwrap();
+        std::fs::remove_file(dir.join("sub").join("deleted.txt")).unwrap();
+        std::fs::write(dir.join("notes.txt"), "rewritten\n").unwrap();
+        std::fs::write(dir.join("staged.txt"), "new\n").unwrap();
+        git(&dir, &["add", "staged.txt"]);
+        std::fs::write(dir.join("created.txt"), "new\n").unwrap();
+        std::fs::write(dir.join("build.log"), "ignored\n").unwrap();
+        let head = git(root, &["rev-parse", "HEAD"]);
+        let index = std::fs::read(root.join(".git").join("index")).unwrap();
+
+        let shown = preview_turn(&GitCli, &snapshots, project, &dir, &start).unwrap();
+        assert_eq!(shown.checkpoint, start);
+        assert_eq!(
+            shown.changed,
+            ["edited.txt", "notes.txt", "sub/deleted.txt"]
+        );
+        assert!(shown.added.is_empty());
+        assert_eq!(shown.created, ["created.txt", "staged.txt"]);
+        assert!(shown.diff.contains("+two") && !shown.diff.contains("outside"));
+
+        std::fs::write(dir.join("late.txt"), "after the preview\n").unwrap();
+        assert_eq!(
+            restore_turn(&GitCli, &snapshots, project, &dir, &start, "0", &[]).unwrap(),
+            Undone::Stale
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("edited.txt")).unwrap(),
+            "two\n"
+        );
+        // The late file changes the fingerprint too: preview again, keep it unconfirmed.
+        let shown = preview_turn(&GitCli, &snapshots, project, &dir, &start).unwrap();
+        let confirmed = ["created.txt".to_owned(), "staged.txt".to_owned()];
+        let done = restore_turn(
+            &GitCli,
+            &snapshots,
+            project,
+            &dir,
+            &start,
+            &shown.fingerprint,
+            &confirmed,
+        );
+        assert_eq!(done.unwrap(), Undone::Done);
+
+        let read = |path: &str| std::fs::read_to_string(dir.join(path)).unwrap();
+        assert_eq!(read("edited.txt"), "one\n");
+        assert_eq!(read("sub/deleted.txt"), "keep\n");
+        assert_eq!(read("notes.txt"), "draft\n");
+        assert!(!dir.join("staged.txt").exists());
+        assert!(!dir.join("created.txt").exists());
+        assert!(dir.join("late.txt").exists());
+        assert!(dir.join("build.log").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("outside.txt")).unwrap(),
+            "b\n"
+        );
+        assert_eq!(git(root, &["rev-parse", "HEAD"]), head);
+        assert_eq!(
+            std::fs::read(root.join(".git").join("index")).unwrap(),
+            index
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(root.join(".git"))
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|name| name.contains("mkrew"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]

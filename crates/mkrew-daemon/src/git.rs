@@ -12,11 +12,14 @@ pub trait GitBackend: Send + Sync {
     /// before the first commit. `Err` = git could not be run.
     fn head(&self, dir: &Path) -> io::Result<Option<String>>;
 
-    /// Tracked files under `dir` whose working copy differs from `commit`, relative to `dir`.
-    fn changed_files(&self, dir: &Path, commit: &str) -> io::Result<Vec<Changed>>;
+    /// Tracked files under `dir` whose working copy (or tree `to`) differs from `commit` (a
+    /// commit or tree), relative to `dir`.
+    fn changed_files(&self, dir: &Path, commit: &str, to: Option<&str>)
+    -> io::Result<Vec<Changed>>;
 
-    /// Unified diff from `commit` to the working copy of the tracked files under `dir`.
-    fn diff(&self, dir: &Path, commit: &str) -> io::Result<String>;
+    /// Unified diff from `commit` to the working copy of the tracked files under `dir` (or to
+    /// tree `to`).
+    fn diff(&self, dir: &Path, commit: &str, to: Option<&str>) -> io::Result<String>;
 
     /// Untracked, non-ignored files under `dir`, relative to it.
     fn untracked_files(&self, dir: &Path) -> io::Result<Vec<String>>;
@@ -100,6 +103,17 @@ pub trait GitBackend: Send + Sync {
 
     /// Deletes every ref under `prefix` (a full ref prefix ending in `/`).
     fn delete_refs(&self, dir: &Path, prefix: &str) -> io::Result<()>;
+
+    /// Writes the `paths` (relative to `dir`) as they are in `tree` to the working copy,
+    /// through a temp index next to `index`: HEAD and the real index are untouched (SPEC
+    /// §20C.2).
+    fn checkout_tree(
+        &self,
+        dir: &Path,
+        index: &Path,
+        tree: &str,
+        paths: &[String],
+    ) -> io::Result<()>;
 }
 
 /// A local branch: its full ref name (`refs/heads/…`) and where it pushes.
@@ -169,11 +183,18 @@ impl GitBackend for GitCli {
         Ok((!head.is_empty()).then_some(head))
     }
 
-    fn changed_files(&self, dir: &Path, commit: &str) -> io::Result<Vec<Changed>> {
+    fn changed_files(
+        &self,
+        dir: &Path,
+        commit: &str,
+        to: Option<&str>,
+    ) -> io::Result<Vec<Changed>> {
         let mut command = git(dir);
         command
             .args(["diff", "--name-status", "-z", "--no-renames", "--relative"])
-            .args([commit, "--", "."]);
+            .arg(commit)
+            .args(to)
+            .args(["--", "."]);
         // `-z --name-status` without renames: status, path, status, path, …
         let fields = nul_separated(&run(command)?);
         Ok(fields
@@ -187,7 +208,7 @@ impl GitBackend for GitCli {
             .collect())
     }
 
-    fn diff(&self, dir: &Path, commit: &str) -> io::Result<String> {
+    fn diff(&self, dir: &Path, commit: &str, to: Option<&str>) -> io::Result<String> {
         let mut command = git(dir);
         command
             .args([
@@ -197,7 +218,9 @@ impl GitBackend for GitCli {
                 "--no-renames",
                 "--relative",
             ])
-            .args([commit, "--", "."]);
+            .arg(commit)
+            .args(to)
+            .args(["--", "."]);
         Ok(String::from_utf8_lossy(&run(command)?).into_owned())
     }
 
@@ -516,19 +539,54 @@ impl GitBackend for GitCli {
         delete.args(["update-ref", "--stdin"]);
         run_with_input(delete, &deletes).map(drop)
     }
+
+    fn checkout_tree(
+        &self,
+        dir: &Path,
+        index: &Path,
+        tree: &str,
+        paths: &[String],
+    ) -> io::Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let temp = TempIndex::next_to(index);
+        let with_temp = || {
+            let mut command = git(dir);
+            command.env("GIT_INDEX_FILE", &temp.0);
+            command
+        };
+        let mut read = with_temp();
+        read.args(["read-tree", tree]);
+        run(read)?;
+        // Paths on stdin are relative to `dir`, like command-line ones.
+        let mut checkout = with_temp();
+        checkout.args(["checkout-index", "-f", "-z", "--stdin"]);
+        let mut input = Vec::new();
+        for path in paths {
+            input.extend_from_slice(path.as_bytes());
+            input.push(0);
+        }
+        run_with_input(checkout, &input).map(drop)
+    }
 }
 
 /// A private copy of an index next to it, deleted on drop.
 struct TempIndex(PathBuf);
 
 impl TempIndex {
-    /// Copies `index` (a missing one, e.g. a fresh repo, stays missing: git starts empty).
-    fn copy_of(index: &Path) -> io::Result<Self> {
+    /// A fresh name next to `index`; git creates the file.
+    fn next_to(index: &Path) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut name = index.as_os_str().to_owned();
         name.push(format!(".mkrew-snapshot-{}-{n}", std::process::id()));
-        let temp = Self(PathBuf::from(name));
+        Self(PathBuf::from(name))
+    }
+
+    /// Copies `index` (a missing one, e.g. a fresh repo, stays missing: git starts empty).
+    fn copy_of(index: &Path) -> io::Result<Self> {
+        let temp = Self::next_to(index);
         match std::fs::copy(index, &temp.0) {
             Ok(_) => Ok(temp),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(temp),
@@ -755,10 +813,10 @@ mod tests {
             added,
         };
         assert_eq!(
-            GitCli.changed_files(&dir, &commit).unwrap(),
+            GitCli.changed_files(&dir, &commit, None).unwrap(),
             [changed("edited.txt", false), changed("staged.txt", true)]
         );
-        let diff = GitCli.diff(&dir, &commit).unwrap();
+        let diff = GitCli.diff(&dir, &commit, None).unwrap();
         assert!(diff.contains("+two"), "{diff}");
         assert!(diff.contains("+++ b/staged.txt"), "{diff}");
         assert!(!diff.contains("outside"), "{diff}");
@@ -771,7 +829,7 @@ mod tests {
         GitCli
             .clean(&dir, &["sub/a[1].txt".to_owned(), "kept.txt".to_owned()])
             .unwrap();
-        assert_eq!(GitCli.changed_files(&dir, &commit).unwrap(), []);
+        assert_eq!(GitCli.changed_files(&dir, &commit, None).unwrap(), []);
         assert_eq!(
             std::fs::read_to_string(dir.join("edited.txt")).unwrap(),
             "one\n"
@@ -879,7 +937,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         run(dir.path(), &["init", "-q"]);
         let missing = "0123456789abcdef0123456789abcdef01234567";
-        let error = GitCli.diff(dir.path(), missing).unwrap_err();
+        let error = GitCli.diff(dir.path(), missing, None).unwrap_err();
         assert!(error.to_string().starts_with("git failed: "), "{error}");
         assert!(GitCli.restore(dir.path(), missing).is_err());
     }

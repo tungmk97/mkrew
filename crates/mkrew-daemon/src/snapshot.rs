@@ -36,6 +36,40 @@ impl Snapshots {
         dir: &Path,
         ref_name: &str,
     ) -> io::Result<String> {
+        self.with_index(project, dir, git, |index| {
+            git.snapshot(dir, index)
+                .and_then(|tree| git.update_ref(dir, ref_name, &tree).map(|()| tree))
+        })
+    }
+
+    /// A snapshot of the repo containing `dir` that no ref keeps (git may prune it later).
+    pub fn tree(&self, git: &dyn GitBackend, project: Ulid, dir: &Path) -> io::Result<String> {
+        self.with_index(project, dir, git, |index| git.snapshot(dir, index))
+    }
+
+    /// Writes `paths` (relative to `dir`) back as they are in `tree`; waits for running
+    /// snapshots of the project, so none sees a half-restored folder.
+    pub fn checkout(
+        &self,
+        git: &dyn GitBackend,
+        project: Ulid,
+        dir: &Path,
+        tree: &str,
+        paths: &[String],
+    ) -> io::Result<()> {
+        self.with_index(project, dir, git, |index| {
+            git.checkout_tree(dir, index, tree, paths)
+        })
+    }
+
+    /// Runs `run` with `dir`'s index path, one at a time per project.
+    fn with_index<T>(
+        &self,
+        project: Ulid,
+        dir: &Path,
+        git: &dyn GitBackend,
+        run: impl FnOnce(&Path) -> io::Result<T>,
+    ) -> io::Result<T> {
         self.one_at_a_time(project, |indexes| {
             let index = match indexes.get(dir) {
                 Some(index) => index,
@@ -43,14 +77,12 @@ impl Snapshots {
                     .entry(dir.to_path_buf())
                     .or_insert(git.index_path(dir)?),
             };
-            let taken = git
-                .snapshot(dir, index)
-                .and_then(|tree| git.update_ref(dir, ref_name, &tree).map(|()| tree));
-            if taken.is_err() {
+            let done = run(index);
+            if done.is_err() {
                 // The folder may have changed repo: resolve again next time.
                 indexes.remove(dir);
             }
-            taken
+            done
         })
     }
 
