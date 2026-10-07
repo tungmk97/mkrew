@@ -27,9 +27,23 @@ impl Daemon {
         self.start_runs(params)
     }
 
-    /// Stops the targets, waits until they exited, then starts them like `run_start`.
+    /// Stops the targets, waits until they exited, then starts them like `run_start`. Targets
+    /// that could not start again are refused before anything stops.
     pub(super) async fn run_restart(&self, params: RunStartParams) -> Outcome {
         let _starting = self.run_starting.lock().await;
+        let project = match self.project_sessions(params.project_id) {
+            Ok((project, _)) => project,
+            Err(outcome) => return outcome,
+        };
+        let targets = match targets(&project, params.name.as_deref()) {
+            Ok(targets) => targets,
+            Err(outcome) => return outcome,
+        };
+        for command in targets {
+            if let Err(message) = prepare(Path::new(&project.path), command) {
+                return Outcome::error(ErrorCode::InvalidRequest, message);
+            }
+        }
         let stopped = match self.stop_runs(params.project_id, params.name.as_deref()) {
             Ok(stopped) => stopped,
             Err(outcome) => return outcome,
@@ -86,19 +100,9 @@ impl Daemon {
             Ok(found) => found,
             Err(outcome) => return outcome,
         };
-        if project.run_commands.is_empty() {
-            let message = format!("project {} has no run commands", project.name);
-            return Outcome::error(ErrorCode::InvalidState, message);
-        }
-        let targets: Vec<&RunCommand> = match &params.name {
-            None => project.run_commands.iter().collect(),
-            Some(name) => match project.run_commands.iter().find(|c| &c.name == name) {
-                Some(command) => vec![command],
-                None => {
-                    let message = format!("project {} has no run command {name:?}", project.name);
-                    return Outcome::error(ErrorCode::NotFound, message);
-                }
-            },
+        let targets = match targets(&project, params.name.as_deref()) {
+            Ok(targets) => targets,
+            Err(outcome) => return outcome,
         };
         let mut answer = Vec::new();
         let mut to_start = Vec::new();
@@ -261,6 +265,25 @@ fn live_run<'a>(sessions: &'a [Session], name: &str) -> Option<&'a Session> {
     sessions
         .iter()
         .find(|s| s.state != SessionState::Exited && run::command_name(s) == Some(name))
+}
+
+/// The configured commands `name` picks (all when `None`); `invalid_state` when there are
+/// none, `not_found` for an unknown name.
+fn targets<'a>(project: &'a Project, name: Option<&str>) -> Result<Vec<&'a RunCommand>, Outcome> {
+    if project.run_commands.is_empty() {
+        let message = format!("project {} has no run commands", project.name);
+        return Err(Outcome::error(ErrorCode::InvalidState, message));
+    }
+    let Some(name) = name else {
+        return Ok(project.run_commands.iter().collect());
+    };
+    match project.run_commands.iter().find(|c| c.name == name) {
+        Some(command) => Ok(vec![command]),
+        None => {
+            let message = format!("project {} has no run command {name:?}", project.name);
+            Err(Outcome::error(ErrorCode::NotFound, message))
+        }
+    }
 }
 
 /// The folder and extra environment of `command`, or why it cannot start.

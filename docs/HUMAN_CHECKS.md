@@ -27,6 +27,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   menu starts it again.
 - [ ] ■ stops both; the button returns to `▶ Run`; the sidebar ▶ disappears.
 - [ ] A command in a missing folder: ▶ Run shows "Cannot run: …" in the sidebar notice; nothing starts.
+- [ ] Open ▾ over a Board card or a terminal pane: clicking a menu row does not click what is
+  underneath; clicking outside closes the menu.
 - [ ] Known gaps: the ▾ menu is mouse-only (the palette has Run: Start/Restart/Stop all, Setup…,
   Show Run tab); the default shell on Windows is cmd, so a `.ps1` script needs
   `pwsh -File .\run.ps1` as its command.
@@ -550,7 +552,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - **View changes** (criterion 6): the T6.10 check above, on the threads Claude just addressed.
   - **§14 design check**: dark + light screenshots of the Docs view (preview with margin
     threads, source view), the Send-to-agent picker and the View-changes dialog.
-- [ ] (T8.3) **Dev server UI.** Restart the daemon (protocol v16). Workspace menu (⋯ /
+- [ ] (T8.3) **Dev server UI.** — superseded by the 2026-10-07 Run button section (ADR 0018).
+  Restart the daemon (protocol v16). Workspace menu (⋯ /
   right-click) → "Dev server settings…": type `npm run dev` (or `python -m http.server`), Tab
   flips "Start it when the daemon starts", Enter saves (Esc keeps). The tab bar then shows
   "Start dev server" (tooltip = the command); clicking it switches to Terminals and shows the
@@ -565,7 +568,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   "Find in scrollback" act on that pane; in Git (list focused) "Git: Stage…", "Git: Fetch",
   "Git: Push", "Git: Discard changes to selected file…" (opens the confirmation); on the board
   with a Review card selected "Task: View changes of selected task"; "Dev server: Start/Stop"
-  with a dev command set; "Go to workspace / session / task" switch to it (a task selects its
+  with a dev command set (— superseded by the 2026-10-07 Run button section (ADR 0018));
+  "Go to workspace / session / task" switch to it (a task selects its
   card on the board). Dark + light screenshots (§14).
 - [ ] (T8.6) **Keymap settings.** With no `<config>/mkrew/keymap.toml`, Ctrl+, (and the palette's
   "Global: Open keymap settings") creates it with every command commented at its default and

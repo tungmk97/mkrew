@@ -5316,6 +5316,66 @@ fn invalid_run_setups_are_refused_before_anything_starts() {
 }
 
 #[test]
+fn run_restarts_that_cannot_start_keep_the_running_command() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::create_dir(repo.join("api")).unwrap();
+    std::fs::write(repo.join("api/.env"), "PORT=1\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let api = RunCommand {
+        env_file: Some(".env".into()),
+        ..run_command("api", "api", &long("echo up> up.txt", "echo up > up.txt"))
+    };
+    client
+        .call(set_runs(&project, vec![api], None))
+        .into_result::<Project>()
+        .unwrap();
+    let started: RunStarted = client
+        .call(run_start(&project, None))
+        .into_result()
+        .unwrap();
+    let id = started.sessions[0].session_id;
+    wait_text(&repo.join("api/up.txt"));
+
+    // The env file no longer parses: refused, the server keeps running.
+    std::fs::write(repo.join("api/.env"), "not a pair\n").unwrap();
+    for name in [None, Some("api")] {
+        assert_eq!(
+            error_code(client.call(run_restart(&project, name))),
+            ErrorCode::InvalidRequest,
+            "{name:?}"
+        );
+    }
+    // An unknown name, and a live command no longer configured, are not found.
+    assert_eq!(
+        error_code(client.call(run_restart(&project, Some("Z")))),
+        ErrorCode::NotFound
+    );
+    client
+        .call(set_runs(
+            &project,
+            vec![run_command("web", ".", "echo web")],
+            None,
+        ))
+        .into_result::<Project>()
+        .unwrap();
+    assert_eq!(
+        error_code(client.call(run_restart(&project, Some("api")))),
+        ErrorCode::NotFound
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    assert_ne!(client.session(id).state, SessionState::Exited);
+
+    client
+        .call(run_stop(&project, Some("api")))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(id, SessionState::Exited);
+    client.stop();
+}
+
+#[test]
 fn run_commands_auto_start_after_a_daemon_restart_and_end_with_their_command() {
     let env = Env::new();
     let repo = env.repo();

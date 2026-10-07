@@ -102,8 +102,9 @@ fn inside(path: &str) -> bool {
 }
 
 /// `KEY=VALUE` lines like a `.env` file: blank lines and `#` comments skipped, a leading BOM
-/// and an `export ` prefix dropped, key and value trimmed, one pair of matching quotes around
-/// the value removed. No interpolation, no multi-line values.
+/// and an `export ` prefix dropped, key and value trimmed, inline ` # …` comments dropped,
+/// one pair of matching quotes around the value removed (only a comment may follow the
+/// closing quote). No interpolation, no multi-line values.
 pub fn parse_env(text: &str) -> Result<Vec<(String, String)>, RunError> {
     let mut vars = Vec::new();
     for (index, line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
@@ -120,7 +121,8 @@ pub fn parse_env(text: &str) -> Result<Vec<(String, String)>, RunError> {
         if !valid_key(key) {
             return Err(bad);
         }
-        vars.push((key.to_owned(), unquote(value.trim()).to_owned()));
+        let value = env_value(value).ok_or(bad)?;
+        vars.push((key.to_owned(), value.to_owned()));
     }
     Ok(vars)
 }
@@ -134,13 +136,24 @@ pub(crate) fn valid_key(key: &str) -> bool {
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
 }
 
-fn unquote(value: &str) -> &str {
+/// The text after `=`: a quoted value up to its closing quote, then only whitespace or a
+/// comment; an unquoted one up to the first `#` after whitespace, trimmed. `None` when a
+/// quote is not closed or text follows the closing quote.
+fn env_value(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
     for quote in ['"', '\''] {
-        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
-            return &value[1..value.len() - 1];
+        if let Some(rest) = trimmed.strip_prefix(quote) {
+            let (inner, after) = rest.split_once(quote)?;
+            let after = after.trim_start();
+            return (after.is_empty() || after.starts_with('#')).then_some(inner);
         }
     }
-    value
+    let end = value
+        .match_indices('#')
+        .map(|(i, _)| i)
+        .find(|&i| value[..i].ends_with(char::is_whitespace))
+        .unwrap_or(value.len());
+    Some(value[..end].trim())
 }
 
 // Constant patterns, compiled in the tests: `expect` cannot fire.
@@ -250,8 +263,8 @@ mod tests {
 
     #[test]
     fn env_files_read_like_dotenv() {
-        let text =
-            "\u{feff}# comment\r\n\r\nexport A = 1 \r\nB=\"two words\"\nC='x=y'\nD=\nE=a#b\n";
+        let text = "\u{feff}# comment\r\n\r\nexport A = 1 \r\nB=\"two words\"\nC='x=y'\nD=\nE=a#b\n\
+                    F=v # c\nG=\"x y\" # c\nH='q' \nI=\"#\"\n";
         assert_eq!(
             parse_env(text).unwrap(),
             vars(&[
@@ -259,9 +272,18 @@ mod tests {
                 ("B", "two words"),
                 ("C", "x=y"),
                 ("D", ""),
-                ("E", "a#b")
+                ("E", "a#b"),
+                ("F", "v"),
+                ("G", "x y"),
+                ("H", "q"),
+                ("I", "#"),
             ])
         );
+        assert_eq!(
+            parse_env("A=1\nE=\"unterminated\n"),
+            Err(RunError::EnvLine { line: 2 })
+        );
+        assert_eq!(parse_env("F=\"x\"y"), Err(RunError::EnvLine { line: 1 }));
         assert_eq!(
             parse_env("A=1\nnot a pair\n"),
             Err(RunError::EnvLine { line: 2 })

@@ -77,9 +77,10 @@ pub struct RunCommand {
   naming the command). With no commands: `invalid_state`; unknown `name`: `not_found`.
 - `project.run_stop` (`project_id`, `name?`) → ok. Without `name`: every live run session of
   the project (also one whose name left the config). Ok when nothing runs.
-- `project.run_restart` (`project_id`, `name?`, `cols`/`rows`) → `RunStarted`. Stops the
-  targets like `run_stop` (the session's own 5 s grace, then forced kill), waits until they
-  exited (max 10 s, else `timeout`), then starts them like `run_start`.
+- `project.run_restart` (`project_id`, `name?`, `cols`/`rows`) → `RunStarted`. Checks the
+  targets like `run_start` first (an error stops nothing), then stops them like `run_stop`
+  (the session's own 5 s grace, then forced kill), waits until they exited (max 10 s, else
+  `timeout`), then starts them like `run_start`.
 - Request `session.ports` (`project_id`) → `[{session_id, ports}]` of the project's live
   sessions with ports; event `session.ports` (`session_id`, `ports`). Ports are kept in daemon
   memory only (the `Session` type is unchanged).
@@ -104,9 +105,10 @@ New `crates/mkrew-daemon/src/server/run.rs` replaces `server/dev.rs`.
   the output, which is what the user reads.
 - **Env file parser** (`mkrew_core::run::parse_env`, pure): `KEY=VALUE` per line; blank lines
   and `#` comments skipped; a leading BOM dropped; optional `export ` prefix; key and value
-  trimmed; one pair of matching `'` or `"` around the value removed; no interpolation, no
-  multi-line values. A line without `=` or with an invalid key is an error naming the line
-  number.
+  trimmed; an inline ` # …` comment dropped (a `#` not after whitespace stays); one pair of
+  matching `'` or `"` around the value removed (only a comment may follow the closing quote);
+  no interpolation, no multi-line values. A line without `=`, with an invalid key, an
+  unclosed quote or text after the closing quote is an error naming the line number.
 - **Tab:** one tab titled `run` (the first one with that title; created when missing). Every
   start and restart rebuilds its layout from the project's live run sessions: configured ones
   in config order, then any whose name left the config; nested vertical splits with equal
