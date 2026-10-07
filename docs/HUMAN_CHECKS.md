@@ -657,6 +657,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T13.8a) **"Run with several agents…" UI:** no "…" card menu yet, so it is a hover-shown
+  "Several agents…" button next to "Run with…" on Todo / Review cards (not on fan-out children,
+  not on an original that already fanned out), plus the palette entry "Agent: Run selected task
+  with several agents…". It shows on non-git workspaces too; the daemon's refusal appears as the
+  board's card error. The picker keeps tick order (= child order), caps at 5 (other rows faded),
+  and runs children at the new-pane size (80×24, panes resize them). The group card's agent line
+  reads "N agents", one line per child (agent + status), and hides any run of its own from
+  before the fan-out. An original can no longer be Run / Run with… from the UI. Picker has no
+  keyboard support (like the M10 "Run with…" leftover).
+
 - (T13.7) **`task.fanout` rules:** refused outside a git repo (agents would share one folder),
   for a running task, a fan-out child, a task that already fanned out, and duplicate profiles
   (two children with the same title). ` · <agent>` is the profile's `name`. Children are created

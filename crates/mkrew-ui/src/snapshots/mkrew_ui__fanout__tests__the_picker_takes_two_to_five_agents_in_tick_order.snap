@@ -1,0 +1,9 @@
+---
+source: crates/mkrew-ui/src/fanout.rs
+expression: "shown.join(\"\\n\")"
+---
+Pick 2–5 agents
+Pick 2–5 agents
+Run 2 agents
+Run 5 agents
+Run 4 agents

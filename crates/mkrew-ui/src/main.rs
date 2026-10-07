@@ -28,8 +28,8 @@ use mkrew_protocol::{
     SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionReadParams,
     SessionReadResult, SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult,
     SessionState, SessionTurnEvent, SessionUnqueueParams, StateSource, TabCreateParams,
-    TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef,
-    TaskStatus, TerminalTab, Turn, UndoPreview,
+    TabListParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams,
+    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -41,6 +41,7 @@ use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::dev_server::{self, DevDialog};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
+use mkrew_ui::fanout::{self, FanOutPicker};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
@@ -229,6 +230,8 @@ struct Shell {
     starting: HashSet<Ulid>,
     /// The open "Run with…" picker of one card (SPEC §20B.6).
     run_with: Option<RunWith>,
+    /// The open "Run with several agents…" picker of one card (SPEC §20E.2).
+    fan_out: Option<FanOutPicker>,
     /// The follow-up draft of one running / needs-input card.
     follow_up: Option<FollowUp>,
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
@@ -524,6 +527,7 @@ impl Shell {
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,
+            fan_out: None,
             follow_up: None,
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
@@ -2782,6 +2786,13 @@ impl Shell {
                     && task.status == TaskStatus::Review
                     && task.checkpoint.is_some()
             });
+        let fan_out = self.selected_card.is_some_and(|id| {
+            self.board
+                .task(id)
+                .is_some_and(|task| Some(task.project_id) == workspace)
+                && self.board.can_fan_out(id, self.sidebar.sessions())
+                && !self.starting.contains(&id)
+        });
         let (dev_running, dev_command) = workspace.map_or((false, None), |id| self.dev_server(id));
         let context = palette::Context {
             workspace: workspace.is_some(),
@@ -2793,6 +2804,7 @@ impl Shell {
             terminal: terminal.is_some(),
             discard,
             task_changes,
+            fan_out,
             dev_command: dev_command.is_some(),
             dev_running,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
@@ -2903,6 +2915,11 @@ impl Shell {
                     Extra::ViewTaskChanges => {
                         if let Some(task_id) = self.selected_card {
                             self.view_task_changes(task_id, window, cx);
+                        }
+                    }
+                    Extra::FanOut => {
+                        if let Some(task_id) = self.selected_card {
+                            self.open_fan_out(task_id, window, cx);
                         }
                     }
                     // The list is built on open: the dev server may have changed since.
@@ -4512,6 +4529,7 @@ impl Shell {
         };
         self.selected_card = Some(task_id);
         self.run_with = Some(RunWith::new(task_id));
+        self.fan_out = None;
         cx.notify();
         let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
         cx.spawn_in(window, async move |this, cx| {
@@ -4596,6 +4614,90 @@ impl Shell {
                 if let Some(error) = failed {
                     tracing::warn!(%task_id, "run with {profile} failed: {error}");
                     shell.card_error = Some((project_id, error));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// "Run with several agents…" on a card: opens its multi-agent picker (closing any other)
+    /// and lists the agent profiles for it.
+    fn open_fan_out(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.selected_card = Some(task_id);
+        self.fan_out = Some(FanOutPicker::new(task_id));
+        self.run_with = None;
+        cx.notify();
+        let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
+        cx.spawn_in(window, async move |this, cx| {
+            let agents = match listed.await {
+                Ok(listed) => Agents::Loaded(listed.profiles),
+                Err(error) => Agents::Failed(format!("{error:#}")),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                // Unless the picker closed (or moved to another card) meanwhile.
+                if let Some(menu) = shell
+                    .fan_out
+                    .as_mut()
+                    .filter(|menu| menu.task_id == task_id)
+                {
+                    menu.agents = agents;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The picker's run button (SPEC §20E.2): `task.fanout` with the ticked agents; the daemon
+    /// creates and runs one child task each, and moves the card to Running. A failure shows on
+    /// the board.
+    fn run_fan_out(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(params) = self.fan_out.as_ref().and_then(FanOutPicker::request) else {
+            return;
+        };
+        self.fan_out = None;
+        cx.notify();
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let task_id = params.task_id;
+        let Some(project_id) = self
+            .board
+            .task(task_id)
+            .filter(|_| {
+                // A run may have started since the picker opened.
+                self.board.can_fan_out(task_id, self.sidebar.sessions())
+                    && !self.starting.contains(&task_id)
+            })
+            .map(|task| task.project_id)
+        else {
+            return;
+        };
+        self.starting.insert(task_id);
+        self.card_error = None;
+        let call = connection.call::<Vec<Task>>(Request::TaskFanout(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let result = call.await;
+            let _ = this.update(cx, |shell, cx| {
+                shell.starting.remove(&task_id);
+                match result {
+                    // Shown at once, without waiting for the `task.updated` echoes.
+                    Ok(children) => {
+                        for child in children {
+                            shell.board.apply(&Event::TaskUpdated(child));
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%task_id, "task.fanout failed: {error:#}");
+                        shell.card_error = Some((
+                            project_id,
+                            format!("Cannot run with several agents: {error:#}"),
+                        ));
+                    }
                 }
                 cx.notify();
             });
@@ -6839,6 +6941,7 @@ impl Shell {
             run_keys: self.keymap.label(Command::RunTask),
             conflicts: &self.conflicts,
             run_with: self.run_with.as_ref(),
+            fan_out: self.fan_out.as_ref(),
         };
         div()
             .flex_1()
@@ -13423,6 +13526,7 @@ struct CardContext<'a> {
     run_keys: String,
     conflicts: &'a Conflicts,
     run_with: Option<&'a RunWith>,
+    fan_out: Option<&'a FanOutPicker>,
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
@@ -13559,6 +13663,7 @@ fn task_card(
     let can_view_changes = card.can_view_changes();
     let manages_worktree = card.manages_worktree();
     let can_run_with = card.can_run_with() && !cards.starting.contains(&card.task_id);
+    let can_fan_out = card.can_fan_out() && !cards.starting.contains(&card.task_id);
     let current_agent = card.agent_profile().map(str::to_owned);
     let opens = card.opens_session();
     let follow_up_session = card.follow_up_session();
@@ -13672,6 +13777,12 @@ fn task_card(
                 .text_color(rgb(theme.text_muted))
                 .child(branch)
         }))
+        // A group card: one line per child (SPEC §20E.2).
+        .children(
+            card.children
+                .into_iter()
+                .map(|child| fan_out_child_row(child, now, theme)),
+        )
         .when_some(card.session, |el, session| {
             el.child(
                 div()
@@ -13799,14 +13910,17 @@ fn task_card(
                     cx,
                 )
             });
+            let fan_out =
+                can_fan_out.then(|| fan_out_button(task_id, group.clone(), cards, theme, cx));
             el.child(
                 div()
                     .flex()
-                    // A Review card can show six buttons; a narrow column wraps them.
+                    // A Review card can show seven buttons; a narrow column wraps them.
                     .flex_wrap()
                     .justify_end()
                     .gap(px(space::S))
                     .children(run_with)
+                    .children(fan_out)
                     .children(changes)
                     .children(worktree_actions.into_iter().flatten())
                     .children(undo)
@@ -13893,6 +14007,184 @@ fn run_with_button(
             .snap_to_window_with_margin(px(space::S))
             .child(div().pt(px(space::XS)).child(panel)),
     ))
+}
+
+/// "Several agents…" on a Todo / Review card (SPEC §20E.2), next to "Run with…" and shown the
+/// same way; its picker ticks 2–5 agent profiles, then runs them, each in its own worktree.
+fn fan_out_button(
+    task_id: Ulid,
+    group: SharedString,
+    cards: &CardContext<'_>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::Div {
+    let menu = cards.fan_out.filter(|menu| menu.task_id == task_id);
+    let button = quiet_button("card-fan-out", "Several agents…", theme, theme.border)
+        .when(menu.is_none(), |el| {
+            el.opacity(opacity::HIDDEN)
+                .group_hover(group, |style| style.opacity(opacity::FULL))
+        })
+        .tooltip(tooltip(
+            theme,
+            "Run with several agents: each in its own worktree, to compare (git repos only)",
+            "",
+        ))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            cx.stop_propagation();
+            shell.open_fan_out(task_id, window, cx);
+        }));
+    let Some(menu) = menu else {
+        return div().child(button);
+    };
+    let choices = match &menu.agents {
+        Agents::Loaded(profiles) => workspace_menu::agent_choices(profiles, None),
+        _ => Vec::new(),
+    };
+    let rows = if choices.is_empty() {
+        // Loading, the error or the empty hint; there is nothing to tick.
+        agent_rows(&menu.agents, None, "fan-out", theme, cx, |_, _, _, _| {})
+    } else if choices.len() < TaskFanoutParams::MIN_PROFILES {
+        vec![
+            div()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child("Needs at least 2 agent profiles. Add one to the profiles folder.")
+                .into_any_element(),
+        ]
+    } else {
+        choices
+            .into_iter()
+            .map(|choice| {
+                let picked = menu.is_picked(&choice.id);
+                let blocked = !picked && menu.is_full();
+                let id = SharedString::from(format!("fan-out-{}", choice.id));
+                let agent = choice.id;
+                menu_item(id, theme)
+                    .child(
+                        div()
+                            .w(px(space::M))
+                            .text_color(rgb(theme.accent))
+                            .child(if picked { "✓" } else { "" }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .when(picked, |el| {
+                                el.text_color(rgb(theme.text))
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                            })
+                            .child(choice.label),
+                    )
+                    .when(blocked, |el| el.opacity(opacity::DISABLED).cursor_default())
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        // Not a click on the card under the menu (which would open its terminal).
+                        cx.stop_propagation();
+                        if let Some(menu) = shell.fan_out.as_mut() {
+                            menu.toggle(&agent);
+                            cx.notify();
+                        }
+                    }))
+                    .into_any_element()
+            })
+            .collect()
+    };
+    let label = menu.button_label();
+    let run = div()
+        .id("fan-out-run")
+        .flex()
+        .items_center()
+        .px(px(space::S))
+        .py(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .text_size(px(font_size::BODY))
+        .bg(rgb(theme.accent))
+        .text_color(rgb(theme.surface))
+        .child(label);
+    let run = if menu.request().is_some() {
+        run.cursor_pointer()
+            .hover(|style| style.opacity(opacity::HOVER))
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .on_click(cx.listener(|shell, _, window, cx| {
+                cx.stop_propagation();
+                shell.run_fan_out(window, cx);
+            }))
+    } else {
+        run.opacity(opacity::DISABLED)
+    };
+    let panel = div()
+        .id("fan-out-menu")
+        .w(px(theme::MENU_WIDTH))
+        .flex()
+        .flex_col()
+        .p(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .bg(rgb(theme.surface_raised))
+        .shadow_md()
+        .font_family(theme::UI_FONT)
+        .occlude()
+        .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+            shell.fan_out = None;
+            cx.notify();
+        }))
+        .child(
+            div()
+                .px(px(space::S))
+                .pt(px(space::XS))
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child("Run with several agents"),
+        )
+        .children(rows)
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .px(px(space::S))
+                .pt(px(space::S))
+                .pb(px(space::XS))
+                .child(run),
+        );
+    div().child(button).child(deferred(
+        anchored()
+            .snap_to_window_with_margin(px(space::S))
+            .child(div().pt(px(space::XS)).child(panel)),
+    ))
+}
+
+/// One child on a group card (SPEC §20E.2): its status icon, agent and state.
+fn fan_out_child_row(child: fanout::ChildLine, now: i64, theme: &Theme) -> gpui::Div {
+    let state = child.state_text(now);
+    let icon = child.session.as_ref().map(|session| {
+        div()
+            .text_color(rgb(sidebar::status_color(theme, session.state)))
+            .child(status::icon(session.state, now))
+    });
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .text_size(px(font_size::META))
+        .text_color(rgb(theme.text_muted))
+        .child(div().flex_none().w(px(space::M)).children(icon))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_color(rgb(theme.text))
+                .child(child.agent),
+        )
+        .child(div().flex_none().child(state))
 }
 
 /// The button of a card's column (Run / Approve); Run is disabled while its run starts.

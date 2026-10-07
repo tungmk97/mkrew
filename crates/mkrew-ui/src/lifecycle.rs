@@ -2,8 +2,8 @@
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
 use mkrew_protocol::{
-    Request, Session, SessionKind, SessionSpawnParams, SessionState, Task, TaskRunParams,
-    TaskUpdateParams,
+    Request, Session, SessionKind, SessionSpawnParams, SessionState, Task, TaskFanoutParams,
+    TaskRunParams, TaskUpdateParams,
 };
 use ulid::Ulid;
 
@@ -40,6 +40,17 @@ pub fn spawn_params(
 pub fn run_params(task_id: Ulid) -> TaskRunParams {
     TaskRunParams {
         task_id,
+        cols: SPAWN_COLS,
+        rows: SPAWN_ROWS,
+    }
+}
+
+/// `task.fanout` for "Run with several agents…" (SPEC §20E.2): the children's sessions start at
+/// the size of a new pane, like a card's Run.
+pub fn fanout_params(task_id: Ulid, agent_profiles: Vec<String>) -> TaskFanoutParams {
+    TaskFanoutParams {
+        task_id,
+        agent_profiles,
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
     }

@@ -6,6 +6,7 @@ use mkrew_core::task::{self, Placement};
 use mkrew_protocol::{Event, Session, SessionState, Task, TaskMoveParams, TaskStatus};
 use ulid::Ulid;
 
+use crate::fanout::{self, ChildLine};
 use crate::status;
 use crate::worktree_target;
 
@@ -101,6 +102,10 @@ pub struct Card {
     pub checkpoint: bool,
     /// `⎇ mkrew/<branch>` once the task's worktree exists (SPEC §20E.1).
     pub branch: Option<String>,
+    /// The task this one is a fan-out child of (SPEC §20E.2).
+    pub fanout_of: Option<Ulid>,
+    /// A fan-out original's children, oldest first: the card is their group card.
+    pub children: Vec<ChildLine>,
     /// The task's newest session, if it ever ran.
     pub session: Option<Session>,
 }
@@ -108,6 +113,8 @@ pub struct Card {
 impl Card {
     pub fn action(&self) -> Option<CardAction> {
         match self.status {
+            // A fan-out original cannot run itself.
+            TaskStatus::Todo if !self.children.is_empty() => None,
             TaskStatus::Todo => Some(CardAction::Run),
             TaskStatus::Review => Some(CardAction::Approve),
             TaskStatus::Running | TaskStatus::NeedsInput | TaskStatus::Done => None,
@@ -115,18 +122,27 @@ impl Card {
     }
 
     /// Whether the card offers "Run with…" (SPEC §20B.6): a Todo or Review card without a live
-    /// session.
+    /// session, unless it fanned out.
     pub fn can_run_with(&self) -> bool {
         matches!(self.status, TaskStatus::Todo | TaskStatus::Review)
+            && self.children.is_empty()
             && self
                 .session
                 .as_ref()
                 .is_none_or(|session| session.state == SessionState::Exited)
     }
 
-    /// The profile the card runs with (`None`: neither the task nor the workspace has one).
+    /// Whether the card offers "Run with several agents…" (SPEC §20E.2): as "Run with…", but
+    /// not on a fan-out child.
+    pub fn can_fan_out(&self) -> bool {
+        self.can_run_with() && self.fanout_of.is_none()
+    }
+
+    /// The profile the card runs with (`None`: neither the task nor the workspace has one, or
+    /// a group card, which runs none).
     pub fn agent_profile(&self) -> Option<&str> {
-        Some(self.agent.as_str()).filter(|&agent| agent != DEFAULT_AGENT_LABEL)
+        Some(self.agent.as_str())
+            .filter(|&agent| agent != DEFAULT_AGENT_LABEL && self.children.is_empty())
     }
 
     /// Whether the card offers "Undo task": a finished (Review / Done) run with a checkpoint.
@@ -288,20 +304,35 @@ impl Board {
                 cards: tasks
                     .iter()
                     .filter(|task| task.status == status)
-                    .map(|task| Card {
-                        task_id: task.id,
-                        title: task.title.clone(),
-                        status: task.status,
-                        agent: task
-                            .agent_profile
-                            .as_deref()
-                            .or(default_agent)
-                            .unwrap_or(DEFAULT_AGENT_LABEL)
-                            .to_owned(),
-                        error_flag: task.error_flag,
-                        checkpoint: task.checkpoint.is_some(),
-                        branch: worktree_target::branch_line(task),
-                        session: newest_session(sessions, task.id).cloned(),
+                    .map(|task| {
+                        let children = fanout::children(task, &self.tasks, sessions);
+                        // A group card runs no agent of its own.
+                        let agent = match children.len() {
+                            0 => task
+                                .agent_profile
+                                .as_deref()
+                                .or(default_agent)
+                                .unwrap_or(DEFAULT_AGENT_LABEL)
+                                .to_owned(),
+                            1 => "1 agent".to_owned(),
+                            n => format!("{n} agents"),
+                        };
+                        Card {
+                            task_id: task.id,
+                            title: task.title.clone(),
+                            status: task.status,
+                            agent,
+                            error_flag: task.error_flag,
+                            checkpoint: task.checkpoint.is_some(),
+                            branch: worktree_target::branch_line(task),
+                            fanout_of: task.fanout_of,
+                            // A group card shows its children's states, not a run of its own
+                            // from before it fanned out.
+                            session: newest_session(sessions, task.id)
+                                .filter(|_| children.is_empty())
+                                .cloned(),
+                            children,
+                        }
                     })
                     .collect(),
             })
@@ -375,20 +406,39 @@ impl Board {
         }
     }
 
-    /// Whether `task_id` can run now (it waits in Todo); Ctrl+Enter runs the selected card.
+    /// Whether `task_id` can run now (it waits in Todo and did not fan out); Ctrl+Enter runs
+    /// the selected card.
     pub fn can_run(&self, task_id: Ulid) -> bool {
         self.task(task_id)
             .is_some_and(|task| task.status == TaskStatus::Todo)
+            && !self.fanned_out(task_id)
+    }
+
+    /// Whether `task_id` is a fan-out original (some task is its child).
+    fn fanned_out(&self, task_id: Ulid) -> bool {
+        self.tasks
+            .iter()
+            .any(|task| task.fanout_of == Some(task_id))
+    }
+
+    /// Whether "Run with several agents…" may still fan `task_id` out (see
+    /// [`Card::can_fan_out`]).
+    pub fn can_fan_out(&self, task_id: Ulid, sessions: &[Session]) -> bool {
+        self.can_run_with(task_id, sessions)
+            && self
+                .task(task_id)
+                .is_some_and(|task| task.fanout_of.is_none())
     }
 
     /// Whether "Run with…" may still run `task_id` (see [`Card::can_run_with`]).
     pub fn can_run_with(&self, task_id: Ulid, sessions: &[Session]) -> bool {
-        self.task(task_id).is_some_and(|task| {
-            matches!(task.status, TaskStatus::Todo | TaskStatus::Review)
-                && !sessions.iter().any(|session| {
-                    session.task_id == Some(task_id) && session.state != SessionState::Exited
-                })
-        })
+        !self.fanned_out(task_id)
+            && self.task(task_id).is_some_and(|task| {
+                matches!(task.status, TaskStatus::Todo | TaskStatus::Review)
+                    && !sessions.iter().any(|session| {
+                        session.task_id == Some(task_id) && session.state != SessionState::Exited
+                    })
+            })
     }
 
     /// The card Ctrl+Enter runs on `project_id`'s board: the selected one, if it is that
@@ -445,7 +495,7 @@ impl Board {
     }
 }
 
-fn newest_session(sessions: &[Session], task_id: Ulid) -> Option<&Session> {
+pub(crate) fn newest_session(sessions: &[Session], task_id: Ulid) -> Option<&Session> {
     sessions
         .iter()
         .filter(|session| session.task_id == Some(task_id))
@@ -921,6 +971,42 @@ mod tests {
         );
         assert!(board.can_run_with(review.id, &[exited]));
         assert!(!board.can_run_with(Ulid::new(), &[]));
+    }
+
+    #[test]
+    fn a_fanned_out_task_becomes_a_group_card_that_cannot_run_itself() {
+        let api = Ulid::new();
+        let original = task(api, "Fix", TaskStatus::Todo, 1.0);
+        let mut board = Board::default();
+        board.load(vec![original.clone()]);
+        let card = |board: &Board| board.columns(api, Some("claude"), &[])[0].cards[0].clone();
+        assert!(card(&board).can_fan_out() && card(&board).can_run_with());
+        assert!(board.can_fan_out(original.id, &[]) && board.can_run(original.id));
+
+        let mut child = task(api, "Fix · Codex", TaskStatus::Todo, 2.0);
+        child.fanout_of = Some(original.id);
+        board.apply(&Event::TaskUpdated(child.clone()));
+        // Still in Todo (e.g. dragged back): no Run, Run with… or another fan-out.
+        let group = card(&board);
+        assert_eq!(group.agent, "1 agent");
+        assert_eq!(group.agent_profile(), None);
+        // A run from before the fan-out is not the group's state.
+        let mut earlier = session(&original, 1, Some(2));
+        earlier.state = SessionState::Exited;
+        let with_earlier = &board.columns(api, None, &[earlier])[0].cards[0];
+        assert!(with_earlier.session.is_none() && with_earlier.opens_session().is_none());
+        assert_eq!(group.children.len(), 1);
+        assert_eq!(group.children[0].agent, "Codex");
+        assert_eq!(group.action(), None);
+        assert!(!group.can_run_with() && !group.can_fan_out());
+        assert!(!board.can_run(original.id));
+        assert!(!board.can_run_with(original.id, &[]) && !board.can_fan_out(original.id, &[]));
+
+        // A child runs with "Run with…" but does not fan out again.
+        let child_card = board.columns(api, None, &[])[0].cards[1].clone();
+        assert_eq!(child_card.fanout_of, Some(original.id));
+        assert!(child_card.can_run_with() && !child_card.can_fan_out());
+        assert!(!board.can_fan_out(child.id, &[]) && board.can_run_with(child.id, &[]));
     }
 
     #[test]

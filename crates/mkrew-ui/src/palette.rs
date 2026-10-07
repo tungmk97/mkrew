@@ -1,6 +1,6 @@
 //! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
 //! view, with its title and shortcut, palette-only actions that have no key (Git fetch / push /
-//! discard, task "View changes", dev server start / stop, broadcast, insert prompt), plus "Go to" workspace /
+//! discard, task "View changes", fan-out, dev server start / stop, broadcast, insert prompt), plus "Go to" workspace /
 //! session / task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
 //! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
@@ -32,6 +32,8 @@ pub struct Context {
     pub discard: bool,
     /// The selected board card offers "View changes".
     pub task_changes: bool,
+    /// The selected board card offers "Run with several agents…".
+    pub fan_out: bool,
     /// The active workspace has a dev command.
     pub dev_command: bool,
     /// The active workspace's dev server runs.
@@ -49,6 +51,7 @@ pub enum Extra {
     GitPush,
     GitDiscard,
     ViewTaskChanges,
+    FanOut,
     StartDevServer,
     StopDevServer,
     Broadcast,
@@ -58,11 +61,12 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
         Self::ViewTaskChanges,
+        Self::FanOut,
         Self::StartDevServer,
         Self::StopDevServer,
         Self::Broadcast,
@@ -77,6 +81,7 @@ impl Extra {
             Self::GitPush => "Git: Push",
             Self::GitDiscard => "Git: Discard changes to selected file…",
             Self::ViewTaskChanges => "Task: View changes of selected task",
+            Self::FanOut => "Agent: Run selected task with several agents…",
             Self::StartDevServer => "Dev server: Start",
             Self::StopDevServer => "Dev server: Stop",
             Self::Broadcast => "Agent: Broadcast to agents…",
@@ -93,6 +98,7 @@ impl Extra {
             Self::GitFetch | Self::GitPush => in_view(View::Git),
             Self::GitDiscard => in_view(View::Git) && context.discard,
             Self::ViewTaskChanges => in_view(View::Board) && context.task_changes,
+            Self::FanOut => in_view(View::Board) && context.fan_out,
             Self::StartDevServer => {
                 context.workspace && context.dev_command && !context.dev_running
             }
@@ -526,6 +532,7 @@ mod tests {
             terminal: false,
             discard: false,
             task_changes: false,
+            fan_out: false,
             dev_command: false,
             dev_running: false,
             agents: false,
@@ -756,6 +763,7 @@ mod tests {
         let git = Context {
             discard: true,
             task_changes: true,
+            fan_out: true,
             ..context(View::Git)
         };
         assert_eq!(
@@ -768,6 +776,11 @@ mod tests {
             ..context(View::Board)
         };
         assert_eq!(extras(&board), [Extra::ViewTaskChanges]);
+        let fan_out = Context {
+            fan_out: true,
+            ..context(View::Board)
+        };
+        assert_eq!(extras(&fan_out), [Extra::FanOut]);
         let stopped = Context {
             dev_command: true,
             ..context(View::Docs)

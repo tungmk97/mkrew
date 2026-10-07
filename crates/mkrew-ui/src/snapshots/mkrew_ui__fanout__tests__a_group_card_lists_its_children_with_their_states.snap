@@ -1,0 +1,7 @@
+---
+source: crates/mkrew-ui/src/fanout.rs
+expression: "shown.join(\"\\n\")"
+---
+Codex — needs input
+Claude Code — exited (0)
+omp — todo
