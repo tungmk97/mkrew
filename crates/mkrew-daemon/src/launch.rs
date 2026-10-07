@@ -32,11 +32,7 @@ pub enum LaunchError {
 /// A shell profile without `command` runs the OS default shell. The caller sets cwd and the
 /// Mkrew env vars.
 pub fn command(profile: &AgentProfile) -> Result<CommandBuilder, LaunchError> {
-    let program = if profile.command.is_empty() && profile.kind == ProfileKind::Shell {
-        default_shell()
-    } else {
-        profile.command.clone()
-    };
+    let program = program(profile);
     let resolved = lookup::find(OsStr::new(&program)).ok_or(LaunchError::NotFound {
         program,
         searched: lookup::SEARCHED,
@@ -46,6 +42,16 @@ pub fn command(profile: &AgentProfile) -> Result<CommandBuilder, LaunchError> {
         cmd.env(key, value);
     }
     Ok(cmd)
+}
+
+/// The program `profile` runs: its `command`, or the OS default shell for a shell profile
+/// without one.
+pub fn program(profile: &AgentProfile) -> String {
+    if profile.command.is_empty() && profile.kind == ProfileKind::Shell {
+        default_shell()
+    } else {
+        profile.command.clone()
+    }
 }
 
 fn default_shell() -> String {
@@ -191,6 +197,12 @@ mod tests {
     #[test]
     fn shell_profile_without_command_uses_the_default_shell() {
         assert!(command(&profile("", ProfileKind::Shell)).is_ok());
+    }
+
+    #[test]
+    fn the_program_of_a_shell_profile_without_command_is_the_default_shell() {
+        assert_eq!(program(&profile("", ProfileKind::Shell)), default_shell());
+        assert_eq!(program(&profile("claude", ProfileKind::Agent)), "claude");
     }
 
     #[test]

@@ -260,6 +260,8 @@ pub struct SpawnSpec {
     pub typed: Option<String>,
     /// A line of mkrew's own shown before the program's output (and kept in its log).
     pub banner: Option<String>,
+    /// Extra environment (run commands, SPEC §10); after the profile's, before mkrew's own.
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -311,9 +313,13 @@ impl Hub {
             log_file,
             typed,
             banner,
+            env,
         } = spec;
         let mut cmd = launch::command(&profile).map_err(SpawnError::Launch)?;
         cmd.cwd(&cwd);
+        for (key, value) in &env {
+            cmd.env(key, value);
+        }
         cmd.env("MKREW_SESSION_ID", session.id.to_string());
         cmd.env(mkrew_core::paths::ENV_SOCKET, &socket);
         cmd.env("TERM", "xterm-256color");

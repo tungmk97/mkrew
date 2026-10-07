@@ -480,6 +480,7 @@ impl Daemon {
             native_session_id: None,
             dir: None,
             banner: None,
+            env: Vec::new(),
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -567,6 +568,7 @@ impl Daemon {
             native_session_id: None,
             dir: Some(dir),
             banner,
+            env: Vec::new(),
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -790,6 +792,7 @@ impl Daemon {
             socket: self.paths.socket.clone(),
             typed: start.typed,
             banner: start.banner,
+            env: start.env,
         };
         match self.hub.spawn(spec) {
             Ok(()) => Ok(session_id),
@@ -1296,6 +1299,8 @@ struct Start {
     /// The `cwd`; `None` = the project folder.
     dir: Option<PathBuf>,
     banner: Option<String>,
+    /// Extra environment for the session (run commands).
+    env: Vec<(String, String)>,
 }
 
 /// The folder a task's agent works in (blocking): the project folder, or the project's folder

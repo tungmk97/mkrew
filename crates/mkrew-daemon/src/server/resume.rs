@@ -111,6 +111,7 @@ impl Daemon {
             native_session_id: Some(native.to_owned()),
             dir,
             banner: None,
+            env: Vec::new(),
         };
         match self.start_session(start) {
             Ok(new_id) => {
