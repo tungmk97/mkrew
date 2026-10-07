@@ -27,7 +27,7 @@
 - §17 Conventions & Windows notes
 - §18 Milestones & acceptance criteria
 - §19 Risks, open questions, backlog
-- §20 v2: working with agents (M9–M13)
+- §20 v2: working with agents (M9–M11, M13)
 
 ---
 
@@ -58,9 +58,9 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
   against a base branch (default `main`, configurable per workspace) like Orca; comment on diff
   lines and send the comments to an agent.
 - Simple, calm, beautiful UI — soft, not rigid.
-- v2 (§20, M9–M13): make the daily loop with agents faster — notice who needs you, answer
-  without switching, instruct precisely, review and undo per turn, leave agents running safely,
-  and isolate parallel work in worktrees when asked.
+- v2 (§20, M9–M11, M13): make the daily loop with agents faster — notice who needs you, answer
+  without switching, instruct precisely, review and undo per turn, and isolate parallel work in
+  worktrees when asked.
 
 **Non-goals**
 
@@ -295,7 +295,7 @@ ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|d
 ALTER TABLE project ADD COLUMN dev_autostart INTEGER NOT NULL DEFAULT 0; -- start dev_command after daemon start
 ```
 
-v2 migrations 0008 (M11), 0009 (M12) and 0010 (M13) are listed in §20.
+v2 migrations 0008 (M11) and 0009 (M13) are listed in §20.
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -926,7 +926,7 @@ checkable end-to-end with it.
 
 ## §18 Milestones & acceptance criteria
 
-Fourteen milestones, strictly in order: M0–M8 = v1, M9–M13 = v2 (§20). A milestone is done only when all criteria are checked and
+Thirteen milestones, strictly in order: M0–M8 = v1, M9–M11 and M13 = v2 (§20); M12 was dropped (ADR 0013) and its number is not reused. A milestone is done only when all criteria are checked and
 `scripts/verify` is green on the current OS (CI covers the other). M0 is a risk spike and the only
 **blocking human gate**: if GPUI fails, switch the UI to Tauri before investing further.
 
@@ -1079,18 +1079,6 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] Git view: "Changes since turn n" (`since` accepts a turn's tree) and the "Changed by" session filter.
 - [ ] Follow in Zed: debouncer unit-tested; manual check with a real agent.
 
-### M12 — Leaving agents running (§20D)
-
-- [ ] Webhook: notification triggers run the fake `MKREW_CURL` with the expected arguments; the
-      `notify.*` switches and the 30 s limit apply; no test touches the network.
-- [ ] Rate limit: fake `rate_limit` step → `session.rate_limited` with the parsed reset time;
-      `continue_text` is sent at that time (clock injected in tests); user input clears it.
-- [ ] Task chains: B (after A) runs when A reaches Review, not when A has `error_flag`; cycles and
-      cross-project links refused; `max_running` delays automatic runs only.
-- [ ] `mk session read`, `mk session spawn --prompt` from inside a session (parent recorded, nested
-      spawn refused), `mk --skill` prints the bundled skill.
-- [ ] `mk task add` inside a session defaults to its project and records the creator; the card shows it.
-
 ### M13 — Isolation & usage (§20E)
 
 - [ ] Worktree task: Run creates the worktree and `mkrew/…` branch from HEAD, copies
@@ -1101,7 +1089,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] Fan-out runs 2–5 agents in their own worktrees; Compare and Pick work; e2e with fake profiles.
 - [ ] Usage: fixture transcripts in the current Claude and Codex formats give the expected
       input/output/context tokens, read incrementally; shown on pane header, card and sidebar.
-- [ ] M9–M13 manual checks listed in HUMAN_CHECKS.
+- [ ] M9–M11 and M13 manual checks listed in HUMAN_CHECKS.
 
 ---
 
@@ -1130,13 +1118,13 @@ estimates from token usage.
 
 ---
 
-## §20 v2: working with agents (M9–M13)
+## §20 v2: working with agents (M9–M11, M13)
 
 Goal: make the daily loop with agents fast — notice who needs you, answer without switching
-views, instruct precisely, review and undo per turn, leave agents running safely, and isolate
-parallel work when asked. Inspired by herdr (peek, agent-driven CLI), Zed's agent panel (queue,
-follow, per-turn checkpoints, keep awake) and Orca (worktrees, fan-out, usage). §1 non-goals still
-hold: no editor, no LLM API calls, no cloud, no mobile app.
+views, instruct precisely, review and undo per turn, and isolate parallel work when asked.
+Inspired by herdr (peek), Zed's agent panel (queue, follow, per-turn checkpoints, keep awake) and
+Orca (worktrees, fan-out, usage). §1 non-goals still hold: no editor, no LLM API calls, no cloud,
+no mobile app.
 
 Every v2 feature keeps §2: agent differences live in TOML profiles; the daemon owns state; it
 works on native Windows; nothing touches the user's branch, index or files without a confirmed
@@ -1155,7 +1143,6 @@ same way. Unknown keys are errors (same rule as profiles). Full shape with defau
 needs_input = true          # OS notification on needs_input
 done = true                 # OS notification on done
 sound = true                # notification plays the OS default sound
-webhook = ""                # §20D.1; "" = off
 
 [awake]
 keep_awake = true           # §20A.5
@@ -1165,9 +1152,6 @@ file_ref = "@{path}"        # §20B.1; how a picked file is typed; "{path}" alon
 
 [zed]
 follow_debounce_ms = 1500   # §20C.4
-
-[tasks]
-max_running = 0             # §20D.3; per workspace, 0 = no limit
 ```
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
@@ -1179,18 +1163,10 @@ continues the same turn. Turns are numbered per session from 1. Pure model in
 **Profile keys added in v2** (all optional; unknown keys stay errors):
 
 ```toml
-[state]
-rate_limit_patterns = ['(?i)limit reached.*resets (?P<reset>\d{1,2}(:\d{2})?\s*[ap]m)']  # §20D.2
-continue_text = "continue"     # §20D.2; typed + Enter when the limit resets
-
 [usage]                        # §20E.3
 format = "claude_jsonl"        # "claude_jsonl" | "codex_jsonl"; absent = no usage
 context_window = 200000        # tokens, for the % shown
 ```
-
-Shipped profiles get the patterns once a real recording exists (test fixture under
-`crates/mkrew-core/tests/fixtures/`); until then they ship without `rate_limit_patterns` and the
-feature is simply off for them (HUMAN_CHECKS).
 
 ### §20A Attention (M9)
 
@@ -1337,51 +1313,11 @@ CREATE TABLE turn (
 
 Turns are recorded from M9 in memory; M11 persists them (M9's `session.turn` does not need the table).
 
-### §20D Leaving agents running (M12)
+### §20D Leaving agents running — dropped
 
-1. **Webhook.** When `notify.webhook` is set, every OS notification the daemon fires (same
-   triggers, switches and 30 s limit) also POSTs plain text `"<project> · <agent>: <Needs input|Done>"`
-   with header `Title: Mkrew` (ntfy-compatible; others ignore it), by spawning
-   `curl -fsS -m 10 -H "Title: Mkrew" -d <text> <url>` (curl ships with Windows 10 1803+, macOS
-   and most Linux; env `MKREW_CURL` overrides the binary — tests point it at a fake). Failures are
-   logged, never retried, never block. No new crate.
-2. **Rate-limit auto-continue.** If the last screen lines match a profile's
-   `rate_limit_patterns` (checked with needs_input patterns), the session gets the flag
-   `rate_limited_until` from the named group `reset` (`h[:mm] am|pm` local time, next occurrence;
-   unparsable → 5 h from now). The state stays as detected; the UI shows `⏸ resumes 14:00` on the
-   pane header, tab and Inbox. At that time + 60 s the daemon sends `continue_text` with submit
-   (once), then clears the flag. Any user input or `session.send` clears it earlier. Event
-   `session.rate_limited` (`session_id`, `until?`, `null` = cleared). Time parsing uses `chrono`
-   (already in the dependency tree) in `mkrew-core`, with the clock passed in.
-3. **Task chains.** A task may name `after_task_id` (same project, no cycles; `invalid_request`
-   otherwise). When a task moves to Review without `error_flag`, every Todo task with
-   `after_task_id` = it is run automatically (daemon `task.run` with the last used pane size, else
-   120×40). `tasks.max_running` > 0 limits running+needs_input tasks per workspace for automatic
-   runs only: excess chained runs wait and start when a slot frees (FIFO by position). Manual Run is
-   never blocked. The card shows `⛓ after <title>`; the task dialog gets an "After" picker.
-4. **Agents driving Mkrew.** CLI additions (all work for users too):
-   - `mk session read <id> [--lines N]` prints `session.read`.
-   - `mk session spawn <project> --agent P [--prompt "…"] [--title T]` — prompt delivered per
-     `prompt_mode` like `task.run`; inside a Mkrew session the parent is recorded
-     (`session.parent_id`) and the new pane is split next to the parent's pane. A session that has
-     a parent cannot spawn (`invalid_state`, one level only).
-   - `mk task add` inside a session: project defaults to the session's, `created_by` = session id;
-     the card shows "by <agent>".
-   - `mk --skill` prints a bundled `skills/mkrew/SKILL.md` (`include_str!`) teaching an agent these
-     commands plus `mk send`/`mk wait`, starting with "only use if `MKREW_SESSION_ID` is set".
-     `mk integration install claude` does not install it; README explains copying it.
-
-**Protocol (M12):** `task.create/update` accept `after_task_id?`; Task carries `after_task_id?`
-and `created_by?`; `session.spawn` accepts `prompt?`, `parent_session_id?`; Session carries
-`parent_id?`; event `session.rate_limited`.
-
-Migration `0009_agent_runs.sql`:
-
-```sql
-ALTER TABLE task ADD COLUMN after_task_id TEXT REFERENCES task(id);
-ALTER TABLE task ADD COLUMN created_by TEXT;          -- session id of the creating agent, NULL = user
-ALTER TABLE session ADD COLUMN parent_id TEXT REFERENCES session(id);
-```
+Removed with M12 (ADR 0013): webhook, rate-limit auto-continue, task chains, agent-driven CLI
+(`mk session read/spawn --prompt`, `mk --skill`, task `created_by`). Not planned; section letters
+and milestone numbers are not reused.
 
 ### §20E Isolation & usage (M13)
 
@@ -1425,7 +1361,7 @@ ALTER TABLE session ADD COLUMN parent_id TEXT REFERENCES session(id);
 `task.fanout` (`task_id`, `agent_profiles[]`) → child Task[]; `fs.*` and `git.*` accept
 `worktree_task_id?`; event `session.usage`.
 
-Migration `0010_worktrees.sql`:
+Migration `0009_worktrees.sql`:
 
 ```sql
 ALTER TABLE task ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0;
@@ -1436,10 +1372,9 @@ ALTER TABLE task ADD COLUMN fanout_of TEXT REFERENCES task(id);
 
 ### §20F Testing v2
 
-- `mkrew-fakeagent` gains steps: `rate_limit { reset = "3pm" }` (prints a Claude-like limit line),
-  `edit_files { paths = [...] }` (writes files and reports `PostToolUse` hooks), and honors
-  `--prompt`/positional prompt as today.
+- `mkrew-fakeagent` gains steps: `edit_files { paths = [...] }` (writes files and reports
+  `PostToolUse` hooks), and honors `--prompt`/positional prompt as today.
 - Real-git tests (temp repos) for snapshots, restore, worktree add/merge/remove, always asserting
   that HEAD, branch, index and untouched files are unchanged.
-- No test calls the network or a real agent: webhook through `MKREW_CURL`, keep-awake through the
-  fake `Inhibitor`, usage through fixture transcripts.
+- No test calls the network or a real agent: keep-awake through the fake `Inhibitor`, usage
+  through fixture transcripts.

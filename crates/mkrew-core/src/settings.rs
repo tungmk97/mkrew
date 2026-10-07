@@ -18,7 +18,6 @@ pub struct Settings {
     pub awake: AwakeSettings,
     pub composer: ComposerSettings,
     pub zed: ZedSettings,
-    pub tasks: TasksSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -30,8 +29,6 @@ pub struct NotifySettings {
     pub done: bool,
     /// The notification plays the OS default sound.
     pub sound: bool,
-    /// §20D.1; empty = off.
-    pub webhook: String,
 }
 
 impl Default for NotifySettings {
@@ -40,7 +37,6 @@ impl Default for NotifySettings {
             needs_input: true,
             done: true,
             sound: true,
-            webhook: String::new(),
         }
     }
 }
@@ -86,13 +82,6 @@ impl Default for ZedSettings {
             follow_debounce_ms: 1500,
         }
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct TasksSettings {
-    /// §20D.3: per workspace, 0 = no limit.
-    pub max_running: u32,
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -147,11 +136,9 @@ mod tests {
         let settings = load(&dir.path().join("settings.toml")).unwrap();
         assert_eq!(settings, Settings::default());
         assert!(settings.notify.needs_input && settings.notify.done && settings.notify.sound);
-        assert_eq!(settings.notify.webhook, "");
         assert!(settings.awake.keep_awake);
         assert_eq!(settings.composer.file_ref, "@{path}");
         assert_eq!(settings.zed.follow_debounce_ms, 1500);
-        assert_eq!(settings.tasks.max_running, 0);
     }
 
     #[test]
@@ -166,13 +153,13 @@ mod tests {
         let path = dir.path().join("settings.toml");
         std::fs::write(
             &path,
-            "[notify]\nsound = false\n\n[tasks]\nmax_running = 3\n",
+            "[notify]\nsound = false\n\n[zed]\nfollow_debounce_ms = 3\n",
         )
         .unwrap();
         let settings = load(&path).unwrap();
         let mut expected = Settings::default();
         expected.notify.sound = false;
-        expected.tasks.max_running = 3;
+        expected.zed.follow_debounce_ms = 3;
         assert_eq!(settings, expected);
     }
 
@@ -183,7 +170,6 @@ mod tests {
 needs_input = false
 done = false
 sound = false
-webhook = "https://example.invalid/hook"
 
 [awake]
 keep_awake = false
@@ -193,9 +179,6 @@ file_ref = "{path}"
 
 [zed]
 follow_debounce_ms = 500
-
-[tasks]
-max_running = 2
 "#;
         let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
@@ -205,7 +188,6 @@ max_running = 2
                     needs_input: false,
                     done: false,
                     sound: false,
-                    webhook: "https://example.invalid/hook".into(),
                 },
                 awake: AwakeSettings { keep_awake: false },
                 composer: ComposerSettings {
@@ -214,7 +196,6 @@ max_running = 2
                 zed: ZedSettings {
                     follow_debounce_ms: 500
                 },
-                tasks: TasksSettings { max_running: 2 },
             }
         );
     }
@@ -236,9 +217,6 @@ max_running = 2
         let message = parse_err("[zed]\nfollow_debounce_ms = \"fast\"\n");
         assert!(message.starts_with("settings.toml:2:"), "{message}");
         assert!(message.contains("invalid type"), "{message}");
-        let message = parse_err("[tasks]\nmax_running = -1\n");
-        assert!(message.starts_with("settings.toml:2:"), "{message}");
-        assert!(message.contains("invalid"), "{message}");
     }
 
     #[test]
