@@ -327,69 +327,29 @@ fn project_update_sets_and_clears_the_git_base() {
 }
 
 #[test]
-fn project_dev_server_is_configured_on_add_and_update() {
+fn project_run_autostart_is_switched_on_update() {
     let env = Env::new();
     let repo = env.dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
     env.ok(&["daemon", "start"]);
-    let path = repo.to_str().unwrap();
-    env.ok(&[
-        "project",
-        "add",
-        path,
-        "--name",
-        "demo",
-        "--dev",
-        "npm run dev",
-    ]);
-
-    let on = env.ok(&["project", "update", "demo", "--dev-autostart", "on"]);
-    assert_eq!(on.trim(), "dev server of demo: npm run dev (auto-start on)");
-    let changed = env.ok(&["project", "update", "demo", "--dev", "cargo run"]);
-    assert_eq!(
-        changed.trim(),
-        "dev server of demo: cargo run (auto-start on)"
-    );
-    // Base and dev settings change together.
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let on = env.ok(&["project", "update", "demo", "--run-autostart", "on"]);
+    assert_eq!(on.trim(), "run auto-start of demo: on");
     let both = env.ok(&[
         "project",
         "update",
         "demo",
         "--auto-base",
-        "--no-dev",
-        "--dev-autostart",
+        "--run-autostart",
         "off",
     ]);
     let lines: Vec<_> = both.lines().collect();
     assert_eq!(
         lines,
-        [
-            "base of demo: auto-detect",
-            "dev server of demo: none (auto-start off)"
-        ]
+        ["base of demo: auto-detect", "run auto-start of demo: off"]
     );
-
-    let conflict = env.mk(&["project", "update", "demo", "--dev", "x", "--no-dev"]);
-    assert!(!conflict.status.success());
-    let bad = env.mk(&["project", "update", "demo", "--dev-autostart", "maybe"]);
+    let bad = env.mk(&["project", "update", "demo", "--run-autostart", "maybe"]);
     assert!(!bad.status.success());
-
-    // `mk project dev`: needs a dev command; a second start prints the running one.
-    let none = env.mk(&["project", "dev", "demo"]);
-    assert!(!none.status.success());
-    env.ok(&[
-        "project",
-        "update",
-        "demo",
-        "--dev",
-        "echo started> dev.txt",
-    ]);
-    let started = env.ok(&["project", "dev", "demo"]);
-    let session_id = started.trim();
-    assert_eq!(session_id.len(), 26, "not a session id: {started}");
-    assert_eq!(env.ok(&["project", "dev", "demo"]).trim(), session_id);
-    let stopped = env.ok(&["project", "dev", "demo", "--stop"]);
-    assert_eq!(stopped.trim(), "dev server of demo stopped");
     env.ok(&["daemon", "stop"]);
 }
 

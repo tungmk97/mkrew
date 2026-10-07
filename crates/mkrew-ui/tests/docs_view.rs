@@ -201,7 +201,6 @@ fn docs_list_render_and_follow_external_edits_and_comments() {
     let project: Project = block_on(connection.call(Request::ProjectAdd(ProjectAddParams {
         path: repo.to_string_lossy().into_owned(),
         name: Some("demo".into()),
-        dev_command: None,
     })))
     .unwrap();
     let inbox = connection.incoming();

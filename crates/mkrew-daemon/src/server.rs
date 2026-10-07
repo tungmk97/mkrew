@@ -35,7 +35,6 @@ use crate::{awake, backup, session_log, undo, worktree};
 mod ai;
 mod attachment;
 mod comment;
-mod dev;
 mod doc;
 mod fanout;
 mod fs;
@@ -56,8 +55,6 @@ pub struct Daemon {
     git_cache: Arc<GitCache>,
     started_at: i64,
     shutdown: watch::Sender<bool>,
-    /// Serializes `project.dev_start`, so a project never gets two dev servers.
-    dev_starting: std::sync::Mutex<()>,
 }
 
 /// Where and to what `task.undo` resets (ADR 0005).
@@ -91,14 +88,13 @@ impl Daemon {
             git_cache: Arc::default(),
             started_at: now_ms(),
             shutdown: watch::channel(false).0,
-            dev_starting: std::sync::Mutex::new(()),
         })
     }
 
     /// Watches `settings.toml`, starts keep awake and daily DB backups, deletes expired turn
-    /// refs (in the background), resumes interrupted tasks and agent panes, auto-starts dev
-    /// servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session
-    /// (SPEC §8). `notifier` = `None` turns OS notifications off.
+    /// refs (in the background), resumes interrupted tasks and agent panes, then serves
+    /// `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8).
+    /// `notifier` = `None` turns OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let _settings_watch = settings::watch(Arc::clone(&self.settings))
             .inspect_err(|e| tracing::warn!("settings.toml is not watched: {e}"))
@@ -118,7 +114,6 @@ impl Daemon {
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
         self.resume_sessions().await;
-        self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
         backups.abort();
         keep_awake.abort();
@@ -247,8 +242,6 @@ impl Daemon {
                 (store_outcome(projects), After::Continue)
             }
             Request::ProjectUpdate(params) => (self.project_update(params), After::Continue),
-            Request::ProjectDevStart(params) => (self.dev_start(params), After::Continue),
-            Request::ProjectDevStop(params) => (self.dev_stop(params.project_id), After::Continue),
             Request::TabList(params) => {
                 let tabs = self.store().list_tabs(params.project_id);
                 (store_outcome(tabs), After::Continue)
@@ -862,20 +855,29 @@ impl Daemon {
         }
     }
 
-    /// Changes the project; a new `default_agent` must name an agent profile.
+    /// Changes the project; a new `default_agent` must name an agent profile, run commands
+    /// are checked and trimmed (SPEC §10).
     fn project_update(&self, params: ProjectUpdateParams) -> Outcome {
         if let Some(Some(id)) = &params.default_agent
             && let Err(outcome) = self.check_agent_profile(id)
         {
             return outcome;
         }
+        let run_commands = match params
+            .run_commands
+            .map(mkrew_core::run::normalize)
+            .transpose()
+        {
+            Ok(commands) => commands,
+            Err(e) => return Outcome::error(ErrorCode::InvalidRequest, e.to_string()),
+        };
         let updated = self.store().update_project(
             params.project_id,
             ProjectChanges {
                 name: params.name.as_deref(),
                 default_agent: params.default_agent.as_ref().map(Option::as_deref),
-                dev_command: params.dev_command.as_ref().map(Option::as_deref),
-                dev_autostart: params.dev_autostart,
+                run_commands: run_commands.as_deref(),
+                run_autostart: params.run_autostart,
             },
         );
         if let Ok(project) = &updated {
@@ -1246,11 +1248,9 @@ impl Daemon {
     }
 
     fn project_add(&self, params: ProjectAddParams) -> Outcome {
-        let added = self.store().add_project_with_dev(
-            std::path::Path::new(&params.path),
-            params.name.as_deref(),
-            params.dev_command.as_deref(),
-        );
+        let added = self
+            .store()
+            .add_project(std::path::Path::new(&params.path), params.name.as_deref());
         if let Ok(project) = &added {
             tracing::info!(id = %project.id, path = %project.path, "project added");
             let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));

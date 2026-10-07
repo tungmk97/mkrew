@@ -219,7 +219,6 @@ fn startup_idle_cpu_and_memory_with_six_sessions() {
     let project: Project = block_on(connection.call(Request::ProjectAdd(ProjectAddParams {
         path: project_dir.to_string_lossy().into_owned(),
         name: None,
-        dev_command: None,
     })))
     .unwrap();
     let tab: TerminalTab = block_on(connection.call(Request::TabCreate(TabCreateParams {

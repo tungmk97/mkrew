@@ -1,6 +1,6 @@
 //! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
 //! view, with its title and shortcut, palette-only actions that have no key (Git fetch / push /
-//! discard, task "View changes", fan-out, dev server start / stop, broadcast, insert prompt), plus "Go to" workspace /
+//! discard, task "View changes", fan-out, broadcast, insert prompt), plus "Go to" workspace /
 //! session / task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
 //! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
@@ -34,10 +34,6 @@ pub struct Context {
     pub task_changes: bool,
     /// The selected board card offers "Run with several agents…".
     pub fan_out: bool,
-    /// The active workspace has a dev command.
-    pub dev_command: bool,
-    /// The active workspace's dev server runs.
-    pub dev_running: bool,
     /// The active workspace has a live agent session.
     pub agents: bool,
     /// The terminal pane that had the keyboard runs an agent (it has a composer).
@@ -52,8 +48,6 @@ pub enum Extra {
     GitDiscard,
     ViewTaskChanges,
     FanOut,
-    StartDevServer,
-    StopDevServer,
     Broadcast,
     InsertPrompt,
     Turns,
@@ -61,14 +55,12 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 9] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
         Self::ViewTaskChanges,
         Self::FanOut,
-        Self::StartDevServer,
-        Self::StopDevServer,
         Self::Broadcast,
         Self::InsertPrompt,
         Self::Turns,
@@ -82,8 +74,6 @@ impl Extra {
             Self::GitDiscard => "Git: Discard changes to selected file…",
             Self::ViewTaskChanges => "Task: View changes of selected task",
             Self::FanOut => "Agent: Run selected task with several agents…",
-            Self::StartDevServer => "Dev server: Start",
-            Self::StopDevServer => "Dev server: Stop",
             Self::Broadcast => "Agent: Broadcast to agents…",
             Self::InsertPrompt => "Agent: Insert prompt…",
             Self::Turns => "Agent: Turns…",
@@ -99,10 +89,6 @@ impl Extra {
             Self::GitDiscard => in_view(View::Git) && context.discard,
             Self::ViewTaskChanges => in_view(View::Board) && context.task_changes,
             Self::FanOut => in_view(View::Board) && context.fan_out,
-            Self::StartDevServer => {
-                context.workspace && context.dev_command && !context.dev_running
-            }
-            Self::StopDevServer => context.workspace && context.dev_running,
             Self::Broadcast => context.workspace && context.agents,
             // Into the focused agent pane's composer (opened if hidden); the focused agent
             // pane's "Turns…" and "Follow in Zed".
@@ -533,8 +519,6 @@ mod tests {
             discard: false,
             task_changes: false,
             fan_out: false,
-            dev_command: false,
-            dev_running: false,
             agents: false,
             agent_pane: false,
         }
@@ -555,8 +539,8 @@ mod tests {
             id: Ulid::new(),
             name: name.into(),
             path: format!("C:/{name}"),
-            dev_command: None,
-            dev_autostart: false,
+            run_commands: Vec::new(),
+            run_autostart: false,
             default_agent: None,
             review_globs: None,
             created_at: 0,
@@ -726,8 +710,6 @@ mod tests {
             workspace: false,
             workspaces: 0,
             tabs: 0,
-            dev_command: true,
-            dev_running: true,
             agents: true,
             ..context(View::Terminals)
         };
@@ -781,22 +763,6 @@ mod tests {
             ..context(View::Board)
         };
         assert_eq!(extras(&fan_out), [Extra::FanOut]);
-        let stopped = Context {
-            dev_command: true,
-            ..context(View::Docs)
-        };
-        assert_eq!(extras(&stopped), [Extra::StartDevServer]);
-        // A running dev server can be stopped even after its command was cleared.
-        let running = Context {
-            dev_running: true,
-            ..context(View::Docs)
-        };
-        assert_eq!(extras(&running), [Extra::StopDevServer]);
-        let both = Context {
-            dev_command: true,
-            ..running
-        };
-        assert_eq!(extras(&both), [Extra::StopDevServer]);
         let agents = Context {
             agents: true,
             ..context(View::Board)

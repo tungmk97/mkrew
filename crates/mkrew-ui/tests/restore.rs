@@ -116,7 +116,6 @@ fn layout_is_restored_and_visible_panes_reattach_after_reopening() {
     let project: Project = block_on(first.call(Request::ProjectAdd(ProjectAddParams {
         path: project_dir.to_string_lossy().into_owned(),
         name: None,
-        dev_command: None,
     })))
     .unwrap();
     let tab: TerminalTab = block_on(first.call(Request::TabCreate(TabCreateParams {

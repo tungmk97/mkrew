@@ -67,8 +67,8 @@ pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
         project_id,
         name: None,
         default_agent: Some(Some(agent.to_owned())),
-        dev_command: None,
-        dev_autostart: None,
+        run_commands: None,
+        run_autostart: None,
     }
 }
 

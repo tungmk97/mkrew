@@ -55,12 +55,6 @@ pub enum Request {
     ProjectList,
     #[serde(rename = "project.update")]
     ProjectUpdate(ProjectUpdateParams),
-    /// Returns [`DevServer`]: the running dev server, else a new one.
-    #[serde(rename = "project.dev_start")]
-    ProjectDevStart(DevStartParams),
-    /// Returns nothing (`null`); also when no dev server runs.
-    #[serde(rename = "project.dev_stop")]
-    ProjectDevStop(ProjectRef),
     #[serde(rename = "tab.list")]
     TabList(TabListParams),
     #[serde(rename = "tab.create")]
@@ -389,11 +383,12 @@ pub struct Project {
     pub id: Ulid,
     pub name: String,
     pub path: String,
-    /// Dev server command, run in its own tab (SPEC §10).
-    pub dev_command: Option<String>,
-    /// Start the dev server after the daemon starts.
+    /// The Run button's commands, in order (SPEC §10, ADR 0018).
     #[serde(default)]
-    pub dev_autostart: bool,
+    pub run_commands: Vec<RunCommand>,
+    /// Run every command after the daemon starts.
+    #[serde(default)]
+    pub run_autostart: bool,
     pub default_agent: Option<String>,
     /// `None` = default globs (SPEC §12).
     pub review_globs: Option<Vec<String>>,
@@ -403,6 +398,22 @@ pub struct Project {
     /// Git view base; `None` = auto-detect (SPEC §12B). Set with `git.set_base`.
     #[serde(default)]
     pub base_ref: Option<String>,
+}
+
+/// One command of a project's Run button (SPEC §10, ADR 0018): typed into its own shell in
+/// `dir`, with `env_file` then `env` added to the environment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunCommand {
+    pub name: String,
+    /// Relative to the project folder; `.` = the folder itself.
+    pub dir: String,
+    pub command: String,
+    /// Relative to `dir`, e.g. `.env`.
+    #[serde(default)]
+    pub env_file: Option<String>,
+    /// Applied after `env_file`.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -609,9 +620,6 @@ pub struct ProjectAddParams {
     /// Defaults to the directory name.
     #[serde(default)]
     pub name: Option<String>,
-    /// Blank = none.
-    #[serde(default)]
-    pub dev_command: Option<String>,
 }
 
 /// `project.update`: fields left out stay unchanged.
@@ -627,40 +635,24 @@ pub struct ProjectUpdateParams {
         deserialize_with = "present"
     )]
     pub default_agent: Option<Option<String>>,
-    /// `Some(None)` (JSON `null`) or a blank command clears the dev command.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "present"
-    )]
-    pub dev_command: Option<Option<String>>,
-    /// Start the dev server after the daemon starts.
+    /// Replaces the whole list; checked and trimmed by the daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub dev_autostart: Option<bool>,
+    pub run_commands: Option<Vec<RunCommand>>,
+    /// Run every command after the daemon starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_autostart: Option<bool>,
 }
 
-/// `project.dev_start`: the terminal size of a newly started dev server.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DevStartParams {
-    pub project_id: Ulid,
-    #[serde(default = "DevStartParams::default_cols")]
-    pub cols: u16,
-    #[serde(default = "DevStartParams::default_rows")]
-    pub rows: u16,
+/// Terminal size used when the client has no pane yet (CLI, auto-start, fan-out children).
+pub const DEFAULT_COLS: u16 = 120;
+pub const DEFAULT_ROWS: u16 = 30;
+
+fn default_cols() -> u16 {
+    DEFAULT_COLS
 }
 
-impl DevStartParams {
-    /// Size used when the client has no pane yet (CLI, auto-start).
-    pub const COLS: u16 = 120;
-    pub const ROWS: u16 = 30;
-
-    fn default_cols() -> u16 {
-        Self::COLS
-    }
-
-    fn default_rows() -> u16 {
-        Self::ROWS
-    }
+fn default_rows() -> u16 {
+    DEFAULT_ROWS
 }
 
 /// Deserializes a field that is present (possibly `null`) as `Some`; with
@@ -808,9 +800,9 @@ pub struct TaskConfirmParams {
 pub struct TaskFanoutParams {
     pub task_id: Ulid,
     pub agent_profiles: Vec<String>,
-    #[serde(default = "DevStartParams::default_cols")]
+    #[serde(default = "default_cols")]
     pub cols: u16,
-    #[serde(default = "DevStartParams::default_rows")]
+    #[serde(default = "default_rows")]
     pub rows: u16,
 }
 
@@ -1124,21 +1116,6 @@ pub struct DaemonStatusResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSpawnResult {
     pub session_id: Ulid,
-}
-
-/// A project's dev server: its live shell session titled [`DevServer::TITLE`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DevServer {
-    pub session_id: Ulid,
-    /// The tab showing it; `None` when no tab layout holds the session any more.
-    pub tab_id: Option<Ulid>,
-    /// False when the dev server was already running.
-    pub started: bool,
-}
-
-impl DevServer {
-    /// Title of the dev server's session and of its tab.
-    pub const TITLE: &'static str = "dev";
 }
 
 /// `session.attach`: the current screen; output frames that follow continue from it.
@@ -1488,7 +1465,6 @@ mod tests {
             Request::ProjectAdd(ProjectAddParams {
                 path: r"C:\work\demo".into(),
                 name: None,
-                dev_command: Some("npm run dev".into()),
             }),
             Request::ProjectList,
             Request::SessionSpawn(SessionSpawnParams {
@@ -1504,15 +1480,15 @@ mod tests {
                 project_id: sid(),
                 name: Some("demo".into()),
                 default_agent: Some(None),
-                dev_command: Some(Some("cargo run".into())),
-                dev_autostart: Some(true),
+                run_commands: Some(vec![RunCommand {
+                    name: "BE".into(),
+                    dir: "api".into(),
+                    command: "uv run main.py".into(),
+                    env_file: Some(".env".into()),
+                    env: vec![("ENVIRONMENT".into(), "dev".into())],
+                }]),
+                run_autostart: Some(true),
             }),
-            Request::ProjectDevStart(DevStartParams {
-                project_id: sid(),
-                cols: 100,
-                rows: 20,
-            }),
-            Request::ProjectDevStop(ProjectRef { project_id: sid() }),
             Request::TabList(TabListParams { project_id: sid() }),
             Request::TabCreate(TabCreateParams {
                 project_id: sid(),
@@ -1732,24 +1708,6 @@ mod tests {
     }
 
     #[test]
-    fn dev_start_size_defaults_when_left_out() {
-        let id = sid();
-        let request: Request = serde_json::from_value(json!({
-            "method": "project.dev_start",
-            "params": {"project_id": id.to_string()}
-        }))
-        .unwrap();
-        assert_eq!(
-            request,
-            Request::ProjectDevStart(DevStartParams {
-                project_id: id,
-                cols: DevStartParams::COLS,
-                rows: DevStartParams::ROWS,
-            })
-        );
-    }
-
-    #[test]
     fn project_update_tells_missing_from_null() {
         let parse = |params: serde_json::Value| -> ProjectUpdateParams {
             serde_json::from_value(params).unwrap()
@@ -1764,21 +1722,20 @@ mod tests {
             parse(json!({"project_id": id, "default_agent": "claude"})).default_agent,
             Some(Some("claude".into()))
         );
-        assert_eq!(parse(json!({"project_id": id})).dev_command, None);
+        let autostart = parse(json!({"project_id": id, "run_autostart": true}));
+        assert_eq!(autostart.run_autostart, Some(true));
+        assert_eq!(autostart.run_commands, None);
         assert_eq!(
-            parse(json!({"project_id": id, "dev_command": null})).dev_command,
-            Some(None)
+            parse(json!({"project_id": id, "run_commands": []})).run_commands,
+            Some(Vec::new())
         );
-        let autostart = parse(json!({"project_id": id, "dev_autostart": true}));
-        assert_eq!(autostart.dev_autostart, Some(true));
-        assert_eq!(autostart.dev_command, None);
         // Unchanged fields are left out on the wire, a cleared one is `null`.
         let keep = ProjectUpdateParams {
             project_id: sid(),
             name: None,
             default_agent: None,
-            dev_command: None,
-            dev_autostart: None,
+            run_commands: None,
+            run_autostart: None,
         };
         assert_eq!(
             serde_json::to_value(&keep).unwrap(),
@@ -1962,8 +1919,14 @@ mod tests {
             id: sid(),
             name: "demo".into(),
             path: "/tmp/demo".into(),
-            dev_command: Some("npm run dev".into()),
-            dev_autostart: true,
+            run_commands: vec![RunCommand {
+                name: "FE".into(),
+                dir: ".".into(),
+                command: "npm run dev".into(),
+                env_file: None,
+                env: Vec::new(),
+            }],
+            run_autostart: true,
             default_agent: Some("claude".into()),
             review_globs: Some(vec!["docs/**/*.md".into()]),
             created_at: 1,

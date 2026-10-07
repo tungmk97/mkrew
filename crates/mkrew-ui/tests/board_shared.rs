@@ -182,7 +182,6 @@ fn mk_task_changes_reach_the_board_and_ui_tasks_reach_mk() {
     let project: Project = block_on(connection.call(Request::ProjectAdd(ProjectAddParams {
         path: repo.to_string_lossy().into_owned(),
         name: Some("demo".into()),
-        dev_command: None,
     })))
     .unwrap();
     let mut ui = Ui::new(connection);

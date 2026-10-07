@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mkrew_protocol::{
-    CommentContext, CommentId, CommentStatus, DocComment, Project, Session, SessionKind,
-    SessionState, StateSource, Task, TaskStatus, TerminalTab, Turn, TurnFile,
+    CommentContext, CommentId, CommentStatus, DocComment, Project, RunCommand, Session,
+    SessionKind, SessionState, StateSource, Task, TaskStatus, TerminalTab, Turn, TurnFile,
 };
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use ulid::Ulid;
@@ -25,6 +25,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0008_turns.sql"),
     include_str!("../migrations/0009_worktrees.sql"),
     include_str!("../migrations/0010_session_interrupted.sql"),
+    include_str!("../migrations/0011_run_commands.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -68,9 +69,9 @@ pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 pub struct ProjectChanges<'a> {
     pub name: Option<&'a str>,
     pub default_agent: Option<Option<&'a str>>,
-    /// A blank command clears it too.
-    pub dev_command: Option<Option<&'a str>>,
-    pub dev_autostart: Option<bool>,
+    /// Replaces the whole list (already checked by the caller).
+    pub run_commands: Option<&'a [RunCommand]>,
+    pub run_autostart: Option<bool>,
 }
 
 pub struct Store {
@@ -107,16 +108,6 @@ impl Store {
     /// Adds a project for the directory at `path` (canonicalized with `dunce`). `name`
     /// defaults to the directory name.
     pub fn add_project(&self, path: &Path, name: Option<&str>) -> Result<Project> {
-        self.add_project_with_dev(path, name, None)
-    }
-
-    /// `add_project` with a dev server command (blank = none).
-    pub fn add_project_with_dev(
-        &self,
-        path: &Path,
-        name: Option<&str>,
-        dev_command: Option<&str>,
-    ) -> Result<Project> {
         // canonicalize returns the on-disk casing, which makes the UNIQUE path column
         // case-insensitive in effect on Windows (SPEC §17).
         let canonical = dunce::canonicalize(path).map_err(|source| StoreError::Path {
@@ -138,8 +129,8 @@ impl Store {
             id: Ulid::new(),
             name,
             path: path_str,
-            dev_command: non_blank(dev_command),
-            dev_autostart: false,
+            run_commands: Vec::new(),
+            run_autostart: false,
             default_agent: None,
             review_globs: None,
             created_at: now_ms(),
@@ -147,13 +138,11 @@ impl Store {
             base_ref: None,
         };
         let inserted = self.conn.execute(
-            "INSERT INTO project (id, name, path, dev_command, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![
                 project.id.to_string(),
                 project.name,
                 project.path,
-                project.dev_command,
                 project.created_at
             ],
         );
@@ -170,26 +159,65 @@ impl Store {
 
     /// All projects, oldest first.
     pub fn list_projects(&self) -> Result<Vec<Project>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived,
-                    base_ref, dev_autostart
-             FROM project ORDER BY created_at, id",
-        )?;
-        let rows = stmt.query_map([], RawProject::from_row)?;
-        rows.map(|r| r?.into_project()).collect()
+        let mut projects: Vec<Project> = {
+            let mut stmt = self.conn.prepare(
+                "SELECT id, name, path, default_agent, review_globs, created_at, archived,
+                        base_ref, run_autostart
+                 FROM project ORDER BY created_at, id",
+            )?;
+            let rows = stmt.query_map([], RawProject::from_row)?;
+            rows.map(|r| r?.into_project()).collect::<Result<_>>()?
+        };
+        for project in &mut projects {
+            project.run_commands = self.run_commands(project.id)?;
+        }
+        Ok(projects)
     }
 
     pub fn get_project(&self, id: Ulid) -> Result<Project> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, path, dev_command, default_agent, review_globs, created_at, archived,
-                    base_ref, dev_autostart
+            "SELECT id, name, path, default_agent, review_globs, created_at, archived,
+                    base_ref, run_autostart
              FROM project WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id.to_string()], RawProject::from_row)?;
         match rows.next() {
-            Some(row) => row?.into_project(),
+            Some(row) => {
+                let mut project = row?.into_project()?;
+                project.run_commands = self.run_commands(id)?;
+                Ok(project)
+            }
             None => Err(StoreError::ProjectNotFound(id)),
         }
+    }
+
+    /// The project's run commands, in order.
+    fn run_commands(&self, project_id: Ulid) -> Result<Vec<RunCommand>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, dir, command, env_file, env FROM run_command
+             WHERE project_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map([project_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        rows.map(|row| {
+            let (name, dir, command, env_file, env) = row?;
+            let env = serde_json::from_str(&env).map_err(|_| corrupt("run_command.env", env))?;
+            Ok(RunCommand {
+                name,
+                dir,
+                command,
+                env_file,
+                env,
+            })
+        })
+        .collect()
     }
 
     /// Applies `changes` and returns the updated project.
@@ -201,23 +229,45 @@ impl Store {
         if let Some(default_agent) = changes.default_agent {
             project.default_agent = default_agent.map(str::to_owned);
         }
-        if let Some(dev_command) = changes.dev_command {
-            project.dev_command = non_blank(dev_command);
+        if let Some(run_autostart) = changes.run_autostart {
+            project.run_autostart = run_autostart;
         }
-        if let Some(dev_autostart) = changes.dev_autostart {
-            project.dev_autostart = dev_autostart;
-        }
-        self.conn.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3, dev_command = ?4, dev_autostart = ?5
-             WHERE id = ?1",
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4 WHERE id = ?1",
             params![
                 id.to_string(),
                 project.name,
                 project.default_agent,
-                project.dev_command,
-                project.dev_autostart
+                project.run_autostart
             ],
         )?;
+        if let Some(commands) = changes.run_commands {
+            tx.execute(
+                "DELETE FROM run_command WHERE project_id = ?1",
+                [id.to_string()],
+            )?;
+            for (position, command) in commands.iter().enumerate() {
+                // A Vec of string pairs always serializes.
+                #[allow(clippy::expect_used)]
+                let env = serde_json::to_string(&command.env).expect("string pairs serialize");
+                tx.execute(
+                    "INSERT INTO run_command (project_id, position, name, dir, command, env_file, env)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        id.to_string(),
+                        position as i64,
+                        command.name,
+                        command.dir,
+                        command.command,
+                        command.env_file,
+                        env
+                    ],
+                )?;
+            }
+            project.run_commands = commands.to_vec();
+        }
+        tx.commit()?;
         Ok(project)
     }
 
@@ -1084,13 +1134,6 @@ fn migrate(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-/// Trimmed; blank = `None`.
-fn non_blank(text: Option<&str>) -> Option<String> {
-    text.map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_owned)
-}
-
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1230,13 +1273,12 @@ struct RawProject {
     id: String,
     name: String,
     path: String,
-    dev_command: Option<String>,
     default_agent: Option<String>,
     review_globs: Option<String>,
     created_at: i64,
     archived: bool,
     base_ref: Option<String>,
-    dev_autostart: bool,
+    run_autostart: bool,
 }
 
 impl RawProject {
@@ -1245,13 +1287,12 @@ impl RawProject {
             id: row.get(0)?,
             name: row.get(1)?,
             path: row.get(2)?,
-            dev_command: row.get(3)?,
-            default_agent: row.get(4)?,
-            review_globs: row.get(5)?,
-            created_at: row.get(6)?,
-            archived: row.get(7)?,
-            base_ref: row.get(8)?,
-            dev_autostart: row.get(9)?,
+            default_agent: row.get(3)?,
+            review_globs: row.get(4)?,
+            created_at: row.get(5)?,
+            archived: row.get(6)?,
+            base_ref: row.get(7)?,
+            run_autostart: row.get(8)?,
         })
     }
 
@@ -1266,8 +1307,8 @@ impl RawProject {
             id: parse_ulid("project.id", self.id)?,
             name: self.name,
             path: self.path,
-            dev_command: self.dev_command,
-            dev_autostart: self.dev_autostart,
+            run_commands: Vec::new(),
+            run_autostart: self.run_autostart,
             default_agent: self.default_agent,
             review_globs,
             created_at: self.created_at,

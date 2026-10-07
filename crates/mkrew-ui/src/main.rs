@@ -21,11 +21,11 @@ use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
-    CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DevServer, DevStartParams,
-    DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
-    FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode,
-    GitStatus, Outcome, Project, ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request,
-    Session, SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
+    CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DiffLineKind, DocComment,
+    DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff, FsContent, FsEntry,
+    FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome,
+    Project, ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request, Session,
+    SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
     SessionListParams, SessionReadParams, SessionReadResult, SessionRef, SessionSendParams,
     SessionSendResult, SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams,
     SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
@@ -39,7 +39,6 @@ use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
-use mkrew_ui::dev_server::{self, DevDialog};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
@@ -216,14 +215,10 @@ struct Shell {
     settings_file: PathBuf,
     /// `<config>/mkrew/prompts`, read (seeded the first time) when a prompt picker opens.
     prompts_dir: PathBuf,
-    /// The open workspace menu (Open in Zed, dev server, default agent).
+    /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
-    /// The open "Dev server" settings of a workspace (modal).
-    dev_dialog: Option<DevDialog>,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
-    /// The dev tab to show once its `tab.updated` arrives (it may trail `project.dev_start`).
-    dev_reveal: Option<Ulid>,
     /// Done sessions already seen, so they leave the Inbox.
     viewed: Viewed,
     /// The last screen line under each Inbox entry.
@@ -470,9 +465,7 @@ impl Shell {
                 shell.attach_errors.clear();
                 shell.renaming = None;
                 shell.workspace_menu = None;
-                shell.dev_dialog = None;
                 shell.broadcast = None;
-                shell.dev_reveal = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
                 shell.worktree_dialog = None;
@@ -535,9 +528,7 @@ impl Shell {
             settings_file,
             prompts_dir,
             workspace_menu: None,
-            dev_dialog: None,
             broadcast: None,
-            dev_reveal: None,
             viewed: Viewed::default(),
             last_lines: LastLines::default(),
             turns: Turns::default(),
@@ -868,7 +859,6 @@ impl Shell {
             self.reveal = None;
             self.place_session(project_id, session, Axis::Vertical, window, cx);
         }
-        self.reveal_dev_tab(project_id, window, cx);
         self.fill_empty_tab(project_id, window, cx);
         self.sync_panes(window, cx);
         cx.notify();
@@ -2897,7 +2887,6 @@ impl Shell {
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
-        let (dev_running, dev_command) = workspace.map_or((false, None), |id| self.dev_server(id));
         let context = palette::Context {
             workspace: workspace.is_some(),
             view: self.view(),
@@ -2909,8 +2898,6 @@ impl Shell {
             discard,
             task_changes,
             fan_out,
-            dev_command: dev_command.is_some(),
-            dev_running,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
             agent_pane: self.focused_agent().is_some(),
         };
@@ -3026,13 +3013,6 @@ impl Shell {
                             self.open_fan_out(task_id, window, cx);
                         }
                     }
-                    // The list is built on open: the dev server may have changed since.
-                    Extra::StartDevServer => self.start_dev_server(project_id, window, cx),
-                    Extra::StopDevServer => {
-                        if self.dev_server(project_id).0 {
-                            self.stop_dev_server(project_id, window, cx);
-                        }
-                    }
                     Extra::Broadcast => self.open_broadcast(project_id, window, cx),
                     // Into the open composer, else one opened on the focused agent pane.
                     Extra::InsertPrompt => {
@@ -3085,7 +3065,6 @@ impl Shell {
             || self.turns_dialog.is_some()
             || self.git_discard.is_some()
             || self.git_base.is_some()
-            || self.dev_dialog.is_some()
             || self.broadcast.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
@@ -3257,7 +3236,6 @@ impl Shell {
                 .call::<Project>(Request::ProjectAdd(ProjectAddParams {
                     path: path.to_string_lossy().into_owned(),
                     name: None,
-                    dev_command: None,
                 }))
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {
@@ -3388,193 +3366,6 @@ impl Shell {
                     }
                 }
                 cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// `project.dev_start`, then shows the dev server's tab (the running one if any). A failure
-    /// shows in the sidebar.
-    fn start_dev_server(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.workspace_menu = None;
-        cx.notify();
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        let started = connection.call::<DevServer>(Request::ProjectDevStart(DevStartParams {
-            project_id,
-            cols: DevStartParams::COLS,
-            rows: DevStartParams::ROWS,
-        }));
-        cx.spawn_in(window, async move |this, cx| {
-            let started = started.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
-                match started {
-                    Ok(dev) => {
-                        // Running without a tab: still reachable from the sidebar.
-                        shell.sidebar_error = dev.tab_id.is_none().then(|| {
-                            "The dev server runs but has no tab; open it from the sidebar."
-                                .to_owned()
-                        });
-                        shell.views.insert(project_id, View::Terminals);
-                        shell.dev_reveal = dev.tab_id;
-                        shell.reveal_dev_tab(project_id, window, cx);
-                        shell.activate_workspace(project_id, window, cx);
-                    }
-                    Err(error) => {
-                        tracing::warn!(%project_id, "project.dev_start failed: {error:#}");
-                        shell.sidebar_error =
-                            Some(format!("Cannot start the dev server: {error:#}"));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Activates the tab in `dev_reveal` once `project_id`'s tabs hold it.
-    fn reveal_dev_tab(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(tab_id) = self.dev_reveal else {
-            return;
-        };
-        let Some(tabs) = self.tabs.get_mut(&project_id) else {
-            return;
-        };
-        if tabs.tabs().iter().any(|tab| tab.id == tab_id) {
-            tabs.activate(tab_id);
-            self.dev_reveal = None;
-            self.sync_panes(window, cx);
-            cx.notify();
-        }
-    }
-
-    /// `project.dev_stop`: the dev server's pane then shows it exited.
-    fn stop_dev_server(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.workspace_menu = None;
-        cx.notify();
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        let stopped = connection.call::<()>(Request::ProjectDevStop(ProjectRef { project_id }));
-        cx.spawn_in(window, async move |this, cx| {
-            let stopped = stopped.await;
-            let _ = this.update(cx, |shell, cx| {
-                match stopped {
-                    Ok(()) => shell.sidebar_error = None,
-                    Err(error) => {
-                        tracing::warn!(%project_id, "project.dev_stop failed: {error:#}");
-                        shell.sidebar_error =
-                            Some(format!("Cannot stop the dev server: {error:#}"));
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// The "Dev server" settings of `project_id`, prefilled with its command and auto-start.
-    fn open_dev_dialog(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.workspace_menu = None;
-        let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
-            return;
-        };
-        self.dev_dialog = Some(DevDialog::new(project));
-        self.dialog_serial += 1;
-        window.focus(&self.dialog_focus, cx);
-        cx.notify();
-    }
-
-    fn close_dev_dialog(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.dev_dialog = None;
-        self.focus_pane(window, cx);
-        cx.notify();
-    }
-
-    /// Typing edits the command, Tab flips auto-start, Enter saves, Esc closes.
-    fn dev_dialog_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        cx.stop_propagation();
-        let Some(key) = dev_server::key(&event.keystroke) else {
-            return;
-        };
-        let paste = (key == dev_server::Key::Paste)
-            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
-            .flatten();
-        let Some(dialog) = self.dev_dialog.as_mut() else {
-            return;
-        };
-        match key {
-            dev_server::Key::Close => return self.close_dev_dialog(window, cx),
-            dev_server::Key::Save => return self.save_dev_settings(window, cx),
-            dev_server::Key::Paste => {
-                if let Some(text) = paste {
-                    dialog.insert(&text);
-                }
-            }
-            dev_server::Key::ToggleAutostart
-            | dev_server::Key::Backspace
-            | dev_server::Key::Insert(_) => {
-                dialog.key(&key);
-            }
-        }
-        cx.notify();
-    }
-
-    /// `project.update` with the dialog's command and auto-start; on success it closes (the
-    /// sidebar picks the change up from `project.updated`).
-    fn save_dev_settings(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        let serial = self.dialog_serial;
-        let Some(params) = self.dev_dialog.as_mut().and_then(DevDialog::begin) else {
-            return;
-        };
-        let project_id = params.project_id;
-        let updated = connection.call::<Project>(Request::ProjectUpdate(params));
-        cx.notify();
-        cx.spawn_in(window, async move |this, cx| {
-            let updated = updated.await;
-            let _ = this.update_in(cx, |shell, window, cx| {
-                if shell.dialog_serial != serial || shell.dev_dialog.is_none() {
-                    return;
-                }
-                match updated {
-                    Ok(_) => shell.close_dev_dialog(window, cx),
-                    Err(error) => {
-                        tracing::warn!(%project_id, "project.update failed: {error:#}");
-                        if let Some(dialog) = shell.dev_dialog.as_mut() {
-                            dialog.failed(format!("{error:#}"));
-                        }
-                        cx.notify();
-                    }
-                }
             });
         })
         .detach();
@@ -6456,11 +6247,6 @@ impl Shell {
                 {
                     self.early_tab_events.push(event.clone());
                 }
-                if let Event::TabUpdated(tab) = event
-                    && self.dev_reveal == Some(tab.id)
-                {
-                    self.reveal_dev_tab(tab.project_id, window, cx);
-                }
                 if let Event::NotificationClicked(clicked) = event {
                     self.notification_clicked(clicked.session_id, clicked.project_id, window, cx);
                 }
@@ -6622,13 +6408,10 @@ impl Shell {
                                 .workspace_menu
                                 .as_ref()
                                 .filter(|menu| menu.project_id == row.project_id);
-                            let dev_running =
-                                dev_server::running(self.sidebar.sessions(), row.project_id)
-                                    .is_some();
                             let tokens = self
                                 .usages
                                 .workspace_total(row.project_id, self.sidebar.sessions());
-                            let row = workspace_row(row, active, dev_running, tokens, theme, cx);
+                            let row = workspace_row(row, active, tokens, theme, cx);
                             match menu {
                                 // The menu drops down from below its row.
                                 Some(menu) => div()
@@ -6804,20 +6587,6 @@ impl Shell {
                     )
                     .on_click(cx.listener(move |shell, _, _, cx| {
                         shell.open_in_zed(project_id, cx);
-                    })),
-            )
-            .child(separator())
-            .children(self.dev_server_item(project_id, theme, cx))
-            .child(
-                menu_item("dev-server-settings".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Dev server settings…"),
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.open_dev_dialog(project_id, window, cx);
                     })),
             )
             .child(separator())
@@ -7059,54 +6828,6 @@ impl Shell {
             )
             .into_any_element(),
         )
-    }
-
-    /// Whether the dev server of `project_id` runs, and its configured command.
-    fn dev_server(&self, project_id: Ulid) -> (bool, Option<&str>) {
-        let running = dev_server::running(self.sidebar.sessions(), project_id).is_some();
-        let command = self
-            .sidebar
-            .projects()
-            .iter()
-            .find(|project| project.id == project_id)
-            .and_then(|project| project.dev_command.as_deref());
-        (running, command)
-    }
-
-    /// The workspace menu's "Stop dev server" while it runs, else "Start dev server" (with
-    /// its command) when one is configured.
-    fn dev_server_item(
-        &self,
-        project_id: Ulid,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::AnyElement> {
-        let (running, command) = self.dev_server(project_id);
-        let item = if running {
-            menu_item("stop-dev-server".into(), theme)
-                .child(
-                    div()
-                        .flex_1()
-                        .text_color(rgb(theme.text))
-                        .child("Stop dev server"),
-                )
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.stop_dev_server(project_id, window, cx);
-                }))
-        } else {
-            menu_item("start-dev-server".into(), theme)
-                .tooltip(tooltip(theme, command?, ""))
-                .child(
-                    div()
-                        .flex_1()
-                        .text_color(rgb(theme.text))
-                        .child("Start dev server"),
-                )
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.start_dev_server(project_id, window, cx);
-                }))
-        };
-        Some(item.into_any_element())
     }
 
     fn render_main(
@@ -10786,138 +10507,6 @@ impl Shell {
         Self::modal_shade("git-base-shade", panel, cx)
     }
 
-    /// The "Dev server" settings: the command typed in the workspace's dev tab and whether it
-    /// starts with the daemon, then Cancel and Save (Enter).
-    fn render_dev_dialog(
-        &self,
-        dialog: &DevDialog,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let error_row = |error: String| {
-            div()
-                .flex()
-                .gap(px(space::XS))
-                .text_size(px(font_size::META))
-                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
-                .child(div().text_color(rgb(theme.text)).child(error))
-        };
-        let save_label = if dialog.busy { "Saving…" } else { "Save" };
-        let hover = theme.surface_raised;
-        let autostart = div()
-            .id("dev-autostart")
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .px(px(space::XS))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .cursor_pointer()
-            .text_size(px(font_size::BODY))
-            .text_color(rgb(theme.text))
-            .hover(move |style| style.bg(rgb(hover)))
-            .active(|style| style.opacity(opacity::ACTIVE))
-            .tooltip(tooltip(
-                theme,
-                "Start the dev server when the daemon starts",
-                "Tab",
-            ))
-            .on_click(cx.listener(|shell, _, _, cx| {
-                if let Some(dialog) = shell.dev_dialog.as_mut() {
-                    dialog.key(&dev_server::Key::ToggleAutostart);
-                }
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .size(px(space::M))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(radius::SMALL))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.border))
-                    .text_size(px(font_size::META))
-                    .text_color(rgb(theme.accent))
-                    .child(if dialog.autostart { "✓" } else { "" }),
-            )
-            .child(div().flex_1().child("Start it when the daemon starts"))
-            .child(
-                div()
-                    .text_size(px(font_size::META))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Tab"),
-            );
-        let panel = div()
-            .id("dev-dialog")
-            .w(px(theme::DIALOG_WIDTH))
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::XL))
-            .rounded(px(radius::LARGE))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .shadow_md()
-            .font_family(theme::UI_FONT)
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::dev_dialog_key_down))
-            .relative()
-            .child(self.typing(&self.dialog_focus, Self::dev_dialog_key_down, cx))
-            .child(
-                div()
-                    .text_size(px(font_size::CARD_TITLE))
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Dev server"),
-            )
-            .child(
-                div()
-                    .text_size(px(font_size::BODY))
-                    .text_color(rgb(theme.text))
-                    .child(format!(
-                        "Runs in its own “{}” tab, in the project folder. Leave the command \
-                         empty for none.",
-                        dev_server::TAB_LABEL
-                    )),
-            )
-            .child(text_field(
-                "dev-command",
-                &dialog.command,
-                "e.g. npm run dev",
-                true,
-                theme,
-            ))
-            .child(autostart)
-            .children(dialog.error.clone().map(error_row))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::S))
-                    .pt(px(space::S))
-                    .child(
-                        button("dev-cancel", "Cancel", theme, false)
-                            .tooltip(tooltip(theme, "Keep the current settings", "Esc"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.close_dev_dialog(window, cx);
-                            })),
-                    )
-                    .child(if dialog.busy {
-                        disabled_button("dev-save", save_label, theme, true)
-                    } else {
-                        button("dev-save", save_label, theme, true)
-                            .tooltip(tooltip(theme, "Save the dev server settings", "Enter"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.save_dev_settings(window, cx);
-                            }))
-                    }),
-            );
-        Self::modal_shade("dev-shade", panel, cx)
-    }
-
     /// "Broadcast to agents": a checkbox row per live agent session (with its last result),
     /// the text, then Cancel and Send (Enter).
     fn render_broadcast(
@@ -12116,8 +11705,6 @@ impl Shell {
     ) -> impl IntoElement {
         let active = tabs.active().map(|tab| tab.id);
         let hover = theme.surface_raised;
-        let dev_session = dev_server::running(self.sidebar.sessions(), project_id).map(|s| s.id);
-        let (dev_running, dev_command) = self.dev_server(project_id);
         div()
             .flex_none()
             .flex()
@@ -12184,13 +11771,7 @@ impl Shell {
                                 .child(status::icon(session.state, now)),
                         )
                     })
-                    .child(
-                        dev_server::tab_label(
-                            &tab.title,
-                            dev_session.is_some_and(|id| tab.sessions().contains(&id)),
-                        )
-                        .to_owned(),
-                    )
+                    .child(tab.title.clone())
                     .into_any_element()
             }))
             .child(
@@ -12228,24 +11809,6 @@ impl Shell {
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
             )
-            .when(dev_running, |bar| {
-                bar.child(
-                    button("stop-dev-server", "Stop dev server", theme, false)
-                        .tooltip(tooltip(theme, "Stop the workspace's dev server", ""))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.stop_dev_server(project_id, window, cx);
-                        })),
-                )
-            })
-            .when_some(dev_command.filter(|_| !dev_running), |bar, command| {
-                bar.child(
-                    button("start-dev-server", "Start dev server", theme, false)
-                        .tooltip(tooltip(theme, command, ""))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.start_dev_server(project_id, window, cx);
-                        })),
-                )
-            })
             .child(
                 button("history", "History", theme, false)
                     .tooltip(tooltip(
@@ -13864,7 +13427,6 @@ fn agent_rows(
 fn workspace_row(
     row: WorkspaceRow,
     active: bool,
-    dev_running: bool,
     tokens: Option<u64>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -13916,16 +13478,6 @@ fn workspace_row(
                 .text_color(rgb(theme.text))
                 .child(row.name),
         )
-        .when(dev_running, |el| {
-            el.child(
-                div()
-                    .id(SharedString::from(format!("workspace-dev-{project_id}")))
-                    .text_size(px(font_size::META))
-                    .text_color(rgb(theme.text_muted))
-                    .tooltip(tooltip(theme, "Dev server running", ""))
-                    .child("▶ dev"),
-            )
-        })
         .when_some(tokens, |el, tokens| {
             el.child(
                 div()
@@ -15310,11 +14862,6 @@ impl Render for Shell {
                 self.git_base
                     .as_ref()
                     .map(|dialog| self.render_git_base(dialog, &theme, cx)),
-            )
-            .children(
-                self.dev_dialog
-                    .as_ref()
-                    .map(|dialog| self.render_dev_dialog(dialog, &theme, cx)),
             )
             .children(
                 self.broadcast

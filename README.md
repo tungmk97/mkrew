@@ -122,16 +122,18 @@ first. The omp and Copilot files belong to Mkrew: install writes the whole file 
 is backed up first) and uninstall deletes it; `PI_CODING_AGENT_DIR` and `COPILOT_HOME` move them.
 The hooks call `mk hook …`, which does nothing when the agent runs outside Mkrew.
 
-### Workspaces, default agent and dev server
+### Workspaces, default agent and Run button
 
 - Add a project folder as a workspace: "Add workspace" in the sidebar (`Ctrl+Shift+K`) or
-  `mk project add <path> [--name N] [--dev "npm run dev"]`.
+  `mk project add <path> [--name N]`.
 - Default agent: in the workspace menu pick "Default agent for new panes". New agent panes and
   tasks without their own agent use it.
-- Dev server: set the command in the workspace menu → "Dev server settings…" or with
-  `mk project update <project> --dev "npm run dev"` (`--no-dev` clears it, `--dev-autostart on`
-  starts it whenever the daemon starts). It runs in its own "dev" tab; start or stop it from
-  the workspace menu, the command palette or `mk project dev <project> [--stop]`.
+- Run button (right of the view tabs): the first click opens "Run setup", where each command
+  gets a name, a folder (relative to the workspace), the command, an optional env file (e.g.
+  `.env`) and extra `KEY=VALUE` lines. After that one click runs every command, each in its own
+  pane of the "run" tab; ↻ restarts, ■ stops, ▾ controls one command. Ports the servers print
+  (`http://localhost:5180`, `port 8080`) show on the button. `mk project update <project>
+  --run-autostart on` runs them whenever the daemon starts.
 
 ## Daily use
 

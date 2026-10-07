@@ -62,7 +62,7 @@ fn readme_has_the_required_sections() {
         "mk integration uninstall claude",
         "mk integration uninstall codex",
         "Default agent for new panes",
-        "--dev",
+        "--run-autostart",
     ] {
         assert!(text.contains(needle), "missing {needle}");
     }

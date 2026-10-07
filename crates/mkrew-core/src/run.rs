@@ -1,9 +1,10 @@
 //! Run commands of a workspace (SPEC §10, ADR 0018): the env file parser, the port scanner,
 //! the line typed into a run session's shell and the layout of the `run` tab. Pure.
 
+use std::path::{Component, Path};
 use std::sync::LazyLock;
 
-use mkrew_protocol::{Session, SessionKind};
+use mkrew_protocol::{RunCommand, Session, SessionKind};
 use regex::Regex;
 use serde_json::{Value, json};
 use ulid::Ulid;
@@ -15,10 +16,89 @@ pub const SESSION_PREFIX: &str = "run:";
 /// Ports kept per run session.
 pub const MAX_PORTS: usize = 4;
 
+/// Commands per project.
+pub const MAX_COMMANDS: usize = 8;
+/// Characters in a command name.
+pub const MAX_NAME_CHARS: usize = 20;
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RunError {
     #[error("line {line}: expected KEY=VALUE")]
     EnvLine { line: usize },
+    #[error("at most {MAX_COMMANDS} run commands")]
+    TooMany,
+    #[error("run command name {0:?} must have 1–{MAX_NAME_CHARS} characters, without / or :")]
+    BadName(String),
+    #[error("two run commands are named {0:?}")]
+    DuplicateName(String),
+    #[error("{0}: the command must be one non-empty line")]
+    BadCommand(String),
+    #[error("{name}: {path:?} must be a relative path inside the project")]
+    BadPath { name: String, path: String },
+    #[error("{name}: {key:?} is not an environment variable name")]
+    BadKey { name: String, key: String },
+}
+
+/// The commands to save: fields trimmed (blank `dir` = `.`, blank `env_file` = none) and
+/// checked (SPEC §10). The name is checked before the command. Folders and files are checked
+/// when a command starts, not here.
+pub fn normalize(commands: Vec<RunCommand>) -> Result<Vec<RunCommand>, RunError> {
+    if commands.len() > MAX_COMMANDS {
+        return Err(RunError::TooMany);
+    }
+    let mut checked: Vec<RunCommand> = Vec::with_capacity(commands.len());
+    for raw in commands {
+        let name = raw.name.trim().to_owned();
+        if name.is_empty()
+            || name.chars().count() > MAX_NAME_CHARS
+            || name.contains(['/', ':'])
+            || name.chars().any(char::is_control)
+        {
+            return Err(RunError::BadName(name));
+        }
+        if checked.iter().any(|c| c.name == name) {
+            return Err(RunError::DuplicateName(name));
+        }
+        let command = raw.command.trim();
+        if command.is_empty() || command.contains(['\n', '\r']) {
+            return Err(RunError::BadCommand(name));
+        }
+        let dir = match raw.dir.trim() {
+            "" => ".".to_owned(),
+            dir => dir.to_owned(),
+        };
+        let env_file = raw
+            .env_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+            .map(str::to_owned);
+        for path in std::iter::once(&dir).chain(env_file.as_ref()) {
+            if !inside(path) {
+                let path = path.clone();
+                return Err(RunError::BadPath { name, path });
+            }
+        }
+        if let Some((key, _)) = raw.env.iter().find(|(key, _)| !valid_key(key)) {
+            let key = key.clone();
+            return Err(RunError::BadKey { name, key });
+        }
+        checked.push(RunCommand {
+            command: command.to_owned(),
+            name,
+            dir,
+            env_file,
+            env: raw.env,
+        });
+    }
+    Ok(checked)
+}
+
+/// A relative path that stays inside its base folder.
+fn inside(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 /// `KEY=VALUE` lines like a `.env` file: blank lines and `#` comments skipped, a leading BOM
@@ -267,6 +347,88 @@ mod tests {
                     {"session": b.to_string()}, {"session": c.to_string()}
                 ]}
             ]})
+        );
+    }
+
+    fn command(name: &str, dir: &str, command: &str) -> mkrew_protocol::RunCommand {
+        mkrew_protocol::RunCommand {
+            name: name.into(),
+            dir: dir.into(),
+            command: command.into(),
+            env_file: None,
+            env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn run_commands_are_trimmed_and_checked() {
+        let raw = mkrew_protocol::RunCommand {
+            env_file: Some("  ".into()),
+            env: vars(&[("PORT", "1")]),
+            ..command(" BE ", " ", " npm run dev ")
+        };
+        assert_eq!(
+            normalize(vec![raw]).unwrap(),
+            [mkrew_protocol::RunCommand {
+                env: vars(&[("PORT", "1")]),
+                ..command("BE", ".", "npm run dev")
+            }]
+        );
+        let file = mkrew_protocol::RunCommand {
+            env_file: Some(" .env ".into()),
+            ..command("FE", "EA-FE", "x")
+        };
+        assert_eq!(
+            normalize(vec![file]).unwrap()[0].env_file.as_deref(),
+            Some(".env")
+        );
+        assert_eq!(normalize(Vec::new()), Ok(Vec::new()));
+
+        let too_many = (0..=MAX_COMMANDS)
+            .map(|i| command(&i.to_string(), ".", "x"))
+            .collect();
+        assert_eq!(normalize(too_many), Err(RunError::TooMany));
+        for name in ["", "a/b", "a:b", "123456789012345678901"] {
+            assert_eq!(
+                normalize(vec![command(name, ".", "x")]),
+                Err(RunError::BadName(name.into())),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            normalize(vec![command("A", ".", "x"), command("A", ".", "y")]),
+            Err(RunError::DuplicateName("A".into()))
+        );
+        for bad in ["", "a\nb"] {
+            assert_eq!(
+                normalize(vec![command("A", ".", bad)]),
+                Err(RunError::BadCommand("A".into()))
+            );
+        }
+        let windows_only = cfg!(windows).then_some([r"\root", "C:/x", "C:x"]);
+        for path in ["..", "a/../b", "/abs"]
+            .into_iter()
+            .chain(windows_only.into_iter().flatten())
+        {
+            assert_eq!(
+                normalize(vec![command("A", path, "x")]),
+                Err(RunError::BadPath {
+                    name: "A".into(),
+                    path: path.into()
+                }),
+                "{path}"
+            );
+        }
+        let key = mkrew_protocol::RunCommand {
+            env: vars(&[("1X", "v")]),
+            ..command("A", ".", "x")
+        };
+        assert_eq!(
+            normalize(vec![key]),
+            Err(RunError::BadKey {
+                name: "A".into(),
+                key: "1X".into()
+            })
         );
     }
 }

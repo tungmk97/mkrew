@@ -411,60 +411,105 @@ fn project_update_sets_and_clears_fields() {
     assert!(matches!(missing, Err(StoreError::ProjectNotFound(_))));
 }
 
+fn run(name: &str) -> RunCommand {
+    RunCommand {
+        name: name.into(),
+        dir: "api".into(),
+        command: "uv run main.py".into(),
+        env_file: Some(".env".into()),
+        env: vec![("ENVIRONMENT".into(), "dev".into())],
+    }
+}
+
 #[test]
-fn project_dev_server_settings_are_set_trimmed_and_cleared() {
+fn run_commands_are_saved_in_order_and_replaced_as_a_whole() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
-    let p = store
-        .add_project_with_dev(dir.path(), None, Some("  npm run dev "))
-        .unwrap();
-    assert_eq!(p.dev_command.as_deref(), Some("npm run dev"));
-    assert!(!p.dev_autostart);
-    assert_eq!(open(&dir).get_project(p.id).unwrap(), p);
+    let p = store.add_project(dir.path(), None).unwrap();
+    assert!(p.run_commands.is_empty() && !p.run_autostart);
 
-    let on = store
+    let two = [run("BE"), run("FE")];
+    let saved = store
         .update_project(
             p.id,
             ProjectChanges {
-                dev_command: Some(Some("cargo run")),
-                dev_autostart: Some(true),
+                run_commands: Some(&two),
+                run_autostart: Some(true),
                 ..ProjectChanges::default()
             },
         )
         .unwrap();
-    assert_eq!(on.dev_command.as_deref(), Some("cargo run"));
-    assert!(on.dev_autostart);
-    assert_eq!(open(&dir).get_project(p.id).unwrap(), on);
+    assert_eq!(saved.run_commands, two);
+    assert!(saved.run_autostart);
+    assert_eq!(open(&dir).get_project(p.id).unwrap(), saved);
+    assert_eq!(
+        open(&dir).list_projects().unwrap(),
+        std::slice::from_ref(&saved)
+    );
 
-    // A blank command clears like `null`; auto-start is kept.
-    let blank = store
+    // Leaving the list out keeps it; a new list replaces it.
+    let renamed = store
         .update_project(
             p.id,
             ProjectChanges {
-                dev_command: Some(Some("  ")),
+                name: Some("x"),
                 ..ProjectChanges::default()
             },
         )
         .unwrap();
-    assert_eq!(blank.dev_command, None);
-    assert!(blank.dev_autostart);
-    let cleared = store
+    assert_eq!(renamed.run_commands, two);
+    let one = [run("FE")];
+    let replaced = store
         .update_project(
             p.id,
             ProjectChanges {
-                dev_command: Some(None),
-                dev_autostart: Some(false),
+                run_commands: Some(&one),
                 ..ProjectChanges::default()
             },
         )
         .unwrap();
-    assert_eq!(cleared.dev_command, None);
-    assert!(!cleared.dev_autostart);
+    assert_eq!(open(&dir).get_project(p.id).unwrap().run_commands, one);
+    assert!(replaced.run_autostart);
+}
 
-    let other = dir.path().join("other");
-    std::fs::create_dir(&other).unwrap();
-    let none = store.add_project_with_dev(&other, None, Some("")).unwrap();
-    assert_eq!(none.dev_command, None);
+#[test]
+fn the_dev_command_becomes_a_run_command_named_dev() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mkrew.db");
+    let (with, without) = (Ulid::new(), Ulid::new());
+    {
+        let conn = Connection::open(&path).unwrap();
+        for sql in &MIGRATIONS[..10] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 10).unwrap();
+        conn.execute(
+            "INSERT INTO project (id, name, path, dev_command, created_at, dev_autostart)
+             VALUES (?1, 'a', '/a', 'npm run dev', 0, 1)",
+            [with.to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO project (id, name, path, created_at) VALUES (?1, 'b', '/b', 1)",
+            [without.to_string()],
+        )
+        .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    let a = store.get_project(with).unwrap();
+    assert_eq!(
+        a.run_commands,
+        [RunCommand {
+            name: "dev".into(),
+            dir: ".".into(),
+            command: "npm run dev".into(),
+            env_file: None,
+            env: Vec::new(),
+        }]
+    );
+    assert!(a.run_autostart);
+    let b = store.get_project(without).unwrap();
+    assert!(b.run_commands.is_empty() && !b.run_autostart);
 }
 
 #[test]
