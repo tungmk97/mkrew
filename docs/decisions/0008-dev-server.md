@@ -1,7 +1,7 @@
 # 0008 — The dev server is a shell session titled "dev" with the command typed in
 
 - Date: 2026-10-06
-- Status: accepted
+- Status: superseded by 0018
 - Milestone: M8
 
 ## Context

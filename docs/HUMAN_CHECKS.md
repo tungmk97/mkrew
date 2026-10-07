@@ -15,6 +15,22 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### 2026-10-07 Run button (plan docs/superpowers/plans/2026-10-07-run-button.md)
+
+- [ ] EA: Run setup with BE (folder `EA-BE`, command `.venv\Scripts\python.exe main.py`, env file
+  `.env`, env `ENVIRONMENT=dev` and `PYTHONPATH=.`) and FE (folder `EA-FE`, `npm run dev`).
+  ▶ Run opens the "run" tab with two panes; the button shows `● Running 2/2 · :8080 :5180`.
+  `[INFERENCE]` uvicorn prints its URL through EA's console log handler; if `:8080` is missing,
+  note it.
+- [ ] ↻ on BE in the ▾ menu restarts only BE (the FE pane keeps its output); the view stays.
+- [ ] Ctrl+C in BE's pane: the button turns `✕ Running 1/2` in the warning color; ▶ on BE in the
+  menu starts it again.
+- [ ] ■ stops both; the button returns to `▶ Run`; the sidebar ▶ disappears.
+- [ ] A command in a missing folder: ▶ Run shows "Cannot run: …" in the sidebar notice; nothing starts.
+- [ ] Known gaps: the ▾ menu is mouse-only (the palette has Run: Start/Restart/Stop all, Setup…,
+  Show Run tab); the default shell on Windows is cmd, so a `.ps1` script needs
+  `pwsh -File .\run.ps1` as its command.
+
 - [ ] **2026-10-07 resume omp/Copilot/free panes** (plan `docs/superpowers/plans/2026-10-07-resume-omp-copilot-panes.md`).
   1. Add `resume = "omp --resume {session_id}"` to `%APPDATA%\mkrew\agents\omp.toml` and set
      `mode = "hook+screen"`. Run `mk integration install omp` and `mk integration install copilot`.

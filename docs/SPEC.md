@@ -294,6 +294,22 @@ ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|d
 
 -- migrations/0007_dev_server.sql (M8)
 ALTER TABLE project ADD COLUMN dev_autostart INTEGER NOT NULL DEFAULT 0; -- start dev_command after daemon start
+
+-- migrations/0011_run_commands.sql (Run button, ADR 0018)
+CREATE TABLE run_command (
+  project_id TEXT NOT NULL REFERENCES project(id),
+  position   INTEGER NOT NULL,           -- order in the menu and in the run tab
+  name       TEXT NOT NULL,              -- unique per project, e.g. "BE"
+  dir        TEXT NOT NULL DEFAULT '.',  -- relative to the project folder
+  command    TEXT NOT NULL,              -- typed into the shell, e.g. "npm run dev"
+  env_file   TEXT,                       -- relative to dir, e.g. ".env"
+  env        TEXT NOT NULL DEFAULT '[]', -- JSON [[key, value], …], applied after env_file
+  PRIMARY KEY (project_id, name)
+);
+INSERT INTO run_command (project_id, position, name, command)
+  SELECT id, 0, 'dev', dev_command FROM project WHERE dev_command IS NOT NULL;
+ALTER TABLE project DROP COLUMN dev_command;
+ALTER TABLE project RENAME COLUMN dev_autostart TO run_autostart;
 ```
 
 v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interrupted.sql` adds
@@ -468,9 +484,11 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Method | Main params | Returns |
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
-| `project.list/add/update/archive` | `path`, `name`, `dev_command`, `dev_autostart` (update only), `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `dev_command` is trimmed, blank = cleared; `default_agent` must be an agent profile) |
-| `project.dev_start` | `project_id`, `cols`/`rows` (default 120×30) | `session_id`, `tab_id?`, `started` — the dev server (ADR 0008) = the project's live shell session titled `dev`: the running one (`started: false`), else `dev_command` typed into a new `shell`-profile session shown alone in the project's `dev` tab (reused when empty or holding one exited pane, else created); `invalid_state` without a dev command |
-| `project.dev_stop` | `project_id` | ok — asks the dev server to terminate; ok when none runs |
+| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart` (update only), `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile) |
+| `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>`: without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file, then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
+| `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start` |
+| `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs |
+| `session.ports` | `project_id` | `[{session_id, ports}]` of the project's live sessions with ports (kept in daemon memory only) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
 | `task.run` | `task_id`, `cols`, `rows` | `session_id` |
 | `task.undo_preview` | `task_id` | `checkpoint`, `fingerprint` (opaque), `changed[]` (tracked files restored), `added[]` (tracked since the checkpoint, deleted), `created[]` (untracked files created since, deleted), `diff` (≤ 1 MiB) + `diff_truncated`; `invalid_state` without a checkpoint (ADR 0005) |
@@ -516,6 +534,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.snapshot` | only to an attached client whose output queue overflowed: fresh screen snapshot replacing the dropped output (backpressure, below) |
 | `session.state` | session state changed (`state`, `source` = hook/screen/daemon, `changed_at`) |
 | `session.exited` | process exited, with `exit_code` |
+| `session.ports` | a run session's port list grew (`session_id`, `ports`): ports are scanned from its screen text (`http(s)://<host>:<port>`, `port(s)[:=] <n>`), first 4 distinct, never removed while it lives |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
 | `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
 | `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |
@@ -579,8 +598,8 @@ v2 adds requests and events in §20; each milestone that changes the protocol bu
   crash/reboot) that has no task, is an agent, and is still a leaf of a tab layout: spawn the
   resume command in the same pane. One that cannot resume stays exited. The mark is cleared at
   startup, so each session is resumed at most once.
-- **Dev servers:** after resume, `project.dev_start` for every non-archived project with
-  `dev_autostart` and a `dev_command` (ADR 0008).
+- **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
+  `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
   session per 30 s. Clicking it emits `notification.clicked`.
 - **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB.
@@ -595,10 +614,12 @@ v2 adds requests and events in §20; each milestone that changes the protocol bu
 
 ```
 mk daemon start | stop | status
-mk project add <path> [--name N] [--dev "npm run dev"]
+mk project add <path> [--name N]
 mk project list
-mk project update <project> [--base develop | --auto-base] [--dev "..." | --no-dev] [--dev-autostart on|off]
-mk project dev <project> [--stop]      # starts the dev server in its "dev" tab (prints its session id)
+mk project update <project> [--base develop | --auto-base] [--run-autostart on|off]
+mk project run <project> [name]      # runs the run commands in the "run" tab (prints `<name> <session id>`)
+mk project restart <project> [name]  # stops, then runs them again
+mk project stop <project> [name]     # stops them
 mk task add <project> "<title>" [--prompt "..."] [--agent claude]
 mk task list [--project P] [--status S]
 mk task run <task-id>
@@ -660,6 +681,20 @@ One window, three regions:
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
 - **Open in Zed:** on task cards, workspace menu and Docs; runs `zed <path>[:line]`; clear error
   with install hint if `zed` is missing.
+- **Run button** (ADR 0018) at the right end of the view bar, in every view: `[▶ Run │▾]` with
+  no command or all stopped (▶ with no command opens Run setup, and saving there runs);
+  `[● Running 2/2 · :8080 :5180 │↻│■│▾]` while running; `[✕ Running 1/2 · …]` in the warning
+  color when some exited. Ports: every distinct port of the live run sessions, config order, up
+  to 4 then `+N`; tooltip `name — :port …` per command. Menu ▾ (mouse-driven): one row per
+  command (name, state, ports, ↻ ■ or ▶), then `Show Run tab`, `Run setup…`. Run from
+  all-stopped switches to Terminals and the `run` tab; Restart and per-command Run keep the
+  view. A run pane's header is `<name> · :8080`; the sidebar workspace row shows `▶` while any
+  run session lives (tooltip = ports). Ports load with `session.ports` per workspace on refresh
+  and stay live through the `session.ports` event. **Run setup dialog:** command cards (Name,
+  Folder, Command, Env file, Env as multi-line `KEY=VALUE`), `+ Add command`, `Remove`, a
+  `Start with the daemon` checkbox; Ctrl+Enter (or Enter outside Env) saves; errors show in
+  the dialog. Palette: `Run: Start all`, `Run: Restart all`, `Run: Stop all`, `Run: Setup…`,
+  `Run: Show Run tab`.
 - **Empty states** everywhere (see §14).
 
 ---
