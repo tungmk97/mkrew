@@ -10,9 +10,29 @@ Task markers: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (se
 
 ## Current milestone: M13 — Isolation & usage (SPEC §18, §20E)
 
-### Task queue
+### Acceptance criteria
+- [ ] Worktree task: Run creates the worktree and `mkrew/…` branch from HEAD, copies
+      `.worktreeinclude` entries, runs the agent inside; the main folder's branch, HEAD, index and
+      files are unchanged (real-git test). Resume after a daemon restart uses the worktree.
+- [ ] Git and Files views work on a task worktree; Merge only when both sides are clean and aborts
+      cleanly on conflict; Remove keeps an unmerged branch (real-git tests).
+- [ ] Fan-out runs 2–5 agents in their own worktrees; Compare and Pick work; e2e with fake profiles.
+- [ ] Usage: fixture transcripts in the current Claude and Codex formats give the expected
+      input/output/context tokens, read incrementally; shown on pane header, card and sidebar.
+- [ ] M9–M11 and M13 manual checks listed in HUMAN_CHECKS.
 
-_(empty — the next session plans M13 with `mkrew-plan-milestone`)_
+### Task queue
+- [ ] T13.1 Migration `0009_worktrees.sql` + store (task `worktree`, `worktree_path`, `branch`, `fanout_of`; list children by `fanout_of`); protocol Task fields, `task.create/update` accept `worktree: bool`, PROTOCOL_VERSION 22, CLI/UI clients adapt; task dialog "Run in a worktree" checkbox (default off); store + protocol tests; covers: worktree task (data). (spec: §20E.1, §20E protocol, §5, §7)
+- [ ] T13.2 Daemon git worktree primitives (ADR 0010 update for the new git writes): `worktree add -b mkrew/<slug>-<short ulid> <data>/mkrew/worktrees/<project_id>/<task_id> HEAD` (pure slug fn, unit-tested), `.worktreeinclude` parser + copy (literal paths, `#` comments, must exist and be ignored, else warning list); real-git tests asserting main HEAD, branch, index and files unchanged; covers: worktree task (git). (spec: §20E.1, §20F, ADR 0010)
+- [ ] T13.3 Run/resume wiring: on Run of a `worktree` task in a git repo create the worktree (once), persist path+branch, spawn with `cwd` = worktree, `.worktreeinclude` warnings in the session's first output line, checkpoint = worktree HEAD; resume after daemon restart uses the same folder; delete refused while a worktree exists; e2e with the fake agent; covers: Run in worktree, resume. (spec: §20E.1, §8, §9)
+- [ ] T13.4 `fs.*` and `git.*` accept `worktree_task_id?` (daemon resolves project + task to a folder; watcher covers the worktree); Files and Git views get the "Project | <task worktree>…" target chooser; card shows `⎇ mkrew/<branch>`; tests; covers: Git and Files views on a worktree. (spec: §20E.1, §12A, §12B, §14)
+- [ ] T13.5 `task.merge` (`confirm`; both sides clean, not detached HEAD, `git merge --no-ff --no-edit`, on conflict `merge --abort` + conflicting files) and `task.remove_worktree` (`confirm`; `worktree remove` refused with uncommitted changes, `branch -d` never `-D`, `branch_kept`); real-git tests (clean merge, conflict abort leaves main untouched, dirty refused, unmerged branch kept); covers: Merge, Remove. (spec: §20E.1, §20E protocol, §20F, ADR 0010)
+- [ ] T13.6 UI card menu "Merge back…" (confirmation with commit list, conflict result) and "Remove worktree…" (shows uncommitted files, separate confirmed discard step, kept-branch result) on Review/Done cards; snapshot tests; covers: Merge/Remove UI. (spec: §20E.1, §13, §14)
+- [ ] T13.7 `task.fanout` (2–5 profiles → child tasks `fanout_of`, title ` · <agent>`, worktree on, all run; original → Running); e2e with 2 fake profiles; covers: fan-out (daemon). (spec: §20E.2, §20E protocol, §20F)
+- [ ] T13.8 UI fan-out: "Run with several agents…" picker (2–5), group card with children's states, "Compare" view (per child: files changed, +/−, run time, open Git view) when all in Review, "Pick" = merge that child + offer removing the others, original → Review; pure tests + snapshot; covers: Compare and Pick. (spec: §20E.2, §13, §14)
+- [ ] T13.9 Usage parsing: profile `[usage]` (`format`, `context_window`) in core; pure incremental readers for `claude_jsonl` and `codex_jsonl` (byte offset, partial last line kept) summing input/output and newest context; fixtures recorded from CURRENT real formats (researcher checks field names); unknown format → none + one warning; covers: usage fixtures, incremental. (spec: §20E.3, §20.0, §6)
+- [ ] T13.10 Daemon usage wiring: locate transcript by `native_session_id` (`CLAUDE_CONFIG_DIR`/`~/.claude/projects/*/<id>.jsonl`, `CODEX_HOME`/`~/.codex/sessions/**/*<id>*.jsonl`, env-overridable in tests), read appended bytes at each turn end, event `session.usage`; UI pane header `ctx 62%` (warning ≥ 80 %), card and sidebar workspace totals; tests; covers: usage shown. (spec: §20E.3, §8, §11, §14)
+- [ ] T13.11 Add M13 manual checks to HUMAN_CHECKS (worktree run with a real agent, merge/remove, fan-out compare/pick, usage with real Claude/Codex, §14 design check) and confirm M9–M11 ones are listed, then milestone wrap-up (`status: DONE`). (spec: §18 M13)
 
 ### Done (last 10)
 
