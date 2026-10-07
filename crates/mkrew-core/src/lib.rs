@@ -12,6 +12,7 @@ pub mod paths;
 pub mod profile;
 pub mod prompt;
 pub mod review;
+pub mod run;
 pub mod settings;
 pub mod state;
 pub mod task;
