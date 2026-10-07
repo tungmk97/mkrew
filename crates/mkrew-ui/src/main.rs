@@ -7304,9 +7304,10 @@ impl Shell {
                 .child(
                     button("run-menu", "▾", theme, false)
                         .tooltip(tooltip(theme, "Run commands", ""))
+                        // An open menu already closed on this mouse down (outside it): the
+                        // click reopens it.
                         .on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.run_menu =
-                                (shell.run_menu != Some(project_id)).then_some(project_id);
+                            shell.run_menu = Some(project_id);
                             cx.notify();
                         })),
                 )
@@ -7385,6 +7386,8 @@ impl Shell {
                         .hover(move |style| style.bg(rgb(hover)))
                         .tooltip(tooltip(theme, tip, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
+                            // Not a click on what lies under the menu (a card, a pane).
+                            cx.stop_propagation();
                             shell.run_action(project_id, action, Some(name.clone()), window, cx);
                         }))
                         .child(label),
@@ -7404,6 +7407,7 @@ impl Shell {
             .bg(rgb(theme.surface_raised))
             .shadow_md()
             .font_family(theme::UI_FONT)
+            .occlude()
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.run_menu = None;
                 cx.notify();
@@ -7418,6 +7422,7 @@ impl Shell {
                             .child("Show Run tab"),
                     )
                     .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
                         shell.show_run_tab(project_id, window, cx);
                     })),
             )
@@ -7430,6 +7435,7 @@ impl Shell {
                             .child("Run setup…"),
                     )
                     .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
                         shell.open_run_setup(project_id, false, window, cx);
                     })),
             );
