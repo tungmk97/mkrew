@@ -7,6 +7,7 @@ use mkrew_protocol::{Event, Session, SessionState, Task, TaskMoveParams, TaskSta
 use ulid::Ulid;
 
 use crate::status;
+use crate::worktree_target;
 
 /// The value carried while a card is dragged (SPEC §10).
 #[derive(Debug, Clone)]
@@ -98,6 +99,8 @@ pub struct Card {
     pub error_flag: bool,
     /// A run stored the project's git HEAD (`task.checkpoint`), so it can be undone.
     pub checkpoint: bool,
+    /// `⎇ mkrew/<branch>` once the task's worktree exists (SPEC §20E.1).
+    pub branch: Option<String>,
     /// The task's newest session, if it ever ran.
     pub session: Option<Session>,
 }
@@ -291,6 +294,7 @@ impl Board {
                             .to_owned(),
                         error_flag: task.error_flag,
                         checkpoint: task.checkpoint.is_some(),
+                        branch: worktree_target::branch_line(task),
                         session: newest_session(sessions, task.id).cloned(),
                     })
                     .collect(),

@@ -64,6 +64,8 @@ pub struct Requests {
 #[derive(Debug)]
 pub struct FilesView {
     pub project_id: Ulid,
+    /// The task worktree shown instead of the project folder (SPEC §20E.1).
+    pub worktree_task_id: Option<Ulid>,
     pub show_ignored: bool,
     /// Listings by folder path (`""` = the root).
     dirs: HashMap<String, Listing>,
@@ -91,9 +93,10 @@ pub struct FilesView {
 }
 
 impl FilesView {
-    pub fn new(project_id: Ulid) -> FilesView {
+    pub fn new(project_id: Ulid, worktree_task_id: Option<Ulid>) -> FilesView {
         FilesView {
             project_id,
+            worktree_task_id,
             show_ignored: false,
             dirs: HashMap::new(),
             expanded: HashSet::new(),
@@ -394,9 +397,9 @@ impl FilesView {
         let Event::GitChanged(changed) = event else {
             return Requests::default();
         };
-        // A task worktree's changes (SPEC §20E.1) are not this project folder's.
+        // A task worktree's changes (SPEC §20E.1) are only that worktree's.
         if changed.project_id != self.project_id
-            || changed.worktree_task_id.is_some()
+            || changed.worktree_task_id != self.worktree_task_id
             || !self.started()
         {
             return Requests::default();
@@ -497,7 +500,7 @@ mod tests {
 
     /// A view with `src/` (holding `src/main.rs`) and `README.md` listed.
     fn listed() -> FilesView {
-        let mut view = FilesView::new(Ulid::new());
+        let mut view = FilesView::new(Ulid::new(), None);
         assert!(view.begin_list(""));
         view.listed("", Ok(vec![dir("src"), file("README.md", None)]));
         view
@@ -563,7 +566,7 @@ mod tests {
 
     #[test]
     fn a_listing_asked_for_while_one_is_in_flight_runs_after_it() {
-        let mut view = FilesView::new(Ulid::new());
+        let mut view = FilesView::new(Ulid::new(), None);
         assert!(view.begin_list(""));
         assert!(!view.begin_list(""));
         assert_eq!(view.listed("", Ok(vec![])), [""]);
@@ -675,6 +678,19 @@ mod tests {
         let requests = view.apply(&changed(view.project_id));
         assert_eq!(requests.list, ["", "src"]);
         assert_eq!(requests.read.as_deref(), Some("README.md"));
+        // A view of that worktree follows its changes, not the project folder's.
+        let mut worktree = FilesView::new(view.project_id, Some(Ulid::new()));
+        worktree.begin_list("");
+        assert_eq!(worktree.apply(&in_worktree), Requests::default());
+        assert_eq!(
+            worktree.apply(&changed(view.project_id)),
+            Requests::default()
+        );
+        let Event::GitChanged(mut own) = in_worktree else {
+            unreachable!()
+        };
+        own.worktree_task_id = worktree.worktree_task_id;
+        assert_eq!(worktree.apply(&Event::GitChanged(own)).list, [""]);
         // The closed `src/a` lost its listing: opening it lists it again.
         assert_eq!(view.click("src/a").list, ["src/a"]);
         // Old rows stay on screen while the re-lists run.
@@ -710,7 +726,7 @@ mod tests {
 
     #[test]
     fn refreshing_a_view_never_shown_lists_the_root() {
-        let mut view = FilesView::new(Ulid::new());
+        let mut view = FilesView::new(Ulid::new(), None);
         assert_eq!(
             view.refresh(),
             Requests {
@@ -734,7 +750,7 @@ mod tests {
 
     #[test]
     fn git_changed_before_the_view_was_shown_does_nothing() {
-        let mut view = FilesView::new(Ulid::new());
+        let mut view = FilesView::new(Ulid::new(), None);
         let changed = Event::GitChanged(GitChangedEvent {
             project_id: view.project_id,
             worktree_task_id: None,

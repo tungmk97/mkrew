@@ -657,6 +657,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T13.4b) **Worktree target chooser:** "Showing Project | <task title>…" chips (hidden while no
+  task of the workspace has a worktree), under the Files tree header and at the top of the Git
+  header; switching starts that view over on the target (the Git commit draft is kept).
+  "Changes" on a worktree card and "Diff since" on a worktree task's turn switch the Git view to
+  that worktree. On a worktree: "Review in Docs" is hidden (Docs are project-only), "Changed by"
+  and diff comments stay project-scoped, quick open still finds project files. Chips are
+  mouse-only like "Changed by" (no palette command / focus ring yet). Check that `⎇` renders
+  (font fallback) on Windows in both themes.
+
 - (T11.6) **"Turns…" in the pane header:** panes have no header menu yet, so §20C.2's "pane
   header menu Turns…" is a quiet "Turns…" button on every agent pane header (always shown, not
   hover-only) plus the palette command "Agent: Turns…". The dialog lists turns newest first

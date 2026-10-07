@@ -60,12 +60,12 @@ pub struct Target {
 }
 
 impl Target {
-    /// The `git.diff` showing this file.
-    pub fn params(&self, project_id: Ulid) -> GitDiffParams {
+    /// The `git.diff` showing this file (of a task worktree, if `worktree_task_id`).
+    pub fn params(&self, project_id: Ulid, worktree_task_id: Option<Ulid>) -> GitDiffParams {
         let commit = |group| self.commit.clone().filter(|_| self.group == group);
         GitDiffParams {
             project_id,
-            worktree_task_id: None,
+            worktree_task_id,
             path: self.path.clone(),
             mode: if matches!(self.group, Group::Base | Group::Since) {
                 GitMode::Base
@@ -348,6 +348,7 @@ impl StageRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discard {
     pub project_id: Ulid,
+    pub worktree_task_id: Option<Ulid>,
     pub target: Target,
     /// The same path also has staged changes (they stay).
     pub also_staged: bool,
@@ -378,7 +379,7 @@ impl Discard {
     pub fn params(&self) -> GitDiscardParams {
         GitDiscardParams {
             project_id: self.project_id,
-            worktree_task_id: None,
+            worktree_task_id: self.worktree_task_id,
             paths: vec![self.target.path.clone()],
             confirm: true,
         }
@@ -424,6 +425,8 @@ pub struct Changer {
 #[derive(Debug)]
 pub struct GitView {
     pub project_id: Ulid,
+    /// The task worktree shown instead of the project folder (SPEC §20E.1).
+    pub worktree_task_id: Option<Ulid>,
     pub mode: GitMode,
     pub status: Status,
     pub selected: Option<Target>,
@@ -469,9 +472,10 @@ pub struct GitView {
 }
 
 impl GitView {
-    pub fn new(project_id: Ulid) -> GitView {
+    pub fn new(project_id: Ulid, worktree_task_id: Option<Ulid>) -> GitView {
         GitView {
             project_id,
+            worktree_task_id,
             mode: GitMode::Working,
             status: Status::Loading,
             selected: None,
@@ -510,7 +514,7 @@ impl GitView {
         self.loading = Some(listed.clone());
         Some(GitStatusParams {
             project_id: self.project_id,
-            worktree_task_id: None,
+            worktree_task_id: self.worktree_task_id,
             mode: listed.0,
             since: listed.1,
         })
@@ -909,7 +913,7 @@ impl GitView {
         self.logging = true;
         Some(GitLogParams {
             project_id: self.project_id,
-            worktree_task_id: None,
+            worktree_task_id: self.worktree_task_id,
             limit: GitLogParams::DEFAULT_LIMIT,
             path: None,
         })
@@ -955,7 +959,7 @@ impl GitView {
     pub fn show_params(&self, hash: String) -> GitShowParams {
         GitShowParams {
             project_id: self.project_id,
-            worktree_task_id: None,
+            worktree_task_id: self.worktree_task_id,
             commit: hash,
         }
     }
@@ -1105,9 +1109,9 @@ impl GitView {
         let Event::GitChanged(changed) = event else {
             return Requests::default();
         };
-        // A task worktree's changes (SPEC §20E.1) are not this project folder's.
+        // A task worktree's changes (SPEC §20E.1) are only that worktree's.
         if changed.project_id != self.project_id
-            || changed.worktree_task_id.is_some()
+            || changed.worktree_task_id != self.worktree_task_id
             || !self.started
         {
             return Requests::default();
@@ -1150,7 +1154,7 @@ impl GitView {
             stage,
             params: GitStageParams {
                 project_id: self.project_id,
-                worktree_task_id: None,
+                worktree_task_id: self.worktree_task_id,
                 paths: [Some(file.path), file.old_path]
                     .into_iter()
                     .flatten()
@@ -1176,7 +1180,7 @@ impl GitView {
             stage,
             params: GitStageParams {
                 project_id: self.project_id,
-                worktree_task_id: None,
+                worktree_task_id: self.worktree_task_id,
                 paths: vec![],
                 hunk: Some(HunkTarget {
                     path: selected.path.clone(),
@@ -1233,6 +1237,7 @@ impl GitView {
         });
         Some(Discard {
             project_id: self.project_id,
+            worktree_task_id: self.worktree_task_id,
             target: target.clone(),
             also_staged: also_staged.is_some(),
             busy: false,
@@ -1453,7 +1458,7 @@ mod tests {
 
     /// A Working view with [`working`] loaded and its first file selected.
     fn loaded() -> GitView {
-        let mut view = GitView::new(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), None);
         assert!(view.begin_status().is_some());
         let requests = view.status_loaded(Ok(working()));
         assert_eq!(requests.diff, Some(target(Group::Staged, "a.rs")));
@@ -1490,17 +1495,20 @@ mod tests {
     #[test]
     fn diff_params_follow_the_group() {
         let project = Ulid::new();
-        let staged = target(Group::Staged, "a").params(project);
+        let staged = target(Group::Staged, "a").params(project, None);
         assert!(staged.staged);
         assert_eq!(staged.mode, GitMode::Working);
-        assert!(!target(Group::Untracked, "a").params(project).staged);
-        assert_eq!(target(Group::Base, "a").params(project).mode, GitMode::Base);
-        assert_eq!(target(Group::Base, "a").params(project).since, None);
+        assert!(!target(Group::Untracked, "a").params(project, None).staged);
+        assert_eq!(
+            target(Group::Base, "a").params(project, None).mode,
+            GitMode::Base
+        );
+        assert_eq!(target(Group::Base, "a").params(project, None).since, None);
     }
 
     #[test]
     fn a_status_asked_while_one_is_in_flight_runs_after_it() {
-        let mut view = GitView::new(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), None);
         assert!(view.begin_status().is_some());
         assert!(view.begin_status().is_none());
         assert!(view.status_loaded(Ok(GitStatus::default())).status);
@@ -1635,7 +1643,7 @@ mod tests {
             commit: Some("abc".into()),
         };
         assert_eq!(requests.diff, Some(shown.clone()));
-        let diff = shown.params(view.project_id);
+        let diff = shown.params(view.project_id, None);
         assert_eq!(diff.mode, GitMode::Base);
         assert_eq!((diff.commit, diff.since.as_deref()), (None, Some("abc")));
         assert_eq!(Stage::of(Group::Since), None);
@@ -1658,7 +1666,7 @@ mod tests {
 
     #[test]
     fn answers_for_another_task_or_against_base_are_dropped() {
-        let mut view = GitView::new(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), None);
         view.show(Section::Base);
         view.begin_status();
         // Against base was in flight: dropped, the task's status asked again.
@@ -1680,7 +1688,7 @@ mod tests {
 
     #[test]
     fn the_commit_box_shows_with_working_changes_or_a_draft() {
-        let mut view = GitView::new(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), None);
         assert!(!view.commit_box_shown(), "still loading");
         let mut view_loaded = loaded();
         assert!(view_loaded.commit_box_shown());
@@ -1758,7 +1766,7 @@ mod tests {
 
     #[test]
     fn git_changed_refreshes_the_status_and_the_shown_diff() {
-        let mut view = GitView::new(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), None);
         let changed = |project_id| {
             Event::GitChanged(GitChangedEvent {
                 project_id,
@@ -1786,6 +1794,32 @@ mod tests {
                 ..Requests::default()
             }
         );
+    }
+
+    #[test]
+    fn a_worktree_view_asks_its_worktree_and_follows_only_its_changes() {
+        let task_id = Some(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), task_id);
+        assert_eq!(view.begin_status().unwrap().worktree_task_id, task_id);
+        view.status_loaded(Ok(working()));
+        let project_id = view.project_id;
+        let changed = |worktree_task_id| {
+            Event::GitChanged(GitChangedEvent {
+                project_id,
+                worktree_task_id,
+            })
+        };
+        assert_eq!(view.apply(&changed(None)), Requests::default());
+        assert_eq!(view.apply(&changed(Some(Ulid::new()))), Requests::default());
+        assert!(view.apply(&changed(task_id)).status);
+        let staged = target(Group::Staged, "a.rs");
+        let untracked = target(Group::Untracked, "new.txt");
+        assert_eq!(staged.params(project_id, task_id).worktree_task_id, task_id);
+        let change = view.file_change(&staged).unwrap();
+        assert_eq!(change.params.worktree_task_id, task_id);
+        let discard = view.discard(&untracked).unwrap();
+        assert_eq!(discard.params().worktree_task_id, task_id);
+        assert_eq!(view.show_params("abc".into()).worktree_task_id, task_id);
     }
 
     #[test]
@@ -1864,7 +1898,7 @@ mod tests {
         assert_eq!(view.file_change(&target(Group::Base, "a.rs")), None);
 
         // A staged rename unstages both paths.
-        let mut view = GitView::new(Ulid::new());
+        let mut view = GitView::new(Ulid::new(), None);
         view.begin_status();
         let mut status = working();
         status.staged = vec![ChangedFile {
@@ -2028,7 +2062,7 @@ mod tests {
         assert_eq!(history_labels(&view), ["b true", "  x", "  y", "a false"]);
         assert!(!view.commit_box_shown());
         // The commit's diff asks for that commit's file; nothing stages it.
-        let params = commit_target("b", "x").params(view.project_id);
+        let params = commit_target("b", "x").params(view.project_id, None);
         assert_eq!(params.commit.as_deref(), Some("b"));
         assert_eq!(view.stage_key(Stage::Stage), None);
         assert_eq!(view.discard(&commit_target("b", "x")), None);
@@ -2235,7 +2269,7 @@ mod tests {
             session(2, Some(7), 5, idle),
             session(3, None, 9, idle),
         ];
-        let mut view = GitView::new(Ulid(1));
+        let mut view = GitView::new(Ulid(1), None);
         assert_eq!(view.since_session(&sessions), None, "not a task's changes");
         view.show_since(Since::task(Ulid(7), "Fix it", "abc".into()));
         assert_eq!(view.since_session(&sessions), Some(Ulid(2)));
@@ -2258,7 +2292,7 @@ mod tests {
         ];
         let turn = Since::turn(&sessions[0], &sessions, 3, "tree3".into());
         assert_eq!(turn.label, "Since turn 3 of fake #2");
-        let mut view = GitView::new(Ulid(1));
+        let mut view = GitView::new(Ulid(1), None);
         view.show_since(turn);
         assert_eq!(view.section(), Section::Since);
         let params = view.begin_status().unwrap();
@@ -2267,7 +2301,7 @@ mod tests {
             (GitMode::Base, Some("tree3"))
         );
         let requests = view.status_loaded(Ok(since(&["a.rs"])));
-        let diff = requests.diff.unwrap().params(view.project_id);
+        let diff = requests.diff.unwrap().params(view.project_id, None);
         assert_eq!(
             (diff.mode, diff.since.as_deref()),
             (GitMode::Base, Some("tree3"))

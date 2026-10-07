@@ -74,6 +74,7 @@ use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
+use mkrew_ui::worktree_target;
 use mkrew_ui::zed;
 use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
@@ -594,6 +595,7 @@ impl Shell {
                 match tasks {
                     Ok(tasks) => {
                         shell.board.load(tasks);
+                        shell.drop_gone_targets(window, cx);
                         shell.board_error = None;
                     }
                     Err(error) => {
@@ -1114,7 +1116,32 @@ impl Shell {
     fn files_view(&mut self, project_id: Ulid) -> &mut FilesView {
         self.files
             .entry(project_id)
-            .or_insert_with(|| FilesView::new(project_id))
+            .or_insert_with(|| FilesView::new(project_id, None))
+    }
+
+    /// The Files view of `project_id` while it still shows `target` (an answer sent for
+    /// another target is dropped).
+    fn files_at(&mut self, project_id: Ulid, target: Option<Ulid>) -> Option<&mut FilesView> {
+        self.files
+            .get_mut(&project_id)
+            .filter(|view| view.worktree_task_id == target)
+    }
+
+    /// The chooser picked `target` (SPEC §20E.1): the Files view starts over on it.
+    fn set_files_target(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.files_view(project_id).worktree_task_id == target {
+            return;
+        }
+        self.files
+            .insert(project_id, FilesView::new(project_id, target));
+        self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.refresh_files(project_id, window, cx);
     }
 
     /// Lists the root and open folders of the Files view of `project_id` again and re-reads
@@ -1156,9 +1183,10 @@ impl Shell {
         if !view.begin_list(&dir) {
             return;
         }
+        let target = view.worktree_task_id;
         let listed = connection.call::<Vec<FsEntry>>(Request::FsList(FsListParams {
             project_id,
-            worktree_task_id: None,
+            worktree_task_id: target,
             dir: dir.clone(),
             show_ignored: view.show_ignored,
         }));
@@ -1168,7 +1196,7 @@ impl Shell {
                 if let Err(error) = &listed {
                     tracing::warn!(%project_id, dir, "fs.list failed: {error}");
                 }
-                let Some(view) = shell.files.get_mut(&project_id) else {
+                let Some(view) = shell.files_at(project_id, target) else {
                     return;
                 };
                 for dir in view.listed(&dir, listed) {
@@ -1192,12 +1220,14 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if !self.files_view(project_id).begin_read() {
+        let view = self.files_view(project_id);
+        if !view.begin_read() {
             return;
         }
+        let target = view.worktree_task_id;
         let read = connection.call::<FsContent>(Request::FsRead(FsReadParams {
             project_id,
-            worktree_task_id: None,
+            worktree_task_id: target,
             path: path.clone(),
         }));
         let background = cx.background_executor().clone();
@@ -1211,8 +1241,7 @@ impl Shell {
                     tracing::warn!(%project_id, path, "fs.read failed: {error}");
                 }
                 let again = shell
-                    .files
-                    .get_mut(&project_id)
+                    .files_at(project_id, target)
                     .and_then(|view| view.read(&path, code));
                 if let Some(path) = again {
                     shell.read_file(project_id, path, window, cx);
@@ -1287,6 +1316,21 @@ impl Shell {
         )
     }
 
+    /// [`Self::workspace_file`] in task worktree `target` when there is one (SPEC §20E.1).
+    fn target_file(&self, project_id: Ulid, target: Option<Ulid>, path: &str) -> Option<PathBuf> {
+        let Some(task_id) = target else {
+            return self.workspace_file(project_id, path);
+        };
+        let project = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|p| p.id == project_id)?;
+        let root = self.board.task(task_id)?.worktree_path.as_deref()?;
+        let dir = worktree_target::project_dir(Path::new(&project.path), Path::new(root));
+        Some(path.split('/').fold(dir, |full, part| full.join(part)))
+    }
+
     /// Opens the opened file of the Files view in Zed, at the selected line if any; a failure
     /// shows in the viewer header.
     fn open_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
@@ -1296,7 +1340,7 @@ impl Shell {
         let (Some(path), line) = (view.file.clone(), view.line) else {
             return;
         };
-        let Some(full) = self.workspace_file(project_id, &path) else {
+        let Some(full) = self.target_file(project_id, view.worktree_task_id, &path) else {
             return;
         };
         let error = zed::open(&full, line).err().map(|error| {
@@ -1307,11 +1351,79 @@ impl Shell {
         cx.notify();
     }
 
+    /// Files and Git views on a worktree that was removed (or whose task was deleted) go back
+    /// to the project folder.
+    fn drop_gone_targets(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let tasks = self.board.tasks();
+        let gone = |project_id, target| !worktree_target::exists(project_id, target, tasks);
+        let files: Vec<Ulid> = (self.files.values())
+            .filter(|view| gone(view.project_id, view.worktree_task_id))
+            .map(|view| view.project_id)
+            .collect();
+        let git: Vec<Ulid> = (self.git.values())
+            .filter(|view| gone(view.project_id, view.worktree_task_id))
+            .map(|view| view.project_id)
+            .collect();
+        // Hidden views read again when shown.
+        let shown = self.workspace;
+        for project_id in files {
+            self.files
+                .insert(project_id, FilesView::new(project_id, None));
+            if shown == Some(project_id) && self.view() == View::Files {
+                self.refresh_files(project_id, window, cx);
+            }
+        }
+        for project_id in git {
+            self.retarget_git(project_id, None);
+            if shown == Some(project_id) && self.view() == View::Git {
+                self.refresh_git(project_id, window, cx);
+            }
+        }
+    }
+
     /// The Git view of `project_id`, created on first use.
     fn git_view(&mut self, project_id: Ulid) -> &mut GitView {
         self.git
             .entry(project_id)
-            .or_insert_with(|| GitView::new(project_id))
+            .or_insert_with(|| GitView::new(project_id, None))
+    }
+
+    /// The Git view of `project_id` while it still shows `target` (an answer sent for another
+    /// target is dropped).
+    fn git_at(&mut self, project_id: Ulid, target: Option<Ulid>) -> Option<&mut GitView> {
+        self.git
+            .get_mut(&project_id)
+            .filter(|view| view.worktree_task_id == target)
+    }
+
+    /// The chooser picked `target` (SPEC §20E.1): the Git view starts over on it, in its
+    /// working changes.
+    fn set_git_target(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.retarget_git(project_id, target) {
+            self.refresh_git(project_id, window, cx);
+        }
+    }
+
+    /// Puts a fresh Git view of `target` in place (the commit draft is kept); `false` = it
+    /// shows `target` already.
+    fn retarget_git(&mut self, project_id: Ulid, target: Option<Ulid>) -> bool {
+        let old = self.git_view(project_id);
+        if old.worktree_task_id == target {
+            return false;
+        }
+        let draft = std::mem::take(&mut old.commit.text);
+        let mut view = GitView::new(project_id, target);
+        view.commit.text = draft;
+        self.git.insert(project_id, view);
+        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        true
     }
 
     /// Asks the Git view of `project_id` for its status and shown diff again.
@@ -1356,6 +1468,7 @@ impl Shell {
         let Some(params) = self.git_view(project_id).begin_log() else {
             return;
         };
+        let target = params.worktree_task_id;
         let loaded = connection.call::<Vec<Commit>>(Request::GitLog(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
@@ -1363,7 +1476,7 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.log failed: {error}");
                 }
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 let requests = view.logged(loaded);
@@ -1385,6 +1498,7 @@ impl Shell {
             return;
         };
         let params = self.git_view(project_id).show_params(hash.clone());
+        let target = params.worktree_task_id;
         let loaded = connection.call::<CommitDetail>(Request::GitShow(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
@@ -1392,7 +1506,7 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, commit = hash, "git.show failed: {error}");
                 }
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 let requests = view.commit_shown(&hash, loaded);
@@ -1448,6 +1562,7 @@ impl Shell {
         let Some(params) = self.git_view(project_id).begin_status() else {
             return;
         };
+        let target = params.worktree_task_id;
         let loaded = connection.call::<GitStatus>(Request::GitStatus(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
@@ -1455,7 +1570,7 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.status failed: {error}");
                 }
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 let requests = view.status_loaded(loaded);
@@ -1480,9 +1595,9 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let (params, serial) = self
-            .git_view(project_id)
-            .begin_session_files(status::now_ms());
+        let view = self.git_view(project_id);
+        let target = view.worktree_task_id;
+        let (params, serial) = view.begin_session_files(status::now_ms());
         let loaded = connection.call::<SessionFiles>(Request::SessionFiles(params));
         cx.spawn_in(window, async move |this, cx| {
             let files = match loaded.await {
@@ -1493,7 +1608,7 @@ impl Shell {
                 }
             };
             let _ = this.update_in(cx, |shell, window, cx| {
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 let requests = view.session_files_loaded(serial, files);
@@ -1528,10 +1643,13 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if !self.git_view(project_id).begin_diff() {
+        let view = self.git_view(project_id);
+        if !view.begin_diff() {
             return;
         }
-        let loaded = connection.call::<FileDiff>(Request::GitDiff(target.params(project_id)));
+        let worktree = view.worktree_task_id;
+        let loaded =
+            connection.call::<FileDiff>(Request::GitDiff(target.params(project_id, worktree)));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             // Syntax highlighting is slow on big diffs: lay out off the UI thread.
@@ -1546,8 +1664,7 @@ impl Shell {
                     tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
                 }
                 let again = shell
-                    .git
-                    .get_mut(&project_id)
+                    .git_at(project_id, worktree)
                     .and_then(|view| view.diff_loaded(&target, loaded));
                 if let Some(target) = again {
                     shell.load_git_diff(project_id, target, window, cx);
@@ -1650,15 +1767,13 @@ impl Shell {
     /// Opens the selected changed file of the Git view in Zed; a failure shows in the diff
     /// header.
     fn open_git_file_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
-        let Some(path) = self
-            .git
-            .get(&project_id)
-            .and_then(|view| view.selected.as_ref())
-            .map(|selected| selected.path.clone())
-        else {
+        let Some((target, path)) = self.git.get(&project_id).and_then(|view| {
+            let selected = view.selected.as_ref()?;
+            Some((view.worktree_task_id, selected.path.clone()))
+        }) else {
             return;
         };
-        let Some(full) = self.workspace_file(project_id, &path) else {
+        let Some(full) = self.target_file(project_id, target, &path) else {
             return;
         };
         let error = zed::open(&full, None).err().map(|error| {
@@ -1686,6 +1801,7 @@ impl Shell {
         }
         cx.notify();
         let stage = change.stage;
+        let target = change.params.worktree_task_id;
         let sent = connection.request(change.request());
         cx.spawn_in(window, async move |this, cx| {
             let result = match sent.await {
@@ -1697,7 +1813,7 @@ impl Shell {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
                 }
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 let requests = view.staged(result);
@@ -1842,11 +1958,13 @@ impl Shell {
             git_view::Status::Loaded(status) => status.staged.len(),
             git_view::Status::Loading | git_view::Status::Failed(_) => 0,
         };
+        let target = view.worktree_task_id;
         let params = view.commit.begin(project_id, staged);
         cx.notify();
-        let Some(params) = params else {
+        let Some(mut params) = params else {
             return;
         };
+        params.worktree_task_id = target;
         let committed = connection.call::<GitCommitResult>(Request::GitCommit(params));
         cx.spawn_in(window, async move |this, cx| {
             let result = committed
@@ -1857,7 +1975,7 @@ impl Shell {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, "git.commit failed: {error}");
                 }
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 view.commit.committed(result);
@@ -1879,11 +1997,13 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        if !self.git_view(project_id).remotes.begin(remote) {
+        let view = self.git_view(project_id);
+        if !view.remotes.begin(remote) {
             return;
         }
+        let target = view.worktree_task_id;
         cx.notify();
-        let sent = connection.request(remote.request(project_id));
+        let sent = connection.request(remote.request(project_id, target));
         cx.spawn_in(window, async move |this, cx| {
             let result = match sent.await {
                 Ok(Outcome::Result(_)) => Ok(()),
@@ -1894,7 +2014,7 @@ impl Shell {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
                 }
-                let Some(view) = shell.git.get_mut(&project_id) else {
+                let Some(view) = shell.git_at(project_id, target) else {
                     return;
                 };
                 view.remotes.finished(remote, result);
@@ -3883,11 +4003,21 @@ impl Shell {
         let session = sessions
             .iter()
             .find(|s| s.id == dialog.session_id && Some(s.project_id) == self.workspace);
-        let since = tree
-            .zip(session)
-            .map(|(tree, session)| (session.project_id, Since::turn(session, sessions, n, tree)));
+        let since = tree.zip(session).map(|(tree, session)| {
+            let since = Since::turn(session, sessions, n, tree);
+            (session.project_id, session.task_id, since)
+        });
         match since {
-            Some((project_id, since)) => self.show_git_since(project_id, since, window, cx),
+            Some((project_id, task_id, since)) => {
+                // A worktree task's turns ran in its worktree: compared there.
+                let target = task_id.filter(|&id| {
+                    self.board
+                        .task(id)
+                        .is_some_and(|task| task.worktree_path.is_some())
+                });
+                self.retarget_git(project_id, target);
+                self.show_git_since(project_id, since, window, cx);
+            }
             None => self.focus_pane(window, cx),
         }
     }
@@ -4086,6 +4216,9 @@ impl Shell {
             return;
         }
         let since = Since::task(task_id, &task.title, checkpoint);
+        // A worktree task's checkpoint is its worktree's HEAD: compared there.
+        let target = task.worktree_path.is_some().then_some(task_id);
+        self.retarget_git(project_id, target);
         self.show_git_since(project_id, since, window, cx);
     }
 
@@ -5701,6 +5834,7 @@ impl Shell {
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
                 if self.board.apply(event) {
+                    self.drop_gone_targets(window, cx);
                     cx.notify();
                 }
                 if self.turns.apply(event) {
@@ -6951,6 +7085,10 @@ impl Shell {
                     .track_focus(&self.files_focus)
                     .on_key_down(cx.listener(Self::files_key_down))
                     .child(header)
+                    .children(
+                        self.target_chooser(project_id, view.worktree_task_id, false, theme, cx)
+                            .map(|chooser| chooser.px(px(space::S)).pb(px(space::S))),
+                    )
                     .child(tree),
             )
             .child(self.render_file(project_id, view, theme, cx))
@@ -7031,7 +7169,8 @@ impl Shell {
                     .text_color(rgb(theme.text_muted))
                     .child(format!("Line {line}"))
             }))
-            .when(markdown, |el| {
+            // The Docs view reviews the project folder's files, not a worktree's.
+            .when(markdown && view.worktree_task_id.is_none(), |el| {
                 el.child(
                     button("file-review", "Review in Docs", theme, false)
                         .flex_none()
@@ -7419,6 +7558,7 @@ impl Shell {
                     self.git_remote_action(project_id, view, status, remote, theme, cx)
                 }))
         });
+        let chooser = self.target_chooser(project_id, view.worktree_task_id, true, theme, cx);
         let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
         let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
         // Lighter than the active segment's fill, so hovering never looks selected.
@@ -7469,6 +7609,7 @@ impl Shell {
             .gap(px(space::XS))
             .px(px(space::M))
             .pt(px(space::XS))
+            .children(chooser)
             .child(
                 div()
                     .overflow_hidden()
@@ -7568,6 +7709,77 @@ impl Shell {
                     .clone()
                     .map(|error| notice(theme.text, format!("✕ Refresh failed: {error}"))),
             )
+    }
+
+    /// "Project | <task worktree>…" (SPEC §20E.1): what the Files (`git: false`) or Git view
+    /// shows; hidden while no task of the workspace has a worktree.
+    fn target_chooser(
+        &self,
+        project_id: Ulid,
+        shown: Option<Ulid>,
+        git: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::Div> {
+        let choices = worktree_target::choices(project_id, self.board.tasks());
+        if choices.is_empty() {
+            return None;
+        }
+        let hover = theme.surface;
+        let view = if git { "git" } else { "files" };
+        let chips = choices.into_iter().map(|choice| {
+            let target = choice.worktree_task_id;
+            let active = shown == target;
+            let id = match target {
+                Some(task_id) => SharedString::from(format!("{view}-target-{task_id}")),
+                None => SharedString::from(format!("{view}-target-project")),
+            };
+            let tip = match &choice.branch {
+                Some(branch) => format!("This task's worktree: {branch}"),
+                None => "The workspace folder".to_owned(),
+            };
+            div()
+                .id(id)
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .tooltip(tooltip(theme, &tip, ""))
+                .when(active, |el| {
+                    el.bg(rgb(theme.surface_raised))
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text))
+                })
+                .when(!active, |el| {
+                    el.cursor_pointer()
+                        .text_color(rgb(theme.text_muted))
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            if git {
+                                window.focus(&shell.git_focus, cx);
+                                shell.set_git_target(project_id, target, window, cx);
+                            } else {
+                                window.focus(&shell.files_focus, cx);
+                                shell.set_files_target(project_id, target, window, cx);
+                            }
+                        }))
+                })
+                .child(choice.label)
+        });
+        Some(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.text_muted)).child("Showing"))
+                .children(chips),
+        )
     }
 
     /// "Changed by: All | claude #1 | …" (SPEC §20C.4): keeps only the files a session changed
@@ -12988,6 +13200,16 @@ fn task_card(
                 )
                 .children(run_time.map(|time| div().flex_none().child(time))),
         )
+        .children(card.branch.map(|branch| {
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(branch)
+        }))
         .when_some(card.session, |el, session| {
             el.child(
                 div()

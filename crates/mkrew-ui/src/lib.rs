@@ -8,7 +8,7 @@
 //! render model of the Docs preview and its GPUI elements, and the Files view-model with its
 //! syntax highlighting and quick open, the Git view-model and its base menu, and the
 //! workspace's dev server, the command palette, the turn summaries, the
-//! peek popover and the broadcast dialog.
+//! peek popover, the broadcast dialog and the Files / Git worktree target.
 
 pub mod base_dialog;
 pub mod board;
@@ -51,4 +51,5 @@ pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;
 pub mod workspace_menu;
+pub mod worktree_target;
 pub mod zed;

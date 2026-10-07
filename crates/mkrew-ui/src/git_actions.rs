@@ -120,10 +120,11 @@ impl Remote {
         }
     }
 
-    pub fn request(self, project_id: Ulid) -> Request {
+    /// The request on the project folder, or on task worktree `worktree_task_id`.
+    pub fn request(self, project_id: Ulid, worktree_task_id: Option<Ulid>) -> Request {
         let params = GitRemoteParams {
             project_id,
-            worktree_task_id: None,
+            worktree_task_id,
         };
         match self {
             Remote::Fetch => Request::GitFetch(params),
@@ -242,17 +243,18 @@ mod tests {
     fn one_remote_action_runs_at_a_time_and_failures_are_kept() {
         let project_id = Ulid::new();
         assert_eq!(
-            Remote::Fetch.request(project_id),
+            Remote::Fetch.request(project_id, None),
             Request::GitFetch(GitRemoteParams {
                 project_id,
                 worktree_task_id: None,
             })
         );
+        let worktree_task_id = Some(Ulid::new());
         assert_eq!(
-            Remote::Push.request(project_id),
+            Remote::Push.request(project_id, worktree_task_id),
             Request::GitPush(GitRemoteParams {
                 project_id,
-                worktree_task_id: None,
+                worktree_task_id,
             })
         );
 
