@@ -1661,6 +1661,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   `tool_response.structuredPatch` (first hunk's `newStart` + leading context lines), which is
   undocumented: check with a real Claude edit that `line` is present and right; without it
   Follow in Zed opens the file at its top.
+- (T11.7) **Since turn / Changed by UI:** "Diff since" lives on each Turns dialog row only (no
+  separate pane-menu entry; the dialog is the pane's "Turns…"). It does nothing (closes) when the
+  session is not in the active workspace. `#n` in `claude #2` numbers same-named sessions of the
+  workspace by start among those the sidebar lists. "Changed by" is a chip row under the Git
+  header (hidden when no session changed files in 24 h, and in the History), mouse only (no
+  palette command / key yet); `session.files` is re-read with every `git.status`. Sessions no
+  longer listed show as `ended session` (numbered when several). Renamed files match on the new
+  path only. The "Send to agent" default label is now "made these changes" (tasks and turns).
 
 ## Done
 

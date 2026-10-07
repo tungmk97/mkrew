@@ -120,7 +120,7 @@ impl SendDialog {
     }
 
     /// "Send selection" of `prefill` from `file_path` (`path:a-b`; empty for a terminal), offering
-    /// `task_session` (Git task changes) first, else the most recently active agent.
+    /// `task_session` (the session of the Git view's task or turn changes) first, else the most recently active agent.
     pub fn selection(
         project_id: Ulid,
         file_path: String,
@@ -216,7 +216,7 @@ impl SendDialog {
     /// Why the default session is offered first (shown next to it).
     pub fn last_label(&self) -> &'static str {
         if self.task {
-            "ran this task"
+            "made these changes"
         } else if self.prefill.is_some() {
             "active last"
         } else {
@@ -384,7 +384,7 @@ mod tests {
             task: true,
             ..open(Some(Ulid(1)))
         };
-        assert_eq!(task.last_label(), "ran this task");
+        assert_eq!(task.last_label(), "made these changes");
         let choices = dialog.choices(&sessions);
         let order: Vec<_> = choices.iter().map(|c| c.session_id.0).collect();
         assert_eq!(
@@ -429,7 +429,7 @@ mod tests {
         assert!(dialog.comment_ids.is_empty());
         assert_eq!(dialog.prefill.as_deref(), Some("x"));
         let task = open(Some(Ulid(2)));
-        assert_eq!(task.last_label(), "ran this task");
+        assert_eq!(task.last_label(), "made these changes");
         assert_eq!(task.target(&sessions), Some(Ulid(2)));
         let exited = open(Some(Ulid(4)));
         assert!(!exited.task, "an exited task session is not offered");

@@ -13,7 +13,8 @@ use gpui::Keystroke;
 use mkrew_protocol::{
     ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, Event, FileDiff,
     GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitShowParams, GitStageParams,
-    GitStatus, GitStatusParams, HunkTarget, Request, Session, SessionState,
+    GitStatus, GitStatusParams, HunkTarget, Request, Session, SessionFiles, SessionFilesParams,
+    SessionState,
 };
 use ulid::Ulid;
 
@@ -32,8 +33,8 @@ pub enum Group {
     Base,
     /// The files of the History section's selected commit.
     Commit,
-    /// A task's changes since its checkpoint.
-    Task,
+    /// A task's or a turn's changes ([`Since`]).
+    Since,
 }
 
 impl Group {
@@ -42,7 +43,7 @@ impl Group {
             Group::Staged => "Staged",
             Group::Unstaged => "Unstaged",
             Group::Untracked => "Untracked",
-            Group::Base | Group::Task => "Changed files",
+            Group::Base | Group::Since => "Changed files",
             Group::Commit => "Files",
         }
     }
@@ -53,8 +54,8 @@ impl Group {
 pub struct Target {
     pub group: Group,
     pub path: String,
-    /// The commit whose change it is ([`Group::Commit`]), or the task checkpoint it is
-    /// compared from ([`Group::Task`]).
+    /// The commit whose change it is ([`Group::Commit`]), or the checkpoint (a commit or a
+    /// tree) it is compared from ([`Group::Since`]).
     pub commit: Option<String>,
 }
 
@@ -65,36 +66,91 @@ impl Target {
         GitDiffParams {
             project_id,
             path: self.path.clone(),
-            mode: if matches!(self.group, Group::Base | Group::Task) {
+            mode: if matches!(self.group, Group::Base | Group::Since) {
                 GitMode::Base
             } else {
                 GitMode::Working
             },
             staged: self.group == Group::Staged,
             commit: commit(Group::Commit),
-            since: commit(Group::Task),
+            since: commit(Group::Since),
         }
     }
 }
 
-/// What the Git view lists: one of the two `git.status` modes, the History, or a task's
-/// changes.
+/// What the Git view lists: one of the two `git.status` modes, the History, or a task's or a
+/// turn's changes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Section {
     Working,
     Base,
     History,
-    /// A task's "View changes" ([`GitView::task`]): from its checkpoint to the working tree.
-    Task,
+    /// A task's "View changes" or a turn's "Diff since" ([`GitView::since`]): from its
+    /// checkpoint to the working tree.
+    Since,
 }
 
-/// The task whose changes the Git view shows (SPEC §12B "Task changes").
+/// Whose changes a [`Since`] lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    Task(Ulid),
+    Turn { session_id: Ulid, n: u32 },
+}
+
+/// The changes since a checkpoint the Git view shows: a task's (SPEC §12B "Task changes") or
+/// a turn's (§20C.3 "Since turn…").
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskChanges {
-    pub task_id: Ulid,
-    pub title: String,
-    /// `task.checkpoint`: the HEAD before the task's run.
+pub struct Since {
+    pub origin: Origin,
+    /// The header line saying what is compared.
+    pub label: String,
+    /// `task.checkpoint` (the HEAD before the task's run) or the turn's start tree.
     pub checkpoint: String,
+}
+
+impl Since {
+    /// `Since abc1234 · task: Fix login`: the hash first, so a long title is cut, never what
+    /// is compared.
+    pub fn task(task_id: Ulid, title: &str, checkpoint: String) -> Since {
+        Since {
+            origin: Origin::Task(task_id),
+            label: format!(
+                "Since {} · task: {title}",
+                crate::git_history::short_hash(&checkpoint)
+            ),
+            checkpoint,
+        }
+    }
+
+    /// `Since turn 3 of claude #2`.
+    pub fn turn(session: &Session, sessions: &[Session], n: u32, start_tree: String) -> Since {
+        Since {
+            origin: Origin::Turn {
+                session_id: session.id,
+                n,
+            },
+            label: format!("Since turn {n} of {}", session_label(session, sessions)),
+            checkpoint: start_tree,
+        }
+    }
+}
+
+/// `session`'s name among `sessions`: its title or agent, numbered (`claude #2`, by start)
+/// when another session of its workspace has the same name.
+pub fn session_label(session: &Session, sessions: &[Session]) -> String {
+    let name = crate::history::label(session);
+    let mut namesakes: Vec<&Session> = sessions
+        .iter()
+        .filter(|s| s.project_id == session.project_id && crate::history::label(s) == name)
+        .collect();
+    if namesakes.len() < 2 {
+        return name;
+    }
+    namesakes.sort_by_key(|s| (s.started_at, s.id));
+    match namesakes.iter().position(|s| s.id == session.id) {
+        Some(at) => format!("{name} #{}", at + 1),
+        None => name,
+    }
 }
 
 impl Section {
@@ -258,7 +314,7 @@ impl Stage {
         match group {
             Group::Unstaged | Group::Untracked => Some(Stage::Stage),
             Group::Staged => Some(Stage::Unstage),
-            Group::Base | Group::Commit | Group::Task => None,
+            Group::Base | Group::Commit | Group::Since => None,
         }
     }
 
@@ -340,6 +396,28 @@ pub struct Requests {
     pub show: Option<String>,
 }
 
+/// How far back "Changed by" looks for the sessions that changed files (SPEC §20C.4).
+pub const CHANGED_BY_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// The "Changed by" filter: `session.files` of the last 24 h, and the session whose files are
+/// kept (`None` = All).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChangedBy {
+    pub files: SessionFiles,
+    pub session: Option<Ulid>,
+    /// The last `session.files` asked for (an older, late answer is dropped).
+    asked: u64,
+}
+
+/// One "Changed by" choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Changer {
+    pub session_id: Ulid,
+    /// [`session_label`], or `ended session` (numbered when several) once it is no longer
+    /// listed.
+    pub label: String,
+}
+
 /// One workspace's Git view.
 #[derive(Debug)]
 pub struct GitView {
@@ -362,9 +440,11 @@ pub struct GitView {
     pub remotes: Remotes,
     /// The History section, while shown (`mode` is the changes it goes back to).
     pub history: Option<History>,
-    /// The task whose changes are listed (`mode` is then [`GitMode::Base`]); kept while the
+    /// The task's or turn's changes listed (`mode` is then [`GitMode::Base`]); kept while the
     /// History is shown, so leaving it goes back to them.
-    pub task: Option<TaskChanges>,
+    pub since: Option<Since>,
+    /// The "Changed by" filter (SPEC §20C.4).
+    pub changed_by: ChangedBy,
     /// The diff comments of the selected file (anchored to new-side lines).
     pub comments: Comments,
     /// The diff `comments.selection` was picked on.
@@ -401,7 +481,8 @@ impl GitView {
             commit: CommitBox::default(),
             remotes: Remotes::default(),
             history: None,
-            task: None,
+            since: None,
+            changed_by: ChangedBy::default(),
             comments: Comments::new(CommentContext::Diff),
             commented: None,
             staging: false,
@@ -432,9 +513,9 @@ impl GitView {
         })
     }
 
-    /// The `git.status` the shown changes come from: the mode and the task checkpoint.
+    /// The `git.status` the shown changes come from: the mode and the checkpoint.
     fn listed(&self) -> (GitMode, Option<String>) {
-        let since = self.task.as_ref().map(|task| task.checkpoint.clone());
+        let since = self.since.as_ref().map(|since| since.checkpoint.clone());
         (self.mode, since)
     }
 
@@ -481,6 +562,16 @@ impl GitView {
             };
         }
         self.refresh_error = None;
+        Requests {
+            status: again,
+            diff: self.reselect(),
+            ..Requests::default()
+        }
+    }
+
+    /// Keeps the selection on the same file if it is still listed (in its group, else in
+    /// another), else moves it to the first file; returns a moved selection (its diff is read).
+    fn reselect(&mut self) -> Option<Target> {
         let files = self.files();
         let kept = self.selected.as_ref().and_then(|selected| {
             files
@@ -495,19 +586,110 @@ impl GitView {
         let next = kept
             .or_else(|| files.first())
             .map(|(target, _)| target.clone());
-        let diff = match next {
+        match next {
             Some(next) if Some(&next) == self.selected.as_ref() => None,
             Some(next) => self.select(next),
             None => {
                 self.select_none();
                 None
             }
+        }
+    }
+
+    /// A `session.files` asking which sessions changed files in the last 24 h before `now_ms`
+    /// is about to be sent: its params and its serial (given back with its answer).
+    pub fn begin_session_files(&mut self, now_ms: i64) -> (SessionFilesParams, u64) {
+        self.changed_by.asked += 1;
+        let params = SessionFilesParams {
+            project_id: self.project_id,
+            since_ms: now_ms - CHANGED_BY_WINDOW_MS,
         };
+        (params, self.changed_by.asked)
+    }
+
+    /// The `session.files` answer to request `serial` (dropped when a newer one was asked
+    /// for): a filtered session without changed files any more falls back to All; the listed
+    /// files (and so the selection) may change.
+    pub fn session_files_loaded(&mut self, serial: u64, files: SessionFiles) -> Requests {
+        if serial != self.changed_by.asked {
+            return Requests::default();
+        }
+        self.changed_by.files = files;
+        let session = self.changed_by.session;
+        let gone = session.is_some_and(|id| {
+            self.changed_by
+                .files
+                .get(&id)
+                .is_none_or(|paths| paths.is_empty())
+        });
+        if gone {
+            self.changed_by.session = None;
+        }
+        self.filtered()
+    }
+
+    /// "Changed by": keeps only `session`'s files (`None` = All).
+    pub fn filter_changed_by(&mut self, session: Option<Ulid>) -> Requests {
+        if self.changed_by.session == session {
+            return Requests::default();
+        }
+        self.changed_by.session = session;
+        self.filtered()
+    }
+
+    /// The listed files changed with the filter: the selection follows.
+    fn filtered(&mut self) -> Requests {
+        if self.history.is_some() || !matches!(self.status, Status::Loaded(_)) {
+            return Requests::default();
+        }
         Requests {
-            status: again,
-            diff,
+            diff: self.reselect(),
             ..Requests::default()
         }
+    }
+
+    /// The "Changed by" choices: the sessions with changed files, oldest first (none in the
+    /// History, where the filter does not apply).
+    pub fn changers(&self, sessions: &[Session]) -> Vec<Changer> {
+        if self.history.is_some() {
+            return vec![];
+        }
+        let mut changers: Vec<(i64, Changer)> = self
+            .changed_by
+            .files
+            .iter()
+            .filter(|(_, paths)| !paths.is_empty())
+            .map(|(&session_id, _)| {
+                let session = sessions.iter().find(|s| s.id == session_id);
+                let label = session.map_or_else(
+                    || "ended session".to_owned(),
+                    |session| session_label(session, sessions),
+                );
+                let started = session.map_or(i64::MAX, |session| session.started_at);
+                (started, Changer { session_id, label })
+            })
+            .collect();
+        changers.sort_by_key(|(started, changer)| (*started, changer.session_id));
+        // Several ended sessions (listed last, by id) are told apart by number.
+        let ended = changers.iter().filter(|(started, _)| *started == i64::MAX);
+        if ended.count() > 1 {
+            let unlisted = changers
+                .iter_mut()
+                .filter(|(started, _)| *started == i64::MAX);
+            for (at, (_, changer)) in unlisted.enumerate() {
+                changer.label = format!("ended session #{}", at + 1);
+            }
+        }
+        changers.into_iter().map(|(_, changer)| changer).collect()
+    }
+
+    /// The label of the filtered session, while filtering.
+    pub fn changed_by_label(&self, sessions: &[Session]) -> Option<String> {
+        let session = self.changed_by.session?;
+        self.changers(sessions)
+            .into_iter()
+            .find(|changer| changer.session_id == session)
+            .map(|changer| changer.label)
     }
 
     fn select_none(&mut self) {
@@ -527,16 +709,16 @@ impl GitView {
 
     /// The changes section the History goes back to.
     fn changes(&self) -> Section {
-        if self.task.is_some() {
-            Section::Task
+        if self.since.is_some() {
+            Section::Since
         } else {
             Section::of(self.mode)
         }
     }
 
     /// Lists `section` (nothing if it is listed already): the status of a changes mode, or
-    /// the History's log. [`Section::Task`] goes back to the kept task (else Against base);
-    /// [`Self::show_task`] picks one.
+    /// the History's log. [`Section::Since`] goes back to the kept changes (else Against
+    /// base); [`Self::show_since`] picks them.
     pub fn show(&mut self, section: Section) -> Requests {
         if section == self.section() {
             return Requests::default();
@@ -549,29 +731,30 @@ impl GitView {
                 ..Requests::default()
             };
         }
-        let (mode, task) = match section {
+        let (mode, since) = match section {
             Section::Working | Section::History => (GitMode::Working, None),
             Section::Base => (GitMode::Base, None),
-            Section::Task => (GitMode::Base, self.task.clone()),
+            Section::Since => (GitMode::Base, self.since.clone()),
         };
-        self.list(mode, task)
+        self.list(mode, since)
     }
 
-    /// Lists `task`'s changes since its checkpoint (a Review card's "View changes").
-    pub fn show_task(&mut self, task: TaskChanges) -> Requests {
-        if self.section() == Section::Task && self.task.as_ref() == Some(&task) {
+    /// Lists the changes since a checkpoint (a Review card's "View changes", a turn's "Diff
+    /// since").
+    pub fn show_since(&mut self, since: Since) -> Requests {
+        if self.section() == Section::Since && self.since.as_ref() == Some(&since) {
             return Requests::default();
         }
         self.select_none();
-        self.list(GitMode::Base, Some(task))
+        self.list(GitMode::Base, Some(since))
     }
 
-    /// Lists the changes of `mode` (and `task`, base mode only) instead of the History.
-    fn list(&mut self, mode: GitMode, task: Option<TaskChanges>) -> Requests {
+    /// Lists the changes of `mode` (and `since`, base mode only) instead of the History.
+    fn list(&mut self, mode: GitMode, since: Option<Since>) -> Requests {
         let listed = self.listed();
         self.history = None;
         self.mode = mode;
-        self.task = task;
+        self.since = since;
         // Back to the same changes: the kept status lists at once; its refresh selects a file.
         if listed != self.listed() {
             self.status = Status::Loading;
@@ -584,7 +767,7 @@ impl GitView {
     }
 
     /// The changed files of the shown section with their diff targets, in list order (Staged,
-    /// Unstaged, Untracked; in the History, the selected commit's).
+    /// Unstaged, Untracked; in the History, the selected commit's), kept by "Changed by".
     pub fn files(&self) -> Vec<(Target, ChangedFile)> {
         if let Some(history) = &self.history {
             return history
@@ -603,21 +786,29 @@ impl GitView {
         let Status::Loaded(status) = &self.status else {
             return vec![];
         };
-        let checkpoint = self.task.as_ref().map(|task| task.checkpoint.clone());
+        let checkpoint = self.since.as_ref().map(|since| since.checkpoint.clone());
+        // "Changed by": only the filtered session's files.
+        let kept = self.changed_by.session.map(|id| {
+            self.changed_by
+                .files
+                .get(&id)
+                .map_or(&[][..], Vec::as_slice)
+        });
         let group = |group: Group, files: &[ChangedFile]| {
             files
                 .iter()
+                .filter(|file| kept.is_none_or(|kept| kept.contains(&file.path)))
                 .map(|file| {
                     let target = Target {
                         group,
                         path: file.path.clone(),
-                        commit: checkpoint.clone().filter(|_| group == Group::Task),
+                        commit: checkpoint.clone().filter(|_| group == Group::Since),
                     };
                     (target, file.clone())
                 })
                 .collect::<Vec<_>>()
         };
-        match (self.mode, &self.task) {
+        match (self.mode, &self.since) {
             (GitMode::Working, _) => [
                 group(Group::Staged, &status.staged),
                 group(Group::Unstaged, &status.unstaged),
@@ -625,7 +816,7 @@ impl GitView {
             ]
             .concat(),
             (GitMode::Base, None) => group(Group::Base, &status.against_base),
-            (GitMode::Base, Some(_)) => group(Group::Task, &status.against_base),
+            (GitMode::Base, Some(_)) => group(Group::Since, &status.against_base),
         }
     }
 
@@ -818,7 +1009,7 @@ impl GitView {
     pub fn toggle_mode(&mut self) -> Requests {
         self.show(match self.section() {
             Section::Working => Section::Base,
-            Section::Base | Section::Task => Section::Working,
+            Section::Base | Section::Since => Section::Working,
             Section::History => self.changes(),
         })
     }
@@ -827,7 +1018,7 @@ impl GitView {
     pub fn toggle_history(&mut self) -> Requests {
         self.show(match self.section() {
             Section::History => self.changes(),
-            Section::Working | Section::Base | Section::Task => Section::History,
+            Section::Working | Section::Base | Section::Since => Section::History,
         })
     }
 
@@ -1097,13 +1288,17 @@ impl GitView {
             && (listed || self.comments.selection.is_some() || self.comments.draft.is_some())
     }
 
-    /// The session "Send to agent" offers first: in a task's changes, the task's newest live
-    /// session, else its newest one (the dialog falls back to the newest live session then).
-    pub fn task_session(&self, sessions: &[Session]) -> Option<Ulid> {
-        if self.section() != Section::Task {
+    /// The session "Send to agent" offers first: in a turn's changes, its session; in a task's,
+    /// the task's newest live session, else its newest one (the dialog falls back to the
+    /// newest live session then).
+    pub fn since_session(&self, sessions: &[Session]) -> Option<Ulid> {
+        if self.section() != Section::Since {
             return None;
         }
-        let task_id = self.task.as_ref()?.task_id;
+        let task_id = match self.since.as_ref()?.origin {
+            Origin::Task(task_id) => task_id,
+            Origin::Turn { session_id, .. } => return Some(session_id),
+        };
         sessions
             .iter()
             .filter(|session| session.task_id == Some(task_id))
@@ -1388,12 +1583,8 @@ mod tests {
         );
     }
 
-    fn task_changes(checkpoint: &str) -> TaskChanges {
-        TaskChanges {
-            task_id: Ulid::new(),
-            title: "Fix login".into(),
-            checkpoint: checkpoint.into(),
-        }
+    fn task_changes(checkpoint: &str) -> Since {
+        Since::task(Ulid::new(), "Fix login", checkpoint.into())
     }
 
     fn since(files: &[&str]) -> GitStatus {
@@ -1411,14 +1602,14 @@ mod tests {
     fn a_tasks_changes_list_and_diff_since_its_checkpoint() {
         let mut view = loaded();
         let task = task_changes("abc");
-        let requests = view.show_task(task.clone());
+        let requests = view.show_since(task.clone());
         assert!(requests.status);
-        assert_eq!(view.section(), Section::Task);
+        assert_eq!(view.section(), Section::Since);
         assert_eq!(
             (view.status.clone(), view.selected.clone()),
             (Status::Loading, None)
         );
-        assert_eq!(view.show_task(task.clone()), Requests::default());
+        assert_eq!(view.show_since(task.clone()), Requests::default());
         let params = view.begin_status().unwrap();
         assert_eq!(
             (params.mode, params.since.as_deref()),
@@ -1428,7 +1619,7 @@ mod tests {
 
         let requests = view.status_loaded(Ok(since(&["a.rs"])));
         let shown = Target {
-            group: Group::Task,
+            group: Group::Since,
             path: "a.rs".into(),
             commit: Some("abc".into()),
         };
@@ -1436,19 +1627,19 @@ mod tests {
         let diff = shown.params(view.project_id);
         assert_eq!(diff.mode, GitMode::Base);
         assert_eq!((diff.commit, diff.since.as_deref()), (None, Some("abc")));
-        assert_eq!(Stage::of(Group::Task), None);
+        assert_eq!(Stage::of(Group::Since), None);
         assert!(view.discard(&shown).is_none());
 
         // The History goes back to the task's kept list; the mode key leaves the task.
         view.toggle_history();
         assert_eq!(view.section(), Section::History);
-        assert!(view.task.is_some());
+        assert!(view.since.is_some());
         let requests = view.toggle_history();
-        assert_eq!((view.section(), requests.status), (Section::Task, true));
+        assert_eq!((view.section(), requests.status), (Section::Since, true));
         assert!(matches!(view.status, Status::Loaded(_)));
         view.toggle_mode();
         assert_eq!(
-            (view.section(), view.task.clone()),
+            (view.section(), view.since.clone()),
             (Section::Working, None)
         );
         assert_eq!(view.status, Status::Loading);
@@ -1460,12 +1651,12 @@ mod tests {
         view.show(Section::Base);
         view.begin_status();
         // Against base was in flight: dropped, the task's status asked again.
-        view.show_task(task_changes("abc"));
+        view.show_since(task_changes("abc"));
         assert!(view.status_loaded(Ok(since(&["base.rs"]))).status);
         assert_eq!(view.status, Status::Loading);
         view.begin_status();
         // Another task meanwhile: its own checkpoint.
-        view.show_task(task_changes("def"));
+        view.show_since(task_changes("def"));
         assert_eq!(view.status, Status::Loading);
         assert!(view.status_loaded(Ok(since(&["old.rs"]))).status);
         assert_eq!(view.begin_status().unwrap().since.as_deref(), Some("def"));
@@ -1993,10 +2184,9 @@ mod tests {
         assert!(!view.comments_shown());
     }
 
-    #[test]
-    fn send_to_agent_offers_the_tasks_newest_session_first() {
-        use mkrew_protocol::{SessionKind, SessionState, StateSource};
-        let session = |id: u128, task: Option<u128>, started_at, state| Session {
+    fn session(id: u128, task: Option<u128>, started_at: i64, state: SessionState) -> Session {
+        use mkrew_protocol::{SessionKind, StateSource};
+        Session {
             id: Ulid(id),
             task_id: task.map(Ulid),
             project_id: Ulid(1),
@@ -2012,7 +2202,11 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
-        };
+        }
+    }
+
+    #[test]
+    fn send_to_agent_offers_the_tasks_newest_session_first() {
         let (idle, exited) = (SessionState::Idle, SessionState::Exited);
         let mut sessions = vec![
             session(1, Some(7), 1, idle),
@@ -2020,19 +2214,128 @@ mod tests {
             session(3, None, 9, idle),
         ];
         let mut view = GitView::new(Ulid(1));
-        assert_eq!(view.task_session(&sessions), None, "not a task's changes");
-        view.show_task(TaskChanges {
-            task_id: Ulid(7),
-            title: "Fix it".into(),
-            checkpoint: "abc".into(),
-        });
-        assert_eq!(view.task_session(&sessions), Some(Ulid(2)));
+        assert_eq!(view.since_session(&sessions), None, "not a task's changes");
+        view.show_since(Since::task(Ulid(7), "Fix it", "abc".into()));
+        assert_eq!(view.since_session(&sessions), Some(Ulid(2)));
         sessions[1].state = exited;
-        assert_eq!(view.task_session(&sessions), Some(Ulid(1)), "live first");
+        assert_eq!(view.since_session(&sessions), Some(Ulid(1)), "live first");
         sessions[0].state = exited;
-        assert_eq!(view.task_session(&sessions), Some(Ulid(2)), "else newest");
+        assert_eq!(view.since_session(&sessions), Some(Ulid(2)), "else newest");
         view.toggle_history();
-        assert_eq!(view.task_session(&sessions), None, "in the History");
+        assert_eq!(view.since_session(&sessions), None, "in the History");
+        // A turn's changes: its own session, even exited.
+        view.show_since(Since::turn(&sessions[2], &sessions, 3, "tree".into()));
+        assert_eq!(view.since_session(&sessions), Some(Ulid(3)));
+    }
+
+    #[test]
+    fn a_turns_changes_list_and_diff_since_its_start_tree() {
+        let sessions = [
+            session(2, None, 5, SessionState::Idle),
+            session(1, None, 1, SessionState::Idle),
+        ];
+        let turn = Since::turn(&sessions[0], &sessions, 3, "tree3".into());
+        assert_eq!(turn.label, "Since turn 3 of fake #2");
+        let mut view = GitView::new(Ulid(1));
+        view.show_since(turn);
+        assert_eq!(view.section(), Section::Since);
+        let params = view.begin_status().unwrap();
+        assert_eq!(
+            (params.mode, params.since.as_deref()),
+            (GitMode::Base, Some("tree3"))
+        );
+        let requests = view.status_loaded(Ok(since(&["a.rs"])));
+        let diff = requests.diff.unwrap().params(view.project_id);
+        assert_eq!(
+            (diff.mode, diff.since.as_deref()),
+            (GitMode::Base, Some("tree3"))
+        );
+        assert_eq!(
+            Since::task(Ulid(7), "Fix it", "0123456789abcdef".into()).label,
+            "Since 0123456 · task: Fix it"
+        );
+    }
+
+    #[test]
+    fn sessions_are_numbered_only_among_namesakes_of_the_workspace() {
+        let idle = SessionState::Idle;
+        let mut other = session(4, None, 0, idle);
+        other.project_id = Ulid(9);
+        let mut titled = session(5, None, 2, idle);
+        titled.title = Some("review".into());
+        let sessions = [
+            session(3, None, 7, idle),
+            session(2, None, 3, idle),
+            other,
+            titled,
+        ];
+        let label = |i: usize| session_label(&sessions[i], &sessions);
+        assert_eq!(label(0), "fake #2");
+        assert_eq!(label(1), "fake #1");
+        assert_eq!(label(2), "fake", "alone in its workspace");
+        assert_eq!(label(3), "review");
+    }
+
+    #[test]
+    fn changed_by_keeps_only_the_sessions_files() {
+        let idle = SessionState::Idle;
+        let sessions = [session(1, None, 1, idle), session(2, None, 2, idle)];
+        let mut view = loaded();
+        let (params, late) = view.begin_session_files(CHANGED_BY_WINDOW_MS + 5);
+        assert_eq!(params.since_ms, 5, "the last 24 h");
+        let (_, serial) = view.begin_session_files(0);
+        let stale = SessionFiles::from([(Ulid(9), vec!["a.rs".into()])]);
+        view.session_files_loaded(late, stale);
+        assert!(
+            view.changers(&sessions).is_empty(),
+            "a late answer is dropped"
+        );
+        let loaded = view.session_files_loaded(
+            serial,
+            SessionFiles::from([
+                (Ulid(2), vec!["b.rs".into(), "gone.rs".into()]),
+                (Ulid(1), vec!["new.txt".into()]),
+                (Ulid(3), vec!["a.rs".into()]),
+                (Ulid(4), vec![]),
+                (Ulid(5), vec!["a.rs".into()]),
+            ]),
+        );
+        assert_eq!(loaded, Requests::default(), "All still lists every file");
+        let labels: Vec<String> = view
+            .changers(&sessions)
+            .into_iter()
+            .map(|changer| changer.label)
+            .collect();
+        let line = format!("Changed by: All | {}", labels.join(" | "));
+        insta::assert_snapshot!(line);
+
+        // The selected a.rs is filtered out: the first kept file is selected.
+        let requests = view.filter_changed_by(Some(Ulid(2)));
+        assert_eq!(requests.diff, Some(target(Group::Unstaged, "b.rs")));
+        let paths: Vec<String> = view.files().into_iter().map(|(t, _)| t.path).collect();
+        assert_eq!(paths, ["b.rs"]);
+        assert_eq!(view.changed_by_label(&sessions).as_deref(), Some("fake #2"));
+        assert_eq!(view.filter_changed_by(Some(Ulid(2))), Requests::default());
+
+        // Its files are gone from `session.files`: back to All.
+        let (_, serial) = view.begin_session_files(0);
+        view.session_files_loaded(
+            serial,
+            SessionFiles::from([(Ulid(1), vec!["new.txt".into()])]),
+        );
+        assert_eq!(view.changed_by.session, None);
+        assert_eq!(view.files().len(), 4);
+
+        // Nothing kept: nothing selected.
+        view.filter_changed_by(Some(Ulid(1)));
+        let (_, serial) = view.begin_session_files(0);
+        view.session_files_loaded(serial, SessionFiles::from([(Ulid(1), vec!["x.rs".into()])]));
+        assert!(view.files().is_empty());
+        assert_eq!(view.selected, None);
+
+        // The History lists commits: no filter there.
+        view.toggle_history();
+        assert!(view.changers(&sessions).is_empty());
     }
 
     #[test]

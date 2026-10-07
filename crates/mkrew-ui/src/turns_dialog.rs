@@ -1,6 +1,7 @@
 //! The "Turns…" dialog of an agent pane (SPEC §20C.2): the session's turns (`turn.list`), newest
-//! first, each with when it ran, its files and +/− lines, and "Restore before turn n" (the
-//! preview and confirm are the undo dialog's). Pure and tested headlessly; `main.rs` renders it.
+//! first, each with when it ran, its files and +/− lines, "Diff since" (the Git view since the
+//! turn's start tree, §20C.3) and "Restore before turn n" (the preview and confirm are the undo
+//! dialog's). Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
 use mkrew_protocol::{Session, SessionState, Turn};
@@ -75,6 +76,8 @@ pub struct Row {
     pub lines: Option<String>,
     /// Why "Restore before" is disabled, if it is.
     pub blocked: Option<&'static str>,
+    /// Why "Diff since" is disabled, if it is.
+    pub diff_blocked: Option<&'static str>,
 }
 
 /// The rows of `turns` (in the order given) at `now_ms`; `state` = the session's state.
@@ -114,20 +117,28 @@ pub fn rows(turns: &[Turn], state: SessionState, now_ms: i64) -> Vec<Row> {
                 files,
                 lines,
                 blocked: restore_blocked(turn, state),
+                diff_blocked: diff_blocked(turn),
             }
         })
         .collect()
 }
 
+const NO_SNAPSHOT: &str = "No snapshot: the workspace is not a git repository.";
+
 /// Why the folder cannot be restored to before `turn` now (the daemon refuses the same).
 pub fn restore_blocked(turn: &Turn, state: SessionState) -> Option<&'static str> {
     if turn.start_tree.is_none() {
-        Some("No snapshot: the workspace is not a git repository.")
+        Some(NO_SNAPSHOT)
     } else if state == SessionState::Working {
         Some("Wait until the agent finishes its turn.")
     } else {
         None
     }
+}
+
+/// Why the Git view cannot show the changes since `turn` (SPEC §20C.3): it has no start tree.
+pub fn diff_blocked(turn: &Turn) -> Option<&'static str> {
+    turn.start_tree.is_none().then_some(NO_SNAPSHOT)
 }
 
 /// Esc closes the dialog; ↑ / ↓ pick a turn; Enter restores before it.
@@ -271,6 +282,15 @@ mod tests {
             Some("Wait until the agent finishes its turn.")
         );
         assert!(restore_blocked(&turn(1, 0, None, false, vec![]), SessionState::Done).is_some());
+    }
+
+    #[test]
+    fn diff_since_needs_a_snapshot_only() {
+        assert_eq!(diff_blocked(&turn(1, 0, None, true, vec![])), None);
+        assert_eq!(
+            diff_blocked(&turn(1, 0, None, false, vec![])),
+            Some(NO_SNAPSHOT)
+        );
     }
 
     #[test]

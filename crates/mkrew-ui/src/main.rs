@@ -24,12 +24,12 @@ use mkrew_protocol::{
     Commit, CommitDetail, DevServer, DevStartParams, DiffLineKind, DocComment, DocContent, DocFile,
     DocListParams, DocReadParams, Event, FileDiff, FsContent, FsEntry, FsListParams, FsMatch,
     FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project,
-    ProjectAddParams, ProjectRef, Request, Session, SessionAttachResult, SessionHistory,
-    SessionKillParams, SessionKind, SessionListParams, SessionReadParams, SessionReadResult,
-    SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
-    SessionTurnEvent, SessionUnqueueParams, StateSource, TabCreateParams, TabListParams, TabRef,
-    TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab,
-    Turn, UndoPreview,
+    ProjectAddParams, ProjectRef, Request, Session, SessionAttachResult, SessionFiles,
+    SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionReadParams,
+    SessionReadResult, SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult,
+    SessionState, SessionTurnEvent, SessionUnqueueParams, StateSource, TabCreateParams,
+    TabListParams, TabRef, TabSetLayoutParams, Task, TaskListParams, TaskMoveParams, TaskRef,
+    TaskStatus, TerminalTab, Turn, UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -45,7 +45,7 @@ use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
 use mkrew_ui::git_history::{self, Commits};
-use mkrew_ui::git_view::{self, GitView, TaskChanges};
+use mkrew_ui::git_view::{self, GitView, Since};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::inbox::{self, Entry, Jump, LastLines, Viewed};
@@ -1323,6 +1323,7 @@ impl Shell {
     ) {
         if requests.status {
             self.load_git_status(project_id, window, cx);
+            self.load_session_files(project_id, window, cx);
         }
         if let Some(target) = requests.diff {
             self.load_git_diff(project_id, target, window, cx);
@@ -1460,6 +1461,53 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// `session.files` of the last 24 h for the Git view's "Changed by" filter (SPEC §20C.4);
+    /// read with every status, so it follows the same refreshes. A failure keeps the last answer.
+    fn load_session_files(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let (params, serial) = self
+            .git_view(project_id)
+            .begin_session_files(status::now_ms());
+        let loaded = connection.call::<SessionFiles>(Request::SessionFiles(params));
+        cx.spawn_in(window, async move |this, cx| {
+            let files = match loaded.await {
+                Ok(files) => files,
+                Err(error) => {
+                    tracing::warn!(%project_id, "session.files failed: {error:#}");
+                    return;
+                }
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let Some(view) = shell.git.get_mut(&project_id) else {
+                    return;
+                };
+                let requests = view.session_files_loaded(serial, files);
+                shell.git_requests(project_id, requests, window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// "Changed by" in the Git view: keeps only `session`'s files (`None` = All).
+    fn filter_git_changed_by(
+        &mut self,
+        project_id: Ulid,
+        session: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let requests = self.git_view(project_id).filter_changed_by(session);
+        self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.git_requests(project_id, requests, window, cx);
     }
 
     /// `git.diff` of the selected file; while one is in flight, the selected file's diff is
@@ -2270,7 +2318,7 @@ impl Shell {
                 let Some(view) = self.git.get(&project_id) else {
                     return;
                 };
-                let last = view.task_session(self.sidebar.sessions());
+                let last = view.since_session(self.sidebar.sessions());
                 let path = view.selected.as_ref().map(|target| target.path.clone());
                 (&view.comments, path, last)
             }
@@ -3766,6 +3814,34 @@ impl Shell {
         self.load_undo_preview(window, cx);
     }
 
+    /// "Diff since" on a Turns dialog row (SPEC §20C.3): closes the dialog and shows the Git
+    /// view since the turn's start tree.
+    fn diff_since_turn(&mut self, n: u32, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(dialog) = self.turns_dialog.take() else {
+            return;
+        };
+        cx.notify();
+        let tree = match &dialog.listing {
+            turns_dialog::Listing::Loaded(turns) => turns
+                .iter()
+                .find(|turn| turn.n == n)
+                .and_then(|turn| turn.start_tree.clone()),
+            _ => None,
+        };
+        let sessions = self.sidebar.sessions();
+        // The Git view shows the active workspace's changes.
+        let session = sessions
+            .iter()
+            .find(|s| s.id == dialog.session_id && Some(s.project_id) == self.workspace);
+        let since = tree
+            .zip(session)
+            .map(|(tree, session)| (session.project_id, Since::turn(session, sessions, n, tree)));
+        match since {
+            Some((project_id, since)) => self.show_git_since(project_id, since, window, cx),
+            None => self.focus_pane(window, cx),
+        }
+    }
+
     /// "History" in the tab bar: lists the workspace's finished sessions (`session.list`) and
     /// replays the newest one's log.
     fn show_history(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -3959,12 +4035,19 @@ impl Shell {
         if self.workspace != Some(project_id) {
             return;
         }
-        let changes = TaskChanges {
-            task_id,
-            title: task.title.clone(),
-            checkpoint,
-        };
-        let requests = self.git_view(project_id).show_task(changes);
+        let since = Since::task(task_id, &task.title, checkpoint);
+        self.show_git_since(project_id, since, window, cx);
+    }
+
+    /// The Git view listing the changes since `since`'s checkpoint.
+    fn show_git_since(
+        &mut self,
+        project_id: Ulid,
+        since: Since,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let requests = self.git_view(project_id).show_since(since);
         self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
         // Showing the Git view refreshes it (the same requests) unless it is shown already.
         if self.view() == View::Git {
@@ -4459,7 +4542,7 @@ impl Shell {
                     .git
                     .get(&project_id)
                     .filter(|_| view == View::Git)
-                    .and_then(|git| git.task_session(sessions));
+                    .and_then(|git| git.since_session(sessions));
                 let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
                 (format!("{path}:{start}-{end}"), prefill, task)
             }
@@ -7045,21 +7128,24 @@ impl Shell {
             (None, git_view::Status::Loading) => {
                 empty("Loading changes…".into(), None).into_any_element()
             }
-            (None, git_view::Status::Failed(error)) if view.task.is_some() => {
+            (None, git_view::Status::Failed(error)) if view.since.is_some() => {
                 // Most likely the checkpoint is gone (gc, rewritten history): Retry won't help.
-                empty(
-                    "Cannot read the task's changes.".into(),
-                    Some(error.clone()),
-                )
-                .child(
-                    button("git-task-back", "Working changes", theme, true).on_click(cx.listener(
-                        move |shell, _, window, cx| {
-                            let working = git_view::Section::Working;
-                            shell.show_git_section(project_id, working, window, cx);
-                        },
-                    )),
-                )
-                .into_any_element()
+                let sentence = match view.since.as_ref().map(|since| since.origin) {
+                    Some(git_view::Origin::Turn { n, .. }) => {
+                        format!("Cannot read the changes since turn {n}.")
+                    }
+                    _ => "Cannot read the task's changes.".to_owned(),
+                };
+                empty(sentence, Some(error.clone()))
+                    .child(
+                        button("git-task-back", "Working changes", theme, true).on_click(
+                            cx.listener(move |shell, _, window, cx| {
+                                let working = git_view::Section::Working;
+                                shell.show_git_section(project_id, working, window, cx);
+                            }),
+                        ),
+                    )
+                    .into_any_element()
             }
             (None, git_view::Status::Failed(error)) => {
                 empty("Cannot read the git status.".into(), Some(error.clone()))
@@ -7070,27 +7156,53 @@ impl Shell {
                     )
                     .into_any_element()
             }
+            (None, git_view::Status::Loaded(_))
+                if !any_files && view.changed_by.session.is_some() =>
+            {
+                // "Changed by" hides every listed file; All brings them back.
+                let who = view
+                    .changed_by_label(self.sidebar.sessions())
+                    .unwrap_or_else(|| "this session".to_owned());
+                empty(format!("No changes here by {who}."), None)
+                    .child(
+                        button("git-changed-by-show-all", "Show all", theme, true).on_click(
+                            cx.listener(move |shell, _, window, cx| {
+                                shell.filter_git_changed_by(project_id, None, window, cx);
+                            }),
+                        ),
+                    )
+                    .into_any_element()
+            }
             (None, git_view::Status::Loaded(status)) if !any_files => {
                 // No merge-base with a commit checked out: the base names nothing usable.
                 let unusable = status.head.is_some() && status.merge_base.is_none();
-                let no_base = view.task.is_none()
+                let no_base = view.since.is_none()
                     && view.mode == GitMode::Base
                     && (status.base_ref.is_none() || unusable);
-                let (sentence, detail) = match (view.mode, &status.base_ref) {
-                    _ if view.task.is_some() => (
+                let since = view.since.as_ref().map(|since| match since.origin {
+                    git_view::Origin::Turn { n, .. } => (
+                        format!("No changes since turn {n} started."),
+                        Some("Its changes may have been restored or undone.".to_owned()),
+                    ),
+                    git_view::Origin::Task(_) => (
                         "No changes since the task's run started.".to_owned(),
                         Some("Its changes may have been undone or committed elsewhere.".to_owned()),
                     ),
-                    (GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
-                    (GitMode::Base, None) => (
+                });
+                let (sentence, detail) = match (since, view.mode, &status.base_ref) {
+                    (Some(since), _, _) => since,
+                    (None, GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
+                    (None, GitMode::Base, None) => (
                         "No base branch found.".to_owned(),
                         Some("None of origin/HEAD, main or master exists here.".to_owned()),
                     ),
-                    (GitMode::Base, Some(base)) if unusable => (
+                    (None, GitMode::Base, Some(base)) if unusable => (
                         format!("Cannot compare with {base}."),
                         Some("It names no commit here, or shares no history with HEAD.".to_owned()),
                     ),
-                    (GitMode::Base, Some(base)) => (format!("No changes against {base}."), None),
+                    (None, GitMode::Base, Some(base)) => {
+                        (format!("No changes against {base}."), None)
+                    }
                 };
                 let (label, tip) = match view.mode {
                     GitMode::Working => ("Against base", "Show everything on this branch"),
@@ -7226,21 +7338,16 @@ impl Shell {
             (Some(base), false) => format!("Base: {base}"),
             (None, _) => "No base branch".to_owned(),
         });
-        // A task's changes: what is compared replaces the base line.
-        let task = view
-            .task
+        // A task's or turn's changes: what is compared replaces the base line.
+        let since = view
+            .since
             .as_ref()
-            .filter(|_| view.section() == git_view::Section::Task);
-        let base = match task {
-            // The hash first: a long title is cut, never what is compared.
-            Some(task) => Some(format!(
-                "Since {} · task: {}",
-                git_history::short_hash(&task.checkpoint),
-                task.title
-            )),
+            .filter(|_| view.section() == git_view::Section::Since);
+        let base = match since {
+            Some(since) => Some(since.label.clone()),
             None => base,
         };
-        let shows_task = task.is_some();
+        let shows_since = since.is_some();
         // The upstream line ends with Fetch and Push.
         let tracking = tracking.map(|tracking| {
             div()
@@ -7364,7 +7471,7 @@ impl Shell {
                             .text_ellipsis()
                             .whitespace_nowrap(),
                     )
-                    .when(shows_task, |el| {
+                    .when(shows_since, |el| {
                         el.child(
                             row_action("git-task-close".into(), "Close", theme)
                                 .tooltip(tooltip(
@@ -7382,7 +7489,7 @@ impl Shell {
                                 })),
                         )
                     })
-                    .when(!shows_task, |el| {
+                    .when(!shows_since, |el| {
                         el.child(
                             row_action(
                                 "git-base-change".into(),
@@ -7402,11 +7509,73 @@ impl Shell {
                         )
                     })
             }))
+            .children(self.git_changed_by(project_id, view, theme, cx))
             .children(
                 view.refresh_error
                     .clone()
                     .map(|error| notice(theme.text, format!("✕ Refresh failed: {error}"))),
             )
+    }
+
+    /// "Changed by: All | claude #1 | …" (SPEC §20C.4): keeps only the files a session changed
+    /// in the last 24 h; hidden while no session changed any (and in the History).
+    fn git_changed_by(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::Div> {
+        let changers = view.changers(self.sidebar.sessions());
+        if changers.is_empty() {
+            return None;
+        }
+        let filtered = view.changed_by.session;
+        let hover = theme.surface;
+        let chip = |id: SharedString, label: String, session: Option<Ulid>| {
+            let active = filtered == session;
+            let tip = match session {
+                None => "Every changed file".to_owned(),
+                Some(_) => format!("Only the files {label} changed in the last 24 h"),
+            };
+            div()
+                .id(id)
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .tooltip(tooltip(theme, &tip, ""))
+                .whitespace_nowrap()
+                .when(active, |el| {
+                    el.bg(rgb(theme.surface_raised))
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text))
+                })
+                .when(!active, |el| {
+                    el.cursor_pointer()
+                        .text_color(rgb(theme.text_muted))
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.git_focus, cx);
+                            shell.filter_git_changed_by(project_id, session, window, cx);
+                        }))
+                })
+                .child(label)
+        };
+        Some(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.text_muted)).child("Changed by"))
+                .child(chip("git-changed-by-all".into(), "All".into(), None))
+                .children(changers.into_iter().map(|changer| {
+                    let id = SharedString::from(format!("git-changed-by-{}", changer.session_id));
+                    chip(id, changer.label, Some(changer.session_id))
+                })),
+        )
     }
 
     /// "Fetch" / "Push" on the header's upstream line: shows "Fetching…" while it runs, and is
@@ -8822,6 +8991,21 @@ impl Shell {
                                         .tooltip(tooltip(theme, reason, ""))
                                 }
                             };
+                            let diff = match row.diff_blocked {
+                                None => button("turn-diff", "Diff since", theme, false)
+                                    .tooltip(tooltip(
+                                        theme,
+                                        &format!("Show the changes since turn {n} started"),
+                                        "",
+                                    ))
+                                    .on_click(cx.listener(move |shell, _, window, cx| {
+                                        shell.diff_since_turn(n, window, cx);
+                                    })),
+                                Some(reason) => {
+                                    disabled_button("turn-diff", "Diff since", theme, false)
+                                        .tooltip(tooltip(theme, reason, ""))
+                                }
+                            };
                             div()
                                 .id(SharedString::from(format!("turn-{n}")))
                                 .flex()
@@ -8861,6 +9045,7 @@ impl Shell {
                                                 .child(details),
                                         ),
                                 )
+                                .child(diff.flex_none())
                                 .child(restore.flex_none())
                         }),
                 )
