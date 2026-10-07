@@ -224,6 +224,7 @@ impl Sidebar {
             | Event::SessionQueue(_)
             | Event::SessionEdited(_)
             | Event::SessionUsage(_)
+            | Event::SessionPorts(_)
             | Event::AiGenerated(_) => Change::None,
         }
     }

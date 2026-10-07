@@ -221,6 +221,9 @@ pub enum Request {
     /// that has one (SPEC §20E.3).
     #[serde(rename = "session.usage")]
     SessionUsage(ProjectRef),
+    /// Returns `SessionPortsEvent[]`: the ports of the project's live run sessions (SPEC §10).
+    #[serde(rename = "session.ports")]
+    SessionPorts(ProjectRef),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -341,6 +344,9 @@ pub enum Event {
     /// A session's token usage after a turn ended (SPEC §20E.3).
     #[serde(rename = "session.usage")]
     SessionUsage(SessionUsageEvent),
+    /// A run session printed a new port (SPEC §10).
+    #[serde(rename = "session.ports")]
+    SessionPorts(SessionPortsEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -1302,6 +1308,13 @@ pub struct SessionUsageEvent {
     pub context_window: Option<u64>,
 }
 
+/// A run session's ports (SPEC §10): every port it printed so far, at most 4, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionPortsEvent {
+    pub session_id: Ulid,
+    pub ports: Vec<u16>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionTurnEvent {
     pub session_id: Ulid,
@@ -1655,6 +1668,7 @@ mod tests {
                 since_ms: 5,
             }),
             Request::SessionUsage(ProjectRef { project_id: sid() }),
+            Request::SessionPorts(ProjectRef { project_id: sid() }),
             Request::TurnRestorePreview(TurnRef {
                 session_id: sid(),
                 n: 2,
@@ -2111,6 +2125,10 @@ mod tests {
             edited["data"],
             json!({ "session_id": sid(), "path": "src/a.rs" })
         );
+        round_trip(&Message::Event(Event::SessionPorts(SessionPortsEvent {
+            session_id: sid(),
+            ports: vec![8080, 5180],
+        })));
         let usage = round_trip(&Message::Event(Event::SessionUsage(SessionUsageEvent {
             session_id: sid(),
             input: 10,

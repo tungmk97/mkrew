@@ -12,10 +12,11 @@ use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, CommentStatus, DaemonStatusResult, ErrorCode, Event,
     Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
     PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
-    Session, SessionHistory, SessionKillParams, SessionKind, SessionReadParams, SessionSendParams,
-    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
-    SessionWaitParams, SessionWaitResult, StateSource, Task, TaskCreateParams, TaskDeletedEvent,
-    TaskRunParams, TaskUndoParams, TaskUpdateParams, TerminalTab, encode,
+    Session, SessionHistory, SessionKillParams, SessionKind, SessionPortsEvent, SessionReadParams,
+    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
+    TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
+    TerminalTab, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -399,6 +400,9 @@ impl Daemon {
             Request::SessionFiles(params) => (self.session_files(params), After::Continue),
             Request::SessionUsage(params) => {
                 (self.session_usage(params.project_id), After::Continue)
+            }
+            Request::SessionPorts(params) => {
+                (self.session_ports(params.project_id), After::Continue)
             }
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
@@ -1023,6 +1027,24 @@ impl Daemon {
             }
             Err(e) => store_outcome::<()>(Err(e)),
         }
+    }
+
+    /// `session.ports`: the ports of the project's live run sessions that printed some.
+    fn session_ports(&self, project_id: Ulid) -> Outcome {
+        let sessions = match self.store().list_sessions(Some(project_id)) {
+            Ok(sessions) => sessions,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let ports: Vec<SessionPortsEvent> = sessions
+            .iter()
+            .filter_map(|s| {
+                Some(SessionPortsEvent {
+                    session_id: s.id,
+                    ports: self.hub.session_ports(s.id)?,
+                })
+            })
+            .collect();
+        ok(&ports)
     }
 
     /// Replies with the screen snapshot; the flusher is started once the reply is queued.

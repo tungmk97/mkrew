@@ -24,12 +24,12 @@ use mkrew_protocol::{
     Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult,
     Request, ResponseError, RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot,
     Session, SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams,
-    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent,
-    SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams,
-    SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams,
-    SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
-    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
-    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionPortsEvent,
+    SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams,
+    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
+    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
+    Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
     TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
     TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
@@ -5348,5 +5348,55 @@ fn run_commands_auto_start_after_a_daemon_restart_and_end_with_their_command() {
         .unwrap();
     assert!(again.sessions[0].started);
     wait_file(&marker);
+    client.stop();
+}
+
+#[test]
+fn run_sessions_report_the_ports_they_print() {
+    let env = Env::new();
+    let repo = env.repo();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let web = run_command(
+        "web",
+        ".",
+        &long(
+            "echo Local: http://localhost:5173/",
+            "echo 'Local: http://localhost:5173/'",
+        ),
+    );
+    client
+        .call(set_runs(&project, vec![web], None))
+        .into_result::<Project>()
+        .unwrap();
+    let started: RunStarted = client
+        .call(run_start(&project, None))
+        .into_result()
+        .unwrap();
+    let id = started.sessions[0].session_id;
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionPorts(p) if p.session_id == id && p.ports == [5173]),
+    );
+    let ports = |client: &mut Client| -> Vec<SessionPortsEvent> {
+        client
+            .call(Request::SessionPorts(ProjectRef {
+                project_id: project.id,
+            }))
+            .into_result()
+            .unwrap()
+    };
+    assert_eq!(
+        ports(&mut client),
+        [SessionPortsEvent {
+            session_id: id,
+            ports: vec![5173]
+        }]
+    );
+    client
+        .call(run_stop(&project, None))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(id, SessionState::Exited);
+    assert!(ports(&mut client).is_empty());
     client.stop();
 }

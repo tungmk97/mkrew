@@ -16,7 +16,8 @@ use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
     QueuedSend, Session, SessionAttachResult, SessionEditedEvent, SessionExitedEvent, SessionKind,
-    SessionQueueEvent, SessionReadResult, SessionState, SessionStateEvent, StateSource,
+    SessionPortsEvent, SessionQueueEvent, SessionReadResult, SessionState, SessionStateEvent,
+    StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -94,6 +95,8 @@ pub struct Hub {
     pub snapshots: Snapshots,
     /// Profiles whose unknown usage format was already logged.
     usage_warned: Mutex<HashSet<String>>,
+    /// Ports printed by live run sessions (SPEC §10); memory only.
+    pub ports: Mutex<HashMap<Ulid, Vec<u16>>>,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -290,12 +293,18 @@ impl Hub {
             git: Arc::new(GitCli),
             snapshots: Snapshots::default(),
             usage_warned: Mutex::default(),
+            ports: Mutex::default(),
         }
     }
 
     pub fn store(&self) -> MutexGuard<'_, Store> {
         // A panic mid-query leaves the connection usable (SQLite rolls back), so ignore poison.
         self.store.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The ports `id` printed, if it is a live run session that printed some.
+    pub fn session_ports(&self, id: Ulid) -> Option<Vec<u16>> {
+        lock(&self.ports).get(&id).cloned()
     }
 
     pub fn live_count(&self) -> usize {
@@ -463,6 +472,9 @@ impl Hub {
         if let Some(text) = typed {
             queue.push(Ulid::new(), text);
         }
+        let run_ports = mkrew_core::run::command_name(&session)
+            .is_some()
+            .then(Vec::new);
         let mut actor = Actor {
             hub: std::sync::Arc::clone(self),
             session,
@@ -482,6 +494,7 @@ impl Hub {
             turn_jobs,
             hook_reply: None,
             usage,
+            ports: run_ports,
         };
         if let Some(banner) = banner {
             actor.on_banner(&banner);
@@ -918,6 +931,8 @@ struct Actor {
     hook_reply: Option<oneshot::Sender<()>>,
     /// To the session's [`usage::track`] task: the native session id at each turn end.
     usage: Option<mpsc::UnboundedSender<String>>,
+    /// `Some` for a run session: the ports it printed so far.
+    ports: Option<Vec<u16>>,
 }
 
 impl Actor {
@@ -1081,6 +1096,7 @@ impl Actor {
         if self.screen_print.replace(print) != Some(print) {
             let lines = self.screen_lines();
             let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+            self.scan_ports(&lines);
             if let Some(state) = self.machine.on_output(Instant::now(), &lines) {
                 self.set_state(state, StateSource::Screen);
             }
@@ -1282,6 +1298,31 @@ impl Actor {
         }
     }
 
+    /// Adds the ports a run session's screen shows (SPEC §10); announces a grown list.
+    fn scan_ports(&mut self, lines: &[&str]) {
+        let Some(ports) = self.ports.as_mut() else {
+            return;
+        };
+        let before = ports.len();
+        for port in lines
+            .iter()
+            .flat_map(|line| mkrew_core::run::scan_ports(line))
+        {
+            if ports.len() < mkrew_core::run::MAX_PORTS && !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+        if ports.len() == before {
+            return;
+        }
+        let ports = ports.clone();
+        lock(&self.hub.ports).insert(self.session.id, ports.clone());
+        let _ = self.hub.events.send(Event::SessionPorts(SessionPortsEvent {
+            session_id: self.session.id,
+            ports,
+        }));
+    }
+
     fn close_master(&mut self) {
         // Closing a pseudo console can block on Windows; keep it off the runtime.
         if let Some(master) = self.master.take() {
@@ -1293,6 +1334,7 @@ impl Actor {
         if let Err(e) = self.log.flush() {
             tracing::warn!(id = %self.session.id, "session log flush failed: {e}");
         }
+        lock(&self.hub.ports).remove(&self.session.id);
         self.close_master();
         lock(&self.hub.live).remove(&self.session.id);
         self.hub.unwatch_idle_project(self.session.project_id);
