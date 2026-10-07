@@ -326,7 +326,7 @@ fn hook_busy_decays_to_idle_after_the_priority_window() {
 
 #[test]
 fn omp_profile_spinner_redraws_are_working_and_quiet_is_idle() {
-    // The shipped profile: screen mode, no patterns, idle after 3 s (SPEC §6).
+    // The shipped profile with no hook yet: screen detection decides, no patterns, idle after 3 s (SPEC §6).
     let src = include_str!("../../../../agents/omp.toml");
     let profile =
         crate::profile::parse_profile("omp", std::path::Path::new("omp.toml"), src).unwrap();

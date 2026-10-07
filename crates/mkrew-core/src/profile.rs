@@ -594,7 +594,21 @@ oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
         let set = load_dir(&dir);
         assert!(set.errors.is_empty(), "{:?}", set.errors);
         let ids: Vec<_> = set.profiles.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["claude", "codex", "fake", "omp", "shell"]);
+        assert_eq!(ids, ["claude", "codex", "copilot", "fake", "omp", "shell"]);
+        let resumed = |id: &str| {
+            set.get(id)
+                .unwrap()
+                .resumed("abc")
+                .map(|p| (p.command, p.args))
+        };
+        assert_eq!(
+            resumed("omp"),
+            Some(("omp".into(), vec!["--resume".into(), "abc".into()]))
+        );
+        assert_eq!(
+            resumed("copilot"),
+            Some(("copilot".into(), vec!["--resume=abc".into()]))
+        );
         assert_eq!(set.get("shell").unwrap().kind, ProfileKind::Shell);
         assert_eq!(set.get("fake").unwrap().command, "mkrew-fakeagent");
         let format = |id: &str| {

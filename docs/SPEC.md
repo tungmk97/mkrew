@@ -133,8 +133,9 @@ CLI are clients.
   then reconnects.
 - UI closes → daemon and all agents keep running.
 - `mk daemon stop` or a reboot → agents stop. On next start the daemon restores workspaces,
-  tasks, tabs and sessions; agents whose profile has `resume` are relaunched into their old
-  conversation.
+  tasks, tabs and sessions; agents whose profile has `resume` and that reported their own
+  session id are relaunched into their old conversation: task sessions (running/needs_input),
+  and agent panes without a task that a tab still showed.
 - Exactly one daemon per user, enforced by a lock file in the data dir.
 
 **Agent state flow:** agent (e.g. Claude Code) fires a hook → the hook runs `mk hook <agent> <event>`
@@ -295,7 +296,8 @@ ALTER TABLE doc_comment ADD COLUMN context TEXT NOT NULL DEFAULT 'doc'; -- doc|d
 ALTER TABLE project ADD COLUMN dev_autostart INTEGER NOT NULL DEFAULT 0; -- start dev_command after daemon start
 ```
 
-v2 migrations 0008 (M11) and 0009 (M13) are listed in §20.
+v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interrupted.sql` adds
+`session.interrupted INTEGER NOT NULL DEFAULT 0` (ADR 0017).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -371,9 +373,23 @@ needs_input_patterns = ['(?i)allow command', '(?i)approve']
 name = "Oh My Pi"
 command = "omp"
 prompt_mode = "type"
+resume = "omp --resume {session_id}"   # {session_id} reported by the Mkrew extension
 oneshot = "omp -p --no-session"  # one-shot text; prompt on stdin
 [state]
-mode = "screen"
+mode = "hook+screen"
+idle_after_ms = 3000
+needs_input_patterns = []
+```
+
+```toml
+# agents/copilot.toml
+name = "GitHub Copilot"
+command = "copilot"
+prompt_mode = "type"             # copilot takes no positional prompt
+resume = "copilot --resume={session_id}"
+# no oneshot: `copilot -p` takes the prompt as an argument, not on stdin
+[state]
+mode = "hook+screen"
 idle_after_ms = 3000
 needs_input_patterns = []
 ```
@@ -412,6 +428,16 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
   `Notification`, `Stop`, each running `mk hook claude <event>`. The hook reads JSON from stdin and
   takes `session_id` as `native_session_id`.
 - Codex: set `notify = ["mk", "hook", "codex"]` in `~/.codex/config.toml`; Codex passes JSON as an argument.
+- Oh My Pi: `mk integration install omp` writes the Mkrew-owned extension
+  `<PI_CODING_AGENT_DIR or ~/.omp/agent>/extensions/mkrew.ts`; it runs
+  `mk hook omp <busy|needs_input|done|session_start> {"session_id": …}` (root session only: not
+  with `OMPCODE=1`, not without a UI).
+- GitHub Copilot CLI: `mk integration install copilot` writes the Mkrew-owned
+  `<COPILOT_HOME or ~/.copilot>/hooks/mkrew.json` (`sessionStart`, `userPromptSubmitted`,
+  `agentStop`, `notification` matching `permission_prompt|elicitation_dialog`), each
+  `exec: mk hook copilot <event>`, JSON on stdin, `sessionId` = `native_session_id`.
+- Owned files (omp, Copilot): install writes the whole file (backing up a different one),
+  uninstall deletes it. Install prints the `resume` line when the user's profile lacks one.
 - Install must: back up the original file (timestamped `.bak`), merge instead of overwrite, be
   idempotent, and have a working uninstall.
 - Before coding this, check the CURRENT hook formats in the official Claude Code and Codex docs.
@@ -419,7 +445,9 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
 - Event mapping (`mkrew_core::hook`): Claude `UserPromptSubmit` → working, `Notification` with
   `notification_type` `permission_prompt`/`elicitation_*`/`agent_needs_input` (or none) →
   needs_input, `Stop` → done, `SessionStart` and other types → recorded only; Codex
-  `agent-turn-complete` → done, `thread-id` = `native_session_id`; fake `busy`/`needs_input`/`done`.
+  `agent-turn-complete` → done, `thread-id` = `native_session_id`; fake `busy`/`needs_input`/`done`;
+  omp `busy`/`needs_input`/`done` like fake; Copilot `userPromptSubmitted` → working,
+  `notification` `permission_prompt`/`elicitation_dialog` → needs_input, `agentStop` → done.
 
 ---
 
@@ -528,7 +556,8 @@ v2 adds requests and events in §20; each milestone that changes the protocol bu
 - **Startup:** take the lock (exit if another daemon runs); run migrations; open the IPC endpoint;
   mark sessions left in working/needs_input/idle as `exited`; then resume (below).
 - **Spawn:** create the PTY with `portable-pty`, `cwd` = project path, env `MKREW_SESSION_ID`,
-  `MKREW_SOCKET`, `TERM=xterm-256color`.
+  `MKREW_SOCKET`, `TERM=xterm-256color`. The daemon removes `OMPCODE` from the PTY environment,
+  so a daemon started from an omp shell does not make the omp extension turn itself off.
 - **PTY reader threads:** `portable-pty` reads are blocking, so each session gets ONE dedicated OS
   thread that reads into a buffer and forwards chunks over a bounded channel to tokio. Never call
   blocking PTY reads inside async tasks.
@@ -545,7 +574,11 @@ v2 adds requests and events in §20; each milestone that changes the protocol bu
   session reaches idle/done/needs_input.
 - **Resume:** on startup, for each task in running/needs_input whose last session has a
   `native_session_id` and whose profile has `resume`, spawn the resume command. Otherwise set the
-  task to needs_input with the note "session stopped — run again?".
+  task to needs_input with the note "session stopped — run again?". Then, for each session marked
+  `interrupted` (it exited during the daemon stop, or was still live at startup after a
+  crash/reboot) that has no task, is an agent, and is still a leaf of a tab layout: spawn the
+  resume command in the same pane. One that cannot resume stays exited. The mark is cleared at
+  startup, so each session is resumed at most once.
 - **Dev servers:** after resume, `project.dev_start` for every non-archived project with
   `dev_autostart` and a `dev_command` (ADR 0008).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
@@ -576,7 +609,7 @@ mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
 mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
-mk integration install|uninstall|status <agent>
+mk integration install|uninstall|status <claude|codex|omp|copilot>
 mk hook <agent> <event>                # called by agent hooks, not by users
 mk open <project> [file[:line]]        # opens in Zed
 mk comment list [--file <path>] [--project P]  # default project: MKREW_SESSION_ID's, else cwd's

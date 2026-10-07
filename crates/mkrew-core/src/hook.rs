@@ -16,6 +16,10 @@ use crate::state::HookEvent;
 pub enum HookAgent {
     Claude,
     Codex,
+    /// GitHub Copilot CLI: `~/.copilot/hooks/mkrew.json` (camelCase events, JSON on stdin).
+    Copilot,
+    /// Oh My Pi: the `mkrew.ts` extension reports `busy`/`needs_input`/`done`/`session_start`.
+    Omp,
     /// The test fake agent (SPEC §16).
     Fake,
 }
@@ -25,6 +29,8 @@ impl HookAgent {
         match name {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
+            "copilot" => Some(Self::Copilot),
+            "omp" => Some(Self::Omp),
             "fake" => Some(Self::Fake),
             _ => None,
         }
@@ -38,9 +44,12 @@ impl HookAgent {
             (Self::Claude, "Notification") => claude_notification(payload),
             (Self::Claude, "Stop") => Some(HookEvent::Done),
             (Self::Codex, "agent-turn-complete") => Some(HookEvent::Done),
-            (Self::Fake, "busy") => Some(HookEvent::Busy),
-            (Self::Fake, "needs_input") => Some(HookEvent::NeedsInput),
-            (Self::Fake, "done") => Some(HookEvent::Done),
+            (Self::Copilot, "userPromptSubmitted") => Some(HookEvent::Busy),
+            (Self::Copilot, "notification") => copilot_notification(payload),
+            (Self::Copilot, "agentStop") => Some(HookEvent::Done),
+            (Self::Omp | Self::Fake, "busy") => Some(HookEvent::Busy),
+            (Self::Omp | Self::Fake, "needs_input") => Some(HookEvent::NeedsInput),
+            (Self::Omp | Self::Fake, "done") => Some(HookEvent::Done),
             _ => None,
         }
     }
@@ -48,8 +57,9 @@ impl HookAgent {
     /// The agent's own session id in `payload`, used for resume (SPEC §5 `native_session_id`).
     pub fn native_session_id(self, payload: &Value) -> Option<String> {
         let key = match self {
-            Self::Claude | Self::Fake => "session_id",
+            Self::Claude | Self::Omp | Self::Fake => "session_id",
             Self::Codex => "thread-id",
+            Self::Copilot => "sessionId",
         };
         payload
             .get(key)
@@ -111,6 +121,15 @@ fn claude_notification(payload: &Value) -> Option<HookEvent> {
         None | Some("permission_prompt" | "agent_needs_input") => Some(HookEvent::NeedsInput),
         Some(kind) if kind.starts_with("elicitation") => Some(HookEvent::NeedsInput),
         Some(_) => None,
+    }
+}
+
+/// Copilot's `notification` hook: tool approvals and questions need the user; shell and
+/// background-agent completions are informational.
+fn copilot_notification(payload: &Value) -> Option<HookEvent> {
+    match payload.get("notification_type").and_then(Value::as_str) {
+        Some("permission_prompt" | "elicitation_dialog") => Some(HookEvent::NeedsInput),
+        _ => None,
     }
 }
 
@@ -223,8 +242,48 @@ mod tests {
     }
 
     #[test]
+    fn omp_events_map_like_the_fake_agent() {
+        let omp = HookAgent::parse("omp").unwrap();
+        assert_eq!(omp.event("busy", &Value::Null), Some(HookEvent::Busy));
+        assert_eq!(
+            omp.event("needs_input", &Value::Null),
+            Some(HookEvent::NeedsInput)
+        );
+        assert_eq!(omp.event("done", &Value::Null), Some(HookEvent::Done));
+        assert_eq!(omp.event("session_start", &Value::Null), None);
+        let start = json!({"session_id": "01a11668-3523"});
+        assert_eq!(
+            omp.native_session_id(&start).as_deref(),
+            Some("01a11668-3523")
+        );
+    }
+
+    #[test]
+    fn copilot_events_and_session_id() {
+        let copilot = HookAgent::parse("copilot").unwrap();
+        let none = Value::Null;
+        assert_eq!(copilot.event("sessionStart", &none), None);
+        assert_eq!(
+            copilot.event("userPromptSubmitted", &none),
+            Some(HookEvent::Busy)
+        );
+        assert_eq!(copilot.event("agentStop", &none), Some(HookEvent::Done));
+        let of = |kind: &str| copilot.event("notification", &json!({"notification_type": kind}));
+        assert_eq!(of("permission_prompt"), Some(HookEvent::NeedsInput));
+        assert_eq!(of("elicitation_dialog"), Some(HookEvent::NeedsInput));
+        assert_eq!(of("shell_completed"), None);
+        assert_eq!(of("agent_idle"), None);
+        let start = json!({"sessionId": "0cb916db-26aa", "source": "resume"});
+        assert_eq!(
+            copilot.native_session_id(&start).as_deref(),
+            Some("0cb916db-26aa")
+        );
+        assert_eq!(copilot.native_session_id(&json!({"session_id": "x"})), None);
+    }
+
+    #[test]
     fn unknown_agents_are_rejected() {
-        assert_eq!(HookAgent::parse("omp"), None);
+        assert_eq!(HookAgent::parse("gemini"), None);
         assert_eq!(HookAgent::parse("Claude"), None);
     }
 }

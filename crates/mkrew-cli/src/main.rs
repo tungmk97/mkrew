@@ -161,7 +161,7 @@ enum CommentCommand {
 
 #[derive(Subcommand)]
 enum IntegrationCommand {
-    /// Add Mkrew's hooks to the agent's config (backs the file up first).
+    /// Add Mkrew's hooks to the agent's config (backs the file up first; omp/copilot: one Mkrew-owned file).
     Install { agent: integration::Agent },
     /// Remove Mkrew's hooks from the agent's config, keeping everything else.
     Uninstall { agent: integration::Agent },

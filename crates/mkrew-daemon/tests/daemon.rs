@@ -736,7 +736,7 @@ fn agent_profiles_lists_samples_and_broken_files() {
 
     let result: AgentProfilesResult = client.call(Request::AgentProfiles).into_result().unwrap();
     let ids: Vec<&str> = result.profiles.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["claude", "codex", "fake", "omp", "shell"]);
+    assert_eq!(ids, ["claude", "codex", "copilot", "fake", "omp", "shell"]);
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
     let error = &result.errors[0];
     assert!(error.file.ends_with("broken.toml"), "{error:?}");
@@ -879,8 +879,8 @@ fn hook_reports_drive_the_state_of_live_sessions_only() {
     // Only a live session may report, and only for a known agent.
     let unknown = client.hook(Ulid::new(), "fake", "busy", Value::Null);
     assert_eq!(error_code(unknown), ErrorCode::NotFound);
-    let omp = client.hook(id, "omp", "busy", Value::Null);
-    assert_eq!(error_code(omp), ErrorCode::InvalidRequest);
+    let unknown_agent = client.hook(id, "gemini", "busy", Value::Null);
+    assert_eq!(error_code(unknown_agent), ErrorCode::InvalidRequest);
 
     // needs_input first: the fake agent's first output may already have made it `working`.
     let native = json!({"session_id": "native-1"});
@@ -4188,6 +4188,131 @@ fn restart_resumes_running_tasks_with_their_native_session_id() {
     assert_eq!(
         tabs[0].layout,
         serde_json::from_str::<Value>(&expected).unwrap()
+    );
+    client.stop();
+}
+
+/// SPEC §8: an agent pane without a task that a tab showed when the daemon stopped comes back
+/// in the same pane with its conversation. A session in no tab, or one that exited by itself
+/// before the stop, stays exited, and each stop resumes the current pane, never an older one.
+#[test]
+fn restart_resumes_free_agent_panes_in_tabs_once() {
+    let env = Env::new();
+    let fake = built_bin("mkrew-fakeagent");
+    let profile = |name: &str, steps: &str| {
+        let scenario = env.dir.path().join(format!("{name}.toml"));
+        std::fs::write(&scenario, steps).unwrap();
+        env.write_fake_profile_as(name, &format!("['--scenario', '{}']", scenario.display()));
+        let path = env.dir.path().join(format!("config/agents/{name}.toml"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let resume = format!(
+            "resume = '\"{}\" --resume {{session_id}}'\n",
+            fake.display()
+        );
+        std::fs::write(
+            &path,
+            text.replace("[state]", &format!("{resume}\n[state]")),
+        )
+        .unwrap();
+    };
+    profile(
+        "resumable",
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-7\"\n\
+         [[step]]\naction = \"ask\"\n",
+    );
+    profile(
+        "quits",
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-8\"\n\
+         [[step]]\naction = \"exit\"\ncode = 0\n",
+    );
+
+    let list = |client: &mut Client| -> Vec<Session> {
+        client
+            .call(Request::SessionList(SessionListParams::default()))
+            .into_result()
+            .unwrap()
+    };
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let shown: SessionSpawnResult = client.spawn(&project, "resumable").into_result().unwrap();
+    let hidden: SessionSpawnResult = client.spawn(&project, "resumable").into_result().unwrap();
+    let quit: SessionSpawnResult = client.spawn(&project, "quits").into_result().unwrap();
+    let layout = |shown: Ulid| {
+        json!({"split": "vertical", "ratio": 0.5, "children": [
+            {"session": shown.to_string()}, {"session": quit.session_id.to_string()}
+        ]})
+    };
+    let tab: TerminalTab = client
+        .call(create_tab(&project, "agents"))
+        .into_result()
+        .unwrap();
+    client
+        .call(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: tab.id,
+            layout: layout(shown.session_id),
+        }))
+        .into_result::<()>()
+        .unwrap();
+    for id in [shown.session_id, hidden.session_id] {
+        let deadline = Instant::now() + TIMEOUT;
+        while client.session(id).native_session_id.is_none() {
+            assert!(Instant::now() < deadline, "no native session id reported");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    client.wait_state(quit.session_id, SessionState::Exited);
+    assert_eq!(
+        client.session(quit.session_id).native_session_id.as_deref(),
+        Some("native-8")
+    );
+    client.stop();
+    assert!(daemon.wait_exit().success());
+
+    let (mut daemon, mut client) = env.start();
+    let sessions = list(&mut client);
+    assert_eq!(
+        sessions.len(),
+        4,
+        "only the shown pane came back: {sessions:?}"
+    );
+    let resumed = sessions
+        .iter()
+        .find(|s| ![shown.session_id, hidden.session_id, quit.session_id].contains(&s.id))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            resumed.task_id,
+            resumed.agent_profile.as_str(),
+            resumed.native_session_id.as_deref()
+        ),
+        (None, "resumable", Some("native-7"))
+    );
+    client.wait_state(resumed.id, SessionState::NeedsInput);
+    let attached: SessionAttachResult = client.attach(resumed.id).into_result().unwrap();
+    let screen = screen_text(&attached.snapshot);
+    assert!(screen.contains("Resumed: native-7"), "{screen}");
+    assert_eq!(
+        list_tabs(&mut client, &project)[0].layout,
+        layout(resumed.id)
+    );
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    let sessions = list(&mut client);
+    assert_eq!(
+        sessions.len(),
+        5,
+        "one more pane, resumed from the current one: {sessions:?}"
+    );
+    let newest = sessions
+        .iter()
+        .max_by_key(|s| (s.started_at, s.id))
+        .unwrap();
+    assert_eq!(
+        list_tabs(&mut client, &project)[0].layout,
+        layout(newest.id)
     );
     client.stop();
 }

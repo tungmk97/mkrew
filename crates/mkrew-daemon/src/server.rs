@@ -96,9 +96,9 @@ impl Daemon {
     }
 
     /// Watches `settings.toml`, starts keep awake and daily DB backups, deletes expired turn
-    /// refs (in the background), resumes interrupted
-    /// tasks, auto-starts dev servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session (SPEC §8). `notifier` = `None` turns
-    /// OS notifications off.
+    /// refs (in the background), resumes interrupted tasks and agent panes, auto-starts dev
+    /// servers, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every session
+    /// (SPEC §8). `notifier` = `None` turns OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let _settings_watch = settings::watch(Arc::clone(&self.settings))
             .inspect_err(|e| tracing::warn!("settings.toml is not watched: {e}"))
@@ -117,7 +117,7 @@ impl Daemon {
         );
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
-        self.resume_tasks().await;
+        self.resume_sessions().await;
         self.autostart_dev_servers();
         Arc::clone(&self).accept(listener).await;
         backups.abort();

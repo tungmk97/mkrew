@@ -1,8 +1,8 @@
 //! `mk hook <agent> <event>`: called by agent hooks inside a session's PTY (SPEC §6, §9).
 //!
-//! - `claude <event>`: the hook JSON comes on stdin.
+//! - `claude <event>` / `copilot <event>`: the hook JSON comes on stdin.
 //! - `codex <json>`: Codex `notify` appends the JSON as the last argument; the event is its `type`.
-//! - anything else (`fake`): `<event> [json]`.
+//! - anything else (`omp`, `fake`): `<event> [json]`.
 //!
 //! Without `MKREW_SESSION_ID` the agent runs outside Mkrew: exit 0 without doing anything.
 
@@ -45,7 +45,7 @@ pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The event name and JSON payload for `agent`; `stdin` is only read for Claude.
+/// The event name and JSON payload for `agent`; `stdin` is only read for Claude and Copilot.
 fn event_and_payload(
     agent: &str,
     args: &[String],
@@ -60,7 +60,7 @@ fn event_and_payload(
             Ok((event.to_owned(), payload))
         }
         ("codex", []) => bail!("usage: mk hook codex <json>"),
-        ("claude", [event]) => {
+        ("claude" | "copilot", [event]) => {
             let text = stdin()?;
             let payload = match text.trim() {
                 "" => Value::Null,
@@ -69,7 +69,9 @@ fn event_and_payload(
             Ok((event.clone(), payload))
         }
         (_, [event]) => Ok((event.clone(), Value::Null)),
-        (_, [event, json]) if agent != "claude" => Ok((event.clone(), parse_json(json)?)),
+        (_, [event, json]) if !matches!(agent, "claude" | "copilot") => {
+            Ok((event.clone(), parse_json(json)?))
+        }
         _ => bail!("usage: mk hook {agent} <event>"),
     }
 }
@@ -129,5 +131,26 @@ mod tests {
                 .unwrap();
         assert_eq!(payload, json!({"session_id": "n"}));
         assert!(event_and_payload("fake", &args(&[]), no_stdin).is_err());
+    }
+
+    #[test]
+    fn copilot_reads_json_from_stdin() {
+        let stdin = || Ok(r#"{"sessionId": "c1", "source": "startup"}"#.into());
+        let (event, payload) =
+            event_and_payload("copilot", &args(&["sessionStart"]), stdin).unwrap();
+        assert_eq!(event, "sessionStart");
+        assert_eq!(payload["sessionId"], "c1");
+        assert!(event_and_payload("copilot", &args(&["agentStop", "{}"]), no_stdin).is_err());
+    }
+
+    #[test]
+    fn omp_takes_event_and_json_argument() {
+        let (event, payload) =
+            event_and_payload("omp", &args(&["busy", r#"{"session_id": "o1"}"#]), no_stdin)
+                .unwrap();
+        assert_eq!(
+            (event.as_str(), payload),
+            ("busy", json!({"session_id": "o1"}))
+        );
     }
 }

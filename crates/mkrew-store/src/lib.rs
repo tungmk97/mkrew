@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0007_dev_server.sql"),
     include_str!("../migrations/0008_turns.sql"),
     include_str!("../migrations/0009_worktrees.sql"),
+    include_str!("../migrations/0010_session_interrupted.sql"),
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -638,15 +639,35 @@ impl Store {
         Ok(())
     }
 
-    /// Marks every session not yet `exited` as exited (no PTY survives a daemon restart,
-    /// SPEC §8). Returns how many rows changed.
+    /// Marks every session not yet `exited` as exited and interrupted: no PTY survives a
+    /// daemon restart, and a row still live here means a crash or reboot (SPEC §8).
+    /// Returns how many rows changed.
     pub fn mark_stale_sessions_exited(&self) -> Result<usize> {
         Ok(self.conn.execute(
             "UPDATE session SET state = 'exited', ended_at = COALESCE(ended_at, ?1),
-                state_source = 'daemon', state_changed_at = ?1
+                state_source = 'daemon', state_changed_at = ?1, interrupted = 1
              WHERE state <> 'exited'",
             [now_ms()],
         )?)
+    }
+
+    /// The daemon stopped while `id` ran: resumable at the next start (SPEC §8).
+    pub fn mark_interrupted(&self, id: Ulid) -> Result<()> {
+        self.conn.execute(
+            "UPDATE session SET interrupted = 1 WHERE id = ?1",
+            [id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// The sessions the last daemon stop interrupted. Clears the mark, so each one is
+    /// resumed at most once.
+    pub fn take_interrupted_sessions(&self) -> Result<Vec<Ulid>> {
+        let mut stmt = self
+            .conn
+            .prepare("UPDATE session SET interrupted = 0 WHERE interrupted = 1 RETURNING id")?;
+        let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        ids.map(|id| parse_ulid("session.id", id?)).collect()
     }
 
     /// Sessions, oldest first, optionally limited to one project.

@@ -317,6 +317,8 @@ impl Hub {
         cmd.env("MKREW_SESSION_ID", session.id.to_string());
         cmd.env(mkrew_core::paths::ENV_SOCKET, &socket);
         cmd.env("TERM", "xterm-256color");
+        // A Mkrew PTY is never omp's own shell; an inherited OMPCODE disables the omp extension.
+        cmd.env_remove("OMPCODE");
         let machine = StateMachine::new(&profile.state).context("compile state patterns")?;
         let log = SessionLog::create(&log_file)
             .with_context(|| format!("create {}", log_file.display()))?;
@@ -1302,6 +1304,13 @@ impl Actor {
         if !self.queue.is_empty() {
             self.queue = SendQueue::default();
             self.announce_queue();
+        }
+        // Cut off by the daemon stop, not ended by the user or the agent: resume it at the
+        // next start (SPEC §8). A reboot leaves the row live instead; startup marks those.
+        if self.hub.stopping.load(Ordering::SeqCst)
+            && let Err(e) = self.hub.store().mark_interrupted(self.session.id)
+        {
+            tracing::warn!(id = %self.session.id, "not marked interrupted: {e}");
         }
         self.session.exit_code = exit_code;
         self.session.ended_at = Some(crate::server::now_ms());

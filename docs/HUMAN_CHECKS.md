@@ -15,6 +15,19 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+- [ ] **2026-10-07 resume omp/Copilot/free panes** (plan `docs/superpowers/plans/2026-10-07-resume-omp-copilot-panes.md`).
+  1. Add `resume = "omp --resume {session_id}"` to `%APPDATA%\mkrew\agents\omp.toml` and set
+     `mode = "hook+screen"`. Run `mk integration install omp` and `mk integration install copilot`.
+  2. Open a project, `+ Agent` with omp, chat one turn; same with copilot, claude, codex (no task).
+     Close the UI, reopen it: all panes are still live (unchanged behaviour).
+  3. `mk daemon stop`, then reopen the UI: each pane comes back in the same tab position with the
+     same conversation (`omp --resume`, `copilot --resume=`, …).
+  4. Reboot Windows, open the UI: same as 3.
+  5. In omp, ask it to run `omp -p hi` in its bash tool; after the restart the pane still resumes
+     the original conversation (nested guard).
+  6. Close an agent pane (kill), restart: it does not come back.
+  7. In omp/copilot: a tool approval shows `needs_input` (`?`), and finishing a turn shows `done`.
+
 - [ ] **2026-10-07 daily fixes** (plan `docs/superpowers/plans/2026-10-07-daily-fixes-and-ai-helpers.md`).
       Stop the old daemon first (`target\debug\mk daemon stop`, protocol v24), then
       `cargo run -p mkrew-ui`:

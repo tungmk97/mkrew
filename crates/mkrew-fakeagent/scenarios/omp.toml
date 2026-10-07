@@ -1,5 +1,6 @@
-# Oh My Pi-like turns for screen detection (`agents/omp.toml`, SPEC §6): omp has no hooks and
-# no approval prompt, so its state is only "spinner redrawing one line" (working) or quiet
+# Oh My Pi-like turns for screen detection (`agents/omp.toml`, SPEC §6): without the installed
+# hook (`mk integration install omp`) screen detection decides, and it has no approval pattern
+# for omp (`needs_input_patterns = []`), so its state is only "spinner redrawing one line" (working) or quiet
 # (idle after `idle_after_ms` = 3000). Two turns, each followed by a quiet gap > 3 s.
 
 [[step]]

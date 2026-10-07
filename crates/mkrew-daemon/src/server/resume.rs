@@ -1,12 +1,13 @@
-//! Startup resume (SPEC §8): tasks the last daemon left running/needs_input get their agent
-//! conversation back, or are flagged for the user to run again. A fan-out's original task is
-//! left alone.
+//! Startup resume (SPEC §8): tasks the last daemon left running/needs_input, and agent panes
+//! without a task that a tab still showed when the daemon stopped, get their agent
+//! conversation back. A task that cannot resume is flagged for the user to run again. A
+//! fan-out's original task is left alone.
 
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mkrew_protocol::{Event, Session, Task, TaskStatus};
+use mkrew_protocol::{Event, Session, SessionKind, Task, TaskStatus};
 use serde_json::Value;
 use ulid::Ulid;
 
@@ -15,58 +16,72 @@ use super::{Daemon, Start, task_dir};
 impl Daemon {
     /// For each running/needs_input task: relaunch its last session with the profile's
     /// `resume` command when the agent reported its own id, else move the card to needs_input
-    /// with `error_flag` ("session stopped — run again?").
-    pub(super) async fn resume_tasks(&self) {
+    /// with `error_flag` ("session stopped — run again?"). Then the same for every interrupted
+    /// agent session without a task that is still in a tab; one that cannot resume stays
+    /// exited, as before.
+    pub(super) async fn resume_sessions(&self) {
         let found = {
             let store = self.store();
-            store
-                .list_tasks(None, None)
-                .and_then(|tasks| Ok((tasks, store.list_sessions(None)?)))
+            store.take_interrupted_sessions().and_then(|interrupted| {
+                Ok((
+                    store.list_tasks(None, None)?,
+                    store.list_sessions(None)?,
+                    interrupted,
+                ))
+            })
         };
-        let (tasks, sessions) = match found {
+        let (tasks, sessions, interrupted) = match found {
             Ok(found) => found,
             Err(e) => {
-                tracing::error!("cannot resume tasks: {e}");
+                tracing::error!("cannot resume sessions: {e}");
                 return;
             }
         };
         // A fan-out's original runs nothing itself: its children are resumed (SPEC §20E.2).
         let fanned_out: Vec<Ulid> = tasks.iter().filter_map(|t| t.fanout_of).collect();
-        let interrupted = tasks.iter().filter(|t| {
+        let stopped_tasks = tasks.iter().filter(|t| {
             matches!(t.status, TaskStatus::Running | TaskStatus::NeedsInput)
                 && !fanned_out.contains(&t.id)
         });
-        for task in interrupted {
+        for task in stopped_tasks {
             let resumed = match last_session(&sessions, task.id) {
-                Some(last) => self.resume(task, last).await,
+                Some(last) => self.resume(last, Some(task)).await,
                 None => None,
             };
             if resumed.is_none() {
                 self.mark_stopped(task.id);
             }
         }
+        let panes = sessions.iter().filter(|s| {
+            s.task_id.is_none() && s.kind == SessionKind::Agent && interrupted.contains(&s.id)
+        });
+        for last in panes {
+            if self.in_a_tab(last) && self.resume(last, None).await.is_none() {
+                tracing::info!(session_id = %last.id, "pane not resumed: no agent session id or no `resume`");
+            }
+        }
     }
 
-    /// Spawns `last`'s resume command as a new session of `task` in `last`'s pane slot.
-    async fn resume(&self, task: &Task, last: &Session) -> Option<Ulid> {
+    /// Spawns `last`'s resume command as a new session (of `task`, if any) in `last`'s pane slot.
+    async fn resume(&self, last: &Session, task: Option<&Task>) -> Option<Ulid> {
         let native = last.native_session_id.as_deref()?;
         let profile = match self.load_profile(&last.agent_profile) {
             Ok(profile) => profile.resumed(native)?,
             Err(outcome) => {
-                tracing::warn!(task_id = %task.id, "cannot resume: {outcome:?}");
+                tracing::warn!(session_id = %last.id, "cannot resume: {outcome:?}");
                 return None;
             }
         };
-        let project = match self.store().get_project(task.project_id) {
+        let project = match self.store().get_project(last.project_id) {
             Ok(project) => project,
             Err(e) => {
-                tracing::warn!(task_id = %task.id, "cannot resume: {e}");
+                tracing::warn!(session_id = %last.id, "cannot resume: {e}");
                 return None;
             }
         };
         let project_id = project.id;
         // A worktree task resumes in its worktree (SPEC §20E.1), never in the project folder.
-        let dir = match &task.worktree_path {
+        let dir = match task.and_then(|t| t.worktree_path.as_ref()) {
             Some(root) => {
                 let git = Arc::clone(&self.git);
                 let (project_dir, root) = (PathBuf::from(&project.path), PathBuf::from(root));
@@ -77,7 +92,7 @@ impl Daemon {
                 match found {
                     Ok(dir) => Some(dir),
                     Err(e) => {
-                        tracing::warn!(task_id = %task.id, "cannot resume: {e}");
+                        tracing::warn!(session_id = %last.id, "cannot resume: {e}");
                         return None;
                     }
                 }
@@ -87,7 +102,7 @@ impl Daemon {
         let start = Start {
             project,
             profile,
-            task_id: Some(task.id),
+            task_id: task.map(|t| t.id),
             title: last.title.clone(),
             cols: last.cols,
             rows: last.rows,
@@ -98,13 +113,13 @@ impl Daemon {
             banner: None,
         };
         match self.start_session(start) {
-            Ok(session_id) => {
-                tracing::info!(task_id = %task.id, %session_id, native, "task resumed");
-                self.replace_in_tabs(project_id, last.id, session_id);
-                Some(session_id)
+            Ok(new_id) => {
+                tracing::info!(session_id = %last.id, %new_id, native, "session resumed");
+                self.replace_in_tabs(project_id, last.id, new_id);
+                Some(new_id)
             }
             Err(outcome) => {
-                tracing::warn!(task_id = %task.id, "cannot resume: {outcome:?}");
+                tracing::warn!(session_id = %last.id, "cannot resume: {outcome:?}");
                 None
             }
         }
@@ -144,6 +159,20 @@ impl Daemon {
                 }
             }
             Err(e) => tracing::warn!(%project_id, "resumed session not placed in its tab: {e}"),
+        }
+    }
+
+    /// Whether a tab of `session`'s project still shows it (the user did not close or hide it).
+    fn in_a_tab(&self, session: &Session) -> bool {
+        let tabs = self.store().list_tabs(session.project_id);
+        match tabs {
+            Ok(tabs) => tabs
+                .iter()
+                .any(|tab| replace_session(&tab.layout, session.id, session.id).is_some()),
+            Err(e) => {
+                tracing::warn!(session_id = %session.id, "tabs not read, pane not resumed: {e}");
+                false
+            }
         }
     }
 }
@@ -186,7 +215,7 @@ fn replace_session(layout: &Value, old: Ulid, new: Ulid) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mkrew_protocol::{SessionKind, SessionState, StateSource};
+    use mkrew_protocol::{SessionState, StateSource};
     use serde_json::json;
 
     fn session(task_id: Option<Ulid>, started_at: i64) -> Session {

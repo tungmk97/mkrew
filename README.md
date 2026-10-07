@@ -74,8 +74,8 @@ Setup 6) or `pwsh scripts/package.ps1` (MSI, needs WiX 7).
 
 Each agent is a TOML file in the agents folder of the config directory (see
 [Files and folders](#files-and-folders)); the file name is the profile id. On first start the
-daemon writes the samples `claude.toml`, `codex.toml`, `omp.toml`, `shell.toml` and
-`fake.toml` (a fake agent for tests) there. It never overwrites a file you edited, but recreates
+daemon writes the samples `claude.toml`, `codex.toml`, `omp.toml`, `copilot.toml`, `shell.toml`
+and `fake.toml` (a fake agent for tests) there. It never overwrites a file you edited, but recreates
 a deleted sample on every start. Profiles are read each time a session starts, so edits apply to
 the next session.
 
@@ -99,21 +99,28 @@ Unknown keys and invalid regexes are errors. `kind = "shell"` makes a plain shel
 (omit `command` to use `%COMSPEC%` / `$SHELL`). The full format is in
 [SPEC §6](docs/SPEC.md#6-agent-profiles--agent-state).
 
-### Hooks (exact status for Claude Code and Codex)
+### Hooks (exact status for Claude Code, Codex, Oh My Pi and Copilot)
 
 Without hooks Mkrew guesses the state from the screen. With hooks the agent reports "working",
-"needs input" and "done" itself:
+"needs input" and "done" itself, and its session id, so a pane can resume its conversation after
+`mk daemon stop` or a reboot:
 
 ```bash
 mk integration install claude    # adds hooks to ~/.claude/settings.json
 mk integration install codex     # sets notify in ~/.codex/config.toml
+mk integration install omp       # writes ~/.omp/agent/extensions/mkrew.ts
+mk integration install copilot   # writes ~/.copilot/hooks/mkrew.json
 mk integration status claude
 ```
+
+If your own profile has no `resume` line, `install` prints the line to add.
 
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move those files as usual. Install backs the file up
 (timestamped `.bak`), merges instead of overwriting and can run again safely. Codex runs only
 one `notify` program, so install refuses when `notify` is already set to another one; remove it
-first. The hooks call `mk hook …`, which does nothing when the agent runs outside Mkrew.
+first. The omp and Copilot files belong to Mkrew: install writes the whole file (a different one
+is backed up first) and uninstall deletes it; `PI_CODING_AGENT_DIR` and `COPILOT_HOME` move them.
+The hooks call `mk hook …`, which does nothing when the agent runs outside Mkrew.
 
 ### Workspaces, default agent and dev server
 
@@ -158,11 +165,14 @@ first. The hooks call `mk hook …`, which does nothing when the agent runs outs
 
 ## Uninstall
 
-1. Remove the agent hooks (only Mkrew's entries are removed; a `.bak` copy is kept):
+1. Remove the agent hooks (only Mkrew's entries are removed and a `.bak` copy is kept; the omp and
+   Copilot files belong to Mkrew and are deleted):
 
    ```bash
    mk integration uninstall claude
    mk integration uninstall codex
+   mk integration uninstall omp
+   mk integration uninstall copilot
    ```
 
 2. Stop the daemon (this ends running agent sessions): `mk daemon stop`.

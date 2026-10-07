@@ -1,0 +1,12 @@
+# GitHub Copilot CLI (SPEC §6). State and resume come from `mk integration install copilot`.
+name = "GitHub Copilot"
+command = "copilot"
+# The prompt is typed once the TUI is ready (`copilot` takes no positional prompt).
+prompt_mode = "type"
+resume = "copilot --resume={session_id}"
+# No `oneshot`: `copilot -p` takes the prompt as an argument, not on stdin.
+
+[state]
+mode = "hook+screen"
+idle_after_ms = 3000
+needs_input_patterns = []

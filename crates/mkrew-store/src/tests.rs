@@ -192,6 +192,44 @@ fn every_session_state_round_trips() {
 }
 
 #[test]
+fn interrupted_sessions_are_taken_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let live = Session {
+        state: SessionState::Working,
+        ..session(p.id, 1)
+    };
+    let ended = Session {
+        state: SessionState::Exited,
+        exit_code: Some(0),
+        ended_at: Some(5),
+        ..session(p.id, 2)
+    };
+    let stopped = Session {
+        state: SessionState::Exited,
+        ended_at: Some(6),
+        ..session(p.id, 3)
+    };
+    for s in [&live, &ended, &stopped] {
+        store.insert_session(s).unwrap();
+    }
+    store.mark_interrupted(stopped.id).unwrap();
+    // A reboot left `live` running: stale rows are interrupted too.
+    assert_eq!(store.mark_stale_sessions_exited().unwrap(), 1);
+
+    let mut taken = store.take_interrupted_sessions().unwrap();
+    taken.sort();
+    let mut expected = vec![live.id, stopped.id];
+    expected.sort();
+    assert_eq!(
+        taken, expected,
+        "the session that ended by itself is not resumed"
+    );
+    assert!(store.take_interrupted_sessions().unwrap().is_empty());
+}
+
+#[test]
 fn stale_sessions_are_marked_exited() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

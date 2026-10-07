@@ -3,10 +3,13 @@
 //!
 //! - Claude Code: `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json`, one command hook per event.
 //! - Codex: `<CODEX_HOME or ~/.codex>/config.toml`, top-level `notify = ["mk", "hook", "codex"]`.
+//! - Oh My Pi: `<PI_CODING_AGENT_DIR or ~/.omp/agent>/extensions/mkrew.ts`, a Mkrew-owned file.
+//! - GitHub Copilot CLI: `<COPILOT_HOME or ~/.copilot>/hooks/mkrew.json`, a Mkrew-owned file.
 //!
 //! Edits merge into the existing file (other settings, hooks and TOML comments are kept), back
 //! the original up to `<file>.<unix ms>.bak` before the first change, and are idempotent: a
-//! file that needs no change is neither written nor backed up.
+//! file that needs no change is neither written nor backed up. The omp and Copilot owned files
+//! are written whole, backed up only when their content differs, and deleted on uninstall.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,9 +22,20 @@ use serde_json::{Map, Value, json};
 /// Claude Code hook events Mkrew listens to (SPEC §6).
 const CLAUDE_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Notification", "Stop"];
 const CODEX_NOTIFY: [&str; 3] = ["mk", "hook", "codex"];
+const OMP_EXTENSION: &str = include_str!("../assets/omp-extension.ts");
+const COPILOT_HOOKS: &str = include_str!("../assets/copilot-hooks.json");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Agent {
+    Claude,
+    Codex,
+    Omp,
+    Copilot,
+}
+
+/// The agents whose hooks merge into a config file the user also edits.
+#[derive(Clone, Copy, Debug)]
+enum Merged {
     Claude,
     Codex,
 }
@@ -46,7 +60,26 @@ pub fn run(action: Action, agent: Agent) -> anyhow::Result<ExitCode> {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     })?;
-    run_on(action, agent, &file)
+    let code = run_on(action, agent, &file)?;
+    if action == Action::Install {
+        let profile = mkrew_core::Paths::from_env()?
+            .agents_dir()
+            .join(format!("{}.toml", name(agent)));
+        let text = fs::read_to_string(&profile).ok();
+        if let Some(hint) = resume_hint(agent, &profile, text.as_deref()) {
+            println!("{hint}");
+        }
+    }
+    Ok(code)
+}
+
+fn name(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Claude => "claude",
+        Agent::Codex => "codex",
+        Agent::Omp => "omp",
+        Agent::Copilot => "copilot",
+    }
 }
 
 /// The agent's config file; `var` is the environment (Claude's `CLAUDE_CONFIG_DIR`, Codex's
@@ -55,6 +88,8 @@ fn config_file(agent: Agent, var: impl Fn(&str) -> Option<PathBuf>) -> anyhow::R
     let (env, dir, name) = match agent {
         Agent::Claude => ("CLAUDE_CONFIG_DIR", ".claude", "settings.json"),
         Agent::Codex => ("CODEX_HOME", ".codex", "config.toml"),
+        Agent::Omp => ("PI_CODING_AGENT_DIR", ".omp/agent", "extensions/mkrew.ts"),
+        Agent::Copilot => ("COPILOT_HOME", ".copilot", "hooks/mkrew.json"),
     };
     let dir = match var(env) {
         Some(dir) => dir,
@@ -67,44 +102,29 @@ fn config_file(agent: Agent, var: impl Fn(&str) -> Option<PathBuf>) -> anyhow::R
 }
 
 fn run_on(action: Action, agent: Agent, file: &Path) -> anyhow::Result<ExitCode> {
-    let name = match agent {
-        Agent::Claude => "claude",
-        Agent::Codex => "codex",
-    };
+    let name = name(agent);
     let text = match fs::read_to_string(file) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e).with_context(|| format!("read {}", file.display())),
     };
+    let merged = match owned_contents(agent) {
+        Ok(ours) => return run_owned(action, name, file, text.as_deref(), ours),
+        Err(merged) => merged,
+    };
     let original = text.as_deref().unwrap_or("");
     if action == Action::Status {
-        let installed = match agent {
-            Agent::Claude => claude_status(original),
-            Agent::Codex => codex_status(original),
+        let installed = match merged {
+            Merged::Claude => claude_status(original),
+            Merged::Codex => codex_status(original),
         }
         .with_context(|| format!("parse {}", file.display()))?;
-        let label = match installed {
-            Installed::Yes => "installed",
-            Installed::Partly => "partly installed (run `mk integration install` again)",
-            Installed::No => "not installed",
-        };
-        println!("{name}: {label} ({})", file.display());
-        if mkrew_core::lookup::find("mk".as_ref()).is_none() {
-            println!(
-                "warning: `mk` is not on PATH ({}); hooks will fail",
-                mkrew_core::lookup::SEARCHED
-            );
-        }
-        return Ok(if installed == Installed::Yes {
-            ExitCode::SUCCESS
-        } else {
-            ExitCode::FAILURE
-        });
+        return Ok(print_status(name, file, &installed));
     }
     let install = action == Action::Install;
-    let updated = match agent {
-        Agent::Claude => claude_edit(original, install),
-        Agent::Codex => codex_edit(original, install),
+    let updated = match merged {
+        Merged::Claude => claude_edit(original, install),
+        Merged::Codex => codex_edit(original, install),
     }
     .with_context(|| format!("update {}", file.display()))?;
     let verb = if install { "installed" } else { "uninstalled" };
@@ -129,6 +149,112 @@ fn run_on(action: Action, agent: Agent, file: &Path) -> anyhow::Result<ExitCode>
         None => println!("{name}: {verb} ({})", file.display()),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn print_status(name: &str, file: &Path, installed: &Installed) -> ExitCode {
+    let label = match installed {
+        Installed::Yes => "installed",
+        Installed::Partly => "partly installed (run `mk integration install` again)",
+        Installed::No => "not installed",
+    };
+    println!("{name}: {label} ({})", file.display());
+    if mkrew_core::lookup::find("mk".as_ref()).is_none() {
+        println!(
+            "warning: `mk` is not on PATH ({}); hooks will fail",
+            mkrew_core::lookup::SEARCHED
+        );
+    }
+    if *installed == Installed::Yes {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// omp and Copilot load every file in one directory, so Mkrew owns one file there; the
+/// others merge into the user's config.
+fn owned_contents(agent: Agent) -> Result<&'static str, Merged> {
+    match agent {
+        Agent::Omp => Ok(OMP_EXTENSION),
+        Agent::Copilot => Ok(COPILOT_HOOKS),
+        Agent::Claude => Err(Merged::Claude),
+        Agent::Codex => Err(Merged::Codex),
+    }
+}
+
+/// Another text = an older Mkrew version or the user's edit: install replaces it.
+fn owned_status(text: Option<&str>, ours: &str) -> Installed {
+    match text {
+        None => Installed::No,
+        Some(text) if text == ours => Installed::Yes,
+        Some(_) => Installed::Partly,
+    }
+}
+
+/// Install writes the whole file, uninstall deletes it; a different file is backed up first.
+fn run_owned(
+    action: Action,
+    name: &str,
+    file: &Path,
+    text: Option<&str>,
+    ours: &str,
+) -> anyhow::Result<ExitCode> {
+    let installed = owned_status(text, ours);
+    let verb = if action == Action::Install {
+        "installed"
+    } else {
+        "uninstalled"
+    };
+    let backup = match (action, &installed) {
+        (Action::Status, _) => return Ok(print_status(name, file, &installed)),
+        (Action::Install, Installed::Yes) | (Action::Uninstall, Installed::No) => {
+            println!("{name}: already {verb} ({})", file.display());
+            return Ok(ExitCode::SUCCESS);
+        }
+        (_, Installed::Partly) => Some(back_up(file)?),
+        _ => None,
+    };
+    if action == Action::Install {
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+        }
+        fs::write(file, ours).with_context(|| format!("write {}", file.display()))?;
+    } else {
+        fs::remove_file(file).with_context(|| format!("delete {}", file.display()))?;
+    }
+    match backup {
+        Some(backup) => println!(
+            "{name}: {verb} ({}; backup: {})",
+            file.display(),
+            backup.display()
+        ),
+        None => println!("{name}: {verb} ({})", file.display()),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The shipped `resume` line of `agent`'s profile (SPEC §6).
+fn resume_example(agent: Agent) -> &'static str {
+    match agent {
+        Agent::Claude => "claude --resume {session_id}",
+        Agent::Codex => "codex resume {session_id}",
+        Agent::Omp => "omp --resume {session_id}",
+        Agent::Copilot => "copilot --resume={session_id}",
+    }
+}
+
+/// A note when the user's profile cannot resume: seeding never overwrites an existing
+/// profile, so one written before `resume` shipped stays without it. `None` when the profile
+/// resumes, is missing (seeded on the next daemon start) or does not parse (the UI says so).
+fn resume_hint(agent: Agent, file: &Path, text: Option<&str>) -> Option<String> {
+    let profile = mkrew_core::profile::parse_profile(name(agent), file, text?).ok()?;
+    profile.resume.is_none().then(|| {
+        format!(
+            "note: {} has no `resume`; add `resume = \"{}\"` so its conversations come back after a restart",
+            file.display(),
+            resume_example(agent)
+        )
+    })
 }
 
 /// Copies `file` to `<file>.<unix ms>.bak` (a new name, never overwriting an older backup).
@@ -435,6 +561,101 @@ mod tests {
         assert_eq!(
             codex_edit("", true).unwrap().unwrap(),
             "notify = [\"mk\", \"hook\", \"codex\"]\n"
+        );
+    }
+
+    #[test]
+    fn config_files_of_owned_integrations() {
+        let none = |_: &str| None;
+        let home = directories::BaseDirs::new().unwrap().home_dir().to_owned();
+        assert_eq!(
+            config_file(Agent::Omp, none).unwrap(),
+            home.join(".omp/agent/extensions/mkrew.ts")
+        );
+        let var = |key: &str| (key == "PI_CODING_AGENT_DIR").then(|| PathBuf::from("/o"));
+        assert_eq!(
+            config_file(Agent::Omp, var).unwrap(),
+            Path::new("/o/extensions/mkrew.ts")
+        );
+        let var = |key: &str| (key == "COPILOT_HOME").then(|| PathBuf::from("/c"));
+        assert_eq!(
+            config_file(Agent::Copilot, var).unwrap(),
+            Path::new("/c/hooks/mkrew.json")
+        );
+    }
+
+    #[test]
+    fn owned_files_install_replace_and_uninstall() {
+        let dir = tempfile::tempdir().unwrap();
+        for agent in [Agent::Omp, Agent::Copilot] {
+            let file = dir.path().join(format!("{agent:?}")).join("mkrew.x");
+            let ours = owned_contents(agent).unwrap();
+            assert_eq!(owned_status(None, ours), Installed::No);
+            run_on(Action::Install, agent, &file).unwrap();
+            let text = fs::read_to_string(&file).unwrap();
+            assert_eq!(owned_status(Some(&text), ours), Installed::Yes);
+            run_on(Action::Install, agent, &file).unwrap();
+            let backups = || {
+                fs::read_dir(file.parent().unwrap())
+                    .unwrap()
+                    .filter(|e| {
+                        e.as_ref()
+                            .unwrap()
+                            .file_name()
+                            .to_string_lossy()
+                            .ends_with(".bak")
+                    })
+                    .count()
+            };
+            assert_eq!(
+                backups(),
+                0,
+                "an unchanged file is neither written nor backed up"
+            );
+            // An older version is outdated, replaced, and kept as a backup.
+            fs::write(&file, "old").unwrap();
+            assert_eq!(owned_status(Some("old"), ours), Installed::Partly);
+            run_on(Action::Install, agent, &file).unwrap();
+            assert_eq!(fs::read_to_string(&file).unwrap(), ours);
+            assert_eq!(backups(), 1);
+            run_on(Action::Uninstall, agent, &file).unwrap();
+            assert!(!file.exists());
+            run_on(Action::Uninstall, agent, &file).unwrap();
+        }
+    }
+
+    #[test]
+    fn copilot_hooks_call_mk_for_the_events_mkrew_maps() {
+        let hooks: Value = serde_json::from_str(COPILOT_HOOKS).unwrap();
+        assert_eq!(hooks["version"], 1);
+        for (event, entries) in hooks["hooks"].as_object().unwrap() {
+            assert_eq!(entries[0]["exec"], "mk");
+            assert_eq!(entries[0]["args"], json!(["hook", "copilot", event]));
+            let known = mkrew_core::HookAgent::Copilot
+                .event(event, &json!({"notification_type": "permission_prompt"}));
+            assert!(
+                known.is_some() || event == "sessionStart",
+                "{event} maps to nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn resume_hint_names_the_missing_line() {
+        let file = Path::new("C:/cfg/agents/omp.toml");
+        let old = "name = \"Oh My Pi\"\ncommand = \"omp\"\n[state]\nmode = \"screen\"\n";
+        let hint = resume_hint(Agent::Omp, file, Some(old)).unwrap();
+        assert!(
+            hint.contains("resume = \"omp --resume {session_id}\""),
+            "{hint}"
+        );
+        assert!(hint.contains("omp.toml"), "{hint}");
+        let new = include_str!("../../../agents/omp.toml");
+        assert_eq!(resume_hint(Agent::Omp, file, Some(new)), None);
+        assert_eq!(
+            resume_hint(Agent::Omp, file, None),
+            None,
+            "seeded on the next daemon start"
         );
     }
 }

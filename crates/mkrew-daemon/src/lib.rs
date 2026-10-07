@@ -81,6 +81,7 @@ fn serve(paths: &Paths) -> anyhow::Result<()> {
 const SAMPLE_PROFILES: &[(&str, &str)] = &[
     ("claude.toml", include_str!("../../../agents/claude.toml")),
     ("codex.toml", include_str!("../../../agents/codex.toml")),
+    ("copilot.toml", include_str!("../../../agents/copilot.toml")),
     ("fake.toml", include_str!("../../../agents/fake.toml")),
     ("omp.toml", include_str!("../../../agents/omp.toml")),
     ("shell.toml", include_str!("../../../agents/shell.toml")),
