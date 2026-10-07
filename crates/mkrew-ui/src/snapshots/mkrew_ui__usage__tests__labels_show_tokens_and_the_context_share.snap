@@ -1,0 +1,17 @@
+---
+source: crates/mkrew-ui/src/usage.rs
+expression: "lines.join(\"\\n\")"
+---
+0 → 0 tok
+850 → 850 tok
+999 → 999 tok
+1000 → 1.0k tok
+12345 → 12.3k tok
+999949 → 999.9k tok
+999950 → 1.0M tok
+1250000 → 1.3M tok
+124000/Some(200000) → ctx 62% · Context 124.0k of 200.0k tokens · 1.3M tokens used (1.2M in, 45.7k out)
+160000/Some(200000) → ctx 80% (warning) · Context 160.0k of 200.0k tokens · 1.3M tokens used (1.2M in, 45.7k out)
+199999/Some(200000) → ctx 99% (warning) · Context 200.0k of 200.0k tokens · 1.3M tokens used (1.2M in, 45.7k out)
+50000/None → none
+50000/Some(0) → none

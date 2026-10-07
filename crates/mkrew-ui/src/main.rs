@@ -27,9 +27,10 @@ use mkrew_protocol::{
     ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request, Session, SessionAttachResult,
     SessionFiles, SessionHistory, SessionKillParams, SessionKind, SessionListParams,
     SessionReadParams, SessionReadResult, SessionRef, SessionSendParams, SessionSendResult,
-    SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams, StateSource,
-    TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
-    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
+    SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams, SessionUsageEvent,
+    StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
+    TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
+    UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -74,6 +75,7 @@ use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
 use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
+use mkrew_ui::usage::{self, ContextShare, Usages};
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
@@ -216,6 +218,8 @@ struct Shell {
     last_lines: LastLines,
     /// Each session's last turn, summarized while it is done.
     turns: Turns,
+    /// Each session's newest token usage (SPEC §20E.3).
+    usages: Usages,
     /// Every workspace's task cards.
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
@@ -523,6 +527,7 @@ impl Shell {
             viewed: Viewed::default(),
             last_lines: LastLines::default(),
             turns: Turns::default(),
+            usages: Usages::default(),
             board: Board::default(),
             board_error: None,
             conflicts: Conflicts::default(),
@@ -620,6 +625,7 @@ impl Shell {
                 match listed {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
+                        shell.load_usage(window, cx);
                         shell.status = Status::Connected;
                         let current = shell
                             .workspace
@@ -657,6 +663,35 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Reads the token usage of each listed workspace not read yet (SPEC §20E.3); events keep
+    /// it live afterwards.
+    fn load_usage(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let projects = self.sidebar.projects().iter().map(|project| project.id);
+        for project_id in self.usages.to_request(projects.collect::<Vec<_>>()) {
+            let listed = connection
+                .call::<Vec<SessionUsageEvent>>(Request::SessionUsage(ProjectRef { project_id }));
+            cx.spawn_in(window, async move |this, cx| {
+                let listed = listed.await;
+                let _ = this.update(cx, |shell, cx| match listed {
+                    Ok(listed) => {
+                        if shell.usages.load(listed) {
+                            cx.notify();
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("session.usage failed: {error:#}");
+                        // Asked again on the next refresh.
+                        shell.usages.request_failed(project_id);
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     /// The workspace of the most recently started live session, else the first one.
@@ -6272,6 +6307,9 @@ impl Shell {
                 if self.turns.apply(event) {
                     cx.notify();
                 }
+                if self.usages.apply(event) {
+                    cx.notify();
+                }
                 if self.composers.apply(event) {
                     cx.notify();
                 }
@@ -6465,7 +6503,10 @@ impl Shell {
                             let dev_running =
                                 dev_server::running(self.sidebar.sessions(), row.project_id)
                                     .is_some();
-                            let row = workspace_row(row, active, dev_running, theme, cx);
+                            let tokens = self
+                                .usages
+                                .workspace_total(row.project_id, self.sidebar.sessions());
+                            let row = workspace_row(row, active, dev_running, tokens, theme, cx);
                             match menu {
                                 // The menu drops down from below its row.
                                 Some(menu) => div()
@@ -7087,6 +7128,8 @@ impl Shell {
             conflicts: &self.conflicts,
             run_with: self.run_with.as_ref(),
             fan_out: self.fan_out.as_ref(),
+            usages: &self.usages,
+            sessions: self.sidebar.sessions(),
         };
         div()
             .flex_1()
@@ -12283,6 +12326,7 @@ impl Shell {
                 pane_header(
                     info,
                     self.turns.get(session),
+                    self.usages.get(session).and_then(usage::context_share),
                     conflict,
                     turns,
                     queued,
@@ -13584,6 +13628,7 @@ fn workspace_row(
     row: WorkspaceRow,
     active: bool,
     dev_running: bool,
+    tokens: Option<u64>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -13625,6 +13670,7 @@ fn workspace_row(
         .child(
             div()
                 .flex_1()
+                .min_w_0()
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
@@ -13641,6 +13687,21 @@ fn workspace_row(
                     .text_color(rgb(theme.text_muted))
                     .tooltip(tooltip(theme, "Dev server running", ""))
                     .child("▶ dev"),
+            )
+        })
+        .when_some(tokens, |el, tokens| {
+            el.child(
+                div()
+                    .id(SharedString::from(format!("workspace-tokens-{project_id}")))
+                    .flex_none()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .tooltip(tooltip(
+                        theme,
+                        "Tokens used by this workspace's agents (input + output)",
+                        "",
+                    ))
+                    .child(usage::format_count(tokens)),
             )
         })
         .when(row.working > 0, |el| {
@@ -13859,6 +13920,8 @@ struct CardContext<'a> {
     conflicts: &'a Conflicts,
     run_with: Option<&'a RunWith>,
     fan_out: Option<&'a FanOutPicker>,
+    usages: &'a Usages,
+    sessions: &'a [Session],
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
@@ -13978,7 +14041,7 @@ fn drop_slot(
         )
 }
 
-/// A task card: title (Edit on hover), agent and run time, then its session's status
+/// A task card: title (Edit on hover), agent, tokens used and run time, then its session's status
 /// (SPEC §10, §11), then its column's action or a follow-up field. Dragging it carries a
 /// [`DraggedCard`]; clicking it selects it and opens its session's terminal.
 fn task_card(
@@ -13989,6 +14052,13 @@ fn task_card(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let run_time = card.run_time(now);
+    // A group card runs no agent of its own (SPEC §20E.3).
+    let tokens = card
+        .children
+        .is_empty()
+        .then(|| cards.usages.task_total(card.task_id, cards.sessions))
+        .flatten()
+        .map(usage::format_tokens);
     let shows_error_row = card.shows_error_row();
     let action = card.action();
     let can_undo = card.can_undo();
@@ -14098,6 +14168,17 @@ fn task_card(
                         .whitespace_nowrap()
                         .child(card.agent),
                 )
+                .children(tokens.map(|tokens| {
+                    div()
+                        .id(SharedString::from(format!("card-tokens-{task_id}")))
+                        .flex_none()
+                        .tooltip(tooltip(
+                            theme,
+                            "Tokens used by this task's agent (input + output)",
+                            "",
+                        ))
+                        .child(tokens)
+                }))
                 .children(run_time.map(|time| div().flex_none().child(time))),
         )
         .children(card.branch.map(|branch| {
@@ -14713,13 +14794,15 @@ fn conflict_badge(
 }
 
 /// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
-/// warning, the number of queued sends (§20B.2), status text and time (with the last turn's
-/// summary when done), and an agent's "Follow in Zed" and "Turns…" (§20C.5, §20C.2);
-/// hovering the status shows its source and last change.
+/// warning, the number of queued sends (§20B.2), the context share (`⚠` and amber from 80 %,
+/// §20E.3), status text and time (with the last turn's summary when done), and an agent's
+/// "Follow in Zed" and "Turns…" (§20C.5, §20C.2); hovering the status shows its source and
+/// last change.
 #[allow(clippy::too_many_arguments)]
 fn pane_header(
     session: &Session,
     turn: Option<&SessionTurnEvent>,
+    context: Option<ContextShare>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
     turns: Option<gpui::Stateful<gpui::Div>>,
     queued: usize,
@@ -14772,6 +14855,22 @@ fn pane_header(
                     .child(format!("⧗ {queued} queued")),
             )
         })
+        .children(context.map(|share| {
+            div()
+                .id(SharedString::from(format!("pane-context-{}", session.id)))
+                .flex_none()
+                .text_color(rgb(if share.warning {
+                    theme.status_needs_input
+                } else {
+                    theme.text_muted
+                }))
+                .tooltip(tooltip(theme, &share.hover, ""))
+                .child(if share.warning {
+                    format!("⚠ {}", share.label)
+                } else {
+                    share.label
+                })
+        }))
         .child(
             div()
                 .id(SharedString::from(format!("pane-status-{}", session.id)))

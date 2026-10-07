@@ -1790,6 +1790,15 @@ _Decisions the agent made on its own. Override them here if you disagree._
   re-reads the same transcript from the start, so the UI must not add up a task's sessions
   (show the newest one). Claude `/clear` (new session id) starts a new transcript and totals.
   Codex: when several rollout files contain the id, the last by path (newest date) is read.
+- (T13.10b) **Usage display:** total = input + output (`12.3k tok` on cards, bare `12.3k` on
+  sidebar rows, details on hover). A card shows its newest session that reported usage (a just
+  resumed run keeps showing the earlier one until its first turn ends); a group (fan-out
+  original) card shows none. A sidebar workspace row adds, per task, that same session plus
+  every session without a task. The pane header shows `ctx 62%` only when the profile sets
+  `context_window`; from 80 % it turns amber with `⚠` (`status_needs_input`, as conflict
+  warnings; no separate warning token). Each workspace's `session.usage` is read once, when it
+  first appears in the lists (events keep it live after); a failed read is logged and retried on
+  the next refresh. Check the labels and amber warning with real Claude/Codex.
 
 ## Done
 
