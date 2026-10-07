@@ -82,6 +82,28 @@ pub fn edited_paths(payload: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The 1-based line of the first edit the hook reports, when it names one: Claude's
+/// `PostToolUse` `tool_response.structuredPatch` (undocumented; HUMAN_CHECKS T11.5) — the
+/// first hunk's `newStart` plus its leading context lines. Best effort: `None` otherwise.
+pub fn edited_line(payload: &Value) -> Option<u32> {
+    let hunk = payload
+        .get("tool_response")?
+        .get("structuredPatch")?
+        .get(0)?;
+    let start = u32::try_from(hunk.get("newStart")?.as_u64()?).ok()?;
+    let context = hunk
+        .get("lines")
+        .and_then(Value::as_array)
+        .map_or(0, |lines| {
+            lines
+                .iter()
+                .take_while(|l| l.as_str().is_some_and(|l| l.starts_with(' ')))
+                .count()
+        });
+    let line = start.saturating_add(u32::try_from(context).ok()?);
+    (line > 0).then_some(line)
+}
+
 /// Approvals and questions need the user. `idle_prompt` fires ~60 s after `Stop` (already
 /// `done`); the remaining types are informational. No type (older builds) = needs input.
 fn claude_notification(payload: &Value) -> Option<HookEvent> {
@@ -179,6 +201,25 @@ mod tests {
         assert!(edited_paths(&json!({"tool_input": {"file_path": ""}})).is_empty());
         assert!(edited_paths(&json!({"type": "agent-turn-complete"})).is_empty());
         assert!(edited_paths(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn edited_line_is_the_first_changed_line_of_the_patch() {
+        let edit = json!({
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "a.rs"},
+            "tool_response": {"structuredPatch": [
+                {"oldStart": 355, "newStart": 355, "lines": [" a", " b", "-old", "+new"]},
+                {"oldStart": 400, "newStart": 399, "lines": ["+x"]}
+            ]}
+        });
+        assert_eq!(edited_line(&edit), Some(357));
+        let created = json!({"tool_response": {"type": "create", "structuredPatch": []}});
+        assert_eq!(edited_line(&created), None);
+        let pre = json!({"tool_name": "Edit", "tool_input": {"file_path": "a.rs"}});
+        assert_eq!(edited_line(&pre), None);
+        let bad = json!({"tool_response": {"structuredPatch": [{"newStart": 0, "lines": []}]}});
+        assert_eq!(edited_line(&bad), None);
     }
 
     #[test]

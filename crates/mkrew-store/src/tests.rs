@@ -882,6 +882,22 @@ fn turns_start_end_list_and_persist() {
     assert_eq!(turns[1].ended_at, None);
     assert_eq!(store.list_turns(b.id).unwrap().len(), 1);
     assert!(store.list_turns(Ulid::new()).unwrap().is_empty());
+
+    // Ended turns of the project's sessions only; the running one has no end yet.
+    std::fs::create_dir(dir.path().join("other")).unwrap();
+    let other = store.add_project(&dir.path().join("other"), None).unwrap();
+    let c = session(other.id, 3);
+    store.insert_session(&c).unwrap();
+    store.start_turn(c.id, 1, 100, None).unwrap();
+    store.end_turn(c.id, 1, 300, None, &files).unwrap();
+    let since = |at| {
+        let turns = store.project_turns(p.id, at).unwrap();
+        turns.iter().map(|(s, t)| (*s, t.n)).collect::<Vec<_>>()
+    };
+    assert_eq!(since(0), vec![(b.id, 1), (a.id, 1)]);
+    assert_eq!(since(161), vec![(a.id, 1)]);
+    assert_eq!(since(201), vec![]);
+    assert_eq!(store.project_turns(p.id, 0).unwrap()[1].1, ended);
 }
 
 #[test]

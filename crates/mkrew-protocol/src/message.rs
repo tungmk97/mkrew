@@ -197,6 +197,10 @@ pub enum Request {
     /// Returns nothing (`null`).
     #[serde(rename = "turn.restore")]
     TurnRestore(TurnRestoreParams),
+    /// Returns [`SessionFiles`]: the files each session of the project changed since
+    /// `since_ms` (SPEC §20C.4).
+    #[serde(rename = "session.files")]
+    SessionFiles(SessionFilesParams),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -308,6 +312,9 @@ pub enum Event {
     /// A session's send queue changed; carries the whole queue (SPEC §20B.2).
     #[serde(rename = "session.queue")]
     SessionQueue(SessionQueueEvent),
+    /// A hook reported that a session's agent edited a file (SPEC §20C.5).
+    #[serde(rename = "session.edited")]
+    SessionEdited(SessionEditedEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -1189,6 +1196,26 @@ pub struct SessionTurnEvent {
     pub files: Vec<TurnFile>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionEditedEvent {
+    pub session_id: Ulid,
+    /// Relative to the project root, `/` separators.
+    pub path: String,
+    /// 1-based line of the edit, when the hook payload names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionFilesParams {
+    pub project_id: Ulid,
+    /// Unix ms.
+    pub since_ms: i64,
+}
+
+/// `session.files` result: per session, the project-relative paths it changed, sorted.
+pub type SessionFiles = std::collections::BTreeMap<Ulid, Vec<String>>;
+
 /// One file of a [`SessionTurnEvent`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnFile {
@@ -1473,6 +1500,10 @@ mod tests {
                 data: vec![0x89, b'P', b'N', b'G'],
             }),
             Request::TurnList(SessionRef { session_id: sid() }),
+            Request::SessionFiles(SessionFilesParams {
+                project_id: sid(),
+                since_ms: 5,
+            }),
             Request::TurnRestorePreview(TurnRef {
                 session_id: sid(),
                 n: 2,
@@ -1907,6 +1938,16 @@ mod tests {
         })));
         assert_eq!(queue["event"], "session.queue");
         assert_eq!(queue["data"]["items"][0]["text"], "fix it");
+        let edited = round_trip(&Message::Event(Event::SessionEdited(SessionEditedEvent {
+            session_id: sid(),
+            path: "src/a.rs".into(),
+            line: None,
+        })));
+        assert_eq!(edited["event"], "session.edited");
+        assert_eq!(
+            edited["data"],
+            json!({ "session_id": sid(), "path": "src/a.rs" })
+        );
     }
 
     #[test]

@@ -30,16 +30,20 @@ impl Daemon {
         // The Git view is open: follow its changes with `git.changed`.
         self.hub
             .keep_watched(project.id, &PathBuf::from(&project.path));
-        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let (hub, cache) = (Arc::clone(&self.hub), Arc::clone(&self.git_cache));
         let status = tokio::task::spawn_blocking(move || {
-            let Project { path, base_ref, .. } = project;
+            let Project {
+                id, path, base_ref, ..
+            } = project;
+            let dir = PathBuf::from(path);
             git_view::status(
-                &*git,
+                &*hub.git,
                 &cache,
-                &PathBuf::from(path),
+                &dir,
                 base_ref.as_deref(),
                 params.mode,
                 params.since.as_deref(),
+                &|| hub.snapshots.tree(&*hub.git, id, &dir),
             )
         })
         .await;
@@ -63,15 +67,25 @@ impl Daemon {
             Ok(project) => project,
             Err(e) => return store_outcome::<()>(Err(e)),
         };
-        let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
+        let (hub, cache) = (Arc::clone(&self.hub), Arc::clone(&self.git_cache));
         let diff = tokio::task::spawn_blocking(move || {
             let Project {
+                id,
                 path: dir,
                 base_ref,
                 ..
             } = project;
             let dir = PathBuf::from(dir);
-            git_view::diff(&*git, &cache, &dir, base_ref.as_deref(), &params, &path)
+            let snapshot = || hub.snapshots.tree(&*hub.git, id, &dir);
+            git_view::diff(
+                &*hub.git,
+                &cache,
+                &dir,
+                base_ref.as_deref(),
+                &params,
+                &path,
+                &snapshot,
+            )
         })
         .await;
         view_outcome("git.diff", diff)

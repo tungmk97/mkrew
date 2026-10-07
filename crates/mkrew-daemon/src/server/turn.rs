@@ -1,9 +1,13 @@
-//! `turn.list`, `turn.restore_preview`, `turn.restore` (SPEC §20C.2).
+//! `turn.list`, `turn.restore_preview`, `turn.restore` (SPEC §20C.2) and `session.files`
+//! (SPEC §20C.4).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mkrew_protocol::{ErrorCode, Outcome, SessionState, TurnRef, TurnRestoreParams};
+use mkrew_protocol::{
+    ErrorCode, Outcome, SessionFilesParams, SessionState, TurnRef, TurnRestoreParams,
+};
 use ulid::Ulid;
 
 use super::{Daemon, ok, store_outcome};
@@ -94,6 +98,39 @@ impl Daemon {
             Ok(Err(e)) => Outcome::error(ErrorCode::Internal, e.to_string()),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("restore failed: {e}")),
         }
+    }
+
+    /// `session.files` (SPEC §20C.4): per session of the project, the files of its turns that
+    /// ended since `since_ms` plus its hook-reported edits since then (the running turn's).
+    pub(super) fn session_files(&self, params: SessionFilesParams) -> Outcome {
+        let (project_id, since) = (params.project_id, params.since_ms);
+        let found = {
+            let store = self.store();
+            store.get_project(project_id).and_then(|_| {
+                let turns = store.project_turns(project_id, since)?;
+                let edits = store.project_session_events(project_id, "edited", since)?;
+                Ok((turns, edits))
+            })
+        };
+        let (turns, edits) = match found {
+            Ok(found) => found,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let mut files: BTreeMap<Ulid, BTreeSet<String>> = BTreeMap::new();
+        for (session, turn) in turns {
+            let paths = turn.files.into_iter().map(|f| f.path);
+            files.entry(session).or_default().extend(paths);
+        }
+        for (session, event) in edits {
+            let paths = event.payload.get("paths").and_then(|p| p.as_array());
+            let paths = paths.into_iter().flatten().filter_map(|p| p.as_str());
+            files
+                .entry(session)
+                .or_default()
+                .extend(paths.map(str::to_owned));
+        }
+        files.retain(|_, paths| !paths.is_empty());
+        ok(&files)
     }
 
     /// The session's project folder and the turn's start tree; `invalid_state` without one.

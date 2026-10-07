@@ -740,6 +740,25 @@ impl Store {
         rows.map(|r| r?.into_turn()).collect()
     }
 
+    /// Turns of the project's sessions that ended at or after `since` (Unix ms), with their
+    /// session, oldest first (SPEC §20C.4).
+    pub fn project_turns(&self, project_id: Ulid, since: i64) -> Result<Vec<(Ulid, Turn)>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {TURN_COLUMNS}, session_id FROM turn
+             WHERE session_id IN (SELECT id FROM session WHERE project_id = ?1)
+               AND ended_at >= ?2
+             ORDER BY ended_at, session_id, n"
+        ))?;
+        let rows = stmt.query_map(params![project_id.to_string(), since], |row| {
+            Ok((row.get::<_, String>(6)?, RawTurn::from_row(row)?))
+        })?;
+        rows.map(|r| {
+            let (session, turn) = r?;
+            Ok((parse_ulid("turn.session_id", session)?, turn.into_turn()?))
+        })
+        .collect()
+    }
+
     /// Sessions that ended before `cutoff` (Unix ms) and still have turn trees, with their
     /// project: their `refs/mkrew/turns/<sid>/*` refs are due for deletion (SPEC §20C.1).
     pub fn sessions_with_expired_turns(&self, cutoff: i64) -> Result<Vec<(Ulid, Ulid)>> {

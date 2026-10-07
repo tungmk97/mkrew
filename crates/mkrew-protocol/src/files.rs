@@ -31,7 +31,8 @@ pub struct GitStatusParams {
     #[serde(default)]
     pub mode: GitMode,
     /// [`GitMode::Base`] only: compare from this commit instead of the merge-base (a task's
-    /// "View changes" from `task.checkpoint`); `merge_base` is then this commit.
+    /// "View changes" from `task.checkpoint`) or from this tree (a turn's `start_tree`);
+    /// `merge_base` is then this commit or tree.
     #[serde(default)]
     pub since: Option<String>,
 }
@@ -108,8 +109,8 @@ pub struct GitDiffParams {
     /// The diff this commit introduced (history); `mode`/`staged` are then ignored.
     #[serde(default)]
     pub commit: Option<String>,
-    /// [`GitMode::Base`] only: the diff from this commit to the working tree instead of from
-    /// the merge-base (a task's "View changes").
+    /// [`GitMode::Base`] only: the diff from this commit or tree to the working tree instead
+    /// of from the merge-base (a task's "View changes", a turn's `start_tree`).
     #[serde(default)]
     pub since: Option<String>,
 }

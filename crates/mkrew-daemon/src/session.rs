@@ -15,8 +15,8 @@ use mkrew_core::turn::{TurnEvent, TurnTracker};
 use mkrew_core::{AgentProfile, HookAgent, SendQueue, StateMachine, conflict};
 use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
-    QueuedSend, Session, SessionAttachResult, SessionExitedEvent, SessionKind, SessionQueueEvent,
-    SessionReadResult, SessionState, SessionStateEvent, StateSource,
+    QueuedSend, Session, SessionAttachResult, SessionEditedEvent, SessionExitedEvent, SessionKind,
+    SessionQueueEvent, SessionReadResult, SessionState, SessionStateEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -668,10 +668,17 @@ impl Hub {
     }
 
     /// A hook of session `session_id` named files its agent edited (`hook::edited_paths`):
-    /// attributes the ones inside the project and not ignored by the watcher, and returns them
-    /// relative to the project. The project path is the watch root too: sessions run with
-    /// `cwd` = project path (SPEC §8).
-    fn hook_edits(&self, project_id: Ulid, session_id: Ulid, reported: &[String]) -> Vec<String> {
+    /// attributes the ones inside the project and not ignored by the watcher, records them
+    /// (session event `edited`, payload `{"paths": [...]}`, for `session.files`), announces
+    /// each with `session.edited` and returns them relative to the project. The project path
+    /// is the watch root too: sessions run with `cwd` = project path (SPEC §8).
+    fn hook_edits(
+        &self,
+        project_id: Ulid,
+        session_id: Ulid,
+        reported: &[String],
+        line: Option<u32>,
+    ) -> Vec<String> {
         let root = match self.store().get_project(project_id) {
             Ok(project) => PathBuf::from(project.path),
             Err(e) => {
@@ -688,7 +695,25 @@ impl Hub {
                 filter.relative(&path, is_dir)
             })
             .collect();
-        self.record_edits(project_id, &paths, session_id, crate::server::now_ms());
+        if paths.is_empty() {
+            return paths;
+        }
+        let at = crate::server::now_ms();
+        let payload = serde_json::json!({ "paths": paths });
+        if let Err(e) = self
+            .store()
+            .insert_session_event(session_id, "edited", &payload, at)
+        {
+            tracing::warn!(%session_id, "hook edits not recorded: {e}");
+        }
+        self.record_edits(project_id, &paths, session_id, at);
+        for path in &paths {
+            let _ = self.events.send(Event::SessionEdited(SessionEditedEvent {
+                session_id,
+                path: path.clone(),
+                line,
+            }));
+        }
         paths
     }
 
@@ -984,9 +1009,10 @@ impl Actor {
         }
         let edited = mkrew_core::hook::edited_paths(&report.payload);
         if !edited.is_empty() {
-            let paths = self
-                .hub
-                .hook_edits(self.session.project_id, self.session.id, &edited);
+            let line = mkrew_core::hook::edited_line(&report.payload);
+            let paths =
+                self.hub
+                    .hook_edits(self.session.project_id, self.session.id, &edited, line);
             self.turns.add_files(paths);
         }
         let native_changed = native.is_some() && native != self.session.native_session_id;

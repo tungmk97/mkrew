@@ -13,7 +13,7 @@ pub use frame::{Frame, FrameDecoder, KIND_JSON, KIND_OUTPUT, MAX_FRAME_LEN, enco
 pub use message::*;
 
 /// Bumped on any incompatible change; `hello` with another value gets `version_mismatch`.
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// Errors from encoding or decoding frames.
 #[derive(Debug, thiserror::Error)]

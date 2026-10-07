@@ -22,14 +22,14 @@ use mkrew_protocol::{
     GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult,
     HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
     ProjectRef, ProjectUpdateParams, QueuedSend, Request, ResponseError, ScreenSnapshot, Session,
-    SessionAttachResult, SessionExitedEvent, SessionInputParams, SessionKillParams, SessionKind,
-    SessionListParams, SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef,
-    SessionResizeParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams, SessionWaitResult,
-    StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams,
-    TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn,
-    TurnRef, TurnRestoreParams, UndoPreview, encode,
+    SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams, SessionInputParams,
+    SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent, SessionReadParams,
+    SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams, SessionSendResult,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams,
+    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
+    TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams,
+    TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams,
+    TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2153,6 +2153,124 @@ fn turns_are_listed_previewed_and_restored() {
         session_id: Ulid::new(),
     }));
     assert_eq!(error_code(unknown), ErrorCode::NotFound);
+    client.stop();
+}
+
+/// SPEC §20C.3–§20C.5: a hook-reported edit is announced with `session.edited` (line from the
+/// payload) and attributed by `session.files`; `git.status`/`git.diff` with `since` = the
+/// turn's start tree show everything changed after it, untracked files included.
+#[test]
+fn hook_edits_are_announced_attributed_and_diffed_since_a_turn() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let scenario = env.dir.path().join("idle.toml");
+    std::fs::write(&scenario, "[[step]]\naction = \"sleep\"\nms = 60000\n").unwrap();
+    env.write_fake_profile_as(
+        "editor",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let path = env.dir.path().join("config/agents/editor.toml");
+    let profile = std::fs::read_to_string(&path).unwrap();
+    env.write_profile(
+        "editor",
+        &profile.replace("mode = \"screen\"", "mode = \"hook\""),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
+    let id = spawned.session_id;
+    let files = |client: &mut Client, since_ms| {
+        let files: SessionFiles = client
+            .call(Request::SessionFiles(SessionFilesParams {
+                project_id: project.id,
+                since_ms,
+            }))
+            .into_result()
+            .unwrap();
+        files
+    };
+
+    client
+        .hook(id, "fake", "busy", Value::Null)
+        .into_result::<()>()
+        .unwrap();
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    let edit = json!({
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "a.txt"},
+        "tool_response": {"structuredPatch": [{"newStart": 1, "lines": ["-one", "+two"]}]}
+    });
+    client
+        .hook(id, "fake", "PostToolUse", edit)
+        .into_result::<()>()
+        .unwrap();
+    let Event::SessionEdited(edited) =
+        client.wait_event_where(|e| matches!(e, Event::SessionEdited(e) if e.session_id == id))
+    else {
+        unreachable!()
+    };
+    assert_eq!((edited.path.as_str(), edited.line), ("a.txt", Some(1)));
+    // The running turn's hook edits count already.
+    assert_eq!(
+        files(&mut client, 0),
+        SessionFiles::from([(id, vec!["a.txt".into()])])
+    );
+    client
+        .hook(id, "fake", "done", Value::Null)
+        .into_result::<()>()
+        .unwrap();
+    client
+        .wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id && t.n == 1));
+    assert_eq!(
+        files(&mut client, 0),
+        SessionFiles::from([(id, vec!["a.txt".into()])])
+    );
+    assert!(files(&mut client, i64::MAX).is_empty());
+    let unknown = client.call(Request::SessionFiles(SessionFilesParams {
+        project_id: Ulid::new(),
+        since_ms: 0,
+    }));
+    assert_eq!(error_code(unknown), ErrorCode::NotFound);
+
+    std::fs::write(repo.join("notes.txt"), "x\n").unwrap();
+    let start = git(&repo, &["rev-parse", &format!("refs/mkrew/turns/{id}/1")]);
+    let status: GitStatus = client
+        .call(Request::GitStatus(GitStatusParams {
+            project_id: project.id,
+            mode: GitMode::Base,
+            since: Some(start.clone()),
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(status.merge_base.as_deref(), Some(start.as_str()));
+    let paths: Vec<&str> = status
+        .against_base
+        .iter()
+        .map(|f| f.path.as_str())
+        .collect();
+    assert_eq!(paths, ["a.txt", "notes.txt"]);
+    let diff: FileDiff = client
+        .call(Request::GitDiff(GitDiffParams {
+            project_id: project.id,
+            path: "a.txt".into(),
+            mode: GitMode::Base,
+            staged: false,
+            commit: None,
+            since: Some(start),
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!((diff.added, diff.removed), (1, 1));
+    // The Git view's reads changed nothing.
+    assert_eq!(
+        git(&repo, &["status", "--porcelain"]),
+        "M a.txt\n?? notes.txt"
+    );
     client.stop();
 }
 

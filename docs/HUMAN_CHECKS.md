@@ -1645,6 +1645,16 @@ _Decisions the agent made on its own. Override them here if you disagree._
   (cwd-relative paths; equal to project-relative except in worktrees). Daemon shutdown waits
   for exit-turn snapshots within the existing session budget (5 s grace + 2 s); past it they are
   lost.
+- (T11.5) **Since a turn / Changed by / edit lines:** `since` = a tree is compared with a fresh
+  unreferenced snapshot of the working state (it holds untracked files), taken on every
+  `git.status` and every uncached `git.diff` in that mode: ~250 ms on the 10,000-file repo, it
+  holds the project's snapshot lock (a turn start can wait that long) and leaves unreferenced
+  objects for `git gc`. `session.files` = files of turns ended since `since_ms` + hook-reported
+  edits (session event `edited`); files only the watcher saw in a still-running turn appear
+  when the turn ends. The `session.edited` line comes from Claude's `PostToolUse`
+  `tool_response.structuredPatch` (first hunk's `newStart` + leading context lines), which is
+  undocumented: check with a real Claude edit that `line` is present and right; without it
+  Follow in Zed opens the file at its top.
 
 ## Done
 

@@ -253,6 +253,9 @@ mod tests {
         fn commit_of(&self, _: &Path, _: &str) -> io::Result<Option<String>> {
             unreachable!()
         }
+        fn tree_of(&self, _: &Path, _: &str) -> io::Result<Option<String>> {
+            unreachable!()
+        }
         fn merge_base(&self, _: &Path, _: &str, _: &str) -> io::Result<Option<String>> {
             unreachable!()
         }

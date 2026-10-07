@@ -46,6 +46,9 @@ pub trait GitBackend: Send + Sync {
     /// The commit `rev` names; `None` if it names none.
     fn commit_of(&self, dir: &Path, rev: &str) -> io::Result<Option<String>>;
 
+    /// The tree `rev` names (a commit's tree too); `None` if it names none.
+    fn tree_of(&self, dir: &Path, rev: &str) -> io::Result<Option<String>>;
+
     /// `git merge-base a b`; `None` when the histories are unrelated.
     fn merge_base(&self, dir: &Path, a: &str, b: &str) -> io::Result<Option<String>>;
 
@@ -342,12 +345,11 @@ impl GitBackend for GitCli {
     }
 
     fn commit_of(&self, dir: &Path, rev: &str) -> io::Result<Option<String>> {
-        let output = view_git(dir)
-            .args(["rev-parse", "--verify", "--quiet"])
-            .arg(format!("{rev}^{{commit}}"))
-            .output()?;
-        let commit = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        Ok((output.status.success() && !commit.is_empty()).then_some(commit))
+        peeled(dir, rev, "commit")
+    }
+
+    fn tree_of(&self, dir: &Path, rev: &str) -> io::Result<Option<String>> {
+        peeled(dir, rev, "tree")
     }
 
     fn merge_base(&self, dir: &Path, a: &str, b: &str) -> io::Result<Option<String>> {
@@ -680,6 +682,16 @@ fn diff_command(dir: &Path, side: Side<'_>) -> Command {
         }
     }
     command
+}
+
+/// The object of type `kind` that `rev` names (`rev^{kind}`); `None` if it names none.
+fn peeled(dir: &Path, rev: &str, kind: &str) -> io::Result<Option<String>> {
+    let output = view_git(dir)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("{rev}^{{{kind}}}"))
+        .output()?;
+    let id = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((output.status.success() && !id.is_empty()).then_some(id))
 }
 
 /// [`git`] for read-only Git view commands: they skip optional locks (e.g. the index refresh

@@ -80,15 +80,19 @@ enum Target {
     Staged,
     Since(String),
     Commit(String),
+    /// A tree (a turn snapshot) → the working state.
+    Tree(String),
 }
 
 impl Target {
-    fn side(&self) -> Side<'_> {
+    /// `now`: a snapshot of the working state, used by [`Target::Tree`] only.
+    fn side<'a>(&'a self, now: &'a str) -> Side<'a> {
         match self {
             Target::Unstaged => Side::Unstaged,
             Target::Staged => Side::Staged,
             Target::Since(commit) => Side::Since(commit),
             Target::Commit(commit) => Side::Commit(commit),
+            Target::Tree(tree) => Side::Between(tree, now),
         }
     }
 }
@@ -136,7 +140,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// The status, the base lookup and (working mode) the staged/unstaged line counts run in
 /// parallel; base mode then adds the cached merge-base and the diff since it. Untracked files
 /// are part of the working tree, so base mode lists them too. `since` (base mode) replaces the
-/// merge-base with that commit.
+/// merge-base with that commit, or with that tree (a turn snapshot): the tree is then compared
+/// with `snapshot()` of the working state, which holds the untracked files already (one
+/// snapshot per call: see HUMAN_CHECKS T11.5 for its cost).
 pub fn status(
     git: &dyn GitBackend,
     cache: &GitCache,
@@ -144,6 +150,7 @@ pub fn status(
     configured: Option<&str>,
     mode: GitMode,
     since: Option<&str>,
+    snapshot: &dyn Fn() -> io::Result<String>,
 ) -> Result<GitStatus, ViewError> {
     let repo = cache.repo(git, dir)?;
     let (status, base, counts) = thread::scope(|s| {
@@ -177,15 +184,27 @@ pub fn status(
         add_counts(&mut status.unstaged, &unstaged?);
     }
     if mode == GitMode::Base {
-        if let Some(since) = since {
-            status.merge_base = Some(commit_id(git, dir, since)?);
-        } else if let (Some(head), Some((_, base))) = (&status.head, &base) {
-            status.merge_base = cache.merge_base(git, dir, head, base)?;
-        }
-        if let Some(merge_base) = &status.merge_base {
-            let mut files = git.changes(dir, Side::Since(merge_base))?;
-            files.append(&mut status.untracked);
-            status.against_base = files;
+        match since
+            .map(|since| since_target(git, dir, since))
+            .transpose()?
+        {
+            Some(Target::Tree(tree)) => {
+                let now = snapshot()?;
+                status.against_base = git.changes(dir, Side::Between(&tree, &now))?;
+                status.merge_base = Some(tree);
+            }
+            since => {
+                if let Some(Target::Since(commit)) = since {
+                    status.merge_base = Some(commit);
+                } else if let (Some(head), Some((_, base))) = (&status.head, &base) {
+                    status.merge_base = cache.merge_base(git, dir, head, base)?;
+                }
+                if let Some(merge_base) = &status.merge_base {
+                    let mut files = git.changes(dir, Side::Since(merge_base))?;
+                    files.append(&mut status.untracked);
+                    status.against_base = files;
+                }
+            }
         }
         status.staged.clear();
         status.unstaged.clear();
@@ -195,7 +214,8 @@ pub fn status(
 }
 
 /// `git.diff` of one file. `path` is already checked to stay inside `dir`. Cached by target,
-/// HEAD, the file's mtime/size and the index's mtime.
+/// HEAD, the file's mtime/size and the index's mtime. A `since` tree is compared with
+/// `snapshot()` of the working state (taken on a cache miss only).
 pub fn diff(
     git: &dyn GitBackend,
     cache: &GitCache,
@@ -203,6 +223,7 @@ pub fn diff(
     configured: Option<&str>,
     params: &GitDiffParams,
     path: &str,
+    snapshot: &dyn Fn() -> io::Result<String>,
 ) -> Result<FileDiff, ViewError> {
     let repo = cache.repo(git, dir)?;
     let (target, stamp) = match &params.commit {
@@ -214,7 +235,7 @@ pub fn diff(
             let target = match (params.mode, params.staged, &params.since) {
                 (GitMode::Working, false, _) => Target::Unstaged,
                 (GitMode::Working, true, _) => Target::Staged,
-                (GitMode::Base, _, Some(since)) => Target::Since(commit_id(git, dir, since)?),
+                (GitMode::Base, _, Some(since)) => since_target(git, dir, since)?,
                 (GitMode::Base, _, None) => {
                     let head = head.as_deref().ok_or(ViewError::NoMergeBase)?;
                     let (_, base) =
@@ -244,7 +265,11 @@ pub fn diff(
     if let Some(cached) = lock(&cache.diffs).get(&key) {
         return Ok(cached.clone());
     }
-    let mut text = git.file_diff(dir, path, key.target.side())?;
+    let now = match key.target {
+        Target::Tree(_) => snapshot()?,
+        _ => String::new(),
+    };
+    let mut text = git.file_diff(dir, path, key.target.side(&now))?;
     if text.is_empty()
         && matches!(key.target, Target::Unstaged | Target::Since(_))
         && dir.join(path).is_file()
@@ -346,6 +371,16 @@ fn commit_id(git: &dyn GitBackend, dir: &Path, name: &str) -> Result<String, Vie
         .ok_or_else(|| ViewError::UnknownCommit(name.to_owned()))
 }
 
+/// What a `since` names: a commit ([`Target::Since`]) or else a tree ([`Target::Tree`]).
+fn since_target(git: &dyn GitBackend, dir: &Path, name: &str) -> Result<Target, ViewError> {
+    if let Some(commit) = git.commit_of(dir, name)? {
+        return Ok(Target::Since(commit));
+    }
+    git.tree_of(dir, name)?
+        .map(Target::Tree)
+        .ok_or_else(|| ViewError::UnknownCommit(name.to_owned()))
+}
+
 /// The configured base (if it names a commit) or the auto-detected one: name and commit.
 fn resolve_base(
     git: &dyn GitBackend,
@@ -426,11 +461,30 @@ mod tests {
     }
 
     fn working(cache: &GitCache, dir: &Path) -> GitStatus {
-        status(&GitCli, cache, dir, None, GitMode::Working, None).unwrap()
+        status(&GitCli, cache, dir, None, GitMode::Working, None, &unused).unwrap()
     }
 
     fn base(cache: &GitCache, dir: &Path, configured: Option<&str>) -> GitStatus {
-        status(&GitCli, cache, dir, configured, GitMode::Base, None).unwrap()
+        status(
+            &GitCli,
+            cache,
+            dir,
+            configured,
+            GitMode::Base,
+            None,
+            &unused,
+        )
+        .unwrap()
+    }
+
+    /// The working-state snapshot of calls that compare with no tree.
+    fn unused() -> io::Result<String> {
+        unreachable!("no tree to compare with")
+    }
+
+    /// A snapshot of the working state of the repo containing `dir`, like a turn's.
+    fn snapshot(dir: &Path) -> io::Result<String> {
+        GitCli.snapshot(dir, &GitCli.index_path(dir)?)
     }
 
     fn summary(files: &[ChangedFile]) -> Vec<String> {
@@ -477,7 +531,15 @@ mod tests {
 
         // Not a repo; a folder that becomes one is found on the next call.
         let plain = tempfile::tempdir().unwrap();
-        let error = super::status(&GitCli, &cache, plain.path(), None, GitMode::Working, None);
+        let error = super::status(
+            &GitCli,
+            &cache,
+            plain.path(),
+            None,
+            GitMode::Working,
+            None,
+            &unused,
+        );
         assert!(matches!(error, Err(ViewError::NotARepo)), "{error:?}");
         git(plain.path(), &["init", "-q", "-b", "main"]);
         let fresh = working(&cache, plain.path());
@@ -578,7 +640,7 @@ mod tests {
 
         let cache = GitCache::default();
         let diff = |path: &str, p: &GitDiffParams| {
-            super::diff(&GitCli, &cache, &dir, None, p, path).unwrap()
+            super::diff(&GitCli, &cache, &dir, None, p, path, &unused).unwrap()
         };
         let unstaged = diff("a.txt", &params(GitMode::Working, false, None));
         assert_eq!(lines(&unstaged), [" one", " TWO", "+three"]);
@@ -633,6 +695,7 @@ mod tests {
                 None,
                 &params(GitMode::Working, false, Some(bad)),
                 "a.txt",
+                &unused,
             );
             assert!(
                 matches!(error, Err(ViewError::UnknownCommit(_))),
@@ -653,7 +716,17 @@ mod tests {
         std::fs::write(dir.join("new.txt"), "n\n").unwrap();
 
         let cache = GitCache::default();
-        let since = |name: &str| status(&GitCli, &cache, &dir, None, GitMode::Base, Some(name));
+        let since = |name: &str| {
+            status(
+                &GitCli,
+                &cache,
+                &dir,
+                None,
+                GitMode::Base,
+                Some(name),
+                &unused,
+            )
+        };
         let status = since(&checkpoint).unwrap();
         assert_eq!(status.merge_base.as_deref(), Some(checkpoint.as_str()));
         assert_eq!(
@@ -675,7 +748,15 @@ mod tests {
             "{error:?}"
         );
         // Working mode ignores it.
-        let working = super::status(&GitCli, &cache, &dir, None, GitMode::Working, Some("nope"));
+        let working = super::status(
+            &GitCli,
+            &cache,
+            &dir,
+            None,
+            GitMode::Working,
+            Some("nope"),
+            &unused,
+        );
         assert_eq!(working.unwrap().merge_base, None);
 
         let diff = |path: &str, since: &str| {
@@ -683,7 +764,7 @@ mod tests {
                 since: Some(since.to_owned()),
                 ..params(GitMode::Base, false, None)
             };
-            super::diff(&GitCli, &cache, &dir, None, &params, path)
+            super::diff(&GitCli, &cache, &dir, None, &params, path, &unused)
         };
         assert_eq!(
             lines(&diff("a.txt", &checkpoint).unwrap()),
@@ -694,6 +775,70 @@ mod tests {
         // Since HEAD: only the uncommitted part.
         assert_eq!(diff("a.txt", "HEAD").unwrap().hunks, []);
         let error = diff("a.txt", "nope");
+        assert!(
+            matches!(error, Err(ViewError::UnknownCommit(_))),
+            "{error:?}"
+        );
+    }
+
+    /// SPEC §20C.3: `since` = a turn's start tree compares it with the working state, so
+    /// files untracked before the turn and unchanged since are not listed.
+    #[test]
+    fn since_a_tree_lists_and_diffs_the_changes_after_the_snapshot() {
+        let (repo, dir) = repo();
+        let root = repo.path();
+        std::fs::write(dir.join("old.txt"), "untracked\n").unwrap();
+        std::fs::write(dir.join("gone.txt"), "g\n").unwrap();
+        let tree = snapshot(&dir).unwrap();
+        // The turn: an edit, a commit, a new file, a deleted untracked file, one outside.
+        std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+        git(root, &["commit", "-q", "-am", "turn"]);
+        std::fs::write(dir.join("new.txt"), "n\n").unwrap();
+        std::fs::remove_file(dir.join("gone.txt")).unwrap();
+        std::fs::write(root.join("outside.txt"), "changed\n").unwrap();
+
+        let cache = GitCache::default();
+        let now = || snapshot(&dir);
+        let status = status(
+            &GitCli,
+            &cache,
+            &dir,
+            None,
+            GitMode::Base,
+            Some(&tree),
+            &now,
+        );
+        let status = status.unwrap();
+        assert_eq!(status.merge_base.as_deref(), Some(tree.as_str()));
+        assert_eq!(
+            summary(&status.against_base),
+            [
+                "Modified a.txt +1 -1",
+                "Deleted gone.txt +0 -1",
+                "Added new.txt +1 -0"
+            ]
+        );
+        let diff = |path: &str| {
+            let params = GitDiffParams {
+                since: Some(tree.clone()),
+                ..params(GitMode::Base, false, None)
+            };
+            super::diff(&GitCli, &cache, &dir, None, &params, path, &now).unwrap()
+        };
+        assert_eq!(lines(&diff("a.txt")), [" one", "-two", "+TWO"]);
+        assert_eq!(lines(&diff("new.txt")), ["+n"]);
+        assert_eq!(lines(&diff("gone.txt")), ["-g"]);
+        assert_eq!(diff("old.txt").hunks, []);
+        // A tree is no commit: `commit` still refuses it.
+        let error = super::diff(
+            &GitCli,
+            &cache,
+            &dir,
+            None,
+            &params(GitMode::Working, false, Some(&tree)),
+            "a.txt",
+            &unused,
+        );
         assert!(
             matches!(error, Err(ViewError::UnknownCommit(_))),
             "{error:?}"

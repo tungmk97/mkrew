@@ -380,6 +380,7 @@ impl Daemon {
                 (self.turn_restore_preview(params).await, After::Continue)
             }
             Request::TurnRestore(params) => (self.turn_restore(params).await, After::Continue),
+            Request::SessionFiles(params) => (self.session_files(params), After::Continue),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (
