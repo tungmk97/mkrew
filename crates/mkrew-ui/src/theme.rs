@@ -105,6 +105,9 @@ pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 /// Width of a modal dialog (the task dialog).
 pub const DIALOG_WIDTH: f32 = 520.0;
 
+/// Height of the Run setup dialog's command list before it scrolls.
+pub const RUN_SETUP_MAX_HEIGHT: f32 = 420.0;
+
 /// Height of the prompt field in the task dialog (it scrolls past that).
 pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;
 

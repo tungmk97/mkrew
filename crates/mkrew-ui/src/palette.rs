@@ -38,6 +38,10 @@ pub struct Context {
     pub agents: bool,
     /// The terminal pane that had the keyboard runs an agent (it has a composer).
     pub agent_pane: bool,
+    /// "Run: Start all" would start something (no command yet: it opens Run setup).
+    pub run_stopped: bool,
+    /// A run session of the active workspace lives.
+    pub run_live: bool,
 }
 
 /// A palette-only action: no key is bound to it.
@@ -52,10 +56,15 @@ pub enum Extra {
     InsertPrompt,
     Turns,
     FollowInZed,
+    RunStart,
+    RunRestart,
+    RunStop,
+    RunSetup,
+    RunShowTab,
 }
 
 impl Extra {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 14] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -65,6 +74,11 @@ impl Extra {
         Self::InsertPrompt,
         Self::Turns,
         Self::FollowInZed,
+        Self::RunStart,
+        Self::RunRestart,
+        Self::RunStop,
+        Self::RunSetup,
+        Self::RunShowTab,
     ];
 
     pub fn title(self) -> &'static str {
@@ -78,6 +92,11 @@ impl Extra {
             Self::InsertPrompt => "Agent: Insert prompt…",
             Self::Turns => "Agent: Turns…",
             Self::FollowInZed => "Agent: Follow in Zed (on/off)",
+            Self::RunStart => "Run: Start all",
+            Self::RunRestart => "Run: Restart all",
+            Self::RunStop => "Run: Stop all",
+            Self::RunSetup => "Run: Setup…",
+            Self::RunShowTab => "Run: Show Run tab",
         }
     }
 
@@ -95,6 +114,11 @@ impl Extra {
             Self::InsertPrompt | Self::Turns | Self::FollowInZed => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
+            Self::RunStart => context.workspace && context.run_stopped,
+            Self::RunRestart | Self::RunStop | Self::RunShowTab => {
+                context.workspace && context.run_live
+            }
+            Self::RunSetup => context.workspace,
         }
     }
 }
@@ -521,6 +545,8 @@ mod tests {
             fan_out: false,
             agents: false,
             agent_pane: false,
+            run_stopped: false,
+            run_live: false,
         }
     }
 
@@ -711,6 +737,8 @@ mod tests {
             workspaces: 0,
             tabs: 0,
             agents: true,
+            run_stopped: true,
+            run_live: true,
             ..context(View::Terminals)
         };
         assert_eq!(
@@ -729,8 +757,8 @@ mod tests {
         entries(&Keymap::defaults(), context, &[], &[], &[])
             .into_iter()
             .filter_map(|entry| match entry.action {
-                Action::Extra(extra) => Some(extra),
-                Action::Run(_) | Action::GoTo(_) => None,
+                Action::Extra(extra) if extra != Extra::RunSetup => Some(extra),
+                _ => None,
             })
             .collect()
     }
@@ -781,6 +809,24 @@ mod tests {
             ..context(View::Board)
         };
         assert_eq!(extras(&elsewhere), [], "the composer is not on screen");
+        let stopped = Context {
+            run_stopped: true,
+            ..context(View::Docs)
+        };
+        assert_eq!(extras(&stopped), [Extra::RunStart]);
+        let live = Context {
+            run_live: true,
+            ..context(View::Docs)
+        };
+        assert_eq!(
+            extras(&live),
+            [Extra::RunRestart, Extra::RunStop, Extra::RunShowTab]
+        );
+        let all = entries(&Keymap::defaults(), &context(View::Board), &[], &[], &[]);
+        assert!(
+            all.iter()
+                .any(|e| matches!(e.action, Action::Extra(Extra::RunSetup)))
+        );
 
         let commands: Vec<String> = Command::all().into_iter().map(title).collect();
         let titles: Vec<&str> = Extra::ALL.into_iter().map(Extra::title).collect();

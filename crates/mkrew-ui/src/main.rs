@@ -21,15 +21,16 @@ use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
-    CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DiffLineKind, DocComment,
-    DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff, FsContent, FsEntry,
-    FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode, GitStatus, Outcome,
-    Project, ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request, Session,
-    SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
-    SessionListParams, SessionReadParams, SessionReadResult, SessionRef, SessionSendParams,
-    SessionSendResult, SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams,
-    SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams,
-    Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
+    CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
+    DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
+    FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode,
+    GitStatus, Outcome, Project, ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request,
+    RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
+    SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionPortsEvent,
+    SessionReadParams, SessionReadResult, SessionRef, SessionSendParams, SessionSendResult,
+    SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams, SessionUsageEvent,
+    StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
+    TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
     UndoPreview,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
@@ -63,6 +64,8 @@ use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
 use mkrew_ui::router::{Delivery, Router};
+use mkrew_ui::run::{self, Ports, RowState, RunAction, Summary};
+use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
 use mkrew_ui::status;
@@ -217,6 +220,14 @@ struct Shell {
     prompts_dir: PathBuf,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
+    /// The open "Run setup" of a workspace (modal).
+    run_setup: Option<RunSetup>,
+    /// The workspace whose Run menu (▾) is open.
+    run_menu: Option<Ulid>,
+    /// The run tab to show once its `tab.updated` arrives (it may trail `project.run_start`).
+    run_reveal: Option<Ulid>,
+    /// Ports of live run sessions (SPEC §10).
+    ports: Ports,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
     /// Done sessions already seen, so they leave the Inbox.
@@ -465,6 +476,10 @@ impl Shell {
                 shell.attach_errors.clear();
                 shell.renaming = None;
                 shell.workspace_menu = None;
+                shell.run_setup = None;
+                shell.run_menu = None;
+                shell.run_reveal = None;
+                shell.ports = Ports::default();
                 shell.broadcast = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
@@ -528,6 +543,10 @@ impl Shell {
             settings_file,
             prompts_dir,
             workspace_menu: None,
+            run_setup: None,
+            run_menu: None,
+            run_reveal: None,
+            ports: Ports::default(),
             broadcast: None,
             viewed: Viewed::default(),
             last_lines: LastLines::default(),
@@ -632,6 +651,7 @@ impl Shell {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
                         shell.load_usage(window, cx);
+                        shell.load_ports(window, cx);
                         shell.status = Status::Connected;
                         let current = shell
                             .workspace
@@ -698,6 +718,263 @@ impl Shell {
             })
             .detach();
         }
+    }
+
+    /// Reads the ports of each listed workspace not read yet (SPEC §10); events keep them live.
+    fn load_ports(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let projects = self.sidebar.projects().iter().map(|project| project.id);
+        for project_id in self.ports.to_request(projects.collect::<Vec<_>>()) {
+            let listed = connection
+                .call::<Vec<SessionPortsEvent>>(Request::SessionPorts(ProjectRef { project_id }));
+            cx.spawn_in(window, async move |this, cx| {
+                let listed = listed.await;
+                let _ = this.update(cx, |shell, cx| match listed {
+                    Ok(listed) => {
+                        if shell.ports.load(listed) {
+                            cx.notify();
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("session.ports failed: {error:#}");
+                        // Asked again on the next refresh.
+                        shell.ports.request_failed(project_id);
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
+    /// The Run state of `project_id` (empty when the workspace is unknown).
+    fn run_summary(&self, project_id: Ulid) -> Summary {
+        self.sidebar
+            .projects()
+            .iter()
+            .find(|project| project.id == project_id)
+            .map(|project| run::summary(project, self.sidebar.sessions(), &self.ports))
+            .unwrap_or_default()
+    }
+
+    /// The button's main part: Run setup when nothing is configured, the run tab while
+    /// something runs, else run everything.
+    fn run_main_click(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let summary = self.run_summary(project_id);
+        if summary.rows.is_empty() {
+            self.open_run_setup(project_id, true, window, cx);
+        } else if summary.any_live() {
+            self.show_run_tab(project_id, window, cx);
+        } else {
+            self.run_action(project_id, RunAction::Start, None, window, cx);
+        }
+    }
+
+    /// `project.run_start` / `run_restart` / `run_stop` (`name` = one command, `None` = all).
+    /// Running from all-stopped shows the run tab; restarts keep the view (SPEC §10). A
+    /// failure shows in the sidebar notice.
+    fn run_action(
+        &mut self,
+        project_id: Ulid,
+        action: RunAction,
+        name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.run_menu = None;
+        cx.notify();
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if action == RunAction::Stop {
+            let stopped =
+                connection.call::<()>(Request::ProjectRunStop(RunStopParams { project_id, name }));
+            cx.spawn_in(window, async move |this, cx| {
+                let stopped = stopped.await;
+                let _ = this.update(cx, |shell, cx| {
+                    shell.sidebar_error = stopped.err().map(|error| {
+                        tracing::warn!(%project_id, "project.run_stop failed: {error:#}");
+                        format!("Cannot stop: {error:#}")
+                    });
+                    cx.notify();
+                });
+            })
+            .detach();
+            return;
+        }
+        let reveal = action == RunAction::Start
+            && name.is_none()
+            && !self.run_summary(project_id).any_live();
+        let params = RunStartParams {
+            project_id,
+            name,
+            cols: DEFAULT_COLS,
+            rows: DEFAULT_ROWS,
+        };
+        let request = match action {
+            RunAction::Restart => Request::ProjectRunRestart(params),
+            RunAction::Start | RunAction::Stop => Request::ProjectRunStart(params),
+        };
+        let started = connection.call::<RunStarted>(request);
+        cx.spawn_in(window, async move |this, cx| {
+            let started = started.await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                match started {
+                    Ok(run) => {
+                        shell.sidebar_error = None;
+                        if reveal {
+                            shell.views.insert(project_id, View::Terminals);
+                            shell.run_reveal = run.tab_id;
+                            shell.reveal_run_tab(project_id, window, cx);
+                            shell.activate_workspace(project_id, window, cx);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%project_id, "run failed: {error:#}");
+                        shell.sidebar_error = Some(format!("Cannot run: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Switches to the workspace's run tab.
+    fn show_run_tab(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.run_menu = None;
+        self.run_reveal = self.tabs.get(&project_id).and_then(|tabs| {
+            tabs.tabs()
+                .iter()
+                .find(|tab| tab.title == mkrew_core::run::TAB_TITLE)
+                .map(|tab| tab.id)
+        });
+        self.views.insert(project_id, View::Terminals);
+        self.reveal_run_tab(project_id, window, cx);
+        self.activate_workspace(project_id, window, cx);
+    }
+
+    /// Activates the tab in `run_reveal` once `project_id`'s tabs hold it.
+    fn reveal_run_tab(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(tab_id) = self.run_reveal else {
+            return;
+        };
+        let Some(tabs) = self.tabs.get_mut(&project_id) else {
+            return;
+        };
+        if tabs.activate(tab_id) {
+            self.run_reveal = None;
+            self.sync_panes(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn open_run_setup(
+        &mut self,
+        project_id: Ulid,
+        run_after: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.workspace_menu = None;
+        self.run_menu = None;
+        let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
+            return;
+        };
+        self.run_setup = Some(RunSetup::new(project, run_after));
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    fn close_run_setup(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.run_setup = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    fn run_setup_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
+            return;
+        };
+        let paste = (key == DialogKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(setup) = self.run_setup.as_mut() else {
+            return;
+        };
+        if let Some(text) = paste {
+            setup.insert(&text);
+        }
+        match setup.key(key) {
+            run_setup::Outcome::Cancel => return self.close_run_setup(window, cx),
+            run_setup::Outcome::Save => return self.save_run_setup(window, cx),
+            run_setup::Outcome::Edited => {}
+        }
+        cx.notify();
+    }
+
+    /// `project.update` with the dialog's commands; on success it closes and, when opened from
+    /// ▶ Run, runs everything.
+    fn save_run_setup(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let serial = self.dialog_serial;
+        let Some(setup) = self.run_setup.as_mut() else {
+            return;
+        };
+        let run_after = setup.run_after;
+        let Some(params) = setup.begin() else {
+            cx.notify();
+            return;
+        };
+        let project_id = params.project_id;
+        let updated = connection.call::<Project>(Request::ProjectUpdate(params));
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let updated = updated.await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if shell.dialog_serial != serial || shell.run_setup.is_none() {
+                    return;
+                }
+                match updated {
+                    Ok(project) => {
+                        // Seen before `project.updated` arrives, so the run below finds the commands.
+                        shell.sidebar.apply(&Event::ProjectUpdated(project.clone()));
+                        shell.close_run_setup(window, cx);
+                        if run_after && !project.run_commands.is_empty() {
+                            shell.run_action(project_id, RunAction::Start, None, window, cx);
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%project_id, "project.update failed: {error:#}");
+                        if let Some(setup) = shell.run_setup.as_mut() {
+                            setup.failed(format!("{error:#}"));
+                        }
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
     }
 
     /// The workspace of the most recently started live session, else the first one.
@@ -2887,6 +3164,7 @@ impl Shell {
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
+        let run_state = workspace.map(|id| self.run_summary(id)).unwrap_or_default();
         let context = palette::Context {
             workspace: workspace.is_some(),
             view: self.view(),
@@ -2900,6 +3178,9 @@ impl Shell {
             fan_out,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
             agent_pane: self.focused_agent().is_some(),
+            run_stopped: workspace.is_some()
+                && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
+            run_live: run_state.any_live(),
         };
         let mut entries = palette::keymap_errors(&self.keymap, &self.keymap_errors);
         entries.extend(palette::entries(
@@ -3034,6 +3315,22 @@ impl Shell {
                             self.toggle_follow(session, cx);
                         }
                     }
+                    // The list is built on open: the run state may have changed since.
+                    Extra::RunStart => {
+                        if self.run_summary(project_id).rows.is_empty() {
+                            self.open_run_setup(project_id, true, window, cx);
+                        } else {
+                            self.run_action(project_id, RunAction::Start, None, window, cx);
+                        }
+                    }
+                    Extra::RunRestart => {
+                        self.run_action(project_id, RunAction::Restart, None, window, cx)
+                    }
+                    Extra::RunStop => {
+                        self.run_action(project_id, RunAction::Stop, None, window, cx)
+                    }
+                    Extra::RunSetup => self.open_run_setup(project_id, false, window, cx),
+                    Extra::RunShowTab => self.show_run_tab(project_id, window, cx),
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
@@ -3071,6 +3368,7 @@ impl Shell {
             || self.quick_open.is_some()
             || self.palette.is_some()
             || self.prompt_picker.is_some()
+            || self.run_setup.is_some()
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
@@ -6215,6 +6513,9 @@ impl Shell {
                 if self.usages.apply(event) {
                     cx.notify();
                 }
+                if self.ports.apply(event) {
+                    cx.notify();
+                }
                 if self.composers.apply(event) {
                     cx.notify();
                 }
@@ -6246,6 +6547,11 @@ impl Shell {
                     && self.loading_tabs.contains(&tab.project_id)
                 {
                     self.early_tab_events.push(event.clone());
+                }
+                if let Event::TabUpdated(tab) = event
+                    && self.run_reveal == Some(tab.id)
+                {
+                    self.reveal_run_tab(tab.project_id, window, cx);
                 }
                 if let Event::NotificationClicked(clicked) = event {
                     self.notification_clicked(clicked.session_id, clicked.project_id, window, cx);
@@ -6411,7 +6717,9 @@ impl Shell {
                             let tokens = self
                                 .usages
                                 .workspace_total(row.project_id, self.sidebar.sessions());
-                            let row = workspace_row(row, active, tokens, theme, cx);
+                            let summary = self.run_summary(row.project_id);
+                            let run_tip = summary.any_live().then(|| summary.tooltip());
+                            let row = workspace_row(row, active, run_tip, tokens, theme, cx);
                             match menu {
                                 // The menu drops down from below its row.
                                 Some(menu) => div()
@@ -6527,8 +6835,8 @@ impl Shell {
             .child(body)
     }
 
-    /// The workspace menu: "Open in Zed" and the default agent for new agent panes. Floats over
-    /// the sidebar; a click outside closes it.
+    /// The workspace menu: "Open in Zed", "Run setup…" and the default agent for new agent
+    /// panes. Floats over the sidebar; a click outside closes it.
     fn render_workspace_menu(
         &self,
         menu: &WorkspaceMenu,
@@ -6587,6 +6895,19 @@ impl Shell {
                     )
                     .on_click(cx.listener(move |shell, _, _, cx| {
                         shell.open_in_zed(project_id, cx);
+                    })),
+            )
+            .child(separator())
+            .child(
+                menu_item("workspace-run-setup".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Run setup…"),
+                    )
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.open_run_setup(project_id, false, window, cx);
                     })),
             )
             .child(separator())
@@ -6917,14 +7238,448 @@ impl Shell {
                     }))
                     .child(view.title())
             }))
-            .when_some(
-                self.workspace
-                    .filter(|&id| shown == View::Board && self.board.has_tasks(id)),
-                |el, project_id| {
-                    el.child(div().flex_1())
-                        .child(self.new_task_button(project_id, false, theme, cx))
-                },
+            .when_some(self.workspace, |el, project_id| {
+                el.child(div().flex_1())
+                    .when(
+                        shown == View::Board && self.board.has_tasks(project_id),
+                        |el| el.child(self.new_task_button(project_id, false, theme, cx)),
+                    )
+                    .child(self.render_run_button(project_id, theme, cx))
+            })
+    }
+
+    /// The Run button (SPEC §10): `▶ Run`, or the running count and ports with ↻ and ■;
+    /// `▾` opens the per-command menu below it.
+    fn render_run_button(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let summary = self.run_summary(project_id);
+        let live = summary.any_live();
+        let tip = if summary.rows.is_empty() {
+            "Set up the commands to run".to_owned()
+        } else {
+            summary.tooltip()
+        };
+        let main = button("run-main", summary.label(), theme, !live)
+            .flex_none()
+            .when(summary.warning(), |el| {
+                el.text_color(rgb(theme.status_needs_input))
+            })
+            .tooltip(tooltip(theme, &tip, ""))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.run_main_click(project_id, window, cx);
+            }));
+        let open = self.run_menu == Some(project_id);
+        let mut bar = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .child(main);
+        if live {
+            for (id, label, tip, action) in [
+                (
+                    "run-restart",
+                    "↻",
+                    "Restart all run commands",
+                    RunAction::Restart,
+                ),
+                ("run-stop", "■", "Stop all run commands", RunAction::Stop),
+            ] {
+                bar = bar.child(
+                    button(id, label, theme, false)
+                        .flex_none()
+                        .tooltip(tooltip(theme, tip, ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.run_action(project_id, action, None, window, cx);
+                        })),
+                );
+            }
+        }
+        bar.child(
+            div()
+                .child(
+                    button("run-menu", "▾", theme, false)
+                        .tooltip(tooltip(theme, "Run commands", ""))
+                        .on_click(cx.listener(move |shell, _, _, cx| {
+                            shell.run_menu =
+                                (shell.run_menu != Some(project_id)).then_some(project_id);
+                            cx.notify();
+                        })),
+                )
+                .when(open, |el| {
+                    el.child(self.render_run_menu(project_id, &summary, theme, cx))
+                }),
+        )
+        .into_any_element()
+    }
+
+    /// One row per command (state, ports, ↻ ■ or ▶), then "Show Run tab" and "Run setup…".
+    fn render_run_menu(
+        &self,
+        project_id: Ulid,
+        summary: &Summary,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let hover = theme.surface_raised;
+        let separator = || {
+            div()
+                .h(px(theme::BORDER_WIDTH))
+                .my(px(space::XS))
+                .bg(rgb(theme.border))
+        };
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        for row in &summary.rows {
+            let running = matches!(row.state, RowState::Running(_));
+            let color = match row.state {
+                RowState::Running(_) => theme.status_done,
+                RowState::Exited(_) => theme.status_exited,
+                RowState::Stopped => theme.text_muted,
+            };
+            let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
+            let controls: &[(&'static str, &'static str, RunAction)] = if running {
+                &[
+                    ("↻", "Restart this command", RunAction::Restart),
+                    ("■", "Stop this command", RunAction::Stop),
+                ]
+            } else {
+                &[("▶", "Run this command", RunAction::Start)]
+            };
+            let mut line = div()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .text_size(px(font_size::BODY))
+                .child(
+                    div()
+                        .flex_1()
+                        .text_color(rgb(theme.text))
+                        .child(row.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(color))
+                        .child(run::state_text(&row.state)),
+                )
+                .child(
+                    div()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(ports.join(" ")),
+                );
+            for &(label, tip, action) in controls {
+                let name = row.name.clone();
+                line = line.child(
+                    div()
+                        .id(SharedString::from(format!("run-{label}-{}", row.name)))
+                        .px(px(space::XS))
+                        .rounded(px(radius::SMALL))
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .tooltip(tooltip(theme, tip, ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.run_action(project_id, action, Some(name.clone()), window, cx);
+                        }))
+                        .child(label),
+                );
+            }
+            rows.push(line.into_any_element());
+        }
+        let panel = div()
+            .id("run-menu-panel")
+            .w(px(theme::MENU_WIDTH))
+            .flex()
+            .flex_col()
+            .p(px(space::XS))
+            .rounded(px(radius::MEDIUM))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface_raised))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.run_menu = None;
+                cx.notify();
+            }))
+            .when(!rows.is_empty(), |el| el.children(rows).child(separator()))
+            .child(
+                menu_item("run-show-tab".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Show Run tab"),
+                    )
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.show_run_tab(project_id, window, cx);
+                    })),
             )
+            .child(
+                menu_item("run-setup".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Run setup…"),
+                    )
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.open_run_setup(project_id, false, window, cx);
+                    })),
+            );
+        deferred(
+            anchored()
+                .snap_to_window_with_margin(px(space::S))
+                .child(div().pt(px(space::XS)).child(panel)),
+        )
+        .into_any_element()
+    }
+
+    /// "Run setup": one card per command, "+ Add command", "Start with the daemon", errors,
+    /// Cancel and Save (Ctrl+Enter).
+    fn render_run_setup(
+        &self,
+        setup: &RunSetup,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        use run_setup::{Field, Focus};
+        let label = |text: &'static str| {
+            div()
+                .text_size(px(font_size::META))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let field = |cx: &mut Context<'_, Self>,
+                     i: usize,
+                     which: Field,
+                     id: &'static str,
+                     text: &str,
+                     placeholder: &'static str| {
+            text_field(
+                id,
+                text,
+                placeholder,
+                setup.focus == Focus::Field(i, which),
+                theme,
+            )
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                if let Some(setup) = shell.run_setup.as_mut() {
+                    setup.focus = Focus::Field(i, which);
+                }
+                cx.notify();
+            }))
+        };
+        let mut cards = div()
+            .id("run-cards")
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
+            .overflow_y_scroll();
+        for (i, card) in setup.cards.iter().enumerate() {
+            let name = field(cx, i, Field::Name, "run-name", &card.name, "e.g. BE");
+            let dir = field(cx, i, Field::Dir, "run-dir", &card.dir, ". or EA-BE");
+            let command = field(
+                cx,
+                i,
+                Field::Command,
+                "run-command",
+                &card.command,
+                "e.g. npm run dev",
+            );
+            let env_file = field(
+                cx,
+                i,
+                Field::EnvFile,
+                "run-env-file",
+                &card.env_file,
+                "e.g. .env",
+            );
+            let env = field(
+                cx,
+                i,
+                Field::Env,
+                "run-env",
+                card.env.text(),
+                "e.g. ENVIRONMENT=dev",
+            );
+            cards = cards.child(
+                // The id scopes the card's field and button ids (the same in every card).
+                div()
+                    .id(("run-card", i))
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .p(px(space::S))
+                    .rounded(px(radius::MEDIUM))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.border))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(space::S))
+                            .child(div().flex_1().child(label("Name")).child(name))
+                            .child(div().flex_1().child(label("Folder")).child(dir)),
+                    )
+                    .child(label("Command"))
+                    .child(command)
+                    .child(label("Env file (optional, relative to the folder)"))
+                    .child(env_file)
+                    .child(label("Env (KEY=VALUE per line, wins over the env file)"))
+                    .child(env)
+                    .child(div().flex().justify_end().child(
+                        quiet_button("run-remove", "Remove", theme, theme.surface_raised).on_click(
+                            cx.listener(move |shell, _, _, cx| {
+                                if let Some(setup) = shell.run_setup.as_mut() {
+                                    setup.remove_card(i);
+                                }
+                                cx.notify();
+                            }),
+                        ),
+                    )),
+            );
+        }
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(px(font_size::META))
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        let hover = theme.surface_raised;
+        let autostart = div()
+            .id("run-autostart")
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::XS))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::transparent_black())
+            .when(setup.focus == Focus::Autostart, |el| {
+                el.border_color(rgb(theme.pane_focus_border))
+            })
+            .cursor_pointer()
+            .text_size(px(font_size::BODY))
+            .text_color(rgb(theme.text))
+            .hover(move |style| style.bg(rgb(hover)))
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .tooltip(tooltip(
+                theme,
+                "Start the run commands when the daemon starts",
+                "Space",
+            ))
+            .on_click(cx.listener(|shell, _, _, cx| {
+                if let Some(setup) = shell.run_setup.as_mut() {
+                    setup.autostart = !setup.autostart;
+                }
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .size(px(space::M))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(radius::SMALL))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.border))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.accent))
+                    .child(if setup.autostart { "✓" } else { "" }),
+            )
+            .child(div().flex_1().child("Start with the daemon"))
+            .child(
+                div()
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .child("Space"),
+            );
+        let panel = div()
+            .id("run-setup")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme::UI_FONT)
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::run_setup_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx))
+            .child(
+                div()
+                    .text_size(px(font_size::CARD_TITLE))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child("Run setup"),
+            )
+            .child(
+                div()
+                    .text_size(px(font_size::BODY))
+                    .text_color(rgb(theme.text))
+                    .child(
+                        "Each command runs in its own pane of the “run” tab, in a shell started \
+                         in its folder.",
+                    ),
+            )
+            .child(cards)
+            .child(
+                div()
+                    .flex()
+                    .child(
+                        button("run-add", "+ Add command", theme, false).on_click(cx.listener(
+                            |shell, _, _, cx| {
+                                if let Some(setup) = shell.run_setup.as_mut() {
+                                    setup.add_card();
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            )
+            .child(autostart)
+            .children(setup.error.clone().map(error_row))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        button("run-cancel", "Cancel", theme, false)
+                            .tooltip(tooltip(theme, "Keep the current commands", "Esc"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.close_run_setup(window, cx);
+                            })),
+                    )
+                    .child(if setup.busy {
+                        disabled_button("run-save", "Saving…", theme, true)
+                    } else {
+                        button("run-save", "Save", theme, true)
+                            .tooltip(tooltip(theme, "Save the run commands", "Ctrl+Enter"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.save_run_setup(window, cx);
+                            }))
+                    }),
+            );
+        Self::modal_shade("run-setup-shade", panel, cx)
     }
 
     /// The workspace's task board: one column per status (SPEC §10); cards drag between and
@@ -12070,6 +12825,7 @@ impl Shell {
                 pane_header(
                     info,
                     self.turns.get(session),
+                    self.ports.get(info.id),
                     self.usages.get(session).and_then(usage::context_share),
                     conflict,
                     turns,
@@ -13427,6 +14183,7 @@ fn agent_rows(
 fn workspace_row(
     row: WorkspaceRow,
     active: bool,
+    run_tip: Option<String>,
     tokens: Option<u64>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -13478,6 +14235,16 @@ fn workspace_row(
                 .text_color(rgb(theme.text))
                 .child(row.name),
         )
+        .when_some(run_tip, |el, tip| {
+            el.child(
+                div()
+                    .id(SharedString::from(format!("workspace-run-{project_id}")))
+                    .text_size(px(font_size::META))
+                    .text_color(rgb(theme.text_muted))
+                    .tooltip(tooltip(theme, &tip, ""))
+                    .child("▶"),
+            )
+        })
         .when_some(tokens, |el, tokens| {
             el.child(
                 div()
@@ -14600,6 +15367,7 @@ fn conflict_badge(
 fn pane_header(
     session: &Session,
     turn: Option<&SessionTurnEvent>,
+    ports: &[u16],
     context: Option<ContextShare>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
     turns: Option<gpui::Stateful<gpui::Div>>,
@@ -14638,7 +15406,7 @@ fn pane_header(
                 .text_ellipsis()
                 .whitespace_nowrap()
                 .text_color(rgb(theme.text_muted))
-                .children(session.title.clone()),
+                .children(run::pane_title(session, ports)),
         )
         .children(conflict.map(|badge| {
             badge
@@ -14862,6 +15630,11 @@ impl Render for Shell {
                 self.git_base
                     .as_ref()
                     .map(|dialog| self.render_git_base(dialog, &theme, cx)),
+            )
+            .children(
+                self.run_setup
+                    .as_ref()
+                    .map(|setup| self.render_run_setup(setup, &theme, cx)),
             )
             .children(
                 self.broadcast
