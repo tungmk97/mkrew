@@ -2,6 +2,29 @@
 
 Done tasks moved out of PROGRESS.md to keep it short. Newest first.
 
+## M11 — Reviewing per turn (tag `m11-done`)
+
+Acceptance criteria at completion (the unticked one waits on the T11.9 manual checks in
+HUMAN_CHECKS "To verify" and the T11.1–T11.7 "Questions with assumed defaults" entries):
+
+- [x] A turn snapshot is taken at each turn start without changing HEAD, branches, the index or any file (real-git test asserts all four); the `hook.report` reply for a turn-start hook waits for it.
+- [x] `turn.list`, `turn.restore_preview`, `turn.restore`: preview lists changed/created/deleted files; restore only with `confirm` and a matching fingerprint; e2e with the fake agent over 2 turns.
+- [x] Snapshot on the generated 10,000-file repo < 300 ms on Windows (perf test like §15).
+- [x] Git view: "Changes since turn n" (`since` accepts a turn's tree) and the "Changed by" session filter.
+- [ ] Follow in Zed: debouncer unit-tested; manual check with a real agent.
+
+Tasks:
+
+- [x] T11.1 Git turn snapshot primitive — feat(daemon): git turn snapshot primitive
+- [x] T11.2 Turns migration + store API — feat(store): persist agent turns
+- [x] T11.3 Snapshot and persist turns in the daemon — feat(daemon): snapshot and persist agent turns
+- [x] T11.4 `turn.list` / `turn.restore_preview` / `turn.restore` — feat(daemon): list and restore agent turns
+- [x] T11.5 `since` a tree, `session.files`, `session.edited` — feat(daemon): diff since a turn, session files and edit events
+- [x] T11.6 Turns dialog + restore before a turn — feat(ui): turns dialog and restore before a turn
+- [x] T11.7 Git view since a turn + Changed by — feat(ui): git view since a turn and changed-by filter
+- [x] T11.8 Follow in Zed — feat(ui): follow an agent's edits in Zed
+- [x] T11.9 M11 manual checks + wrap-up — chore(progress): complete M11
+
 ## M10 — Instructing (tag `m10-done`)
 
 Acceptance criteria at completion (unticked ones wait on the T10.10 manual checks in

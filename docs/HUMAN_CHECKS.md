@@ -623,6 +623,35 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   - **§14 design check**: dark + light screenshots of the docked composer (draft + 2 queued
     rows), the prompt picker with preview + "left empty" note, the send-selection dialog, the
     task dialog multi-line prompt, and the "Run with…" picker anchored on a card.
+- [ ] (T11.9) **M11 wrap-up — the unticked M11 criterion and the M11 views.** Four of five
+  criteria are ticked; their backend is covered by automated tests (snapshot real-git +
+  `snapshot_of_a_10000_file_repo_meets_the_budget` (release only), daemon e2e
+  `a_hook_turn_start_is_snapshotted_before_the_agent_edits`,
+  `turns_are_listed_previewed_and_restored`,
+  `hook_edits_are_announced_attributed_and_diffed_since_a_turn`; UI `turns_dialog::tests`,
+  `follow::tests`, `git_view` since/changed-by tests + snapshots). No M11 view was ever seen and
+  no real agent ran a turn. Restart the daemon first (protocol v21), with `mk` on PATH and `zed`
+  on PATH. Details: the "Questions with assumed defaults" entries T11.1–T11.7.
+  - **Turns + restore** (criterion 2): Claude in a git project, two prompts that each edit a
+    file (one prompt also creates a new file) → pane header "Turns…" lists both newest first
+    with time, files and +/−; "Restore before turn 2" → preview lists the changed file and the
+    new file as deleted → confirm → files are back as before turn 2, `git status` shows HEAD,
+    branch and index unchanged; while Claude works the button is disabled. Cancel in the preview
+    returns to the list.
+  - **Since turn / Changed by** (criterion 4): "Diff since" on a Turns row → Git view header
+    `Since turn n of claude #k` with only the files changed since then (incl. untracked);
+    with two agents editing different files → "Changed by" chips filter the list per session.
+  - **Follow in Zed** (criterion 5, the unticked one): "Follow in Zed" in a Claude pane header
+    (and the palette command) → while Claude edits several files, Zed opens the last edited file
+    ~1.5 s after the edits stop (`zed.follow_debounce_ms`), at the edited line (checks the
+    undocumented `structuredPatch` line, T11.5); off again → no more opens. Without `zed` on PATH
+    nothing breaks (only logged).
+  - **Perf on Windows** (criterion 3): run
+    `cargo test --release -p mkrew-daemon snapshot_of_a_10000_file_repo_meets_the_budget` once on
+    your machine (and with a large real repo: a turn start should not feel slower).
+  - **§14 design check**: dark + light screenshots of the Turns dialog (a working session with
+    restore disabled, and an idle one), the restore-before-turn preview, the Git view in Since
+    turn mode with the Changed by chips, and the pane header with "Following in Zed".
 
 ## Questions with assumed defaults
 
