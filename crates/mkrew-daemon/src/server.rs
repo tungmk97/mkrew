@@ -393,6 +393,9 @@ impl Daemon {
             }
             Request::TurnRestore(params) => (self.turn_restore(params).await, After::Continue),
             Request::SessionFiles(params) => (self.session_files(params), After::Continue),
+            Request::SessionUsage(params) => {
+                (self.session_usage(params.project_id), After::Continue)
+            }
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (

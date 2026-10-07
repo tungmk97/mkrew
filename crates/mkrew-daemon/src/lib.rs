@@ -24,6 +24,7 @@ mod snapshot;
 pub mod spawn;
 mod turns;
 mod undo;
+mod usage;
 mod watch;
 mod worktree;
 

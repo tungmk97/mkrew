@@ -1782,6 +1782,14 @@ _Decisions the agent made on its own. Override them here if you disagree._
   fixtures are hand-trimmed copies of those shapes. An unknown `[usage] format` name is not a
   profile error (no usage + one warning). Sample profiles now set `context_window` 200000
   (claude) and 258400 (codex): check both against the models you use.
+- (T13.10a) **Usage wiring:** added request `session.usage` (`project_id` → newest usage per
+  session, stored as `session_event` kind `usage` on change) so the UI can show totals after a
+  reconnect or daemon restart (SPEC §20E protocol line updated; protocol v23). Usage is read only
+  at turn ends, and only once the agent reported its native session id through a hook (a
+  screen-only profile gets no usage). Totals are per native conversation: a resumed session
+  re-reads the same transcript from the start, so the UI must not add up a task's sessions
+  (show the newest one). Claude `/clear` (new session id) starts a new transcript and totals.
+  Codex: when several rollout files contain the id, the last by path (newest date) is read.
 
 ## Done
 

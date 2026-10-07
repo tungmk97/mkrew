@@ -221,7 +221,8 @@ impl Sidebar {
             | Event::GitChanged(_)
             | Event::SessionTurn(_)
             | Event::SessionQueue(_)
-            | Event::SessionEdited(_) => Change::None,
+            | Event::SessionEdited(_)
+            | Event::SessionUsage(_) => Change::None,
         }
     }
 

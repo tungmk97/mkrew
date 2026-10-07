@@ -1366,7 +1366,8 @@ terminals) → child Task[] (git repos only; if a child fails to start the call 
 the others keep running and the original moves to Running if any started; the original itself
 can no longer be run); `fs.*` and `git.*` accept
 `worktree_task_id?` (not `git.set_base`: the base is per project) and `git.changed` carries it;
-event `session.usage`.
+event `session.usage`; request `session.usage` (`project_id`) → the newest usage of each session
+of the project (kept as `session_event` kind `usage`, so totals survive reconnects and restarts).
 
 Migration `0009_worktrees.sql`:
 

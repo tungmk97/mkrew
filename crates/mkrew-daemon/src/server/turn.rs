@@ -1,12 +1,13 @@
-//! `turn.list`, `turn.restore_preview`, `turn.restore` (SPEC §20C.2) and `session.files`
-//! (SPEC §20C.4).
+//! `turn.list`, `turn.restore_preview`, `turn.restore` (SPEC §20C.2), `session.files`
+//! (SPEC §20C.4) and `session.usage` (SPEC §20E.3).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use mkrew_protocol::{
-    ErrorCode, Outcome, SessionFilesParams, SessionState, TurnRef, TurnRestoreParams,
+    ErrorCode, Outcome, SessionFilesParams, SessionState, SessionUsageEvent, TurnRef,
+    TurnRestoreParams,
 };
 use ulid::Ulid;
 
@@ -131,6 +132,31 @@ impl Daemon {
         }
         files.retain(|_, paths| !paths.is_empty());
         ok(&files)
+    }
+
+    /// The newest recorded token usage of each session of the project (SPEC §20E.3).
+    pub(super) fn session_usage(&self, project_id: Ulid) -> Outcome {
+        let found = {
+            let store = self.store();
+            store
+                .get_project(project_id)
+                .and_then(|_| store.project_session_events(project_id, crate::usage::EVENT_KIND, 0))
+        };
+        let events = match found {
+            Ok(events) => events,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        // Oldest first: later events replace earlier ones.
+        let mut newest: BTreeMap<Ulid, SessionUsageEvent> = BTreeMap::new();
+        for (session, event) in events {
+            match serde_json::from_value(event.payload) {
+                Ok(usage) => {
+                    newest.insert(session, usage);
+                }
+                Err(e) => tracing::warn!(%session, "unreadable usage event: {e}"),
+            }
+        }
+        ok(&newest.into_values().collect::<Vec<_>>())
     }
 
     /// The session's project folder and the turn's start tree; `invalid_state` without one.

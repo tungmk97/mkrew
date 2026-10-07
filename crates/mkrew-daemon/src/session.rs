@@ -2,7 +2,7 @@
 //! bounded channel, one blocking writer OS thread fed by a bounded input channel, and one
 //! tokio task owning the headless emulator, the state machine and the session log.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +33,7 @@ use crate::launch;
 use crate::session_log::SessionLog;
 use crate::snapshot::Snapshots;
 use crate::turns;
+use crate::usage;
 use crate::watch::{self, Watch};
 
 const READ_BUFFER_BYTES: usize = 64 * 1024;
@@ -91,6 +92,8 @@ pub struct Hub {
     pub git: Arc<dyn GitBackend>,
     /// Turn snapshots (SPEC §20C.1), one at a time per project.
     pub snapshots: Snapshots,
+    /// Profiles whose unknown usage format was already logged.
+    usage_warned: Mutex<HashSet<String>>,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -284,6 +287,7 @@ impl Hub {
             flood_turn: tokio::sync::Mutex::default(),
             git: Arc::new(GitCli),
             snapshots: Snapshots::default(),
+            usage_warned: Mutex::default(),
         }
     }
 
@@ -446,6 +450,7 @@ impl Hub {
             cwd,
             jobs,
         ));
+        let usage = self.track_usage(&session, &profile);
         let mut queue = SendQueue::default();
         if let Some(text) = typed {
             queue.push(Ulid::new(), text);
@@ -467,12 +472,39 @@ impl Hub {
             turns: TurnTracker::default(),
             turn_jobs,
             hook_reply: None,
+            usage,
         };
         if let Some(banner) = banner {
             actor.on_banner(&banner);
         }
         lock(&self.tasks).spawn(actor.run(rx, commands));
         Ok(())
+    }
+
+    /// Starts the usage task of an agent session whose profile has `[usage]` (SPEC §20E.3);
+    /// an unknown format is logged once per profile.
+    fn track_usage(
+        self: &std::sync::Arc<Self>,
+        session: &Session,
+        profile: &AgentProfile,
+    ) -> Option<mpsc::UnboundedSender<String>> {
+        let config = profile.usage.as_ref()?;
+        if session.kind != SessionKind::Agent {
+            return None;
+        }
+        match usage::track(Arc::clone(self), session.id, config) {
+            Ok((ends, task)) => {
+                // In `tasks`, so shutdown waits for the read of the last turn's end.
+                lock(&self.tasks).spawn(task);
+                Some(ends)
+            }
+            Err(warning) => {
+                if lock(&self.usage_warned).insert(profile.id.clone()) {
+                    tracing::warn!(profile = %profile.id, "{warning}");
+                }
+                None
+            }
+        }
     }
 
     /// Moves task `task_id` after its session went to `state` (SPEC §5 rules) and announces
@@ -872,6 +904,8 @@ struct Actor {
     turn_jobs: mpsc::UnboundedSender<turns::Job>,
     /// The reply of the hook being handled; a turn it starts keeps it until the snapshot.
     hook_reply: Option<oneshot::Sender<()>>,
+    /// To the session's [`usage::track`] task: the native session id at each turn end.
+    usage: Option<mpsc::UnboundedSender<String>>,
 }
 
 impl Actor {
@@ -1179,10 +1213,16 @@ impl Actor {
                 at,
                 reply: self.hook_reply.take(),
             },
-            Some(TurnEvent::Ended(turn)) => turns::Job::End {
-                turn,
-                snapshot: state != SessionState::NeedsInput,
-            },
+            Some(TurnEvent::Ended(turn)) => {
+                if let (Some(usage), Some(native)) = (&self.usage, &self.session.native_session_id)
+                {
+                    let _ = usage.send(native.clone());
+                }
+                turns::Job::End {
+                    turn,
+                    snapshot: state != SessionState::NeedsInput,
+                }
+            }
             Some(TurnEvent::Resumed(_)) | None => return,
         };
         // The recorder lives until this sender is dropped.

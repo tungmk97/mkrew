@@ -210,6 +210,10 @@ pub enum Request {
     /// `since_ms` (SPEC §20C.4).
     #[serde(rename = "session.files")]
     SessionFiles(SessionFilesParams),
+    /// Returns `SessionUsageEvent[]`: the newest token usage of each session of the project
+    /// that has one (SPEC §20E.3).
+    #[serde(rename = "session.usage")]
+    SessionUsage(ProjectRef),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -324,6 +328,9 @@ pub enum Event {
     /// A hook reported that a session's agent edited a file (SPEC §20C.5).
     #[serde(rename = "session.edited")]
     SessionEdited(SessionEditedEvent),
+    /// A session's token usage after a turn ended (SPEC §20E.3).
+    #[serde(rename = "session.usage")]
+    SessionUsage(SessionUsageEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -1250,6 +1257,21 @@ pub struct SessionExitedEvent {
     pub exit_code: Option<i32>,
 }
 
+/// Token totals of an agent session, read from its transcript (SPEC §20E.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionUsageEvent {
+    pub session_id: Ulid,
+    /// Input tokens over the agent's whole conversation.
+    pub input: u64,
+    /// Output tokens over the agent's whole conversation.
+    pub output: u64,
+    /// Context size of the newest message.
+    pub context: u64,
+    /// The profile's `context_window`, when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionTurnEvent {
     pub session_id: Ulid,
@@ -1587,6 +1609,7 @@ mod tests {
                 project_id: sid(),
                 since_ms: 5,
             }),
+            Request::SessionUsage(ProjectRef { project_id: sid() }),
             Request::TurnRestorePreview(TurnRef {
                 session_id: sid(),
                 n: 2,
@@ -2036,6 +2059,18 @@ mod tests {
         assert_eq!(
             edited["data"],
             json!({ "session_id": sid(), "path": "src/a.rs" })
+        );
+        let usage = round_trip(&Message::Event(Event::SessionUsage(SessionUsageEvent {
+            session_id: sid(),
+            input: 10,
+            output: 2,
+            context: 7,
+            context_window: None,
+        })));
+        assert_eq!(usage["event"], "session.usage");
+        assert_eq!(
+            usage["data"],
+            json!({ "session_id": sid(), "input": 10, "output": 2, "context": 7 })
         );
     }
 

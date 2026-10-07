@@ -26,9 +26,9 @@ use mkrew_protocol::{
     SessionFilesParams, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
     SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams,
     SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
-    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
-    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
+    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
+    Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
     TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
     TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
@@ -132,6 +132,9 @@ impl Env {
             .env("MKREW_SOCKET", &self.socket)
             .env("MKREW_LOG", "debug")
             .env(mkrew_daemon::ENV_NOTIFY, self.notifications())
+            // Transcripts for token usage (SPEC §20E.3): never the user's real ones.
+            .env("CLAUDE_CONFIG_DIR", self.dir.path().join("claude"))
+            .env("CODEX_HOME", self.dir.path().join("codex"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1966,6 +1969,72 @@ fn a_turn_that_edits_two_files_reports_both() {
             .iter()
             .all(|f| f.added.is_none() && f.removed.is_none())
     );
+    client.stop();
+}
+
+/// A profile with `[usage]`: at the turn end the daemon finds the transcript of the agent's
+/// native session id, announces `session.usage` and `session.usage` lists it (SPEC §20E.3).
+#[test]
+fn a_turn_end_reads_token_usage_from_the_agent_transcript() {
+    let env = Env::new();
+    let transcripts = env.dir.path().join("claude/projects/C--repo");
+    std::fs::create_dir_all(&transcripts).unwrap();
+    std::fs::write(
+        transcripts.join("native-7.jsonl"),
+        include_bytes!("../../mkrew-core/tests/fixtures/usage/claude.jsonl"),
+    )
+    .unwrap();
+    let scenario = env.dir.path().join("usage.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-7\"\n\n\
+         [[step]]\naction = \"sleep\"\nms = 300\n\n\
+         [[step]]\naction = \"hook\"\nevent = \"done\"\nsession_id = \"native-7\"\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "usage",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let path = env.dir.path().join("config/agents/usage.toml");
+    let profile = std::fs::read_to_string(&path).unwrap();
+    let hooks = profile.replace("mode = \"screen\"", "mode = \"hook+screen\"");
+    assert_ne!(hooks, profile);
+    env.write_profile(
+        "usage",
+        &format!("{hooks}\n[usage]\nformat = \"claude_jsonl\"\ncontext_window = 200000\n"),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "usage").into_result().unwrap();
+    let id = spawned.session_id;
+
+    let event =
+        client.wait_event_where(|e| matches!(e, Event::SessionUsage(u) if u.session_id == id));
+    let Event::SessionUsage(usage) = event else {
+        unreachable!()
+    };
+    // The totals of `mkrew-core`'s Claude fixture.
+    let expected = SessionUsageEvent {
+        session_id: id,
+        input: (2 + 688 + 48215) + (3 + 9000) + (1 + 1200 + 48903),
+        output: 206 + 40 + 512,
+        context: 1 + 1200 + 48903,
+        context_window: Some(200_000),
+    };
+    assert_eq!(usage, expected);
+    let listed: Vec<SessionUsageEvent> = client
+        .call(Request::SessionUsage(ProjectRef {
+            project_id: project.id,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(listed, [expected]);
+    let unknown = client.call(Request::SessionUsage(ProjectRef {
+        project_id: Ulid::new(),
+    }));
+    assert_eq!(error_code(unknown), ErrorCode::NotFound);
     client.stop();
 }
 
