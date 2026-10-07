@@ -37,6 +37,20 @@ fn installer_lists_binaries_and_profiles() {
     assert!(wxs.contains(r#"Name="PATH" Value="[BINDIR]""#));
 }
 
+/// The setup .exe ships the same files and lets the user pick per-user (no admin) or all users.
+#[test]
+fn setup_exe_lists_binaries_profiles_and_both_scopes() {
+    let iss = std::fs::read_to_string(repo_root().join("packaging/mkrew.iss")).unwrap();
+    for bin in BINS {
+        let source = format!(r#"Source: "{{#BinDir}}\{bin}.exe"; DestDir: "{{app}}\bin""#);
+        assert!(iss.contains(&source), "missing {source}");
+    }
+    assert!(iss.contains(r#"Source: "{#AgentsDir}\*.toml"; DestDir: "{app}\agents""#));
+    assert!(iss.contains("PrivilegesRequired=lowest"));
+    assert!(iss.contains("PrivilegesRequiredOverridesAllowed=dialog commandline"));
+    assert!(iss.contains("DefaultDirName={autopf}\\Mkrew"));
+}
+
 // `package.sh` targets Linux/macOS; on Windows `bash` may resolve to WSL (System32 first).
 #[cfg(unix)]
 #[test]

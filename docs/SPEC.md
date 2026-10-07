@@ -179,8 +179,8 @@ mkrew/
 ├── Cargo.toml                # workspace
 ├── AGENTS.md / CLAUDE.md     # agent instructions
 ├── docs/                     # SPEC, PROGRESS, BUILD_LOOP, HUMAN_CHECKS, decisions/, screenshots/
-├── scripts/                  # verify, autobuild, status, package (MSI / tar.gz)
-├── packaging/                # mkrew.wxs (WiX 7 Windows installer)
+├── scripts/                  # verify, autobuild, status, package (MSI / setup .exe / tar.gz)
+├── packaging/                # mkrew.wxs (WiX 7 MSI), mkrew.iss (Inno Setup 6 setup .exe)
 ├── agents/                   # sample profiles: claude.toml codex.toml omp.toml shell.toml fake.toml
 └── crates/
     ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files.

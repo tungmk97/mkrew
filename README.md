@@ -19,6 +19,19 @@ Agents keep running when you close the window: they live in the daemon.
 You need the agents you want to use (`claude`, `codex`, `omp`) installed and logged in, and
 optionally Zed with its `zed` command on your `PATH` (for "Open in Zed").
 
+### Windows (setup .exe)
+
+Run `mkrew-<version>-x64-setup.exe`. The first page asks:
+
+- **Install for me only**: no admin password; installs to `%LOCALAPPDATA%\Programs\Mkrew\` and
+  adds `bin\` to your user `PATH`.
+- **Install for all users**: asks for an admin password (UAC); installs to
+  `C:\Program Files\Mkrew\` and adds `bin\` to the system `PATH`.
+
+Both create a Start Menu shortcut "Mkrew" and an entry in Settings → Apps for uninstalling. Setup
+and uninstall stop a running daemon first. Silent install: add `/VERYSILENT` plus `/CURRENTUSER`
+or `/ALLUSERS`. Open a new terminal afterwards so the new `PATH` applies.
+
 ### Windows (MSI)
 
 Run `mkrew-<version>-x64.msi`. It installs to `C:\Program Files\Mkrew\` (`bin\` with the
@@ -52,7 +65,8 @@ cargo install --locked --path crates/mkrew-daemon   # mkrew-daemon
 ```
 
 All three land in `~/.cargo/bin`, which rustup already puts on your `PATH`. Release packages:
-`bash scripts/package.sh` (tar.gz) or `pwsh scripts/package.ps1` (MSI, needs WiX 7).
+`bash scripts/package.sh` (tar.gz), `pwsh scripts/package-setup.ps1` (setup .exe, needs Inno
+Setup 6) or `pwsh scripts/package.ps1` (MSI, needs WiX 7).
 
 ## Configure agents
 
