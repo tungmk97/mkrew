@@ -931,3 +931,26 @@ fn comment_list_and_reply_from_inside_a_session() {
     let stderr = String::from_utf8_lossy(&unknown.stderr);
     assert!(stderr.contains("not found"), "{stderr}");
 }
+
+#[test]
+fn project_run_restart_and_stop_reach_the_daemon() {
+    let env = Env::new();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    // Commands are set up in the UI; without any, run and restart fail and say why.
+    for verb in ["run", "restart"] {
+        let refused = env.mk(&["project", verb, "demo"]);
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("no run commands"),
+            "{verb}"
+        );
+    }
+    let unknown = env.mk(&["project", "stop", "demo", "BE"]);
+    assert!(!unknown.status.success());
+    let stopped = env.ok(&["project", "stop", "demo"]);
+    assert_eq!(stopped.trim(), "stopped the run commands of demo");
+    env.ok(&["daemon", "stop"]);
+}

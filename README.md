@@ -134,6 +134,8 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
   pane of the "run" tab; ↻ restarts, ■ stops, ▾ controls one command. Ports the servers print
   (`http://localhost:5180`, `port 8080`) show on the button. `mk project update <project>
   --run-autostart on` runs them whenever the daemon starts.
+  From a terminal: `mk project run <project> [name]`, `mk project restart <project> [name]`,
+  `mk project stop <project> [name]`.
 
 ## Daily use
 

@@ -205,6 +205,27 @@ enum ProjectCommand {
         #[arg(long, group = "change", value_enum)]
         run_autostart: Option<project::Switch>,
     },
+    /// Run the workspace's run commands (all, or one by name); prints `<name> <session id>`.
+    Run {
+        /// Project id or name.
+        project: String,
+        /// One command's name (default: all).
+        name: Option<String>,
+    },
+    /// Stop, then run again the workspace's run commands (all, or one by name).
+    Restart {
+        /// Project id or name.
+        project: String,
+        /// One command's name (default: all).
+        name: Option<String>,
+    },
+    /// Stop the workspace's run commands (all, or one by name).
+    Stop {
+        /// Project id or name.
+        project: String,
+        /// One command's name (default: all).
+        name: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -258,6 +279,15 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                         run_autostart: run_autostart.map(|s| s == project::Switch::On),
                     },
                 ),
+                ProjectCommand::Run { project, name } => {
+                    project::run(&mut client, &project, name, false)
+                }
+                ProjectCommand::Restart { project, name } => {
+                    project::run(&mut client, &project, name, true)
+                }
+                ProjectCommand::Stop { project, name } => {
+                    project::stop(&mut client, &project, name)
+                }
             }
             .map(|()| ExitCode::SUCCESS)
         }

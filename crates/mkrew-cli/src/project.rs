@@ -1,10 +1,13 @@
-//! `mk project add | list | update` (SPEC §9).
+//! `mk project add | list | update | run | restart | stop` (SPEC §9).
 
 use std::path::Path;
 
 use anyhow::Context;
 use mkrew_core::Paths;
-use mkrew_protocol::{GitSetBaseParams, Project, ProjectAddParams, ProjectUpdateParams, Request};
+use mkrew_protocol::{
+    DEFAULT_COLS, DEFAULT_ROWS, GitSetBaseParams, Project, ProjectAddParams, ProjectUpdateParams,
+    Request, RunStartParams, RunStarted, RunStopParams,
+};
 
 use crate::client::Client;
 use crate::session::resolve_project;
@@ -97,6 +100,53 @@ pub fn list(client: &mut Client) -> anyhow::Result<()> {
             "{:<26}  {:<name_width$}  {}",
             project.id, project.name, project.path
         );
+    }
+    Ok(())
+}
+
+/// `mk project run|restart <project> [name]`: prints `<name> <session id>` per command.
+pub fn run(
+    client: &mut Client,
+    project: &str,
+    name: Option<String>,
+    restart: bool,
+) -> anyhow::Result<()> {
+    let projects: Vec<Project> = client.call(Request::ProjectList)?;
+    let project = resolve_project(&projects, project)?;
+    let params = RunStartParams {
+        project_id: project.id,
+        name,
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+    };
+    let request = if restart {
+        Request::ProjectRunRestart(params)
+    } else {
+        Request::ProjectRunStart(params)
+    };
+    let started: RunStarted = client.call(request)?;
+    for session in started.sessions {
+        let note = if session.started {
+            ""
+        } else {
+            " (already running)"
+        };
+        println!("{} {}{note}", session.name, session.session_id);
+    }
+    Ok(())
+}
+
+/// `mk project stop <project> [name]`.
+pub fn stop(client: &mut Client, project: &str, name: Option<String>) -> anyhow::Result<()> {
+    let projects: Vec<Project> = client.call(Request::ProjectList)?;
+    let project = resolve_project(&projects, project)?;
+    let () = client.call(Request::ProjectRunStop(RunStopParams {
+        project_id: project.id,
+        name: name.clone(),
+    }))?;
+    match name {
+        Some(name) => println!("stopped {name} of {}", project.name),
+        None => println!("stopped the run commands of {}", project.name),
     }
     Ok(())
 }
