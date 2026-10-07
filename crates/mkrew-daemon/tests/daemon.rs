@@ -18,18 +18,19 @@ use mkrew_protocol::{
     DevStartParams, DocChangedEvent, DocComment, DocContent, DocFile, DocListParams, DocReadParams,
     ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent, FsEntry, FsFindParams,
     FsListParams, FsMatch, FsReadParams, GitChangedEvent, GitCommitParams, GitCommitResult,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitSetBaseParams,
-    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult,
-    HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams,
-    ProjectRef, ProjectUpdateParams, QueuedSend, Request, ResponseError, ScreenSnapshot, Session,
-    SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams, SessionInputParams,
-    SessionKillParams, SessionKind, SessionListParams, SessionQueueEvent, SessionReadParams,
-    SessionReadResult, SessionRef, SessionResizeParams, SessionSendParams, SessionSendResult,
-    SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams,
-    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
-    TabRenameParams, TabSetLayoutParams, Task, TaskCreateParams, TaskDeletedEvent, TaskListParams,
-    TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
+    GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitRemoteParams,
+    GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams,
+    HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project,
+    ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, Request, ResponseError,
+    ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionFiles,
+    SessionFilesParams, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
+    SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams,
+    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
+    TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams,
+    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams,
+    UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2242,6 +2243,7 @@ fn hook_edits_are_announced_attributed_and_diffed_since_a_turn() {
     let status: GitStatus = client
         .call(Request::GitStatus(GitStatusParams {
             project_id: project.id,
+            worktree_task_id: None,
             mode: GitMode::Base,
             since: Some(start.clone()),
         }))
@@ -2257,6 +2259,7 @@ fn hook_edits_are_announced_attributed_and_diffed_since_a_turn() {
     let diff: FileDiff = client
         .call(Request::GitDiff(GitDiffParams {
             project_id: project.id,
+            worktree_task_id: None,
             path: "a.txt".into(),
             mode: GitMode::Base,
             staged: false,
@@ -2971,6 +2974,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     let status = |project: &Project, mode| {
         Request::GitStatus(GitStatusParams {
             project_id: project.id,
+            worktree_task_id: None,
             mode,
             since: None,
         })
@@ -2978,6 +2982,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     let diff = |path: &str, mode, commit: Option<&str>| {
         Request::GitDiff(GitDiffParams {
             project_id: project.id,
+            worktree_task_id: None,
             path: path.into(),
             mode,
             staged: false,
@@ -2988,6 +2993,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     let since_status = |since: &str| {
         Request::GitStatus(GitStatusParams {
             project_id: project.id,
+            worktree_task_id: None,
             mode: GitMode::Base,
             since: Some(since.into()),
         })
@@ -2995,6 +3001,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     let since_diff = |since: &str| {
         Request::GitDiff(GitDiffParams {
             project_id: project.id,
+            worktree_task_id: None,
             path: "a.txt".into(),
             mode: GitMode::Base,
             staged: false,
@@ -3076,6 +3083,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     }
     let missing = Request::GitStatus(GitStatusParams {
         project_id: Ulid::new(),
+        worktree_task_id: None,
         mode: GitMode::Working,
         since: None,
     });
@@ -3111,6 +3119,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     let status = |client: &mut Client| -> GitStatus {
         let request = Request::GitStatus(GitStatusParams {
             project_id: id,
+            worktree_task_id: None,
             mode: GitMode::Working,
             since: None,
         });
@@ -3121,11 +3130,13 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     };
     let by_path = |paths: &[&str]| GitStageParams {
         project_id: id,
+        worktree_task_id: None,
         paths: paths.iter().map(|&p| p.to_owned()).collect(),
         hunk: None,
     };
     let by_hunk = |hunk: &mkrew_protocol::Hunk| GitStageParams {
         project_id: id,
+        worktree_task_id: None,
         paths: vec![],
         hunk: Some(HunkTarget {
             path: "a.txt".into(),
@@ -3135,6 +3146,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     let diff = |client: &mut Client, staged| -> FileDiff {
         let request = Request::GitDiff(GitDiffParams {
             project_id: id,
+            worktree_task_id: None,
             path: "a.txt".into(),
             mode: GitMode::Working,
             staged,
@@ -3143,7 +3155,10 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         });
         client.call(request).into_result().unwrap()
     };
-    let changed_event = Event::GitChanged(GitChangedEvent { project_id: id });
+    let changed_event = Event::GitChanged(GitChangedEvent {
+        project_id: id,
+        worktree_task_id: None,
+    });
 
     // Changes made through the daemon are reported at once.
     assert_eq!(names(&status(&mut client).unstaged), ["a.txt", "b.txt"]);
@@ -3187,6 +3202,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     let discard = |confirm| {
         Request::GitDiscard(GitDiscardParams {
             project_id: id,
+            worktree_task_id: None,
             paths: vec!["a.txt".into(), "new.txt".into()],
             confirm,
         })
@@ -3207,6 +3223,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     let commit = |message: &str| {
         Request::GitCommit(GitCommitParams {
             project_id: id,
+            worktree_task_id: None,
             message: message.into(),
         })
     };
@@ -3229,11 +3246,13 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         Request::GitStage(by_path(&[])),
         Request::GitStage(by_path(&["../x"])),
         Request::GitStage(GitStageParams {
+            worktree_task_id: None,
             hunk: by_hunk(&unstaged[0]).hunk,
             ..by_path(&["a.txt"])
         }),
         Request::GitDiscard(GitDiscardParams {
             project_id: id,
+            worktree_task_id: None,
             paths: vec![],
             confirm: true,
         }),
@@ -3268,6 +3287,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     let log = |path: Option<&str>| {
         Request::GitLog(GitLogParams {
             project_id: id,
+            worktree_task_id: None,
             limit: GitLogParams::DEFAULT_LIMIT,
             path: path.map(str::to_owned),
         })
@@ -3275,10 +3295,14 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     let show = |commit: &str| {
         Request::GitShow(GitShowParams {
             project_id: id,
+            worktree_task_id: None,
             commit: commit.into(),
         })
     };
-    let changed_event = Event::GitChanged(GitChangedEvent { project_id: id });
+    let changed_event = Event::GitChanged(GitChangedEvent {
+        project_id: id,
+        worktree_task_id: None,
+    });
 
     let commits: Vec<Commit> = client.call(log(None)).into_result().unwrap();
     let summaries: Vec<&str> = commits.iter().map(|c| c.summary.as_str()).collect();
@@ -3296,7 +3320,10 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     }
 
     // Push needs an upstream; then it updates the remote branch.
-    let push = Request::GitPush(ProjectRef { project_id: id });
+    let push = Request::GitPush(GitRemoteParams {
+        project_id: id,
+        worktree_task_id: None,
+    });
     assert_eq!(
         error_code(client.call(push.clone())),
         ErrorCode::InvalidState
@@ -3320,12 +3347,16 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     git(&other, &["commit", "-q", "--allow-empty", "-m", "theirs"]);
     git(&other, &["push", "-q"]);
     client.events.clear();
-    let fetch = Request::GitFetch(ProjectRef { project_id: id });
+    let fetch = Request::GitFetch(GitRemoteParams {
+        project_id: id,
+        worktree_task_id: None,
+    });
     let _: () = client.call(fetch).into_result().unwrap();
     client.wait_event(&changed_event);
     let status: GitStatus = client
         .call(Request::GitStatus(GitStatusParams {
             project_id: id,
+            worktree_task_id: None,
             mode: GitMode::Working,
             since: None,
         }))
@@ -4200,6 +4231,10 @@ fn worktree_tasks_run_and_resume_in_their_own_worktree() {
     assert!(preview.changed.is_empty(), "{preview:?}");
     assert_eq!(preview.created, ["made.txt"]);
     // Turn snapshots are of the worktree: never restored into the project folder (T13.4).
+    // The turn is recorded shortly after the state change.
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionTurn(t) if t.session_id == run.session_id && t.n == 1),
+    );
     let restore = Request::TurnRestorePreview(TurnRef {
         session_id: run.session_id,
         n: 1,
@@ -4229,6 +4264,183 @@ fn worktree_tasks_run_and_resume_in_their_own_worktree() {
     assert_eq!(tasks[0].worktree_path, task.worktree_path);
     assert_eq!(tasks[0].branch, task.branch);
     assert_eq!(main_state(&repo), before);
+    client.stop();
+}
+
+/// T13.4: `fs.*` and `git.*` with `worktree_task_id` work on the project's folder inside the
+/// task's worktree, which is watched (`git.changed` names the task); the user's checkout and
+/// its views are untouched.
+#[test]
+fn fs_and_git_requests_target_a_task_worktree() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("worktree.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"write_file\"\npath = \"made.txt\"\ncontent = \"run\"\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as("wt", &format!("['--scenario', '{}']", scenario.display()));
+    let repo = env.repo();
+    let app = repo.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("core.autocrlf", "false"),
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+        ("commit.gpgsign", "false"),
+    ] {
+        git(&repo, &["config", key, value]);
+    }
+    std::fs::write(app.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let main_head = git(&repo, &["rev-parse", "HEAD"]);
+
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&app);
+    let create = |worktree| {
+        Request::TaskCreate(TaskCreateParams {
+            project_id: project.id,
+            title: "Worktree views".into(),
+            prompt: String::new(),
+            agent_profile: Some("wt".into()),
+            position: None,
+            worktree,
+        })
+    };
+    let task: Task = client.call(create(true)).into_result().unwrap();
+    let plain: Task = client.call(create(false)).into_result().unwrap();
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+    let task = wait_task(&mut client, task.id, |t| t.worktree_path.is_some());
+    let root = PathBuf::from(task.worktree_path.clone().unwrap());
+    let wt = Some(task.id);
+
+    let list = |client: &mut Client, worktree_task_id| -> Vec<String> {
+        let request = Request::FsList(FsListParams {
+            project_id: project.id,
+            worktree_task_id,
+            dir: String::new(),
+            show_ignored: false,
+        });
+        let entries: Vec<FsEntry> = client.call(request).into_result().unwrap();
+        entries.into_iter().map(|e| e.path).collect()
+    };
+    assert_eq!(list(&mut client, wt), ["a.txt", "made.txt"]);
+    assert_eq!(list(&mut client, None), ["a.txt"]);
+    let read = Request::FsRead(FsReadParams {
+        project_id: project.id,
+        worktree_task_id: wt,
+        path: "made.txt".into(),
+    });
+    let content: FsContent = client.call(read).into_result().unwrap();
+    assert_eq!(content.content.as_deref(), Some("run"));
+    let find = |client: &mut Client, worktree_task_id| -> Vec<String> {
+        let request = Request::FsFind(FsFindParams {
+            project_id: project.id,
+            worktree_task_id,
+            query: "made".into(),
+            limit: 10,
+        });
+        let found: Vec<FsMatch> = client.call(request).into_result().unwrap();
+        found.into_iter().map(|m| m.path).collect()
+    };
+    assert_eq!(find(&mut client, wt), ["made.txt"]);
+    assert!(find(&mut client, None).is_empty());
+
+    let status = |client: &mut Client, worktree_task_id| -> GitStatus {
+        let request = Request::GitStatus(GitStatusParams {
+            project_id: project.id,
+            worktree_task_id,
+            mode: GitMode::Working,
+            since: None,
+        });
+        client.call(request).into_result().unwrap()
+    };
+    let in_worktree = status(&mut client, wt);
+    assert_eq!(in_worktree.branch, task.branch);
+    assert_eq!(in_worktree.untracked[0].path, "made.txt");
+    let main = status(&mut client, None);
+    assert_eq!(main.branch.as_deref(), Some("main"));
+    assert!(main.untracked.is_empty());
+
+    // The worktree's own watcher reports its changes.
+    client.events.clear();
+    std::fs::write(root.join("app/later.txt"), "x").unwrap();
+    client.wait_event(&Event::GitChanged(GitChangedEvent {
+        project_id: project.id,
+        worktree_task_id: wt,
+    }));
+    // ... and drops the worktree's cached `fs.find` list.
+    let request = Request::FsFind(FsFindParams {
+        project_id: project.id,
+        worktree_task_id: wt,
+        query: "later".into(),
+        limit: 10,
+    });
+    let found: Vec<FsMatch> = client.call(request).into_result().unwrap();
+    assert_eq!(found[0].path, "later.txt");
+
+    // Stage and commit inside the worktree: its branch moves, `main` does not.
+    let stage = Request::GitStage(GitStageParams {
+        project_id: project.id,
+        worktree_task_id: wt,
+        paths: vec!["made.txt".into()],
+        hunk: None,
+    });
+    let _: () = client.call(stage).into_result().unwrap();
+    let commit = Request::GitCommit(GitCommitParams {
+        project_id: project.id,
+        worktree_task_id: wt,
+        message: "made in the worktree".into(),
+    });
+    let made: GitCommitResult = client.call(commit).into_result().unwrap();
+    let log = |client: &mut Client, worktree_task_id| -> Vec<String> {
+        let request = Request::GitLog(GitLogParams {
+            project_id: project.id,
+            worktree_task_id,
+            limit: 10,
+            path: None,
+        });
+        let commits: Vec<Commit> = client.call(request).into_result().unwrap();
+        commits.into_iter().map(|c| c.summary).collect()
+    };
+    assert_eq!(log(&mut client, wt), ["made in the worktree", "one"]);
+    assert_eq!(log(&mut client, None), ["one"]);
+    let show = Request::GitShow(GitShowParams {
+        project_id: project.id,
+        worktree_task_id: wt,
+        commit: made.commit,
+    });
+    let detail: CommitDetail = client.call(show).into_result().unwrap();
+    assert_eq!(detail.files[0].path, "made.txt");
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), main_head);
+    assert!(!app.join("made.txt").exists());
+
+    // Unknown task, a task without a worktree, a task of another project.
+    let other = client.add_project(env.dir.path());
+    let fs_list = |project_id, worktree_task_id| {
+        Request::FsList(FsListParams {
+            project_id,
+            worktree_task_id,
+            dir: String::new(),
+            show_ignored: false,
+        })
+    };
+    assert_eq!(
+        error_code(client.call(fs_list(project.id, Some(Ulid::new())))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(
+        error_code(client.call(fs_list(project.id, Some(plain.id)))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        error_code(client.call(fs_list(other.id, wt))),
+        ErrorCode::InvalidRequest
+    );
     client.stop();
 }
 
@@ -4301,6 +4513,7 @@ fn fs_list_read_and_find_follow_file_changes() {
     let list = |client: &mut Client, dir: &str, show_ignored| -> Vec<FsEntry> {
         let request = Request::FsList(FsListParams {
             project_id: id,
+            worktree_task_id: None,
             dir: dir.into(),
             show_ignored,
         });
@@ -4309,6 +4522,7 @@ fn fs_list_read_and_find_follow_file_changes() {
     let find = |client: &mut Client, query: &str| -> Vec<String> {
         let request = Request::FsFind(FsFindParams {
             project_id: id,
+            worktree_task_id: None,
             query: query.into(),
             limit: 10,
         });
@@ -4318,6 +4532,7 @@ fn fs_list_read_and_find_follow_file_changes() {
     let read = |path: &str| {
         Request::FsRead(FsReadParams {
             project_id: id,
+            worktree_task_id: None,
             path: path.into(),
         })
     };
@@ -4351,6 +4566,7 @@ fn fs_list_read_and_find_follow_file_changes() {
     );
     let missing = Request::FsList(FsListParams {
         project_id: id,
+        worktree_task_id: None,
         dir: "nope".into(),
         show_ignored: false,
     });
@@ -4367,7 +4583,10 @@ fn fs_list_read_and_find_follow_file_changes() {
     client.call(Request::DaemonStatus);
     client.events.clear();
     std::fs::write(repo.join("src/maintenance.rs"), "").unwrap();
-    client.wait_event(&Event::GitChanged(GitChangedEvent { project_id: id }));
+    client.wait_event(&Event::GitChanged(GitChangedEvent {
+        project_id: id,
+        worktree_task_id: None,
+    }));
     assert_eq!(
         find(&mut client, "main"),
         ["src/main.rs", "src/maintenance.rs"]

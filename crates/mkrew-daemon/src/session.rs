@@ -72,8 +72,8 @@ pub struct Hub {
     pub store: Mutex<Store>,
     pub events: broadcast::Sender<Event>,
     live: Mutex<HashMap<Ulid, Live>>,
-    /// One file watcher per project with live sessions or read docs. Lock order: `watches`,
-    /// then `live`.
+    /// One file watcher per project with live sessions or read docs, and one per task worktree
+    /// a Files or Git view opened (keyed by the task id). Lock order: `watches`, then `live`.
     watches: Mutex<HashMap<Ulid, ProjectWatch>>,
     /// Last content hash (`None` = deleted) of each Markdown file the watchers reported, by
     /// project and relative path. Never held with another lock.
@@ -510,12 +510,33 @@ impl Hub {
         self.watch_project(project_id, root, true);
     }
 
+    /// Keeps the worktree of task `task_id` (project `project_id`; `root` = the project's folder
+    /// inside it) watched for the Files and Git views until the daemon stops: each batch
+    /// broadcasts `git.changed` with `worktree_task_id` and invalidates `fs.find`'s list
+    /// (keyed by the task id). Changes there are not attributed to sessions or turns.
+    pub fn keep_worktree_watched(self: &Arc<Self>, project_id: Ulid, task_id: Ulid, root: &Path) {
+        self.watch(task_id, project_id, Some(task_id), root, true);
+    }
+
     /// Starts watching `root` for project `project_id` unless it is watched already; `kept`
     /// keeps the watch after the project's last session exits. Every batch also broadcasts
     /// `git.changed`: a reported file or the git state changed.
     fn watch_project(self: &Arc<Self>, project_id: Ulid, root: &Path, kept: bool) {
+        self.watch(project_id, project_id, None, root, kept);
+    }
+
+    /// The watch of [`Hub::watch_project`] (`worktree_task_id` = `None`, `key` = the project)
+    /// or [`Hub::keep_worktree_watched`] (`key` = the task).
+    fn watch(
+        self: &Arc<Self>,
+        key: Ulid,
+        project_id: Ulid,
+        worktree_task_id: Option<Ulid>,
+        root: &Path,
+        kept: bool,
+    ) {
         let mut watches = lock(&self.watches);
-        if let Some(watch) = watches.get_mut(&project_id) {
+        if let Some(watch) = watches.get_mut(&key) {
             watch.kept |= kept;
             return;
         }
@@ -523,22 +544,25 @@ impl Hub {
         let started = watch::watch(root, move |batch| {
             if let Some(hub) = hub.upgrade() {
                 if !batch.files.is_empty() {
-                    hub.file_index.invalidate(project_id);
-                    hub.files_changed(project_id, &batch.files);
+                    hub.file_index.invalidate(key);
+                    if worktree_task_id.is_none() {
+                        hub.files_changed(project_id, &batch.files);
+                    }
                 }
-                let _ = hub
-                    .events
-                    .send(Event::GitChanged(GitChangedEvent { project_id }));
+                let _ = hub.events.send(Event::GitChanged(GitChangedEvent {
+                    project_id,
+                    worktree_task_id,
+                }));
             }
         });
         match started {
             Ok(watch) => {
-                tracing::debug!(%project_id, root = %root.display(), "watching project files");
+                tracing::debug!(%project_id, ?worktree_task_id, root = %root.display(), "watching files");
                 let watch = ProjectWatch {
                     _watch: watch,
                     kept,
                 };
-                watches.insert(project_id, watch);
+                watches.insert(key, watch);
             }
             Err(e) => tracing::warn!(%project_id, root = %root.display(), "cannot watch: {e}"),
         }

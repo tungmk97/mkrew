@@ -394,7 +394,11 @@ impl FilesView {
         let Event::GitChanged(changed) = event else {
             return Requests::default();
         };
-        if changed.project_id != self.project_id || !self.started() {
+        // A task worktree's changes (SPEC §20E.1) are not this project folder's.
+        if changed.project_id != self.project_id
+            || changed.worktree_task_id.is_some()
+            || !self.started()
+        {
             return Requests::default();
         }
         self.refresh()
@@ -656,8 +660,18 @@ mod tests {
         view.click("README.md");
         view.begin_read();
         view.read("README.md", Ok(code("x")));
-        let changed = |project_id| Event::GitChanged(GitChangedEvent { project_id });
+        let changed = |project_id| {
+            Event::GitChanged(GitChangedEvent {
+                project_id,
+                worktree_task_id: None,
+            })
+        };
         assert_eq!(view.apply(&changed(Ulid::new())), Requests::default());
+        let in_worktree = Event::GitChanged(GitChangedEvent {
+            project_id: view.project_id,
+            worktree_task_id: Some(Ulid::new()),
+        });
+        assert_eq!(view.apply(&in_worktree), Requests::default());
         let requests = view.apply(&changed(view.project_id));
         assert_eq!(requests.list, ["", "src"]);
         assert_eq!(requests.read.as_deref(), Some("README.md"));
@@ -723,6 +737,7 @@ mod tests {
         let mut view = FilesView::new(Ulid::new());
         let changed = Event::GitChanged(GitChangedEvent {
             project_id: view.project_id,
+            worktree_task_id: None,
         });
         assert_eq!(view.apply(&changed), Requests::default());
     }

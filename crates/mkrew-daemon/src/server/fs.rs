@@ -1,8 +1,8 @@
-//! `fs.*` handlers (SPEC §7, §12A). Each keeps the project watched: the Files view refreshes
-//! on `git.changed` and `fs.find`'s cached file list is invalidated by the watcher.
+//! `fs.*` handlers (SPEC §7, §12A). Each keeps its target (project or task worktree, §20E.1)
+//! watched: the Files view refreshes on `git.changed` and `fs.find`'s cached file list is
+//! invalidated by the watcher.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use mkrew_protocol::{ErrorCode, FsFindParams, FsListParams, FsReadParams, Outcome};
@@ -21,14 +21,17 @@ impl Daemon {
                 _ => return outside("dir", &params.dir),
             }
         };
-        let project = match self.watched_project(params.project_id) {
-            Ok(project) => project,
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target,
             Err(outcome) => return outcome,
         };
         let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
-        let (project_id, folder) = (project.id, dir.clone());
+        let (project_id, folder) = (target.project.id, dir.clone());
         let listed = tokio::task::spawn_blocking(move || {
-            let root = PathBuf::from(project.path);
+            let root = target.dir;
             // Not a repo (or git failing): no markers, the tree still lists.
             let status = cache
                 .repo(&*git, &root)
@@ -56,30 +59,34 @@ impl Daemon {
         if in_git_dir(&path) {
             return outside("path", &params.path);
         }
-        let project = match self.watched_project(params.project_id) {
-            Ok(project) => project,
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target,
             Err(outcome) => return outcome,
         };
-        let file = PathBuf::from(&project.path).join(relative);
+        let file = target.dir.join(relative);
         let shown = path.clone();
         let read = tokio::task::spawn_blocking(move || files::read(&file, path)).await;
         match read {
             Ok(Ok(content)) => ok(&content),
-            Ok(Err(e)) => read_error(project.id, &shown, e),
+            Ok(Err(e)) => read_error(target.project.id, &shown, e),
             Err(e) => Outcome::error(ErrorCode::Internal, format!("fs.read failed: {e}")),
         }
     }
 
     pub(super) async fn fs_find(&self, params: FsFindParams) -> Outcome {
-        let project = match self.watched_project(params.project_id) {
-            Ok(project) => project,
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target,
             Err(outcome) => return outcome,
         };
         let hub = Arc::clone(&self.hub);
         let found = tokio::task::spawn_blocking(move || {
-            let all = hub
-                .file_index
-                .files(project.id, &PathBuf::from(&project.path));
+            let all = hub.file_index.files(target.key(), &target.dir);
             files::find(&all, &params.query, params.limit as usize)
         })
         .await;

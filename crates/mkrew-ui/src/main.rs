@@ -1158,6 +1158,7 @@ impl Shell {
         }
         let listed = connection.call::<Vec<FsEntry>>(Request::FsList(FsListParams {
             project_id,
+            worktree_task_id: None,
             dir: dir.clone(),
             show_ignored: view.show_ignored,
         }));
@@ -1196,6 +1197,7 @@ impl Shell {
         }
         let read = connection.call::<FsContent>(Request::FsRead(FsReadParams {
             project_id,
+            worktree_task_id: None,
             path: path.clone(),
         }));
         let background = cx.background_executor().clone();

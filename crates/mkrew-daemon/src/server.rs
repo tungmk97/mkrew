@@ -39,6 +39,7 @@ mod doc;
 mod fs;
 mod git;
 mod resume;
+mod target;
 mod turn;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");

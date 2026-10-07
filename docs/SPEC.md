@@ -1362,7 +1362,8 @@ and milestone numbers are not reused.
 `worktree_path?`, `branch?`, `fanout_of?`; new `task.merge` (`task_id`, `confirm: true`) →
 `merged: bool`, `conflicts[]`; `task.remove_worktree` (`task_id`, `confirm: true`) → `branch_kept: bool`;
 `task.fanout` (`task_id`, `agent_profiles[]`) → child Task[]; `fs.*` and `git.*` accept
-`worktree_task_id?`; event `session.usage`.
+`worktree_task_id?` (not `git.set_base`: the base is per project) and `git.changed` carries it;
+event `session.usage`.
 
 Migration `0009_worktrees.sql`:
 

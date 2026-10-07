@@ -1,7 +1,8 @@
 //! Params, results and events of the Files & Git requests (SPEC §7 `fs.*`/`git.*`, §12A, §12B).
 //!
 //! Paths are relative to the project root with `/` separators. Commit ids are full hex
-//! hashes.
+//! hashes. `worktree_task_id` (SPEC §20E.1): work on that task's worktree (the project's
+//! folder inside it) instead of the project folder; paths are then relative to that folder.
 
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
@@ -10,6 +11,14 @@ use ulid::Ulid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectRef {
     pub project_id: Ulid,
+}
+
+/// Params of `git.fetch` and `git.push`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitRemoteParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
 }
 
 // ---- git ----
@@ -28,6 +37,8 @@ pub enum GitMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitStatusParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     #[serde(default)]
     pub mode: GitMode,
     /// [`GitMode::Base`] only: compare from this commit instead of the merge-base (a task's
@@ -100,6 +111,8 @@ pub struct ChangedFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitDiffParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     pub path: String,
     #[serde(default)]
     pub mode: GitMode,
@@ -174,6 +187,8 @@ pub struct DiffLine {
 pub struct GitStageParams {
     pub project_id: Ulid,
     #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    #[serde(default)]
     pub paths: Vec<String>,
     #[serde(default)]
     pub hunk: Option<HunkTarget>,
@@ -190,6 +205,8 @@ pub struct HunkTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitDiscardParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     pub paths: Vec<String>,
     #[serde(default)]
     pub confirm: bool,
@@ -199,6 +216,8 @@ pub struct GitDiscardParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitCommitParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     pub message: String,
 }
 
@@ -211,6 +230,8 @@ pub struct GitCommitResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitLogParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     #[serde(default = "GitLogParams::default_limit")]
     pub limit: u32,
     /// Only commits touching this path.
@@ -245,6 +266,8 @@ pub struct Commit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitShowParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     pub commit: String,
 }
 
@@ -266,6 +289,9 @@ pub struct GitSetBaseParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GitChangedEvent {
     pub project_id: Ulid,
+    /// Something changed in this task's worktree; `None` = in the project folder.
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
 }
 
 // ---- fs ----
@@ -274,6 +300,8 @@ pub struct GitChangedEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsListParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     /// `""` = the project root.
     #[serde(default)]
     pub dir: String,
@@ -310,6 +338,8 @@ pub struct FsEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsReadParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     pub path: String,
 }
 
@@ -332,6 +362,8 @@ pub struct FsContent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FsFindParams {
     pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
     pub query: String,
     #[serde(default = "FsFindParams::default_limit")]
     pub limit: u32,
@@ -410,14 +442,18 @@ mod tests {
     #[test]
     fn every_files_and_git_request_round_trips() {
         let project_id = sid();
+        // Every request but `git.set_base` (a project setting) can target a worktree.
+        let wt = Some(Ulid::from_parts(1_700_000_000_001, 9));
         let requests = vec![
             Request::GitStatus(GitStatusParams {
                 project_id,
+                worktree_task_id: wt,
                 mode: GitMode::Base,
                 since: Some("abc".into()),
             }),
             Request::GitDiff(GitDiffParams {
                 project_id,
+                worktree_task_id: wt,
                 path: "src/a.rs".into(),
                 mode: GitMode::Working,
                 staged: true,
@@ -426,11 +462,13 @@ mod tests {
             }),
             Request::GitStage(GitStageParams {
                 project_id,
+                worktree_task_id: wt,
                 paths: vec!["a".into()],
                 hunk: None,
             }),
             Request::GitUnstage(GitStageParams {
                 project_id,
+                worktree_task_id: None,
                 paths: vec![],
                 hunk: Some(HunkTarget {
                     path: "a".into(),
@@ -439,39 +477,52 @@ mod tests {
             }),
             Request::GitDiscard(GitDiscardParams {
                 project_id,
+                worktree_task_id: wt,
                 paths: vec!["a".into()],
                 confirm: true,
             }),
             Request::GitCommit(GitCommitParams {
                 project_id,
+                worktree_task_id: wt,
                 message: "feat: x\n\nbody".into(),
             }),
             Request::GitLog(GitLogParams {
                 project_id,
+                worktree_task_id: wt,
                 limit: 10,
                 path: Some("a".into()),
             }),
             Request::GitShow(GitShowParams {
                 project_id,
+                worktree_task_id: wt,
                 commit: "abc".into(),
             }),
             Request::GitSetBase(GitSetBaseParams {
                 project_id,
                 base_ref: Some("develop".into()),
             }),
-            Request::GitFetch(ProjectRef { project_id }),
-            Request::GitPush(ProjectRef { project_id }),
+            Request::GitFetch(GitRemoteParams {
+                project_id,
+                worktree_task_id: wt,
+            }),
+            Request::GitPush(GitRemoteParams {
+                project_id,
+                worktree_task_id: None,
+            }),
             Request::FsList(FsListParams {
                 project_id,
+                worktree_task_id: wt,
                 dir: "src".into(),
                 show_ignored: true,
             }),
             Request::FsRead(FsReadParams {
                 project_id,
+                worktree_task_id: wt,
                 path: "src/a.rs".into(),
             }),
             Request::FsFind(FsFindParams {
                 project_id,
+                worktree_task_id: wt,
                 query: "mai".into(),
                 limit: 20,
             }),
@@ -506,7 +557,10 @@ mod tests {
     fn optional_params_default_when_missing() {
         let id = sid().to_string();
         let status: GitStatusParams = serde_json::from_value(json!({"project_id": id})).unwrap();
-        assert_eq!(status.mode, GitMode::Working);
+        assert_eq!(
+            (status.mode, status.worktree_task_id),
+            (GitMode::Working, None)
+        );
         let diff: GitDiffParams =
             serde_json::from_value(json!({"project_id": id, "path": "a"})).unwrap();
         assert_eq!(
@@ -614,8 +668,10 @@ mod tests {
 
         let changed = round_trip(&Message::Event(Event::GitChanged(GitChangedEvent {
             project_id: sid(),
+            worktree_task_id: None,
         })));
         assert_eq!(changed["event"], "git.changed");
         assert_eq!(changed["data"]["project_id"], sid().to_string());
+        assert_eq!(changed["data"]["worktree_task_id"], json!(null));
     }
 }

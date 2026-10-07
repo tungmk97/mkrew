@@ -3,7 +3,7 @@
 //! Pure and tested headlessly; `main.rs` sends the requests and renders them. The box has its
 //! own focus outside `keymap::GIT_CONTEXT`, so typing `s` / `u` / `b` never acts on the list.
 
-use mkrew_protocol::{GitCommitParams, ProjectRef, Request};
+use mkrew_protocol::{GitCommitParams, GitRemoteParams, Request};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
@@ -80,6 +80,7 @@ impl CommitBox {
         self.error = None;
         Some(GitCommitParams {
             project_id,
+            worktree_task_id: None,
             message: message.to_owned(),
         })
     }
@@ -120,7 +121,10 @@ impl Remote {
     }
 
     pub fn request(self, project_id: Ulid) -> Request {
-        let params = ProjectRef { project_id };
+        let params = GitRemoteParams {
+            project_id,
+            worktree_task_id: None,
+        };
         match self {
             Remote::Fetch => Request::GitFetch(params),
             Remote::Push => Request::GitPush(params),
@@ -184,6 +188,7 @@ mod tests {
             draft.begin(project_id, 1),
             Some(GitCommitParams {
                 project_id,
+                worktree_task_id: None,
                 message: "Fix login\n\nBody\nmore".into(),
             })
         );
@@ -238,11 +243,17 @@ mod tests {
         let project_id = Ulid::new();
         assert_eq!(
             Remote::Fetch.request(project_id),
-            Request::GitFetch(ProjectRef { project_id })
+            Request::GitFetch(GitRemoteParams {
+                project_id,
+                worktree_task_id: None,
+            })
         );
         assert_eq!(
             Remote::Push.request(project_id),
-            Request::GitPush(ProjectRef { project_id })
+            Request::GitPush(GitRemoteParams {
+                project_id,
+                worktree_task_id: None,
+            })
         );
 
         let mut remotes = Remotes::default();

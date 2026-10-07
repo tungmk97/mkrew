@@ -18,8 +18,8 @@ use ulid::Ulid;
 
 use crate::files::{
     FsFindParams, FsListParams, FsReadParams, GitChangedEvent, GitCommitParams, GitDiffParams,
-    GitDiscardParams, GitLogParams, GitSetBaseParams, GitShowParams, GitStageParams,
-    GitStatusParams, ProjectRef,
+    GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams, GitShowParams,
+    GitStageParams, GitStatusParams, ProjectRef,
 };
 
 /// One JSON frame.
@@ -172,10 +172,10 @@ pub enum Request {
     #[serde(rename = "git.set_base")]
     GitSetBase(GitSetBaseParams),
     #[serde(rename = "git.fetch")]
-    GitFetch(ProjectRef),
+    GitFetch(GitRemoteParams),
     /// Pushes the current branch to its upstream, never with force.
     #[serde(rename = "git.push")]
-    GitPush(ProjectRef),
+    GitPush(GitRemoteParams),
     /// Returns `FsEntry[]`.
     #[serde(rename = "fs.list")]
     FsList(FsListParams),

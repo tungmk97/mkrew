@@ -84,6 +84,7 @@ impl QuickOpen {
         self.sent += 1;
         let params = FsFindParams {
             project_id: self.project_id,
+            worktree_task_id: None,
             query: self.query.clone(),
             limit: FsFindParams::DEFAULT_LIMIT,
         };

@@ -1,16 +1,18 @@
 //! `git.*` handlers (SPEC §7, §12B).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use mkrew_protocol::{
     ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
-    GitDiscardParams, GitLogParams, GitSetBaseParams, GitShowParams, GitStageParams,
-    GitStatusParams, HunkTarget, Outcome, Project, ProjectRef,
+    GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams, GitShowParams,
+    GitStageParams, GitStatusParams, HunkTarget, Outcome, Project,
 };
 use serde::Serialize;
 use tokio::task::JoinError;
+use ulid::Ulid;
 
+use super::target::Target;
 use super::{Daemon, ok, store_outcome};
 use crate::docs;
 use crate::git::{GitBackend, Repo};
@@ -23,19 +25,21 @@ impl Daemon {
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
-        let project = match self.store().get_project(params.project_id) {
-            Ok(project) => project,
-            Err(e) => return store_outcome::<()>(Err(e)),
-        };
         // The Git view is open: follow its changes with `git.changed`.
-        self.hub
-            .keep_watched(project.id, &PathBuf::from(&project.path));
+        let target = match self
+            .watched_target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
         let (hub, cache) = (Arc::clone(&self.hub), Arc::clone(&self.git_cache));
         let status = tokio::task::spawn_blocking(move || {
-            let Project {
-                id, path, base_ref, ..
-            } = project;
-            let dir = PathBuf::from(path);
+            let Target {
+                project: Project { id, base_ref, .. },
+                dir,
+                ..
+            } = target;
             git_view::status(
                 &*hub.git,
                 &cache,
@@ -63,19 +67,20 @@ impl Daemon {
         {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
-        let project = match self.store().get_project(params.project_id) {
-            Ok(project) => project,
-            Err(e) => return store_outcome::<()>(Err(e)),
+        let target = match self
+            .target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
         };
         let (hub, cache) = (Arc::clone(&self.hub), Arc::clone(&self.git_cache));
         let diff = tokio::task::spawn_blocking(move || {
-            let Project {
-                id,
-                path: dir,
-                base_ref,
+            let Target {
+                project: Project { id, base_ref, .. },
+                dir,
                 ..
-            } = project;
-            let dir = PathBuf::from(dir);
+            } = target;
             let snapshot = || hub.snapshots.tree(&*hub.git, id, &dir);
             git_view::diff(
                 &*hub.git,
@@ -114,7 +119,7 @@ impl Daemon {
         };
         self.git_change(
             method,
-            params.project_id,
+            (params.project_id, params.worktree_task_id),
             move |git, dir, repo| match &hunk {
                 Some((path, hunk)) => {
                     let patch = mkrew_core::git::hunk_patch(path, hunk);
@@ -139,7 +144,8 @@ impl Daemon {
             Ok(_) => return Outcome::error(ErrorCode::InvalidRequest, "git.discard needs paths"),
             Err(outcome) => return outcome,
         };
-        self.git_change("git.discard", params.project_id, move |git, dir, _| {
+        let target = (params.project_id, params.worktree_task_id);
+        self.git_change("git.discard", target, move |git, dir, _| {
             let mut tracked = Vec::new();
             let mut untracked = Vec::new();
             for path in paths {
@@ -164,7 +170,8 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
         let message = params.message;
-        self.git_change("git.commit", params.project_id, move |git, dir, _| {
+        let target = (params.project_id, params.worktree_task_id);
+        self.git_change("git.commit", target, move |git, dir, _| {
             git.commit(dir, &message)
                 .map(|commit| GitCommitResult { commit })
         })
@@ -184,13 +191,15 @@ impl Daemon {
                 return Outcome::error(ErrorCode::InvalidRequest, message);
             }
         };
-        let project = match self.store().get_project(params.project_id) {
-            Ok(project) => project,
-            Err(e) => return store_outcome::<()>(Err(e)),
+        let dir = match self
+            .target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
         };
         let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
         let log = tokio::task::spawn_blocking(move || {
-            let dir = PathBuf::from(project.path);
             git_view::log(&*git, &cache, &dir, params.limit, path.as_deref())
         })
         .await;
@@ -202,13 +211,15 @@ impl Daemon {
         if let Err(reason) = check_ref(&params.commit) {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
-        let project = match self.store().get_project(params.project_id) {
-            Ok(project) => project,
-            Err(e) => return store_outcome::<()>(Err(e)),
+        let dir = match self
+            .target(params.project_id, params.worktree_task_id)
+            .await
+        {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
         };
         let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
         let detail = tokio::task::spawn_blocking(move || {
-            let dir = PathBuf::from(project.path);
             git_view::show(&*git, &cache, &dir, &params.commit)
         })
         .await;
@@ -217,9 +228,10 @@ impl Daemon {
 
     /// `git.fetch` (refreshes the base and ahead/behind) and `git.push` (current branch to
     /// its upstream, never forced). Both may take long; other requests are not held up.
-    pub(super) async fn git_remote(&self, params: ProjectRef, push: bool) -> Outcome {
+    pub(super) async fn git_remote(&self, params: GitRemoteParams, push: bool) -> Outcome {
         let method = if push { "git.push" } else { "git.fetch" };
-        self.git_change(method, params.project_id, move |git, dir, _| {
+        let target = (params.project_id, params.worktree_task_id);
+        self.git_change(method, target, move |git, dir, _| {
             if push {
                 git_view::push(git, dir)
             } else {
@@ -229,31 +241,31 @@ impl Daemon {
         .await
     }
 
-    /// Runs `change` on the project's folder off the async runtime. The index mtime moves, so
-    /// cached diffs go stale by themselves. Success broadcasts `git.changed` right away: the
-    /// watcher misses a `.git` dir outside the project folder (repo subfolder, worktree).
+    /// Runs `change` on the target's folder (project or task worktree) off the async runtime.
+    /// The index mtime moves, so cached diffs go stale by themselves. Success broadcasts
+    /// `git.changed` right away: the watcher misses a `.git` dir outside the project folder
+    /// (repo subfolder, worktree).
     async fn git_change<T: Serialize + Send + 'static, E: Into<ViewError>>(
         &self,
         method: &str,
-        project_id: ulid::Ulid,
+        (project_id, worktree_task_id): (Ulid, Option<Ulid>),
         change: impl FnOnce(&dyn GitBackend, &Path, &Repo) -> Result<T, E> + Send + 'static,
     ) -> Outcome {
-        let project = match self.store().get_project(project_id) {
-            Ok(project) => project,
-            Err(e) => return store_outcome::<()>(Err(e)),
+        let dir = match self.target(project_id, worktree_task_id).await {
+            Ok(target) => target.dir,
+            Err(outcome) => return outcome,
         };
         let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
         let result = tokio::task::spawn_blocking(move || {
-            let dir = PathBuf::from(project.path);
             let repo = cache.repo(&*git, &dir)?;
             change(&*git, &dir, &repo).map_err(Into::into)
         })
         .await;
         if let Ok(Ok(_)) = &result {
-            let _ = self
-                .hub
-                .events
-                .send(Event::GitChanged(GitChangedEvent { project_id }));
+            let _ = self.hub.events.send(Event::GitChanged(GitChangedEvent {
+                project_id,
+                worktree_task_id,
+            }));
         }
         view_outcome(method, result)
     }
