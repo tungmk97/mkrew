@@ -26,6 +26,35 @@ pub struct AgentProfile {
     /// Resume command template with `{session_id}`; `None` = no resume.
     pub resume: Option<String>,
     pub state: StateConfig,
+    /// `[usage]` (SPEC §20E.3); `None` = no usage for this agent.
+    pub usage: Option<UsageConfig>,
+}
+
+/// Where the daemon reads token usage from (SPEC §20E.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageConfig {
+    pub format: UsageFormat,
+    /// Tokens, for the context % shown; `None` = no %.
+    pub context_window: Option<u64>,
+}
+
+/// Transcript format. An unrecognised name is kept rather than being a profile error
+/// (SPEC §20E.3: no usage plus one warning, see [`crate::usage::UsageReader::new`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsageFormat {
+    ClaudeJsonl,
+    CodexJsonl,
+    Unknown(String),
+}
+
+impl UsageFormat {
+    fn parse(name: &str) -> Self {
+        match name {
+            "claude_jsonl" => Self::ClaudeJsonl,
+            "codex_jsonl" => Self::CodexJsonl,
+            other => Self::Unknown(other.to_owned()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -260,6 +289,10 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
             idle_after_ms: raw.state.idle_after_ms,
             needs_input_patterns,
         },
+        usage: raw.usage.map(|u| UsageConfig {
+            format: UsageFormat::parse(&u.format),
+            context_window: u.context_window,
+        }),
     })
 }
 
@@ -279,6 +312,14 @@ struct RawProfile {
     resume: Option<String>,
     #[serde(default)]
     state: RawState,
+    usage: Option<RawUsage>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawUsage {
+    format: String,
+    context_window: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -377,6 +418,28 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
         assert_eq!(p.prompt_mode, PromptMode::None);
         assert_eq!(p.resume, None);
         assert_eq!(p.state, StateConfig::default());
+        assert_eq!(p.usage, None);
+    }
+
+    #[test]
+    fn usage_section_parses_known_and_unknown_formats() {
+        let p =
+            parse("command = \"x\"\n[usage]\nformat = \"claude_jsonl\"\ncontext_window = 200000")
+                .unwrap();
+        let expected = UsageConfig {
+            format: UsageFormat::ClaudeJsonl,
+            context_window: Some(200_000),
+        };
+        assert_eq!(p.usage, Some(expected));
+        let p = parse("command = \"x\"\n[usage]\nformat = \"codex_jsonl\"").unwrap();
+        assert_eq!(p.usage.unwrap().format, UsageFormat::CodexJsonl);
+        let p = parse("command = \"x\"\n[usage]\nformat = \"gemini\"").unwrap();
+        assert_eq!(
+            p.usage.unwrap().format,
+            UsageFormat::Unknown("gemini".into())
+        );
+        assert!(parse_err("command = \"x\"\n[usage]\nformt = \"x\"").contains("unknown field"));
+        assert!(parse_err("command = \"x\"\n[usage]\ncontext_window = 1").contains("format"));
     }
 
     #[test]
@@ -493,5 +556,14 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
         assert_eq!(ids, ["claude", "codex", "fake", "omp", "shell"]);
         assert_eq!(set.get("shell").unwrap().kind, ProfileKind::Shell);
         assert_eq!(set.get("fake").unwrap().command, "mkrew-fakeagent");
+        let format = |id: &str| {
+            set.get(id)
+                .unwrap()
+                .usage
+                .as_ref()
+                .map(|u| u.format.clone())
+        };
+        assert_eq!(format("claude"), Some(UsageFormat::ClaudeJsonl));
+        assert_eq!(format("codex"), Some(UsageFormat::CodexJsonl));
     }
 }

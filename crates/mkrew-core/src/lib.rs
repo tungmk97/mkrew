@@ -16,12 +16,13 @@ pub mod settings;
 pub mod state;
 pub mod task;
 pub mod turn;
+pub mod usage;
 
 pub use hook::HookAgent;
 pub use paths::Paths;
 pub use profile::{
     AgentProfile, ProfileError, ProfileKind, ProfileSet, PromptMode, StateConfig, StateMode,
-    load_dir, parse_profile,
+    UsageConfig, UsageFormat, load_dir, parse_profile,
 };
 pub use settings::{Settings, SettingsError};
 pub use state::{HookEvent, SendQueue, StateMachine, can_deliver};

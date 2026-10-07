@@ -16,3 +16,8 @@ resume = "claude --resume {session_id}"
 mode = "hook+screen"            # "hook" | "screen" | "hook+screen"
 idle_after_ms = 3000
 needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)', '❯ 1\. Yes']
+
+# Token usage from the session transcript (SPEC §20E.3). Remove to show none.
+[usage]
+format = "claude_jsonl"         # "claude_jsonl" | "codex_jsonl"
+context_window = 200000         # tokens, for the ctx % shown

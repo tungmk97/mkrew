@@ -1771,6 +1771,17 @@ _Decisions the agent made on its own. Override them here if you disagree._
   folder and branch to remove by hand. The banner line is written before the agent's first frame,
   so a full-screen agent (claude, codex) may paint over it on screen (it stays in the session log)
   — check with a real agent.
+- (T13.9) **Usage counting:** Claude "input" = `input_tokens` + `cache_creation_input_tokens` +
+  `cache_read_input_tokens` summed over API messages (deduped by `message.id` + `requestId`,
+  since one message is written as one line per content block), so it counts every token the
+  model read, cache reads included, and is the same meaning as Codex's `input_tokens`. Claude
+  context = that sum on the newest non-sidechain, non-`<synthetic>` message (output not
+  included); sidechain messages count in the totals. Codex: the newest cumulative
+  `total_token_usage` (not summed) and context = `last_token_usage.total_tokens`. Field shapes
+  checked against Claude Code 2.1.250 and Codex CLI 0.130.0 files plus codex-rs source; the
+  fixtures are hand-trimmed copies of those shapes. An unknown `[usage] format` name is not a
+  profile error (no usage + one warning). Sample profiles now set `context_window` 200000
+  (claude) and 258400 (codex): check both against the models you use.
 
 ## Done
 

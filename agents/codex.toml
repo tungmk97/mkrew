@@ -8,3 +8,7 @@ resume = "codex resume {session_id}"
 mode = "hook+screen"
 idle_after_ms = 3000
 needs_input_patterns = ['(?i)allow command', '(?i)approve']
+
+[usage]
+format = "codex_jsonl"
+context_window = 258400
