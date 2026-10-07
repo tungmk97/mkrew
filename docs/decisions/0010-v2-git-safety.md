@@ -43,3 +43,17 @@ deleted with `-d` only, never `-D`.
 - Snapshot cost on huge repos is bounded by a perf criterion (< 300 ms on 10,000 files, M11);
   if it fails, the fix is to skip snapshots above a size limit, recorded in HUMAN_CHECKS.
 - Real-git tests must assert HEAD, current branch, index and untouched files are unchanged.
+
+## Update 2026-10-07 (M13) — the exact git writes for task worktrees
+
+- `git worktree add --quiet -b mkrew/<slug>-<last 8 chars of the task id> <data>/worktrees/<project_id>/<task_id> HEAD`
+  (`<data>` = the `…/mkrew` data dir), run from the project folder: adds one branch and one
+  linked worktree; the user's HEAD, branch, index and files are untouched (real-git test in
+  `crates/mkrew-daemon/src/worktree.rs`).
+- `.worktreeinclude` copies are plain file copies into the new worktree, not git writes; only
+  the read-only `git check-ignore` decides which entries qualify. Entries must be relative paths
+  inside the repo (no `..`, not absolute), exist and be ignored, else they are skipped with a
+  warning. A failure after `worktree add` keeps the worktree and only skips copies.
+- Merge back and removal (T13.5): `git merge --no-ff --no-edit <branch>` and on conflict
+  `git merge --abort`, in the main checkout; `git worktree remove` (never `--force`) and
+  `git branch -d` (never `-D`).

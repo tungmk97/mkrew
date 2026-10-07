@@ -117,6 +117,19 @@ pub trait GitBackend: Send + Sync {
         tree: &str,
         paths: &[String],
     ) -> io::Result<()>;
+
+    /// The root folder of the (worktree of the) repo containing `dir`.
+    #[cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
+    fn toplevel(&self, dir: &Path) -> io::Result<PathBuf>;
+
+    /// `git worktree add -b <branch> <path> HEAD` from the repo containing `dir`: a new branch
+    /// checked out in a new folder; the user's checkout is untouched (SPEC §20E.1, ADR 0010).
+    #[cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
+    fn worktree_add(&self, dir: &Path, path: &Path, branch: &str) -> io::Result<()>;
+
+    /// The `paths` (relative to `dir`) that `.gitignore` rules ignore; tracked files never are.
+    #[cfg_attr(not(test), expect(dead_code, reason = "Run wiring is T13.3"))]
+    fn ignored(&self, dir: &Path, paths: &[String]) -> io::Result<Vec<String>>;
 }
 
 /// A local branch: its full ref name (`refs/heads/…`) and where it pushes.
@@ -564,13 +577,48 @@ impl GitBackend for GitCli {
         // Paths on stdin are relative to `dir`, like command-line ones.
         let mut checkout = with_temp();
         checkout.args(["checkout-index", "-f", "-z", "--stdin"]);
-        let mut input = Vec::new();
-        for path in paths {
-            input.extend_from_slice(path.as_bytes());
-            input.push(0);
-        }
-        run_with_input(checkout, &input).map(drop)
+        run_with_input(checkout, &nul_joined(paths)).map(drop)
     }
+
+    fn toplevel(&self, dir: &Path) -> io::Result<PathBuf> {
+        let mut command = git(dir);
+        command.args(["rev-parse", "--show-toplevel"]);
+        Ok(PathBuf::from(
+            String::from_utf8_lossy(&run(command)?).trim(),
+        ))
+    }
+
+    fn worktree_add(&self, dir: &Path, path: &Path, branch: &str) -> io::Result<()> {
+        let mut command = git(dir);
+        command
+            .args(["worktree", "add", "--quiet", "-b", branch])
+            .arg(path)
+            .arg("HEAD");
+        run(command).map(drop)
+    }
+
+    fn ignored(&self, dir: &Path, paths: &[String]) -> io::Result<Vec<String>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut command = git(dir);
+        command.args(["check-ignore", "-z", "--stdin"]);
+        let output = output_with_input(command, &nul_joined(paths))?;
+        // Exit 1 = none of them is ignored.
+        if output.status.code() == Some(1) {
+            return Ok(Vec::new());
+        }
+        failed_unless_success(output).map(|out| nul_separated(&out))
+    }
+}
+
+fn nul_joined(paths: &[String]) -> Vec<u8> {
+    let mut input = Vec::new();
+    for path in paths {
+        input.extend_from_slice(path.as_bytes());
+        input.push(0);
+    }
+    input
 }
 
 /// A private copy of an index next to it, deleted on drop.
@@ -626,17 +674,17 @@ fn network_git(dir: &Path) -> Command {
 /// Runs `command` with `paths` passed NUL-separated on stdin (no command-line length limit).
 fn run_with_paths(mut command: Command, paths: &[String]) -> io::Result<()> {
     command.args(["--pathspec-from-file=-", "--pathspec-file-nul"]);
-    let mut input = Vec::new();
-    for path in paths {
-        input.extend_from_slice(path.as_bytes());
-        input.push(0);
-    }
-    run_with_input(command, &input).map(drop)
+    run_with_input(command, &nul_joined(paths)).map(drop)
 }
 
 /// [`run`] with `input` written to stdin. Git reads all of it before writing much, so writing
 /// first and reading afterwards cannot deadlock.
-fn run_with_input(mut command: Command, input: &[u8]) -> io::Result<Vec<u8>> {
+fn run_with_input(command: Command, input: &[u8]) -> io::Result<Vec<u8>> {
+    failed_unless_success(output_with_input(command, input)?)
+}
+
+/// Runs `command` with `input` on stdin; any exit status is returned.
+fn output_with_input(mut command: Command, input: &[u8]) -> io::Result<std::process::Output> {
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -650,7 +698,7 @@ fn run_with_input(mut command: Command, input: &[u8]) -> io::Result<Vec<u8>> {
             result => result?,
         }
     }
-    failed_unless_success(child.wait_with_output()?)
+    child.wait_with_output()
 }
 
 /// `git diff` (or `git show` for [`Side::Commit`]) between the trees of `side`, before the

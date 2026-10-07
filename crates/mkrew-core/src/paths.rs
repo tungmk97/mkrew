@@ -81,6 +81,11 @@ impl Paths {
         self.data_dir.join("attachments")
     }
 
+    /// Task worktrees, `<project_id>/<task_id>` (SPEC §20E.1).
+    pub fn worktrees_dir(&self) -> PathBuf {
+        self.data_dir.join("worktrees")
+    }
+
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")
     }
@@ -156,6 +161,7 @@ mod tests {
             paths.attachments_dir(),
             Path::new("/tmp/d").join("attachments")
         );
+        assert_eq!(paths.worktrees_dir(), Path::new("/tmp/d").join("worktrees"));
     }
 
     #[test]

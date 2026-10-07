@@ -25,6 +25,7 @@ pub mod spawn;
 mod turns;
 mod undo;
 mod watch;
+mod worktree;
 
 use anyhow::Context;
 use mkrew_core::Paths;
