@@ -40,6 +40,7 @@ mod fs;
 mod git;
 mod resume;
 mod target;
+mod task_worktree;
 mod turn;
 
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -297,6 +298,10 @@ impl Daemon {
                 After::Continue,
             ),
             Request::TaskUndo(params) => (self.task_undo(params).await, After::Continue),
+            Request::TaskMerge(params) => (self.task_merge(params).await, After::Continue),
+            Request::TaskRemoveWorktree(params) => {
+                (self.task_remove_worktree(params).await, After::Continue)
+            }
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);

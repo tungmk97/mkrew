@@ -127,6 +127,36 @@ pub trait GitBackend: Send + Sync {
 
     /// The `paths` (relative to `dir`) that `.gitignore` rules ignore; tracked files never are.
     fn ignored(&self, dir: &Path, paths: &[String]) -> io::Result<Vec<String>>;
+
+    /// Repo-relative paths with staged or unstaged changes anywhere in the (worktree of the)
+    /// repo containing `dir`; with `untracked`, untracked non-ignored files too.
+    fn uncommitted(&self, dir: &Path, untracked: bool) -> io::Result<Vec<String>>;
+
+    /// `git merge --no-ff --no-edit <branch>` in the checkout containing `dir`. On conflict
+    /// runs `git merge --abort` and returns the conflicting repo-relative paths (ADR 0010).
+    /// Refused while a merge, cherry-pick or revert is in progress there.
+    fn merge(&self, dir: &Path, branch: &str) -> io::Result<Merged>;
+
+    /// `git worktree remove <path>` (never `--force`: git refuses a dirty worktree).
+    fn worktree_remove(&self, dir: &Path, path: &Path) -> io::Result<()>;
+
+    /// `git worktree prune`: forgets worktrees whose folder is gone.
+    fn worktree_prune(&self, dir: &Path) -> io::Result<()>;
+
+    /// `git branch -d <branch>` (never `-D`); `false` when git keeps it (not merged). A branch
+    /// that no longer exists counts as deleted.
+    fn delete_branch(&self, dir: &Path, branch: &str) -> io::Result<bool>;
+}
+
+/// Result of [`GitBackend::merge`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Merged {
+    Done,
+    /// Aborted; the checkout is as before.
+    Conflicts(Vec<String>),
+    /// Not done, and why: another merge in progress, or git refused (e.g. an untracked file
+    /// in the way).
+    Refused(String),
 }
 
 /// A local branch: its full ref name (`refs/heads/…`) and where it pushes.
@@ -606,6 +636,94 @@ impl GitBackend for GitCli {
             return Ok(Vec::new());
         }
         failed_unless_success(output).map(|out| nul_separated(&out))
+    }
+
+    fn uncommitted(&self, dir: &Path, untracked: bool) -> io::Result<Vec<String>> {
+        let mut command = view_git(dir);
+        // `:/` = the whole repo, not just `dir`.
+        command
+            .args(["status", "--porcelain=v1", "-z", "--ignore-submodules=none"])
+            .arg(if untracked {
+                "--untracked-files=all"
+            } else {
+                "--untracked-files=no"
+            })
+            .args(["--", ":/"]);
+        let out = run(command)?;
+        let mut paths = Vec::new();
+        let mut records = out.split(|b| *b == 0).filter(|r| !r.is_empty());
+        while let Some(record) = records.next() {
+            // `XY path`; a rename or copy is followed by its source path.
+            if record.len() < 4 {
+                continue;
+            }
+            paths.push(String::from_utf8_lossy(&record[3..]).into_owned());
+            if matches!(record[0], b'R' | b'C') || matches!(record[1], b'R' | b'C') {
+                records.next();
+            }
+        }
+        Ok(paths)
+    }
+
+    fn merge(&self, dir: &Path, branch: &str) -> io::Result<Merged> {
+        // Never `merge --abort` a merge (or pick, revert) the user has in progress.
+        for head in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"] {
+            if peeled(dir, head, "commit")?.is_some() {
+                let why = format!("the project's checkout has a {head} in progress");
+                return Ok(Merged::Refused(why));
+            }
+        }
+        let output = git(dir)
+            .env("GIT_MERGE_AUTOEDIT", "no")
+            .args(["merge", "--no-ff", "--no-edit", "--quiet", branch])
+            .stderr(Stdio::piped())
+            .output()?;
+        if output.status.success() {
+            return Ok(Merged::Done);
+        }
+        let mut conflicts = git(dir);
+        conflicts.args(["diff", "--name-only", "--diff-filter=U", "-z", "--", ":/"]);
+        // Abort first, whatever listing the conflicts gave.
+        let conflicts = run(conflicts).map(|out| nul_separated(&out));
+        if peeled(dir, "MERGE_HEAD", "commit")?.is_some() {
+            let mut abort = git(dir);
+            abort.args(["merge", "--abort"]);
+            run(abort)?;
+        }
+        let conflicts = conflicts?;
+        if conflicts.is_empty() {
+            // Refused before it started (e.g. an untracked file in the way), or failed after.
+            let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Ok(Merged::Refused(format!("git merge failed: {message}")));
+        }
+        Ok(Merged::Conflicts(conflicts))
+    }
+
+    fn worktree_remove(&self, dir: &Path, path: &Path) -> io::Result<()> {
+        let mut command = git(dir);
+        command.args(["worktree", "remove"]).arg(path);
+        run(command).map(drop)
+    }
+
+    fn worktree_prune(&self, dir: &Path) -> io::Result<()> {
+        let mut command = git(dir);
+        command.args(["worktree", "prune"]);
+        run(command).map(drop)
+    }
+
+    fn delete_branch(&self, dir: &Path, branch: &str) -> io::Result<bool> {
+        if peeled(dir, &format!("refs/heads/{branch}"), "commit")?.is_none() {
+            return Ok(true);
+        }
+        let output = git(dir)
+            .args(["branch", "-d", branch])
+            .stderr(Stdio::piped())
+            .output()?;
+        if !output.status.success() {
+            let message = String::from_utf8_lossy(&output.stderr);
+            tracing::info!(%branch, "branch kept: {}", message.trim());
+        }
+        Ok(output.status.success())
     }
 }
 

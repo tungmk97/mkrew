@@ -657,6 +657,17 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (T13.5) **Merge back / Remove worktree rules:** merge is refused (`invalid_state`, files named)
+  when the worktree has any uncommitted or untracked file, or the user's checkout has staged or
+  unstaged changes; untracked files in the user's checkout are allowed (git itself refuses a
+  merge that would overwrite one). Merge is allowed while the task's agent session is still
+  live (it does not touch the worktree); removal is refused while one is live ("stop it
+  first") because the agent's cwd is the worktree. Neither changes the task's status. After
+  removal the task keeps `worktree` on; running it again creates a fresh worktree — which
+  fails while a kept (unmerged) branch of the same name still exists (delete or rename it by
+  hand). A worktree folder deleted by hand is pruned and its branch deleted with `-d`.
+  `task.remove_worktree` on a dirty worktree returns `invalid_state` naming the files; the UI
+  (T13.6) shows them via `git.status` on the worktree target.
 - (T13.4b) **Worktree target chooser:** "Showing Project | <task title>…" chips (hidden while no
   task of the workspace has a worktree), under the Files tree header and at the top of the Git
   header; switching starts that view over on the target (the Git commit draft is kept).

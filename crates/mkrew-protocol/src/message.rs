@@ -92,6 +92,12 @@ pub enum Request {
     /// Returns nothing (`null`).
     #[serde(rename = "task.undo")]
     TaskUndo(TaskUndoParams),
+    /// Returns [`TaskMergeResult`] (SPEC §20E.1).
+    #[serde(rename = "task.merge")]
+    TaskMerge(TaskConfirmParams),
+    /// Returns [`RemoveWorktreeResult`] (SPEC §20E.1).
+    #[serde(rename = "task.remove_worktree")]
+    TaskRemoveWorktree(TaskConfirmParams),
     #[serde(rename = "session.spawn")]
     SessionSpawn(SessionSpawnParams),
     #[serde(rename = "session.list")]
@@ -769,6 +775,29 @@ pub struct TaskUndoParams {
     /// changes no longer match it, so nothing unseen is restored away.
     #[serde(default)]
     pub fingerprint: String,
+}
+
+/// `task.merge` / `task.remove_worktree`: refused unless `confirm`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskConfirmParams {
+    pub task_id: Ulid,
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+/// `task.merge` result: `merged`, or aborted on `conflicts` (repo-relative paths) with the
+/// user's checkout unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskMergeResult {
+    pub merged: bool,
+    pub conflicts: Vec<String>,
+}
+
+/// `task.remove_worktree` result: `branch_kept` = the branch was not merged, so `git branch -d`
+/// kept it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoveWorktreeResult {
+    pub branch_kept: bool,
 }
 
 /// A turn of a session (`turn.restore_preview`).
@@ -1492,6 +1521,14 @@ mod tests {
                 created: vec!["new.txt".into()],
                 fingerprint: "00ff".into(),
             }),
+            Request::TaskMerge(TaskConfirmParams {
+                task_id: sid(),
+                confirm: true,
+            }),
+            Request::TaskRemoveWorktree(TaskConfirmParams {
+                task_id: sid(),
+                confirm: false,
+            }),
             Request::SessionList(SessionListParams::default()),
             Request::SessionAttach(SessionRef { session_id: sid() }),
             Request::SessionDetach(SessionRef { session_id: sid() }),
@@ -2074,5 +2111,7 @@ mod tests {
         let undo: TaskUndoParams = serde_json::from_value(json!({"task_id": id})).unwrap();
         assert!(!undo.confirm);
         assert!(undo.created.is_empty() && undo.fingerprint.is_empty());
+        let merge: TaskConfirmParams = serde_json::from_value(json!({"task_id": id})).unwrap();
+        assert!(!merge.confirm);
     }
 }

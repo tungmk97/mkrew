@@ -518,6 +518,13 @@ impl Hub {
         self.watch(task_id, project_id, Some(task_id), root, true);
     }
 
+    /// Stops watching the worktree of task `task_id` and forgets its `fs.find` list: an open
+    /// watcher handle can make `git worktree remove` fail on Windows.
+    pub fn unwatch_worktree(&self, task_id: Ulid) {
+        lock(&self.watches).remove(&task_id);
+        self.file_index.invalidate(task_id);
+    }
+
     /// Starts watching `root` for project `project_id` unless it is watched already; `kept`
     /// keeps the watch after the project's last session exits. Every batch also broadcasts
     /// `git.changed`: a reported file or the git state changed.

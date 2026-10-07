@@ -323,6 +323,21 @@ mod tests {
         fn ignored(&self, _: &Path, _: &[String]) -> io::Result<Vec<String>> {
             unreachable!()
         }
+        fn uncommitted(&self, _: &Path, _: bool) -> io::Result<Vec<String>> {
+            unreachable!()
+        }
+        fn merge(&self, _: &Path, _: &str) -> io::Result<crate::git::Merged> {
+            unreachable!()
+        }
+        fn worktree_remove(&self, _: &Path, _: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn worktree_prune(&self, _: &Path) -> io::Result<()> {
+            unreachable!()
+        }
+        fn delete_branch(&self, _: &Path, _: &str) -> io::Result<bool> {
+            unreachable!()
+        }
     }
 
     #[test]

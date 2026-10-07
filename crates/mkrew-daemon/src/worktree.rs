@@ -1,6 +1,7 @@
 //! Task worktrees (SPEC §20E.1, ADR 0010): a `mkrew/…` branch checked out in its own folder
 //! under the data dir, plus copies of the git-ignored files `.worktreeinclude` names.
-//! Blocking: callers run [`create`] and [`project_dir`] in `spawn_blocking`.
+//! Merge back and removal are user actions (ADR 0010). Blocking: callers run every function
+//! but the pure ones in `spawn_blocking`.
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -8,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use mkrew_core::Paths;
 use ulid::Ulid;
 
-use crate::git::GitBackend;
+use crate::git::{GitBackend, Merged};
 
 /// Longest branch slug (SPEC §20E.1).
 const MAX_SLUG: usize = 30;
@@ -128,6 +129,102 @@ pub fn project_dir(
     Ok(Some(
         parts.fold(root.to_path_buf(), |dir, part| dir.join(part)),
     ))
+}
+
+/// Outcome of [`merge`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Merge {
+    Merged,
+    /// Aborted: the user's checkout is as before. Repo-relative paths.
+    Conflicts(Vec<String>),
+    /// Not started, and why.
+    Refused(String),
+}
+
+/// Merges `branch` (checked out in the worktree at `root`) into the user's checkout holding
+/// `project_dir` (SPEC §20E.1): only when neither side has uncommitted changes (untracked
+/// files count in the worktree: they would not be merged) and the checkout is on a branch.
+pub fn merge(
+    git: &dyn GitBackend,
+    project_dir: &Path,
+    root: &Path,
+    branch: &str,
+) -> io::Result<Merge> {
+    if !root.is_dir() {
+        return Ok(Merge::Refused(format!(
+            "worktree {} is missing",
+            root.display()
+        )));
+    }
+    let dirty = git.uncommitted(root, true)?;
+    if !dirty.is_empty() {
+        return Ok(Merge::Refused(format!(
+            "the worktree has uncommitted changes ({}); commit them there first",
+            listed(&dirty)
+        )));
+    }
+    let dirty = git.uncommitted(project_dir, false)?;
+    if !dirty.is_empty() {
+        return Ok(Merge::Refused(format!(
+            "the project's checkout has uncommitted changes ({})",
+            listed(&dirty)
+        )));
+    }
+    if git.current_branch(project_dir)?.is_none() {
+        let message = "the project's checkout is on a detached HEAD";
+        return Ok(Merge::Refused(message.into()));
+    }
+    Ok(match git.merge(project_dir, branch)? {
+        Merged::Done => Merge::Merged,
+        Merged::Conflicts(files) => Merge::Conflicts(files),
+        Merged::Refused(why) => Merge::Refused(why),
+    })
+}
+
+/// Outcome of [`remove`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Remove {
+    /// `branch_kept`: git refused `branch -d` (not merged).
+    Removed { branch_kept: bool },
+    /// Nothing done: the worktree's uncommitted files (repo-relative).
+    Dirty(Vec<String>),
+}
+
+/// Removes the worktree at `root` of the repo holding `project_dir`, then deletes its branch
+/// unless it is not merged (SPEC §20E.1). A folder already deleted by hand is pruned.
+/// `release` runs right before git deletes the folder (to close handles into it).
+pub fn remove(
+    git: &dyn GitBackend,
+    project_dir: &Path,
+    root: &Path,
+    branch: Option<&str>,
+    release: impl FnOnce(),
+) -> io::Result<Remove> {
+    if root.is_dir() {
+        let dirty = git.uncommitted(root, true)?;
+        if !dirty.is_empty() {
+            return Ok(Remove::Dirty(dirty));
+        }
+        release();
+        git.worktree_remove(project_dir, root)?;
+    } else {
+        git.worktree_prune(project_dir)?;
+    }
+    let branch_kept = match branch {
+        Some(branch) => !git.delete_branch(project_dir, branch)?,
+        None => false,
+    };
+    Ok(Remove::Removed { branch_kept })
+}
+
+/// The first few `paths`, comma-separated, with a count of the rest.
+pub fn listed(paths: &[String]) -> String {
+    const SHOWN: usize = 5;
+    let mut text = paths[..paths.len().min(SHOWN)].join(", ");
+    if paths.len() > SHOWN {
+        text.push_str(&format!(" and {} more", paths.len() - SHOWN));
+    }
+    text
 }
 
 /// Relative, with only normal components: it cannot leave the folder it is joined to.
@@ -408,5 +505,216 @@ mod tests {
 
         assert_eq!(state(&root), before);
         assert!(!dest.join("a.txt").exists());
+    }
+
+    const BRANCH: &str = "mkrew/task-00000000";
+
+    /// A repo on `main` with `a.txt` committed and its worktree of [`BRANCH`] at `<temp>/wt`.
+    /// The repo's own config lets the daemon's `git merge` commit.
+    fn repo_with_worktree(temp: &Path) -> (PathBuf, PathBuf) {
+        let root = temp.join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "core.autocrlf", "false"]);
+        git(&root, &["config", "user.name", "t"]);
+        git(&root, &["config", "user.email", "t@t"]);
+        git(&root, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "one"]);
+        let dest = temp.join("wt");
+        create(&GitCli, &root, &dest, BRANCH).unwrap();
+        (root, dest)
+    }
+
+    fn commit_file(dir: &Path, name: &str, text: &str) {
+        std::fs::write(dir.join(name), text).unwrap();
+        git(dir, &["add", name]);
+        git(dir, &["commit", "-q", "-m", name]);
+    }
+
+    fn has_branch(root: &Path) -> bool {
+        !git(root, &["branch", "--list", BRANCH]).is_empty()
+    }
+
+    #[test]
+    fn a_clean_worktree_merges_with_a_merge_commit_and_is_removed_with_its_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        commit_file(&wt, "b.txt", "from the agent\n");
+        let head = git(&root, &["rev-parse", "HEAD"]);
+        let tip = git(&wt, &["rev-parse", "HEAD"]);
+        // Untracked files in the user's checkout do not block a merge.
+        std::fs::write(root.join("notes.txt"), "mine\n").unwrap();
+
+        assert_eq!(merge(&GitCli, &root, &wt, BRANCH).unwrap(), Merge::Merged);
+
+        assert_eq!(git(&root, &["symbolic-ref", "HEAD"]), "refs/heads/main");
+        assert_eq!(
+            git(&root, &["rev-parse", "HEAD^1", "HEAD^2"]),
+            format!("{head}\n{tip}")
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("b.txt")).unwrap(),
+            "from the agent\n"
+        );
+        assert_eq!(git(&root, &["status", "--porcelain"]), "?? notes.txt");
+
+        let removed = remove(&GitCli, &root, &wt, Some(BRANCH), || {}).unwrap();
+        assert_eq!(removed, Remove::Removed { branch_kept: false });
+        assert!(!wt.exists());
+        assert!(!has_branch(&root));
+        assert_eq!(
+            git(&root, &["worktree", "list", "--porcelain"])
+                .matches("worktree ")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_conflicting_merge_is_aborted_and_leaves_the_checkout_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        commit_file(&wt, "a.txt", "agent\n");
+        commit_file(&wt, "b.txt", "agent\n");
+        commit_file(&root, "a.txt", "user\n");
+        // `merge --abort` rewrites the index: compare its entries, not its bytes.
+        let entries = |root: &Path| git(root, &["ls-files", "-s"]).into_bytes();
+        let mut before = state(&root);
+        before.index = entries(&root);
+
+        let merged = merge(&GitCli, &root, &wt, BRANCH).unwrap();
+
+        assert_eq!(merged, Merge::Conflicts(vec!["a.txt".into()]));
+        let mut after = state(&root);
+        after.index = entries(&root);
+        assert_eq!(after, before);
+        assert!(!root.join(".git").join("MERGE_HEAD").exists());
+        assert!(has_branch(&root));
+    }
+
+    #[test]
+    fn merging_is_refused_when_either_side_is_dirty_or_head_is_detached() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        commit_file(&wt, "b.txt", "agent\n");
+
+        // An untracked file in the worktree would not be merged.
+        std::fs::write(wt.join("new.txt"), "x\n").unwrap();
+        let before = state(&root);
+        let Merge::Refused(why) = merge(&GitCli, &root, &wt, BRANCH).unwrap() else {
+            panic!("merged a dirty worktree");
+        };
+        assert!(why.contains("new.txt"), "{why}");
+        std::fs::remove_file(wt.join("new.txt")).unwrap();
+
+        std::fs::write(root.join("a.txt"), "edited\n").unwrap();
+        let Merge::Refused(why) = merge(&GitCli, &root, &wt, BRANCH).unwrap() else {
+            panic!("merged into a dirty checkout");
+        };
+        assert!(why.contains("a.txt"), "{why}");
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        assert_eq!(state(&root), before);
+
+        let head = git(&root, &["rev-parse", "HEAD"]);
+        git(&root, &["checkout", "-q", "--detach"]);
+        let Merge::Refused(why) = merge(&GitCli, &root, &wt, BRANCH).unwrap() else {
+            panic!("merged into a detached HEAD");
+        };
+        assert!(why.contains("detached"), "{why}");
+        assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
+    }
+
+    #[test]
+    fn a_merge_git_refuses_or_one_already_in_progress_is_left_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        commit_file(&wt, "b.txt", "agent\n");
+
+        // An untracked file the merge would overwrite: git refuses before starting.
+        std::fs::write(root.join("b.txt"), "mine\n").unwrap();
+        let before = state(&root);
+        let Merge::Refused(why) = merge(&GitCli, &root, &wt, BRANCH).unwrap() else {
+            panic!("merged over an untracked file");
+        };
+        assert!(why.contains("b.txt"), "{why}");
+        assert_eq!(state(&root), before);
+        std::fs::remove_file(root.join("b.txt")).unwrap();
+
+        // The user's own merge in progress is never aborted.
+        let head = git(&root, &["rev-parse", "HEAD"]);
+        let merge_head = root.join(".git").join("MERGE_HEAD");
+        std::fs::write(&merge_head, format!("{head}\n")).unwrap();
+        let Merge::Refused(why) = merge(&GitCli, &root, &wt, BRANCH).unwrap() else {
+            panic!("merged during another merge");
+        };
+        assert!(why.contains("MERGE_HEAD"), "{why}");
+        assert!(merge_head.exists());
+        assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
+    }
+
+    #[test]
+    fn a_dirty_worktree_is_not_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        std::fs::write(wt.join("a.txt"), "edited\n").unwrap();
+        std::fs::write(wt.join("new.txt"), "x\n").unwrap();
+
+        let removed = remove(&GitCli, &root, &wt, Some(BRANCH), || {}).unwrap();
+
+        assert_eq!(
+            removed,
+            Remove::Dirty(vec!["a.txt".into(), "new.txt".into()])
+        );
+        assert_eq!(
+            std::fs::read_to_string(wt.join("a.txt")).unwrap(),
+            "edited\n"
+        );
+        assert!(has_branch(&root));
+    }
+
+    #[test]
+    fn removing_keeps_an_unmerged_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        commit_file(&wt, "b.txt", "agent\n");
+        let tip = git(&wt, &["rev-parse", "HEAD"]);
+        let before = state(&root);
+
+        let removed = remove(&GitCli, &root, &wt, Some(BRANCH), || {}).unwrap();
+
+        assert_eq!(removed, Remove::Removed { branch_kept: true });
+        assert!(!wt.exists());
+        assert_eq!(git(&root, &["rev-parse", BRANCH]), tip);
+        assert_eq!(state(&root), before);
+    }
+
+    #[test]
+    fn a_worktree_folder_deleted_by_hand_is_pruned() {
+        let temp = tempfile::tempdir().unwrap();
+        let (root, wt) = repo_with_worktree(temp.path());
+        std::fs::remove_dir_all(&wt).unwrap();
+
+        let removed = remove(&GitCli, &root, &wt, Some(BRANCH), || {}).unwrap();
+
+        assert_eq!(removed, Remove::Removed { branch_kept: false });
+        assert!(!has_branch(&root));
+        assert_eq!(
+            git(&root, &["worktree", "list", "--porcelain"])
+                .matches("worktree ")
+                .count(),
+            1
+        );
+        // Again: nothing left to do.
+        let again = remove(&GitCli, &root, &wt, Some(BRANCH), || {}).unwrap();
+        assert_eq!(again, Remove::Removed { branch_kept: false });
+    }
+
+    #[test]
+    fn long_path_lists_are_cut() {
+        let paths: Vec<String> = (1..=7).map(|n| format!("f{n}")).collect();
+        assert_eq!(listed(&paths[..2]), "f1, f2");
+        assert_eq!(listed(&paths), "f1, f2, f3, f4, f5 and 2 more");
     }
 }

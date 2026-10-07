@@ -21,16 +21,16 @@ use mkrew_protocol::{
     GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode, GitRemoteParams,
     GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams,
     HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project,
-    ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, Request, ResponseError,
-    ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionFiles,
+    ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request,
+    ResponseError, ScreenSnapshot, Session, SessionAttachResult, SessionExitedEvent, SessionFiles,
     SessionFilesParams, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
     SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams,
     SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams,
     TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
-    TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMoveParams, TaskRef, TaskRunParams,
-    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams,
-    UndoPreview, encode,
+    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskListParams, TaskMergeResult,
+    TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams,
+    TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -4441,6 +4441,146 @@ fn fs_and_git_requests_target_a_task_worktree() {
         error_code(client.call(fs_list(other.id, wt))),
         ErrorCode::InvalidRequest
     );
+    client.stop();
+}
+
+/// T13.5: `task.merge` needs `confirm` and a clean worktree, then merges the task's branch into
+/// the user's checkout with a merge commit; `task.remove_worktree` is refused while the agent
+/// runs there, then removes the (watched) worktree and its merged branch so the task can be
+/// deleted.
+#[test]
+fn worktree_tasks_merge_back_and_remove_their_worktree() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("worktree.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"write_file\"\npath = \"made.txt\"\ncontent = \"run\"\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as("wt", &format!("['--scenario', '{}']", scenario.display()));
+    let repo = env.repo();
+    let app = repo.join("app");
+    std::fs::create_dir_all(&app).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("core.autocrlf", "false"),
+        ("user.name", "t"),
+        ("user.email", "t@t"),
+        ("commit.gpgsign", "false"),
+    ] {
+        git(&repo, &["config", key, value]);
+    }
+    std::fs::write(app.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    let main_head = git(&repo, &["rev-parse", "HEAD"]);
+
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&app);
+    let task: Task = client
+        .call(Request::TaskCreate(TaskCreateParams {
+            project_id: project.id,
+            title: "Merge me".into(),
+            prompt: String::new(),
+            agent_profile: Some("wt".into()),
+            position: None,
+            worktree: true,
+        }))
+        .into_result()
+        .unwrap();
+    let merge = |confirm| {
+        Request::TaskMerge(TaskConfirmParams {
+            task_id: task.id,
+            confirm,
+        })
+    };
+    let remove = |confirm| {
+        Request::TaskRemoveWorktree(TaskConfirmParams {
+            task_id: task.id,
+            confirm,
+        })
+    };
+    // No worktree yet.
+    assert_eq!(
+        error_code(client.call(merge(true))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(
+        error_code(client.call(remove(true))),
+        ErrorCode::InvalidState
+    );
+
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+    let task = wait_task(&mut client, task.id, |t| t.worktree_path.is_some());
+    let root = PathBuf::from(task.worktree_path.clone().unwrap());
+    let branch = task.branch.clone().unwrap();
+    // A Files view on the worktree keeps it watched.
+    let list = Request::FsList(FsListParams {
+        project_id: project.id,
+        worktree_task_id: Some(task.id),
+        dir: String::new(),
+        show_ignored: false,
+    });
+    let _: Vec<FsEntry> = client.call(list).into_result().unwrap();
+
+    assert_eq!(
+        error_code(client.call(merge(false))),
+        ErrorCode::InvalidRequest
+    );
+    // `made.txt` is not committed yet.
+    assert_eq!(
+        error_code(client.call(merge(true))),
+        ErrorCode::InvalidState
+    );
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), main_head);
+
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-q", "-m", "made"]);
+    let tip = git(&root, &["rev-parse", "HEAD"]);
+    let merged: TaskMergeResult = client.call(merge(true)).into_result().unwrap();
+    assert_eq!(
+        merged,
+        TaskMergeResult {
+            merged: true,
+            conflicts: Vec::new()
+        }
+    );
+    assert_eq!(
+        git(&repo, &["rev-parse", "HEAD^1", "HEAD^2"]),
+        format!("{main_head}\n{tip}")
+    );
+    assert_eq!(git(&repo, &["symbolic-ref", "HEAD"]), "refs/heads/main");
+    assert_eq!(
+        std::fs::read_to_string(app.join("made.txt")).unwrap(),
+        "run"
+    );
+
+    assert_eq!(
+        error_code(client.call(remove(false))),
+        ErrorCode::InvalidRequest
+    );
+    // The agent still runs in the worktree.
+    assert_eq!(
+        error_code(client.call(remove(true))),
+        ErrorCode::InvalidState
+    );
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: run.session_id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    client.wait_state(run.session_id, SessionState::Exited);
+
+    let removed: RemoveWorktreeResult = client.call(remove(true)).into_result().unwrap();
+    assert!(!removed.branch_kept);
+    assert!(!root.exists());
+    assert!(git(&repo, &["branch", "--list", &branch]).is_empty());
+    let task = wait_task(&mut client, task.id, |t| t.worktree_path.is_none());
+    assert!(task.worktree && task.branch.is_none());
+    let delete = Request::TaskDelete(TaskRef { task_id: task.id });
+    client.call(delete).into_result::<()>().unwrap();
     client.stop();
 }
 

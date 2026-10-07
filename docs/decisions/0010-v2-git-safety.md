@@ -56,7 +56,11 @@ deleted with `-d` only, never `-D`.
   warning. A failure after `worktree add` keeps the worktree and only skips copies.
 - Merge back and removal (T13.5): `git merge --no-ff --no-edit <branch>` and on conflict
   `git merge --abort`, in the main checkout; `git worktree remove` (never `--force`) and
-  `git branch -d` (never `-D`).
+  `git branch -d` (never `-D`). A worktree folder deleted by hand is forgotten with
+  `git worktree prune` (only drops git's records of folders that no longer exist) before
+  `branch -d`. "Clean" for a merge = no staged/unstaged changes anywhere in the user's
+  checkout (untracked files allowed: git itself refuses a merge that would overwrite one) and
+  none, untracked included, in the worktree (they would not be merged).
 - Run (T13.3): the session's `cwd` is the project's folder inside the worktree (the worktree
   root when the project is the repo root; the same subfolder otherwise), so a project that is a
   repo subfolder sees the same layout. A worktree task whose project is not in a git repo runs in
