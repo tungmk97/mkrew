@@ -1315,6 +1315,7 @@ impl Daemon {
                 id: p.id,
                 name: p.name,
                 command: p.command,
+                icon: p.icon,
             })
             .collect();
         let errors = set

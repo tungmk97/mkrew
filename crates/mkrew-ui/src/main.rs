@@ -240,6 +240,8 @@ struct Shell {
     run_reveal: Option<Ulid>,
     /// Ports of live run sessions (SPEC §10).
     ports: Ports,
+    /// Profile id → `icon` (ADR 0025), reloaded on every refresh.
+    agent_icons: HashMap<String, String>,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
     /// Done sessions already seen, so they leave the Inbox.
@@ -589,6 +591,7 @@ impl Shell {
             run_menu: None,
             run_reveal: None,
             ports: Ports::default(),
+            agent_icons: HashMap::new(),
             broadcast: None,
             viewed: Viewed::default(),
             last_lines: LastLines::default(),
@@ -672,14 +675,27 @@ impl Shell {
         let sessions =
             connection.call::<Vec<Session>>(Request::SessionList(SessionListParams::default()));
         let tasks = connection.call::<Vec<Task>>(Request::TaskList(TaskListParams::default()));
+        let profiles = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
         cx.spawn_in(window, async move |this, cx| {
             let listed = match (projects.await, sessions.await) {
                 (Ok(projects), Ok(sessions)) => Ok((projects, sessions)),
                 (Err(error), _) | (_, Err(error)) => Err(error),
             };
             let tasks = tasks.await;
+            let profiles = profiles.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.refreshing = false;
+                match profiles {
+                    Ok(listed) => {
+                        shell.agent_icons = listed
+                            .profiles
+                            .into_iter()
+                            .filter_map(|p| Some((p.id, p.icon?)))
+                            .collect();
+                    }
+                    // Badges fall back to letters; the listing below is unaffected.
+                    Err(error) => tracing::warn!("agent.profiles failed: {error:#}"),
+                }
                 match tasks {
                     Ok(tasks) => {
                         shell.board.load(tasks);
@@ -734,6 +750,11 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// The badge before `agent`'s name (ADR 0025).
+    fn agent_badge(&self, agent: &str) -> String {
+        sidebar::agent_badge(self.agent_icons.get(agent).map(String::as_str), agent)
     }
 
     /// Reads the token usage of each listed workspace not read yet (SPEC §20E.3); events keep
@@ -7090,7 +7111,7 @@ impl Shell {
                                 .workspace_total(row.project_id, self.sidebar.sessions());
                             let summary = self.run_summary(row.project_id);
                             let run_tip = summary.any_live().then(|| summary.tooltip());
-                            let row = workspace_row(row, active, run_tip, tokens, theme, cx);
+                            let row = workspace_row(row, active, run_tip, tokens, now, theme, cx);
                             match menu {
                                 // The menu drops down from below its row.
                                 Some(menu) => div()
@@ -7103,7 +7124,8 @@ impl Shell {
                         Row::Session(row) => {
                             let (selected, session_id) =
                                 (shown == Some(row.session_id), row.session_id);
-                            let row = session_row(row, selected, now, theme, cx);
+                            let badge = self.agent_badge(&row.agent);
+                            let row = session_row(row, badge, selected, now, theme, cx);
                             self.with_peek(row, Place::Sidebar, session_id, now, theme, cx)
                         }
                         Row::NoSessions { .. } => div()
@@ -13405,6 +13427,7 @@ impl Shell {
                 });
                 pane_header(
                     info,
+                    self.agent_badge(&info.agent_profile),
                     self.turns.get(session),
                     self.ports.get(info.id),
                     self.usages.get(session).and_then(usage::context_share),
@@ -14841,6 +14864,7 @@ fn workspace_row(
     active: bool,
     run_tip: Option<String>,
     tokens: Option<u64>,
+    now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -14929,12 +14953,13 @@ fn workspace_row(
             )
         })
         .when(row.working > 0, |el| {
-            let working = sidebar::status_display(SessionState::Working);
+            // Same spinner as the session rows (§11).
+            let working = status::icon(SessionState::Working, now);
             el.child(
                 div()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.status_working))
-                    .child(format!("{} {}", working.icon, row.working)),
+                    .child(format!("{working} {}", row.working)),
             )
         })
         .when(row.needs_input, |el| {
@@ -14968,6 +14993,7 @@ fn workspace_row(
 
 fn session_row(
     row: SessionRow,
+    badge: String,
     selected: bool,
     now: i64,
     theme: &Theme,
@@ -15009,6 +15035,13 @@ fn session_row(
                 .text_size(font_size::BODY)
                 .text_color(rgb(sidebar::status_color(theme, row.state)))
                 .child(status::icon(row.state, now)),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text_muted))
+                .child(badge),
         )
         .child(
             div()
@@ -16056,6 +16089,7 @@ fn conflict_badge(
 #[allow(clippy::too_many_arguments)]
 fn pane_header(
     session: &Session,
+    badge: String,
     turn: Option<&SessionTurnEvent>,
     ports: &[u16],
     context: Option<ContextShare>,
@@ -16080,6 +16114,12 @@ fn pane_header(
                 .flex_none()
                 .text_color(rgb(sidebar::status_color(theme, state)))
                 .child(status::icon(state, now)),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_color(rgb(theme.text_muted))
+                .child(badge),
         )
         .child(
             div()

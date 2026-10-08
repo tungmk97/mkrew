@@ -1,5 +1,6 @@
 # GitHub Copilot CLI (SPEC §6). State and resume come from `mk integration install copilot`.
 name = "GitHub Copilot"
+icon = "⊙"
 command = "copilot"
 # The prompt is typed once the TUI is ready (`copilot` takes no positional prompt).
 prompt_mode = "type"

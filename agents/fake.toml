@@ -2,6 +2,7 @@
 # Runs the built-in `ask` scenario; pick another with `MKREW_FAKE_SCENARIO=<file|name>`
 # (built-ins: ask, flood, omp) or `args = ["--scenario", "<file|name>"]`.
 name = "Fake agent"
+icon = "ƒ"
 command = "mkrew-fakeagent"
 args = []
 prompt_mode = "none"

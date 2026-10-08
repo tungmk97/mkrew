@@ -41,6 +41,19 @@ pub fn status_color(theme: &Theme, state: SessionState) -> u32 {
     }
 }
 
+/// The badge before an agent name (ADR 0025): the profile's `icon`, else the first letter of
+/// its id, uppercased (profiles written before `icon` existed, or not loaded yet).
+pub fn agent_badge(icon: Option<&str>, agent: &str) -> String {
+    match icon {
+        Some(icon) => icon.to_owned(),
+        None => agent
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_default(),
+    }
+}
+
 /// One visible sidebar row, top to bottom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -390,6 +403,14 @@ mod tests {
             status_color(&theme, SessionState::NeedsInput),
             theme.status_needs_input
         );
+    }
+
+    #[test]
+    fn agent_badge_uses_the_profile_icon_else_the_first_letter() {
+        assert_eq!(agent_badge(Some("π"), "omp"), "π");
+        assert_eq!(agent_badge(None, "claude"), "C");
+        // Uppercasing works beyond ASCII.
+        assert_eq!(agent_badge(None, "ølm"), "Ø");
     }
 
     #[test]

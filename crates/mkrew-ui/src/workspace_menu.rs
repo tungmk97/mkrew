@@ -98,6 +98,7 @@ mod tests {
             name: name.into(),
             kind,
             command: id.into(),
+            icon: None,
         }
     }
 

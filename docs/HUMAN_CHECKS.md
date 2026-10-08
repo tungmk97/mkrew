@@ -15,6 +15,24 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-08 inbox: status, drop, badges (plan docs/superpowers/plans/2026-10-08-inbox-status-drop-badges.md)
+
+- [ ] **States with hooks (user setup):** run `mk integration install claude`, `… codex`,
+  `… omp`, `… copilot`, then restart the agents. Claude: send a prompt → ◐ spins; it asks for a
+  permission → `?` and an amber pane border; the turn ends → `✓ done` and an Inbox entry; wait →
+  `○ idle`. Same in omp. Hover a status: the source says `hook`. Without the install, `done`
+  never appears and omp/Copilot never show `?` (SPEC §6: done is hook-only).
+- [ ] Collapse a workspace with a working agent: its `◐ N` count spins.
+- [ ] **File drop** (T10.8 check below, still open): drag 2 files (one with a space) from
+  Explorer onto a Claude pane and a pwsh pane → both paths typed, the spaced one quoted, no Enter.
+  Mkrew must not run as administrator: Windows blocks Explorer drops into elevated windows.
+- [ ] **Agent badges:** the sample profiles show ✻ claude, ⌬ codex, π omp, ⊙ copilot, >_ shell
+  in the sidebar rows and pane headers (light + dark; check the glyphs render, not boxes). Your
+  existing `%APPDATA%\mkrew\agents\*.toml` [INFERENCE: `dirs` config dir] are not updated: they
+  show claude `C`, codex `C`, omp `O`, copilot `C` until you add `icon = "…"` to each; the change
+  shows after the next refresh (reconnect or restart the UI). `icon = "claude"` → the profile
+  error lists `file:line:col`.
+
 ### To verify — 2026-10-08 inbox: keys, fonts, view rail (plan docs/superpowers/plans/2026-10-08-inbox-keys-fonts-view-rail.md)
 
 - [ ] Git commit box: type two lines, Ctrl+A highlights them, Backspace empties the box; Ctrl+A then

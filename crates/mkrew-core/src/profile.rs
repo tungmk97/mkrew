@@ -17,6 +17,9 @@ pub struct AgentProfile {
     /// File stem, e.g. `claude` for `claude.toml`.
     pub id: String,
     pub name: String,
+    /// Short badge shown before the agent name (≤ [`MAX_ICON_CHARS`] characters, ADR 0025);
+    /// `None` = the UI uses the id's first letter.
+    pub icon: Option<String>,
     pub kind: ProfileKind,
     /// Program to run. Empty only for [`ProfileKind::Shell`], meaning the OS default shell.
     pub command: String,
@@ -245,6 +248,9 @@ pub fn load_dir(dir: &Path) -> ProfileSet {
     set
 }
 
+/// Longest `icon`: a glyph plus a variation selector, or two or three letters.
+pub const MAX_ICON_CHARS: usize = 3;
+
 /// Parses one profile. `file` is only used in error messages.
 pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, ProfileError> {
     let err = |span: Option<Range<usize>>, message: String| {
@@ -277,6 +283,21 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
         ));
     }
 
+    let icon = match raw.icon {
+        Some(icon) => {
+            let span = icon.span();
+            let icon = icon.into_inner().trim().to_owned();
+            if icon.chars().count() > MAX_ICON_CHARS {
+                return Err(err(
+                    Some(span),
+                    format!("`icon` must be at most {MAX_ICON_CHARS} characters, got `{icon}`"),
+                ));
+            }
+            (!icon.is_empty()).then_some(icon)
+        }
+        None => None,
+    };
+
     let mut needs_input_patterns = Vec::with_capacity(raw.state.needs_input_patterns.len());
     for pattern in raw.state.needs_input_patterns {
         let span = pattern.span();
@@ -293,6 +314,7 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
     Ok(AgentProfile {
         id: id.to_owned(),
         name: raw.name.unwrap_or_else(|| id.to_owned()),
+        icon,
         kind: raw.kind,
         command,
         args: raw.args,
@@ -316,6 +338,7 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
 #[serde(deny_unknown_fields)]
 struct RawProfile {
     name: Option<String>,
+    icon: Option<Spanned<String>>,
     #[serde(default)]
     kind: ProfileKind,
     command: Option<Spanned<String>>,
@@ -457,6 +480,24 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
         );
         assert!(parse_err("command = \"x\"\n[usage]\nformt = \"x\"").contains("unknown field"));
         assert!(parse_err("command = \"x\"\n[usage]\ncontext_window = 1").contains("format"));
+    }
+
+    #[test]
+    fn icon_is_trimmed_optional_and_short() {
+        let icon = |src: &str| parse(src).unwrap().icon;
+        assert_eq!(icon("command = \"x\"\nicon = \" π \""), Some("π".into()));
+        assert_eq!(icon("command = \"x\"\nicon = \">_\""), Some(">_".into()));
+        // Blank = no icon, like an empty `resume`.
+        assert_eq!(icon("command = \"x\"\nicon = \"  \""), None);
+        // Profiles written before `icon` existed still parse.
+        assert_eq!(icon("command = \"x\""), None);
+
+        let long = parse_err("command = \"x\"\nicon = \"claude\"");
+        assert!(long.starts_with("agents/broken.toml:2:"), "{long}");
+        assert!(
+            long.contains("`icon` must be at most 3 characters, got `claude`"),
+            "{long}"
+        );
     }
 
     #[test]

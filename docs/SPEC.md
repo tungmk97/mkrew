@@ -352,6 +352,8 @@ Sample profiles live in the repo's `agents/` and are copied to the config dir on
 ```toml
 # agents/claude.toml
 name    = "Claude Code"
+# Short badge before the agent name (≤ 3 characters). Missing = the id's first letter.
+icon    = "✻"
 command = "claude"
 args    = []
 # How the task prompt reaches the agent:
@@ -377,6 +379,7 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)', '❯ 1\. Yes']
 ```toml
 # agents/codex.toml
 name = "Codex"
+icon = "⌬"
 command = "codex"
 prompt_mode = "arg"
 resume = "codex resume {session_id}"
@@ -390,6 +393,7 @@ needs_input_patterns = ['(?i)allow command', '(?i)approve']
 ```toml
 # agents/omp.toml
 name = "Oh My Pi"
+icon = "π"
 command = "omp"
 prompt_mode = "type"
 resume = "omp --resume {session_id}"   # {session_id} reported by the Mkrew extension
@@ -403,6 +407,7 @@ needs_input_patterns = []
 ```toml
 # agents/copilot.toml
 name = "GitHub Copilot"
+icon = "⊙"
 command = "copilot"
 prompt_mode = "type"             # copilot takes no positional prompt
 resume = "copilot --resume={session_id}"
@@ -416,7 +421,9 @@ needs_input_patterns = []
 `agents/shell.toml` (kind shell, command = OS default shell) and `agents/fake.toml`
 (command = `mkrew-fakeagent`, see §16) also ship. Optional key `kind = "agent" | "shell"`
 (default `agent`); a shell profile may omit `command` to use the OS default shell
-(`%COMSPEC%` / `$SHELL`). Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
+(`%COMSPEC%` / `$SHELL`). Optional key `icon` (≤ 3 characters, ADR 0025) is the badge shown
+before the agent name; a missing or blank one shows the id's first letter, uppercased; a longer
+one is a parse error. Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
 Profiles written before `oneshot` existed are not updated (seeding never overwrites); ✦ then
 answers `invalid_state` naming the key and the file.
 
@@ -728,9 +735,10 @@ color alone.
 | exited | ✕ | exit code, "Run again" / "Resume" |
 | unknown | · | |
 
-- Pane header: icon, agent name, session/task title, time.
+- Pane header: status icon, agent badge (§6 `icon`), agent name, session/task title, time. The
+  sidebar session row also puts the badge before the agent name.
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
-- Workspace row: number of working sessions and `?` if any needs_input.
+- Workspace row: number of working sessions (with the spinner) and `?` if any needs_input.
 - Hovering a status shows its source (hook/screen) and when it last changed.
 
 ---

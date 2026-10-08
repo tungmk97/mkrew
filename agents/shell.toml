@@ -1,6 +1,7 @@
 # Plain shell. No `command`: the daemon uses the OS default shell
 # (%COMSPEC% on Windows, $SHELL on Unix).
 name = "Shell"
+icon = ">_"
 kind = "shell"
 prompt_mode = "none"
 

@@ -1,5 +1,6 @@
 # Oh My Pi (SPEC §6). State and resume come from `mk integration install omp`.
 name = "Oh My Pi"
+icon = "π"
 command = "omp"
 prompt_mode = "type"
 # Resume command; {session_id} = the id omp reports through the Mkrew extension.

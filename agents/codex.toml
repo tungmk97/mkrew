@@ -1,5 +1,6 @@
 # Codex (SPEC §6).
 name = "Codex"
+icon = "⌬"
 command = "codex"
 prompt_mode = "arg"
 resume = "codex resume {session_id}"

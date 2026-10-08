@@ -323,6 +323,7 @@ mod tests {
             name: id.to_uppercase(),
             kind,
             command: id.into(),
+            icon: None,
         }
     }
 

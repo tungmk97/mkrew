@@ -1,5 +1,7 @@
 # Claude Code (SPEC §6). Patterns are starting points; refine from recorded output.
 name    = "Claude Code"
+# Short badge before the agent name (≤ 3 characters). Missing = the id's first letter.
+icon    = "✻"
 command = "claude"
 args    = []
 # How the task prompt reaches the agent:

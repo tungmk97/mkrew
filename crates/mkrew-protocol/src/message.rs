@@ -1292,6 +1292,9 @@ pub struct AgentProfileInfo {
     pub kind: SessionKind,
     /// Empty for a shell profile using the OS default shell.
     pub command: String,
+    /// The profile's badge (ADR 0025); absent from older daemons.
+    #[serde(default)]
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1966,6 +1969,7 @@ mod tests {
                 name: "Fake agent".into(),
                 kind: SessionKind::Agent,
                 command: "mkrew-fakeagent".into(),
+                icon: Some("ƒ".into()),
             }],
             errors: vec![ProfileErrorInfo {
                 file: "agents/broken.toml".into(),
@@ -1976,6 +1980,15 @@ mod tests {
         };
         let decoded: AgentProfilesResult = Outcome::ok(&result).unwrap().into_result().unwrap();
         assert_eq!(decoded, result);
+    }
+
+    #[test]
+    fn agent_profile_info_without_icon_decodes() {
+        let info: AgentProfileInfo = serde_json::from_value(serde_json::json!({
+            "id": "x", "name": "X", "kind": "agent", "command": "x"
+        }))
+        .unwrap();
+        assert_eq!(info.icon, None);
     }
 
     #[test]
