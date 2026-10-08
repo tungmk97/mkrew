@@ -43,6 +43,7 @@ This repository is built **autonomously** by agents, one task per session.
 | `docs/PROGRESS.md` | loop state + task queue + notes (keep short) |
 | `docs/BUILD_LOOP.md` | the per-session procedure |
 | `docs/HUMAN_CHECKS.md` | everything waiting for the human |
+| `docs/INBOX.md` | bugs/enhancements/features from the human; `mkrew-inbox` skill plans `[ ]` items |
 | `docs/decisions/` | ADRs |
 | `.claude/skills/` | skills (read by Claude Code and omp) |
 | `.claude/agents/` | subagents: researcher, reviewer, ui-reviewer (Claude Code) |
