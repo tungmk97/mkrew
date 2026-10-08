@@ -61,10 +61,11 @@ pub enum Extra {
     RunStop,
     RunSetup,
     RunShowTab,
+    OpenSettings,
 }
 
 impl Extra {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -79,6 +80,7 @@ impl Extra {
         Self::RunStop,
         Self::RunSetup,
         Self::RunShowTab,
+        Self::OpenSettings,
     ];
 
     pub fn title(self) -> &'static str {
@@ -97,6 +99,7 @@ impl Extra {
             Self::RunStop => "Run: Stop all",
             Self::RunSetup => "Run: Setup…",
             Self::RunShowTab => "Run: Show Run tab",
+            Self::OpenSettings => "Global: Open settings",
         }
     }
 
@@ -119,6 +122,7 @@ impl Extra {
                 context.workspace && context.run_live
             }
             Self::RunSetup => context.workspace,
+            Self::OpenSettings => true,
         }
     }
 }
@@ -282,6 +286,19 @@ pub fn keymap_errors(keymap: &Keymap, errors: &[KeymapError]) -> Vec<Entry> {
             title: format!("Keymap error: {error}"),
             shortcut: keymap.label(Command::OpenKeymapSettings),
         })
+        .collect()
+}
+
+/// The `settings.toml` problem (SPEC §20.0), listed before the commands like keymap errors;
+/// picking it opens the settings to fix it.
+pub fn settings_error(error: Option<&str>) -> Vec<Entry> {
+    error
+        .map(|error| Entry {
+            action: Action::Extra(Extra::OpenSettings),
+            title: format!("Settings error: {error}"),
+            shortcut: String::new(),
+        })
+        .into_iter()
         .collect()
 }
 
@@ -653,6 +670,16 @@ mod tests {
     }
 
     #[test]
+    fn a_settings_error_opens_the_settings() {
+        let error = "settings.toml:2:13: font_size must be 8–32 px, got 4";
+        let listed = settings_error(Some(error));
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].action, Action::Extra(Extra::OpenSettings));
+        assert_eq!(listed[0].title, format!("Settings error: {error}"));
+        assert!(settings_error(None).is_empty());
+    }
+
+    #[test]
     fn commands_carry_their_shortcut() {
         let (keymap, errors) = Keymap::parse("new_shell_tab = \"ctrl-shift-y\"\n");
         assert_eq!(errors, []);
@@ -755,13 +782,21 @@ mod tests {
             ]
         );
         assert_eq!(extras(&none), []);
+        assert!(
+            entries(&Keymap::defaults(), &none, &[], &[], &[])
+                .iter()
+                .any(|e| e.action == Action::Extra(Extra::OpenSettings)),
+            "settings open without a workspace"
+        );
     }
 
     fn extras(context: &Context) -> Vec<Extra> {
         entries(&Keymap::defaults(), context, &[], &[], &[])
             .into_iter()
             .filter_map(|entry| match entry.action {
-                Action::Extra(extra) if extra != Extra::RunSetup => Some(extra),
+                Action::Extra(extra) if !matches!(extra, Extra::RunSetup | Extra::OpenSettings) => {
+                    Some(extra)
+                }
                 _ => None,
             })
             .collect()
@@ -838,6 +873,7 @@ mod tests {
             assert!(!titles[..i].contains(title), "{title}");
             assert!(!commands.iter().any(|command| command == title), "{title}");
         }
+        assert!(titles.contains(&"Global: Open settings"));
         // Palette-only actions come after the commands, before "Go to".
         let all = entries(
             &Keymap::defaults(),

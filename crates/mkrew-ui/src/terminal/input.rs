@@ -40,6 +40,39 @@ pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode) -> Option<Vec<u8>> {
     None
 }
 
+/// Plain Ctrl+C: copies the selection when there is one, else it is ^C for the program
+/// (like Windows Terminal, ADR 0022).
+pub fn is_copy_key(keystroke: &Keystroke) -> bool {
+    let m = keystroke.modifiers;
+    keystroke.key == "c" && m.control && !m.shift && !m.alt && !m.platform
+}
+
+/// What a key press in a terminal pane does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyAction {
+    /// Copy the selection (plain Ctrl+C while text is selected, also in an exited pane).
+    Copy,
+    Send(Vec<u8>),
+    Ignore,
+}
+
+/// The pane's answer to `keystroke`: `selected` = text is selected, `exited` = the session
+/// ended (nothing more is sent).
+pub fn key_action(
+    keystroke: &Keystroke,
+    selected: bool,
+    exited: bool,
+    mode: InputMode,
+) -> KeyAction {
+    if selected && is_copy_key(keystroke) {
+        return KeyAction::Copy;
+    }
+    match key_to_bytes(keystroke, mode) {
+        Some(bytes) if !exited => KeyAction::Send(bytes),
+        _ => KeyAction::Ignore,
+    }
+}
+
 /// Bytes for pasting `text`: newlines become CR (what Enter sends); in bracketed mode the text
 /// is wrapped and stripped of ESC so it cannot end the bracket early.
 pub fn paste_bytes(text: &str, mode: InputMode) -> Vec<u8> {
@@ -90,7 +123,9 @@ fn special_key(
 ) -> Option<Vec<u8>> {
     let bytes = match key {
         "enter" => b"\r".to_vec(),
-        "backspace" if ctrl => vec![0x08],
+        // Word rubout: ^W. PSReadLine's default Windows mode binds Ctrl+w (not Alt+Backspace),
+        // like readline and pi-tui; `\x08` reads as a plain Backspace in most TUIs.
+        "backspace" if ctrl => vec![0x17],
         "backspace" => vec![0x7f],
         "tab" if shift => b"\x1b[Z".to_vec(),
         "tab" => b"\t".to_vec(),
@@ -232,10 +267,48 @@ mod tests {
     }
 
     #[test]
+    fn only_plain_ctrl_c_is_the_copy_key() {
+        assert!(is_copy_key(&key("ctrl-c", None)));
+        assert!(
+            !is_copy_key(&key("ctrl-shift-c", None)),
+            "bound Copy, handled by the keymap"
+        );
+        assert!(!is_copy_key(&key("ctrl-alt-c", None)), "AltGr / Alt+^C");
+        assert!(!is_copy_key(&key("c", Some("c"))));
+        assert!(!is_copy_key(&key("ctrl-x", None)));
+        // Without a selection it is still ^C for the program.
+        assert_eq!(bytes("ctrl-c", None, NORMAL), Some(vec![0x03]));
+    }
+
+    #[test]
+    fn a_selection_is_copied_even_from_an_exited_pane() {
+        let ctrl_c = key("ctrl-c", None);
+        assert_eq!(key_action(&ctrl_c, true, false, NORMAL), KeyAction::Copy);
+        assert_eq!(key_action(&ctrl_c, true, true, NORMAL), KeyAction::Copy);
+        assert_eq!(
+            key_action(&ctrl_c, false, false, NORMAL),
+            KeyAction::Send(vec![0x03])
+        );
+        assert_eq!(key_action(&ctrl_c, false, true, NORMAL), KeyAction::Ignore);
+        let a = key("a", Some("a"));
+        assert_eq!(key_action(&a, true, true, NORMAL), KeyAction::Ignore);
+        assert_eq!(
+            key_action(&a, true, false, NORMAL),
+            KeyAction::Send(b"a".to_vec())
+        );
+    }
+
+    #[test]
     fn editing_keys() {
         assert_eq!(bytes("enter", None, NORMAL), Some(b"\r".to_vec()));
         assert_eq!(bytes("backspace", None, NORMAL), Some(vec![0x7f]));
-        assert_eq!(bytes("ctrl-backspace", None, NORMAL), Some(vec![0x08]));
+        // Word rubout: ^W, bound by PSReadLine (Windows mode: Ctrl+w), readline and pi-tui.
+        // ESC DEL stays Alt+Backspace, which PSReadLine's Windows mode does not bind.
+        assert_eq!(bytes("ctrl-backspace", None, NORMAL), Some(vec![0x17]));
+        assert_eq!(
+            bytes("alt-backspace", None, NORMAL),
+            Some(b"\x1b\x7f".to_vec())
+        );
         assert_eq!(bytes("tab", None, NORMAL), Some(b"\t".to_vec()));
         assert_eq!(bytes("shift-tab", None, NORMAL), Some(b"\x1b[Z".to_vec()));
         assert_eq!(bytes("escape", None, NORMAL), Some(vec![0x1b]));

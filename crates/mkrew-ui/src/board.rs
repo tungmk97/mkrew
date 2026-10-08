@@ -50,6 +50,18 @@ impl View {
             View::Git => "Git",
         }
     }
+
+    /// The keymap command that shows this view (its rail tooltip shows the keys).
+    pub fn command(self) -> crate::keymap::Command {
+        use crate::keymap::Command;
+        match self {
+            View::Board => Command::ShowBoard,
+            View::Terminals => Command::ShowTerminals,
+            View::Docs => Command::ShowDocs,
+            View::Files => Command::ShowFiles,
+            View::Git => Command::ShowGit,
+        }
+    }
 }
 
 /// Board columns, left to right.
@@ -518,6 +530,22 @@ mod tests {
     use mkrew_protocol::{SessionKind, StateSource, TaskDeletedEvent};
 
     use super::*;
+
+    #[test]
+    fn each_view_maps_to_its_own_show_command() {
+        use crate::keymap::Command;
+        let commands: Vec<Command> = View::ALL.into_iter().map(View::command).collect();
+        assert_eq!(
+            commands,
+            [
+                Command::ShowBoard,
+                Command::ShowTerminals,
+                Command::ShowDocs,
+                Command::ShowFiles,
+                Command::ShowGit
+            ]
+        );
+    }
 
     fn task(project_id: Ulid, title: &str, status: TaskStatus, position: f64) -> Task {
         Task {

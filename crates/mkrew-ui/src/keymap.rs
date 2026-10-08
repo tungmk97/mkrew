@@ -361,9 +361,9 @@ pub fn template() -> String {
     text
 }
 
-/// Writes [`template`] to `path` (creating its folder) unless the file exists; an existing
+/// Writes `contents` to `path` (creating its folder) unless the file exists; an existing
 /// file is never touched.
-pub fn ensure_file(path: &Path) -> std::io::Result<()> {
+pub fn ensure_file(path: &Path, contents: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -373,9 +373,9 @@ pub fn ensure_file(path: &Path) -> std::io::Result<()> {
         .open(path)
     {
         Ok(mut file) => {
-            let written = std::io::Write::write_all(&mut file, template().as_bytes());
+            let written = std::io::Write::write_all(&mut file, contents.as_bytes());
             if written.is_err() {
-                // A half-written file would never be rewritten; the next Ctrl+, tries again.
+                // A half-written file would never be rewritten; the next open tries again.
                 drop(file);
                 let _ = std::fs::remove_file(path);
             }
@@ -919,11 +919,11 @@ mod tests {
     fn ensure_file_creates_the_template_once() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mkrew").join("keymap.toml");
-        ensure_file(&path).unwrap();
+        ensure_file(&path, &template()).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), template());
         let edited = "close_pane = \"ctrl-shift-q\"\n";
         std::fs::write(&path, edited).unwrap();
-        ensure_file(&path).unwrap();
+        ensure_file(&path, &template()).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
     }
 

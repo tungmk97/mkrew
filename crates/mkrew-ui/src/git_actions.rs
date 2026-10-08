@@ -7,6 +7,7 @@ use mkrew_protocol::{GitCommitParams, GitRemoteParams, Request};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
+use crate::text_box::TextBox;
 
 /// What a key press in the commit box does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +23,7 @@ pub enum Outcome {
 /// The commit message draft of one workspace.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommitBox {
-    pub text: String,
+    pub text: TextBox,
     /// A `git.commit` is in flight.
     pub busy: bool,
     /// Why the last commit failed, or why the draft cannot be committed.
@@ -35,19 +36,15 @@ impl CommitBox {
     /// Applies a key; Enter is a new line. Paste is the caller's (see [`CommitBox::insert`]).
     pub fn key(&mut self, key: DialogKey) -> Outcome {
         match key {
-            DialogKey::Cancel => return Outcome::Leave,
-            DialogKey::Save => return Outcome::Commit,
-            DialogKey::Enter => self.insert("\n"),
-            DialogKey::Backspace => {
-                if !self.busy && self.generating.is_none() {
-                    self.text.pop();
-                    self.error = None;
-                }
+            DialogKey::Cancel => Outcome::Leave,
+            DialogKey::Save => Outcome::Commit,
+            _ if self.busy || self.generating.is_some() => Outcome::Edited,
+            key => {
+                self.text.key(key);
+                self.error = None;
+                Outcome::Edited
             }
-            DialogKey::Insert(text) => self.insert(&text),
-            DialogKey::SwitchField | DialogKey::Paste => {}
         }
-        Outcome::Edited
     }
 
     /// Types or pastes `text` (CRLF becomes LF); ignored while committing or generating.
@@ -55,7 +52,7 @@ impl CommitBox {
         if self.busy || self.generating.is_some() {
             return;
         }
-        self.text.push_str(&text.replace("\r\n", "\n"));
+        self.text.insert(text);
         self.error = None;
     }
 
@@ -66,7 +63,7 @@ impl CommitBox {
         if self.busy || self.generating.is_some() {
             return None;
         }
-        let message = self.text.trim();
+        let message = self.text.text().trim();
         let invalid = if staged == 0 {
             Some("Stage changes to commit them.")
         } else if message.is_empty() {
@@ -115,7 +112,10 @@ impl CommitBox {
         }
         self.generating = None;
         match result {
-            Ok(text) => self.text = text.replace("\r\n", "\n"),
+            Ok(text) => {
+                self.text.clear();
+                self.text.insert(&text);
+            }
             Err(error) => self.error = Some(format!("Cannot write a message: {error}")),
         }
         true
@@ -200,17 +200,16 @@ mod tests {
 
     #[test]
     fn a_generated_message_replaces_the_draft_and_typing_waits_for_it() {
-        let mut commit = CommitBox {
-            text: "wip".into(),
-            ..CommitBox::default()
-        };
+        let mut commit = CommitBox::default();
+        commit.insert("wip");
         let (first, second) = (Ulid::new(), Ulid::new());
         assert!(commit.begin_generate(first));
         assert!(!commit.begin_generate(second), "one generation at a time");
         commit.insert("x");
         commit.key(DialogKey::Backspace);
         assert_eq!(
-            commit.text, "wip",
+            commit.text.text(),
+            "wip",
             "typing is ignored while the agent writes"
         );
         assert!(
@@ -222,21 +221,19 @@ mod tests {
             "not this box's generation"
         );
         assert!(commit.generated(first, Ok("feat: add x\r\n\r\nWhy.".into())));
-        assert_eq!(commit.text, "feat: add x\n\nWhy.");
+        assert_eq!(commit.text.text(), "feat: add x\n\nWhy.");
         assert_eq!(commit.generating, None);
         assert_eq!(commit.error, None);
     }
 
     #[test]
     fn a_failed_generation_keeps_the_draft_and_says_why() {
-        let mut commit = CommitBox {
-            text: "wip".into(),
-            ..CommitBox::default()
-        };
+        let mut commit = CommitBox::default();
+        commit.insert("wip");
         let id = Ulid::new();
         assert!(commit.begin_generate(id));
         assert!(commit.generated(id, Err("the agent exited with 3".into())));
-        assert_eq!(commit.text, "wip");
+        assert_eq!(commit.text.text(), "wip");
         assert_eq!(
             commit.error.as_deref(),
             Some("Cannot write a message: the agent exited with 3")
@@ -262,7 +259,7 @@ mod tests {
         assert_eq!(draft.key(DialogKey::Enter), Outcome::Edited);
         draft.insert("Body\r\nmore\n\n");
         assert_eq!(draft.key(DialogKey::SwitchField), Outcome::Edited);
-        assert_eq!(draft.text, "Fix login\n\nBody\nmore\n\n");
+        assert_eq!(draft.text.text(), "Fix login\n\nBody\nmore\n\n");
         assert_eq!(draft.key(DialogKey::Save), Outcome::Commit);
         assert_eq!(draft.key(DialogKey::Cancel), Outcome::Leave);
 
@@ -279,13 +276,14 @@ mod tests {
         draft.insert("x");
         draft.key(DialogKey::Backspace);
         assert_eq!(
-            draft.text, "Fix login\n\nBody\nmore\n\n",
+            draft.text.text(),
+            "Fix login\n\nBody\nmore\n\n",
             "frozen while committing"
         );
 
         draft.committed(Ok(()));
         assert!(!draft.busy);
-        assert_eq!(draft.text, "");
+        assert_eq!(draft.text.text(), "");
     }
 
     #[test]
@@ -313,11 +311,56 @@ mod tests {
         assert!(draft.begin(Ulid::new(), 1).is_some());
         draft.committed(Err("pre-commit hook failed".into()));
         assert!(!draft.busy);
-        assert_eq!(draft.text, "Ship it");
+        assert_eq!(draft.text.text(), "Ship it");
         assert_eq!(
             draft.error.as_deref(),
             Some("Commit failed: pre-commit hook failed")
         );
+    }
+
+    #[test]
+    fn ctrl_a_then_backspace_typing_or_paste_replaces_the_whole_draft() {
+        let mut draft = CommitBox::default();
+        type_text(&mut draft, "wip\nmore");
+        assert_eq!(draft.key(DialogKey::SelectAll), Outcome::Edited);
+        draft.key(DialogKey::Backspace);
+        assert_eq!(draft.text.text(), "", "Backspace removes everything");
+
+        type_text(&mut draft, "old");
+        draft.key(DialogKey::SelectAll);
+        type_text(&mut draft, "fix: x");
+        assert_eq!(draft.text.text(), "fix: x", "typing replaces the selection");
+        draft.key(DialogKey::Backspace);
+        assert_eq!(
+            draft.text.text(),
+            "fix: ",
+            "the selection is gone after one edit"
+        );
+
+        draft.key(DialogKey::SelectAll);
+        draft.insert("pasted");
+        assert_eq!(draft.text.text(), "pasted", "paste replaces the selection");
+    }
+
+    #[test]
+    fn select_all_does_not_change_commit_or_leave() {
+        let mut draft = CommitBox::default();
+        draft.insert("Ship it");
+        draft.key(DialogKey::SelectAll);
+        assert_eq!(draft.key(DialogKey::Cancel), Outcome::Leave);
+        assert_eq!(draft.text.text(), "Ship it", "Esc keeps the text");
+        assert_eq!(draft.key(DialogKey::Save), Outcome::Commit);
+        assert_eq!(
+            draft.begin(Ulid::new(), 1).map(|p| p.message),
+            Some("Ship it".to_owned()),
+            "Ctrl+Enter commits the whole selected text"
+        );
+        let mut busy = CommitBox {
+            busy: true,
+            ..CommitBox::default()
+        };
+        busy.key(DialogKey::SelectAll);
+        assert!(!busy.text.all_selected(), "frozen while committing");
     }
 
     #[test]

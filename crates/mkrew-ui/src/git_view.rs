@@ -832,7 +832,7 @@ impl GitView {
     pub fn commit_box_shown(&self) -> bool {
         self.section() == Section::Working
             && matches!(self.status, Status::Loaded(_))
-            && (!self.files().is_empty() || !self.commit.text.is_empty())
+            && (!self.files().is_empty() || !self.commit.text.text().is_empty())
     }
 
     /// The changed-file list: in Working mode each non-empty group under its title; in the

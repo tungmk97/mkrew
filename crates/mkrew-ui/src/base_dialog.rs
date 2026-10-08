@@ -26,7 +26,7 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         DialogKey::Backspace => Some(Key::Backspace),
         DialogKey::Paste => Some(Key::Paste),
         DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField => None,
+        DialogKey::SwitchField | DialogKey::SelectAll => None,
     }
 }
 

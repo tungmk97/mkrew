@@ -18,6 +18,10 @@ pub struct Settings {
     pub awake: AwakeSettings,
     pub composer: ComposerSettings,
     pub zed: ZedSettings,
+    /// `[ui]`: the app's font (SPEC §14, §20.0).
+    pub ui: FontSettings,
+    /// `[terminal]`: the terminal font; also used by the Files and Git code views.
+    pub terminal: FontSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -84,6 +88,72 @@ impl Default for ZedSettings {
     }
 }
 
+/// `[ui]` / `[terminal]` font. An empty family is the built-in default (SPEC §14).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FontSettings {
+    pub font_family: String,
+    pub font_size: FontSize,
+}
+
+impl Default for FontSettings {
+    fn default() -> Self {
+        Self {
+            font_family: String::new(),
+            font_size: FontSize(13),
+        }
+    }
+}
+
+/// A font size in px, 8–32 (checked when parsed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "u16")]
+pub struct FontSize(pub u16);
+
+impl TryFrom<u16> for FontSize {
+    type Error = String;
+
+    fn try_from(px: u16) -> Result<Self, String> {
+        if (8..=32).contains(&px) {
+            Ok(Self(px))
+        } else {
+            Err(format!("font_size must be 8–32 px, got {px}"))
+        }
+    }
+}
+
+/// The commented `settings.toml` written when the user opens settings and none exists:
+/// every key at its default (SPEC §20.0).
+pub fn template() -> &'static str {
+    "# Mkrew settings (SPEC §20.0). Uncomment a line to change it; changes apply on save.\n\
+     # A mistake is reported in the command palette and the last good settings stay.\n\
+     \n\
+     [notify]\n\
+     # needs_input = true\n\
+     # done = true\n\
+     # sound = true\n\
+     \n\
+     [awake]\n\
+     # keep_awake = true\n\
+     \n\
+     [composer]\n\
+     # file_ref = \"@{path}\"\n\
+     \n\
+     [zed]\n\
+     # follow_debounce_ms = 1500\n\
+     \n\
+     # App font: an installed family name (empty: the system UI font); size 8–32 px.\n\
+     [ui]\n\
+     # font_family = \"\"\n\
+     # font_size = 13\n\
+     \n\
+     # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
+     # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
+     [terminal]\n\
+     # font_family = \"\"\n\
+     # font_size = 13\n"
+}
+
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{}{}: {message}", file.display(), position(*line_col))]
@@ -139,6 +209,14 @@ mod tests {
         assert!(settings.awake.keep_awake);
         assert_eq!(settings.composer.file_ref, "@{path}");
         assert_eq!(settings.zed.follow_debounce_ms, 1500);
+        assert_eq!(
+            settings.ui,
+            FontSettings {
+                font_family: String::new(),
+                font_size: FontSize(13)
+            }
+        );
+        assert_eq!(settings.terminal, settings.ui);
     }
 
     #[test]
@@ -179,6 +257,14 @@ file_ref = "{path}"
 
 [zed]
 follow_debounce_ms = 500
+
+[ui]
+font_family = "Inter"
+font_size = 14
+
+[terminal]
+font_family = "JetBrains Mono"
+font_size = 15
 "#;
         let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
@@ -195,6 +281,14 @@ follow_debounce_ms = 500
                 },
                 zed: ZedSettings {
                     follow_debounce_ms: 500
+                },
+                ui: FontSettings {
+                    font_family: "Inter".into(),
+                    font_size: FontSize(14),
+                },
+                terminal: FontSettings {
+                    font_family: "JetBrains Mono".into(),
+                    font_size: FontSize(15),
                 },
             }
         );
@@ -223,6 +317,49 @@ follow_debounce_ms = 500
     fn syntax_error_has_position() {
         let message = parse_err("[notify]\nsound = \n");
         assert!(message.starts_with("settings.toml:2:"), "{message}");
+    }
+
+    #[test]
+    fn font_size_outside_8_to_32_is_an_error() {
+        let message = parse_err("[terminal]\nfont_size = 4\n");
+        assert!(message.starts_with("settings.toml:2:"), "{message}");
+        assert!(message.contains("8–32"), "{message}");
+        let message = parse_err("[ui]\nfont_size = 33\n");
+        assert!(message.contains("8–32"), "{message}");
+        let ok = parse(
+            Path::new("settings.toml"),
+            "[ui]\nfont_size = 8\n[terminal]\nfont_size = 32\nfont_family = \"Consolas\"\n",
+        )
+        .unwrap();
+        assert_eq!(ok.ui.font_size, FontSize(8));
+        assert_eq!(ok.terminal.font_size, FontSize(32));
+        assert_eq!(ok.terminal.font_family, "Consolas");
+        assert_eq!(
+            ok.ui.font_family, "",
+            "a missing family is the built-in default"
+        );
+    }
+
+    #[test]
+    fn the_template_parses_to_the_defaults_commented_or_not() {
+        assert_eq!(
+            parse(Path::new("settings.toml"), template()).unwrap(),
+            Settings::default()
+        );
+        let uncommented: String = template()
+            .lines()
+            .map(|line| {
+                line.strip_prefix("# ")
+                    .filter(|l| l.contains(" = "))
+                    .unwrap_or(line)
+            })
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert_eq!(
+            parse(Path::new("settings.toml"), &uncommented).unwrap(),
+            Settings::default(),
+            "{uncommented}"
+        );
     }
 
     #[test]

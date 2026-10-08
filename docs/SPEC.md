@@ -651,16 +651,16 @@ records the agent as author). `mk attach` makes Mkrew usable without the UI, inc
 One window, three regions:
 
 ```
-┌──────────────┬───────────────────────────────────────────────┐
-│ WORKSPACES   │  [Board] [Terminals] [Docs] [Files] [Git]     │
-│ ▾ api      2 │                                               │
-│   ● claude   │  Todo │ Running │ Needs input │ Review │ Done │
-│   ? codex    │                                               │
-│ ▸ web     ?  │  …or the terminal tabs/panes of the workspace │
-│ ▸ infra      │  …or the Markdown review view                 │
-│ INBOX (2)    │                                               │
-│ web: approve?│                                               │
-└──────────────┴───────────────────────────────────────────────┘
+┌──────────────┬──────────────────────────────────────┬───────────┐
+│ WORKSPACES   │  Todo │ Running │ Needs input │ …    │ Board     │
+│ ▾ api      2 │                                      │ Terminals │
+│   ● claude   │  …or the terminal tabs/panes         │ Docs      │
+│   ? codex    │    (tab bar: … ▶ Run · History ·     │ Files     │
+│ ▸ web     ?  │     + Agent · + Shell)               │ Git       │
+│ ▸ infra      │  …or the Markdown review view        │           │
+│ INBOX (2)    │                                      │           │
+│ web: approve?│                                      │ ▶ ▾       │
+└──────────────┴──────────────────────────────────────┴───────────┘
 ```
 
 - **Sidebar:** workspaces; expanding one lists its sessions with status (§11). Below: **Inbox** —
@@ -671,8 +671,11 @@ One window, three regions:
 - **Color:** the workspace menu's swatches give a workspace one of 8 colors, shown as a dot
   before its name (decoration only, ADR 0020).
 - **Views per workspace:** Board, Terminals, Docs, Files, Git.
+- **View rail** (ADR 0023): the views are a column right of the main area; the active one is
+  highlighted, tooltips show their shortcuts (§13).
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
+  New task: the empty board's button, or `New task` in the Todo column header.
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
   Sessions are `agent` (from a profile) or `shell` (pwsh on Windows, `$SHELL` elsewhere, configurable).
   New panes open in the project folder. Closing a pane with a running agent asks: kill the
@@ -690,7 +693,9 @@ One window, three regions:
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
 - **Open in Zed:** on task cards, workspace menu and Docs; runs `zed <path>[:line]`; clear error
   with install hint if `zed` is missing.
-- **Run button** (ADR 0018) at the right end of the view bar, in every view: `[▶ Run │▾]` with
+- **Run button** (ADR 0018) in the Terminals tab bar before History, and as a compact
+  `[▶│▾]` / `[●│▾]` / `[✕│▾]` (full label in the tooltip, ↻ ■ in the menu) at the foot of the
+  view rail in the other views: `[▶ Run │▾]` with
   no command or all stopped (▶ with no command opens Run setup, and saving there runs);
   `[● Running 2/2 · :8080 :5180 │↻│■│▾]` while running; `[✕ Running 1/2 · …]` in the warning
   color when some exited. Ports: every distinct port of the live run sessions, config order, up
@@ -846,6 +851,8 @@ Windows (tens of ms, worse with antivirus), so:
 All shortcuts live in `<config>/mkrew/keymap.toml`; below are defaults. While a terminal has focus,
 only combinations bound in the keymap are intercepted; everything else goes to the agent. Defaults
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
+One exception: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection
+it reaches the agent as ^C. Anything sent to the agent clears the selection.
 On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 
 | Group | Action | Default |
@@ -868,7 +875,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
-| Terminal | Copy / paste | Ctrl+Shift+C / Ctrl+Shift+V |
+| Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+Shift+V |
 | Terminal / Files / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
 | Docs | Comment on selection | Ctrl+Alt+M |
@@ -941,12 +948,15 @@ The terminal is the hero; everything else steps back.
 
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 4 (badges, small buttons), 8 (cards, panes, inputs), 12 (dialogs, palette).
-- UI font = system font (Segoe UI Variable / SF / Inter). Sizes 12 meta, 13 body, 15 card title,
-  20 view title. Weights 400/500/600. No all-caps text.
+- UI font = system font (Segoe UI Variable / SF / Inter) unless `[ui] font_family` is set. Sizes
+  12 meta, 13 body, 15 card title, 20 view title at the default `[ui] font_size = 13`; other sizes
+  keep their ratio to body (ADR 0024). Weights 400/500/600. No all-caps text.
 - Docs preview (ADR 0021): body 14 px, line height 1.6, headings 24/20/17/15/14/14 px, code 13 px,
   a centered column of at most 720 px.
 - Terminal font defaults: Cascadia Code → Cascadia Mono → Consolas (Windows), SF Mono → Menlo
-  (macOS), JetBrains Mono → DejaVu Sans Mono (Linux): the first installed one, 13 px. Icons of
+  (macOS), JetBrains Mono → DejaVu Sans Mono (Linux): the first installed one, 13 px;
+  `[terminal] font_family` / `font_size` override them (a family that is not installed is
+  ignored). Icons of
   Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
   family (`theme::TERMINAL_GLYPH_FALLBACKS`), then the system fallback. ANSI palette
   harmonized with the theme.
@@ -1243,7 +1253,9 @@ action (ADR 0010).
 at start and re-read after it changes (the daemon watches its own config dir, debounced 300 ms).
 Missing file = all defaults. A parse error keeps the last good settings and is reported in
 `daemon.status` (`settings_error`) and by the palette like keymap errors. The UI reads it the
-same way. Unknown keys are errors (same rule as profiles). Full shape with defaults:
+same way and re-reads it within 500 ms of a change (fonts apply live, ADR 0024). Palette
+`Global: Open settings` creates the commented file if missing and opens it in Zed. Unknown keys
+are errors (same rule as profiles). Full shape with defaults:
 
 ```toml
 [notify]
@@ -1259,6 +1271,14 @@ file_ref = "@{path}"        # §20B.1; how a picked file is typed; "{path}" alon
 
 [zed]
 follow_debounce_ms = 1500   # §20C.4
+
+[ui]
+font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
+font_size = 13              # px, 8–32
+
+[terminal]
+font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
+font_size = 13              # px, 8–32; also the Files and Git code views
 ```
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session

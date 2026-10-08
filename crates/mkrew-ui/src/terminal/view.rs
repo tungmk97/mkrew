@@ -29,7 +29,7 @@ use crate::composer::{attachment_ext, typed_paths};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindStatus, find_key};
-use crate::terminal::input::{key_to_bytes, paste_bytes, wheel_bytes};
+use crate::terminal::input::{KeyAction, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::theme::{self, Theme, font_size, radius, space};
 
@@ -124,7 +124,7 @@ impl TerminalPane {
             session_id,
             connection,
             emulator,
-            theme: theme_for(window.appearance()),
+            theme: theme_for(window.appearance(), cx),
             rows: Rc::default(),
             focus_handle,
             painted,
@@ -213,15 +213,33 @@ impl TerminalPane {
     }
 
     /// Keys go to the session. Keystrokes bound in the keymap (SPEC §13) never get here: their
-    /// action handler stops them first.
+    /// action handler stops them first. Plain Ctrl+C copies a selection instead, also in an
+    /// exited pane (ADR 0022).
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.exited.is_some() {
-            return;
+        let selected = self.emulator.selection_text().is_some();
+        let mode = self.emulator.input_mode();
+        match key_action(&event.keystroke, selected, self.exited.is_some(), mode) {
+            KeyAction::Copy => {
+                cx.stop_propagation();
+                self.copy_selection(cx);
+            }
+            KeyAction::Send(data) => {
+                cx.stop_propagation();
+                self.input(data, cx);
+            }
+            KeyAction::Ignore => {}
         }
-        if let Some(data) = key_to_bytes(&event.keystroke, self.emulator.input_mode()) {
-            cx.stop_propagation();
-            self.input(data, cx);
-        }
+    }
+
+    /// Copies the selection to the clipboard and clears it; `false` when nothing is selected.
+    fn copy_selection(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let Some(text) = self.emulator.selection_text() else {
+            return false;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.emulator.clear_selection();
+        cx.notify();
+        true
     }
 
     /// The visible cell under a window position, once the grid has been painted.
@@ -325,11 +343,7 @@ impl TerminalPane {
                 }
             }
             Command::Copy => {
-                if let Some(text) = self.emulator.selection_text() {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    self.emulator.clear_selection();
-                    cx.notify();
-                }
+                self.copy_selection(cx);
             }
             Command::PageUp | Command::PageDown => {
                 self.emulator.scroll_page(*command == Command::PageUp);
@@ -410,7 +424,7 @@ impl TerminalPane {
         let caret = div()
             .flex_none()
             .w(px(theme::BORDER_WIDTH))
-            .h(px(font_size::BODY))
+            .h(font_size::BODY)
             .bg(rgb(theme.text));
         // While typing, the caret sits after the query; the placeholder comes after the caret.
         let query = div()
@@ -434,7 +448,7 @@ impl TerminalPane {
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
             .cursor_pointer()
-            .text_size(px(font_size::META))
+            .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))
             .hover(move |style| style.bg(rgb(hover)))
             .active(|style| style.opacity(theme::opacity::ACTIVE))
@@ -459,8 +473,8 @@ impl TerminalPane {
                 }))
                 .bg(rgb(theme.surface_raised))
                 .shadow_sm()
-                .font_family(theme::UI_FONT)
-                .text_size(px(font_size::BODY))
+                .font_family(theme.ui_font_family.clone())
+                .text_size(font_size::BODY)
                 .cursor(CursorStyle::IBeam)
                 .track_focus(&self.find_focus)
                 .on_key_down(cx.listener(Self::find_key_down))
@@ -474,7 +488,7 @@ impl TerminalPane {
                 )
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(status),
                 )
@@ -555,11 +569,14 @@ impl TerminalPane {
     }
 
     /// Sends typed or pasted bytes; a scrolled-back view returns to the live screen first.
+    /// Sends `data` to the session. Anything sent (keys, paste, dropped paths, wheel arrows)
+    /// clears the selection, so a later Ctrl+C interrupts again (ADR 0022).
     fn input(&mut self, data: Vec<u8>, cx: &mut Context<'_, Self>) {
+        self.emulator.clear_selection();
         if self.emulator.display_offset() > 0 {
             self.emulator.scroll_to_bottom();
-            cx.notify();
         }
+        cx.notify();
         let request = Request::SessionInput(SessionInputParams {
             session_id: self.session_id,
             data,
@@ -568,16 +585,17 @@ impl TerminalPane {
     }
 }
 
-fn theme_for(appearance: WindowAppearance) -> Theme {
+fn theme_for(appearance: WindowAppearance, cx: &App) -> Theme {
     Theme::for_appearance(matches!(
         appearance,
         WindowAppearance::Dark | WindowAppearance::VibrantDark
     ))
+    .with_fonts(cx.global::<theme::Fonts>())
 }
 
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = theme_for(window.appearance());
+        let theme = theme_for(window.appearance(), cx);
         if theme != self.theme {
             self.rows.borrow_mut().clear();
             self.theme = theme;
@@ -591,8 +609,8 @@ impl Render for TerminalPane {
                 .px(px(space::M))
                 .py(px(space::XS))
                 .bg(rgb(self.theme.surface))
-                .font_family(theme::UI_FONT)
-                .text_size(px(font_size::META))
+                .font_family(self.theme.ui_font_family.clone())
+                .text_size(font_size::META)
                 .text_color(rgb(self.theme.text_muted))
                 .child(text)
         });
@@ -849,7 +867,7 @@ static GLYPH_FALLBACKS: std::sync::LazyLock<gpui::FontFallbacks> = std::sync::La
 });
 
 fn terminal_font(theme: &Theme) -> Font {
-    let mut base = font(theme.terminal_font_family);
+    let mut base = font(theme.terminal_font_family.clone());
     base.fallbacks = Some(GLYPH_FALLBACKS.clone());
     base
 }

@@ -108,6 +108,12 @@ impl RunSetup {
                 }
                 Outcome::Edited
             }
+            DialogKey::SelectAll => {
+                if let Focus::Field(i, Field::Env) = self.focus {
+                    self.cards[i].env.key(DialogKey::SelectAll);
+                }
+                Outcome::Edited
+            }
             // The caller reads the clipboard and calls `insert`.
             DialogKey::Paste => Outcome::Edited,
             DialogKey::Insert(text) => {

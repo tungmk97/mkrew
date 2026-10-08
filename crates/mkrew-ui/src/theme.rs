@@ -1,8 +1,11 @@
 //! Design tokens (SPEC §14). Every color, spacing, radius, font size and duration used by the
 //! UI comes from here; components never hard-code values. Colors are `0xRRGGBB`.
 
+use std::path::Path;
 use std::time::Duration;
 
+use gpui::SharedString;
+use mkrew_core::settings::Settings;
 use mkrew_protocol::WORKSPACE_COLORS;
 
 /// Spacing scale in px: 4 · 8 · 12 · 16 · 24 · 32.
@@ -28,12 +31,16 @@ pub mod radius {
     pub const LARGE: f32 = 12.0;
 }
 
-/// UI font sizes in px.
+/// UI font sizes relative to body text (1 rem = `[ui] font_size`, default 13 px, set per
+/// frame with `Window::set_rem_size`): 12 meta, 13 body, 15 card title, 20 view title at the
+/// default (SPEC §14, ADR 0024).
 pub mod font_size {
-    pub const META: f32 = 12.0;
-    pub const BODY: f32 = 13.0;
-    pub const CARD_TITLE: f32 = 15.0;
-    pub const VIEW_TITLE: f32 = 20.0;
+    use gpui::{Rems, rems};
+
+    pub const META: Rems = rems(12.0 / 13.0);
+    pub const BODY: Rems = rems(1.0);
+    pub const CARD_TITLE: Rems = rems(15.0 / 13.0);
+    pub const VIEW_TITLE: Rems = rems(20.0 / 13.0);
 }
 
 /// UI font weights (400/500/600 only).
@@ -92,6 +99,14 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
 /// Width of the workspace sidebar.
 pub const SIDEBAR_WIDTH: f32 = 240.0;
+
+/// Min width of the view rail right of the main area (view switcher + compact Run, ADR 0023);
+/// it grows to fit its labels at larger UI font sizes.
+pub const VIEW_RAIL_WIDTH: f32 = 76.0;
+
+/// Min height of a board column header row: the Todo header's `New task` button at the
+/// default UI font size, so every column's cards start at the same height (ADR 0023).
+pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 
 /// Width of a popover menu (the workspace menu).
 pub const MENU_WIDTH: f32 = 240.0;
@@ -254,9 +269,6 @@ pub const TERMINAL_GLYPH_FALLBACKS: &[&str] = &[
     "FiraCode Nerd Font Mono",
 ];
 
-/// The terminal family picked from the installed fonts at startup.
-static TERMINAL_FONT: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-
 /// The first of `preferred` that is `installed`, else the first of `preferred`.
 pub fn pick_family(preferred: &[&'static str], installed: &[String]) -> &'static str {
     preferred
@@ -267,17 +279,51 @@ pub fn pick_family(preferred: &[&'static str], installed: &[String]) -> &'static
         .unwrap_or_default()
 }
 
-/// Picks the terminal family once; call before the first window opens. A family DirectWrite
-/// / CoreText cannot find would silently become a proportional UI font.
-pub fn init_terminal_font(installed: &[String]) {
-    let _ = TERMINAL_FONT.set(pick_family(TERMINAL_FONTS, installed));
+/// The fonts of `settings.toml` (SPEC §20.0), as a GPUI global read by every [`Theme`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fonts {
+    pub ui_family: SharedString,
+    pub ui_size: f32,
+    pub terminal_family: SharedString,
+    pub terminal_size: f32,
 }
 
-fn terminal_font_family() -> &'static str {
-    TERMINAL_FONT
-        .get()
-        .copied()
-        .unwrap_or_else(|| pick_family(TERMINAL_FONTS, &[]))
+impl gpui::Global for Fonts {}
+
+impl Fonts {
+    /// `installed` = `cx.text_system().all_font_names()`. A terminal family that is not
+    /// installed would silently become a proportional UI font, so it falls back to the list.
+    pub fn from_settings(settings: &Settings, installed: &[String]) -> Self {
+        let terminal = &settings.terminal.font_family;
+        let terminal_family = if !terminal.is_empty() && installed.iter().any(|n| n == terminal) {
+            SharedString::from(terminal.clone())
+        } else {
+            pick_family(TERMINAL_FONTS, installed).into()
+        };
+        let ui_family = if settings.ui.font_family.is_empty() {
+            UI_FONT.into()
+        } else {
+            settings.ui.font_family.clone().into()
+        };
+        Self {
+            ui_family,
+            ui_size: settings.ui.font_size.0.into(),
+            terminal_family,
+            terminal_size: settings.terminal.font_size.0.into(),
+        }
+    }
+}
+
+/// The fonts of `path` when they differ from `last` (`Ok(None)` when unchanged). A broken
+/// file is an `Err` with `file:line:col` (§20.0); the caller keeps the last good fonts.
+pub fn reload_fonts(
+    path: &Path,
+    installed: &[String],
+    last: &Fonts,
+) -> Result<Option<Fonts>, String> {
+    let settings = mkrew_core::settings::load(path).map_err(|error| error.to_string())?;
+    let fonts = Fonts::from_settings(&settings, installed);
+    Ok((fonts != *last).then_some(fonts))
 }
 
 /// Color tokens for one appearance (dark or light), plus the terminal settings.
@@ -322,7 +368,8 @@ pub struct Theme {
     pub workspace_colors: [u32; 8],
     /// Dark appearance (picks diagram images, ADR 0021).
     pub dark: bool,
-    pub terminal_font_family: &'static str,
+    pub ui_font_family: SharedString,
+    pub terminal_font_family: SharedString,
     pub terminal_font_size: f32,
     /// Line height as a multiple of the font size.
     pub terminal_line_height: f32,
@@ -339,6 +386,14 @@ impl Theme {
     /// Follows the OS appearance (SPEC §14).
     pub fn for_appearance(dark: bool) -> Self {
         if dark { Self::dark() } else { Self::light() }
+    }
+
+    /// This theme with the fonts of `settings.toml`.
+    pub fn with_fonts(mut self, fonts: &Fonts) -> Self {
+        self.ui_font_family = fonts.ui_family.clone();
+        self.terminal_font_family = fonts.terminal_family.clone();
+        self.terminal_font_size = fonts.terminal_size;
+        self
     }
 
     pub fn dark() -> Self {
@@ -454,8 +509,9 @@ impl Theme {
             ansi: [0; 16],
             workspace_colors: [0; 8],
             dark: false,
-            terminal_font_family: terminal_font_family(),
-            terminal_font_size: font_size::BODY,
+            ui_font_family: UI_FONT.into(),
+            terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
+            terminal_font_size: 13.0,
             terminal_line_height: 1.35,
             terminal_padding: space::S,
             terminal_underline_thickness: 1.0,
@@ -490,7 +546,70 @@ pub fn contrast(a: u32, b: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use mkrew_core::settings::{FontSize, Settings};
+
     use super::*;
+
+    #[test]
+    fn a_configured_family_is_used_only_when_installed() {
+        let mut settings = Settings::default();
+        settings.terminal.font_family = "JetBrains Mono".into();
+        settings.terminal.font_size = FontSize(18);
+        settings.ui.font_family = "Inter".into();
+        settings.ui.font_size = FontSize(15);
+        let installed = vec!["JetBrains Mono".to_owned(), TERMINAL_FONTS[0].to_owned()];
+
+        let fonts = Fonts::from_settings(&settings, &installed);
+        assert_eq!(fonts.terminal_family.as_ref(), "JetBrains Mono");
+        assert_eq!((fonts.terminal_size, fonts.ui_size), (18.0, 15.0));
+        assert_eq!(
+            fonts.ui_family.as_ref(),
+            "Inter",
+            "UI families fall back in GPUI itself"
+        );
+
+        let fonts = Fonts::from_settings(&settings, &installed[1..]);
+        assert_eq!(
+            fonts.terminal_family.as_ref(),
+            TERMINAL_FONTS[0],
+            "a missing family never makes the grid proportional"
+        );
+    }
+
+    #[test]
+    fn default_settings_give_the_spec_fonts() {
+        let fonts = Fonts::from_settings(&Settings::default(), &[]);
+        assert_eq!(fonts.ui_family.as_ref(), UI_FONT);
+        assert_eq!(fonts.terminal_family.as_ref(), TERMINAL_FONTS[0]);
+        assert_eq!((fonts.ui_size, fonts.terminal_size), (13.0, 13.0));
+        let theme = Theme::dark().with_fonts(&fonts);
+        assert_eq!(theme.terminal_font_size, 13.0);
+        assert_eq!(
+            theme,
+            Theme::dark(),
+            "the default theme already uses the default fonts"
+        );
+    }
+
+    #[test]
+    fn a_broken_settings_file_keeps_the_last_fonts_and_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let last = Fonts::from_settings(&Settings::default(), &[]);
+        std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
+        let grown = reload_fonts(&path, &[], &last).unwrap().expect("changed");
+        assert_eq!(grown.terminal_size, 18.0);
+        std::fs::write(&path, "[terminal]\nfont_size = 4\n").unwrap();
+        let error = reload_fonts(&path, &[], &grown).expect_err("out of range");
+        assert!(error.contains("settings.toml:2:"), "{error}");
+        assert!(error.contains("8–32"), "{error}");
+        std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
+        assert_eq!(
+            reload_fonts(&path, &[], &grown),
+            Ok(None),
+            "unchanged: no redraw"
+        );
+    }
 
     #[test]
     fn the_first_installed_terminal_family_wins() {

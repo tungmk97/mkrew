@@ -15,6 +15,26 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-08 inbox: keys, fonts, view rail (plan docs/superpowers/plans/2026-10-08-inbox-keys-fonts-view-rail.md)
+
+- [ ] Git commit box: type two lines, Ctrl+A highlights them, Backspace empties the box; Ctrl+A then
+  typing or Ctrl+V replaces the text. Same in the composer and the card follow-up.
+- [ ] Terminal: drag-select text, Ctrl+C → it is on the clipboard (paste into Zed). Without a
+  selection Ctrl+C still stops `ping -t 127.0.0.1` in a shell pane. Select, type a letter, then
+  Ctrl+C → it interrupts (the selection was cleared). Same after Ctrl+Shift+V paste. In an
+  exited pane, select text and Ctrl+C copies it.
+- [ ] In omp, Claude Code and a pwsh pane: type `hello world`, Ctrl+Backspace deletes `world`
+  only (it sends ^W; PSReadLine's Windows mode binds Ctrl+w to BackwardKillWord).
+- [ ] Ctrl+A in omp moves to the line start (by design, terminals send ^A); Ctrl+U clears the input.
+- [ ] Palette → `Global: Open settings` opens a commented settings.toml in Zed. `[terminal]
+  font_size = 18` → glyphs grow within ~1 s, a running agent redraws to fewer columns.
+  `[ui] font_size = 15` → sidebar/board text grows. `font_family = "Consolas"` changes the
+  terminal; a family that is not installed changes nothing. `font_size = 4` → nothing changes,
+  the palette shows the error.
+- [ ] Views are a rail on the right; the main area starts at the top. Tooltips show
+  Ctrl+Shift+1..5. In Terminals `▶ Run` sits before History; in other views the compact Run at
+  the rail foot opens its ▾ menu. `New task` is in the Todo column header. Light + dark.
+
 ### To verify — 2026-10-07 workspace, files and docs fixes (plan docs/superpowers/plans/2026-10-07-workspace-files-docs-fixes.md)
 
 The protocol is now v26, and `target\debug\mk.exe` is already rebuilt at v26, so
@@ -467,8 +487,8 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   the pane gets the keyboard back. Ctrl+V pastes into the query. In a 10,000-file repo typing
   feels instant. Dark + light screenshots for §14.
 - [ ] (T7.9a) **Git view** (logic covered by `git_view.rs` unit tests; daemon `git.status`/
-  `git.diff` by daemon e2e; the view was never seen): Ctrl+Shift+5 or the "Git" tab in the
-  view bar → branch name, "→ origin/main  ↑2 ↓1" (or "No upstream"), Working changes /
+  `git.diff` by daemon e2e; the view was never seen): Ctrl+Shift+5 or the "Git" entry in the
+  view rail → branch name, "→ origin/main  ↑2 ↓1" (or "No upstream"), Working changes /
   Against base segments, "Base: main (auto-detected)". Changed files grouped Staged /
   Unstaged / Untracked with change letters and +/− counts; the first is selected and its diff
   shows: hunk headers on `diff-hunk-header`, added/deleted lines in the diff colors with old /

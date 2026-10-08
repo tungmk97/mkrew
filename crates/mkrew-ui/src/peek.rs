@@ -122,7 +122,7 @@ impl Peek {
                 self.insert(&text);
                 Outcome::Edited
             }
-            Some(DialogKey::SwitchField) | None => Outcome::Edited,
+            Some(DialogKey::SwitchField | DialogKey::SelectAll) | None => Outcome::Edited,
         }
     }
 

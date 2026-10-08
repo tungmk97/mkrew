@@ -115,7 +115,7 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
                     .gap(px(space::XS))
                     .child(
                         div()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child(format!("Cannot draw this diagram: {error}")),
                     )
@@ -169,7 +169,7 @@ fn list_item(item: &Item, number: Option<u64>, shown: &Shown, theme: &Theme) -> 
                 theme.text_muted
             }))
             .when(checked, |el| el.bg(rgb(theme.accent)))
-            .text_size(px(font_size::META))
+            .text_size(font_size::META)
             .text_color(rgb(theme.surface))
             .when(checked, |el| el.child("✓")),
         (None, Some(number)) => div()
@@ -228,8 +228,8 @@ fn code(text: &str, color: u32, theme: &Theme) -> gpui::Div {
         .p(px(space::M))
         .rounded(px(radius::MEDIUM))
         .bg(rgb(theme.surface_raised))
-        .font_family(theme.terminal_font_family)
-        .text_size(px(font_size::META))
+        .font_family(theme.terminal_font_family.clone())
+        .text_size(font_size::META)
         .text_color(rgb(color))
         .child(SharedString::from(text.to_owned()))
 }
@@ -246,7 +246,7 @@ fn code_block(lang: Option<&str>, code: &Code, theme: &Theme) -> gpui::Div {
         .bg(rgb(theme.surface_raised))
         .children(lang.map(|lang| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(lang.to_owned())
         }))
@@ -254,7 +254,7 @@ fn code_block(lang: Option<&str>, code: &Code, theme: &Theme) -> gpui::Div {
             div()
                 .flex()
                 .flex_col()
-                .font_family(theme.terminal_font_family)
+                .font_family(theme.terminal_font_family.clone())
                 .text_size(px(theme::doc::CODE))
                 .line_height(relative(theme::doc::CODE_LINE_HEIGHT))
                 .text_color(rgb(theme.text))
@@ -291,12 +291,7 @@ fn text(runs: &[Run], theme: &Theme) -> StyledText {
     let mono: Vec<(Range<usize>, SharedString)> = styled
         .iter()
         .filter(|(_, style, _)| style.code)
-        .map(|(range, _, _)| {
-            (
-                range.clone(),
-                SharedString::from(theme.terminal_font_family),
-            )
-        })
+        .map(|(range, _, _)| (range.clone(), theme.terminal_font_family.clone()))
         .collect();
     let accent = Hsla::from(rgb(theme.accent));
     let code_bg = Hsla::from(rgb(theme.surface_raised));
@@ -375,7 +370,7 @@ pub fn source(
             })
             .collect()
     })
-    .font_family(theme.terminal_font_family)
+    .font_family(theme.terminal_font_family.clone())
     .text_size(px(theme.terminal_font_size))
 }
 
@@ -493,7 +488,7 @@ pub fn code_view(
     theme: &Theme,
 ) -> UniformList {
     let total = code.lines.len();
-    let (font_family, font_size) = (theme.terminal_font_family, theme.terminal_font_size);
+    let (font_family, font_size) = (theme.terminal_font_family.clone(), theme.terminal_font_size);
     let line_height = theme.terminal_font_size * theme.terminal_line_height;
     let theme = theme.clone();
     uniform_list(id, total, move |range, _, _| {

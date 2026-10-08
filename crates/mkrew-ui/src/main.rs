@@ -127,7 +127,12 @@ fn main() {
             cx.bind_keys(bindings);
         })
         .detach();
-        theme::init_terminal_font(&cx.text_system().all_font_names());
+        // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
+        let settings = mkrew_core::settings::load(&paths.settings_file()).unwrap_or_default();
+        cx.set_global(theme::Fonts::from_settings(
+            &settings,
+            &cx.text_system().all_font_names(),
+        ));
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
@@ -216,8 +221,13 @@ struct Shell {
     keymap_errors: Vec<KeymapError>,
     /// `<config>/mkrew/keymap.toml` (Ctrl+, creates and opens it).
     keymap_file: PathBuf,
-    /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed (§20.0).
+    /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed and polled for
+    /// font changes (§20.0).
     settings_file: PathBuf,
+    /// Its mtime at the last font check (ADR 0024); `None` until the first status tick reads it.
+    settings_modified: Option<std::time::SystemTime>,
+    /// Why the last read of `settings_file` failed; listed in the palette (§20.0).
+    settings_error: Option<String>,
     /// `<config>/mkrew/prompts`, read (seeded the first time) when a prompt picker opens.
     prompts_dir: PathBuf,
     /// The open workspace menu (Open in Zed, default agent).
@@ -387,6 +397,28 @@ impl Shell {
                 let now = status::now_ms();
                 let ticked = this.update_in(cx, |shell, window, cx| {
                     let sessions = shell.sidebar.sessions();
+                    // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
+                    // in a profile.
+                    let modified = std::fs::metadata(&shell.settings_file)
+                        .and_then(|m| m.modified())
+                        .ok();
+                    if modified != shell.settings_modified {
+                        shell.settings_modified = modified;
+                        let installed = cx.text_system().all_font_names();
+                        let last = cx.global::<theme::Fonts>().clone();
+                        match theme::reload_fonts(&shell.settings_file, &installed, &last) {
+                            Ok(fonts) => {
+                                shell.settings_error = None;
+                                if let Some(fonts) = fonts {
+                                    cx.set_global(fonts);
+                                    cx.refresh_windows();
+                                }
+                            }
+                            // The last good fonts stay; the palette lists why (§20.0).
+                            Err(error) => shell.settings_error = Some(error),
+                        }
+                        cx.notify();
+                    }
                     let board_due = shell.workspace.is_some_and(|project_id| {
                         shell.view() == View::Board
                             && shell.board.redraw_due(project_id, sessions, last, now)
@@ -548,6 +580,8 @@ impl Shell {
                 }),
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
+            settings_modified: None,
+            settings_error: None,
             settings_file,
             prompts_dir,
             workspace_menu: None,
@@ -3343,7 +3377,8 @@ impl Shell {
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
             run_live: run_state.any_live(),
         };
-        let mut entries = palette::keymap_errors(&self.keymap, &self.keymap_errors);
+        let mut entries = palette::settings_error(self.settings_error.as_deref());
+        entries.extend(palette::keymap_errors(&self.keymap, &self.keymap_errors));
         entries.extend(palette::entries(
             &self.keymap,
             &context,
@@ -3429,6 +3464,7 @@ impl Shell {
                 // the last rendered frame (root if gone), so terminal commands reach the pane.
                 window.dispatch_action(Box::new(Run(command)), cx);
             }
+            palette::Action::Extra(Extra::OpenSettings) => self.open_settings(cx),
             palette::Action::Extra(extra) => {
                 let Some(project_id) = workspace else {
                     return;
@@ -3492,6 +3528,8 @@ impl Shell {
                     }
                     Extra::RunSetup => self.open_run_setup(project_id, false, window, cx),
                     Extra::RunShowTab => self.show_run_tab(project_id, window, cx),
+                    // Handled above: it needs no workspace.
+                    Extra::OpenSettings => self.open_settings(cx),
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {
@@ -3768,13 +3806,29 @@ impl Shell {
     /// Ctrl+,: writes the commented `keymap.toml` template if the file is missing and opens it
     /// in Zed; a failure shows in the sidebar. Changes apply after a restart.
     fn open_keymap_settings(&mut self, cx: &mut Context<'_, Self>) {
-        let opened = keymap::ensure_file(&self.keymap_file)
+        let opened = keymap::ensure_file(&self.keymap_file, &keymap::template())
             .map_err(|error| format!("Cannot create keymap.toml: {error}"))
             .and_then(|()| zed::open(&self.keymap_file, None).map_err(|error| error.to_string()));
         match opened {
             Ok(()) => self.sidebar_error = None,
             Err(error) => {
                 tracing::warn!(path = %self.keymap_file.display(), "open keymap settings failed: {error}");
+                self.sidebar_error = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Palette "Global: Open settings": writes the commented `settings.toml` template if the
+    /// file is missing and opens it in Zed; fonts apply on save (ADR 0024).
+    fn open_settings(&mut self, cx: &mut Context<'_, Self>) {
+        let opened = keymap::ensure_file(&self.settings_file, mkrew_core::settings::template())
+            .map_err(|error| format!("Cannot create settings.toml: {error}"))
+            .and_then(|()| zed::open(&self.settings_file, None).map_err(|error| error.to_string()));
+        match opened {
+            Ok(()) => self.sidebar_error = None,
+            Err(error) => {
+                tracing::warn!(path = %self.settings_file.display(), "open settings failed: {error}");
                 self.sidebar_error = Some(error);
             }
         }
@@ -6967,7 +7021,7 @@ impl Shell {
             .py(px(space::S))
             .child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .font_weight(FontWeight(weight::MEDIUM))
                     .text_color(rgb(theme.text_muted))
                     .child("Workspaces"),
@@ -6986,7 +7040,7 @@ impl Shell {
                 div()
                     .px(px(space::M))
                     .pb(px(space::S))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(format!("✕ {error}"))
             })
@@ -7001,7 +7055,7 @@ impl Shell {
                 .py(px(space::S))
                 .child(
                     div()
-                        .text_size(px(font_size::BODY))
+                        .text_size(font_size::BODY)
                         .text_color(rgb(theme.text_muted))
                         .child("No workspaces yet."),
                 )
@@ -7009,7 +7063,7 @@ impl Shell {
                     button("add-first-workspace", "Add workspace", theme, true)
                         .child(
                             div()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .opacity(opacity::SECONDARY)
                                 .child(add_workspace_keys),
                         )
@@ -7055,7 +7109,7 @@ impl Shell {
                         Row::NoSessions { .. } => div()
                             .pl(px(space::XL))
                             .py(px(space::XS))
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child("No sessions yet.")
                             .into_any_element(),
@@ -7079,7 +7133,7 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.surface))
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .child(
                 div()
                     .id("sidebar")
@@ -7111,7 +7165,7 @@ impl Shell {
             .id("inbox-header")
             .px(px(space::M))
             .py(px(space::S))
-            .text_size(px(font_size::META))
+            .text_size(font_size::META)
             .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text_muted))
             .tooltip(tooltip(
@@ -7124,7 +7178,7 @@ impl Shell {
             div()
                 .px(px(space::M))
                 .pb(px(space::S))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child("Nothing needs you right now.")
         } else {
@@ -7196,7 +7250,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface_raised))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.workspace_menu = None;
                 cx.notify();
@@ -7211,7 +7265,7 @@ impl Shell {
                     )
                     .child(
                         div()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .child(self.keymap.label(Command::OpenInZed)),
                     )
                     .on_click(cx.listener(move |shell, _, _, cx| {
@@ -7236,7 +7290,7 @@ impl Shell {
                 div()
                     .px(px(space::S))
                     .pt(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .font_weight(FontWeight(weight::MEDIUM))
                     .text_color(rgb(theme.text_muted))
                     .child("Default agent for new panes"),
@@ -7247,7 +7301,7 @@ impl Shell {
                 div()
                     .px(px(space::S))
                     .pt(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .font_weight(FontWeight(weight::MEDIUM))
                     .text_color(rgb(theme.text_muted))
                     .child("Color"),
@@ -7339,7 +7393,7 @@ impl Shell {
         };
         let muted = |text: String| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
@@ -7350,8 +7404,8 @@ impl Shell {
             peek::Screen::Read(lines) => div()
                 .flex()
                 .flex_col()
-                .font_family(theme.terminal_font_family)
-                .text_size(px(font_size::META))
+                .font_family(theme.terminal_font_family.clone())
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text))
                 .children(lines.iter().map(|line| {
                     div()
@@ -7388,6 +7442,7 @@ impl Shell {
                         &peek.text,
                         "Reply to the agent",
                         peek.focused,
+                        false,
                         theme,
                     )
                     .when(peek.busy, |el| el.opacity(opacity::DISABLED))
@@ -7426,7 +7481,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             // Only once it has the keyboard: a tracked element takes focus on any mouse down,
             // so a click on a hover peek would steal the keyboard before `take_peek_focus`.
             .when(peek.focused, |el| el.track_focus(&self.peek_focus))
@@ -7446,7 +7501,7 @@ impl Shell {
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(font_size::BODY))
+                            .text_size(font_size::BODY)
                             .text_color(rgb(sidebar::status_color(theme, session.state)))
                             .child(status::icon(session.state, now)),
                     )
@@ -7457,7 +7512,7 @@ impl Shell {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .text_size(px(font_size::BODY))
+                            .text_size(font_size::BODY)
                             .font_weight(FontWeight(weight::MEDIUM))
                             .text_color(rgb(theme.text))
                             .child(name),
@@ -7465,7 +7520,7 @@ impl Shell {
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child(status::text(
                                 session.state,
@@ -7485,7 +7540,7 @@ impl Shell {
             .child(reply)
             .children(peek.error.clone().map(|error| {
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.status_exited))
                     .child(error)
             }))
@@ -7523,13 +7578,7 @@ impl Shell {
                 .into_any_element();
         };
         let view = self.view();
-        let main = div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(self.render_view_bar(view, theme, cx));
+        let main = div().flex_1().min_w_0().h_full().flex().flex_col();
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
@@ -7552,33 +7601,38 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The workspace's view switcher (SPEC §10): Board / Terminals / Docs / Files / Git.
-    fn render_view_bar(&self, shown: View, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
+    /// The workspace's view switcher (SPEC §10, ADR 0023): a column right of the main area
+    /// with Board / Terminals / Docs / Files / Git, and a compact Run at its foot outside
+    /// Terminals (where the full Run sits in the tab bar).
+    fn render_view_rail(
+        &self,
+        shown: View,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
         let hover = theme.surface_raised;
         div()
             .flex_none()
+            // Grows with the labels (a larger `[ui] font_size`) instead of wrapping them.
+            .min_w(px(theme::VIEW_RAIL_WIDTH))
+            .h_full()
             .flex()
-            .items_center()
+            .flex_col()
             .gap(px(space::XS))
-            .px(px(space::S))
-            .py(px(space::XS))
-            .font_family(theme::UI_FONT)
+            .p(px(space::XS))
+            .border_l(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .font_family(theme.ui_font_family.clone())
             .children(View::ALL.into_iter().map(|view| {
                 let active = view == shown;
-                let command = match view {
-                    View::Board => Command::ShowBoard,
-                    View::Terminals => Command::ShowTerminals,
-                    View::Docs => Command::ShowDocs,
-                    View::Files => Command::ShowFiles,
-                    View::Git => Command::ShowGit,
-                };
                 div()
                     .id(SharedString::from(format!("view-{}", view.title())))
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
                     .cursor_pointer()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::META)
+                    .whitespace_nowrap()
                     .when(active, |el| {
                         el.bg(rgb(theme.surface_raised))
                             .font_weight(FontWeight(weight::MEDIUM))
@@ -7589,7 +7643,11 @@ impl Shell {
                             .hover(move |style| style.bg(rgb(hover)))
                             .active(|style| style.opacity(opacity::ACTIVE))
                     })
-                    .tooltip(tooltip(theme, view.title(), self.keymap.label(command)))
+                    .tooltip(tooltip(
+                        theme,
+                        view.title(),
+                        self.keymap.label(view.command()),
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.show_view(view, window, cx);
                     }))
@@ -7597,30 +7655,41 @@ impl Shell {
             }))
             .when_some(self.workspace, |el, project_id| {
                 el.child(div().flex_1())
-                    .when(
-                        shown == View::Board && self.board.has_tasks(project_id),
-                        |el| el.child(self.new_task_button(project_id, false, theme, cx)),
-                    )
-                    .child(self.render_run_button(project_id, theme, cx))
+                    .when(shown != View::Terminals, |el| {
+                        el.child(self.render_run_button(project_id, true, theme, cx))
+                    })
             })
     }
 
     /// The Run button (SPEC §10): `▶ Run`, or the running count and ports with ↻ and ■;
-    /// `▾` opens the per-command menu below it.
+    /// `▾` opens the per-command menu below it. `compact` (the view rail): only the state
+    /// icon and `▾`; ↻ ■ stay in the menu.
     fn render_run_button(
         &self,
         project_id: Ulid,
+        compact: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let summary = self.run_summary(project_id);
         let live = summary.any_live();
-        let tip = if summary.rows.is_empty() {
-            "Set up the commands to run".to_owned()
+        // The rail is narrow: only the state icon; the tooltip carries the full label.
+        let label = if compact {
+            summary
+                .label()
+                .chars()
+                .next()
+                .map(String::from)
+                .unwrap_or_default()
         } else {
-            summary.tooltip()
+            summary.label()
         };
-        let main = button("run-main", summary.label(), theme, !live)
+        let tip = match (summary.rows.is_empty(), compact) {
+            (true, _) => "Set up the commands to run".to_owned(),
+            (false, true) => format!("{}\n{}", summary.label(), summary.tooltip()),
+            (false, false) => summary.tooltip(),
+        };
+        let main = button("run-main", label, theme, !live)
             .flex_none()
             .when(summary.warning(), |el| {
                 el.text_color(rgb(theme.status_needs_input))
@@ -7635,8 +7704,9 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::XS))
+            .when(compact, |el| el.flex_wrap())
             .child(main);
-        if live {
+        if live && !compact {
             for (id, label, tip, action) in [
                 (
                     "run-restart",
@@ -7713,7 +7783,7 @@ impl Shell {
                 .gap(px(space::S))
                 .px(px(space::S))
                 .py(px(space::XS))
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .child(
                     div()
                         .flex_1()
@@ -7722,13 +7792,13 @@ impl Shell {
                 )
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(color))
                         .child(run::state_text(&row.state)),
                 )
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(ports.join(" ")),
                 );
@@ -7763,7 +7833,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface_raised))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .occlude()
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.run_menu = None;
@@ -7815,7 +7885,7 @@ impl Shell {
         use run_setup::{Field, Focus};
         let label = |text: &'static str| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child(text)
@@ -7831,6 +7901,7 @@ impl Shell {
                 text,
                 placeholder,
                 setup.focus == Focus::Field(i, which),
+                which == Field::Env && setup.cards[i].env.all_selected(),
                 theme,
             )
             .on_click(cx.listener(move |shell, _, _, cx| {
@@ -7914,7 +7985,7 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
@@ -7933,7 +8004,7 @@ impl Shell {
                 el.border_color(rgb(theme.pane_focus_border))
             })
             .cursor_pointer()
-            .text_size(px(font_size::BODY))
+            .text_size(font_size::BODY)
             .text_color(rgb(theme.text))
             .hover(move |style| style.bg(rgb(hover)))
             .active(|style| style.opacity(opacity::ACTIVE))
@@ -7957,14 +8028,14 @@ impl Shell {
                     .rounded(px(radius::SMALL))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.border))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.accent))
                     .child(if setup.autostart { "✓" } else { "" }),
             )
             .child(div().flex_1().child("Start with the daemon"))
             .child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child("Space"),
             );
@@ -7980,21 +8051,21 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::run_setup_key_down))
             .relative()
             .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Run setup"),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(
                         "Each command runs in its own pane of the “run” tab, in a shell started \
@@ -8102,7 +8173,7 @@ impl Shell {
             .min_h_0()
             .flex()
             .flex_col()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             // A later `task.list` failed: the cards may be stale.
             .children(self.board_error.clone().map(|error| {
                 notice(theme.text, format!("✕ Cannot reload the tasks: {error}"))
@@ -8127,11 +8198,13 @@ impl Shell {
                     .pb(px(space::L))
                     .pt(px(space::S))
                     .overflow_x_scroll()
-                    .children(
-                        columns
-                            .into_iter()
-                            .map(|column| board_column(column, &cards, now, theme, cx)),
-                    ),
+                    .children(columns.into_iter().map(|column| {
+                        let new_task = (column.status == TaskStatus::Todo).then(|| {
+                            self.new_task_button(project_id, false, theme, cx)
+                                .into_any_element()
+                        });
+                        board_column(column, &cards, now, new_task, theme, cx)
+                    })),
             )
             .into_any_element()
     }
@@ -8179,7 +8252,7 @@ impl Shell {
                         .tooltip(tooltip(theme, "Show terminals", keys.clone()))
                         .child(
                             div()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .opacity(opacity::SECONDARY)
                                 .child(keys),
                         )
@@ -8207,6 +8280,7 @@ impl Shell {
                         &docs.filter,
                         "Filter files…",
                         filter_focused,
+                        false,
                         theme,
                     )
                     .track_focus(&self.docs_filter_focus)
@@ -8239,7 +8313,7 @@ impl Shell {
                         el.child(
                             div()
                                 .px(px(space::S))
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child("No files match the filter."),
                         )
@@ -8253,7 +8327,7 @@ impl Shell {
             .flex_1()
             .min_h_0()
             .flex()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .child(list)
             .child(self.render_doc(project_id, docs, theme, window, cx))
             .into_any_element()
@@ -8299,7 +8373,7 @@ impl Shell {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(file_path.clone()),
@@ -8489,6 +8563,7 @@ impl Shell {
                         "",
                         "Search files…",
                         false,
+                        false,
                         theme,
                     ))
                     .tooltip(tooltip(
@@ -8573,7 +8648,7 @@ impl Shell {
             .flex_1()
             .min_h_0()
             .flex()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .child(
                 div()
                     .id("files-tree")
@@ -8662,7 +8737,7 @@ impl Shell {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(path.clone()),
@@ -8670,7 +8745,7 @@ impl Shell {
             .children(view.line.map(|line| {
                 div()
                     .flex_none()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(format!("Line {line}"))
             }))
@@ -8711,6 +8786,7 @@ impl Shell {
                         &find.query,
                         "Find in file",
                         focused,
+                        false,
                         theme,
                     )
                     .w(px(theme::FIND_INPUT_WIDTH))
@@ -8726,7 +8802,7 @@ impl Shell {
                 .child(
                     div()
                         .flex_1()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(find.label()),
                 )
@@ -9020,7 +9096,7 @@ impl Shell {
             .flex()
             // The list column stays at the right edge even when no diff is shown.
             .justify_end()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .when(any_files, |el| {
                 el.child(self.render_git_diff(project_id, view, theme, window, cx))
             })
@@ -9168,7 +9244,7 @@ impl Shell {
                 .px(px(space::S))
                 .py(px(space::XS))
                 .rounded(px(radius::SMALL))
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .when(active, |el| {
                     el.bg(rgb(theme.surface_raised))
                         .font_weight(FontWeight(weight::MEDIUM))
@@ -9199,7 +9275,7 @@ impl Shell {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(branch),
@@ -9208,7 +9284,7 @@ impl Shell {
             // Wrapped, not cut: git's push / fetch errors say what to do.
             .children(view.remotes.error.clone().map(|error| {
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text))
                     .child(format!("✕ {error}"))
             }))
@@ -9360,7 +9436,7 @@ impl Shell {
                 .flex_wrap()
                 .items_center()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.text_muted)).child("Showing"))
                 .children(chips),
         )
@@ -9417,7 +9493,7 @@ impl Shell {
                 .flex_wrap()
                 .items_center()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.text_muted)).child("Changed by"))
                 .child(chip("git-changed-by-all".into(), "All".into(), None))
                 .children(changers.into_iter().map(|changer| {
@@ -9451,7 +9527,7 @@ impl Shell {
                 .id(id.clone())
                 .flex_none()
                 .px(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .opacity(opacity)
                 .child(label)
@@ -9530,9 +9606,10 @@ impl Shell {
             .child(
                 text_field(
                     "git-commit-message",
-                    &draft.text,
+                    draft.text.text(),
                     "Commit message",
                     focused,
+                    draft.text.all_selected(),
                     theme,
                 )
                 .max_h(px(theme::GIT_COMMIT_BOX_MAX_HEIGHT))
@@ -9555,7 +9632,7 @@ impl Shell {
             // Wrapped like the Fetch / Push error: hook output says what to fix.
             .children(draft.error.clone().map(|error| {
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text))
                     .child(format!("✕ {error}"))
             }))
@@ -9684,7 +9761,7 @@ impl Shell {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(selected.path.clone()),
@@ -9700,7 +9777,7 @@ impl Shell {
                 div()
                     .id("git-hunks")
                     .flex_none()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .tooltip(tooltip(theme, "Next / previous hunk", keys))
                     .child(label)
@@ -9870,7 +9947,7 @@ impl Shell {
                 .flex_1()
                 .min_h_0()
                 .pb(px(space::L))
-                .font_family(theme.terminal_font_family)
+                .font_family(theme.terminal_font_family.clone())
                 .text_size(px(theme.terminal_font_size))
                 .into_any_element()
             }
@@ -9990,7 +10067,7 @@ impl Shell {
             .gap(px(space::S))
             .pr(px(space::L))
             .pb(px(space::L))
-            .text_size(px(font_size::BODY));
+            .text_size(font_size::BODY);
         let new_draft = comments
             .draft
             .as_ref()
@@ -10008,7 +10085,7 @@ impl Shell {
                 .bg(rgb(theme.surface_raised))
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(comments::lines_label(selection.start, selection.end)),
                 )
@@ -10108,7 +10185,7 @@ impl Shell {
                 .flex_col()
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(if comment.author == DocComment::USER {
                             "You".to_owned()
@@ -10191,7 +10268,7 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::S))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .cursor_pointer()
                     .when_some(lines, |el, (start, end)| {
                         el.on_click(cx.listener(move |shell, _, _, cx| {
@@ -10216,7 +10293,7 @@ impl Shell {
                     .pl(px(space::S))
                     .border_l(px(theme::DOC_QUOTE_BAR_WIDTH))
                     .border_color(rgb(theme.border))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .overflow_hidden()
                     .text_ellipsis()
@@ -10255,22 +10332,29 @@ impl Shell {
             .flex_col()
             .gap(px(space::XS))
             .child(
-                text_field("comment-draft", &draft.text, placeholder, focused, theme)
-                    .bg(rgb(theme.surface))
-                    .track_focus(&self.comment_focus)
-                    .on_key_down(cx.listener(Shell::comment_key_down))
-                    .relative()
-                    .child(self.typing(&self.comment_focus, Shell::comment_key_down, cx))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        window.focus(&shell.comment_focus, cx);
-                        cx.notify();
-                    })),
+                text_field(
+                    "comment-draft",
+                    &draft.text,
+                    placeholder,
+                    focused,
+                    false,
+                    theme,
+                )
+                .bg(rgb(theme.surface))
+                .track_focus(&self.comment_focus)
+                .on_key_down(cx.listener(Shell::comment_key_down))
+                .relative()
+                .child(self.typing(&self.comment_focus, Shell::comment_key_down, cx))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    window.focus(&shell.comment_focus, cx);
+                    cx.notify();
+                })),
             )
             .children(status.map(|(icon, color, text)| {
                 div()
                     .flex()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .child(div().text_color(rgb(color)).child(icon))
                     .child(div().text_color(rgb(theme.text)).child(text))
             }))
@@ -10298,7 +10382,7 @@ impl Shell {
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .tooltip(tooltip(theme, "Toggle preview / source", keys.clone()))
                     .when(active, |el| {
                         el.bg(rgb(theme.surface_raised))
@@ -10336,7 +10420,7 @@ impl Shell {
             .tooltip(tooltip(theme, "New task", keys.clone()))
             .child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .opacity(opacity::SECONDARY)
                     .child(keys),
             )
@@ -10362,20 +10446,27 @@ impl Shell {
             .and_then(|project| project.default_agent.as_deref());
         let label = |text: &'static str| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
         let field = |id: &'static str, which: Field, text: &str, placeholder: &'static str| {
-            text_field(id, text, placeholder, dialog.field == which, theme).on_click(cx.listener(
-                move |shell, _, _, cx| {
-                    if let Some(dialog) = shell.task_dialog.as_mut() {
-                        dialog.field = which;
-                        cx.notify();
-                    }
-                },
-            ))
+            let selected = which == Field::Prompt && dialog.prompt.all_selected();
+            text_field(
+                id,
+                text,
+                placeholder,
+                dialog.field == which,
+                selected,
+                theme,
+            )
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                if let Some(dialog) = shell.task_dialog.as_mut() {
+                    dialog.field = which;
+                    cx.notify();
+                }
+            }))
         };
         let agents = match &dialog.agents {
             Agents::Loading => vec![label("Loading agents…").into_any_element()],
@@ -10395,7 +10486,7 @@ impl Shell {
                         .rounded(px(radius::SMALL))
                         .border(px(theme::BORDER_WIDTH))
                         .cursor_pointer()
-                        .text_size(px(font_size::BODY))
+                        .text_size(font_size::BODY)
                         .when(choice.selected, |el| {
                             el.border_color(rgb(theme.accent))
                                 .text_color(rgb(theme.text))
@@ -10429,7 +10520,7 @@ impl Shell {
             .px(px(space::XS))
             .py(px(space::XS))
             .rounded(px(radius::SMALL))
-            .text_size(px(font_size::BODY))
+            .text_size(font_size::BODY)
             .tooltip(tooltip(
                 theme,
                 if locked && !dialog.busy {
@@ -10461,7 +10552,7 @@ impl Shell {
                     .rounded(px(radius::SMALL))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.border))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.accent))
                     .child(if dialog.worktree { "✓" } else { "" }),
             )
@@ -10483,7 +10574,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             // The prompt picker over it has the keyboard meanwhile.
             .when(self.prompt_picker.is_none(), |el| {
                 el.track_focus(&self.dialog_focus)
@@ -10493,7 +10584,7 @@ impl Shell {
             })
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(if editing { "Edit task" } else { "New task" }),
@@ -10565,7 +10656,7 @@ impl Shell {
                 div()
                     .flex()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                     .child(div().text_color(rgb(theme.text)).child(error))
             }))
@@ -10618,7 +10709,7 @@ impl Shell {
     ) -> gpui::AnyElement {
         let label = |text: String| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child(text)
@@ -10639,7 +10730,7 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
@@ -10692,11 +10783,11 @@ impl Shell {
                                 .flex()
                                 .gap(px(space::S))
                                 .px(px(space::S))
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .child(
                                     div()
                                         .flex_none()
-                                        .font_family(theme.terminal_font_family)
+                                        .font_family(theme.terminal_font_family.clone())
                                         .text_color(rgb(theme.text_muted))
                                         .child(marker),
                                 )
@@ -10724,13 +10815,13 @@ impl Shell {
                     scroll_box("undo-diff", theme::UNDO_DIFF_HEIGHT)
                         // `surface`, so hunk rows (`diff_hunk_header`) show as a band.
                         .bg(rgb(theme.surface))
-                        .font_family(theme.terminal_font_family)
-                        .text_size(px(font_size::META))
+                        .font_family(theme.terminal_font_family.clone())
+                        .text_size(font_size::META)
                         .when(shown.lines.is_empty(), |el| {
                             el.child(
                                 div()
                                     .px(px(space::S))
-                                    .font_family(theme::UI_FONT)
+                                    .font_family(theme.ui_font_family.clone())
                                     .text_color(rgb(theme.text_muted))
                                     .child("No tracked file changed."),
                             )
@@ -10767,19 +10858,19 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::undo_dialog_key_down))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(dialog.heading()),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(if nothing_changed {
                         format!("{intro}: there is nothing to undo.")
@@ -10799,7 +10890,7 @@ impl Shell {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .children(hint),
                     )
@@ -10853,7 +10944,7 @@ impl Shell {
         use worktree_dialog::{Done, Kind, Step};
         let label = |text: String| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child(text)
@@ -10862,7 +10953,7 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
@@ -10872,11 +10963,11 @@ impl Shell {
                 .flex()
                 .gap(px(space::S))
                 .px(px(space::S))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .children(marker.map(|marker| {
                     div()
                         .flex_none()
-                        .font_family(theme.terminal_font_family)
+                        .font_family(theme.terminal_font_family.clone())
                         .text_color(rgb(theme.text_muted))
                         .child(marker)
                 }))
@@ -10959,7 +11050,7 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .children(pick.lines().into_iter().map(|line| div().child(line)))
             }),
@@ -11112,19 +11203,19 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::worktree_dialog_key_down))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(dialog.heading()),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(dialog.intro()),
             )
@@ -11140,7 +11231,7 @@ impl Shell {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .children(hint),
                     )
@@ -11164,7 +11255,7 @@ impl Shell {
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
@@ -11228,7 +11319,7 @@ impl Shell {
                         .overflow_hidden()
                         .text_ellipsis()
                         .whitespace_nowrap()
-                        .text_size(px(font_size::BODY))
+                        .text_size(font_size::BODY)
                         .font_weight(FontWeight(weight::MEDIUM))
                         .text_color(rgb(theme.text))
                         .child(column.agent.clone()),
@@ -11242,7 +11333,7 @@ impl Shell {
                     div()
                         .flex()
                         .gap(px(space::XS))
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(changes_color))
                         .when(failed, |el| {
                             el.child(div().text_color(rgb(theme.status_exited)).child("✕"))
@@ -11272,19 +11363,19 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::compare_key_down))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Compare agents"),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(format!(
                         "“{}”: changes since each run started. Pick one to merge it back into \
@@ -11316,7 +11407,7 @@ impl Shell {
     ) -> gpui::AnyElement {
         let muted = |text: String| {
             div()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
@@ -11327,7 +11418,7 @@ impl Shell {
             turns_dialog::Listing::Failed(error) => div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(
                     div()
@@ -11412,7 +11503,7 @@ impl Shell {
                                         .flex_col()
                                         .child(
                                             div()
-                                                .text_size(px(font_size::BODY))
+                                                .text_size(font_size::BODY)
                                                 .font_weight(FontWeight(weight::MEDIUM))
                                                 .text_color(rgb(theme.text))
                                                 .child(row.title),
@@ -11422,7 +11513,7 @@ impl Shell {
                                                 .overflow_hidden()
                                                 .text_ellipsis()
                                                 .whitespace_nowrap()
-                                                .text_size(px(font_size::META))
+                                                .text_size(font_size::META)
                                                 .text_color(rgb(theme.text_muted))
                                                 .child(details),
                                         ),
@@ -11445,12 +11536,12 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::turns_dialog_key_down))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(format!("Turns of {}", dialog.agent)),
@@ -11480,7 +11571,7 @@ impl Shell {
         let shown = view.and_then(|view| view.shown_diff(&dialog.target));
         let muted = |text: String| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
@@ -11488,7 +11579,7 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
@@ -11534,7 +11625,7 @@ impl Shell {
                             .rounded(px(radius::MEDIUM))
                             .bg(rgb(theme.surface))
                             .overflow_scroll()
-                            .font_family(theme.terminal_font_family)
+                            .font_family(theme.terminal_font_family.clone())
                             .text_size(px(theme.terminal_font_size))
                             .children(
                                 (0..shown.rows.len().min(git_view::DISCARD_PREVIEW_ROWS)).map(
@@ -11590,19 +11681,19 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::git_discard_key_down))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Discard changes?"),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(dialog.sentence()),
             )
@@ -11654,7 +11745,7 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
@@ -11675,21 +11766,21 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::git_base_key_down))
             .relative()
             .child(self.typing(&self.dialog_focus, Self::git_base_key_down, cx))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Base branch"),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(
                         "“Against base” shows everything on this branch since it left the base.",
@@ -11703,6 +11794,7 @@ impl Shell {
                 &dialog.text,
                 "A branch or ref, e.g. develop or origin/main",
                 true,
+                false,
                 theme,
             ))
             .children(dialog.error.clone().map(error_row))
@@ -11769,7 +11861,7 @@ impl Shell {
                     .max_w(px(theme::BROADCAST_RESULT_WIDTH))
                     .flex()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(div().text_color(rgb(icon_color)).child(delivery.icon()))
                     .child(div().min_w_0().truncate().child(delivery.text()))
@@ -11785,7 +11877,7 @@ impl Shell {
                 .rounded(px(radius::SMALL))
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(gpui::transparent_black())
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
                 .when(index == dialog.cursor, |el| {
                     el.border_color(rgb(theme.accent))
@@ -11812,7 +11904,7 @@ impl Shell {
                         .rounded(px(radius::SMALL))
                         .border(px(theme::BORDER_WIDTH))
                         .border_color(rgb(theme.border))
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.accent))
                         .child(if row.checked { "✓" } else { "" }),
                 )
@@ -11878,21 +11970,21 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::broadcast_key_down))
             .relative()
             .child(self.typing(&self.dialog_focus, Self::broadcast_key_down, cx))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Broadcast to agents"),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(if dialog.rows.is_empty() {
                         "No live agent sessions in this workspace."
@@ -11914,7 +12006,7 @@ impl Shell {
                 )
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child("↑↓ move · Tab check · Enter send"),
                 )
@@ -11923,6 +12015,7 @@ impl Shell {
                     &dialog.text,
                     "e.g. run the tests",
                     true,
+                    false,
                     theme,
                 ))
             })
@@ -11953,7 +12046,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::doc_dialog_key_down))
             .child(
@@ -11961,14 +12054,14 @@ impl Shell {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(title),
             )
             .child(
                 div()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .child(sentence),
             )
@@ -12022,7 +12115,7 @@ impl Shell {
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     // The pick has a focus-colored ring, so it stays visible under hover.
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(if picked {
@@ -12063,7 +12156,7 @@ impl Shell {
                         el.child(
                             div()
                                 .flex_none()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(dialog.last_label()),
                         )
@@ -12071,7 +12164,7 @@ impl Shell {
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child(status::text(
                                 choice.state,
@@ -12172,7 +12265,7 @@ impl Shell {
                 div()
                     .flex()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                     .child(div().text_color(rgb(theme.text)).child(error))
             }))
@@ -12229,7 +12322,7 @@ impl Shell {
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .overflow_hidden()
                     .whitespace_nowrap()
@@ -12267,7 +12360,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::quick_open_key_down))
             .relative()
@@ -12277,7 +12370,7 @@ impl Shell {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child(if open.composer.is_some() {
@@ -12291,6 +12384,7 @@ impl Shell {
                 &open.query,
                 "Type part of a file name or path",
                 true,
+                false,
                 theme,
             ))
             .when(!rows.is_empty(), |el| {
@@ -12311,7 +12405,7 @@ impl Shell {
                 div()
                     .flex()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .when(failed, |el| {
                         el.child(div().text_color(rgb(theme.status_exited)).child("✕"))
                     })
@@ -12323,7 +12417,7 @@ impl Shell {
             }))
             .child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(if open.composer.is_some() {
                         "↑ ↓ to pick · Enter types its path in the composer · Esc types @"
@@ -12367,7 +12461,7 @@ impl Shell {
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     // The pick has a focus-colored ring, so it stays visible under hover.
                     .border(px(theme::BORDER_WIDTH))
@@ -12402,7 +12496,7 @@ impl Shell {
                         el.child(
                             div()
                                 .flex_none()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(row.entry.shortcut.clone()),
                         )
@@ -12423,14 +12517,14 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::palette_key_down))
             .relative()
             .child(self.typing(&self.dialog_focus, Self::palette_key_down, cx))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Command palette"),
@@ -12440,6 +12534,7 @@ impl Shell {
                 palette.query(),
                 "Type a command, workspace, session or task",
                 true,
+                false,
                 theme,
             ))
             .when(!empty, |el| {
@@ -12458,14 +12553,14 @@ impl Shell {
             .when(empty, |el| {
                 el.child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(format!("Nothing matches “{}”.", palette.query().trim())),
                 )
             })
             .child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child("↑ ↓ to pick · Enter runs it · Esc closes"),
             );
@@ -12498,7 +12593,7 @@ impl Shell {
                     .px(px(space::S))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     // The pick has a focus-colored ring, so it stays visible under hover.
                     .border(px(theme::BORDER_WIDTH))
@@ -12529,7 +12624,7 @@ impl Shell {
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child(prompt.name.clone()),
                     )
@@ -12542,7 +12637,7 @@ impl Shell {
             .and_then(|rendered| prompt_picker::missing_note(&rendered.missing));
         let muted = |text: String| {
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
@@ -12567,12 +12662,12 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::prompt_picker_key_down))
             .child(
                 div()
-                    .text_size(px(font_size::CARD_TITLE))
+                    .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
                     .child("Insert prompt"),
@@ -12620,7 +12715,7 @@ impl Shell {
                     .py(px(space::S))
                     .rounded(px(radius::MEDIUM))
                     .bg(rgb(theme.surface_raised))
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .text_color(rgb(theme.text))
                     .children(rendered.text.split('\n').map(|line| {
                         // An empty line still takes a line's height.
@@ -12633,7 +12728,7 @@ impl Shell {
                     div()
                         .flex()
                         .gap(px(space::XS))
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .child(div().text_color(rgb(theme.status_needs_input)).child("⚠"))
                         .child(muted(format!(
                             "{unreadable} prompt file(s) could not be read (see the log)."
@@ -12690,8 +12785,8 @@ impl Shell {
                         // `surface`, so hunk rows (`diff_hunk_header`) show as a band.
                         .bg(rgb(theme.surface))
                         .overflow_scroll()
-                        .font_family(theme.terminal_font_family)
-                        .text_size(px(font_size::META))
+                        .font_family(theme.terminal_font_family.clone())
+                        .text_size(font_size::META)
                         .children(changes.lines.iter().map(|line| diff_row(line, theme))),
                 )
             })
@@ -12724,7 +12819,7 @@ impl Shell {
     ) -> gpui::AnyElement {
         let muted = |text: String| {
             div()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
@@ -12732,7 +12827,7 @@ impl Shell {
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
@@ -12771,7 +12866,7 @@ impl Shell {
                                 .flex()
                                 .items_center()
                                 .gap(px(space::XS))
-                                .text_size(px(font_size::BODY))
+                                .text_size(font_size::BODY)
                                 .child(
                                     div()
                                         .flex_none()
@@ -12801,7 +12896,7 @@ impl Shell {
                                 .overflow_hidden()
                                 .text_ellipsis()
                                 .whitespace_nowrap()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(history::details(session, now)),
                         )
@@ -12832,7 +12927,7 @@ impl Shell {
                     .when(*cut, |el| {
                         el.child(
                             div()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(format!(
                                     "Older output is left out; mk session history {} prints \
@@ -12857,7 +12952,7 @@ impl Shell {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface))
             .shadow_md()
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .track_focus(&self.dialog_focus)
             .on_key_down(cx.listener(Self::history_key_down))
             .child(
@@ -12872,7 +12967,7 @@ impl Shell {
                             .overflow_hidden()
                             .text_ellipsis()
                             .whitespace_nowrap()
-                            .text_size(px(font_size::CARD_TITLE))
+                            .text_size(font_size::CARD_TITLE)
                             .font_weight(FontWeight(weight::SEMIBOLD))
                             .text_color(rgb(theme.text))
                             .child(format!("History · {}", dialog.workspace)),
@@ -12953,7 +13048,7 @@ impl Shell {
             .px(px(space::S))
             .py(px(space::XS))
             .bg(rgb(theme.surface))
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .children(tabs.tabs().iter().map(|tab| {
                 let tab_id = tab.id;
                 let is_active = active == Some(tab_id);
@@ -12975,7 +13070,7 @@ impl Shell {
                     .border_color(gpui::transparent_black())
                     .cursor_pointer()
                     .whitespace_nowrap()
-                    .text_size(px(font_size::BODY))
+                    .text_size(font_size::BODY)
                     .when(is_active, |el| {
                         el.bg(rgb(theme.surface_raised))
                             .font_weight(FontWeight(weight::MEDIUM))
@@ -13049,6 +13144,7 @@ impl Shell {
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
             )
+            .child(self.render_run_button(project_id, false, theme, cx))
             .child(
                 button("history", "History", theme, false)
                     .tooltip(tooltip(
@@ -13108,7 +13204,7 @@ impl Shell {
             .border_color(rgb(theme.pane_focus_border))
             .bg(rgb(theme.surface_raised))
             .whitespace_nowrap()
-            .text_size(px(font_size::BODY))
+            .text_size(font_size::BODY)
             .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text))
             .cursor(CursorStyle::IBeam)
@@ -13121,7 +13217,7 @@ impl Shell {
                 div()
                     .flex_none()
                     .w(px(theme::BORDER_WIDTH))
-                    .h(px(font_size::BODY))
+                    .h(font_size::BODY)
                     .bg(rgb(theme.text)),
             )
             .into_any_element()
@@ -13273,7 +13369,7 @@ impl Shell {
                             )
                             .px(px(space::XS))
                             .py_0()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .active(|style| style.opacity(opacity::ACTIVE))
                             .when(following, |el| {
                                 el.bg(rgb(theme.surface_raised))
@@ -13296,7 +13392,7 @@ impl Shell {
                             quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
                                 .px(px(space::XS))
                                 .py_0()
-                                .text_size(px(font_size::META))
+                                .text_size(font_size::META)
                                 .tooltip(tooltip(
                                     theme,
                                     "The agent's turns: restore the files to before one",
@@ -13360,6 +13456,7 @@ impl Shell {
             draft.text.text(),
             "Message the agent…",
             focused && !draft.busy && draft.enhancing.is_none(),
+            draft.text.all_selected(),
             theme,
         )
         .max_h(px(theme::COMPOSER_MAX_HEIGHT))
@@ -13402,7 +13499,7 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .child(
                         div()
                             .flex_none()
@@ -13445,7 +13542,7 @@ impl Shell {
             .gap(px(space::XS))
             .p(px(space::S))
             .bg(rgb(theme.surface))
-            .font_family(theme::UI_FONT)
+            .font_family(theme.ui_font_family.clone())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -13484,7 +13581,7 @@ impl Shell {
                                 div()
                                     .flex()
                                     .gap(px(space::XS))
-                                    .text_size(px(font_size::META))
+                                    .text_size(font_size::META)
                                     .when(!icon.is_empty(), |el| {
                                         el.child(div().text_color(rgb(color)).child(icon))
                                     })
@@ -13579,24 +13676,24 @@ fn message(
         .justify_center()
         .gap(px(space::S))
         .p(px(space::XL))
-        .font_family(theme::UI_FONT)
+        .font_family(theme.ui_font_family.clone())
         .children(title.map(|title| {
             div()
-                .text_size(px(font_size::VIEW_TITLE))
+                .text_size(font_size::VIEW_TITLE)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(theme.text))
                 .child(title)
         }))
         .child(
             div()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(sentence),
         )
         .children(detail.map(|detail| {
             div()
                 .max_w(px(theme::READABLE_WIDTH))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(detail)
         }))
@@ -13609,7 +13706,7 @@ fn notice(color: u32, text: String) -> gpui::Div {
         .overflow_hidden()
         .text_ellipsis()
         .whitespace_nowrap()
-        .text_size(px(font_size::META))
+        .text_size(font_size::META)
         .text_color(rgb(color))
         .child(text)
 }
@@ -13661,7 +13758,7 @@ fn button_frame(id: &'static str, label: impl Into<SharedString>) -> gpui::State
         .py(px(space::XS))
         .rounded(px(radius::SMALL))
         .cursor_pointer()
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .child(label.into())
 }
 
@@ -13711,7 +13808,7 @@ fn disabled_button(
         .py(px(space::XS))
         .rounded(px(radius::SMALL))
         .opacity(opacity::DISABLED)
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .child(label);
     if primary {
         base.bg(rgb(theme.accent)).text_color(rgb(theme.surface))
@@ -13763,20 +13860,22 @@ fn typing_input(
     .size_full()
 }
 
-/// A text input (task dialog, follow-up, composer): its lines with a caret at the end while `focused`, or a
-/// muted placeholder when empty. Callers make clicks focus it.
+/// A text input (task dialog, follow-up, composer): its lines with a caret at the end while
+/// `focused`, the lines highlighted while `selected` (Ctrl+A), or a muted placeholder when
+/// empty. Callers make clicks focus it.
 fn text_field(
     id: &'static str,
     text: &str,
     placeholder: &'static str,
     focused: bool,
+    selected: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let caret = || {
         div()
             .flex_none()
             .w(px(theme::BORDER_WIDTH))
-            .h(px(font_size::BODY))
+            .h(font_size::BODY)
             .bg(rgb(theme.text))
     };
     let lines: Vec<&str> = text.split('\n').collect();
@@ -13795,7 +13894,7 @@ fn text_field(
             theme.border
         }))
         .bg(rgb(theme.surface_raised))
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .cursor(CursorStyle::IBeam)
         .when(text.is_empty(), |el| {
@@ -13814,8 +13913,13 @@ fn text_field(
                 div()
                     .flex()
                     .items_center()
-                    .child(div().min_w_0().child(line.to_owned()))
-                    .when(focused && i == last, |row| row.child(caret()))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .when(selected, |el| el.bg(rgb(theme.terminal_selection_bg)))
+                            .child(line.to_owned()),
+                    )
+                    .when(focused && !selected && i == last, |row| row.child(caret()))
             }))
         })
 }
@@ -13898,7 +14002,7 @@ fn ai_result(done: &AiGeneratedEvent) -> Result<String, String> {
 /// A muted one-line note (e.g. "Loading comments…").
 fn meta_line(theme: &Theme, text: SharedString) -> gpui::Div {
     div()
-        .text_size(px(font_size::META))
+        .text_size(font_size::META)
         .text_color(rgb(theme.text_muted))
         .child(text)
 }
@@ -13933,7 +14037,7 @@ fn file_row(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(text.clone())
                 .into_any_element();
@@ -13982,7 +14086,7 @@ fn file_row(
             fill
         }))
         .cursor_pointer()
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .when(at_cursor || opened, |el| el.bg(rgb(fill)))
         .when(!at_cursor && !opened, |el| {
             el.hover(move |style| style.bg(rgb(hover)))
@@ -14014,7 +14118,7 @@ fn file_row(
             div()
                 .id(SharedString::from(format!("file-marker-{}", entry.path)))
                 .flex_none()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(color))
                 .tooltip(tooltip(theme, what, ""))
@@ -14043,7 +14147,7 @@ fn change_counts(added: u32, removed: u32, theme: &Theme) -> gpui::Div {
         .flex_none()
         .flex()
         .gap(px(space::XS))
-        .text_size(px(font_size::META))
+        .text_size(font_size::META)
         .child(
             div()
                 .text_color(rgb(theme.diff_add_text))
@@ -14082,7 +14186,7 @@ fn git_file_row(
                 .py(px(space::XS))
                 .border(px(theme::BORDER_WIDTH))
                 .border_color(rgb(theme.bg))
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child(group.title())
@@ -14103,7 +14207,7 @@ fn git_file_row(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(note.clone())
                 .into_any_element();
@@ -14163,7 +14267,7 @@ fn git_file_row(
             fill
         }))
         .cursor_pointer()
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .when(picked, |el| el.bg(rgb(fill)))
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
         .active(|style| style.opacity(opacity::ACTIVE))
@@ -14172,7 +14276,7 @@ fn git_file_row(
                 .id(SharedString::from(format!("{id}-kind")))
                 .flex_none()
                 .w(px(space::M))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(color))
                 .tooltip(tooltip(theme, what, ""))
@@ -14198,7 +14302,7 @@ fn git_file_row(
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(dir)
                 })),
@@ -14289,7 +14393,7 @@ fn git_commit_row(
             fill
         }))
         .cursor_pointer()
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .when(picked, |el| el.bg(rgb(fill)))
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
         .active(|style| style.opacity(opacity::ACTIVE))
@@ -14316,7 +14420,7 @@ fn git_commit_row(
             div()
                 .flex_none()
                 .whitespace_nowrap()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(meta),
         )
@@ -14337,8 +14441,8 @@ fn row_action(id: SharedString, label: &'static str, theme: &Theme) -> gpui::Sta
         .px(px(space::XS))
         .rounded(px(radius::SMALL))
         .cursor_pointer()
-        .font_family(theme::UI_FONT)
-        .text_size(px(font_size::META))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
         .text_color(rgb(theme.text_muted))
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
@@ -14562,7 +14666,7 @@ fn doc_row(
                 .flex_col()
                 .child(line(
                     div()
-                        .text_size(px(font_size::BODY))
+                        .text_size(font_size::BODY)
                         .text_color(rgb(theme.text))
                         .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                         .child(marked(name, &name_hits)),
@@ -14570,7 +14674,7 @@ fn doc_row(
                 .children(folder.map(|folder| {
                     line(
                         div()
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child(marked(folder, &folder_hits)),
                     )
@@ -14588,7 +14692,7 @@ fn doc_row(
                     } else {
                         theme.surface_raised
                     }))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(format!("{} open", file.open_comments)),
             )
@@ -14611,7 +14715,7 @@ fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         .py(px(space::XS))
         .rounded(px(radius::SMALL))
         .cursor_pointer()
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .text_color(rgb(theme.text_muted))
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
@@ -14666,7 +14770,7 @@ fn agent_rows(
         div()
             .px(px(space::S))
             .py(px(space::XS))
-            .text_size(px(font_size::META))
+            .text_size(font_size::META)
             .text_color(rgb(theme.text_muted))
             .child(text)
     };
@@ -14680,7 +14784,7 @@ fn agent_rows(
                     .child(
                         div()
                             .py(px(space::XS))
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.status_exited))
                             .child("✕"),
                     )
@@ -14771,7 +14875,7 @@ fn workspace_row(
         )
         .child(
             div()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(if row.expanded { "▾" } else { "▸" }),
         )
@@ -14794,7 +14898,7 @@ fn workspace_row(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text))
                 .child(row.name),
@@ -14803,7 +14907,7 @@ fn workspace_row(
             el.child(
                 div()
                     .id(SharedString::from(format!("workspace-run-{project_id}")))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .tooltip(tooltip(theme, &tip, ""))
                     .child("▶"),
@@ -14814,7 +14918,7 @@ fn workspace_row(
                 div()
                     .id(SharedString::from(format!("workspace-tokens-{project_id}")))
                     .flex_none()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .tooltip(tooltip(
                         theme,
@@ -14828,7 +14932,7 @@ fn workspace_row(
             let working = sidebar::status_display(SessionState::Working);
             el.child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.status_working))
                     .child(format!("{} {}", working.icon, row.working)),
             )
@@ -14836,7 +14940,7 @@ fn workspace_row(
         .when(row.needs_input, |el| {
             el.child(
                 div()
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.status_needs_input))
                     .child(sidebar::status_display(SessionState::NeedsInput).icon),
@@ -14902,7 +15006,7 @@ fn session_row(
         })
         .child(
             div()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(sidebar::status_color(theme, row.state)))
                 .child(status::icon(row.state, now)),
         )
@@ -14912,7 +15016,7 @@ fn session_row(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
                 // Selection uses the accent; hover only the surface shift.
                 .when(selected, |el| {
@@ -14925,7 +15029,7 @@ fn session_row(
             div()
                 .id(SharedString::from(format!("session-status-{session_id}")))
                 .flex_none()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .tooltip(status_tooltip(
                     theme,
@@ -14991,7 +15095,7 @@ fn inbox_row(
         .child(
             div()
                 .flex_none()
-                .text_size(px(font_size::BODY))
+                .text_size(font_size::BODY)
                 .text_color(rgb(sidebar::status_color(theme, entry.state)))
                 .child(status::icon(entry.state, now)),
         )
@@ -15006,7 +15110,7 @@ fn inbox_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .whitespace_nowrap()
-                        .text_size(px(font_size::BODY))
+                        .text_size(font_size::BODY)
                         .text_color(rgb(theme.text))
                         .child(name),
                 )
@@ -15015,7 +15119,7 @@ fn inbox_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .whitespace_nowrap()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(line)
                 })),
@@ -15024,7 +15128,7 @@ fn inbox_row(
             div()
                 .id(SharedString::from(format!("inbox-status-{session_id}")))
                 .flex_none()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .tooltip(status_tooltip(
                     theme,
@@ -15070,6 +15174,7 @@ fn board_column(
     column: board::Column,
     cards: &CardContext<'_>,
     now: i64,
+    new_task: Option<gpui::AnyElement>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -15083,23 +15188,25 @@ fn board_column(
         .gap(px(space::S))
         .child(
             div()
+                .min_h(px(theme::BOARD_COLUMN_HEADER_HEIGHT))
                 .flex()
                 .items_center()
                 .gap(px(space::S))
                 .px(px(space::XS))
                 .child(
                     div()
-                        .text_size(px(font_size::BODY))
+                        .text_size(font_size::BODY)
                         .font_weight(FontWeight(weight::MEDIUM))
                         .text_color(rgb(theme.text))
                         .child(board::column_title(column.status)),
                 )
                 .child(
                     div()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .child(count.to_string()),
-                ),
+                )
+                .children(new_task.map(|button| div().ml_auto().child(button))),
         )
         .child(
             div()
@@ -15121,7 +15228,7 @@ fn board_column(
                     el.child(
                         div()
                             .p(px(space::S))
-                            .text_size(px(font_size::META))
+                            .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child("No tasks"),
                     )
@@ -15260,7 +15367,7 @@ fn task_card(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(font_size::CARD_TITLE))
+                        .text_size(font_size::CARD_TITLE)
                         .font_weight(FontWeight(weight::MEDIUM))
                         .text_color(rgb(theme.text))
                         .child(card.title),
@@ -15274,7 +15381,7 @@ fn task_card(
                         .py(px(space::XS))
                         .rounded(px(radius::SMALL))
                         .cursor_pointer()
-                        .text_size(px(font_size::META))
+                        .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
                         .opacity(opacity::HIDDEN)
                         .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
@@ -15297,7 +15404,7 @@ fn task_card(
                 .flex()
                 .items_center()
                 .gap(px(space::S))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(
                     div()
@@ -15327,7 +15434,7 @@ fn task_card(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(branch)
         }))
@@ -15344,7 +15451,7 @@ fn task_card(
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .tooltip(status_tooltip(
                         theme,
@@ -15381,7 +15488,7 @@ fn task_card(
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .text_size(px(font_size::META))
+                    .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .child(
                         div()
@@ -15563,7 +15670,7 @@ fn run_with_button(
         .border_color(rgb(theme.border))
         .bg(rgb(theme.surface_raised))
         .shadow_md()
-        .font_family(theme::UI_FONT)
+        .font_family(theme.ui_font_family.clone())
         .occlude()
         .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
             shell.run_with = None;
@@ -15573,7 +15680,7 @@ fn run_with_button(
             div()
                 .px(px(space::S))
                 .pt(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child("Run with"),
@@ -15625,7 +15732,7 @@ fn fan_out_button(
             div()
                 .px(px(space::S))
                 .py(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child("Needs at least 2 agent profiles. Add one to the profiles folder.")
                 .into_any_element(),
@@ -15678,7 +15785,7 @@ fn fan_out_button(
         .px(px(space::S))
         .py(px(space::XS))
         .rounded(px(radius::SMALL))
-        .text_size(px(font_size::BODY))
+        .text_size(font_size::BODY)
         .bg(rgb(theme.accent))
         .text_color(rgb(theme.surface))
         .child(label);
@@ -15704,7 +15811,7 @@ fn fan_out_button(
         .border_color(rgb(theme.border))
         .bg(rgb(theme.surface_raised))
         .shadow_md()
-        .font_family(theme::UI_FONT)
+        .font_family(theme.ui_font_family.clone())
         .occlude()
         .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
             shell.fan_out = None;
@@ -15714,7 +15821,7 @@ fn fan_out_button(
             div()
                 .px(px(space::S))
                 .pt(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text_muted))
                 .child("Run with several agents"),
@@ -15748,7 +15855,7 @@ fn fan_out_child_row(child: fanout::ChildLine, now: i64, theme: &Theme) -> gpui:
         .flex()
         .items_center()
         .gap(px(space::XS))
-        .text_size(px(font_size::META))
+        .text_size(font_size::META)
         .text_color(rgb(theme.text_muted))
         .child(div().flex_none().w(px(space::M)).children(icon))
         .child(
@@ -15830,6 +15937,7 @@ fn follow_up_field(
         text,
         "Follow up… (Ctrl+Enter sends)",
         focused,
+        draft.is_some_and(|draft| draft.text.all_selected()),
         theme,
     )
     .bg(rgb(theme.surface))
@@ -15870,7 +15978,7 @@ fn follow_up_field(
             div()
                 .flex()
                 .gap(px(space::XS))
-                .text_size(px(font_size::META))
+                .text_size(font_size::META)
                 .child(div().text_color(rgb(color)).child(icon))
                 .child(div().text_color(rgb(theme.text)).child(text))
         }))
@@ -15894,7 +16002,7 @@ fn conflict_badge(
         .items_center()
         .gap(px(space::XS))
         .min_w_0()
-        .text_size(px(font_size::META))
+        .text_size(font_size::META)
         .tooltip(tooltip(theme, &conflicts::hover(paths), ""))
         .child(
             div()
@@ -15965,8 +16073,8 @@ fn pane_header(
         .gap(px(space::S))
         .px(px(space::S))
         .py(px(space::XS))
-        .font_family(theme::UI_FONT)
-        .text_size(px(font_size::META))
+        .font_family(theme.ui_font_family.clone())
+        .text_size(font_size::META)
         .child(
             div()
                 .flex_none()
@@ -16095,8 +16203,8 @@ impl Render for CardPreview {
             .bg(rgb(theme.surface_raised))
             .shadow_sm()
             .opacity(opacity::DRAGGING)
-            .font_family(theme::UI_FONT)
-            .text_size(px(font_size::CARD_TITLE))
+            .font_family(theme.ui_font_family.clone())
+            .text_size(font_size::CARD_TITLE)
             .font_weight(FontWeight(weight::MEDIUM))
             .text_color(rgb(theme.text))
             .child(self.title.clone())
@@ -16122,8 +16230,8 @@ impl Render for Tooltip {
             .border_color(rgb(theme.border))
             .bg(rgb(theme.surface_raised))
             .shadow_sm()
-            .font_family(theme::UI_FONT)
-            .text_size(px(font_size::META))
+            .font_family(theme.ui_font_family.clone())
+            .text_size(font_size::META)
             .text_color(rgb(theme.text))
             .child(self.text.clone())
             .when(!self.keys.is_empty(), |el| {
@@ -16142,7 +16250,9 @@ impl Render for Shell {
             window.appearance(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark
         );
-        let theme = Theme::for_appearance(dark);
+        let fonts = cx.global::<theme::Fonts>().clone();
+        window.set_rem_size(px(fonts.ui_size));
+        let theme = Theme::for_appearance(dark).with_fonts(&fonts);
         if let Some(launched) = self.launched {
             if !self.first_frame_logged {
                 self.first_frame_logged = true;
@@ -16178,6 +16288,10 @@ impl Render for Shell {
             .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(now, &theme, cx))
             .child(self.render_main(now, &theme, window, cx))
+            .when(
+                self.workspace.is_some() && self.connection.is_some(),
+                |el| el.child(self.render_view_rail(self.view(), &theme, cx)),
+            )
             .children(
                 self.task_dialog
                     .as_ref()

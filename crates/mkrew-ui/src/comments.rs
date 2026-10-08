@@ -162,7 +162,7 @@ impl Draft {
             DialogKey::Cancel => return Outcome::Cancel,
             DialogKey::Enter | DialogKey::Save => return Outcome::Submit,
             // The caller inserts the clipboard text.
-            DialogKey::SwitchField | DialogKey::Paste => {}
+            DialogKey::SwitchField | DialogKey::Paste | DialogKey::SelectAll => {}
             DialogKey::Backspace => {
                 if !self.busy {
                     self.text.pop();

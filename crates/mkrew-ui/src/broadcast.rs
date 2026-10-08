@@ -151,7 +151,7 @@ impl Broadcast {
                 self.insert(&text);
                 Outcome::Edited
             }
-            None => Outcome::Edited,
+            Some(DialogKey::SelectAll) | None => Outcome::Edited,
         }
     }
 

@@ -36,6 +36,8 @@ pub enum DialogKey {
     Backspace,
     /// Ctrl+V (Cmd+V): the caller inserts the clipboard text.
     Paste,
+    /// Ctrl+A (Cmd+A): the next edit replaces the whole text.
+    SelectAll,
     Insert(String),
 }
 
@@ -50,6 +52,7 @@ pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
         "tab" => return Some(DialogKey::SwitchField),
         "backspace" => return Some(DialogKey::Backspace),
         "v" if command && !m.alt && !m.shift => return Some(DialogKey::Paste),
+        "a" if command && !m.alt && !m.shift => return Some(DialogKey::SelectAll),
         _ => {}
     }
     // AltGr arrives as Ctrl+Alt with the composed char; plain Ctrl+key types nothing.
@@ -167,6 +170,11 @@ impl TaskDialog {
                 }
             },
             DialogKey::Insert(text) => self.insert(&text),
+            DialogKey::SelectAll => {
+                if self.field == Field::Prompt {
+                    self.prompt.key(DialogKey::SelectAll);
+                }
+            }
             DialogKey::Paste => {}
         }
         Outcome::Edited
@@ -329,7 +337,9 @@ mod tests {
         assert_eq!(key("backspace"), Some(DialogKey::Backspace));
         assert_eq!(key("ctrl-v"), Some(DialogKey::Paste));
         assert_eq!(key("a"), Some(DialogKey::Insert("a".into())));
-        assert_eq!(key("ctrl-a"), None);
+        assert_eq!(key("ctrl-a"), Some(DialogKey::SelectAll));
+        assert_eq!(key("cmd-a"), Some(DialogKey::SelectAll));
+        assert_eq!(key("ctrl-b"), None, "other Ctrl+letters still type nothing");
     }
 
     #[test]
