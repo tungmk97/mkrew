@@ -15,6 +15,45 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-07 workspace, files and docs fixes (plan docs/superpowers/plans/2026-10-07-workspace-files-docs-fixes.md)
+
+The protocol is now v26, and `target\debug\mk.exe` is already rebuilt at v26, so
+`target\debug\mk daemon stop` cannot stop an older daemon (it answers "version mismatch"). Every
+build (dev and the installed Mkrew in `%LOCALAPPDATA%\Programs\Mkrew`) uses the same daemon, and
+ending it stops all running agents and run commands at once, with no graceful shutdown. So first
+let your agents finish or stop them, close the Mkrew window (or `Stop-Process -Name mkrew`), and
+only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo run -p mkrew-ui`.
+
+- [ ] 1. **Remove a workspace.** Workspace menu → "Remove workspace…" on a workspace with a running
+  agent and its run commands. Expected: a confirmation that names the workspace and says how many
+  running sessions stop; after Remove, the row is gone, the agents stop, and another workspace is
+  shown. Then add the same folder again: it returns with its tasks and history.
+- [ ] 2. **Remove the shown workspace.** Workspace menu → "Remove workspace…" on the workspace that
+  is currently shown → Remove: the view moves to another workspace (not an empty or stale view).
+- [ ] 3. **Remove an agent row.** Hover an exited agent row: ✕ removes it. On a running one, ✕ asks
+  first, then stops it and closes its pane. Restart the app: removed rows stay gone.
+- [ ] 4. **Workspace color.** Workspace menu → Color: pick teal, then "No color". The dot before the
+  name follows, in the dark and light themes.
+- [ ] 5. **Full-width rows.** In the Files tree and the Git list, click anywhere on a row, also right
+  of the name. The whole row width highlights, and the markers sit at the right edge.
+- [ ] 6. **Find in file.** In Files, open a file, press Ctrl+Shift+F (or "Find"), and type `việt` /
+  `TODO`. Expected: matches are highlighted; Enter, Shift+Enter, ↑ and ↓ move between them and
+  scroll; "N of M" updates; Esc closes the bar. Click the bar's ↑/↓ buttons: the cursor stays in
+  the field (typing still goes there). Let an agent edit the open file: the count follows.
+- [ ] 7. **Docs filter.** In Docs, Ctrl+Shift+F focuses "Filter files…". Typing filters the list,
+  with the matched letters bold; ↑/↓ open the previous/next file; Esc clears the filter.
+- [ ] 8. **Docs preview.** Open a plan in dark and light with headings h1–h4, nested and numbered
+  lists, a table, a quote, `inline code`, and ```rust, ```ts and ```mermaid blocks (a flowchart and
+  a sequenceDiagram), plus a ```mermaid `pie` block with a large and a tiny slice (`pie`,
+  `"A": 95`, `"B": 3`). Expected: a readable, centered column; colored code (```ts too); diagrams
+  drawn in theme colors; in dark mode the pie labels (inside and outside the slices) are readable.
+  Retake the §14 screenshots.
+- [ ] 9. **Broken mermaid.** A malformed block (e.g. `flowchart LR` then `A[/]`) shows its source
+  and the reason; the app does not crash.
+- [ ] 10. **Memory.** With a doc that contains 3 diagrams open: the UI process stays under 150 MB
+  (Task Manager); in a release build (`cargo run --release -p mkrew-ui`), the first diagram shows
+  within ~1 s.
+
 ### 2026-10-07 Run button (plan docs/superpowers/plans/2026-10-07-run-button.md)
 
 - [ ] EA: Run setup with BE (folder `EA-BE`, command `.venv\Scripts\python.exe main.py`, env file

@@ -185,6 +185,7 @@ impl RunSetup {
             default_agent: None,
             run_commands: Some(commands),
             run_autostart: Some(self.autostart),
+            color: None,
         })
     }
 
@@ -262,6 +263,7 @@ mod tests {
             created_at: 0,
             archived: false,
             base_ref: None,
+            color: None,
         }
     }
 

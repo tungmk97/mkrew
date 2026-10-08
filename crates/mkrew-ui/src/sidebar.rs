@@ -62,6 +62,8 @@ pub struct WorkspaceRow {
     pub working: usize,
     /// Any session needs input (shown as `?`).
     pub needs_input: bool,
+    /// A `WORKSPACE_COLORS` name.
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +182,11 @@ impl Sidebar {
         }
     }
 
+    /// A session the user removed (`session.remove` answered ok): gone from the rows now.
+    pub fn remove_session(&mut self, session_id: Ulid) {
+        self.sessions.retain(|session| session.id != session_id);
+    }
+
     /// Applies a daemon event.
     pub fn apply(&mut self, event: &Event) -> Change {
         if let Some(since_load) = &mut self.since_load
@@ -252,6 +259,7 @@ impl Sidebar {
                 needs_input: sessions
                     .iter()
                     .any(|session| session.state == SessionState::NeedsInput),
+                color: project.color.clone(),
             }));
             if !expanded {
                 continue;
@@ -318,6 +326,7 @@ mod tests {
             created_at: 0,
             archived: false,
             base_ref: None,
+            color: None,
         }
     }
 
@@ -525,6 +534,7 @@ mod tests {
                     expanded: true,
                     working: 0,
                     needs_input: false,
+                    color: None,
                 }),
                 Row::NoSessions { project_id: api.id },
             ]

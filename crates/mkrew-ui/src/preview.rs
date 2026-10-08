@@ -9,14 +9,16 @@ use std::rc::Rc;
 use gpui::prelude::*;
 use gpui::{
     AnyElement, App, FontStyle, FontWeight, HighlightStyle, Hsla, MouseButton, MouseDownEvent,
-    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, UniformList, Window, div, px,
-    rgb, uniform_list,
+    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, UniformList, Window, div, img,
+    px, relative, rgb, uniform_list,
 };
 
 use crate::comments::Selection;
+use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
+use crate::text_find::Hits;
 use crate::theme::{self, Theme, font_size, radius, space, weight};
 
 /// The text of `runs` joined, and the byte range, style and "is a link" of every run that is
@@ -35,27 +37,32 @@ pub fn inline(runs: &[Run]) -> (String, Vec<(Range<usize>, Style, bool)>) {
 }
 
 /// The rendered preview of `blocks`, top to bottom.
-pub fn blocks(blocks: &[Block], theme: &Theme) -> Vec<AnyElement> {
+pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement> {
     blocks
         .iter()
-        .filter_map(|block| self::block(block, theme))
+        .filter_map(|block| self::block(block, shown, theme))
         .collect()
 }
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
-pub fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
+pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> {
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
-            let (size, weight) = match level {
-                1 => (font_size::VIEW_TITLE, weight::SEMIBOLD),
-                2 => (font_size::CARD_TITLE, weight::SEMIBOLD),
-                _ => (font_size::BODY, weight::SEMIBOLD),
-            };
+            let size = (theme::doc::HEADINGS.get(usize::from(*level).saturating_sub(1)))
+                .copied()
+                .unwrap_or(theme::doc::BODY);
+            let major = *level <= 2;
             div()
-                .pt(px(space::S))
+                .pt(px(if major { space::L } else { space::S }))
                 .text_size(px(size))
-                .font_weight(FontWeight(weight))
+                .line_height(relative(theme::doc::HEADING_LINE_HEIGHT))
+                .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(theme.text))
+                .when(major, |el| {
+                    el.pb(px(space::XS))
+                        .border_b_1()
+                        .border_color(rgb(theme.border))
+                })
                 .child(text(runs, theme))
                 .into_any_element()
         }
@@ -70,7 +77,7 @@ pub fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
             .gap(px(space::XS))
             .children(items.iter().enumerate().map(|(index, item)| {
                 let number = start.map(|first| first + index as u64);
-                list_item(item, number, theme)
+                list_item(item, number, shown, theme)
             }))
             .into_any_element(),
         BlockKind::Quote(inner) => div()
@@ -81,7 +88,7 @@ pub fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
                     .flex_none()
                     .w(px(theme::DOC_QUOTE_BAR_WIDTH))
                     .rounded(px(radius::SMALL))
-                    .bg(rgb(theme.border)),
+                    .bg(rgb(theme.pane_focus_border)),
             )
             .child(
                 div()
@@ -90,11 +97,33 @@ pub fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
                     .flex()
                     .flex_col()
                     .gap(px(space::S))
-                    .text_color(rgb(theme.text_muted))
-                    .children(blocks(inner, theme)),
+                    .text_color(rgb(theme.text))
+                    .children(blocks(inner, shown, theme)),
             )
             .into_any_element(),
-        BlockKind::Code { text, .. } => code(text, theme.text, theme).into_any_element(),
+        BlockKind::Code { lang, text } => {
+            let start = block.lines.start;
+            let source = || match shown.code.get(&start) {
+                Some(highlighted) => code_block(lang.as_deref(), highlighted, theme),
+                None => code(text, theme.text, theme),
+            };
+            match shown.diagrams.get(&start) {
+                Some(Ok(diagram)) => diagram_view(diagram, theme).into_any_element(),
+                Some(Err(error)) => div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .child(
+                        div()
+                            .text_size(px(font_size::META))
+                            .text_color(rgb(theme.text_muted))
+                            .child(format!("Cannot draw this diagram: {error}")),
+                    )
+                    .child(source())
+                    .into_any_element(),
+                None => source().into_any_element(),
+            }
+        }
         BlockKind::Html(html) => code(html, theme.text_muted, theme).into_any_element(),
         BlockKind::Table { aligns, head, rows } => div()
             .flex()
@@ -124,7 +153,7 @@ pub fn block(block: &Block, theme: &Theme) -> Option<AnyElement> {
 }
 
 /// A bullet, number or check box, then the item's blocks.
-fn list_item(item: &Item, number: Option<u64>, theme: &Theme) -> gpui::Div {
+fn list_item(item: &Item, number: Option<u64>, shown: &Shown, theme: &Theme) -> gpui::Div {
     let marker = match (item.checked, number) {
         (Some(checked), _) => div()
             .mt(px(space::XS))
@@ -151,7 +180,14 @@ fn list_item(item: &Item, number: Option<u64>, theme: &Theme) -> gpui::Div {
     div()
         .flex()
         .gap(px(space::S))
-        .child(marker.flex_none())
+        .child(
+            div()
+                .flex_none()
+                .w(px(theme::doc::MARKER_WIDTH))
+                .flex()
+                .justify_end()
+                .child(marker),
+        )
         .child(
             div()
                 .flex_1()
@@ -162,7 +198,7 @@ fn list_item(item: &Item, number: Option<u64>, theme: &Theme) -> gpui::Div {
                 .when(item.checked == Some(true), |el| {
                     el.text_color(rgb(theme.text_muted))
                 })
-                .children(blocks(&item.blocks, theme)),
+                .children(blocks(&item.blocks, shown, theme)),
         )
 }
 
@@ -198,10 +234,70 @@ fn code(text: &str, color: u32, theme: &Theme) -> gpui::Div {
         .child(SharedString::from(text.to_owned()))
 }
 
+/// A fenced code block: its language muted above, then its lines with syntax colors in the
+/// monospaced font on a raised surface (long lines wrap).
+fn code_block(lang: Option<&str>, code: &Code, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(space::XS))
+        .p(px(space::M))
+        .rounded(px(radius::MEDIUM))
+        .bg(rgb(theme.surface_raised))
+        .children(lang.map(|lang| {
+            div()
+                .text_size(px(font_size::META))
+                .text_color(rgb(theme.text_muted))
+                .child(lang.to_owned())
+        }))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .font_family(theme.terminal_font_family)
+                .text_size(px(theme::doc::CODE))
+                .line_height(relative(theme::doc::CODE_LINE_HEIGHT))
+                .text_color(rgb(theme.text))
+                .children(code.lines.iter().zip(&code.spans).map(|(line, spans)| {
+                    // An empty line still takes a line's height.
+                    let line = if line.is_empty() {
+                        " ".to_owned()
+                    } else {
+                        line.clone()
+                    };
+                    div().child(code_line(line, spans, &[], theme))
+                })),
+        )
+}
+
+/// A drawn Mermaid diagram on a bordered card, at its natural size, at most as wide as the
+/// preview.
+fn diagram_view(diagram: &Diagram, theme: &Theme) -> gpui::Div {
+    div()
+        .flex()
+        .justify_center()
+        .p(px(space::M))
+        .rounded(px(radius::MEDIUM))
+        .border_1()
+        .border_color(rgb(theme.border))
+        .bg(rgb(theme.surface))
+        .child(img(diagram.image(theme)).w(px(diagram.width)).max_w_full())
+}
+
 /// Inline runs as one text element: bold, italic, struck through, code spans on a raised
 /// background, links in the accent color and underlined.
 fn text(runs: &[Run], theme: &Theme) -> StyledText {
     let (text, styled) = inline(runs);
+    let mono: Vec<(Range<usize>, SharedString)> = styled
+        .iter()
+        .filter(|(_, style, _)| style.code)
+        .map(|(range, _, _)| {
+            (
+                range.clone(),
+                SharedString::from(theme.terminal_font_family),
+            )
+        })
+        .collect();
     let accent = Hsla::from(rgb(theme.accent));
     let code_bg = Hsla::from(rgb(theme.surface_raised));
     let highlights = styled.into_iter().map(move |(range, style, link)| {
@@ -223,7 +319,9 @@ fn text(runs: &[Run], theme: &Theme) -> StyledText {
         };
         (range, highlight)
     });
-    StyledText::new(text).with_highlights(highlights)
+    StyledText::new(text)
+        .with_highlights(highlights)
+        .with_font_family_overrides(mono)
 }
 
 /// Called with a clicked source line (1-based) and whether Shift was held.
@@ -293,27 +391,104 @@ pub fn token_color(token: Token, theme: &Theme) -> u32 {
     }
 }
 
-/// One line of code with its syntax `spans` colored (other text keeps the parent's color).
-pub fn code_line(text: String, spans: &[(Range<usize>, Token)], theme: &Theme) -> StyledText {
-    let highlights: Vec<_> = spans
+/// How a piece of a code line is drawn: in a token color, or as a find match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Paint {
+    Token(Token),
+    Match { current: bool },
+}
+
+/// The non-overlapping pieces of a line to draw: find matches (`found`, with "is current")
+/// cover the syntax `spans`; text in neither keeps the parent's color. Both inputs are sorted
+/// and non-overlapping, so one pass over the cuts is enough (minified lines hold thousands).
+pub fn paint(
+    spans: &[(Range<usize>, Token)],
+    found: &[(Range<usize>, bool)],
+) -> Vec<(Range<usize>, Paint)> {
+    if found.is_empty() {
+        return spans
+            .iter()
+            .map(|(range, token)| (range.clone(), Paint::Token(*token)))
+            .collect();
+    }
+    let mut cuts: Vec<usize> = spans
         .iter()
-        .map(|(range, token)| {
-            let style = HighlightStyle {
-                color: Some(Hsla::from(rgb(token_color(*token, theme)))),
-                ..HighlightStyle::default()
+        .map(|(range, _)| range)
+        .chain(found.iter().map(|(range, _)| range))
+        .flat_map(|range| [range.start, range.end])
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    // The first range of `ranges`, from `*at` on, that covers `piece`; `*at` only moves
+    // forward because the pieces come left to right.
+    fn covering<'a, T>(
+        ranges: &'a [(Range<usize>, T)],
+        at: &mut usize,
+        piece: &Range<usize>,
+    ) -> Option<&'a T> {
+        while ranges
+            .get(*at)
+            .is_some_and(|(range, _)| range.end <= piece.start)
+        {
+            *at += 1;
+        }
+        ranges
+            .get(*at)
+            .filter(|(range, _)| range.start <= piece.start && piece.end <= range.end)
+            .map(|(_, value)| value)
+    }
+    let (mut next_found, mut next_span) = (0, 0);
+    cuts.windows(2)
+        .filter_map(|pair| {
+            let piece = pair[0]..pair[1];
+            let matched = covering(found, &mut next_found, &piece)
+                .map(|current| Paint::Match { current: *current });
+            let token = covering(spans, &mut next_span, &piece).map(|token| Paint::Token(*token));
+            matched.or(token).map(|paint| (piece, paint))
+        })
+        .collect()
+}
+
+/// One line of code with its syntax `spans` colored and its find matches (`found`, with "is
+/// current") on the match backgrounds in the text color; other text keeps the parent's color.
+pub fn code_line(
+    text: String,
+    spans: &[(Range<usize>, Token)],
+    found: &[(Range<usize>, bool)],
+    theme: &Theme,
+) -> StyledText {
+    let highlights: Vec<_> = paint(spans, found)
+        .into_iter()
+        .map(|(range, paint)| {
+            let style = match paint {
+                Paint::Token(token) => HighlightStyle {
+                    color: Some(Hsla::from(rgb(token_color(token, theme)))),
+                    ..HighlightStyle::default()
+                },
+                Paint::Match { current } => HighlightStyle {
+                    color: Some(Hsla::from(rgb(theme.text))),
+                    background_color: Some(Hsla::from(rgb(if current {
+                        theme.terminal_match_current_bg
+                    } else {
+                        theme.terminal_match_bg
+                    }))),
+                    ..HighlightStyle::default()
+                },
             };
-            (range.clone(), style)
+            (range, style)
         })
         .collect();
     StyledText::new(text).with_highlights(highlights)
 }
 
 /// The Files viewer (SPEC §12A): `code` with line numbers and syntax colors; a click on a line
-/// calls `on_line` (Shift is ignored), `selected` is shown like a selection.
+/// calls `on_line` (Shift is ignored), `selected` is shown like a selection, and the find
+/// matches in `found` are highlighted.
 pub fn code_view(
     id: &'static str,
     code: Rc<Code>,
     selected: Option<u32>,
+    found: Option<Hits>,
     on_line: OnLine,
     theme: &Theme,
 ) -> UniformList {
@@ -329,6 +504,10 @@ pub fn code_view(
                 let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
                 let on_line = Rc::clone(&on_line);
                 let picked = selected == Some(number);
+                let marks = found
+                    .as_ref()
+                    .map(|hits| hits.on_line(index))
+                    .unwrap_or_default();
                 // A raised band plus an accent number: syntax colors and muted comments stay
                 // ≥ 4.5:1 on it (the terminal selection color would not).
                 div()
@@ -355,6 +534,7 @@ pub fn code_view(
                     .child(div().text_color(rgb(theme.text)).child(code_line(
                         line.to_owned(),
                         spans,
+                        &marks,
                         &theme,
                     )))
             })
@@ -411,5 +591,30 @@ mod tests {
         assert_eq!(token_color(Token::Comment, &theme), theme.text_muted);
         assert_eq!(token_color(Token::Keyword, &theme), theme.syntax_keyword);
         assert_eq!(token_color(Token::Function, &theme), theme.syntax_function);
+    }
+
+    #[test]
+    fn matches_paint_over_syntax_colors() {
+        let spans = [(0..2, Token::Keyword), (3..8, Token::String)];
+        let found = [(1..4, false), (6..7, true)];
+        assert_eq!(
+            paint(&spans, &found),
+            [
+                (0..1, Paint::Token(Token::Keyword)),
+                (1..2, Paint::Match { current: false }),
+                (2..3, Paint::Match { current: false }),
+                (3..4, Paint::Match { current: false }),
+                (4..6, Paint::Token(Token::String)),
+                (6..7, Paint::Match { current: true }),
+                (7..8, Paint::Token(Token::String)),
+            ]
+        );
+        assert_eq!(
+            paint(&spans, &[]),
+            [
+                (0..2, Paint::Token(Token::Keyword)),
+                (3..8, Paint::Token(Token::String))
+            ]
+        );
     }
 }

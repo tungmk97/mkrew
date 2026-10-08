@@ -166,6 +166,7 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | Paths | `directories`, `dunce` | |
 | Markdown | `pulldown-cmark` | docs review (M6) |
 | Syntax highlighting | `syntect` (pure-Rust regex feature, lazy-loaded) | files & diffs (M7) |
+| Diagrams | `mermaid-rs-renderer` (no default features) | Mermaid in the Docs preview (ADR 0021) |
 | File walking | `ignore` | respects .gitignore (M7) |
 | Fuzzy matching | `nucleo-matcher` | quick open files (M7) |
 | Diff | `similar` | |
@@ -313,7 +314,9 @@ ALTER TABLE project RENAME COLUMN dev_autostart TO run_autostart;
 ```
 
 v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interrupted.sql` adds
-`session.interrupted INTEGER NOT NULL DEFAULT 0` (ADR 0017).
+`session.interrupted INTEGER NOT NULL DEFAULT 0` (ADR 0017). `0012_session_hidden.sql` adds
+`session.hidden INTEGER NOT NULL DEFAULT 0` (ADR 0019). `0013_project_color.sql` adds
+`project.color TEXT` (ADR 0020).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -484,7 +487,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Method | Main params | Returns |
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
-| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart` (update only), `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile) |
+| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color` (update only), `review_globs`, `default_agent?` | Project (`update`: absent field = unchanged, `null` = cleared; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `color` must be one of red, orange, yellow, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
 | `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>`: without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file, then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
 | `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start` |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs |
@@ -502,6 +505,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.wait` | `session_id`, `until` (states), `timeout_ms` | final state |
 | `session.resize` | `session_id`, `cols`, `rows` | ok |
 | `session.kill` | `session_id`, `force` | ok |
+| `session.remove` | `session_id` | ok — leaves the session out of `session.list` for good (row, log, turns kept); a live one is asked to stop first (ADR 0019) |
 | `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab, its sessions keep running, no event) |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
@@ -661,6 +665,11 @@ One window, three regions:
 
 - **Sidebar:** workspaces; expanding one lists its sessions with status (§11). Below: **Inbox** —
   every session in needs_input or freshly done, newest first; click jumps to that pane.
+- **Remove:** the workspace menu's "Remove workspace…" archives it after a confirmation
+  (`project.archive`, ADR 0019); a session row's ✕ (on hover) removes it from the sidebar
+  (`session.remove`; a running one asks first and is stopped).
+- **Color:** the workspace menu's swatches give a workspace one of 8 colors, shown as a dot
+  before its name (decoration only, ADR 0020).
 - **Views per workspace:** Board, Terminals, Docs, Files, Git.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
@@ -728,9 +737,13 @@ agent session that wrote them so it edits the file **in the same conversation co
 
 - **File list:** files matching the workspace's `review_globs` (default
   `["*.md", "docs/**/*.md", ".claude/plans/**/*.md"]`) plus `.md` files recently changed by agents.
-  Show open-comment counts.
+  Show open-comment counts. A filter field at the top (`Ctrl+Shift+F`) fuzzy-filters the list by
+  path; ↑ / ↓ in it show the previous / next file.
 - **Rendering:** `pulldown-cmark` → GPUI elements: headings, paragraphs, lists, task lists, tables,
-  code blocks, links, quotes. Toggle to source view with line numbers. No syntax highlighting in v1.
+  code blocks, links, quotes. Toggle to source view with line numbers. Code blocks are
+  highlighted by their fence language (syntect, as in the Files viewer); the text uses the doc
+  typography of §14 (ADR 0021). ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust
+  renderer, theme colors); a block that cannot be drawn shows its source and the reason.
 - **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
@@ -772,6 +785,9 @@ Only edit this file. When done, for EACH comment run:
   fuzzy-finds files of the current workspace, in the folder the Files view shows (project or
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - Select a line → "Open in Zed" at that line.
+- **Find in file** (`Ctrl+Shift+F` or "Find" in the viewer header): case-insensitive text search
+  in the opened file; matches highlighted, Enter / Shift+Enter move between them (the line is
+  selected for "Open in Zed"), Esc closes.
 
 ## §12B UI: Git view (inspired by Orca)
 
@@ -853,7 +869,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
 | Terminal | Copy / paste | Ctrl+Shift+C / Ctrl+Shift+V |
-| Terminal | Find in scrollback | Ctrl+Shift+F |
+| Terminal / Files / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
 | Docs | Comment on selection | Ctrl+Alt+M |
 | Docs | Send comments to agent | Ctrl+Shift+S |
@@ -892,7 +908,8 @@ The terminal is the hero; everything else steps back.
 1. **Little chrome, lots of air.** Separate regions with spacing and subtle background shifts, not
    heavy lines. Borders, if any, are 1 px and faint.
 2. **Soft.** Moderate corner radius; very light shadows only on floating layers (popover, dialog,
-   palette). No saturated colors besides the accent and status colors.
+   palette). No saturated colors besides the accent and status colors. Workspace colors
+   (ADR 0020) are the one exception: a small dot per workspace.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
 4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
 5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow spinner.
@@ -926,6 +943,8 @@ The terminal is the hero; everything else steps back.
 - Radius 4 (badges, small buttons), 8 (cards, panes, inputs), 12 (dialogs, palette).
 - UI font = system font (Segoe UI Variable / SF / Inter). Sizes 12 meta, 13 body, 15 card title,
   20 view title. Weights 400/500/600. No all-caps text.
+- Docs preview (ADR 0021): body 14 px, line height 1.6, headings 24/20/17/15/14/14 px, code 13 px,
+  a centered column of at most 720 px.
 - Terminal font defaults: Cascadia Code → Cascadia Mono → Consolas (Windows), SF Mono → Menlo
   (macOS), JetBrains Mono → DejaVu Sans Mono (Linux): the first installed one, 13 px. Icons of
   Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
@@ -937,6 +956,9 @@ The terminal is the hero; everything else steps back.
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
   Find matches (`status-needs-input` amber mixed into `bg`, text drawn in `text`):
   `terminal-match-bg` #3F3524 / #F6EBCF; `terminal-match-current-bg` #7A5A1F / #E9C46A.
+- Workspace colors (red … pink): dark #E5676B #F0955A #E3C14E #4CB782 #5EC4D6 #7C8CFF #C28CF0
+  #F08CC0 / light #C53030 #C05621 #975A16 #2F855A #1F8A9E #4F5BD5 #8A3FB8 #B83280 (≥ 3:1 on
+  every surface).
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
 - Theme follows OS light/dark.
 

@@ -1,5 +1,5 @@
-//! The workspace menu (SPEC §10): "Open in Zed" and the workspace's default agent, used for
-//! new agent panes. Pure and tested headlessly; `main.rs` renders it.
+//! The workspace menu (SPEC §10): "Open in Zed", "Run setup…", the default agent, and removing
+//! the workspace. Pure and tested headlessly; `main.rs` renders it.
 
 use mkrew_protocol::{AgentProfileInfo, ProjectUpdateParams, SessionKind};
 use ulid::Ulid;
@@ -69,8 +69,24 @@ pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
         default_agent: Some(Some(agent.to_owned())),
         run_commands: None,
         run_autostart: None,
+        color: None,
     }
 }
+
+/// `project.update` setting the workspace's color (`None` = no color).
+pub fn set_color(project_id: Ulid, color: Option<&str>) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        project_id,
+        name: None,
+        default_agent: None,
+        run_commands: None,
+        run_autostart: None,
+        color: Some(color.map(str::to_owned)),
+    }
+}
+
+/// Answers of the "Remove …?" confirmations; index 0 removes ([`crate::task_dialog::confirms_delete`]).
+pub const REMOVE_ANSWERS: [&str; 2] = ["Remove", "Cancel"];
 
 #[cfg(test)]
 mod tests {

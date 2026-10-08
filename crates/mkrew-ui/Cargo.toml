@@ -23,6 +23,8 @@ async-channel = "2"
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7" }
 interprocess = { version = "2.4.4", features = ["tokio"] }
+# Mermaid diagrams of the Docs preview (ADR 0021): pure Rust, SVG only (no CLI, no PNG).
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }

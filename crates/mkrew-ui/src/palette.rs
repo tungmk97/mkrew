@@ -186,7 +186,7 @@ pub fn title(command: Command) -> String {
         Command::Paste => "Terminal: Paste".into(),
         Command::PageUp => "Terminal: Page up".into(),
         Command::PageDown => "Terminal: Page down".into(),
-        Command::Find => "Terminal: Find in scrollback".into(),
+        Command::Find => "Find: in scrollback, the open file or the Docs list".into(),
         Command::OpenInZed => "Zed: Open workspace or current file in Zed".into(),
         Command::NextInbox => "Inbox: Jump to next item needing attention".into(),
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
@@ -248,8 +248,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::Resize(_)
         | Command::ZoomPane
         | Command::ClosePane => on_panes,
-        Command::Copy | Command::Paste | Command::PageUp | Command::PageDown | Command::Find => {
+        Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
             on_panes && context.terminal
+        }
+        Command::Find => {
+            (on_panes && context.terminal) || in_view(View::Files) || in_view(View::Docs)
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::SendSelection => {
@@ -572,6 +575,7 @@ mod tests {
             created_at: 0,
             archived,
             base_ref: None,
+            color: None,
         }
     }
 

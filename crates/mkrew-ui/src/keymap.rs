@@ -120,6 +120,9 @@ pub const GIT_CONTEXT: &str = "Git";
 /// Comment commands work in the Docs view and in the Git view's list (diff comments).
 pub const COMMENTS_CONTEXT: &str = "Docs || Git";
 
+/// Find: in a terminal's scrollback, the Files view's opened file, and the Docs list filter.
+pub const FIND_CONTEXT: &str = "Terminal || Files || Docs";
+
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
 #[derive(Debug, Clone, PartialEq, gpui::Action)]
@@ -319,11 +322,10 @@ impl Command {
     /// Key context the binding is limited to; `None` = anywhere in the window.
     pub fn context(self) -> Option<&'static str> {
         match self {
-            Command::Copy
-            | Command::Paste
-            | Command::PageUp
-            | Command::PageDown
-            | Command::Find => Some(TERMINAL_CONTEXT),
+            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
+                Some(TERMINAL_CONTEXT)
+            }
+            Command::Find => Some(FIND_CONTEXT),
             Command::RunTask => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
             Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
@@ -525,7 +527,8 @@ impl Keymap {
             .iter()
             .filter_map(|(command, keystroke)| {
                 // Never fails in practice: the keystroke was parsed and is unparsed back, the
-                // contexts are plain identifiers or `COMMENTS_CONTEXT` (all loaded in the tests).
+                // contexts are plain identifiers, `COMMENTS_CONTEXT` or `FIND_CONTEXT` (all
+                // loaded in the tests).
                 let context = match command
                     .context()
                     .map(gpui::KeyBindingContextPredicate::parse)
@@ -686,10 +689,10 @@ mod tests {
             Command::Paste,
             Command::PageUp,
             Command::PageDown,
-            Command::Find,
         ] {
             assert_eq!(command.context(), Some(TERMINAL_CONTEXT), "{command:?}");
         }
+        assert_eq!(Command::Find.context(), Some(FIND_CONTEXT));
         assert_eq!(Command::ClosePane.context(), None);
         // Ctrl+Enter only runs a card while the board is shown; terminals still get it.
         assert_eq!(Command::RunTask.context(), Some(BOARD_CONTEXT));

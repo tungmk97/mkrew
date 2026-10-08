@@ -21,7 +21,7 @@ use mkrew_protocol::{
 use mkrew_ui::client::{Connection, Inbox, Incoming};
 use mkrew_ui::comments::{self, List};
 use mkrew_ui::connect::{DaemonLauncher, POLL, TIMEOUT, connect_or_spawn};
-use mkrew_ui::docs::{Doc, Docs, Files};
+use mkrew_ui::docs::{Doc, Docs, Files, Shown};
 use mkrew_ui::markdown::BlockKind;
 use ulid::Ulid;
 
@@ -105,6 +105,7 @@ impl Ui {
             .map_err(|error| format!("{error:#}"));
             self.docs.comments.listed(&file_path, listed);
         }
+        let read = read.map(|content| Shown::new(&content));
         self.docs.read(&file_path, read);
     }
 

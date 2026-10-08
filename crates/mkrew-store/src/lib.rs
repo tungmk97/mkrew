@@ -26,7 +26,12 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0009_worktrees.sql"),
     include_str!("../migrations/0010_session_interrupted.sql"),
     include_str!("../migrations/0011_run_commands.sql"),
+    include_str!("../migrations/0012_session_hidden.sql"),
+    include_str!("../migrations/0013_project_color.sql"),
 ];
+
+/// Columns of [`RawProject::from_row`], in its order.
+const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -72,6 +77,8 @@ pub struct ProjectChanges<'a> {
     /// Replaces the whole list (already checked by the caller).
     pub run_commands: Option<&'a [RunCommand]>,
     pub run_autostart: Option<bool>,
+    /// A `WORKSPACE_COLORS` name (checked by the daemon); `Some(None)` clears it.
+    pub color: Option<Option<&'a str>>,
 }
 
 pub struct Store {
@@ -136,6 +143,7 @@ impl Store {
             created_at: now_ms(),
             archived: false,
             base_ref: None,
+            color: None,
         };
         let inserted = self.conn.execute(
             "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -151,20 +159,26 @@ impl Store {
             Err(rusqlite::Error::SqliteFailure(e, _))
                 if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
-                Err(StoreError::DuplicateProject(project.path))
+                // A removed (archived) workspace comes back with its tasks and history.
+                let revived = self.conn.execute(
+                    "UPDATE project SET archived = 0 WHERE path = ?1 AND archived = 1",
+                    [&project.path],
+                )?;
+                match self.project_at(&project.path)? {
+                    Some(project) if revived > 0 => Ok(project),
+                    _ => Err(StoreError::DuplicateProject(project.path)),
+                }
             }
             Err(e) => Err(e.into()),
         }
     }
 
-    /// All projects, oldest first.
+    /// All projects (archived ones too: clients hide them), oldest first.
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let mut projects: Vec<Project> = {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, name, path, default_agent, review_globs, created_at, archived,
-                        base_ref, run_autostart
-                 FROM project ORDER BY created_at, id",
-            )?;
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT {PROJECT_COLUMNS} FROM project ORDER BY created_at, id"
+            ))?;
             let rows = stmt.query_map([], RawProject::from_row)?;
             rows.map(|r| r?.into_project()).collect::<Result<_>>()?
         };
@@ -175,20 +189,39 @@ impl Store {
     }
 
     pub fn get_project(&self, id: Ulid) -> Result<Project> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, path, default_agent, review_globs, created_at, archived,
-                    base_ref, run_autostart
-             FROM project WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query_map([id.to_string()], RawProject::from_row)?;
-        match rows.next() {
-            Some(row) => {
+        self.project_where("id = ?1", &id.to_string())?
+            .ok_or(StoreError::ProjectNotFound(id))
+    }
+
+    /// The project at `path` (as stored: canonical).
+    fn project_at(&self, path: &str) -> Result<Option<Project>> {
+        self.project_where("path = ?1", path)
+    }
+
+    fn project_where(&self, condition: &str, value: &str) -> Result<Option<Project>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECT_COLUMNS} FROM project WHERE {condition}"
+        ))?;
+        let mut rows = stmt.query_map([value], RawProject::from_row)?;
+        rows.next()
+            .map(|row| {
                 let mut project = row?.into_project()?;
-                project.run_commands = self.run_commands(id)?;
+                project.run_commands = self.run_commands(project.id)?;
                 Ok(project)
-            }
-            None => Err(StoreError::ProjectNotFound(id)),
-        }
+            })
+            .transpose()
+    }
+
+    /// Archives the project (SPEC §7 `project.archive`, ADR 0019): clients leave it out; its
+    /// tasks, sessions and comments stay. Adding its folder again un-archives it.
+    pub fn archive_project(&self, id: Ulid) -> Result<Project> {
+        let mut project = self.get_project(id)?;
+        project.archived = true;
+        self.conn.execute(
+            "UPDATE project SET archived = 1 WHERE id = ?1",
+            [id.to_string()],
+        )?;
+        Ok(project)
     }
 
     /// The project's run commands, in order.
@@ -232,14 +265,18 @@ impl Store {
         if let Some(run_autostart) = changes.run_autostart {
             project.run_autostart = run_autostart;
         }
+        if let Some(color) = changes.color {
+            project.color = color.map(str::to_owned);
+        }
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4 WHERE id = ?1",
+            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5 WHERE id = ?1",
             params![
                 id.to_string(),
                 project.name,
                 project.default_agent,
-                project.run_autostart
+                project.run_autostart,
+                project.color
             ],
         )?;
         if let Some(commands) = changes.run_commands {
@@ -720,12 +757,12 @@ impl Store {
         ids.map(|id| parse_ulid("session.id", id?)).collect()
     }
 
-    /// Sessions, oldest first, optionally limited to one project.
+    /// Sessions not removed (`hidden`), oldest first, optionally limited to one project.
     pub fn list_sessions(&self, project_id: Option<Ulid>) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
                 state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at
-             FROM session WHERE ?1 IS NULL OR project_id = ?1
+             FROM session WHERE (?1 IS NULL OR project_id = ?1) AND hidden = 0
              ORDER BY started_at, id",
         )?;
         let rows = stmt.query_map([project_id.map(|id| id.to_string())], RawSession::from_row)?;
@@ -744,6 +781,19 @@ impl Store {
             Some(row) => row?.into_session(),
             None => Err(StoreError::SessionNotFound(id)),
         }
+    }
+
+    /// Leaves the session out of [`Store::list_sessions`] from now on (SPEC §7
+    /// `session.remove`, ADR 0019); its row, events, turns and log stay as history.
+    pub fn hide_session(&self, id: Ulid) -> Result<()> {
+        let changed = self.conn.execute(
+            "UPDATE session SET hidden = 1 WHERE id = ?1",
+            [id.to_string()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::SessionNotFound(id));
+        }
+        Ok(())
     }
 
     /// Appends a `session_event` row (SPEC §5); `payload` is stored as JSON text.
@@ -1279,6 +1329,7 @@ struct RawProject {
     archived: bool,
     base_ref: Option<String>,
     run_autostart: bool,
+    color: Option<String>,
 }
 
 impl RawProject {
@@ -1293,6 +1344,7 @@ impl RawProject {
             archived: row.get(6)?,
             base_ref: row.get(7)?,
             run_autostart: row.get(8)?,
+            color: row.get(9)?,
         })
     }
 
@@ -1314,6 +1366,7 @@ impl RawProject {
             created_at: self.created_at,
             archived: self.archived,
             base_ref: self.base_ref,
+            color: self.color,
         })
     }
 }

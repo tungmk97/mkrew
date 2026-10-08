@@ -275,6 +275,7 @@ mod tests {
             created_at: 0,
             archived: false,
             base_ref: None,
+            color: None,
         }
     }
 

@@ -36,7 +36,7 @@ pub enum BlockKind {
         items: Vec<Item>,
     },
     Quote(Vec<Block>),
-    /// Shown verbatim (no syntax highlighting in v1); `text` has no trailing newline.
+    /// Highlighted by the preview (`highlight::fenced`); `text` has no trailing newline.
     Code {
         lang: Option<String>,
         text: String,
@@ -119,6 +119,22 @@ pub fn parse(source: &str) -> Vec<Block> {
         inline: Inline::default(),
     };
     builder.blocks()
+}
+
+/// Calls `f` on every block, nested ones (list items, quotes) included, in document order.
+pub fn walk<'a>(blocks: &'a [Block], f: &mut impl FnMut(&'a Block)) {
+    for block in blocks {
+        f(block);
+        match &block.kind {
+            BlockKind::List { items, .. } => {
+                for item in items {
+                    walk(&item.blocks, f);
+                }
+            }
+            BlockKind::Quote(inner) => walk(inner, f),
+            _ => {}
+        }
+    }
 }
 
 /// Inline formatting state while collecting runs.

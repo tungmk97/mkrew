@@ -27,21 +27,30 @@ impl Daemon {
                     store.list_tasks(None, None)?,
                     store.list_sessions(None)?,
                     interrupted,
+                    store.list_projects()?,
                 ))
             })
         };
-        let (tasks, sessions, interrupted) = match found {
+        let (tasks, sessions, interrupted, projects) = match found {
             Ok(found) => found,
             Err(e) => {
                 tracing::error!("cannot resume sessions: {e}");
                 return;
             }
         };
+        // A removed workspace runs nothing; its tasks stay as they are, so adding the folder
+        // again resumes them on the next start.
+        let archived: Vec<Ulid> = projects
+            .iter()
+            .filter(|p| p.archived)
+            .map(|p| p.id)
+            .collect();
         // A fan-out's original runs nothing itself: its children are resumed (SPEC §20E.2).
         let fanned_out: Vec<Ulid> = tasks.iter().filter_map(|t| t.fanout_of).collect();
         let stopped_tasks = tasks.iter().filter(|t| {
             matches!(t.status, TaskStatus::Running | TaskStatus::NeedsInput)
                 && !fanned_out.contains(&t.id)
+                && !archived.contains(&t.project_id)
         });
         for task in stopped_tasks {
             let resumed = match last_session(&sessions, task.id) {
@@ -53,7 +62,10 @@ impl Daemon {
             }
         }
         let panes = sessions.iter().filter(|s| {
-            s.task_id.is_none() && s.kind == SessionKind::Agent && interrupted.contains(&s.id)
+            s.task_id.is_none()
+                && s.kind == SessionKind::Agent
+                && interrupted.contains(&s.id)
+                && !archived.contains(&s.project_id)
         });
         for last in panes {
             if self.in_a_tab(last) && self.resume(last, None).await.is_none() {

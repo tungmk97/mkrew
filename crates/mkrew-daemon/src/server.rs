@@ -16,7 +16,7 @@ use mkrew_protocol::{
     SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
     TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, encode,
+    TerminalTab, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -252,6 +252,9 @@ impl Daemon {
             Request::ProjectRunStart(params) => (self.run_start(params).await, After::Continue),
             Request::ProjectRunRestart(params) => (self.run_restart(params).await, After::Continue),
             Request::ProjectRunStop(params) => (self.run_stop(params), After::Continue),
+            Request::ProjectArchive(params) => {
+                (self.project_archive(params.project_id), After::Continue)
+            }
             Request::TabList(params) => {
                 let tabs = self.store().list_tabs(params.project_id);
                 (store_outcome(tabs), After::Continue)
@@ -314,6 +317,9 @@ impl Daemon {
                 (store_outcome(sessions), After::Continue)
             }
             Request::SessionKill(params) => (self.session_kill(params), After::Continue),
+            Request::SessionRemove(params) => {
+                (self.session_remove(params.session_id), After::Continue)
+            }
             Request::SessionHistory(params) => {
                 let session = self.store().get_session(params.session_id);
                 let history = session.map(|s| SessionHistory {
@@ -871,6 +877,29 @@ impl Daemon {
         }
     }
 
+    /// `project.archive` (ADR 0019): hides the project and stops its live sessions (run
+    /// commands too); tasks, history and comments stay.
+    fn project_archive(&self, project_id: Ulid) -> Outcome {
+        let archived = {
+            // One lock for archive and list.
+            let store = self.store();
+            store.archive_project(project_id).and_then(|project| {
+                let sessions = store.list_sessions(Some(project_id))?;
+                Ok((project, sessions))
+            })
+        };
+        let (project, sessions) = match archived {
+            Ok(archived) => archived,
+            Err(e) => return store_outcome::<Project>(Err(e)),
+        };
+        for session in sessions.iter().filter(|s| s.state != SessionState::Exited) {
+            self.hub.command(session.id, Command::Kill { force: false });
+        }
+        tracing::info!(%project_id, "project archived");
+        let _ = self.hub.events.send(Event::ProjectUpdated(project.clone()));
+        ok(&project)
+    }
+
     /// Changes the project; a new `default_agent` must name an agent profile, run commands
     /// are checked and trimmed (SPEC §10).
     fn project_update(&self, params: ProjectUpdateParams) -> Outcome {
@@ -887,6 +916,15 @@ impl Daemon {
             Ok(commands) => commands,
             Err(e) => return Outcome::error(ErrorCode::InvalidRequest, e.to_string()),
         };
+        if let Some(Some(color)) = &params.color
+            && !WORKSPACE_COLORS.contains(&color.as_str())
+        {
+            let message = format!(
+                "unknown color {color:?}; use one of {}",
+                WORKSPACE_COLORS.join(", ")
+            );
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        }
         let updated = self.store().update_project(
             params.project_id,
             ProjectChanges {
@@ -894,6 +932,7 @@ impl Daemon {
                 default_agent: params.default_agent.as_ref().map(Option::as_deref),
                 run_commands: run_commands.as_deref(),
                 run_autostart: params.run_autostart,
+                color: params.color.as_ref().map(Option::as_deref),
             },
         );
         if let Ok(project) = &updated {
@@ -1027,6 +1066,16 @@ impl Daemon {
             }
             Err(e) => store_outcome::<()>(Err(e)),
         }
+    }
+
+    /// `session.remove` (ADR 0019): hidden from `session.list` for good; a live session is
+    /// asked to stop (its exit still goes out as `session.exited`).
+    fn session_remove(&self, session_id: Ulid) -> Outcome {
+        let hidden = self.store().hide_session(session_id);
+        if hidden.is_ok() {
+            self.hub.command(session_id, Command::Kill { force: false });
+        }
+        store_outcome(hidden)
     }
 
     /// `session.ports`: the ports of the project's live run sessions that printed some.

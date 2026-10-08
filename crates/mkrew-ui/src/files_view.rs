@@ -12,6 +12,7 @@ use mkrew_protocol::{Event, FsEntry};
 use ulid::Ulid;
 
 use crate::highlight::Code;
+use crate::text_find::TextFind;
 
 /// One folder's children.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +80,9 @@ pub struct FilesView {
     pub line: Option<u32>,
     /// Why the last "Open in Zed" failed.
     pub zed_error: Option<String>,
+    /// The find bar over the opened file (SPEC §12A), `None` = closed. Kept when another
+    /// file opens; searched again whenever the content changes.
+    pub find: Option<TextFind>,
     /// Folders with an `fs.list` in flight, and those asked again meanwhile.
     listing: HashSet<String>,
     list_again: HashSet<String>,
@@ -105,6 +109,7 @@ impl FilesView {
             content: Content::None,
             line: None,
             zed_error: None,
+            find: None,
             listing: HashSet::new(),
             list_again: HashSet::new(),
             generation: 0,
@@ -321,6 +326,14 @@ impl FilesView {
             }
             Err(error) => Content::Failed(error),
         };
+        self.search();
+    }
+
+    /// Runs the find bar's query over the opened file again.
+    pub fn search(&mut self) {
+        if let (Some(find), Content::Shown(code)) = (&mut self.find, &self.content) {
+            find.search(&code.lines);
+        }
     }
 
     /// Selects line `line` of the opened file (a second click on it clears the selection).
@@ -789,5 +802,23 @@ mod tests {
             paths(&view),
             ["src/", "  src/a/", "    src/a/y", "target", "README.md"]
         );
+    }
+
+    #[test]
+    fn find_follows_a_reread_file() {
+        let mut view = listed();
+        view.open("README.md");
+        view.begin_read();
+        view.read("README.md", Ok(code("todo\nok")));
+        let mut find = TextFind::default();
+        find.query = "todo".into();
+        view.find = Some(find);
+        view.search();
+        let label = |view: &FilesView| view.find.as_ref().map(TextFind::label);
+        assert_eq!(label(&view).as_deref(), Some("1 of 1"));
+        // An agent edits the file: the re-read is searched again.
+        view.begin_read();
+        view.read("README.md", Ok(code("todo\ntodo")));
+        assert_eq!(label(&view).as_deref(), Some("1 of 2"));
     }
 }

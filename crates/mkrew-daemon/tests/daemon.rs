@@ -24,14 +24,15 @@ use mkrew_protocol::{
     Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult,
     Request, ResponseError, RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot,
     Session, SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams,
-    SessionInputParams, SessionKillParams, SessionKind, SessionListParams, SessionPortsEvent,
-    SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef, SessionResizeParams,
-    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
-    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
-    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
+    SessionHistory, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
+    SessionPortsEvent, SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef,
+    SessionResizeParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionUsageEvent, SessionWaitParams,
+    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
+    TabRenameParams, TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams,
+    TaskDeletedEvent, TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef,
+    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef,
+    TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -2733,6 +2734,7 @@ fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
         default_agent: Some(agent.map(str::to_owned)),
         run_commands: None,
         run_autostart: None,
+        color: None,
     })
 }
 
@@ -3470,6 +3472,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
             default_agent: None,
             run_commands: Some(vec![raw]),
             run_autostart: Some(true),
+            color: None,
         }))
         .into_result()
         .unwrap();
@@ -3495,6 +3498,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
         default_agent: None,
         run_commands: Some(vec![bad]),
         run_autostart: None,
+        color: None,
     }));
     assert_eq!(error_code(refused), ErrorCode::InvalidRequest);
     client.stop();
@@ -5102,6 +5106,7 @@ fn set_runs(project: &Project, commands: Vec<RunCommand>, autostart: Option<bool
         default_agent: None,
         run_commands: Some(commands),
         run_autostart: autostart,
+        color: None,
     })
 }
 
@@ -5458,5 +5463,166 @@ fn run_sessions_report_the_ports_they_print() {
         .unwrap();
     client.wait_state(id, SessionState::Exited);
     assert!(ports(&mut client).is_empty());
+    client.stop();
+}
+
+#[test]
+fn archived_workspaces_stop_their_sessions_and_come_back_when_added_again() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    client.wait_state(spawned.session_id, SessionState::NeedsInput);
+
+    let archive = |project_id| Request::ProjectArchive(ProjectRef { project_id });
+    let archived: Project = client.call(archive(project.id)).into_result().unwrap();
+    assert!(archived.archived);
+    client.wait_event(&Event::ProjectUpdated(archived.clone()));
+    client.wait_state(spawned.session_id, SessionState::Exited);
+    // Still listed (clients hide archived projects).
+    let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
+    assert_eq!(listed, vec![archived]);
+
+    // Adding the folder again brings back the same workspace.
+    let back = client.add_project(&env.repo());
+    assert_eq!((back.id, back.archived), (project.id, false));
+    client.wait_event(&Event::ProjectUpdated(back));
+    assert_eq!(
+        error_code(client.call(archive(Ulid::new()))),
+        ErrorCode::NotFound
+    );
+    client.stop();
+}
+
+/// A removed workspace's tasks are not resumed on daemon start (no hidden live agent), but
+/// they are left as they were, so adding the folder again resumes them on the next start.
+#[test]
+fn archived_workspaces_are_not_resumed_until_added_again() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("native.toml");
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-7\"\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    let fake = built_bin("mkrew-fakeagent");
+    env.write_fake_profile_as(
+        "resumable",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let path = env.dir.path().join("config/agents/resumable.toml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let resume = format!(
+        "resume = '\"{}\" --resume {{session_id}}'\n",
+        fake.display()
+    );
+    std::fs::write(
+        &path,
+        text.replace("[state]", &format!("{resume}\n[state]")),
+    )
+    .unwrap();
+
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let task: Task = client
+        .call(create_task(&project, "archived", Some("resumable")))
+        .into_result()
+        .unwrap();
+    let run: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    while client.session(run.session_id).native_session_id.is_none() {
+        assert!(Instant::now() < deadline, "no native session id reported");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    client.wait_state(run.session_id, SessionState::NeedsInput);
+    client
+        .call(Request::ProjectArchive(ProjectRef {
+            project_id: project.id,
+        }))
+        .into_result::<Project>()
+        .unwrap();
+    client.wait_state(run.session_id, SessionState::Exited);
+    let before = list_tasks(&mut client, &project);
+    let new_sessions = |client: &mut Client| -> Vec<Session> {
+        let all: Vec<Session> = client
+            .call(Request::SessionList(SessionListParams::default()))
+            .into_result()
+            .unwrap();
+        all.into_iter()
+            .filter(|s| s.task_id == Some(task.id) && s.id != run.session_id)
+            .collect()
+    };
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (mut daemon, mut client) = env.start();
+    assert_eq!(new_sessions(&mut client), vec![]);
+    assert_eq!(list_tasks(&mut client, &project), before);
+
+    client.add_project(&env.repo());
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    assert_eq!(new_sessions(&mut client).len(), 1);
+    client.stop();
+}
+
+#[test]
+fn removed_sessions_stop_and_leave_the_list() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+
+    let remove = |session_id| Request::SessionRemove(SessionRef { session_id });
+    client.call(remove(id)).into_result::<()>().unwrap();
+    client.wait_event_where(|e| matches!(e, Event::SessionExited(x) if x.session_id == id));
+    let listed: Vec<Session> = client
+        .call(Request::SessionList(SessionListParams::default()))
+        .into_result()
+        .unwrap();
+    assert!(listed.iter().all(|s| s.id != id), "{listed:?}");
+    // Its output log stays readable.
+    let history: SessionHistory = client
+        .call(Request::SessionHistory(SessionRef { session_id: id }))
+        .into_result()
+        .unwrap();
+    assert!(!history.files.is_empty());
+    assert_eq!(
+        error_code(client.call(remove(Ulid::new()))),
+        ErrorCode::NotFound
+    );
+    client.stop();
+}
+
+#[test]
+fn workspace_colors_are_set_cleared_and_checked() {
+    let env = Env::new();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let color = |color: Option<&str>| {
+        Request::ProjectUpdate(ProjectUpdateParams {
+            project_id: project.id,
+            name: None,
+            default_agent: None,
+            run_commands: None,
+            run_autostart: None,
+            color: Some(color.map(Into::into)),
+        })
+    };
+    let teal: Project = client.call(color(Some("teal"))).into_result().unwrap();
+    assert_eq!(teal.color.as_deref(), Some("teal"));
+    client.wait_event(&Event::ProjectUpdated(teal));
+    assert_eq!(
+        error_code(client.call(color(Some("#ff0000")))),
+        ErrorCode::InvalidRequest
+    );
+    let cleared: Project = client.call(color(None)).into_result().unwrap();
+    assert_eq!(cleared.color, None);
     client.stop();
 }

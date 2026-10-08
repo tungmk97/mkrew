@@ -87,22 +87,12 @@ impl Code {
     /// language guess).
     pub fn new(content: &FsContent) -> Code {
         let text = content.content.as_deref().unwrap_or("");
-        let mut code = Code::plain(text);
+        let mut code = highlighted(text, || {
+            find_syntax(&content.path, content.language.as_deref())
+        });
         code.size = content.size;
         code.binary = content.binary;
         code.too_large = content.too_large;
-        let long = code
-            .lines
-            .iter()
-            .any(|line| line.len() > HIGHLIGHT_MAX_LINE);
-        if text.len() > HIGHLIGHT_MAX_BYTES || long {
-            return code;
-        }
-        let Some(syntax) = find_syntax(&content.path, content.language.as_deref()) else {
-            return code;
-        };
-        code.syntax = Some(syntax.name.clone());
-        code.spans = highlight(&code.lines, syntax);
         code
     }
 
@@ -121,6 +111,31 @@ impl Code {
             syntax: None,
         }
     }
+}
+
+/// A fenced code block of the Docs preview (SPEC §12): `text` split like a file, highlighted
+/// by its fence language (`rust`, `ts`, `sh`, …); unknown languages and blocks over the
+/// highlighting limits stay plain. Slow on big blocks: run it off the UI thread.
+pub fn fenced(lang: Option<&str>, text: &str) -> Code {
+    highlighted(text, || lang.and_then(|lang| find_syntax("", Some(lang))))
+}
+
+/// `text` split, highlighted with the syntax `find` returns unless it is over the highlighting
+/// limits (then, or without a syntax, plain).
+fn highlighted(text: &str, find: impl FnOnce() -> Option<&'static SyntaxReference>) -> Code {
+    let mut code = Code::plain(text);
+    let long = code
+        .lines
+        .iter()
+        .any(|line| line.len() > HIGHLIGHT_MAX_LINE);
+    if text.len() > HIGHLIGHT_MAX_BYTES || long {
+        return code;
+    }
+    if let Some(syntax) = find() {
+        code.syntax = Some(syntax.name.clone());
+        code.spans = highlight(&code.lines, syntax);
+    }
+    code
 }
 
 /// Token spans of every line of `hunks` (SPEC §12B), per hunk then per line, over the line's
@@ -218,7 +233,7 @@ fn find_syntax(path: &str, language: Option<&str>) -> Option<&'static SyntaxRefe
         .and_then(|(_, ext)| set.find_syntax_by_extension(&ext.to_ascii_lowercase()));
     let by_language = || {
         let token = match language? {
-            "typescript" | "tsx" | "jsx" => "js",
+            "typescript" | "ts" | "tsx" | "jsx" => "js",
             "shell" => "sh",
             "csharp" => "cs",
             "batch" => "bat",

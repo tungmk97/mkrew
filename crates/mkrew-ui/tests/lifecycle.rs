@@ -129,6 +129,7 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
         default_agent: Some(Some("fake".into())),
         run_commands: None,
         run_autostart: None,
+        color: None,
     })))
     .unwrap();
     let tab: TerminalTab = block_on(first.call(Request::TabCreate(TabCreateParams {

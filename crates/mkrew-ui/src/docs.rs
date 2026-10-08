@@ -3,13 +3,17 @@
 //! preview / source mode. `doc.changed` re-reads the shown file and re-lists; `comment.updated`
 //! re-lists (counts). Pure and tested headlessly; `main.rs` does the requests and renders it.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use mkrew_protocol::{CommentContext, DocContent, DocFile, Event};
 use ulid::Ulid;
 
 use crate::comments::Comments;
-use crate::markdown::{self, Block};
+use crate::diagram::{self, Diagram};
+use crate::highlight::{self, Code};
+use crate::markdown::{self, Block, BlockKind};
+use crate::palette;
 
 /// The file list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,21 +36,41 @@ pub enum Doc {
     Deleted,
 }
 
-/// A read file, parsed once.
+/// A read file, parsed once (off the UI thread: highlighting is slow).
 #[derive(Debug, PartialEq)]
 pub struct Shown {
     pub hash: String,
     pub blocks: Vec<Block>,
     /// Source lines without their line ending; line `n` (1-based) is `lines[n - 1]`.
     pub lines: Vec<String>,
+    /// Every code block, highlighted, by its first source line (ADR 0021).
+    pub code: HashMap<u32, Code>,
+    /// Every ```mermaid block drawn (or why not), by its first source line (ADR 0021).
+    pub diagrams: HashMap<u32, Result<Diagram, String>>,
 }
 
 impl Shown {
     pub fn new(content: &DocContent) -> Shown {
+        let blocks = markdown::parse(&content.content);
+        let mut code = HashMap::new();
+        let mut diagrams = HashMap::new();
+        markdown::walk(&blocks, &mut |block| {
+            if let BlockKind::Code { lang, text } = &block.kind {
+                code.insert(block.lines.start, highlight::fenced(lang.as_deref(), text));
+                if lang
+                    .as_deref()
+                    .is_some_and(|lang| lang.eq_ignore_ascii_case("mermaid"))
+                {
+                    diagrams.insert(block.lines.start, diagram::render(text));
+                }
+            }
+        });
         Shown {
             hash: content.hash.clone(),
-            blocks: markdown::parse(&content.content),
             lines: source_lines(&content.content),
+            blocks,
+            code,
+            diagrams,
         }
     }
 }
@@ -76,6 +100,9 @@ pub struct Docs {
     pub selected: Option<String>,
     pub doc: Doc,
     pub mode: Mode,
+    /// The list filter (fuzzy over the path, SPEC §12); empty = every file. Kept across
+    /// relists.
+    pub filter: String,
     /// Why the last "Open in Zed" failed.
     pub zed_error: Option<String>,
     /// The selected file's review comments.
@@ -95,6 +122,7 @@ impl Docs {
             selected: None,
             doc: Doc::None,
             mode: Mode::default(),
+            filter: String::new(),
             zed_error: None,
             comments: Comments::default(),
             listing: false,
@@ -149,19 +177,19 @@ impl Docs {
         Some(file_path.to_owned())
     }
 
-    /// A `doc.read` answer; ignored when another file got selected meanwhile, or when it
-    /// predates the last `doc.changed` (the read that change asked for follows).
-    pub fn read(&mut self, file_path: &str, read: Result<DocContent, String>) {
+    /// A `doc.read` answer, parsed; ignored when another file got selected meanwhile, or when
+    /// it predates the last `doc.changed` (the read that change asked for follows).
+    pub fn read(&mut self, file_path: &str, read: Result<Shown, String>) {
         if self.selected.as_deref() != Some(file_path) {
             return;
         }
-        if let (Ok(content), Some(changed_to)) = (&read, &self.changed_to)
-            && content.hash != *changed_to
+        if let (Ok(shown), Some(changed_to)) = (&read, &self.changed_to)
+            && shown.hash != *changed_to
         {
             return;
         }
         self.doc = match read {
-            Ok(content) => Doc::Shown(Rc::new(Shown::new(&content))),
+            Ok(shown) => Doc::Shown(Rc::new(shown)),
             Err(error) => Doc::Failed(error),
         };
     }
@@ -222,6 +250,39 @@ impl Docs {
         let selected = self.selected.as_deref()?;
         files.iter().find(|file| file.file_path == selected)
     }
+
+    /// The listed files the filter keeps, best match first (the daemon's order on ties and
+    /// with an empty filter), each with its matched char indices in `file_path`.
+    pub fn shown_files(&self) -> Vec<(&DocFile, Vec<u32>)> {
+        let Files::Loaded(files) = &self.files else {
+            return Vec::new();
+        };
+        let mut shown: Vec<(i64, &DocFile, Vec<u32>)> = files
+            .iter()
+            .filter_map(|file| {
+                let (score, indices) = palette::fuzzy(&self.filter, &file.file_path)?;
+                Some((score, file, indices))
+            })
+            .collect();
+        // Stable: ties keep the listed order.
+        shown.sort_by_key(|(score, _, _)| std::cmp::Reverse(*score));
+        shown
+            .into_iter()
+            .map(|(_, file, indices)| (file, indices))
+            .collect()
+    }
+
+    /// ↑ / ↓ in the filter: the shown file `offset` places from the selected one, clamped
+    /// (the first shown one when the selection is filtered out); `None` without shown files.
+    pub fn step_selection(&self, offset: isize) -> Option<String> {
+        let shown = self.shown_files();
+        let last = shown.len().checked_sub(1)?;
+        let at = shown
+            .iter()
+            .position(|(file, _)| Some(file.file_path.as_str()) == self.selected.as_deref());
+        let next = at.map_or(0, |at| at.saturating_add_signed(offset).min(last));
+        shown.get(next).map(|(file, _)| file.file_path.clone())
+    }
 }
 
 /// `content` split into lines as comment anchors count them (`\n` or `\r\n` endings; a final
@@ -262,6 +323,39 @@ mod tests {
         }
     }
 
+    fn shown(path: &str, text: &str, hash: &str) -> Shown {
+        Shown::new(&content(path, text, hash))
+    }
+
+    #[test]
+    fn code_blocks_are_highlighted_once_also_inside_lists() {
+        let doc = "```rust\nfn main() {}\n```\n\n- item\n\n  ```\n  plain\n  ```\n\n```ts\nlet a = 1;\n```\n";
+        let shown = shown("a.md", doc, "h");
+        let rust = &shown.code[&1];
+        assert_eq!(rust.syntax.as_deref(), Some("Rust"));
+        assert!(!rust.spans[0].is_empty(), "colored");
+        let nested = shown.code.get(&7).expect("the code block in the list item");
+        assert_eq!(nested.lines, ["plain"]);
+        assert_eq!(nested.syntax, None);
+        assert_eq!(
+            shown.code[&11].syntax.as_deref(),
+            Some("JavaScript"),
+            "ts reads as js"
+        );
+    }
+
+    #[test]
+    fn mermaid_blocks_are_drawn_and_other_code_is_not() {
+        let doc = "```mermaid\ngraph TD\n  A --> B\n```\n\n```sh\nls\n```\n";
+        let shown = shown("a.md", doc, "h");
+        assert!(matches!(shown.diagrams.get(&1), Some(Ok(_))));
+        assert!(!shown.diagrams.contains_key(&6));
+        assert!(
+            shown.code.contains_key(&1),
+            "the source stays for a failed drawing"
+        );
+    }
+
     fn changed(project_id: Ulid, path: &str, hash: Option<&str>) -> Event {
         Event::DocChanged(DocChangedEvent {
             project_id,
@@ -287,7 +381,7 @@ mod tests {
         assert_eq!(docs.doc, Doc::Loading);
         docs.read(
             "PLAN.md",
-            Ok(content("PLAN.md", "# Plan\r\n\r\nGo.\r\n", "h1")),
+            Ok(shown("PLAN.md", "# Plan\r\n\r\nGo.\r\n", "h1")),
         );
         assert_eq!(shown_hash(&docs), Some("h1"));
         let Doc::Shown(shown) = &docs.doc else {
@@ -331,12 +425,12 @@ mod tests {
         assert_eq!(docs.select("a.md").as_deref(), Some("a.md"));
         assert_eq!(docs.select("b.md").as_deref(), Some("b.md"));
         // The answer for `a.md` arrives late.
-        docs.read("a.md", Ok(content("a.md", "a", "ha")));
+        docs.read("a.md", Ok(shown("a.md", "a", "ha")));
         assert_eq!(docs.doc, Doc::Loading);
         docs.read("b.md", Err("too large".into()));
         assert_eq!(docs.doc, Doc::Failed("too large".into()));
         assert_eq!(docs.select("b.md").as_deref(), Some("b.md"));
-        docs.read("b.md", Ok(content("b.md", "b", "hb")));
+        docs.read("b.md", Ok(shown("b.md", "b", "hb")));
         assert_eq!(docs.select("b.md"), None);
         assert_eq!(shown_hash(&docs), Some("hb"));
     }
@@ -346,7 +440,7 @@ mod tests {
         let project = Ulid::new();
         let mut docs = Docs::new(project);
         docs.select("a.md");
-        docs.read("a.md", Ok(content("a.md", "a", "h1")));
+        docs.read("a.md", Ok(shown("a.md", "a", "h1")));
         // Same hash (e.g. our own `doc.read` made the daemon notice it): only re-list.
         let same = docs.apply(&changed(project, "a.md", Some("h1")));
         assert_eq!(
@@ -367,9 +461,9 @@ mod tests {
             Reaction::default()
         );
         // A read sent before the change answers late with the old content: dropped.
-        docs.read("a.md", Ok(content("a.md", "a", "h1")));
+        docs.read("a.md", Ok(shown("a.md", "a", "h1")));
         assert_eq!(docs.doc, Doc::Loading);
-        docs.read("a.md", Ok(content("a.md", "a2", "h2")));
+        docs.read("a.md", Ok(shown("a.md", "a2", "h2")));
         assert_eq!(shown_hash(&docs), Some("h2"));
     }
 
@@ -378,7 +472,7 @@ mod tests {
         let project = Ulid::new();
         let mut docs = Docs::new(project);
         docs.select("a.md");
-        docs.read("a.md", Ok(content("a.md", "a", "h1")));
+        docs.read("a.md", Ok(shown("a.md", "a", "h1")));
         let reaction = docs.apply(&changed(project, "a.md", None));
         assert_eq!((reaction.relist, reaction.reread), (true, None));
         assert_eq!(docs.doc, Doc::Deleted);
@@ -436,5 +530,73 @@ mod tests {
         assert_eq!(gutter(7, 120), "  7");
         assert_eq!(gutter(120, 120), "120");
         assert_eq!(gutter(1, 0), "1");
+    }
+
+    fn paths(docs: &Docs) -> Vec<String> {
+        docs.shown_files()
+            .into_iter()
+            .map(|(file, _)| file.file_path.clone())
+            .collect()
+    }
+
+    fn three_files() -> Docs {
+        let mut docs = Docs::new(Ulid::new());
+        docs.begin_list();
+        docs.listed(Ok(vec![
+            file("PLAN.md", 0),
+            file("docs/plan-v2.md", 0),
+            file("docs/notes.md", 1),
+        ]));
+        docs
+    }
+
+    #[test]
+    fn the_filter_ranks_paths_and_survives_relisting() {
+        let mut docs = three_files();
+        assert_eq!(
+            paths(&docs),
+            ["PLAN.md", "docs/plan-v2.md", "docs/notes.md"]
+        );
+        docs.filter = "notes".into();
+        assert_eq!(paths(&docs), ["docs/notes.md"]);
+        assert_eq!(docs.shown_files()[0].1, [5, 6, 7, 8, 9]);
+        // Equal scores keep the daemon's order.
+        docs.filter = "md".into();
+        assert_eq!(
+            paths(&docs),
+            ["PLAN.md", "docs/plan-v2.md", "docs/notes.md"]
+        );
+        // A relist (doc.changed / comment.updated) keeps the filter.
+        docs.filter = "v2".into();
+        docs.begin_list();
+        docs.listed(Ok(vec![
+            file("docs/plan-v2.md", 3),
+            file("docs/other.md", 0),
+        ]));
+        assert_eq!(paths(&docs), ["docs/plan-v2.md"]);
+        docs.filter = "zz".into();
+        assert!(paths(&docs).is_empty());
+    }
+
+    #[test]
+    fn arrows_in_the_filter_move_over_the_shown_files() {
+        let mut docs = three_files();
+        docs.filter = "docs".into();
+        assert_eq!(
+            docs.step_selection(1).as_deref(),
+            Some("docs/plan-v2.md"),
+            "the selected PLAN.md is filtered out: the first shown file"
+        );
+        docs.select("docs/plan-v2.md");
+        assert_eq!(docs.step_selection(1).as_deref(), Some("docs/notes.md"));
+        docs.select("docs/notes.md");
+        assert_eq!(
+            docs.step_selection(1).as_deref(),
+            Some("docs/notes.md"),
+            "stays at the end"
+        );
+        assert_eq!(docs.step_selection(-1).as_deref(), Some("docs/plan-v2.md"));
+        docs.filter = "zz".into();
+        assert_eq!(docs.step_selection(1), None);
     }
 }

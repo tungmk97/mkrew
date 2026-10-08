@@ -64,6 +64,11 @@ pub enum Request {
     /// Returns nothing (`null`); also when nothing runs.
     #[serde(rename = "project.run_stop")]
     ProjectRunStop(RunStopParams),
+    /// Returns the [`Project`] (`archived: true`), also announced as `project.updated`: its
+    /// live sessions are asked to stop and clients hide it; `project.add` of its folder
+    /// brings it back (SPEC §7, ADR 0019).
+    #[serde(rename = "project.archive")]
+    ProjectArchive(ProjectRef),
     #[serde(rename = "tab.list")]
     TabList(TabListParams),
     #[serde(rename = "tab.create")]
@@ -125,6 +130,10 @@ pub enum Request {
     SessionResize(SessionResizeParams),
     #[serde(rename = "session.kill")]
     SessionKill(SessionKillParams),
+    /// Returns nothing (`null`): leaves the session out of `session.list` for good (its log
+    /// and turns stay); a live one is asked to stop first (SPEC §7, ADR 0019).
+    #[serde(rename = "session.remove")]
+    SessionRemove(SessionRef),
     /// Returns [`SessionHistory`]; works for exited sessions too.
     #[serde(rename = "session.history")]
     SessionHistory(SessionRef),
@@ -393,6 +402,11 @@ pub enum SessionKind {
     Shell,
 }
 
+/// Workspace color names (SPEC §14, ADR 0020); clients map them to theme tokens.
+pub const WORKSPACE_COLORS: [&str; 8] = [
+    "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Project {
     pub id: Ulid,
@@ -413,6 +427,9 @@ pub struct Project {
     /// Git view base; `None` = auto-detect (SPEC §12B). Set with `git.set_base`.
     #[serde(default)]
     pub base_ref: Option<String>,
+    /// One of [`WORKSPACE_COLORS`]; `None` = no color.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// One command of a project's Run button (SPEC §10, ADR 0018): typed into its own shell in
@@ -656,6 +673,13 @@ pub struct ProjectUpdateParams {
     /// Run every command after the daemon starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_autostart: Option<bool>,
+    /// One of [`WORKSPACE_COLORS`]; `Some(None)` (JSON `null`) clears it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub color: Option<Option<String>>,
 }
 
 /// `project.run_start` / `project.run_restart`: `name` = one command, none = all.
@@ -1547,6 +1571,7 @@ mod tests {
                     env: vec![("ENVIRONMENT".into(), "dev".into())],
                 }]),
                 run_autostart: Some(true),
+                color: Some(Some("teal".into())),
             }),
             Request::ProjectRunStart(RunStartParams {
                 project_id: sid(),
@@ -1564,6 +1589,7 @@ mod tests {
                 project_id: sid(),
                 name: None,
             }),
+            Request::ProjectArchive(ProjectRef { project_id: sid() }),
             Request::TabList(TabListParams { project_id: sid() }),
             Request::TabCreate(TabCreateParams {
                 project_id: sid(),
@@ -1689,6 +1715,7 @@ mod tests {
                 session_id: sid(),
                 force: true,
             }),
+            Request::SessionRemove(SessionRef { session_id: sid() }),
             Request::HookReport(HookReportParams {
                 mkrew_session_id: sid(),
                 agent: "claude".into(),
@@ -1824,6 +1851,15 @@ mod tests {
             parse(json!({"project_id": id, "run_commands": []})).run_commands,
             Some(Vec::new())
         );
+        assert_eq!(parse(json!({"project_id": id})).color, None);
+        assert_eq!(
+            parse(json!({"project_id": id, "color": null})).color,
+            Some(None)
+        );
+        assert_eq!(
+            parse(json!({"project_id": id, "color": "teal"})).color,
+            Some(Some("teal".into()))
+        );
         // Unchanged fields are left out on the wire, a cleared one is `null`.
         let keep = ProjectUpdateParams {
             project_id: sid(),
@@ -1831,6 +1867,7 @@ mod tests {
             default_agent: None,
             run_commands: None,
             run_autostart: None,
+            color: None,
         };
         assert_eq!(
             serde_json::to_value(&keep).unwrap(),
@@ -2027,6 +2064,7 @@ mod tests {
             created_at: 1,
             archived: false,
             base_ref: Some("develop".into()),
+            color: Some("teal".into()),
         })));
         let tab = round_trip(&Message::Event(Event::TabUpdated(TerminalTab {
             id: sid(),

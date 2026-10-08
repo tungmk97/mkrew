@@ -1149,3 +1149,77 @@ fn session_requires_existing_project() {
     let store = open(&dir);
     assert!(store.insert_session(&session(Ulid::new(), 0)).is_err());
 }
+
+#[test]
+fn archived_projects_come_back_when_their_folder_is_added_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), Some("demo")).unwrap();
+    let task = store.create_task(p.id, "t", "", None, None, false).unwrap();
+
+    let archived = store.archive_project(p.id).unwrap();
+    assert!(archived.archived);
+    assert!(store.get_project(p.id).unwrap().archived);
+    // Adding the folder again un-archives the same project: settings and tasks stay.
+    let back = store.add_project(dir.path(), None).unwrap();
+    assert_eq!(
+        (back.id, back.name.as_str(), back.archived),
+        (p.id, "demo", false)
+    );
+    assert_eq!(store.get_task(task.id).unwrap(), task);
+    // Only an archived one comes back; an active one is still a duplicate.
+    assert!(matches!(
+        store.add_project(dir.path(), None),
+        Err(StoreError::DuplicateProject(_))
+    ));
+    assert!(matches!(
+        store.archive_project(Ulid::new()),
+        Err(StoreError::ProjectNotFound(_))
+    ));
+}
+
+#[test]
+fn hidden_sessions_leave_the_list_but_keep_their_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let mut gone = session(p.id, 1);
+    gone.state = SessionState::Exited;
+    store.insert_session(&gone).unwrap();
+    let kept = session(p.id, 2);
+    store.insert_session(&kept).unwrap();
+    store.start_turn(gone.id, 1, 1, None).unwrap();
+
+    store.hide_session(gone.id).unwrap();
+    assert_eq!(store.list_sessions(Some(p.id)).unwrap(), vec![kept.clone()]);
+    assert_eq!(store.list_sessions(None).unwrap(), vec![kept]);
+    assert_eq!(store.get_session(gone.id).unwrap(), gone);
+    assert_eq!(store.list_turns(gone.id).unwrap().len(), 1);
+    assert!(matches!(
+        store.hide_session(Ulid::new()),
+        Err(StoreError::SessionNotFound(_))
+    ));
+}
+
+#[test]
+fn project_color_persists_and_clears() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    assert_eq!(p.color, None);
+    let teal = ProjectChanges {
+        color: Some(Some("teal")),
+        ..ProjectChanges::default()
+    };
+    store.update_project(p.id, teal).unwrap();
+    assert_eq!(
+        open(&dir).get_project(p.id).unwrap().color.as_deref(),
+        Some("teal")
+    );
+    let none = ProjectChanges {
+        color: Some(None),
+        ..ProjectChanges::default()
+    };
+    store.update_project(p.id, none).unwrap();
+    assert_eq!(open(&dir).get_project(p.id).unwrap().color, None);
+}

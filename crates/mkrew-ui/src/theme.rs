@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use mkrew_protocol::WORKSPACE_COLORS;
+
 /// Spacing scale in px: 4 · 8 · 12 · 16 · 24 · 32.
 pub mod space {
     pub const XS: f32 = 4.0;
@@ -61,6 +63,10 @@ pub const BORDER_WIDTH: f32 = 1.0;
 
 /// The OS UI font (Segoe UI Variable / SF / …); GPUI resolves this name per platform.
 pub const UI_FONT: &str = ".SystemUIFont";
+
+/// Font family list of Mermaid diagram text (an SVG font-family value; the first installed
+/// one is used).
+pub const DIAGRAM_FONT: &str = "Segoe UI, Helvetica Neue, DejaVu Sans, sans-serif";
 
 /// Size of a new main window.
 pub const WINDOW_WIDTH: f32 = 1200.0;
@@ -171,6 +177,15 @@ pub const FILE_TREE_INDENT: f32 = space::M;
 /// Side of the dot on a Files tree folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
+/// The workspace color dot in front of a sidebar row's name (ADR 0020).
+pub const WORKSPACE_DOT_SIZE: f32 = space::S;
+
+/// A color choice in the workspace menu.
+pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;
+
+/// Ring around a workspace menu color choice.
+pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
+
 /// Height of the quick open match list (it scrolls past that).
 pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 
@@ -182,6 +197,21 @@ pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
+
+/// Docs preview typography (SPEC §12, ADR 0021): long-form reading, a step above the UI
+/// scale.
+pub mod doc {
+    pub const BODY: f32 = 14.0;
+    pub const CODE: f32 = 13.0;
+    /// h1–h6.
+    pub const HEADINGS: [f32; 6] = [24.0, 20.0, 17.0, 15.0, 14.0, 14.0];
+    /// Line heights as multiples of the font size.
+    pub const LINE_HEIGHT: f32 = 1.6;
+    pub const HEADING_LINE_HEIGHT: f32 = 1.3;
+    pub const CODE_LINE_HEIGHT: f32 = 1.45;
+    /// The marker column of list items (bullets, numbers, check boxes line up).
+    pub const MARKER_WIDTH: f32 = 20.0;
+}
 
 /// Width of the peek popover next to a session row (§20A.1).
 pub const PEEK_WIDTH: f32 = 480.0;
@@ -288,6 +318,10 @@ pub struct Theme {
     pub syntax_function: u32,
     /// ANSI 0–15, harmonized with the tokens above.
     pub ansi: [u32; 16],
+    /// Workspace colors, in [`WORKSPACE_COLORS`] order (≥ 3:1 on every surface, ADR 0020).
+    pub workspace_colors: [u32; 8],
+    /// Dark appearance (picks diagram images, ADR 0021).
+    pub dark: bool,
     pub terminal_font_family: &'static str,
     pub terminal_font_size: f32,
     /// Line height as a multiple of the font size.
@@ -339,6 +373,10 @@ impl Theme {
                 0x25262C, 0xE5676B, 0x4CB782, 0xE3A63E, 0x7C8CFF, 0xC28CF0, 0x5EC4D6, 0xC9CBD1,
                 0x6E7079, 0xF2A0A4, 0x7DD3A0, 0xF0C674, 0xA3AFFF, 0xD8B4FE, 0x8BE0EC, 0xF5F6F8,
             ],
+            workspace_colors: [
+                0xE5676B, 0xF0955A, 0xE3C14E, 0x4CB782, 0x5EC4D6, 0x7C8CFF, 0xC28CF0, 0xF08CC0,
+            ],
+            dark: true,
             ..Self::shared()
         }
     }
@@ -377,6 +415,10 @@ impl Theme {
                 0x1D1E22, 0xC53030, 0x2F855A, 0xB7791F, 0x4F5BD5, 0x9B4DCA, 0x1F8A9E, 0x8A8C94,
                 0x6B6D76, 0xE5676B, 0x38A169, 0xD69E2E, 0x3B47B8, 0xB37FEB, 0x31A3B8, 0x55575F,
             ],
+            workspace_colors: [
+                0xC53030, 0xC05621, 0x975A16, 0x2F855A, 0x1F8A9E, 0x4F5BD5, 0x8A3FB8, 0xB83280,
+            ],
+            dark: false,
             ..Self::shared()
         }
     }
@@ -410,6 +452,8 @@ impl Theme {
             syntax_type: 0,
             syntax_function: 0,
             ansi: [0; 16],
+            workspace_colors: [0; 8],
+            dark: false,
             terminal_font_family: terminal_font_family(),
             terminal_font_size: font_size::BODY,
             terminal_line_height: 1.35,
@@ -418,6 +462,12 @@ impl Theme {
             dim_blend: 0.6,
             unfocused_pane_dim: 0.05,
         }
+    }
+
+    /// The token of a workspace color name; `None` for an unknown name.
+    pub fn workspace_color(&self, name: &str) -> Option<u32> {
+        let index = WORKSPACE_COLORS.iter().position(|color| *color == name)?;
+        self.workspace_colors.get(index).copied()
     }
 }
 
@@ -557,5 +607,23 @@ mod tests {
         );
         assert!(motion::FAST >= Duration::from_millis(120));
         assert!(motion::SLOW <= Duration::from_millis(180));
+    }
+
+    #[test]
+    fn workspace_colors_stand_out_from_the_surfaces() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for color in theme.workspace_colors {
+                // WCAG 1.4.11: graphical objects ≥ 3:1.
+                for bg in [theme.bg, theme.surface, theme.surface_raised] {
+                    let ratio = contrast(color, bg);
+                    assert!(ratio >= 3.0, "{color:06X} on {bg:06X}: {ratio:.2}");
+                }
+            }
+            assert_eq!(
+                theme.workspace_color("teal"),
+                Some(theme.workspace_colors[4])
+            );
+            assert_eq!(theme.workspace_color("#ff0000"), None);
+        }
     }
 }

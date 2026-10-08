@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, KeyDownEvent,
-    MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
-    Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance, WindowBounds,
-    WindowOptions, anchored, canvas, deferred, div, px, relative, rgb, size, uniform_list,
+    AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, HighlightStyle,
+    Hsla, KeyDownEvent, MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy,
+    SharedString, StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowAppearance, WindowBounds, WindowOptions, anchored, canvas, deferred, div, px, relative,
+    rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
@@ -24,14 +25,14 @@ use mkrew_protocol::{
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode,
-    GitStatus, Outcome, Project, ProjectAddParams, ProjectRef, RemoveWorktreeResult, Request,
-    RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
-    SessionHistory, SessionKillParams, SessionKind, SessionListParams, SessionPortsEvent,
-    SessionReadParams, SessionReadResult, SessionRef, SessionSendParams, SessionSendResult,
-    SessionSpawnResult, SessionState, SessionTurnEvent, SessionUnqueueParams, SessionUsageEvent,
-    StateSource, TabCreateParams, TabListParams, TabRef, TabSetLayoutParams, Task,
-    TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn,
-    UndoPreview,
+    GitStatus, Outcome, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams,
+    RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams, Session,
+    SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
+    SessionListParams, SessionPortsEvent, SessionReadParams, SessionReadResult, SessionRef,
+    SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionTurnEvent,
+    SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabRef,
+    TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
+    TaskStatus, TerminalTab, Turn, UndoPreview, WORKSPACE_COLORS,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -41,7 +42,7 @@ use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
-use mkrew_ui::docs::{Doc, Docs, Files, Mode};
+use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
@@ -74,6 +75,7 @@ use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::text_box;
+use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
 use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
@@ -280,6 +282,12 @@ struct Shell {
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
+    /// The Files viewer's find field (outside `FILES_CONTEXT`'s arrow keys).
+    file_find_focus: FocusHandle,
+    /// Keeps the current find match of the Files viewer in view.
+    file_code_scroll: UniformListScrollHandle,
+    /// The Docs list filter field.
+    docs_filter_focus: FocusHandle,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
@@ -574,6 +582,9 @@ impl Shell {
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
             files_scroll: UniformListScrollHandle::new(),
+            file_find_focus: cx.focus_handle(),
+            docs_filter_focus: cx.focus_handle(),
+            file_code_scroll: UniformListScrollHandle::new(),
             git: HashMap::new(),
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
@@ -977,15 +988,18 @@ impl Shell {
         .detach();
     }
 
-    /// The workspace of the most recently started live session, else the first one.
+    /// The listed workspace of the most recently started live session, else the first one.
+    /// Sessions of an archived workspace may still be live (stopping), so they do not count.
     fn initial_workspace(&self) -> Option<Ulid> {
+        let projects = self.sidebar.projects();
         self.sidebar
             .sessions()
             .iter()
             .filter(|session| session.state != SessionState::Exited)
+            .filter(|session| projects.iter().any(|p| p.id == session.project_id))
             .max_by_key(|session| session.started_at)
             .map(|session| session.project_id)
-            .or_else(|| self.sidebar.projects().first().map(|project| project.id))
+            .or_else(|| projects.first().map(|project| project.id))
     }
 
     /// Shows the tabs of `project_id`, loading them the first time.
@@ -1359,6 +1373,47 @@ impl Shell {
         cx.notify();
     }
 
+    /// The Docs filter field: typing filters, ↑ / ↓ show the previous / next shown file,
+    /// Esc clears the filter (then leaves the field), Enter leaves it.
+    fn docs_filter_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
+        else {
+            return;
+        };
+        let paste = (key == quick_open::Key::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(docs) = self.docs.get_mut(&project_id) else {
+            return;
+        };
+        match key {
+            quick_open::Key::Close if !docs.filter.is_empty() => docs.filter.clear(),
+            quick_open::Key::Close | quick_open::Key::Open => {
+                window.focus(&self.focus_handle, cx);
+            }
+            quick_open::Key::Move(by) => {
+                if let Some(path) = docs.step_selection(by as isize) {
+                    self.select_doc(project_id, &path, window, cx);
+                }
+            }
+            quick_open::Key::Backspace => {
+                docs.filter.pop();
+            }
+            quick_open::Key::Paste => {
+                docs.filter
+                    .push_str(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
+            }
+            quick_open::Key::Insert(text) => docs.filter.push_str(&text),
+        }
+        cx.notify();
+    }
+
     /// `doc.read` (and `comment.list` for a newly shown file); the answer is dropped if
     /// another file got selected meanwhile.
     fn read_doc(
@@ -1382,8 +1437,12 @@ impl Shell {
             project_id,
             file_path: file_path.clone(),
         }));
+        let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
-            let read = read.await.map_err(|error| format!("{error:#}"));
+            let read = match read.await {
+                Ok(content) => Ok(background.spawn(async move { Shown::new(&content) }).await),
+                Err(error) => Err(format!("{error:#}")),
+            };
             let _ = this.update(cx, |shell, cx| {
                 if let Err(error) = &read {
                     tracing::warn!(%project_id, file_path, "doc.read failed: {error}");
@@ -1630,6 +1689,108 @@ impl Shell {
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
+    }
+
+    /// Ctrl+Shift+F / "Find" in the Files view: opens the find bar over the opened file, or
+    /// gives it the keyboard again.
+    fn open_file_find(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let view = self.files_view(project_id);
+        if view.file.is_none() {
+            return;
+        }
+        view.find.get_or_insert_with(TextFind::default);
+        window.focus(&self.file_find_focus, cx);
+        cx.notify();
+    }
+
+    /// Typing edits the query; Enter / Shift+Enter go to the next / previous match; Esc
+    /// closes the bar.
+    fn file_find_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if task_dialog::dialog_key(&event.keystroke) == Some(DialogKey::Paste) {
+            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                let text = text.replace(['\r', '\n'], " ");
+                self.edit_file_find(project_id, |query| query.push_str(&text), cx);
+            }
+            return;
+        }
+        match find_key(&event.keystroke) {
+            Some(FindKey::Close) => self.close_file_find(project_id, window, cx),
+            // The terminal's names: Enter = "older" = the next match here.
+            Some(FindKey::Older) => self.step_file_find(project_id, true, cx),
+            Some(FindKey::Newer) => self.step_file_find(project_id, false, cx),
+            Some(FindKey::Backspace) => self.edit_file_find(
+                project_id,
+                |query| {
+                    query.pop();
+                },
+                cx,
+            ),
+            Some(FindKey::Insert(text)) => {
+                self.edit_file_find(project_id, |query| query.push_str(&text), cx);
+            }
+            None => {}
+        }
+    }
+
+    fn edit_file_find(
+        &mut self,
+        project_id: Ulid,
+        edit: impl FnOnce(&mut String),
+        cx: &mut Context<'_, Self>,
+    ) {
+        let view = self.files_view(project_id);
+        let Some(find) = &mut view.find else {
+            return;
+        };
+        edit(&mut find.query);
+        view.search();
+        self.reveal_file_match(project_id, cx);
+    }
+
+    fn step_file_find(&mut self, project_id: Ulid, forward: bool, cx: &mut Context<'_, Self>) {
+        if let Some(find) = &mut self.files_view(project_id).find {
+            find.step(forward);
+        }
+        self.reveal_file_match(project_id, cx);
+    }
+
+    /// Scrolls to the current match and selects its line (so "Open in Zed" goes there).
+    fn reveal_file_match(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        let view = self.files_view(project_id);
+        let line = view
+            .find
+            .as_ref()
+            .and_then(TextFind::current)
+            .map(|m| m.line);
+        if let Some(line) = line {
+            view.line = u32::try_from(line + 1).ok();
+            self.file_code_scroll
+                .scroll_to_item(line, ScrollStrategy::Center);
+        }
+        cx.notify();
+    }
+
+    fn close_file_find(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.files_view(project_id).find = None;
+        window.focus(&self.files_focus, cx);
+        cx.notify();
     }
 
     /// The absolute path of `path` (relative, `/`-separated) in workspace `project_id`, with
@@ -3636,12 +3797,12 @@ impl Shell {
         self.close_prompt_picker(None, window, cx);
     }
 
-    /// Makes `agent` the default agent of `project_id` (`project.update`); the sidebar picks
-    /// the change up from `project.updated`.
-    fn set_default_agent(
+    /// "Remove workspace…": asks, then `project.archive` (its sessions stop; its folder, tasks
+    /// and history stay; adding the folder again brings it back). The sidebar drops it on
+    /// `project.updated`; a refresh moves to another workspace if it was shown.
+    fn archive_workspace(
         &mut self,
         project_id: Ulid,
-        agent: String,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -3650,7 +3811,95 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        let Some(name) = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .map(|project| project.name.clone())
+        else {
+            return;
+        };
+        let live = (self.sidebar.sessions().iter())
+            .filter(|s| s.project_id == project_id && s.state != SessionState::Exited)
+            .count();
+        let stops = match live {
+            0 => String::new(),
+            1 => "Its running session stops. ".to_owned(),
+            n => format!("Its {n} running sessions stop. "),
+        };
+        let detail = format!(
+            "{stops}The folder, its tasks and history stay. Add the folder again to bring it back."
+        );
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Remove “{name}” from Mkrew?"),
+            Some(detail.as_str()),
+            &workspace_menu::REMOVE_ANSWERS,
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if !task_dialog::confirms_delete(answer.await.ok()) {
+                return;
+            }
+            let archived = connection
+                .call::<Project>(Request::ProjectArchive(ProjectRef { project_id }))
+                .await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                match archived {
+                    Ok(_) => {
+                        shell.sidebar_error = None;
+                        shell.refresh(window, cx);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%project_id, "project.archive failed: {error:#}");
+                        shell.sidebar_error =
+                            Some(format!("Cannot remove the workspace: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Makes `agent` the default agent of `project_id`; the sidebar picks the change up from
+    /// `project.updated`.
+    fn set_default_agent(
+        &mut self,
+        project_id: Ulid,
+        agent: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let params = workspace_menu::set_default_agent(project_id, &agent);
+        self.update_project(params, "Cannot change the default agent", window, cx);
+    }
+
+    /// Sets (or clears) the workspace color from the menu.
+    fn set_workspace_color(
+        &mut self,
+        project_id: Ulid,
+        color: Option<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let params = workspace_menu::set_color(project_id, color);
+        self.update_project(params, "Cannot change the color", window, cx);
+    }
+
+    /// Closes the workspace menu and sends `project.update`; a failure shows in the sidebar
+    /// after `failure`.
+    fn update_project(
+        &mut self,
+        params: ProjectUpdateParams,
+        failure: &'static str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.workspace_menu = None;
+        cx.notify();
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let project_id = params.project_id;
         let updated = connection.call::<Project>(Request::ProjectUpdate(params));
         cx.spawn_in(window, async move |this, cx| {
             let updated = updated.await;
@@ -3659,8 +3908,7 @@ impl Shell {
                     Ok(_) => shell.sidebar_error = None,
                     Err(error) => {
                         tracing::warn!(%project_id, "project.update failed: {error:#}");
-                        shell.sidebar_error =
-                            Some(format!("Cannot change the default agent: {error:#}"));
+                        shell.sidebar_error = Some(format!("{failure}: {error:#}"));
                     }
                 }
                 cx.notify();
@@ -5690,6 +5938,26 @@ impl Shell {
             }
             window.focus(&self.git_focus, cx);
         }
+        // Same for the Files find field while it has the keyboard (Esc gives it back).
+        if self.file_find_focus.is_focused(window) {
+            let open = self.view() == View::Files
+                && (self.workspace)
+                    .and_then(|id| self.files.get(&id))
+                    .is_some_and(|view| view.find.is_some());
+            if open {
+                cx.propagate();
+                return;
+            }
+            window.focus(&self.focus_handle, cx);
+        }
+        // Same for the Docs filter while it has the keyboard.
+        if self.docs_filter_focus.is_focused(window) {
+            if self.view() == View::Docs {
+                cx.propagate();
+                return;
+            }
+            window.focus(&self.focus_handle, cx);
+        }
         // Same for the focused pane's composer (§20B.1), unless it went away. Its own shortcut
         // keeps it focused (Ctrl+Shift+Enter would read as Ctrl+Enter: send).
         if self.composer_focus.is_focused(window) {
@@ -5905,11 +6173,16 @@ impl Shell {
                 }
             }
             // Handled by the focused terminal pane.
-            Command::Copy
-            | Command::Paste
-            | Command::PageUp
-            | Command::PageDown
-            | Command::Find => {}
+            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {}
+            // A focused terminal pane handles it itself.
+            Command::Find => match self.view() {
+                View::Files => self.open_file_find(window, cx),
+                View::Docs => {
+                    window.focus(&self.docs_filter_focus, cx);
+                    cx.notify();
+                }
+                _ => {}
+            },
         }
     }
 
@@ -6151,6 +6424,50 @@ impl Shell {
                     cx.notify();
                 });
             }
+        })
+        .detach();
+    }
+
+    /// ✕ on a sidebar session: a running one asks first (removing stops it); then
+    /// `session.remove` hides it for good and its pane closes. Its log stays on disk.
+    fn remove_session(
+        &mut self,
+        session_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let answer = (!self.is_exited(session_id)).then(|| {
+            window.prompt(
+                PromptLevel::Warning,
+                "This session is still running.",
+                Some("Removing it from the sidebar stops it."),
+                &workspace_menu::REMOVE_ANSWERS,
+                cx,
+            )
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            if let Some(answer) = answer
+                && !task_dialog::confirms_delete(answer.await.ok())
+            {
+                return;
+            }
+            let removed = connection
+                .call::<()>(Request::SessionRemove(SessionRef { session_id }))
+                .await;
+            let _ = this.update_in(cx, |shell, window, cx| match removed {
+                Ok(()) => {
+                    shell.sidebar.remove_session(session_id);
+                    shell.remove_pane(session_id, window, cx);
+                }
+                Err(error) => {
+                    tracing::warn!(%session_id, "session.remove failed: {error:#}");
+                    shell.sidebar_error = Some(format!("Cannot remove the session: {error:#}"));
+                    cx.notify();
+                }
+            });
         })
         .detach();
     }
@@ -6835,8 +7152,9 @@ impl Shell {
             .child(body)
     }
 
-    /// The workspace menu: "Open in Zed", "Run setup…" and the default agent for new agent
-    /// panes. Floats over the sidebar; a click outside closes it.
+    /// The workspace menu: "Open in Zed", "Run setup…", the default agent for new agent
+    /// panes, the workspace color and "Remove workspace…". Floats over the sidebar; a click
+    /// outside closes it.
     fn render_workspace_menu(
         &self,
         menu: &WorkspaceMenu,
@@ -6850,6 +7168,9 @@ impl Shell {
             .iter()
             .find(|project| project.id == project_id)
             .and_then(|project| project.default_agent.as_deref());
+        let current_color = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .and_then(|project| project.color.as_deref());
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
@@ -6920,7 +7241,43 @@ impl Shell {
                     .text_color(rgb(theme.text_muted))
                     .child("Default agent for new panes"),
             )
-            .children(agents);
+            .children(agents)
+            .child(separator())
+            .child(
+                div()
+                    .px(px(space::S))
+                    .pt(px(space::XS))
+                    .text_size(px(font_size::META))
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text_muted))
+                    .child("Color"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(space::S))
+                    .px(px(space::S))
+                    .py(px(space::S))
+                    .child(color_swatch(project_id, None, current_color, theme, cx))
+                    .children(WORKSPACE_COLORS.iter().map(|name| {
+                        color_swatch(project_id, Some(*name), current_color, theme, cx)
+                    })),
+            )
+            .child(separator())
+            .child(
+                menu_item("remove-workspace".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            // The destructive color of `danger_button`.
+                            .text_color(rgb(theme.diff_del_text))
+                            .child("Remove workspace…"),
+                    )
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.archive_workspace(project_id, window, cx);
+                    })),
+            );
         deferred(
             anchored()
                 .snap_to_window_with_margin(px(space::S))
@@ -7800,7 +8157,7 @@ impl Shell {
         let Some(docs) = self.docs.get(&project_id) else {
             return empty("Loading docs…", None).into_any_element();
         };
-        let files = match &docs.files {
+        match &docs.files {
             Files::Loading => return empty("Loading docs…", None).into_any_element(),
             Files::Failed(error) => {
                 return empty("Cannot list the docs.", Some(error.clone()))
@@ -7832,31 +8189,72 @@ impl Shell {
                 )
                 .into_any_element();
             }
-            Files::Loaded(files) => files,
-        };
+            Files::Loaded(_) => {}
+        }
         let selected = docs.selected.as_deref();
-        div()
-            .flex_1()
-            .min_h_0()
+        let shown_files = docs.shown_files();
+        let filter_focused = self.docs_filter_focus.is_focused(window);
+        let list = div()
+            .flex_none()
+            .w(px(theme::DOC_LIST_WIDTH))
+            .h_full()
             .flex()
-            .font_family(theme::UI_FONT)
+            .flex_col()
+            .child(
+                div().px(px(space::S)).pb(px(space::XS)).child(
+                    text_field(
+                        "docs-filter",
+                        &docs.filter,
+                        "Filter files…",
+                        filter_focused,
+                        theme,
+                    )
+                    .track_focus(&self.docs_filter_focus)
+                    .on_key_down(cx.listener(Self::docs_filter_key_down))
+                    .relative()
+                    .child(self.typing(&self.docs_filter_focus, Self::docs_filter_key_down, cx))
+                    .tooltip(tooltip(
+                        theme,
+                        "Filter the files",
+                        self.keymap.label(Command::Find),
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        window.focus(&shell.docs_filter_focus, cx);
+                        cx.notify();
+                    })),
+                ),
+            )
             .child(
                 div()
                     .id("doc-list")
-                    .flex_none()
-                    .w(px(theme::DOC_LIST_WIDTH))
-                    .h_full()
+                    .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .gap(px(space::XS))
                     .px(px(space::S))
                     .pb(px(space::S))
-                    .children(files.iter().map(|file| {
+                    .when(shown_files.is_empty(), |el| {
+                        el.child(
+                            div()
+                                .px(px(space::S))
+                                .text_size(px(font_size::META))
+                                .text_color(rgb(theme.text_muted))
+                                .child("No files match the filter."),
+                        )
+                    })
+                    .children(shown_files.into_iter().map(|(file, matched)| {
                         let shown = selected == Some(file.file_path.as_str());
-                        doc_row(project_id, file, shown, theme, cx)
+                        doc_row(project_id, file, &matched, shown, theme, cx)
                     })),
-            )
+            );
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .font_family(theme::UI_FONT)
+            .child(list)
             .child(self.render_doc(project_id, docs, theme, window, cx))
             .into_any_element()
     }
@@ -7997,17 +8395,20 @@ impl Shell {
                     .min_h_0()
                     .overflow_y_scroll()
                     .px(px(space::XL))
-                    .pb(px(space::XL))
+                    .py(px(space::L))
                     .child(
                         div()
+                            .w_full()
                             .max_w(px(theme::DOC_PREVIEW_MAX_WIDTH))
+                            .mx_auto()
                             .flex()
                             .flex_col()
                             .gap(px(space::M))
-                            .text_size(px(font_size::BODY))
+                            .text_size(px(theme::doc::BODY))
+                            .line_height(relative(theme::doc::LINE_HEIGHT))
                             .children(preview_blocks(
                                 project_id,
-                                &shown.blocks,
+                                shown,
                                 docs.comments.selection,
                                 theme,
                                 cx,
@@ -8191,7 +8592,7 @@ impl Shell {
                     )
                     .child(tree),
             )
-            .child(self.render_file(project_id, view, theme, cx))
+            .child(self.render_file(project_id, view, window, theme, cx))
             .into_any_element()
     }
 
@@ -8201,6 +8602,7 @@ impl Shell {
         &self,
         project_id: Ulid,
         view: &FilesView,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
@@ -8283,7 +8685,75 @@ impl Shell {
                         })),
                 )
             })
+            .child(
+                button("file-find", "Find", theme, false)
+                    .flex_none()
+                    .tooltip(tooltip(
+                        theme,
+                        "Find in this file",
+                        self.keymap.label(Command::Find),
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| shell.open_file_find(window, cx))),
+            )
             .child(zed_button("file-zed", false));
+        let find_bar = view.find.as_ref().map(|find| {
+            let focused = self.file_find_focus.is_focused(window);
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::L))
+                .pb(px(space::S))
+                .child(
+                    text_field(
+                        "file-find-field",
+                        &find.query,
+                        "Find in file",
+                        focused,
+                        theme,
+                    )
+                    .w(px(theme::FIND_INPUT_WIDTH))
+                    .track_focus(&self.file_find_focus)
+                    .on_key_down(cx.listener(Self::file_find_key_down))
+                    .relative()
+                    .child(self.typing(&self.file_find_focus, Self::file_find_key_down, cx))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        window.focus(&shell.file_find_focus, cx);
+                        cx.notify();
+                    })),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_size(px(font_size::META))
+                        .text_color(rgb(theme.text_muted))
+                        .child(find.label()),
+                )
+                .child(
+                    button("file-find-previous", "↑", theme, false)
+                        .tooltip(tooltip(theme, "Previous match", "Shift+Enter"))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.file_find_focus, cx);
+                            shell.step_file_find(project_id, false, cx);
+                        })),
+                )
+                .child(
+                    button("file-find-next", "↓", theme, false)
+                        .tooltip(tooltip(theme, "Next match", "Enter"))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.file_find_focus, cx);
+                            shell.step_file_find(project_id, true, cx);
+                        })),
+                )
+                .child(
+                    button("file-find-close", "✕", theme, false)
+                        .tooltip(tooltip(theme, "Close", "Esc"))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.close_file_find(project_id, window, cx);
+                        })),
+                )
+        });
         let body = match &view.content {
             Content::None | Content::Loading => message(theme, None, "Loading…".into(), None)
                 .flex_1()
@@ -8334,16 +8804,25 @@ impl Shell {
                         cx.notify();
                     });
                 });
-                preview::code_view("file-code", Rc::clone(code), view.line, on_line, theme)
-                    .flex_1()
-                    .min_h_0()
-                    .px(px(space::L))
-                    .pb(px(space::L))
-                    .into_any_element()
+                preview::code_view(
+                    "file-code",
+                    Rc::clone(code),
+                    view.line,
+                    view.find.as_ref().map(TextFind::hits),
+                    on_line,
+                    theme,
+                )
+                .track_scroll(&self.file_code_scroll)
+                .flex_1()
+                .min_h_0()
+                .px(px(space::L))
+                .pb(px(space::L))
+                .into_any_element()
             }
         };
         panel
             .child(header)
+            .children(find_bar)
             .children(view.zed_error.clone().map(|error| {
                 notice(theme.text, format!("✕ {error}"))
                     .px(px(space::L))
@@ -13345,17 +13824,18 @@ fn text_field(
 /// lines; picked ones are highlighted.
 fn preview_blocks(
     project_id: Ulid,
-    blocks: &[mkrew_ui::markdown::Block],
+    shown: &Shown,
     selection: Option<Selection>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> Vec<gpui::AnyElement> {
     let hover = theme.surface_raised;
-    blocks
+    shown
+        .blocks
         .iter()
         .enumerate()
         .filter_map(|(index, block)| {
-            let element = preview::block(block, theme)?;
+            let element = preview::block(block, shown, theme)?;
             let (start, end) = (block.lines.start, block.lines.end);
             let picked = selection.is_some_and(|s| s.contains(start, end));
             let wrapped = div()
@@ -13447,6 +13927,7 @@ fn file_row(
     let (entry, depth, expanded) = match row {
         files_view::Row::Note { depth, text } => {
             return div()
+                .w_full()
                 .pl(px(space::S + theme::FILE_TREE_INDENT * *depth as f32))
                 .py(px(space::XS))
                 .overflow_hidden()
@@ -13485,6 +13966,7 @@ fn file_row(
     let path = entry.path.clone();
     div()
         .id(SharedString::from(format!("file-{}", entry.path)))
+        .w_full()
         .flex()
         .items_center()
         .gap(px(space::XS))
@@ -13592,6 +14074,7 @@ fn git_file_row(
         git_view::ListRow::Header(group, count) => {
             // The same box as a file row (uniform list: rows are sized from the first one).
             return div()
+                .w_full()
                 .flex()
                 .items_center()
                 .gap(px(space::XS))
@@ -13609,6 +14092,7 @@ fn git_file_row(
         git_view::ListRow::Note(note) => {
             // Indented under its commit, like the commit's files.
             return div()
+                .w_full()
                 .flex()
                 .items_center()
                 .px(px(space::S))
@@ -13660,12 +14144,16 @@ fn git_file_row(
     div()
         .id(id.clone())
         .group(id.clone())
+        .w_full()
         .flex()
         .items_center()
         .gap(px(space::S))
         .px(px(space::S))
         .py(px(space::XS))
-        .when(group == git_view::Group::Commit, |el| el.ml(px(space::M)))
+        // Indented under its commit inside the full-width row (a margin would overflow it).
+        .when(group == git_view::Group::Commit, |el| {
+            el.pl(px(space::S + space::M))
+        })
         .rounded(px(radius::SMALL))
         .border(px(theme::BORDER_WIDTH))
         // The border is always there (so rows never shift); it only shows as the focus ring.
@@ -13787,6 +14275,7 @@ fn git_commit_row(
     let hash = commit.hash.clone();
     div()
         .id(SharedString::from(format!("git-commit-{}", commit.hash)))
+        .w_full()
         .flex()
         .items_center()
         .gap(px(space::S))
@@ -13988,6 +14477,7 @@ fn git_diff_row(
                         .child(div().text_color(rgb(text_color)).child(preview::code_line(
                             line.text.replace('\t', highlight::TAB),
                             spans,
+                            &[],
                             theme,
                         ))),
                 )
@@ -14020,6 +14510,7 @@ fn size_label(bytes: u64) -> String {
 fn doc_row(
     project_id: Ulid,
     file: &DocFile,
+    matched: &[u32],
     selected: bool,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -14030,6 +14521,26 @@ fn doc_row(
     };
     let hover = theme.surface_raised;
     let file_path = file.file_path.clone();
+    // `matched` indexes chars of the whole path: split it over the folder and the name.
+    let name_from = folder.map_or(0, |folder| folder.chars().count() + 1);
+    let name_from = u32::try_from(name_from).unwrap_or(u32::MAX);
+    let name_hits: Vec<u32> = matched
+        .iter()
+        .filter_map(|i| i.checked_sub(name_from))
+        .collect();
+    let folder_hits: Vec<u32> = matched.iter().copied().filter(|i| *i < name_from).collect();
+    let marked = |text: &str, hits: &[u32]| {
+        let style = HighlightStyle {
+            color: Some(Hsla::from(rgb(theme.accent))),
+            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+            ..HighlightStyle::default()
+        };
+        StyledText::new(text.to_owned()).with_highlights(
+            quick_open::match_ranges(text, hits)
+                .into_iter()
+                .map(move |range| (range, style)),
+        )
+    };
     let line = |el: gpui::Div| el.overflow_hidden().text_ellipsis().whitespace_nowrap();
     div()
         .id(SharedString::from(format!("doc-{}", file.file_path)))
@@ -14054,14 +14565,14 @@ fn doc_row(
                         .text_size(px(font_size::BODY))
                         .text_color(rgb(theme.text))
                         .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
-                        .child(name.to_owned()),
+                        .child(marked(name, &name_hits)),
                 ))
                 .children(folder.map(|folder| {
                     line(
                         div()
                             .text_size(px(font_size::META))
                             .text_color(rgb(theme.text_muted))
-                            .child(folder.to_owned()),
+                            .child(marked(folder, &folder_hits)),
                     )
                 })),
         )
@@ -14104,6 +14615,41 @@ fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         .text_color(rgb(theme.text_muted))
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
+}
+
+/// One color choice of the workspace menu: a filled dot (`None` = an empty ring = no
+/// color); the current one is ringed in the text color.
+fn color_swatch(
+    project_id: Ulid,
+    color: Option<&'static str>,
+    current: Option<&str>,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let fill = color.and_then(|name| theme.workspace_color(name));
+    let ring = if color == current {
+        theme.text
+    } else {
+        fill.unwrap_or(theme.text_muted)
+    };
+    div()
+        .id(SharedString::from(format!(
+            "workspace-color-{}",
+            color.unwrap_or("none")
+        )))
+        .flex_none()
+        .size(px(theme::WORKSPACE_SWATCH_SIZE))
+        .rounded_full()
+        .cursor_pointer()
+        .border(px(theme::WORKSPACE_SWATCH_BORDER))
+        .border_color(rgb(ring))
+        .when_some(fill, |el, fill| el.bg(rgb(fill)))
+        .hover(|style| style.opacity(opacity::HOVER))
+        .tooltip(tooltip(theme, color.unwrap_or("No color"), ""))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.set_workspace_color(project_id, color, window, cx);
+        }))
+        .into_any_element()
 }
 
 /// The rows of an agent-profile list in a menu (`current` checked): loading, the error, an
@@ -14231,6 +14777,18 @@ fn workspace_row(
         )
         .child(
             div()
+                .flex_none()
+                .size(px(theme::WORKSPACE_DOT_SIZE))
+                .rounded_full()
+                .when_some(
+                    row.color
+                        .as_deref()
+                        .and_then(|name| theme.workspace_color(name)),
+                    |el, color| el.bg(rgb(color)),
+                ),
+        )
+        .child(
+            div()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
@@ -14320,8 +14878,10 @@ fn session_row(
     let hover = theme.surface_raised;
     // An exited session cannot be attached ("Run again" / "Resume" come later).
     let live = row.state != SessionState::Exited;
+    let row_id = SharedString::from(format!("session-{session_id}"));
     div()
-        .id(SharedString::from(format!("session-{session_id}")))
+        .id(row_id.clone())
+        .group(row_id.clone())
         .flex()
         .items_center()
         .gap(px(space::S))
@@ -14374,6 +14934,22 @@ fn session_row(
                     row.state_changed_at,
                 ))
                 .child(status_text),
+        )
+        .child(
+            row_action(
+                SharedString::from(format!("session-remove-{session_id}")),
+                "✕",
+                theme,
+            )
+            // Shown on hover (SPEC §14 progressive disclosure).
+            .opacity(opacity::HIDDEN)
+            .group_hover(row_id.clone(), |style| style.opacity(opacity::FULL))
+            .tooltip(tooltip(theme, "Remove from the sidebar", ""))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                // Not a click on the row (which would open the session).
+                cx.stop_propagation();
+                shell.remove_session(session_id, window, cx);
+            })),
         )
         .into_any_element()
 }
