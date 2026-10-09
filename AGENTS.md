@@ -47,6 +47,8 @@ This repository is built **autonomously** by agents, one task per session.
 | `docs/decisions/` | ADRs |
 | `.claude/skills/` | skills (read by Claude Code and omp) |
 | `.claude/agents/` | subagents: researcher, reviewer, ui-reviewer (Claude Code) |
+| `.omp/agents/` | omp subagents: `final-reviewer` (`@slow`) — dispatch it for the superpowers final whole-branch review |
+| `docs/MODEL_ROLES.md` | superpowers step → omp model role → model, and how to roll back |
 | `crates/` | workspace crates (SPEC §4) |
 
 ## Conventions (summary of SPEC §17)
