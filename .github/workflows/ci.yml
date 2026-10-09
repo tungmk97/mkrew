@@ -36,6 +36,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # gpui's x11/wayland backends (mkrew-ui) link against these.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev
       # Runs in Git Bash on Windows. Tests need the daemon + fakeagent bins, which
       # `cargo test --workspace` builds.
       - run: bash scripts/verify.sh

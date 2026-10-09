@@ -1,0 +1,2 @@
+// ID 1: gpui's Windows backend loads icon resource 1 for the window/taskbar; Explorer uses it too.
+1 ICON "mkrew.ico"
