@@ -18,8 +18,8 @@ pub struct Settings {
     pub awake: AwakeSettings,
     pub composer: ComposerSettings,
     pub zed: ZedSettings,
-    /// `[ui]`: the app's font (SPEC §14, §20.0).
-    pub ui: FontSettings,
+    /// `[ui]`: the app's font and theme (SPEC §14, §20.0).
+    pub ui: UiSettings,
     /// `[terminal]`: the terminal font; also used by the Files and Git code views.
     pub terminal: FontSettings,
 }
@@ -105,6 +105,110 @@ impl Default for FontSettings {
     }
 }
 
+/// `[ui] theme` (SPEC §14, ADR 0027): `system` follows the OS live.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            ThemeMode::System => "system",
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+        }
+    }
+}
+
+/// `[ui]`: the app font and theme (SPEC §14, §20.0).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UiSettings {
+    pub font_family: String,
+    pub font_size: FontSize,
+    pub theme: ThemeMode,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        let font = FontSettings::default();
+        Self {
+            font_family: font.font_family,
+            font_size: font.font_size,
+            theme: ThemeMode::System,
+        }
+    }
+}
+
+/// `src` with `[ui] theme = "<mode>"`: replaces an uncommented `theme =` line inside `[ui]`,
+/// else inserts one right after the `[ui]` header, else appends a `[ui]` section. Everything
+/// else (comments, order, other keys, CRLF line ends) is kept byte for byte. Forms this does not
+/// recognise (`ui.theme = …`, an inline `ui = {…}`) can yield invalid TOML: callers parse the
+/// result before writing it.
+pub fn set_ui_theme(src: &str, mode: ThemeMode) -> String {
+    let eol = if src.contains("\r\n") { "\r\n" } else { "\n" };
+    let line = format!("theme = \"{}\"", mode.name());
+    // `[ui]`, `[ ui ]` and `[ui] # note` are the same table header.
+    let is_ui_header = |l: &&str| {
+        let code = l.split('#').next().unwrap_or_default();
+        code.split_whitespace().collect::<String>() == "[ui]"
+    };
+    let mut lines: Vec<&str> = src.lines().collect();
+    let Some(header) = lines.iter().position(is_ui_header) else {
+        let sep = if src.is_empty() || src.ends_with(&format!("{eol}{eol}")) {
+            ""
+        } else if src.ends_with('\n') {
+            eol
+        } else {
+            "\n\n"
+        };
+        return format!("{src}{sep}[ui]{eol}{line}{eol}");
+    };
+    let end = lines[header + 1..]
+        .iter()
+        .position(|l| l.trim_start().starts_with('['))
+        .map_or(lines.len(), |i| header + 1 + i);
+    let is_theme = |l: &&str| {
+        l.trim_start()
+            .strip_prefix("theme")
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    };
+    match lines[header + 1..end].iter().position(is_theme) {
+        Some(i) => lines[header + 1 + i] = &line,
+        None => lines.insert(header + 1, &line),
+    }
+    let mut out = lines.join(eol);
+    if src.ends_with('\n') {
+        out.push_str(eol);
+    }
+    out
+}
+
+/// Saves `[ui] theme = "<mode>"` in `path` (the template when it is missing) with
+/// [`set_ui_theme`]. Writes nothing when the file does not parse or the edit would not parse
+/// (an unusual `ui` form), so a good file never turns bad.
+pub fn write_ui_theme(path: &Path, mode: ThemeMode) -> Result<(), SettingsError> {
+    let io_error = |e: io::Error| SettingsError {
+        file: path.to_path_buf(),
+        line_col: None,
+        message: e.to_string(),
+    };
+    let src = match std::fs::read_to_string(path) {
+        Ok(src) => src,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => template().to_owned(),
+        Err(e) => return Err(io_error(e)),
+    };
+    parse(path, &src)?;
+    let out = set_ui_theme(&src, mode);
+    parse(path, &out)?;
+    std::fs::write(path, out).map_err(io_error)
+}
+
 /// A font size in px, 8–32 (checked when parsed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "u16")]
@@ -143,9 +247,11 @@ pub fn template() -> &'static str {
      # follow_debounce_ms = 1500\n\
      \n\
      # App font: an installed family name (empty: the system UI font); size 8–32 px.\n\
+     # Theme: system (follows the OS), light or dark; the toolbar toggle writes it.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
+     # theme = \"system\"\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -209,14 +315,16 @@ mod tests {
         assert!(settings.awake.keep_awake);
         assert_eq!(settings.composer.file_ref, "@{path}");
         assert_eq!(settings.zed.follow_debounce_ms, 1500);
+        assert_eq!(settings.ui.font_family, "");
+        assert_eq!(settings.ui.font_size, FontSize(13));
+        assert_eq!(settings.ui.theme, ThemeMode::System);
         assert_eq!(
-            settings.ui,
+            settings.terminal,
             FontSettings {
                 font_family: String::new(),
                 font_size: FontSize(13)
             }
         );
-        assert_eq!(settings.terminal, settings.ui);
     }
 
     #[test]
@@ -282,9 +390,10 @@ font_size = 15
                 zed: ZedSettings {
                     follow_debounce_ms: 500
                 },
-                ui: FontSettings {
+                ui: UiSettings {
                     font_family: "Inter".into(),
                     font_size: FontSize(14),
+                    theme: ThemeMode::System,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
@@ -360,6 +469,91 @@ font_size = 15
             Settings::default(),
             "{uncommented}"
         );
+    }
+
+    #[test]
+    fn ui_theme_parses_and_defaults_to_system() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!(ui("").theme, ThemeMode::System);
+        assert_eq!(ui("[ui]\ntheme = \"dark\"").theme, ThemeMode::Dark);
+        assert_eq!(
+            ui("[ui]\ntheme = \"light\"\nfont_size = 14").font_size,
+            FontSize(14)
+        );
+        assert!(parse_err("[ui]\ntheme = \"blue\"").contains("unknown variant `blue`"));
+        // [terminal] has no theme.
+        assert!(parse_err("[terminal]\ntheme = \"dark\"").contains("unknown field `theme`"));
+    }
+
+    #[test]
+    fn set_ui_theme_keeps_comments_and_other_keys() {
+        let src = "# mine\n[ui]\n# theme = \"system\"\nfont_size = 15\ntheme = \"light\"\n\n[terminal]\nfont_size = 12\n";
+        let out = set_ui_theme(src, ThemeMode::Dark);
+        assert_eq!(out, src.replace("theme = \"light\"", "theme = \"dark\""));
+        assert_eq!(
+            parse(Path::new("s.toml"), &out).unwrap().ui.theme,
+            ThemeMode::Dark
+        );
+    }
+
+    #[test]
+    fn set_ui_theme_inserts_ui_section() {
+        let with_ui = set_ui_theme("[ui]\nfont_size = 15\n", ThemeMode::Light);
+        assert_eq!(with_ui, "[ui]\ntheme = \"light\"\nfont_size = 15\n");
+        let without = set_ui_theme("[zed]\nfollow_debounce_ms = 1\n", ThemeMode::Dark);
+        assert_eq!(
+            without,
+            "[zed]\nfollow_debounce_ms = 1\n\n[ui]\ntheme = \"dark\"\n"
+        );
+        assert_eq!(
+            set_ui_theme("", ThemeMode::System),
+            "[ui]\ntheme = \"system\"\n"
+        );
+    }
+
+    #[test]
+    fn set_ui_theme_finds_a_commented_or_spaced_ui_header() {
+        for src in [
+            "[ui] # app font\nfont_size = 15\n",
+            "[ ui ]\nfont_size = 15\n",
+            "[ui]#x\nfont_size = 15\n",
+        ] {
+            let out = set_ui_theme(src, ThemeMode::Dark);
+            let settings = parse(Path::new("s.toml"), &out).expect(&out);
+            assert_eq!(settings.ui.theme, ThemeMode::Dark, "{out}");
+            assert_eq!(settings.ui.font_size, FontSize(15), "{out}");
+        }
+    }
+
+    #[test]
+    fn set_ui_theme_keeps_crlf_line_endings() {
+        let src = "[ui]\r\nfont_size = 15\r\n";
+        assert_eq!(
+            set_ui_theme(src, ThemeMode::Light),
+            "[ui]\r\ntheme = \"light\"\r\nfont_size = 15\r\n"
+        );
+        assert_eq!(
+            set_ui_theme("[zed]\r\n", ThemeMode::Dark),
+            "[zed]\r\n\r\n[ui]\r\ntheme = \"dark\"\r\n"
+        );
+    }
+
+    #[test]
+    fn write_ui_theme_never_turns_a_good_file_bad() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        // Missing: the template plus the theme.
+        write_ui_theme(&path, ThemeMode::Dark).unwrap();
+        assert_eq!(load(&path).unwrap().ui.theme, ThemeMode::Dark);
+        // A dotted `ui.font_size` key: the edit would declare `ui` twice, so nothing is written.
+        let dotted = "ui.font_size = 15\n";
+        std::fs::write(&path, dotted).unwrap();
+        assert!(write_ui_theme(&path, ThemeMode::Light).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), dotted);
+        // A file that does not parse is left alone.
+        std::fs::write(&path, "[ui\n").unwrap();
+        assert!(write_ui_theme(&path, ThemeMode::Light).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[ui\n");
     }
 
     #[test]

@@ -4,8 +4,9 @@
 use std::path::Path;
 use std::time::Duration;
 
-use gpui::SharedString;
+use gpui::{App, Rems, SharedString, Window, WindowAppearance, rems};
 use mkrew_core::settings::Settings;
+pub use mkrew_core::settings::ThemeMode;
 use mkrew_protocol::WORKSPACE_COLORS;
 
 /// Spacing scale in px: 4 · 8 · 12 · 16 · 24 · 32.
@@ -69,8 +70,16 @@ pub const STATUS_TICK: Duration = Duration::from_millis(500);
 pub const STATUS_DOT: f32 = 4.0;
 /// Gap between the dots of the `working` mark.
 pub const STATUS_DOT_GAP: f32 = 2.0;
-/// Width of every status mark, so glyph and dot rows line up (3 × 4 + 2 × 2 = 16).
+/// Width of every status mark, so glyph and dot rows line up (3 × 4 + 2 × 2 = 16). These three
+/// are px at the default 13 px body and scale with `[ui] font_size` ([`rems_px`]).
 pub const STATUS_MARK_WIDTH: f32 = space::L;
+
+/// The Inbox card's header tile (✓ / !).
+pub const INBOX_TILE_SIZE: f32 = 28.0;
+/// A square glyph button (theme toggle, sidebar +).
+pub const ICON_BUTTON_SIZE: f32 = 26.0;
+/// Inset of the toolbar's segmented control around its segments.
+pub const SEGMENT_PADDING: f32 = 2.0;
 
 /// Borders are 1 px and faint.
 pub const BORDER_WIDTH: f32 = 1.0;
@@ -107,11 +116,7 @@ pub mod opacity {
 pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
 /// Width of the workspace sidebar.
-pub const SIDEBAR_WIDTH: f32 = 240.0;
-
-/// Min width of the view rail right of the main area (view switcher + compact Run, ADR 0023);
-/// it grows to fit its labels at larger UI font sizes.
-pub const VIEW_RAIL_WIDTH: f32 = 76.0;
+pub const SIDEBAR_WIDTH: f32 = 280.0;
 
 /// Min height of a board column header row: the Todo header's `New task` button at the
 /// default UI font size, so every column's cards start at the same height (ADR 0023).
@@ -201,9 +206,6 @@ pub const FILE_TREE_INDENT: f32 = space::M;
 /// Side of the dot on a Files tree folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
-/// The workspace color dot in front of a sidebar row's name (ADR 0020).
-pub const WORKSPACE_DOT_SIZE: f32 = space::S;
-
 /// Side of an agent badge chip (ADR 0025), like the design's workspace avatar.
 pub const AGENT_CHIP_SIZE: f32 = 18.0;
 
@@ -252,9 +254,6 @@ pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
 
 /// How long a hover peek stays after the mouse left its row, so it can reach the popover.
 pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
-
-/// The shade behind a modal dialog (RGBA: black at ~35 %), in both appearances.
-pub const DIALOG_SCRIM: u32 = 0x0000_0059;
 
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
@@ -326,29 +325,65 @@ impl Fonts {
     }
 }
 
-/// The fonts of `path` when they differ from `last` (`Ok(None)` when unchanged). A broken
-/// file is an `Err` with `file:line:col` (§20.0); the caller keeps the last good fonts.
-pub fn reload_fonts(
+/// The fonts and theme mode of `path` when either differs from `last` / `mode` (`Ok(None)`
+/// when unchanged). A broken file is an `Err` with `file:line:col` (§20.0); the caller keeps
+/// the last good settings.
+pub fn reload(
     path: &Path,
     installed: &[String],
     last: &Fonts,
-) -> Result<Option<Fonts>, String> {
+    mode: ThemeMode,
+) -> Result<Option<(Fonts, ThemeMode)>, String> {
     let settings = mkrew_core::settings::load(path).map_err(|error| error.to_string())?;
     let fonts = Fonts::from_settings(&settings, installed);
-    Ok((fonts != *last).then_some(fonts))
+    let changed = fonts != *last || settings.ui.theme != mode;
+    Ok(changed.then_some((fonts, settings.ui.theme)))
 }
 
-/// Color tokens for one appearance (dark or light), plus the terminal settings.
+/// Color tokens for one appearance (dark or light), plus the terminal settings. A GPUI global
+/// (ADR 0027): views read it with [`ActiveTheme::theme`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
+    /// The main area behind panes and views.
     pub bg: u32,
+    /// Panels, popovers, inputs.
     pub surface: u32,
+    /// A raised control on a surface (selected segment, selected code line).
     pub surface_raised: u32,
+    /// The workspace sidebar, a shade off `bg`.
+    pub sidebar: u32,
+    /// Board cards and other blocks that sit on `bg`.
+    pub card: u32,
+    /// A hovered row or quiet button.
+    pub hover: u32,
+    /// The selected row (sidebar session, list item).
+    pub selected: u32,
     pub border: u32,
+    /// Hairlines between sections, fainter than `border`.
+    pub divider: u32,
     pub text: u32,
+    /// Secondary text that is still read (row titles under a name).
+    pub text_dim: u32,
     pub text_muted: u32,
+    /// Graphics only (chevrons, idle ring, guide lines); never text.
+    pub subtle: u32,
     /// Selection, primary buttons, focus.
     pub accent: u32,
+    /// Accent-colored text on `bg` / `accent_bg` (links, the selected view).
+    pub accent_text: u32,
+    /// A faint accent fill (selected toolbar segment, accent chips).
+    pub accent_bg: u32,
+    /// Text and glyphs on an `accent` fill (primary buttons).
+    pub on_accent: u32,
+    /// Divider inside an `accent` fill (split primary button), RGBA.
+    pub on_accent_divider: u32,
+    /// Faint needs-input and done fills behind their text.
+    pub warning_bg: u32,
+    pub success_bg: u32,
+    /// Alpha of a workspace color tint (avatars, [`Theme::tint`]).
+    pub tint_alpha: u8,
+    /// The shade behind a modal dialog, RGBA.
+    pub scrim: u32,
     /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
     pub pane_focus_border: u32,
     /// Background of selected terminal cells (accent mixed into `bg`, text stays readable).
@@ -380,6 +415,8 @@ pub struct Theme {
     pub workspace_colors: [u32; 8],
     /// Dark appearance (picks diagram images, ADR 0021).
     pub dark: bool,
+    /// The chosen mode (`[ui] theme`); `dark` is what it resolved to.
+    pub mode: ThemeMode,
     pub ui_font_family: SharedString,
     pub terminal_font_family: SharedString,
     pub terminal_font_size: f32,
@@ -394,10 +431,40 @@ pub struct Theme {
     pub unfocused_pane_dim: f32,
 }
 
+impl gpui::Global for Theme {}
+
 impl Theme {
-    /// Follows the OS appearance (SPEC §14).
-    pub fn for_appearance(dark: bool) -> Self {
-        if dark { Self::dark() } else { Self::light() }
+    /// `mode` resolved against the OS appearance: `System` follows `os_dark` (SPEC §14).
+    pub fn resolve(mode: ThemeMode, os_dark: bool) -> Self {
+        let dark = match mode {
+            ThemeMode::System => os_dark,
+            ThemeMode::Light => false,
+            ThemeMode::Dark => true,
+        };
+        let theme = if dark { Self::dark() } else { Self::light() };
+        Self { mode, ..theme }
+    }
+
+    /// `color` at the palette's tint alpha (workspace avatars, ADR 0027).
+    pub fn tint(&self, color: u32) -> gpui::Rgba {
+        gpui::rgba((color << 8) | u32::from(self.tint_alpha))
+    }
+
+    /// A workspace avatar on `bg`: (letter color, the tint blended over `bg`). The letter is
+    /// body text, so it is `text`: the workspace color itself is too light on its own tint.
+    pub fn avatar_colors(&self, color: u32, bg: u32) -> (u32, u32) {
+        let alpha = u32::from(self.tint_alpha);
+        let fill = [16, 8, 0].into_iter().fold(0, |fill, shift| {
+            let (c, b) = ((color >> shift) & 0xFF, (bg >> shift) & 0xFF);
+            fill | (((c * alpha + b * (255 - alpha) + 127) / 255) << shift)
+        });
+        (self.text, fill)
+    }
+
+    /// The expand / collapse chevron of a workspace row: the only sign of the row's state, so
+    /// `text_muted` (≥ 3:1), not the graphics-only `subtle`.
+    pub fn chevron_color(&self) -> u32 {
+        self.text_muted
     }
 
     /// This theme with the fonts of `settings.toml`.
@@ -410,15 +477,30 @@ impl Theme {
 
     pub fn dark() -> Self {
         Self {
-            bg: 0x16171B,
-            surface: 0x1D1E23,
-            surface_raised: 0x25262C,
-            border: 0x2D2F36,
+            bg: 0x17181C,
+            surface: 0x1F2127,
+            surface_raised: 0x2C2E37,
+            sidebar: 0x131418,
+            card: 0x1A1B20,
+            hover: 0x22242B,
+            selected: 0x262938,
+            border: 0x2A2C33,
+            divider: 0x24262D,
             text: 0xE6E7EB,
+            text_dim: 0xB4B7C0,
             text_muted: 0x9A9CA6,
+            subtle: 0x5D616C,
             accent: 0x7C8CFF,
-            pane_focus_border: 0x49518D,
-            terminal_selection_bg: 0x3A406B,
+            accent_text: 0x9A9FFF,
+            accent_bg: 0x25264A,
+            // The dark accent is light: dark text keeps ≥ 3:1 on it (white would not).
+            on_accent: 0x17181C,
+            on_accent_divider: 0x0000_0040,
+            warning_bg: 0x3A3020,
+            success_bg: 0x1D3A31,
+            tint_alpha: 0x2E,
+            pane_focus_border: 0x4A528E,
+            terminal_selection_bg: 0x353B60,
             terminal_match_bg: 0x3F3524,
             terminal_match_current_bg: 0x7A5A1F,
             status_working: 0x7C8CFF,
@@ -430,7 +512,7 @@ impl Theme {
             diff_add_text: 0x7DD3A0,
             diff_del_bg: 0x3D2226,
             diff_del_text: 0xF2A0A4,
-            diff_hunk_header: 0x25262C,
+            diff_hunk_header: 0x2C2E37,
             syntax_keyword: 0xC28CF0,
             syntax_string: 0x7DD3A0,
             syntax_number: 0xF0C674,
@@ -450,15 +532,29 @@ impl Theme {
 
     pub fn light() -> Self {
         Self {
-            bg: 0xFAFAF9,
-            surface: 0xFFFFFF,
-            surface_raised: 0xF3F3F1,
-            border: 0xE5E5E1,
-            text: 0x1D1E22,
-            text_muted: 0x6B6D76,
+            bg: 0xFFFFFF,
+            surface: 0xF6F7F9,
+            surface_raised: 0xEEF0F3,
+            sidebar: 0xF4F5F7,
+            card: 0xFFFFFF,
+            hover: 0xEEF0F3,
+            selected: 0xE9EAFF,
+            border: 0xE3E5EA,
+            divider: 0xECEEF1,
+            text: 0x1B1D22,
+            text_dim: 0x474B55,
+            text_muted: 0x5F6473,
+            subtle: 0xA0A4AF,
             accent: 0x4F5BD5,
-            pane_focus_border: 0xA4AAE7,
-            terminal_selection_bg: 0xCFD2F0,
+            accent_text: 0x4A52D9,
+            accent_bg: 0xECEEFF,
+            on_accent: 0xFFFFFF,
+            on_accent_divider: 0xFFFF_FF59,
+            warning_bg: 0xFDF3E1,
+            success_bg: 0xE1F5EC,
+            tint_alpha: 0x24,
+            pane_focus_border: 0xA7ADEA,
+            terminal_selection_bg: 0xCACEF2,
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
             status_working: 0x4F5BD5,
@@ -470,7 +566,7 @@ impl Theme {
             diff_add_text: 0x1E6B3A,
             diff_del_bg: 0xFDEEEE,
             diff_del_text: 0xA61B1B,
-            diff_hunk_header: 0xF3F3F1,
+            diff_hunk_header: 0xF6F7F9,
             // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
             syntax_keyword: 0x8A3FB8,
             syntax_string: 0x276749,
@@ -495,10 +591,26 @@ impl Theme {
             bg: 0,
             surface: 0,
             surface_raised: 0,
+            sidebar: 0,
+            card: 0,
+            hover: 0,
+            selected: 0,
             border: 0,
+            divider: 0,
             text: 0,
+            text_dim: 0,
             text_muted: 0,
+            subtle: 0,
             accent: 0,
+            accent_text: 0,
+            accent_bg: 0,
+            on_accent: 0,
+            on_accent_divider: 0,
+            warning_bg: 0,
+            success_bg: 0,
+            tint_alpha: 0,
+            // Black at ~35 %, in both appearances.
+            scrim: 0x0000_0059,
             pane_focus_border: 0,
             terminal_selection_bg: 0,
             terminal_match_bg: 0,
@@ -521,6 +633,7 @@ impl Theme {
             ansi: [0; 16],
             workspace_colors: [0; 8],
             dark: false,
+            mode: ThemeMode::System,
             ui_font_family: UI_FONT.into(),
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
@@ -538,6 +651,61 @@ impl Theme {
         self.workspace_colors.get(index).copied()
     }
 }
+
+/// Views read the theme with `cx.theme()` (ADR 0027).
+pub trait ActiveTheme {
+    fn theme(&self) -> &Theme;
+}
+
+impl ActiveTheme for App {
+    fn theme(&self) -> &Theme {
+        self.global::<Theme>()
+    }
+}
+
+/// Rebuilds the theme global from `mode`, the window's OS appearance and the `Fonts` global.
+/// Called at startup, on OS appearance changes, on a settings reload and by the toggle.
+pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
+    let os_dark = matches!(
+        window.appearance(),
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    );
+    let fonts = cx.global::<Fonts>().clone();
+    cx.set_global(Theme::resolve(mode, os_dark).with_fonts(&fonts));
+}
+
+/// System → Light → Dark → System (the toolbar toggle, `ToggleTheme`).
+pub fn next_mode(mode: ThemeMode) -> ThemeMode {
+    match mode {
+        ThemeMode::System => ThemeMode::Light,
+        ThemeMode::Light => ThemeMode::Dark,
+        ThemeMode::Dark => ThemeMode::System,
+    }
+}
+
+/// The toggle's glyph: half-filled circle (follows the OS) / sun / moon.
+pub fn mode_glyph(mode: ThemeMode) -> &'static str {
+    match mode {
+        ThemeMode::System => "◐",
+        ThemeMode::Light => "☀",
+        ThemeMode::Dark => "☾",
+    }
+}
+
+/// A design size in px at the default 13 px body, as rems: it grows with `[ui] font_size`
+/// (ADR 0024) instead of clipping text.
+pub fn rems_px(px: f32) -> Rems {
+    rems(px / 13.0)
+}
+
+/// Layout heights from the redesign (ADR 0027), in px at the default font size.
+pub const TOOLBAR_HEIGHT: f32 = 44.0;
+pub const TAB_STRIP_HEIGHT: f32 = 38.0;
+pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
+pub const SESSION_ROW_HEIGHT: f32 = 28.0;
+pub const WORKSPACE_AVATAR_SIZE: f32 = 18.0;
+pub const EMPTY_STATE_MAX_WIDTH: f32 = 320.0;
+pub const EMPTY_STATE_TILE: f32 = 44.0;
 
 /// WCAG contrast ratio of two `0xRRGGBB` colors (1–21).
 pub fn contrast(a: u32, b: u32) -> f32 {
@@ -604,22 +772,33 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_settings_file_keeps_the_last_fonts_and_says_why() {
+    fn a_broken_settings_file_keeps_the_last_settings_and_says_why() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         let last = Fonts::from_settings(&Settings::default(), &[]);
+        let system = ThemeMode::System;
         std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
-        let grown = reload_fonts(&path, &[], &last).unwrap().expect("changed");
-        assert_eq!(grown.terminal_size, 18.0);
+        let (grown, mode) = reload(&path, &[], &last, system).unwrap().expect("changed");
+        assert_eq!((grown.terminal_size, mode), (18.0, system));
         std::fs::write(&path, "[terminal]\nfont_size = 4\n").unwrap();
-        let error = reload_fonts(&path, &[], &grown).expect_err("out of range");
+        let error = reload(&path, &[], &grown, system).expect_err("out of range");
         assert!(error.contains("settings.toml:2:"), "{error}");
         assert!(error.contains("8–32"), "{error}");
         std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
         assert_eq!(
-            reload_fonts(&path, &[], &grown),
+            reload(&path, &[], &grown, system),
             Ok(None),
             "unchanged: no redraw"
+        );
+        // A new theme alone is a change.
+        std::fs::write(
+            &path,
+            "[ui]\ntheme = \"dark\"\n[terminal]\nfont_size = 18\n",
+        )
+        .unwrap();
+        assert_eq!(
+            reload(&path, &[], &grown, system),
+            Ok(Some((grown.clone(), ThemeMode::Dark)))
         );
     }
 
@@ -642,12 +821,50 @@ mod tests {
     #[test]
     fn body_text_contrast_is_at_least_4_5() {
         for theme in [Theme::dark(), Theme::light()] {
-            for bg in [theme.bg, theme.surface, theme.surface_raised] {
+            for bg in [
+                theme.bg,
+                theme.surface,
+                theme.surface_raised,
+                theme.sidebar,
+                theme.hover,
+                theme.selected,
+                theme.card,
+            ] {
                 for fg in [theme.text, theme.text_muted] {
                     let ratio = contrast(fg, bg);
                     assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn mode_cycles_system_light_dark() {
+        assert_eq!(next_mode(ThemeMode::System), ThemeMode::Light);
+        assert_eq!(next_mode(ThemeMode::Light), ThemeMode::Dark);
+        assert_eq!(next_mode(ThemeMode::Dark), ThemeMode::System);
+    }
+
+    #[test]
+    fn mode_resolves_against_the_os() {
+        assert!(Theme::resolve(ThemeMode::System, true).dark);
+        assert!(!Theme::resolve(ThemeMode::System, false).dark);
+        assert!(!Theme::resolve(ThemeMode::Light, true).dark);
+        assert!(Theme::resolve(ThemeMode::Dark, false).dark);
+        assert_eq!(Theme::resolve(ThemeMode::Dark, false).mode, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn layout_heights_scale_with_the_ui_font() {
+        // 44 px at the default 13 px body; at 20 px the toolbar is 44 × 20 / 13.
+        assert_eq!(rems_px(44.0), gpui::rems(44.0 / 13.0));
+        assert_eq!(rems_px(TOOLBAR_HEIGHT).0 * 20.0, 44.0 * 20.0 / 13.0);
+    }
+
+    #[test]
+    fn on_accent_text_is_readable_on_the_accent() {
+        for t in [Theme::dark(), Theme::light()] {
+            assert!(contrast(t.on_accent, t.accent) >= 3.0, "{:06X}", t.accent);
         }
     }
 
@@ -713,13 +930,6 @@ mod tests {
     }
 
     #[test]
-    fn appearance_picks_the_matching_palette() {
-        assert_eq!(Theme::for_appearance(true), Theme::dark());
-        assert_eq!(Theme::for_appearance(false), Theme::light());
-        assert_ne!(Theme::dark().bg, Theme::light().bg);
-    }
-
-    #[test]
     fn spacing_and_radius_follow_the_scale() {
         assert_eq!(
             [
@@ -755,6 +965,22 @@ mod tests {
                 Some(theme.workspace_colors[4])
             );
             assert_eq!(theme.workspace_color("#ff0000"), None);
+        }
+    }
+
+    #[test]
+    fn avatar_letters_and_chevrons_stay_readable() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for bg in [theme.sidebar, theme.hover, theme.selected] {
+                for color in theme.workspace_colors {
+                    let (letter, fill) = theme.avatar_colors(color, bg);
+                    let ratio = contrast(letter, fill);
+                    assert!(ratio >= 4.5, "{letter:06X} on {fill:06X}: {ratio:.2}");
+                }
+                // The chevron is the only sign of expanded / collapsed (WCAG 1.4.11).
+                let ratio = contrast(theme.chevron_color(), bg);
+                assert!(ratio >= 3.0, "chevron on {bg:06X}: {ratio:.2}");
+            }
         }
     }
 }

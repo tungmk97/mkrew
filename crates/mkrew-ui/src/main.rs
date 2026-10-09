@@ -15,9 +15,8 @@ use gpui::{
     AnyView, App, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent, Entity,
     ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent, MouseButton,
     MouseUpEvent, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
-    StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance,
-    WindowBounds, WindowOptions, anchored, canvas, deferred, div, px, relative, rgb, size,
-    uniform_list,
+    StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowOptions, anchored, canvas, deferred, div, px, relative, rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
@@ -77,7 +76,7 @@ use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
 use mkrew_ui::text_box;
 use mkrew_ui::text_find::TextFind;
-use mkrew_ui::theme::{self, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
 use mkrew_ui::turn::{self, Turns};
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
@@ -146,7 +145,9 @@ fn main() {
             }),
             ..Default::default()
         };
+        let mode = settings.ui.theme;
         let opened = cx.open_window(options, |window, cx| {
+            theme::refresh(mode, window, cx);
             cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, window, cx))
         });
         if let Err(error) = opened {
@@ -384,8 +385,12 @@ impl Shell {
         let keymap_file = paths.keymap_file();
         let settings_file = paths.settings_file();
         let prompts_dir = paths.prompts_dir();
-        cx.observe_window_appearance(window, |_, _, cx| cx.notify())
-            .detach();
+        // System mode follows the OS live (ADR 0027).
+        cx.observe_window_appearance(window, |_, window, cx| {
+            theme::refresh(cx.theme().mode, window, cx);
+            cx.notify();
+        })
+        .detach();
         // Minimized → detach every pane; restored → re-attach from daemon snapshots (§10).
         cx.observe_window_visibility(window, |shell, _, window, cx| {
             shell.sync_panes(window, cx);
@@ -412,15 +417,17 @@ impl Shell {
                         shell.settings_modified = modified;
                         let installed = cx.text_system().all_font_names();
                         let last = cx.global::<theme::Fonts>().clone();
-                        match theme::reload_fonts(&shell.settings_file, &installed, &last) {
-                            Ok(fonts) => {
+                        let mode = cx.theme().mode;
+                        match theme::reload(&shell.settings_file, &installed, &last, mode) {
+                            Ok(changed) => {
                                 shell.settings_error = None;
-                                if let Some(fonts) = fonts {
+                                if let Some((fonts, mode)) = changed {
                                     cx.set_global(fonts);
+                                    theme::refresh(mode, window, cx);
                                     cx.refresh_windows();
                                 }
                             }
-                            // The last good fonts stay; the palette lists why (§20.0).
+                            // The last good settings stay; the palette lists why (§20.0).
                             Err(error) => shell.settings_error = Some(error),
                         }
                         cx.notify();
@@ -3903,6 +3910,18 @@ impl Shell {
         cx.notify();
     }
 
+    /// Cycles System → Light → Dark (ADR 0027) and saves it as `[ui] theme`. A settings file
+    /// that does not parse is not written; the mode still changes for this session and the
+    /// palette lists why (§20.0).
+    fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let mode = theme::next_mode(cx.theme().mode);
+        theme::refresh(mode, window, cx);
+        cx.notify();
+        if let Err(error) = mkrew_core::settings::write_ui_theme(&self.settings_file, mode) {
+            self.settings_error = Some(error.to_string());
+        }
+    }
+
     /// The prompt picker's empty state: opens the prompts folder (created if missing) in Zed
     /// to add Markdown prompts; a failure shows in the sidebar.
     fn open_prompts_dir(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -6185,7 +6204,16 @@ impl Shell {
                 cx,
             ),
             Command::RenameTab => self.start_rename(window, cx),
-            Command::CloseTab => self.close_tab(window, cx),
+            Command::CloseTab => {
+                let active = self
+                    .workspace
+                    .and_then(|project_id| self.tabs.get(&project_id))
+                    .and_then(|tabs| tabs.active())
+                    .map(|tab| tab.id);
+                if let Some(tab_id) = active {
+                    self.close_tab(tab_id, window, cx);
+                }
+            }
             Command::SplitRight => self.split(Axis::Vertical, window, cx),
             Command::SplitDown => self.split(Axis::Horizontal, window, cx),
             Command::Focus(direction) => {
@@ -6285,6 +6313,7 @@ impl Shell {
             Command::QuickOpen => self.open_quick_open(window, cx),
             Command::CommandPalette => self.open_palette(window, cx),
             Command::OpenKeymapSettings => self.open_keymap_settings(cx),
+            Command::ToggleTheme => self.toggle_theme(window, cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
@@ -6481,21 +6510,14 @@ impl Shell {
         }
     }
 
-    /// `tab.close` for the active tab. Its sessions keep running (reachable from the sidebar);
-    /// closing the last tab leaves a fresh empty one.
-    fn close_tab(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕). Its
+    /// sessions keep running (reachable from the sidebar); closing the last tab leaves a fresh
+    /// empty one.
+    fn close_tab(&mut self, tab_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
         let Some(project_id) = self.workspace else {
-            return;
-        };
-        let Some(tab_id) = self
-            .tabs
-            .get(&project_id)
-            .and_then(|tabs| tabs.active())
-            .map(|tab| tab.id)
-        else {
             return;
         };
         self.tab_error = None;
@@ -7134,11 +7156,12 @@ impl Shell {
         let connected = self.connection.is_some();
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let header = div()
+            .flex_none()
+            .h(theme::rems_px(theme::TOOLBAR_HEIGHT))
             .flex()
             .items_center()
             .justify_between()
             .px(px(space::M))
-            .py(px(space::S))
             .child(
                 div()
                     .text_size(font_size::META)
@@ -7148,7 +7171,7 @@ impl Shell {
             )
             .when(connected, |header| {
                 header.child(
-                    button("add-workspace", "+", theme, false)
+                    icon_button("add-workspace", "+", theme)
                         .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.add_workspace(window, cx);
@@ -7167,75 +7190,89 @@ impl Shell {
         });
         let body = if connected && self.sidebar.is_empty() {
             // Empty state: one sentence plus the primary action with its shortcut.
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(space::S))
-                .px(px(space::M))
-                .py(px(space::S))
-                .child(
-                    div()
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text_muted))
-                        .child("No workspaces yet."),
-                )
+            empty_state(theme, None, None, "No workspaces yet.".into(), None)
                 .child(
                     button("add-first-workspace", "Add workspace", theme, true)
-                        .child(
-                            div()
-                                .text_size(font_size::META)
-                                .opacity(opacity::SECONDARY)
-                                .child(add_workspace_keys),
-                        )
+                        .child(kbd(add_workspace_keys, theme, true))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.add_workspace(window, cx);
                         })),
                 )
                 .into_any_element()
         } else {
-            div()
-                .flex()
-                .flex_col()
-                .px(px(space::XS))
-                .children(self.sidebar.rows().into_iter().map(|row| {
-                    match row {
-                        Row::Workspace(row) => {
-                            let active = self.workspace == Some(row.project_id);
-                            let menu = self
-                                .workspace_menu
-                                .as_ref()
-                                .filter(|menu| menu.project_id == row.project_id);
-                            let tokens = self
-                                .usages
-                                .workspace_total(row.project_id, self.sidebar.sessions());
-                            let summary = self.run_summary(row.project_id);
-                            let run_tip = summary.any_live().then(|| summary.tooltip());
-                            let row = workspace_row(row, active, run_tip, tokens, now, theme, cx);
-                            match menu {
-                                // The menu drops down from below its row.
-                                Some(menu) => div()
-                                    .child(row)
-                                    .child(self.render_workspace_menu(menu, theme, cx))
-                                    .into_any_element(),
-                                None => row,
-                            }
+            // A workspace's sessions hang under a faint guide line.
+            let guide = |rows: Vec<gpui::AnyElement>| {
+                div()
+                    .ml(px(space::L))
+                    .pl(px(space::XS))
+                    .border_l(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.subtle))
+                    .flex()
+                    .flex_col()
+                    .children(rows)
+                    .into_any_element()
+            };
+            let mut list = Vec::new();
+            let mut sessions = Vec::new();
+            for row in self.sidebar.rows() {
+                match row {
+                    Row::Workspace(row) => {
+                        if !sessions.is_empty() {
+                            list.push(guide(std::mem::take(&mut sessions)));
                         }
-                        Row::Session(row) => {
-                            let (selected, session_id) =
-                                (shown == Some(row.session_id), row.session_id);
-                            let badge = self.agent_badge(&row.agent);
-                            let row = session_row(row, badge, selected, now, theme, cx);
-                            self.with_peek(row, Place::Sidebar, session_id, now, theme, cx)
-                        }
-                        Row::NoSessions { .. } => div()
-                            .pl(px(space::XL))
+                        let active = self.workspace == Some(row.project_id);
+                        let menu = self
+                            .workspace_menu
+                            .as_ref()
+                            .filter(|menu| menu.project_id == row.project_id);
+                        let tokens = self
+                            .usages
+                            .workspace_total(row.project_id, self.sidebar.sessions());
+                        let summary = self.run_summary(row.project_id);
+                        let run_tip = summary.any_live().then(|| summary.tooltip());
+                        let row = workspace_row(row, active, run_tip, tokens, now, theme, cx);
+                        list.push(match menu {
+                            // The menu drops down from below its row.
+                            Some(menu) => div()
+                                .child(row)
+                                .child(self.render_workspace_menu(menu, theme, cx))
+                                .into_any_element(),
+                            None => row,
+                        });
+                    }
+                    Row::Session(row) => {
+                        let (selected, session_id) =
+                            (shown == Some(row.session_id), row.session_id);
+                        let badge = self.agent_badge(&row.agent);
+                        let row = session_row(row, badge, selected, now, theme, cx);
+                        sessions.push(self.with_peek(
+                            row,
+                            Place::Sidebar,
+                            session_id,
+                            now,
+                            theme,
+                            cx,
+                        ));
+                    }
+                    Row::NoSessions { .. } => sessions.push(
+                        div()
+                            .px(px(space::S))
                             .py(px(space::XS))
                             .text_size(font_size::META)
                             .text_color(rgb(theme.text_muted))
                             .child("No sessions yet.")
                             .into_any_element(),
-                    }
-                }))
+                    ),
+                }
+            }
+            if !sessions.is_empty() {
+                list.push(guide(sessions));
+            }
+            div()
+                .flex()
+                .flex_col()
+                .px(px(space::XS))
+                .children(list)
                 .into_any_element()
         };
         let inbox = (connected && !self.sidebar.is_empty()).then(|| {
@@ -7253,7 +7290,9 @@ impl Shell {
             .h_full()
             .flex()
             .flex_col()
-            .bg(rgb(theme.surface))
+            .bg(rgb(theme.sidebar))
+            .border_r(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .child(
                 div()
@@ -7278,54 +7317,92 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let title = match entries.len() {
-            0 => "Inbox".to_owned(),
-            n => format!("Inbox ({n})"),
+        let waiting = entries.len();
+        let (glyph, color, fill, title) = match waiting {
+            0 => (
+                "✓",
+                theme.status_done,
+                theme.success_bg,
+                "Nothing needs you right now.".to_owned(),
+            ),
+            n => (
+                "!",
+                theme.status_needs_input,
+                theme.warning_bg,
+                format!("{n} waiting for you"),
+            ),
         };
         let header = div()
             .id("inbox-header")
-            .px(px(space::M))
-            .py(px(space::S))
-            .text_size(font_size::META)
-            .font_weight(FontWeight(weight::MEDIUM))
-            .text_color(rgb(theme.text_muted))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
             .tooltip(tooltip(
                 theme,
                 "Jump to next item needing attention",
                 self.keymap.label(Command::NextInbox),
             ))
-            .child(title);
-        let body = if entries.is_empty() {
-            div()
-                .px(px(space::M))
-                .pb(px(space::S))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .child("Nothing needs you right now.")
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .px(px(space::XS))
-                .pb(px(space::S))
-                .children(entries.into_iter().map(|entry| {
-                    let last_line = self.last_lines.get(&entry).map(str::to_owned);
-                    let (turn, session_id) = (self.turns.get(entry.session_id), entry.session_id);
-                    let badge = self.agent_badge(&entry.agent);
-                    let row = inbox_row(entry, badge, last_line, turn, now, theme, cx);
-                    self.with_peek(row, Place::Inbox, session_id, now, theme, cx)
-                }))
-        };
-        // At most half the sidebar; a long Inbox scrolls on its own.
+            .child(
+                div()
+                    .flex_none()
+                    .size(theme::rems_px(theme::INBOX_TILE_SIZE))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(radius::SMALL))
+                    .bg(rgb(fill))
+                    .text_color(rgb(color))
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .child(glyph),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_size(font_size::META)
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text))
+                            .child("Inbox"),
+                    )
+                    .child(
+                        div()
+                            .truncate()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(title),
+                    ),
+            );
+        let list = div()
+            .flex()
+            .flex_col()
+            .children(entries.into_iter().map(|entry| {
+                let last_line = self.last_lines.get(&entry).map(str::to_owned);
+                let (turn, session_id) = (self.turns.get(entry.session_id), entry.session_id);
+                let badge = self.agent_badge(&entry.agent);
+                let row = inbox_row(entry, badge, last_line, turn, now, theme, cx);
+                self.with_peek(row, Place::Inbox, session_id, now, theme, cx)
+            }));
+        // A card pinned at the bottom; at most half the sidebar, a long Inbox scrolls.
         div()
             .id("inbox")
             .flex_none()
             .max_h(relative(0.5))
             .overflow_y_scroll()
-            .border_t(px(theme::BORDER_WIDTH))
+            .m(px(space::S))
+            .p(px(space::M))
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .bg(rgb(theme.card))
+            .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.border))
             .child(header)
-            .child(body)
+            .when(waiting > 0, |el| el.child(list))
     }
 
     /// The workspace menu: "Open in Zed", "Run setup…", the default agent for new agent
@@ -7700,6 +7777,7 @@ impl Shell {
         };
         let view = self.view();
         let main = div().flex_1().min_w_0().h_full().flex().flex_col();
+        let main = main.child(self.render_toolbar(project_id, view, theme, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
@@ -7722,45 +7800,43 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The workspace's view switcher (SPEC §10, ADR 0023): a column right of the main area
-    /// with Board / Terminals / Docs / Files / Git, and a compact Run at its foot outside
-    /// Terminals (where the full Run sits in the tab bar).
-    fn render_view_rail(
+    /// The toolbar above every view (SPEC §10, ADR 0027): the views as a segmented control on
+    /// the left; the theme toggle, History, + Agent, + Shell and Run on the right.
+    fn render_toolbar(
         &self,
+        project_id: Ulid,
         shown: View,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
-    ) -> gpui::Div {
-        let hover = theme.surface_raised;
-        div()
+    ) -> impl IntoElement {
+        let hover = theme.hover;
+        let segments = div()
             .flex_none()
-            // Grows with the labels (a larger `[ui] font_size`) instead of wrapping them.
-            .min_w(px(theme::VIEW_RAIL_WIDTH))
-            .h_full()
             .flex()
-            .flex_col()
-            .gap(px(space::XS))
-            .p(px(space::XS))
-            .border_l(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .font_family(theme.ui_font_family.clone())
+            .items_center()
+            .p(px(theme::SEGMENT_PADDING))
+            .rounded(px(radius::MEDIUM))
+            .bg(rgb(theme.surface))
             .children(View::ALL.into_iter().map(|view| {
                 let active = view == shown;
                 div()
                     .id(SharedString::from(format!("view-{}", view.title())))
-                    .px(px(space::S))
+                    .px(px(space::M))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
+                    .border(px(theme::BORDER_WIDTH))
                     .cursor_pointer()
-                    .text_size(font_size::META)
                     .whitespace_nowrap()
+                    .text_size(font_size::BODY)
                     .when(active, |el| {
                         el.bg(rgb(theme.surface_raised))
+                            .border_color(rgb(theme.border))
                             .font_weight(FontWeight(weight::MEDIUM))
                             .text_color(rgb(theme.text))
                     })
                     .when(!active, |el| {
-                        el.text_color(rgb(theme.text_muted))
+                        el.border_color(gpui::transparent_black())
+                            .text_color(rgb(theme.text_muted))
                             .hover(move |style| style.bg(rgb(hover)))
                             .active(|style| style.opacity(opacity::ACTIVE))
                     })
@@ -7773,45 +7849,83 @@ impl Shell {
                         shell.show_view(view, window, cx);
                     }))
                     .child(view.title())
-            }))
-            .when_some(self.workspace, |el, project_id| {
-                el.child(div().flex_1())
-                    .when(shown != View::Terminals, |el| {
-                        el.child(self.render_run_button(project_id, true, theme, cx))
-                    })
-            })
+            }));
+        let mode = match theme.mode {
+            theme::ThemeMode::System => "Theme: System",
+            theme::ThemeMode::Light => "Theme: Light",
+            theme::ThemeMode::Dark => "Theme: Dark",
+        };
+        div()
+            .flex_none()
+            .h(theme::rems_px(theme::TOOLBAR_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::M))
+            .bg(rgb(theme.bg))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .font_family(theme.ui_font_family.clone())
+            .child(segments)
+            .child(div().flex_1())
+            .child(
+                icon_button("toggle-theme", theme::mode_glyph(theme.mode), theme)
+                    .tooltip(tooltip(
+                        theme,
+                        mode,
+                        self.keymap.label(Command::ToggleTheme),
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.toggle_theme(window, cx);
+                    })),
+            )
+            .child(
+                button("history", "History", theme, false)
+                    .flex_none()
+                    .tooltip(tooltip(
+                        theme,
+                        "Logs of the workspace's finished sessions",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.show_history(project_id, window, cx);
+                    })),
+            )
+            .child(new_pane_button(
+                "new-agent-pane",
+                "+ Agent",
+                SessionKind::Agent,
+                theme,
+                cx,
+            ))
+            .child(new_pane_button(
+                "new-shell-pane",
+                "+ Shell",
+                SessionKind::Shell,
+                theme,
+                cx,
+            ))
+            .child(self.render_run_button(project_id, theme, cx))
     }
 
-    /// The Run button (SPEC §10): `▶ Run`, or the running count and ports with ↻ and ■;
-    /// `▾` opens the per-command menu below it. `compact` (the view rail): only the state
-    /// icon and `▾`; ↻ ■ stay in the menu.
+    /// The Run button (SPEC §10): a split accent button, `▶ Run` (or the running count and
+    /// ports, with ↻ and ■ beside it while live) and `▾` for the per-command menu below it.
     fn render_run_button(
         &self,
         project_id: Ulid,
-        compact: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let summary = self.run_summary(project_id);
         let live = summary.any_live();
-        // The rail is narrow: only the state icon; the tooltip carries the full label.
-        let label = if compact {
-            summary
-                .label()
-                .chars()
-                .next()
-                .map(String::from)
-                .unwrap_or_default()
+        let tip = if summary.rows.is_empty() {
+            "Set up the commands to run".to_owned()
         } else {
-            summary.label()
+            summary.tooltip()
         };
-        let tip = match (summary.rows.is_empty(), compact) {
-            (true, _) => "Set up the commands to run".to_owned(),
-            (false, true) => format!("{}\n{}", summary.label(), summary.tooltip()),
-            (false, false) => summary.tooltip(),
-        };
-        let main = button("run-main", label, theme, !live)
+        let main = button("run-main", summary.label(), theme, !live)
             .flex_none()
+            .when(!live, |el| el.rounded_r_none())
             .when(summary.warning(), |el| {
                 el.text_color(rgb(theme.status_needs_input))
             })
@@ -7824,10 +7938,9 @@ impl Shell {
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(space::XS))
-            .when(compact, |el| el.flex_wrap())
+            .when(live, |el| el.gap(px(space::XS)))
             .child(main);
-        if live && !compact {
+        if live {
             for (id, label, tip, action) in [
                 (
                     "run-restart",
@@ -7847,11 +7960,16 @@ impl Shell {
                 );
             }
         }
+        // The ▾ half of the split button: same fill, a faint divider on its left.
+        let menu = button("run-menu", "▾", theme, !live).when(!live, |el| {
+            el.rounded_l_none()
+                .border_l(px(theme::BORDER_WIDTH))
+                .border_color(gpui::rgba(theme.on_accent_divider))
+        });
         bar.child(
             div()
                 .child(
-                    button("run-menu", "▾", theme, false)
-                        .tooltip(tooltip(theme, "Run commands", ""))
+                    menu.tooltip(tooltip(theme, "Run commands", ""))
                         // An open menu already closed on this mouse down (outside it): the
                         // click reopens it.
                         .on_click(cx.listener(move |shell, _, _, cx| {
@@ -13133,7 +13251,7 @@ impl Shell {
             .flex()
             .items_center()
             .justify_center()
-            .bg(gpui::rgba(theme::DIALOG_SCRIM))
+            .bg(gpui::rgba(cx.theme().scrim))
             .occlude()
             // The keyboard stays in the dialog.
             .on_mouse_down(
@@ -13156,15 +13274,17 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let active = tabs.active().map(|tab| tab.id);
-        let hover = theme.surface_raised;
+        let hover = theme.hover;
         div()
             .flex_none()
+            .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
             .flex()
             .items_center()
             .gap(px(space::XS))
             .px(px(space::S))
-            .py(px(space::XS))
-            .bg(rgb(theme.surface))
+            .bg(rgb(theme.bg))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .children(tabs.tabs().iter().map(|tab| {
                 let tab_id = tab.id;
@@ -13174,14 +13294,17 @@ impl Shell {
                 }
                 // The most urgent state among the tab's panes (SPEC §11).
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
+                let group = SharedString::from(format!("tab-{tab_id}"));
                 div()
-                    .id(SharedString::from(format!("tab-{tab_id}")))
+                    .id(group.clone())
+                    .group(group.clone())
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .px(px(space::S))
+                    .pl(px(space::S))
+                    .pr(px(space::XS))
                     .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
+                    .rounded(px(radius::MEDIUM))
                     // Same box as the rename field, so the bar does not shift while renaming.
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(gpui::transparent_black())
@@ -13190,6 +13313,7 @@ impl Shell {
                     .text_size(font_size::BODY)
                     .when(is_active, |el| {
                         el.bg(rgb(theme.surface_raised))
+                            .border_color(rgb(theme.border))
                             .font_weight(FontWeight(weight::MEDIUM))
                             .text_color(rgb(theme.text))
                     })
@@ -13220,6 +13344,34 @@ impl Shell {
                         .child(status_mark(session.state, now, theme))
                     })
                     .child(tab.title.clone())
+                    .child(
+                        row_action(
+                            SharedString::from(format!("tab-close-{tab_id}")),
+                            "✕",
+                            theme,
+                        )
+                        // Always on the active tab, on hover for the others.
+                        .when(!is_active, |el| {
+                            el.opacity(opacity::HIDDEN)
+                                .group_hover(group, |style| style.opacity(opacity::FULL))
+                        })
+                        .tooltip(tooltip(
+                            theme,
+                            "Close tab",
+                            if is_active {
+                                self.keymap.label(Command::CloseTab)
+                            } else {
+                                String::new()
+                            },
+                        ))
+                        .on_click(cx.listener(
+                            move |shell, _, window, cx| {
+                                // Never activate the tab being closed.
+                                cx.stop_propagation();
+                                shell.close_tab(tab_id, window, cx);
+                            },
+                        )),
+                    )
                     .into_any_element()
             }))
             .child(
@@ -13257,32 +13409,6 @@ impl Shell {
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
             )
-            .child(self.render_run_button(project_id, false, theme, cx))
-            .child(
-                button("history", "History", theme, false)
-                    .tooltip(tooltip(
-                        theme,
-                        "Logs of the workspace's finished sessions",
-                        "",
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.show_history(project_id, window, cx);
-                    })),
-            )
-            .child(new_pane_button(
-                "new-agent-pane",
-                "+ Agent",
-                SessionKind::Agent,
-                theme,
-                cx,
-            ))
-            .child(new_pane_button(
-                "new-shell-pane",
-                "+ Shell",
-                SessionKind::Shell,
-                theme,
-                cx,
-            ))
             .when(self.focused_session().is_some(), |bar| {
                 bar.child(
                     button("close-pane", "Close pane", theme, false)
@@ -13347,11 +13473,12 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         if tabs.active().and_then(|tab| tab.layout()).is_none() {
-            return message(
+            return empty_state(
                 theme,
+                Some(">_"),
+                Some("No panes in this tab"),
+                "Start an agent or a shell, or pick a session from the sidebar.".into(),
                 None,
-                "This tab has no panes.".into(),
-                Some("Start an agent or a shell, or pick a session in the sidebar.".into()),
             )
             .flex_1()
             .child(
@@ -13359,19 +13486,20 @@ impl Shell {
                     .flex()
                     .gap(px(space::S))
                     .child(
-                        button("empty-new-agent", "New agent", theme, true).on_click(cx.listener(
-                            |shell, _, window, cx| {
+                        button("empty-new-agent", "New agent", theme, true)
+                            .child(kbd(self.keymap.label(Command::NewAgentTab), theme, true))
+                            .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
-                            },
-                        )),
+                            })),
                     )
-                    .child(new_pane_button(
-                        "empty-new-shell",
-                        "New shell",
-                        SessionKind::Shell,
-                        theme,
-                        cx,
-                    )),
+                    .child(
+                        secondary_button("empty-new-shell", "New shell", theme)
+                            .child(kbd(self.keymap.label(Command::NewShellTab), theme, false))
+                            .tooltip(tooltip(theme, "New shell pane in the workspace folder", ""))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
+                            })),
+                    ),
             );
         }
         let focused = tabs.active().and_then(|tab| tab.focused());
@@ -13790,9 +13918,22 @@ impl Shell {
     }
 }
 
-/// A centered message: optional title, one sentence, optional smaller detail.
+/// A centered message: optional title, one sentence, optional smaller detail (an
+/// [`empty_state`] without a glyph).
 fn message(
     theme: &Theme,
+    title: Option<&'static str>,
+    sentence: SharedString,
+    detail: Option<SharedString>,
+) -> gpui::Div {
+    empty_state(theme, None, title, sentence, detail)
+}
+
+/// A calm empty state (ADR 0027): an optional glyph tile, an optional title, one muted
+/// sentence and an optional smaller detail, centered in a narrow column.
+fn empty_state(
+    theme: &Theme,
+    glyph: Option<&'static str>,
     title: Option<&'static str>,
     sentence: SharedString,
     detail: Option<SharedString>,
@@ -13805,15 +13946,31 @@ fn message(
         .gap(px(space::S))
         .p(px(space::XL))
         .font_family(theme.ui_font_family.clone())
+        .when_some(glyph, |el, glyph| {
+            el.child(
+                div()
+                    .size(theme::rems_px(theme::EMPTY_STATE_TILE))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(radius::MEDIUM))
+                    .bg(rgb(theme.surface))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.border))
+                    .text_color(rgb(theme.text_muted))
+                    .child(glyph),
+            )
+        })
         .children(title.map(|title| {
             div()
-                .text_size(font_size::VIEW_TITLE)
-                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_size(font_size::CARD_TITLE)
+                .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text))
                 .child(title)
         }))
         .child(
             div()
+                .max_w(px(theme::EMPTY_STATE_MAX_WIDTH))
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(sentence),
@@ -13854,6 +14011,8 @@ fn new_pane_button(
     button(id, label, theme, false)
         .tooltip(tooltip(theme, tip, ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
+            // The toolbar shows it in every view; the new pane is seen in Terminals.
+            shell.show_view(View::Terminals, window, cx);
             shell.new_pane(kind, Axis::Vertical, window, cx);
         }))
 }
@@ -13890,7 +14049,7 @@ fn button_frame(id: &'static str, label: impl Into<SharedString>) -> gpui::State
         .child(label.into())
 }
 
-/// A small text button: primary (accent) or quiet (hover shows a surface).
+/// A small text button: primary (accent, `on_accent` text) or ghost (muted, hover bg).
 fn button(
     id: &'static str,
     label: impl Into<SharedString>,
@@ -13900,12 +14059,29 @@ fn button(
     if primary {
         button_frame(id, label)
             .bg(rgb(theme.accent))
-            .text_color(rgb(theme.surface))
+            .text_color(rgb(theme.on_accent))
+            .font_weight(FontWeight(weight::MEDIUM))
             .hover(|style| style.opacity(opacity::HOVER))
             .active(|style| style.opacity(opacity::ACTIVE))
     } else {
-        quiet_button(id, label, theme, theme.surface_raised)
+        quiet_button(id, label, theme, theme.hover)
     }
+}
+
+/// A secondary button: surface background with a faint border (the empty state's New shell).
+fn secondary_button(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = theme.hover;
+    button_frame(id, label)
+        .bg(rgb(theme.surface))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .text_color(rgb(theme.text))
+        .hover(move |style| style.bg(rgb(hover)))
+        .active(|style| style.opacity(opacity::ACTIVE))
 }
 
 /// A quiet [`button`] whose hover shows `hover` (e.g. one step above a raised card).
@@ -13939,7 +14115,7 @@ fn disabled_button(
         .text_size(font_size::BODY)
         .child(label);
     if primary {
-        base.bg(rgb(theme.accent)).text_color(rgb(theme.surface))
+        base.bg(rgb(theme.accent)).text_color(rgb(theme.on_accent))
     } else {
         base.text_color(rgb(theme.text_muted))
     }
@@ -13960,6 +14136,49 @@ fn danger_button(
         // Stronger than an opacity change on the faint background.
         .hover(move |style| style.text_color(rgb(text)))
         .active(|style| style.opacity(opacity::ACTIVE))
+}
+
+/// A keyboard shortcut chip (`Keymap::label` text). On an accent button it is drawn in
+/// `on_accent` at reduced opacity.
+fn kbd(text: String, theme: &Theme, on_accent: bool) -> gpui::Div {
+    let base = div()
+        .flex_none()
+        .px(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .text_size(font_size::META);
+    if on_accent {
+        base.text_color(rgb(theme.on_accent))
+            .opacity(opacity::SECONDARY)
+            .child(text)
+    } else {
+        base.bg(rgb(theme.surface_raised))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .text_color(rgb(theme.text_muted))
+            .child(text)
+    }
+}
+
+/// A square ghost button holding one glyph (theme toggle, sidebar +).
+fn icon_button(
+    id: impl Into<gpui::ElementId>,
+    glyph: &'static str,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = theme.hover;
+    div()
+        .id(id)
+        .flex_none()
+        .size(theme::rems_px(theme::ICON_BUTTON_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::SMALL))
+        .cursor_pointer()
+        .text_color(rgb(theme.text_muted))
+        .hover(move |style| style.bg(rgb(hover)))
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .child(glyph)
 }
 
 /// Delivers an OS file drop on `session`'s pane (see `Shell::drop_hover`).
@@ -15010,17 +15229,23 @@ fn workspace_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let project_id = row.project_id;
-    let hover = theme.surface_raised;
+    let hover = theme.hover;
+    let group = SharedString::from(format!("workspace-{project_id}"));
+    let color = row
+        .color
+        .as_deref()
+        .and_then(|name| theme.workspace_color(name));
     div()
-        .id(SharedString::from(format!("workspace-{project_id}")))
+        .id(group.clone())
+        .group(group.clone())
+        .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
         .flex()
         .items_center()
         .gap(px(space::S))
         .px(px(space::S))
-        .py(px(space::XS))
         .rounded(px(radius::SMALL))
         .cursor_pointer()
-        .when(active, |el| el.bg(rgb(theme.surface_raised)))
+        .when(active, |el| el.bg(rgb(theme.selected)))
         .hover(move |style| style.bg(rgb(hover)))
         .tooltip(tooltip(theme, &row.path, ""))
         // The first click shows the workspace; clicking the shown one expands/collapses it.
@@ -15041,21 +15266,10 @@ fn workspace_row(
         .child(
             div()
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.chevron_color()))
                 .child(if row.expanded { "▾" } else { "▸" }),
         )
-        .child(
-            div()
-                .flex_none()
-                .size(px(theme::WORKSPACE_DOT_SIZE))
-                .rounded_full()
-                .when_some(
-                    row.color
-                        .as_deref()
-                        .and_then(|name| theme.workspace_color(name)),
-                    |el, color| el.bg(rgb(color)),
-                ),
-        )
+        .child(workspace_avatar(&row.name, color, theme))
         .child(
             div()
                 .flex_1()
@@ -15094,14 +15308,18 @@ fn workspace_row(
             )
         })
         .when(row.working > 0, |el| {
-            // Same working dots as the session rows (§11).
+            // Same working dots as the session rows (§11), in an accent pill.
             el.child(
                 div()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
+                    .px(px(space::S))
+                    .rounded_full()
+                    .bg(rgb(theme.accent_bg))
                     .text_size(font_size::META)
-                    .text_color(rgb(theme.status_working))
+                    .text_color(rgb(theme.accent_text))
                     .child(status_mark(SessionState::Working, now, theme))
                     .child(row.working.to_string()),
             )
@@ -15115,24 +15333,53 @@ fn workspace_row(
                     .child(sidebar::status_display(SessionState::NeedsInput).icon),
             )
         })
-        .when(active, |el| {
-            el.child(
-                button("workspace-menu-button", "⋯", theme, false)
-                    .px(px(space::XS))
-                    .py_0()
-                    .tooltip(tooltip(
-                        theme,
-                        "Workspace menu (or right-click the row)",
-                        "",
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        // Not a click on the row (which would collapse it).
-                        cx.stop_propagation();
-                        shell.open_workspace_menu(project_id, window, cx);
-                    })),
+        .child(
+            row_action(
+                SharedString::from(format!("workspace-menu-{project_id}")),
+                "⋯",
+                theme,
             )
-        })
+            // Shown on hover, and always on the active row (SPEC §14 progressive disclosure).
+            .when(!active, |el| {
+                el.opacity(opacity::HIDDEN)
+                    .group_hover(group, |style| style.opacity(opacity::FULL))
+            })
+            .tooltip(tooltip(
+                theme,
+                "Workspace menu (or right-click the row)",
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                // Not a click on the row (which would collapse it).
+                cx.stop_propagation();
+                shell.open_workspace_menu(project_id, window, cx);
+            })),
+        )
         .into_any_element()
+}
+
+/// A workspace's first letter on a tint of its color (SPEC §10, ADR 0020); muted without one.
+/// The letter is `text` (see [`Theme::avatar_colors`]); the tint carries the color.
+fn workspace_avatar(name: &str, color: Option<u32>, theme: &Theme) -> gpui::Div {
+    let color = color.unwrap_or(theme.text_muted);
+    let (letter, _) = theme.avatar_colors(color, theme.sidebar);
+    div()
+        .flex_none()
+        .size(theme::rems_px(theme::WORKSPACE_AVATAR_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::SMALL))
+        .bg(theme.tint(color))
+        .text_color(rgb(letter))
+        .text_size(font_size::META)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .child(
+            name.chars()
+                .next()
+                .map(|c| c.to_uppercase().collect::<String>())
+                .unwrap_or_default(),
+        )
 }
 
 fn session_row(
@@ -15149,21 +15396,20 @@ fn session_row(
         Some(title) => format!("{} · {title}", row.agent),
         None => row.agent.clone(),
     };
-    let hover = theme.surface_raised;
+    let hover = theme.hover;
     // An exited session cannot be attached ("Run again" / "Resume" come later).
     let live = row.state != SessionState::Exited;
     let row_id = SharedString::from(format!("session-{session_id}"));
     div()
         .id(row_id.clone())
         .group(row_id.clone())
+        .h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
         .flex()
         .items_center()
         .gap(px(space::S))
-        .pl(px(space::XL))
-        .pr(px(space::S))
-        .py(px(space::XS))
+        .px(px(space::S))
         .rounded(px(radius::SMALL))
-        .when(selected, |el| el.bg(rgb(theme.surface_raised)))
+        .when(selected, |el| el.bg(rgb(theme.selected)))
         .when(live, |el| {
             el.cursor_pointer()
                 .hover(move |style| style.bg(rgb(hover)))
@@ -15179,16 +15425,11 @@ fn session_row(
         .child(
             div()
                 .flex_1()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
+                .min_w_0()
+                .truncate()
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
-                // Selection uses the accent; hover only the surface shift.
-                .when(selected, |el| {
-                    el.font_weight(FontWeight(weight::MEDIUM))
-                        .text_color(rgb(theme.accent))
-                })
+                .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                 .child(name),
         )
         .child(
@@ -15961,7 +16202,7 @@ fn fan_out_button(
         .rounded(px(radius::SMALL))
         .text_size(font_size::BODY)
         .bg(rgb(theme.accent))
-        .text_color(rgb(theme.surface))
+        .text_color(rgb(theme.on_accent))
         .child(label);
     let run = if menu.request().is_some() {
         run.cursor_pointer()
@@ -16033,7 +16274,7 @@ fn fan_out_child_row(child: fanout::ChildLine, now: i64, theme: &Theme) -> gpui:
         .child(
             div()
                 .flex_none()
-                .w(px(theme::STATUS_MARK_WIDTH))
+                .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
                 .children(icon),
         )
         .child(
@@ -16330,7 +16571,7 @@ fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement
     let color = rgb(sidebar::status_color(theme, state));
     let mark = div()
         .flex_none()
-        .w(px(theme::STATUS_MARK_WIDTH))
+        .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
         .flex()
         .items_center()
         .justify_center();
@@ -16341,10 +16582,10 @@ fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement
             .into_any_element();
     }
     let lit = status::working_dot(now);
-    mark.gap(px(theme::STATUS_DOT_GAP))
+    mark.gap(theme::rems_px(theme::STATUS_DOT_GAP))
         .children((0..status::WORKING_DOTS).map(|i| {
             div()
-                .size(px(theme::STATUS_DOT))
+                .size(theme::rems_px(theme::STATUS_DOT))
                 .rounded_full()
                 .bg(color)
                 .opacity(if i == lit {
@@ -16361,7 +16602,7 @@ fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement
 fn agent_chip(badge: String, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
-        .size(px(theme::AGENT_CHIP_SIZE))
+        .size(theme::rems_px(theme::AGENT_CHIP_SIZE))
         .flex()
         .items_center()
         .justify_center()
@@ -16494,13 +16735,8 @@ impl Render for Tooltip {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let fonts = cx.global::<theme::Fonts>().clone();
-        window.set_rem_size(px(fonts.ui_size));
-        let theme = Theme::for_appearance(dark).with_fonts(&fonts);
+        let theme = cx.theme().clone();
+        window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         if let Some(launched) = self.launched {
             if !self.first_frame_logged {
                 self.first_frame_logged = true;
@@ -16536,10 +16772,6 @@ impl Render for Shell {
             .on_action(cx.listener(Self::run))
             .child(self.render_sidebar(now, &theme, cx))
             .child(self.render_main(now, &theme, window, cx))
-            .when(
-                self.workspace.is_some() && self.connection.is_some(),
-                |el| el.child(self.render_view_rail(self.view(), &theme, cx)),
-            )
             .children(
                 self.task_dialog
                     .as_ref()

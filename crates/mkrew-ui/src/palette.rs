@@ -217,6 +217,7 @@ pub fn title(command: Command) -> String {
         Command::RunTask => "Task: Run selected task".into(),
         Command::CommandPalette => "Global: Command palette".into(),
         Command::OpenKeymapSettings => "Global: Open keymap settings".into(),
+        Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
     }
 }
 
@@ -230,7 +231,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::AddWorkspace
         | Command::NextInbox
         | Command::Peek
-        | Command::OpenKeymapSettings => true,
+        | Command::OpenKeymapSettings
+        | Command::ToggleTheme => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -778,7 +780,8 @@ mod tests {
                 Command::AddWorkspace,
                 Command::NextInbox,
                 Command::Peek,
-                Command::OpenKeymapSettings
+                Command::OpenKeymapSettings,
+                Command::ToggleTheme
             ]
         );
         assert_eq!(extras(&none), []);

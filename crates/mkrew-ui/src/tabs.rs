@@ -840,6 +840,22 @@ mod tests {
     }
 
     #[test]
+    fn removing_an_inactive_tab_keeps_the_active_one() {
+        let project = Ulid::new();
+        let [one, two, three] = [
+            wire(project, "1", 1.0, serde_json::Value::Null),
+            wire(project, "2", 2.0, serde_json::Value::Null),
+            wire(project, "3", 3.0, serde_json::Value::Null),
+        ];
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![one.clone(), two.clone(), three.clone()]);
+        assert!(tabs.activate(three.id));
+        tabs.remove(one.id);
+        assert_eq!(tabs.active().map(|t| t.id), Some(three.id));
+        assert_eq!(tabs.tabs().len(), 2);
+    }
+
+    #[test]
     fn prune_drops_panes_of_unknown_sessions() {
         let project = Ulid::new();
         let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];

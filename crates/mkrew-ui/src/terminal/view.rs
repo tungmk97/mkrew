@@ -15,7 +15,7 @@ use gpui::{
     FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId,
     KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle,
-    Window, WindowAppearance, canvas, div, fill, font, point, px, relative, rgb, size,
+    Window, canvas, div, fill, font, point, px, relative, rgb, size,
 };
 use mkrew_protocol::{
     AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
@@ -30,7 +30,7 @@ use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindStatus, find_key};
 use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
-use crate::theme::{self, Theme, font_size, radius, space};
+use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space};
 
 /// Cell width guess used only until the terminal font is resolved.
 const CELL_WIDTH_ESTIMATE: f32 = 0.6;
@@ -123,7 +123,7 @@ impl TerminalPane {
             session_id,
             connection,
             emulator,
-            theme: theme_for(window.appearance(), cx),
+            theme: cx.theme().clone(),
             rows: Rc::default(),
             focus_handle,
             painted,
@@ -593,17 +593,9 @@ impl TerminalPane {
     }
 }
 
-fn theme_for(appearance: WindowAppearance, cx: &App) -> Theme {
-    Theme::for_appearance(matches!(
-        appearance,
-        WindowAppearance::Dark | WindowAppearance::VibrantDark
-    ))
-    .with_fonts(cx.global::<theme::Fonts>())
-}
-
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = theme_for(window.appearance(), cx);
+        let theme = cx.theme().clone();
         if theme != self.theme {
             self.rows.borrow_mut().clear();
             self.theme = theme;

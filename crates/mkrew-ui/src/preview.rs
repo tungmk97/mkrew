@@ -170,7 +170,7 @@ fn list_item(item: &Item, number: Option<u64>, shown: &Shown, theme: &Theme) -> 
             }))
             .when(checked, |el| el.bg(rgb(theme.accent)))
             .text_size(font_size::META)
-            .text_color(rgb(theme.surface))
+            .text_color(rgb(theme.on_accent))
             .when(checked, |el| el.child("✓")),
         (None, Some(number)) => div()
             .text_color(rgb(theme.text_muted))

@@ -656,19 +656,19 @@ records the agent as author). `mk attach` makes Mkrew usable without the UI, inc
 
 ## §10 UI: layout, workspaces & terminals
 
-One window, three regions:
+One window, two columns; the main area has a toolbar on top:
 
 ```
-┌──────────────┬──────────────────────────────────────┬───────────┐
-│ WORKSPACES   │  Todo │ Running │ Needs input │ …    │ Board     │
-│ ▾ api      2 │                                      │ Terminals │
-│   ● claude   │  …or the terminal tabs/panes         │ Docs      │
-│   ? codex    │    (tab bar: … ▶ Run · History ·     │ Files     │
-│ ▸ web     ?  │     + Agent · + Shell)               │ Git       │
-│ ▸ infra      │  …or the Markdown review view        │           │
-│ INBOX (2)    │                                      │           │
-│ web: approve?│                                      │ ▶ ▾       │
-└──────────────┴──────────────────────────────────────┴───────────┘
+┌──────────────┬───────────────────────────────────────────────────────┐
+│ Workspaces + │ [Board│Terminals│Docs│Files│Git]   ◐ History +Agent +Shell [▶ Run│▾] │
+│ ▾ A api  (•••2)├───────────────────────────────────────────────────────┤
+│ │ ••• ✻ claude │ tab strip (Terminals only): [● tab ✕] [tab ✕] +        │
+│ │ ?   ⌬ codex  │                                                       │
+│ ▸ W web     ? │  Todo │ Running │ Needs input │ …                       │
+│ ▸ I infra     │  …or the terminal tabs/panes                          │
+│ ┌ Inbox ────┐ │  …or the Markdown review view                         │
+│ │! 2 waiting│ │                                                       │
+└──────────────┴───────────────────────────────────────────────────────┘
 ```
 
 - **Sidebar:** workspaces; expanding one lists its sessions with status (§11). Below: **Inbox** —
@@ -676,15 +676,18 @@ One window, three regions:
 - **Remove:** the workspace menu's "Remove workspace…" archives it after a confirmation
   (`project.archive`, ADR 0019); a session row's ✕ (on hover) removes it from the sidebar
   (`session.remove`; a running one asks first and is stopped).
-- **Color:** the workspace menu's swatches give a workspace one of 8 colors, shown as a dot
-  before its name (decoration only, ADR 0020).
+- **Color:** the workspace menu's swatches give a workspace one of 8 colors, shown as a letter
+  avatar tinted with the color before its name (decoration only, ADR 0020, ADR 0027).
 - **Views per workspace:** Board, Terminals, Docs, Files, Git.
-- **View rail** (ADR 0023): the views are a column right of the main area; the active one is
-  highlighted, tooltips show their shortcuts (§13).
+- **Toolbar** (44 px, ADR 0027): segmented views Board / Terminals / Docs / Files / Git on the
+  left (tooltips show their shortcuts, §13); the theme toggle, History, + Agent, + Shell and the
+  split Run button on the right, in every view (+ Agent / + Shell switch to Terminals first).
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
   New task: the empty board's button, or `New task` in the Todo column header.
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
+  Each tab has a ✕ (always on the active tab, on hover for the others); closing never activates
+  the tab first.
   Sessions are `agent` (from a profile) or `shell` (pwsh on Windows, `$SHELL` elsewhere, configurable).
   New panes open in the project folder. Closing a pane with a running agent asks: kill the
   session, or just hide it (still reachable from the sidebar). Layout persists (`terminal_tab`).
@@ -701,9 +704,8 @@ One window, three regions:
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
 - **Open in Zed:** on task cards, workspace menu and Docs; runs `zed <path>[:line]`; clear error
   with install hint if `zed` is missing.
-- **Run button** (ADR 0018) in the Terminals tab bar before History, and as a compact
-  `[▶│▾]` / `[●│▾]` / `[✕│▾]` (full label in the tooltip, ↻ ■ in the menu) at the foot of the
-  view rail in the other views: `[▶ Run │▾]` with
+- **Run button** (ADR 0018) at the right end of the toolbar (ADR 0027), a split accent button:
+  `[▶ Run │▾]` with
   no command or all stopped (▶ with no command opens Run setup, and saving there runs);
   `[● Running 2/2 · :8080 :5180 │↻│■│▾]` while running; `[✕ Running 1/2 · …]` in the warning
   color when some exited. Ports: every distinct port of the live run sessions, config order, up
@@ -740,7 +742,9 @@ color alone.
   sidebar session row also puts the badge before the agent name. The badge is a bordered square
   chip; it also shows in the Inbox row, on board cards and in agent menus.
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
-- Workspace row: number of working sessions (with the working dots) and `?` if any needs_input.
+- Workspace row: number of working sessions (the working dots in an accent pill) and `?` if any
+  needs_input. Sidebar session rows hang under a faint guide line: status mark, agent chip,
+  name, status text. The Inbox is a card at the bottom of the sidebar.
 - Hovering a status shows its source (hook/screen) and when it last changed.
 
 ---
@@ -872,6 +876,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Command palette | Ctrl+Shift+P |
 | Global | Quick open a file of the active workspace | Ctrl+Shift+O |
 | Global | Open keymap settings | Ctrl+, |
+| Global | Toggle theme (System → Light → Dark) | Ctrl+Shift+J |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace | Ctrl+Shift+K |
@@ -928,7 +933,7 @@ The terminal is the hero; everything else steps back.
    heavy lines. Borders, if any, are 1 px and faint.
 2. **Soft.** Moderate corner radius; very light shadows only on floating layers (popover, dialog,
    palette). No saturated colors besides the accent and status colors. Workspace colors
-   (ADR 0020) are the one exception: a small dot per workspace.
+   (ADR 0020) are the one exception: a small tinted letter avatar per workspace.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
 4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
 5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow working dots.
@@ -940,13 +945,24 @@ The terminal is the hero; everything else steps back.
 
 | Token | Dark | Light |
 | --- | --- | --- |
-| `bg` | #16171B | #FAFAF9 |
-| `surface` | #1D1E23 | #FFFFFF |
-| `surface-raised` | #25262C | #F3F3F1 |
-| `border` | #2D2F36 | #E5E5E1 |
-| `text` | #E6E7EB | #1D1E22 |
-| `text-muted` | #9A9CA6 | #6B6D76 |
+| `bg` | #17181C | #FFFFFF |
+| `surface` | #1F2127 | #F6F7F9 |
+| `surface-raised` | #2C2E37 | #EEF0F3 |
+| `sidebar` | #131418 | #F4F5F7 |
+| `card` | #1A1B20 | #FFFFFF |
+| `hover` | #22242B | #EEF0F3 |
+| `selected` | #262938 | #E9EAFF |
+| `border` | #2A2C33 | #E3E5EA |
+| `divider` | #24262D | #ECEEF1 |
+| `text` | #E6E7EB | #1B1D22 |
+| `text-dim` | #B4B7C0 | #474B55 |
+| `text-muted` | #9A9CA6 | #5F6473 |
+| `subtle` (graphics only) | #5D616C | #A0A4AF |
 | `accent` | #7C8CFF | #4F5BD5 |
+| `accent-text` | #9A9FFF | #4A52D9 |
+| `accent-bg` | #25264A | #ECEEFF |
+| `on-accent` | #17181C | #FFFFFF |
+| `warning-bg` / `success-bg` | #3A3020 / #1D3A31 | #FDF3E1 / #E1F5EC |
 | `status-working` | #7C8CFF | #4F5BD5 |
 | `status-needs-input` | #E3A63E | #B7791F |
 | `status-done` | #4CB782 | #2F855A |
@@ -956,7 +972,7 @@ The terminal is the hero; everything else steps back.
 | `diff-add-text` | #7DD3A0 | #1E6B3A |
 | `diff-del-bg` | #3D2226 | #FDEEEE |
 | `diff-del-text` | #F2A0A4 | #A61B1B |
-| `diff-hunk-header` | #25262C | #F3F3F1 |
+| `diff-hunk-header` | #2C2E37 | #F6F7F9 |
 
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 4 (badges, small buttons), 8 (cards, panes, inputs), 12 (dialogs, palette).
@@ -982,7 +998,8 @@ The terminal is the hero; everything else steps back.
   #F08CC0 / light #C53030 #C05621 #975A16 #2F855A #1F8A9E #4F5BD5 #8A3FB8 #B83280 (≥ 3:1 on
   every surface).
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
-- Theme follows OS light/dark.
+- Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the toolbar toggle
+  (ADR 0027).
 
 **Design check (every milestone with UI):** capture screenshots of new views in light and dark
 into `docs/screenshots/` (if automatic capture is not possible, list them in `docs/HUMAN_CHECKS.md`)
@@ -1287,6 +1304,7 @@ follow_debounce_ms = 1500   # §20C.4
 [ui]
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32
+theme = "system"            # §14; "system" | "light" | "dark"; the toolbar toggle writes it
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family

@@ -24,7 +24,7 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
   - Done: `mkrew.exe` icon (Explorer, window, taskbar, Alt+Tab) embedded via `crates/mkrew-ui/build.rs` + `resources/windows/mkrew.ico` (16–256 px).
   - Left: installer icon (`SetupIconFile=` in `packaging/mkrew.iss`, `.wxs` icon); `mk.exe` / `mkrew-daemon.exe` icons if wanted; logo (glyph) in the app (sidebar header / About); lockup in `README.md`.
   - Regenerate the `.ico` whenever the SVG changes (render 16,20,24,32,40,48,64,256 px).
-- [~] I want to redesign the look of this GPUI desktop app so it feels modern, simple, and calm. This is a visual/UX refactor only: keep all existing behavior, actions, state, and data flow working exactly as they do now. → plan: docs/superpowers/plans/2026-10-08-inbox-dots-drop-paste-redesign.md Task 5–10
+- [x] I want to redesign the look of this GPUI desktop app so it feels modern, simple, and calm. This is a visual/UX refactor only: keep all existing behavior, actions, state, and data flow working exactly as they do now. → plan: docs/superpowers/plans/2026-10-08-inbox-dots-drop-paste-redesign.md Task 5–10
 ## Reference material
 - `design/reference/theme.rs`, `design/reference/sidebar.rs`, `design/reference/app_shell.rs` are a reference implementation of the target design written against plain gpui primitives. Use them as the source of truth for layout, spacing, and colors, but adapt them to this codebase's real structs, actions, and GPUI version rather than pasting them in blindly.
 - Screenshots of the current UI (if present) are in `design/reference/`.

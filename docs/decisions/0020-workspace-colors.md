@@ -31,3 +31,7 @@
 - §14 principle 2 gets one exception: a small dot per workspace.
 - `Project.color` is optional on the wire; protocol stays v26.
 - No CLI flag and no coloring of tabs or inbox rows yet.
+
+## Amendment 2026-10-08 (ADR 0027)
+
+The dot became the workspace's first letter on a tint of its color (the redesign's avatar).

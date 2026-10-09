@@ -1,7 +1,7 @@
 # 0023 — View rail on the right
 
 - Date: 2026-10-08
-- Status: accepted
+- Status: superseded by 0027
 - Milestone: inbox 2026-10-08
 
 ## Context

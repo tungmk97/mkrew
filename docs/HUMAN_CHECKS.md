@@ -15,6 +15,43 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-08 inbox 3: dots, drop, paste, icons, redesign (plan docs/superpowers/plans/2026-10-08-inbox-dots-drop-paste-redesign.md)
+
+- [ ] **Hooks (user setup, item 18):** run `mk integration install claude`, `… codex`, `… omp`,
+  `… copilot`, restart the agents and the daemon. Claude: prompt → three dots; a permission
+  prompt → amber `?` + amber pane border; turn ends → `✓ done` + Inbox entry; later `○ idle`.
+  Hover a status: source `hook`. Without the install `done` never appears (SPEC §6).
+- [ ] **Working dots:** a working session shows three dots taking turns (~1.5 s cycle) in the
+  sidebar row, the workspace pill, the tab, the pane header, the Inbox and board cards; rows with
+  other states line up with it.
+- [ ] **File drop:** drag 2 files (one path with a space) from Explorer onto (1) the terminal,
+  (2) the open composer (Ctrl+Shift+Enter), (3) the pane header → paths typed, the spaced one
+  quoted, no Enter; with the composer open they go into the draft and it keeps the keyboard.
+  (4) Type a letter in a pane, Alt+Tab to Explorer overlapping Mkrew, drop without moving over
+  Mkrew first → still typed. (5) Drag over a pane, release outside the window, click the pane →
+  nothing typed. (6) Open the palette (Ctrl+Shift+P) over an agent pane and drop on it → nothing
+  typed into the pane. Mkrew must not run as administrator.
+- [ ] **Ctrl+V:** in Claude, omp, codex and pwsh panes: text → pasted (bracketed); Win+Shift+S
+  then Ctrl+V → `…attachments\<id>\<ulid>.png` typed; PrintScreen then Ctrl+V → a `.png` path;
+  Explorer copy of 2 files → 2 paths; empty clipboard in vim → Ctrl+V starts block visual. In the
+  composer, an image clipboard + Ctrl+V → path in the draft. No visible stall on a 4K screenshot.
+- [ ] **Agent icons:** after a daemon restart + UI reconnect, your existing profiles show ✻ claude,
+  ⌬ codex, π omp, ⊙ copilot, >_ shell as bordered chips in the sidebar rows, pane headers, Inbox
+  rows, board cards and the Run with… / default agent menus (glyphs, not boxes; light + dark).
+- [ ] **Theme:** the toolbar toggle cycles System (◐) → Light (☀) → Dark (☾); every surface
+  updates at once, no dark pieces left in light or the reverse; `settings.toml` gets
+  `[ui] theme = "…"` with your comments kept; Ctrl+Shift+J does the same. In System mode, change
+  Windows' app mode → the app follows live. A broken settings.toml → the toggle still switches,
+  the palette shows the error, the file is untouched.
+- [ ] **Both themes, these states visible:** hover, selected session, active tab, working dots,
+  the Inbox card empty and non-empty, the empty-state buttons with their Ctrl+Shift+A / T chips.
+  Muted text on the sidebar and status labels is readable in light mode. Screenshots of each
+  view in light and dark for §14 (`docs/screenshots/`).
+- [ ] **Layout:** no right rail; toolbar 44 px with the segmented views; switching views, Run and
+  its ▾ menu, History, + Agent, + Shell (also from Board/Docs/Files/Git), creating / closing /
+  switching tabs, ✕ on an inactive tab closes it without activating it, expanding and collapsing
+  workspaces, ⋯ on hover, selecting sessions. At `[ui] font_size = 20` nothing clips.
+
 ### To verify — 2026-10-08 inbox: status, drop, badges (plan docs/superpowers/plans/2026-10-08-inbox-status-drop-badges.md)
 
 - [ ] **States with hooks (user setup):** run `mk integration install claude`, `… codex`,
@@ -49,7 +86,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   `[ui] font_size = 15` → sidebar/board text grows. `font_family = "Consolas"` changes the
   terminal; a family that is not installed changes nothing. `font_size = 4` → nothing changes,
   the palette shows the error.
-- [ ] Views are a rail on the right; the main area starts at the top. Tooltips show
+- [ ] (superseded by ADR 0027: the toolbar replaces the rail) Views are a rail on the right; the main area starts at the top. Tooltips show
   Ctrl+Shift+1..5. In Terminals `▶ Run` sits before History; in other views the compact Run at
   the rail foot opens its ▾ menu. `New task` is in the Todo column header. Light + dark.
 
@@ -506,7 +543,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   feels instant. Dark + light screenshots for §14.
 - [ ] (T7.9a) **Git view** (logic covered by `git_view.rs` unit tests; daemon `git.status`/
   `git.diff` by daemon e2e; the view was never seen): Ctrl+Shift+5 or the "Git" entry in the
-  view rail → branch name, "→ origin/main  ↑2 ↓1" (or "No upstream"), Working changes /
+  view rail (superseded by ADR 0027: the toolbar's "Git" segment) → branch name, "→ origin/main  ↑2 ↓1" (or "No upstream"), Working changes /
   Against base segments, "Base: main (auto-detected)". Changed files grouped Staged /
   Unstaged / Untracked with change letters and +/− counts; the first is selected and its diff
   shows: hunk headers on `diff-hunk-header`, added/deleted lines in the diff colors with old /

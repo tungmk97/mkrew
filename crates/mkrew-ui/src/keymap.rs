@@ -99,6 +99,8 @@ pub enum Command {
     CommandPalette,
     /// Create `keymap.toml` from the template if missing and open it in Zed.
     OpenKeymapSettings,
+    /// Cycle the theme System → Light → Dark (ADR 0027), saved as `[ui] theme`.
+    ToggleTheme,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -189,6 +191,7 @@ impl Command {
             Command::RunTask,
             Command::CommandPalette,
             Command::OpenKeymapSettings,
+            Command::ToggleTheme,
         ]);
         all
     }
@@ -250,6 +253,7 @@ impl Command {
             Command::RunTask => "run_task".into(),
             Command::CommandPalette => "command_palette".into(),
             Command::OpenKeymapSettings => "open_keymap_settings".into(),
+            Command::ToggleTheme => "toggle_theme".into(),
         }
     }
 
@@ -316,6 +320,7 @@ impl Command {
             Command::RunTask => "ctrl-enter".into(),
             Command::CommandPalette => "ctrl-shift-p".into(),
             Command::OpenKeymapSettings => "ctrl-,".into(),
+            Command::ToggleTheme => "ctrl-shift-j".into(),
         }
     }
 
