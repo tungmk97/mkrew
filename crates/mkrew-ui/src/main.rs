@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
@@ -7164,10 +7165,17 @@ impl Shell {
             .px(px(space::M))
             .child(
                 div()
-                    .text_size(font_size::META)
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Workspaces"),
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(logo(theme))
+                    .child(
+                        div()
+                            .text_size(font_size::META)
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text_muted))
+                            .child("Workspaces"),
+                    ),
             )
             .when(connected, |header| {
                 header.child(
@@ -16595,6 +16603,27 @@ fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement
                 })
         }))
         .into_any_element()
+}
+
+/// The Mkrew logo glyph for the current appearance (`icon/mkrew-1-lanes/glyph-*.svg`): the dark
+/// accent on dark, the light accent on light.
+fn logo(theme: &Theme) -> gpui::Img {
+    static DARK: LazyLock<Arc<gpui::Image>> = LazyLock::new(|| {
+        Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Svg,
+            include_bytes!("../../../icon/mkrew-1-lanes/glyph-dark.svg").to_vec(),
+        ))
+    });
+    static LIGHT: LazyLock<Arc<gpui::Image>> = LazyLock::new(|| {
+        Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Svg,
+            include_bytes!("../../../icon/mkrew-1-lanes/glyph-light.svg").to_vec(),
+        ))
+    });
+    let image = if theme.dark { &DARK } else { &LIGHT };
+    gpui::img(Arc::clone(image))
+        .flex_none()
+        .size(theme::rems_px(theme::LOGO_SIZE))
 }
 
 /// An agent badge (ADR 0025) as a small square chip, so glyphs and letters line up and never

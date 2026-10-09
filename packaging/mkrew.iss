@@ -30,6 +30,7 @@ OutputBaseFilename=mkrew-{#MyVersion}-x64-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\crates\mkrew-ui\resources\windows\mkrew.ico
 ; Off: the guard is inherited by the post-install "Launch Mkrew", so the app, daemon and every
 ; agent it starts could not traverse user-created junctions (omp plugins in ~/.omp/plugins/
 ; node_modules are junctions: EUNKNOWN / "untrusted mount point"). Setup writes only {app} and the

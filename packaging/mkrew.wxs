@@ -9,13 +9,17 @@
            UpgradeCode="6F0B8A3E-2C7D-4E51-9B64-3A1D5C8E7F20" Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Mkrew is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <!-- The logo (icon/mkrew-1-lanes/tile-dark.svg) for Add/Remove Programs and the shortcut. -->
+    <Icon Id="MkrewIcon" SourceFile="$(sys.SOURCEFILEDIR)..\crates\mkrew-ui\resources\windows\mkrew.ico" />
+    <Property Id="ARPPRODUCTICON" Value="MkrewIcon" />
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Mkrew">
         <Directory Id="BINDIR" Name="bin">
           <Component>
             <File Id="MkrewExe" Source="$(BinDir)\mkrew.exe" KeyPath="yes">
               <Shortcut Id="MkrewStartMenu" Name="Mkrew"
-                        Directory="ProgramMenuFolder" WorkingDirectory="BINDIR" />
+                        Directory="ProgramMenuFolder" WorkingDirectory="BINDIR"
+                        Icon="MkrewIcon" />
             </File>
           </Component>
           <Component>

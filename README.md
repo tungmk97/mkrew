@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="icon/mkrew-1-lanes/lockup-dark.svg">
+  <img alt="Mkrew" src="icon/mkrew-1-lanes/lockup-light.svg" height="48">
+</picture>
+
 # Mkrew
 
 A lightweight native desktop app to dispatch tasks to many coding agents (Claude Code, Codex,
