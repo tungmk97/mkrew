@@ -23,3 +23,10 @@ old profiles keep working through the letter fallback (seeding never overwrites 
 `icon` is a profile error so rows cannot stretch. Shown in the sidebar session row and the pane
 header, muted, between the status icon and the agent name; status keeps its own icon and text
 (§11).
+
+## Amendment 2026-10-08
+
+Users' profile files are never overwritten, so files copied before `icon` existed showed
+letters (claude, codex and copilot all `C`). A profile without `icon` now borrows the shipped
+sample's `icon` for the same id (`sample_icon`, daemon); other ids show the first letter. The
+badge is a bordered square chip and also shows in the Inbox row, board card and agent menus.

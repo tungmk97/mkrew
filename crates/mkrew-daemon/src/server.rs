@@ -1317,10 +1317,10 @@ impl Daemon {
             .into_iter()
             .map(|p| AgentProfileInfo {
                 kind: session_kind(p.kind),
+                icon: p.icon.or_else(|| crate::sample_icon(&p.id)),
                 id: p.id,
                 name: p.name,
                 command: p.command,
-                icon: p.icon,
             })
             .collect();
         let errors = set

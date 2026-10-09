@@ -18,11 +18,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 ### To verify — 2026-10-08 inbox: status, drop, badges (plan docs/superpowers/plans/2026-10-08-inbox-status-drop-badges.md)
 
 - [ ] **States with hooks (user setup):** run `mk integration install claude`, `… codex`,
-  `… omp`, `… copilot`, then restart the agents. Claude: send a prompt → ◐ spins; it asks for a
+  `… omp`, `… copilot`, then restart the agents. Claude: send a prompt → the three dots take turns; it asks for a
   permission → `?` and an amber pane border; the turn ends → `✓ done` and an Inbox entry; wait →
   `○ idle`. Same in omp. Hover a status: the source says `hook`. Without the install, `done`
   never appears and omp/Copilot never show `?` (SPEC §6: done is hook-only).
-- [ ] Collapse a workspace with a working agent: its `◐ N` count spins.
+- [ ] Collapse a workspace with a working agent: its `••• N` count steps.
 - [ ] **File drop** (T10.8 check below, still open): drag 2 files (one with a space) from
   Explorer onto a Claude pane and a pwsh pane → both paths typed, the spaced one quoted, no Enter.
   Mkrew must not run as administrator: Windows blocks Explorer drops into elevated windows.
@@ -323,8 +323,8 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   your notification server.
 
 - [ ] (T3.6) **Per-session status, dark and light** (§11, §14): spawn the fake agent and a
-  shell in split panes. Each pane header shows icon, agent, title and `working · Ns` with a
-  slowly turning spinner, then `needs input` with an amber pane border; the tab label shows the
+  shell in split panes. Each pane header shows icon, agent, title and `working · Ns` with
+  three dots taking turns, then `needs input` with an amber pane border; the tab label shows the
   most urgent state's icon (needs input over done over working); the sidebar row text matches;
   the workspace row shows the working count and `?`. Hover the status in a pane header and in
   the sidebar → "<state> · from hook|screen|daemon · Ns ago". Idle shows `idle · Nm`; an

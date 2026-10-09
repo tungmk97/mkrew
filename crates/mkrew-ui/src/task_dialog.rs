@@ -213,6 +213,7 @@ impl TaskDialog {
             id: String::new(),
             label: default_label,
             selected: self.agent.is_none(),
+            icon: None,
         }];
         choices.extend(agent_choices(profiles, self.agent.as_deref()));
         choices

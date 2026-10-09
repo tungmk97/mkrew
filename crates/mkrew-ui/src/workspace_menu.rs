@@ -26,6 +26,8 @@ pub struct AgentChoice {
     pub id: String,
     pub label: String,
     pub selected: bool,
+    /// The profile's badge (ADR 0025); `None` for rows without a loaded profile.
+    pub icon: Option<String>,
 }
 
 impl WorkspaceMenu {
@@ -47,6 +49,7 @@ pub fn agent_choices(profiles: &[AgentProfileInfo], current: Option<&str>) -> Ve
             id: profile.id.clone(),
             label: profile.name.clone(),
             selected: current == Some(profile.id.as_str()),
+            icon: profile.icon.clone(),
         })
         .collect();
     if let Some(current) = current
@@ -56,6 +59,7 @@ pub fn agent_choices(profiles: &[AgentProfileInfo], current: Option<&str>) -> Ve
             id: current.to_owned(),
             label: format!("{current} (profile missing)"),
             selected: true,
+            icon: None,
         });
     }
     choices

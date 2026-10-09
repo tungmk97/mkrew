@@ -12,11 +12,10 @@ use alacritty_terminal::index::Side;
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId, Entity,
-    ExternalPaths, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
-    InspectorElementId, KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextAlign,
-    TextRun, UnderlineStyle, Window, WindowAppearance, canvas, div, fill, font, point, px,
-    relative, rgb, size,
+    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId,
+    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle,
+    Window, WindowAppearance, canvas, div, fill, font, point, px, relative, rgb, size,
 };
 use mkrew_protocol::{
     AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
@@ -25,7 +24,7 @@ use mkrew_protocol::{
 use ulid::Ulid;
 
 use crate::client::Connection;
-use crate::composer::{attachment_ext, typed_paths};
+use crate::composer::{attachment, typed_paths};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindStatus, find_key};
@@ -214,7 +213,7 @@ impl TerminalPane {
 
     /// Keys go to the session. Keystrokes bound in the keymap (SPEC §13) never get here: their
     /// action handler stops them first. Plain Ctrl+C copies a selection instead, also in an
-    /// exited pane (ADR 0022).
+    /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026).
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
         // Only plain Ctrl+C reads the selection: building its text per keystroke costs O(selection).
         let selected = is_copy_key(&event.keystroke) && self.emulator.selection_text().is_some();
@@ -228,8 +227,52 @@ impl TerminalPane {
                 cx.stop_propagation();
                 self.input(data, cx);
             }
+            KeyAction::Paste => {
+                cx.stop_propagation();
+                if !self.paste(cx) {
+                    self.input(vec![0x16], cx);
+                }
+            }
             KeyAction::Ignore => {}
         }
+    }
+
+    /// Pastes the clipboard (§20B.5): text (bracketed when asked), else an image saved through
+    /// `attachment.save` and typed as its path, else copied files typed as paths. `false` when
+    /// the clipboard holds none of these (Ctrl+V then sends ^V, ADR 0026).
+    fn paste(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let Some(item) = cx.read_from_clipboard() else {
+            return false;
+        };
+        if self.exited.is_some() {
+            return true;
+        }
+        if let Some(text) = item.text() {
+            let data = paste_bytes(&text, self.emulator.input_mode());
+            self.input(data, cx);
+            return true;
+        }
+        for entry in item.into_entries() {
+            match entry {
+                ClipboardEntry::Image(image) => {
+                    if let Some((ext, bytes)) = attachment(image) {
+                        self.paste_image(ext, bytes, cx);
+                        return true;
+                    }
+                }
+                ClipboardEntry::ExternalPaths(paths) => {
+                    let paths: Vec<String> = paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect();
+                    self.type_text(&typed_paths(paths.iter().map(String::as_str)), cx);
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Copies the selection to the clipboard and clears it; `false` when nothing is selected.
@@ -351,24 +394,7 @@ impl TerminalPane {
                 cx.notify();
             }
             Command::Paste => {
-                let Some(item) = cx.read_from_clipboard() else {
-                    return;
-                };
-                if self.exited.is_some() {
-                    return;
-                }
-                if let Some(text) = item.text() {
-                    let data = paste_bytes(&text, self.emulator.input_mode());
-                    self.input(data, cx);
-                } else if let Some((ext, bytes)) = item.into_entries().find_map(|entry| match entry
-                {
-                    ClipboardEntry::Image(image) => {
-                        attachment_ext(image.format).map(|ext| (ext, image.bytes))
-                    }
-                    _ => None,
-                }) {
-                    self.paste_image(ext, bytes, cx);
-                }
+                self.paste(cx);
             }
             _ => cx.propagate(),
         }
@@ -532,40 +558,21 @@ impl TerminalPane {
             }));
         cx.spawn(async move |this, cx| match saved.await {
             Ok(saved) => {
-                let _ = this.update(cx, |pane, cx| pane.type_paths([saved.path.as_str()], cx));
+                let _ = this.update(cx, |pane, cx| {
+                    pane.type_text(&typed_paths([saved.path.as_str()]), cx)
+                });
             }
             Err(error) => tracing::warn!(%session_id, "attachment.save failed: {error:#}"),
         })
         .detach();
     }
 
-    /// Files dropped from the OS: their absolute paths are typed, without Enter (§20B.5).
-    fn drop_paths(
-        &mut self,
-        paths: &ExternalPaths,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let paths: Vec<_> = paths
-            .paths()
-            .iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect();
-        self.type_paths(paths.iter().map(String::as_str), cx);
-        self.focus(window, cx);
-    }
-
-    /// Types `paths` (formatted by [`typed_paths`]) as one paste into a live session.
-    fn type_paths<'a>(
-        &mut self,
-        paths: impl IntoIterator<Item = &'a str>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let text = typed_paths(paths);
+    /// Types `text` as one paste into a live session (dropped or pasted paths, §20B.5).
+    pub fn type_text(&mut self, text: &str, cx: &mut Context<'_, Self>) {
         if self.exited.is_some() || text.is_empty() {
             return;
         }
-        let data = paste_bytes(&text, self.emulator.input_mode());
+        let data = paste_bytes(text, self.emulator.input_mode());
         self.input(data, cx);
     }
 
@@ -625,7 +632,6 @@ impl Render for TerminalPane {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::key_down))
             .on_action(cx.listener(Self::run))
-            .on_drop(cx.listener(Self::drop_paths))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))

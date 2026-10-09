@@ -23,6 +23,9 @@ async-channel = "2"
 # `x11`/`wayland`: Linux windowing backends (off by default; without one the app panics at start).
 gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["x11", "wayland"] }
+# Clipboard bitmaps (Windows CF_DIB → BMP) re-encoded as PNG for `attachment.save` (ADR 0026);
+# already in the tree via gpui.
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
 interprocess = { version = "2.4.4", features = ["tokio"] }
 # Mermaid diagrams of the Docs preview (ADR 0021): pure Rust, SVG only (no CLI, no PNG).
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }

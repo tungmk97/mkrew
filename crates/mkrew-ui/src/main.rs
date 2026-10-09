@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, CursorStyle, Entity, FocusHandle, FontWeight, HighlightStyle,
-    Hsla, KeyDownEvent, MouseButton, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy,
-    SharedString, StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window,
-    WindowAppearance, WindowBounds, WindowOptions, anchored, canvas, deferred, div, px, relative,
-    rgb, size, uniform_list,
+    AnyView, App, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent, Entity,
+    ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent, MouseButton,
+    MouseUpEvent, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
+    StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowAppearance,
+    WindowBounds, WindowOptions, anchored, canvas, deferred, div, px, relative, rgb, size,
+    uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
@@ -277,6 +278,9 @@ struct Shell {
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
     composers: Composers,
+    /// The pane under an OS file drag (§20B.5), tracked without GPUI's hover check: gpui-pre
+    /// 0.3.7 keeps keyboard modality during OLE drags, so `on_drop` misses drops after typing.
+    drop_hover: Option<(Ulid, ExternalPaths)>,
     /// Focused while the focused pane's composer takes keys.
     composer_focus: FocusHandle,
     /// Composing IME chars typed into the focused field so far (see `mkrew_ui::ime`).
@@ -610,6 +614,7 @@ impl Shell {
             _follow_up_blur: follow_up_blur,
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
+            drop_hover: None,
             composer_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
             composer_scroll: ScrollHandle::new(),
@@ -3247,6 +3252,40 @@ impl Shell {
         }
     }
 
+    /// Files dropped from the OS on `session`'s pane (§20B.5): into its composer draft while
+    /// the composer is shown, else typed into the terminal. No Enter either way. A modal dialog
+    /// covers the panes, so a drop on it types nothing.
+    fn drop_paths(
+        &mut self,
+        session: Ulid,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.modal_open() {
+            return;
+        }
+        let paths: Vec<String> = paths
+            .paths()
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        let text = composer::typed_paths(paths.iter().map(String::as_str));
+        if text.is_empty() {
+            return;
+        }
+        if let Some(tabs) = self.active_tabs_mut() {
+            tabs.focus(session);
+        }
+        if self.composers.shown(session).is_some() {
+            self.composer_typed(session, &text, window, cx);
+        } else if let Some(pane) = self.panes.get(&session).cloned() {
+            pane.update(cx, |pane, cx| pane.type_text(&text, cx));
+            self.focus_pane(window, cx);
+        }
+        cx.notify();
+    }
+
     /// `fs.find` for the finder's query; a reply to an older query or finder is dropped.
     fn find_files(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
@@ -5565,9 +5604,12 @@ impl Shell {
             return self.open_file_ref_picker(session, window, cx);
         }
         if key == DialogKey::Paste
-            && let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+            && let Some(item) = cx.read_from_clipboard()
         {
-            self.composers.insert(session, &text);
+            match item.text() {
+                Some(text) => self.composers.insert(session, &text),
+                None => self.composer_paste_image(session, item, window, cx),
+            }
         }
         match self.composers.key(session, key) {
             text_box::Outcome::Edited => {
@@ -5581,6 +5623,45 @@ impl Shell {
             }
             text_box::Outcome::Submit => self.send_composer(session, window, cx),
         }
+    }
+
+    /// An image pasted into the composer (§20B.5): saved through `attachment.save` (a BMP as
+    /// PNG), then its path goes into the draft. A failure only logs, like a pane's paste.
+    fn composer_paste_image(
+        &mut self,
+        session: Ulid,
+        item: gpui::ClipboardItem,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some((ext, data)) = item.into_entries().find_map(|entry| match entry {
+            gpui::ClipboardEntry::Image(image) => composer::attachment(image),
+            _ => None,
+        }) else {
+            return;
+        };
+        let saved = connection.call::<mkrew_protocol::AttachmentSaveResult>(
+            Request::AttachmentSave(mkrew_protocol::AttachmentSaveParams {
+                session_id: session,
+                ext: ext.to_owned(),
+                data,
+            }),
+        );
+        cx.spawn_in(window, async move |this, cx| match saved.await {
+            Ok(saved) => {
+                let _ = this.update(cx, |shell, cx| {
+                    let text = composer::typed_paths([saved.path.as_str()]);
+                    shell.composers.insert(session, &text);
+                    shell.composer_scroll.scroll_to_bottom();
+                    cx.notify();
+                });
+            }
+            Err(error) => tracing::warn!(%session, "attachment.save failed: {error:#}"),
+        })
+        .detach();
     }
 
     /// ✦ in the composer (SPEC §20B.1): the session's own agent rewrites the draft, reading
@@ -7230,7 +7311,8 @@ impl Shell {
                 .children(entries.into_iter().map(|entry| {
                     let last_line = self.last_lines.get(&entry).map(str::to_owned);
                     let (turn, session_id) = (self.turns.get(entry.session_id), entry.session_id);
-                    let row = inbox_row(entry, last_line, turn, now, theme, cx);
+                    let badge = self.agent_badge(&entry.agent);
+                    let row = inbox_row(entry, badge, last_line, turn, now, theme, cx);
                     self.with_peek(row, Place::Inbox, session_id, now, theme, cx)
                 }))
         };
@@ -7542,8 +7624,7 @@ impl Shell {
                         div()
                             .flex_none()
                             .text_size(font_size::BODY)
-                            .text_color(rgb(sidebar::status_color(theme, session.state)))
-                            .child(status::icon(session.state, now)),
+                            .child(status_mark(session.state, now, theme)),
                     )
                     .child(
                         div()
@@ -8207,6 +8288,7 @@ impl Shell {
             fan_out: self.fan_out.as_ref(),
             usages: &self.usages,
             sessions: self.sidebar.sessions(),
+            agent_icons: &self.agent_icons,
         };
         div()
             .flex_1()
@@ -12175,12 +12257,7 @@ impl Shell {
                             cx.notify();
                         }
                     }))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(rgb(sidebar::status_color(theme, choice.state)))
-                            .child(status::icon(choice.state, now)),
-                    )
+                    .child(status_mark(choice.state, now, theme))
                     .child(
                         div()
                             .flex_1()
@@ -12915,7 +12992,7 @@ impl Shell {
                                         } else {
                                             theme.text_muted
                                         }))
-                                        .child(status::icon(SessionState::Exited, now)),
+                                        .child(status::icon(SessionState::Exited)),
                                 )
                                 .child(
                                     div()
@@ -13140,11 +13217,7 @@ impl Shell {
                             session.state_source,
                             session.state_changed_at,
                         ))
-                        .child(
-                            div()
-                                .text_color(rgb(sidebar::status_color(theme, session.state)))
-                                .child(status::icon(session.state, now)),
-                        )
+                        .child(status_mark(session.state, now, theme))
                     })
                     .child(tab.title.clone())
                     .into_any_element()
@@ -13372,6 +13445,20 @@ impl Shell {
                     cx.notify();
                 }),
             )
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                move |shell, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        shell.drop_hover = Some((session, event.drag(cx).clone()));
+                    } else if shell
+                        .drop_hover
+                        .as_ref()
+                        .is_some_and(|(hovered, _)| *hovered == session)
+                    {
+                        shell.drop_hover = None;
+                    }
+                },
+            ))
+            .child(drop_catcher(session, cx))
             .children(info.map(|info| {
                 let paths = self.conflicts.for_session(session);
                 let conflict = (!paths.is_empty()).then(|| {
@@ -13873,6 +13960,36 @@ fn danger_button(
         // Stronger than an opacity change on the faint background.
         .hover(move |style| style.text_color(rgb(text)))
         .active(|style| style.opacity(opacity::ACTIVE))
+}
+
+/// Delivers an OS file drop on `session`'s pane (see `Shell::drop_hover`).
+// ponytail: works around gpui-pre 0.3.7 keeping keyboard modality during OLE drags
+// (window.rs:5415 skips FileDrop), which makes every hover-gated mouse-up listener (`on_drop`,
+// `capture_any_mouse_up`) miss drops after typing. Use plain `.on_drop` on the pane when
+// upstream treats FileDrop as mouse input.
+fn drop_catcher(session: Ulid, cx: &Context<'_, Shell>) -> impl IntoElement + use<> {
+    let view = cx.entity();
+    canvas(
+        |_, _, _| (),
+        move |_, (), window, _| {
+            let view = view.clone();
+            window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+                // A plain click has no active drag: stale paths are never typed.
+                if phase != DispatchPhase::Capture || !cx.has_active_drag() {
+                    return;
+                }
+                view.update(cx, |shell, cx| {
+                    let hovered = shell.drop_hover.take_if(|(hovered, _)| *hovered == session);
+                    if let Some((_, paths)) = hovered {
+                        cx.stop_propagation();
+                        shell.drop_paths(session, &paths, window, cx);
+                    }
+                });
+            });
+        },
+    )
+    .absolute()
+    .size_full()
 }
 
 /// Platform text input (IME, Unikey) for the field focused by `focus`, fed to `on_key` (see
@@ -14854,6 +14971,12 @@ fn agent_rows(
                                     .text_color(rgb(theme.accent))
                                     .child(if choice.selected { "✓" } else { "" }),
                             )
+                            .when(!agent.is_empty(), |el| {
+                                el.child(agent_chip(
+                                    sidebar::agent_badge(choice.icon.as_deref(), &agent),
+                                    theme,
+                                ))
+                            })
                             .child(
                                 div()
                                     .flex_1()
@@ -14971,13 +15094,16 @@ fn workspace_row(
             )
         })
         .when(row.working > 0, |el| {
-            // Same spinner as the session rows (§11).
-            let working = status::icon(SessionState::Working, now);
+            // Same working dots as the session rows (§11).
             el.child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
                     .text_size(font_size::META)
                     .text_color(rgb(theme.status_working))
-                    .child(format!("{working} {}", row.working)),
+                    .child(status_mark(SessionState::Working, now, theme))
+                    .child(row.working.to_string()),
             )
         })
         .when(row.needs_input, |el| {
@@ -15048,19 +15174,8 @@ fn session_row(
                     shell.hover_row(Place::Sidebar, session_id, *hovered, window, cx);
                 }))
         })
-        .child(
-            div()
-                .text_size(font_size::BODY)
-                .text_color(rgb(sidebar::status_color(theme, row.state)))
-                .child(status::icon(row.state, now)),
-        )
-        .child(
-            div()
-                .flex_none()
-                .text_size(font_size::BODY)
-                .text_color(rgb(theme.text_muted))
-                .child(badge),
-        )
+        .child(status_mark(row.state, now, theme))
+        .child(agent_chip(badge, theme))
         .child(
             div()
                 .flex_1()
@@ -15113,6 +15228,7 @@ fn session_row(
 /// status (with the last turn's summary when done); a click shows the pane.
 fn inbox_row(
     entry: Entry,
+    badge: String,
     last_line: Option<String>,
     turn: Option<&SessionTurnEvent>,
     now: i64,
@@ -15147,9 +15263,9 @@ fn inbox_row(
             div()
                 .flex_none()
                 .text_size(font_size::BODY)
-                .text_color(rgb(sidebar::status_color(theme, entry.state)))
-                .child(status::icon(entry.state, now)),
+                .child(status_mark(entry.state, now, theme)),
         )
+        .child(agent_chip(badge, theme))
         .child(
             div()
                 .flex_1()
@@ -15217,6 +15333,8 @@ struct CardContext<'a> {
     fan_out: Option<&'a FanOutPicker>,
     usages: &'a Usages,
     sessions: &'a [Session],
+    /// Profile icons by id, for the agent chip (see [`Shell::agent_badge`]).
+    agent_icons: &'a HashMap<String, String>,
 }
 
 /// A board column: its title and card count over the cards, or a quiet "No tasks". Every
@@ -15457,6 +15575,15 @@ fn task_card(
                 .gap(px(space::S))
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
+                .children(current_agent.as_deref().map(|agent| {
+                    agent_chip(
+                        sidebar::agent_badge(
+                            cards.agent_icons.get(agent).map(String::as_str),
+                            agent,
+                        ),
+                        theme,
+                    )
+                }))
                 .child(
                     div()
                         .flex_1()
@@ -15510,11 +15637,7 @@ fn task_card(
                         session.state_source,
                         session.state_changed_at,
                     ))
-                    .child(
-                        div()
-                            .text_color(rgb(sidebar::status_color(theme, session.state)))
-                            .child(status::icon(session.state, now)),
-                    )
+                    .child(status_mark(session.state, now, theme))
                     .child(status::text(
                         session.state,
                         session.exit_code,
@@ -15897,18 +16020,22 @@ fn fan_out_button(
 /// One child on a group card (SPEC §20E.2): its status icon, agent and state.
 fn fan_out_child_row(child: fanout::ChildLine, now: i64, theme: &Theme) -> gpui::Div {
     let state = child.state_text(now);
-    let icon = child.session.as_ref().map(|session| {
-        div()
-            .text_color(rgb(sidebar::status_color(theme, session.state)))
-            .child(status::icon(session.state, now))
-    });
+    let icon = child
+        .session
+        .as_ref()
+        .map(|session| status_mark(session.state, now, theme));
     div()
         .flex()
         .items_center()
         .gap(px(space::XS))
         .text_size(font_size::META)
         .text_color(rgb(theme.text_muted))
-        .child(div().flex_none().w(px(space::M)).children(icon))
+        .child(
+            div()
+                .flex_none()
+                .w(px(theme::STATUS_MARK_WIDTH))
+                .children(icon),
+        )
         .child(
             div()
                 .flex_1()
@@ -16127,18 +16254,8 @@ fn pane_header(
         .py(px(space::XS))
         .font_family(theme.ui_font_family.clone())
         .text_size(font_size::META)
-        .child(
-            div()
-                .flex_none()
-                .text_color(rgb(sidebar::status_color(theme, state)))
-                .child(status::icon(state, now)),
-        )
-        .child(
-            div()
-                .flex_none()
-                .text_color(rgb(theme.text_muted))
-                .child(badge),
-        )
+        .child(status_mark(state, now, theme))
+        .child(agent_chip(badge, theme))
         .child(
             div()
                 .flex_none()
@@ -16205,6 +16322,56 @@ fn pane_header(
                 )),
         )
         .children(turns)
+}
+
+/// A session's status mark (SPEC §11): three dots taking turns while working, else the glyph.
+/// Fixed width, so rows with different states line up.
+fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement {
+    let color = rgb(sidebar::status_color(theme, state));
+    let mark = div()
+        .flex_none()
+        .w(px(theme::STATUS_MARK_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center();
+    if state != SessionState::Working {
+        return mark
+            .text_color(color)
+            .child(status::icon(state))
+            .into_any_element();
+    }
+    let lit = status::working_dot(now);
+    mark.gap(px(theme::STATUS_DOT_GAP))
+        .children((0..status::WORKING_DOTS).map(|i| {
+            div()
+                .size(px(theme::STATUS_DOT))
+                .rounded_full()
+                .bg(color)
+                .opacity(if i == lit {
+                    opacity::FULL
+                } else {
+                    opacity::STATUS_DOT_DIM
+                })
+        }))
+        .into_any_element()
+}
+
+/// An agent badge (ADR 0025) as a small square chip, so glyphs and letters line up and never
+/// read as part of the name.
+fn agent_chip(badge: String, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .size(px(theme::AGENT_CHIP_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::SMALL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .text_size(font_size::META)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .text_color(rgb(theme.text))
+        .child(badge)
 }
 
 /// Tooltip of a status: its source and how long ago it changed, aged when it opens (a

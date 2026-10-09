@@ -99,10 +99,35 @@ fn seed_profiles(dir: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The shipped sample's `icon` for profile `id` (ADR 0025): profile files copied before the key
+/// existed are never overwritten, so they borrow it. Data from the TOML samples, not per-agent
+/// code (§2.1).
+pub(crate) fn sample_icon(id: &str) -> Option<String> {
+    let (file, src) = SAMPLE_PROFILES
+        .iter()
+        .find(|(file, _)| file.strip_suffix(".toml") == Some(id))?;
+    mkrew_core::parse_profile(id, std::path::Path::new(file), src)
+        .ok()?
+        .icon
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
     #[error(transparent)]
     Lock(#[from] LockError),
     #[error(transparent)]
     Other(anyhow::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sample_icon_comes_from_the_shipped_profile_of_the_same_id() {
+        assert_eq!(sample_icon("claude").as_deref(), Some("✻"));
+        assert_eq!(sample_icon("omp").as_deref(), Some("π"));
+        // A user's own profile id has no shipped sample: the UI shows its first letter.
+        assert_eq!(sample_icon("mybot"), None);
+    }
 }

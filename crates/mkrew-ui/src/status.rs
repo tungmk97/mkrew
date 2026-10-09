@@ -1,4 +1,4 @@
-//! Per-session status display (SPEC §11): spinner, elapsed/idle time, tab urgency, hover text
+//! Per-session status display (SPEC §11): working dots, elapsed/idle time, tab urgency, hover text
 //! and the pane border. Pure; `main.rs` renders the result with [`crate::sidebar::status_display`]
 //! icons and [`crate::sidebar::status_color`] colors.
 
@@ -10,8 +10,8 @@ use ulid::Ulid;
 use crate::sidebar::status_display;
 use crate::theme::{self, Theme};
 
-/// Frames of the small spinner shown for `working`, one per [`theme::STATUS_TICK`].
-pub const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
+/// Dots of the `working` mark (SPEC §11); one is lit per [`theme::STATUS_TICK`].
+pub const WORKING_DOTS: usize = 3;
 
 /// Unix ms now (0 if the clock is before 1970).
 pub fn now_ms() -> i64 {
@@ -21,14 +21,16 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// The status icon at `now_ms`: a spinner frame while working, else the state's icon.
-pub fn icon(state: SessionState, now_ms: i64) -> &'static str {
-    if state == SessionState::Working {
-        let step = theme::STATUS_TICK.as_millis().max(1) as i64;
-        SPINNER[(now_ms.max(0) / step) as usize % SPINNER.len()]
-    } else {
-        status_display(state).icon
-    }
+/// The lit dot of the `working` mark at `now_ms`: steps on the status tick, so the mark costs
+/// no more redraws than the old spinner.
+pub fn working_dot(now_ms: i64) -> usize {
+    let step = theme::STATUS_TICK.as_millis().max(1) as i64;
+    (now_ms.max(0) / step) as usize % WORKING_DOTS
+}
+
+/// The state's glyph; `working` is drawn as dots (see [`working_dot`]) wherever there is room.
+pub fn icon(state: SessionState) -> &'static str {
+    status_display(state).icon
 }
 
 /// A short duration: `12s`, `4m`, `1h 5m`, `3h`.
@@ -101,7 +103,7 @@ pub fn most_urgent<'a>(sessions: &'a [Session], ids: &[Ulid]) -> Option<&'a Sess
 }
 
 /// Whether the status display changed between `last_ms` and `now_ms` (checked every
-/// [`theme::STATUS_TICK`]): the spinner turns while a session works; an idle time changes
+/// [`theme::STATUS_TICK`]): the working dots step while a session works; an idle time changes
 /// once per second, then once per minute.
 pub fn redraw_due(sessions: &[Session], last_ms: i64, now_ms: i64) -> bool {
     sessions.iter().any(|s| match s.state {
@@ -169,14 +171,15 @@ mod tests {
     }
 
     #[test]
-    fn spinner_turns_only_while_working() {
+    fn working_dots_take_turns_one_per_tick() {
         let step = theme::STATUS_TICK.as_millis() as i64;
-        let frames: Vec<&str> = (0..5)
-            .map(|i| icon(SessionState::Working, i * step))
-            .collect();
-        assert_eq!(frames, ["◐", "◓", "◑", "◒", "◐"]);
-        assert_eq!(icon(SessionState::Idle, step), "○");
-        assert_eq!(icon(SessionState::NeedsInput, 3 * step), "?");
+        let lit: Vec<usize> = (0..4).map(|i| working_dot(i * step)).collect();
+        assert_eq!(lit, [0, 1, 2, 0]);
+        // Mid-tick stays on the same dot; a clock before 1970 is dot 0.
+        assert_eq!(working_dot(step + step / 2), 1);
+        assert_eq!(working_dot(-5), 0);
+        assert_eq!(icon(SessionState::Idle), "○");
+        assert_eq!(icon(SessionState::NeedsInput), "?");
     }
 
     fn session(state: SessionState, changed_at: i64) -> Session {

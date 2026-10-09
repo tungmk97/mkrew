@@ -231,6 +231,21 @@ pub fn attachment_ext(format: ImageFormat) -> Option<&'static str> {
     }
 }
 
+/// A clipboard image as `attachment.save` input (extension, bytes). Windows bitmaps
+/// (`CF_DIB`, e.g. PrintScreen) arrive as BMP, which agents do not read: re-encoded as PNG.
+pub fn attachment(image: gpui::Image) -> Option<(&'static str, Vec<u8>)> {
+    if image.format == ImageFormat::Bmp {
+        let decoded =
+            image::load_from_memory_with_format(&image.bytes, image::ImageFormat::Bmp).ok()?;
+        let mut png = Vec::new();
+        decoded
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .ok()?;
+        return Some(("png", png));
+    }
+    attachment_ext(image.format).map(|ext| (ext, image.bytes))
+}
+
 /// The first line of a queued text, as listed in the composer.
 pub fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
@@ -258,6 +273,21 @@ mod tests {
             }
             composers.key(session, DialogKey::Insert(line.into()));
         }
+    }
+
+    #[test]
+    fn a_bmp_clipboard_image_is_stored_as_png() {
+        let mut bmp = Vec::new();
+        image::RgbImage::new(2, 2)
+            .write_to(&mut std::io::Cursor::new(&mut bmp), image::ImageFormat::Bmp)
+            .unwrap();
+        let (ext, bytes) = attachment(gpui::Image::from_bytes(ImageFormat::Bmp, bmp)).unwrap();
+        assert_eq!(ext, "png");
+        assert!(bytes.starts_with(b"\x89PNG"));
+        let png = gpui::Image::from_bytes(ImageFormat::Png, b"png".to_vec());
+        assert_eq!(attachment(png), Some(("png", b"png".to_vec())));
+        let svg = gpui::Image::from_bytes(ImageFormat::Svg, b"<svg/>".to_vec());
+        assert_eq!(attachment(svg), None);
     }
 
     /// Text that arrives while ✦ rewrites (a picked prompt or file, a Docs selection, a

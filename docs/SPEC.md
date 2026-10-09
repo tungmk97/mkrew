@@ -422,7 +422,8 @@ needs_input_patterns = []
 (command = `mkrew-fakeagent`, see §16) also ship. Optional key `kind = "agent" | "shell"`
 (default `agent`); a shell profile may omit `command` to use the OS default shell
 (`%COMSPEC%` / `$SHELL`). Optional key `icon` (≤ 3 characters, ADR 0025) is the badge shown
-before the agent name; a missing or blank one shows the id's first letter, uppercased; a longer
+before the agent name; a missing or blank one uses the shipped sample's icon for the same id,
+else the id's first letter, uppercased; a longer
 one is a parse error. Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
 Profiles written before `oneshot` existed are not updated (seeding never overwrites); ✦ then
 answers `invalid_state` naming the key and the file.
@@ -728,7 +729,7 @@ color alone.
 | State | Icon | Extra |
 | --- | --- | --- |
 | starting | ◌ | |
-| working | small spinner | elapsed time |
+| working | ••• three dots taking turns, one step per status tick (500 ms) | elapsed time |
 | needs_input | ? | highlighted pane border, listed in Inbox |
 | idle | ○ | idle time |
 | done | ✓ | listed in Inbox until viewed |
@@ -736,9 +737,10 @@ color alone.
 | unknown | · | |
 
 - Pane header: status icon, agent badge (§6 `icon`), agent name, session/task title, time. The
-  sidebar session row also puts the badge before the agent name.
+  sidebar session row also puts the badge before the agent name. The badge is a bordered square
+  chip; it also shows in the Inbox row, on board cards and in agent menus.
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
-- Workspace row: number of working sessions (with the spinner) and `?` if any needs_input.
+- Workspace row: number of working sessions (with the working dots) and `?` if any needs_input.
 - Hovering a status shows its source (hook/screen) and when it last changed.
 
 ---
@@ -861,6 +863,8 @@ only combinations bound in the keymap are intercepted; everything else goes to t
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
 One exception: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection
 it reaches the agent as ^C. Anything sent to the agent clears the selection.
+Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the clipboard holds no
+text, image or files (ADR 0026).
 On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 
 | Group | Action | Default |
@@ -883,7 +887,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
-| Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+Shift+V |
+| Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
 | Terminal / Files / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
 | Docs | Comment on selection | Ctrl+Alt+M |
@@ -927,7 +931,7 @@ The terminal is the hero; everything else steps back.
    (ADR 0020) are the one exception: a small dot per workspace.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
 4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
-5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow spinner.
+5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow working dots.
    Respect the OS reduce-motion setting.
 6. **Helpful empty states.** One short sentence plus one primary action with its shortcut.
 7. **Keyboard = mouse.** Everything clickable has a visible focus ring; tooltips show shortcuts.
@@ -1378,9 +1382,11 @@ context_window = 200000        # tokens, for the % shown
    and sends.
 5. **Drop files / paste images.** Dropping files from the OS onto an agent pane (gpui
    `ExternalPaths`) types their absolute paths, each quoted with `"` if needed, separated by spaces,
-   with no Enter. `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`)
-   saves it through `attachment.save` and types the returned path the same way. Text clipboard
-   behaves as before.
+   with no Enter. The whole pane accepts the drop (header, terminal, composer). While the pane's
+   composer is shown, the paths go into its draft instead of the terminal. `Ctrl+V` /
+   `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`; a BMP image is
+   re-encoded as PNG) saves it through `attachment.save` and types the returned path the same
+   way; copied files type their paths. Text clipboard behaves as before.
 6. **Run with…** A task card's menu offers "Run with…" (pick a profile): updates the task's agent,
    then runs it. Only for Todo or Review cards without a live session.
 

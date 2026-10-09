@@ -3843,6 +3843,7 @@ dependencies = [
  "futures-lite",
  "gpui-pre",
  "gpui-pre-platform",
+ "image",
  "insta",
  "interprocess",
  "mermaid-rs-renderer",

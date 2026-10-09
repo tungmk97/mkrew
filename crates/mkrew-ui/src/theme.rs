@@ -61,9 +61,16 @@ pub mod motion {
 /// In-app toasts auto-hide after this long.
 pub const TOAST_DURATION: Duration = Duration::from_secs(4);
 
-/// Status refresh period: one spinner frame (a small, slow spinner) and the elapsed/idle
-/// time update (SPEC §11, §14).
+/// Status refresh period: one step of the `working` dots and the elapsed/idle time update
+/// (SPEC §11, §14).
 pub const STATUS_TICK: Duration = Duration::from_millis(500);
+
+/// Diameter of one dot of the `working` mark (SPEC §11).
+pub const STATUS_DOT: f32 = 4.0;
+/// Gap between the dots of the `working` mark.
+pub const STATUS_DOT_GAP: f32 = 2.0;
+/// Width of every status mark, so glyph and dot rows line up (3 × 4 + 2 × 2 = 16).
+pub const STATUS_MARK_WIDTH: f32 = space::L;
 
 /// Borders are 1 px and faint.
 pub const BORDER_WIDTH: f32 = 1.0;
@@ -86,6 +93,8 @@ pub mod opacity {
     pub const SECONDARY: f32 = 0.8;
     /// A control that cannot be used right now (e.g. Save while saving).
     pub const DISABLED: f32 = 0.5;
+    /// The unlit dots of the `working` mark.
+    pub const STATUS_DOT_DIM: f32 = 0.35;
     /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
     pub const HIDDEN: f32 = 0.0;
     pub const FULL: f32 = 1.0;
@@ -194,6 +203,9 @@ pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
 /// The workspace color dot in front of a sidebar row's name (ADR 0020).
 pub const WORKSPACE_DOT_SIZE: f32 = space::S;
+
+/// Side of an agent badge chip (ADR 0025), like the design's workspace avatar.
+pub const AGENT_CHIP_SIZE: f32 = 18.0;
 
 /// A color choice in the workspace menu.
 pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;

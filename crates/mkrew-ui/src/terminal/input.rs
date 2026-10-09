@@ -47,11 +47,20 @@ pub fn is_copy_key(keystroke: &Keystroke) -> bool {
     keystroke.key == "c" && m.control && !m.shift && !m.alt && !m.platform
 }
 
+/// Plain Ctrl+V: the pane pastes the clipboard; ^V goes to the program only when there is
+/// nothing to paste (ADR 0026).
+pub fn is_paste_key(keystroke: &Keystroke) -> bool {
+    let m = keystroke.modifiers;
+    keystroke.key == "v" && m.control && !m.shift && !m.alt && !m.platform
+}
+
 /// What a key press in a terminal pane does.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeyAction {
     /// Copy the selection (plain Ctrl+C while text is selected, also in an exited pane).
     Copy,
+    /// Paste the clipboard (plain Ctrl+V in a live pane, ADR 0026).
+    Paste,
     Send(Vec<u8>),
     Ignore,
 }
@@ -66,6 +75,9 @@ pub fn key_action(
 ) -> KeyAction {
     if selected && is_copy_key(keystroke) {
         return KeyAction::Copy;
+    }
+    if !exited && is_paste_key(keystroke) {
+        return KeyAction::Paste;
     }
     match key_to_bytes(keystroke, mode) {
         Some(bytes) if !exited => KeyAction::Send(bytes),
@@ -296,6 +308,23 @@ mod tests {
             key_action(&a, true, false, NORMAL),
             KeyAction::Send(b"a".to_vec())
         );
+    }
+
+    #[test]
+    fn plain_ctrl_v_is_paste_only_while_live() {
+        let ctrl_v = key("ctrl-v", None);
+        assert_eq!(key_action(&ctrl_v, false, false, NORMAL), KeyAction::Paste);
+        // A selection does not change it (Ctrl+C copies, Ctrl+V pastes).
+        assert_eq!(key_action(&ctrl_v, true, false, NORMAL), KeyAction::Paste);
+        assert_eq!(key_action(&ctrl_v, false, true, NORMAL), KeyAction::Ignore);
+        // Ctrl+Shift+V stays the keymap's; AltGr (ctrl-alt) and Win+V are not paste.
+        for other in ["ctrl-shift-v", "ctrl-alt-v", "win-v", "v"] {
+            assert_ne!(
+                key_action(&key(other, None), false, false, NORMAL),
+                KeyAction::Paste,
+                "{other}"
+            );
+        }
     }
 
     #[test]
