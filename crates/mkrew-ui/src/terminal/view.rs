@@ -27,7 +27,7 @@ use crate::client::Connection;
 use crate::composer::{attachment, typed_paths};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
-use crate::terminal::find::{FindBar, FindStatus, find_key};
+use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space};
@@ -166,7 +166,8 @@ impl TerminalPane {
     }
 
     /// Replaces the screen with a fresh daemon snapshot (`session.snapshot` after the output
-    /// queue overflowed). The caller notifies.
+    /// queue overflowed). The scrollback restarts from the snapshot's history (≤ 200 lines,
+    /// ADR 0030). The caller notifies.
     pub fn load_snapshot(&mut self, snapshot: &ScreenSnapshot) {
         self.emulator = Emulator::from_snapshot(snapshot);
         if let Some(find) = &self.find {
@@ -409,7 +410,18 @@ impl TerminalPane {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let (Some(find), Some(key)) = (self.find.as_mut(), find_key(&event.keystroke)) else {
+        let Some(key) = find_key(&event.keystroke) else {
+            return;
+        };
+        if key == FindKey::Paste {
+            let text = cx.read_from_clipboard().and_then(|item| item.text());
+            if let (Some(find), Some(text)) = (self.find.as_mut(), text) {
+                find.insert(&text, &mut self.emulator);
+                cx.notify();
+            }
+            return;
+        }
+        let Some(find) = self.find.as_mut() else {
             return;
         };
         if find.key(key, &mut self.emulator) {
@@ -454,14 +466,19 @@ impl TerminalPane {
             .h(font_size::BODY)
             .bg(rgb(theme.text));
         // While typing, the caret sits after the query; the placeholder comes after the caret.
-        let query = div()
-            .flex()
-            .items_center()
-            .child(div().text_color(rgb(color)).child(text));
+        // Ctrl+A highlights the query instead of showing the caret.
+        let selected = find.selected();
+        let mut shown = div().text_color(rgb(color));
+        if selected {
+            shown = shown.bg(rgb(theme.terminal_selection_bg));
+        }
+        let query = div().flex().items_center().child(shown.child(text));
         let query = if !focused {
             query
         } else if find.query().is_empty() {
             div().flex().items_center().child(caret).child(query)
+        } else if selected {
+            query
         } else {
             query.child(caret)
         };
@@ -841,7 +858,7 @@ impl Element for TerminalElement {
 
 /// Cell width and line height. Monospace: one precomputed cell size, no per-cell measurement
 /// (SPEC §10).
-fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
+pub fn cell_size(window: &Window, theme: &Theme) -> (Pixels, Pixels) {
     let text_system = window.text_system();
     let font_size = px(theme.terminal_font_size);
     let cell_width = text_system

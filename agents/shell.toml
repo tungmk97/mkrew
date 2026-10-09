@@ -1,5 +1,5 @@
-# Plain shell. No `command`: the daemon uses the OS default shell
-# (%COMSPEC% on Windows, $SHELL on Unix).
+# The OS default shell: no `command`, so the daemon uses %COMSPEC% on Windows, $SHELL on Unix.
+# Run commands (the Run button) always use this profile (ADR 0032).
 name = "Shell"
 icon = ">_"
 kind = "shell"

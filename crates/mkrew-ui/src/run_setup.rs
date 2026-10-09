@@ -7,14 +7,14 @@ use mkrew_protocol::{Project, ProjectUpdateParams, RunCommand};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
-use crate::text_box::TextBox;
+use crate::text_box::{Input, TextBox};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Card {
-    pub name: String,
-    pub dir: String,
-    pub command: String,
-    pub env_file: String,
+    pub name: Input,
+    pub dir: Input,
+    pub command: Input,
+    pub env_file: Input,
     /// `KEY=VALUE` lines.
     pub env: TextBox,
 }
@@ -36,6 +36,19 @@ impl Field {
         Field::EnvFile,
         Field::Env,
     ];
+}
+
+impl Card {
+    /// Whether Ctrl+A selected the whole text of `field` (drawn highlighted).
+    pub fn all_selected(&self, field: Field) -> bool {
+        match field {
+            Field::Name => self.name.all_selected(),
+            Field::Dir => self.dir.all_selected(),
+            Field::Command => self.command.all_selected(),
+            Field::EnvFile => self.env_file.all_selected(),
+            Field::Env => self.env.all_selected(),
+        }
+    }
 }
 
 /// Where typing goes.
@@ -96,21 +109,15 @@ impl RunSetup {
                 self.focus = self.next_focus();
                 Outcome::Edited
             }
-            DialogKey::Backspace => {
+            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
                 match self.focus {
                     Focus::Field(i, Field::Env) => {
-                        self.cards[i].env.key(DialogKey::Backspace);
+                        self.cards[i].env.key(key);
                     }
                     Focus::Field(i, field) => {
-                        line(&mut self.cards[i], field).pop();
+                        line(&mut self.cards[i], field).edit(&key);
                     }
                     Focus::Autostart => {}
-                }
-                Outcome::Edited
-            }
-            DialogKey::SelectAll => {
-                if let Focus::Field(i, Field::Env) = self.focus {
-                    self.cards[i].env.key(DialogKey::SelectAll);
                 }
                 Outcome::Edited
             }
@@ -133,7 +140,8 @@ impl RunSetup {
             }
             Focus::Field(i, Field::Env) => self.cards[i].env.insert(text),
             Focus::Field(i, field) => {
-                line(&mut self.cards[i], field).extend(text.chars().filter(|c| !c.is_control()));
+                let text: String = text.chars().filter(|c| !c.is_control()).collect();
+                line(&mut self.cards[i], field).insert(&text);
             }
         }
     }
@@ -169,10 +177,10 @@ impl RunSetup {
                 }
             };
             commands.push(RunCommand {
-                name: card.name.clone(),
-                dir: card.dir.clone(),
-                command: card.command.clone(),
-                env_file: Some(card.env_file.clone()),
+                name: card.name.as_str().to_owned(),
+                dir: card.dir.as_str().to_owned(),
+                command: card.command.as_str().to_owned(),
+                env_file: Some(card.env_file.as_str().to_owned()),
                 env,
             });
         }
@@ -189,6 +197,7 @@ impl RunSetup {
             project_id: self.project_id,
             name: None,
             default_agent: None,
+            default_shell: None,
             run_commands: Some(commands),
             run_autostart: Some(self.autostart),
             color: None,
@@ -219,7 +228,7 @@ impl RunSetup {
 
 fn empty_card() -> Card {
     Card {
-        dir: ".".to_owned(),
+        dir: ".".into(),
         ..Card::default()
     }
 }
@@ -233,16 +242,16 @@ fn card(command: &RunCommand) -> Card {
         .collect();
     env.insert(&lines.join("\n"));
     Card {
-        name: command.name.clone(),
-        dir: command.dir.clone(),
-        command: command.command.clone(),
-        env_file: command.env_file.clone().unwrap_or_default(),
+        name: command.name.clone().into(),
+        dir: command.dir.clone().into(),
+        command: command.command.clone().into(),
+        env_file: command.env_file.clone().unwrap_or_default().into(),
         env,
     }
 }
 
 /// The single-line field `field` of `card` (`Env` never reaches here).
-fn line(card: &mut Card, field: Field) -> &mut String {
+fn line(card: &mut Card, field: Field) -> &mut Input {
     match field {
         Field::Name => &mut card.name,
         Field::Dir => &mut card.dir,
@@ -265,6 +274,7 @@ mod tests {
             run_commands: commands,
             run_autostart: true,
             default_agent: None,
+            default_shell: None,
             review_globs: None,
             created_at: 0,
             archived: false,
@@ -397,5 +407,28 @@ mod tests {
         setup.key(DialogKey::Backspace);
         assert_eq!(setup.cards[0].dir, "EA-B");
         assert_eq!(setup.cards[0].name, "BE");
+    }
+
+    #[test]
+    fn single_line_fields_and_the_env_box_take_select_all_and_ctrl_backspace() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.cards[0].command = "npm run dev".into();
+        setup.focus = Focus::Field(0, Field::Command);
+        setup.key(DialogKey::DeleteWord);
+        assert_eq!(setup.cards[0].command, "npm run ");
+        setup.key(DialogKey::SelectAll);
+        assert!(setup.cards[0].all_selected(Field::Command));
+        assert!(!setup.cards[0].all_selected(Field::Name), "per field");
+        setup.insert("make");
+        assert_eq!(setup.cards[0].command, "make");
+        assert_eq!(setup.cards[0].name, "BE", "other fields untouched");
+
+        setup.focus = Focus::Field(0, Field::Env);
+        setup.key(DialogKey::SelectAll);
+        setup.insert("A=1\nB=2");
+        setup.key(DialogKey::DeleteWord);
+        assert_eq!(setup.cards[0].env.text(), "A=1\nB=");
+        setup.key(DialogKey::SelectAll);
+        assert!(setup.cards[0].all_selected(Field::Env));
     }
 }

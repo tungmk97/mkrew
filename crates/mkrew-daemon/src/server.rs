@@ -13,10 +13,10 @@ use mkrew_protocol::{
     Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
     PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
     Session, SessionHistory, SessionKillParams, SessionKind, SessionPortsEvent, SessionReadParams,
-    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
-    TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, WORKSPACE_COLORS, encode,
+    SessionRenameParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams, SessionWaitResult,
+    StateSource, Task, TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -319,12 +319,19 @@ impl Daemon {
             Request::SessionSpawn(params) => (self.session_spawn(params), After::Continue),
             Request::SessionList(params) => {
                 let sessions = self.store().list_sessions(params.project_id);
+                let sessions = sessions.map(|mut sessions| {
+                    for session in &mut sessions {
+                        session.terminal_title = self.hub.terminal_title(session.id);
+                    }
+                    sessions
+                });
                 (store_outcome(sessions), After::Continue)
             }
             Request::SessionKill(params) => (self.session_kill(params), After::Continue),
             Request::SessionRemove(params) => {
                 (self.session_remove(params.session_id), After::Continue)
             }
+            Request::SessionRename(params) => (self.session_rename(params).await, After::Continue),
             Request::SessionHistory(params) => {
                 let session = self.store().get_session(params.session_id);
                 let history = session.map(|s| SessionHistory {
@@ -386,6 +393,7 @@ impl Daemon {
                 (self.comment_send_to_agent(params).await, After::Continue)
             }
             Request::GitSetBase(params) => (self.git_set_base(params), After::Continue),
+            Request::GitRepos(params) => (self.git_repos(params).await, After::Continue),
             Request::GitStatus(params) => (self.git_status(params).await, After::Continue),
             Request::GitDiff(params) => (self.git_diff(params).await, After::Continue),
             Request::GitStage(params) => (self.git_stage(params, false).await, After::Continue),
@@ -399,6 +407,7 @@ impl Daemon {
             Request::GitPush(params) => (self.git_remote(params, true).await, After::Continue),
             Request::FsList(params) => (self.fs_list(params).await, After::Continue),
             Request::FsRead(params) => (self.fs_read(params).await, After::Continue),
+            Request::FsWrite(params) => (self.fs_write(params).await, After::Continue),
             Request::FsFind(params) => (self.fs_find(params).await, After::Continue),
             Request::AttachmentSave(params) => {
                 (self.attachment_save(params).await, After::Continue)
@@ -477,17 +486,22 @@ impl Daemon {
         }
         let profile_id = match (params.agent_profile, params.kind) {
             (Some(id), _) => id,
-            (None, SessionKind::Shell) => "shell".to_owned(),
-            (None, SessionKind::Agent) => match project.default_agent.clone() {
-                Some(id) => id,
-                None => {
-                    let message = format!(
-                        "project {} has no default agent; name an agent profile",
-                        project.name
-                    );
-                    return Outcome::error(ErrorCode::InvalidRequest, message);
+            (None, kind) => {
+                let (default, what) = match kind {
+                    SessionKind::Agent => (&project.default_agent, "agent; name an agent profile"),
+                    SessionKind::Shell => (
+                        &project.default_shell,
+                        "shell; pick one in the workspace menu",
+                    ),
+                };
+                match default.clone() {
+                    Some(id) => id,
+                    None => {
+                        let message = format!("project {} has no default {what}", project.name);
+                        return Outcome::error(ErrorCode::InvalidRequest, message);
+                    }
                 }
-            },
+            }
         };
         let profile = match self.load_profile(&profile_id) {
             Ok(profile) => profile,
@@ -794,6 +808,7 @@ impl Daemon {
             agent_profile: start.profile.id.clone(),
             kind: session_kind(start.profile.kind),
             title: start.title,
+            terminal_title: None,
             native_session_id: start.native_session_id,
             state: SessionState::Starting,
             state_source: StateSource::Daemon,
@@ -905,11 +920,16 @@ impl Daemon {
         ok(&project)
     }
 
-    /// Changes the project; a new `default_agent` must name an agent profile, run commands
-    /// are checked and trimmed (SPEC §10).
+    /// Changes the project; a new `default_agent` must name an agent profile, a new
+    /// `default_shell` a shell profile; run commands are checked and trimmed (SPEC §10).
     fn project_update(&self, params: ProjectUpdateParams) -> Outcome {
         if let Some(Some(id)) = &params.default_agent
-            && let Err(outcome) = self.check_agent_profile(id)
+            && let Err(outcome) = self.check_profile_kind(id, mkrew_core::ProfileKind::Agent)
+        {
+            return outcome;
+        }
+        if let Some(Some(id)) = &params.default_shell
+            && let Err(outcome) = self.check_profile_kind(id, mkrew_core::ProfileKind::Shell)
         {
             return outcome;
         }
@@ -935,6 +955,7 @@ impl Daemon {
             ProjectChanges {
                 name: params.name.as_deref(),
                 default_agent: params.default_agent.as_ref().map(Option::as_deref),
+                default_shell: params.default_shell.as_ref().map(Option::as_deref),
                 run_commands: run_commands.as_deref(),
                 run_autostart: params.run_autostart,
                 color: params.color.as_ref().map(Option::as_deref),
@@ -946,15 +967,17 @@ impl Daemon {
         store_outcome(updated)
     }
 
-    /// `id` must name an agent profile (not a shell).
-    fn check_agent_profile(&self, id: &str) -> Result<(), Outcome> {
-        match self.load_profile(id)? {
-            profile if profile.kind == mkrew_core::ProfileKind::Agent => Ok(()),
-            _ => {
-                let message = format!("{id} is a shell profile, not an agent");
-                Err(Outcome::error(ErrorCode::InvalidRequest, message))
-            }
+    /// `id` must name a profile of `kind`: `default_agent` and task agents an agent,
+    /// `default_shell` a shell.
+    fn check_profile_kind(&self, id: &str, kind: mkrew_core::ProfileKind) -> Result<(), Outcome> {
+        if self.load_profile(id)?.kind == kind {
+            return Ok(());
         }
+        let message = match kind {
+            mkrew_core::ProfileKind::Agent => format!("{id} is a shell profile, not an agent"),
+            mkrew_core::ProfileKind::Shell => format!("{id} is an agent profile, not a shell"),
+        };
+        Err(Outcome::error(ErrorCode::InvalidRequest, message))
     }
 
     fn task_create(&self, params: TaskCreateParams) -> Outcome {
@@ -962,7 +985,7 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, "task title is empty");
         }
         if let Some(id) = &params.agent_profile
-            && let Err(outcome) = self.check_agent_profile(id)
+            && let Err(outcome) = self.check_profile_kind(id, mkrew_core::ProfileKind::Agent)
         {
             return outcome;
         }
@@ -982,7 +1005,7 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, "task title is empty");
         }
         if let Some(Some(id)) = &params.agent_profile
-            && let Err(outcome) = self.check_agent_profile(id)
+            && let Err(outcome) = self.check_profile_kind(id, mkrew_core::ProfileKind::Agent)
         {
             return outcome;
         }
@@ -1081,6 +1104,66 @@ impl Daemon {
             self.hub.command(session_id, Command::Kill { force: false });
         }
         store_outcome(hidden)
+    }
+
+    /// `session.rename` (ADR 0031): a live session through its task, an exited one in the
+    /// store. Run sessions are named by their command (`run:<name>`, ADR 0018), so they and
+    /// `run:` titles are refused.
+    async fn session_rename(&self, params: SessionRenameParams) -> Outcome {
+        use mkrew_core::run::{SESSION_PREFIX, command_name};
+        let title = params
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned);
+        if title
+            .as_deref()
+            .is_some_and(|t| t.starts_with(SESSION_PREFIX))
+        {
+            let message = format!("a pane title cannot start with {SESSION_PREFIX:?}");
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        }
+        let found = self.store().get_session(params.session_id);
+        let session = match found {
+            Ok(session) => session,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        if command_name(&session).is_some() {
+            let message = "a run session is named by its command";
+            return Outcome::error(ErrorCode::InvalidState, message);
+        }
+        if let Some(sender) = self.hub.sender(session.id) {
+            let (reply, renamed) = oneshot::channel();
+            let command = Command::Rename {
+                title: title.clone(),
+                reply,
+            };
+            if sender.send(command).await.is_ok()
+                && let Ok(renamed) = renamed.await
+            {
+                return ok(&renamed);
+            }
+        }
+        // Not live (any more): re-read, its task may have saved the exit meanwhile.
+        let found = self.store().get_session(params.session_id);
+        let mut session = match found {
+            Ok(session) => session,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        if session.state != SessionState::Exited {
+            // Between leaving `live` and its final save: that save would undo this rename.
+            let message = format!("session {} is exiting; try again", session.id);
+            return Outcome::error(ErrorCode::InvalidState, message);
+        }
+        session.title = title;
+        let saved = self.store().update_session(&session);
+        if let Err(e) = saved {
+            return store_outcome::<()>(Err(e));
+        }
+        session.terminal_title = self.hub.terminal_title(session.id);
+        let _ = self.hub.events.send(Event::SessionUpdated(session.clone()));
+        ok(&session)
     }
 
     /// `session.ports`: the ports of the project's live run sessions that printed some.
@@ -1315,12 +1398,17 @@ impl Daemon {
         let profiles = set
             .profiles
             .into_iter()
-            .map(|p| AgentProfileInfo {
-                kind: session_kind(p.kind),
-                icon: p.icon.or_else(|| crate::sample_icon(&p.id)),
-                id: p.id,
-                name: p.name,
-                command: p.command,
+            .map(|p| {
+                // What a spawn would run (the OS shell for a shell without `command`).
+                let program = crate::launch::program(&p);
+                AgentProfileInfo {
+                    installed: mkrew_core::lookup::find(std::ffi::OsStr::new(&program)).is_some(),
+                    kind: session_kind(p.kind),
+                    icon: p.icon.or_else(|| crate::sample_icon(&p.id)),
+                    id: p.id,
+                    name: p.name,
+                    command: p.command,
+                }
             })
             .collect();
         let errors = set

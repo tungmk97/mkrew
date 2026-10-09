@@ -92,6 +92,7 @@ fn spawns_the_daemon_once_then_reuses_it() {
         project_id: added.id,
         name: Some("renamed".into()),
         default_agent: None,
+        default_shell: None,
         run_commands: None,
         run_autostart: None,
         color: None,

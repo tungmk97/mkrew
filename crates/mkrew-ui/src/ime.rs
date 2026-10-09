@@ -176,9 +176,9 @@ mod tests {
     use std::cell::Cell;
 
     use super::{Composing, keys};
-    use crate::task_dialog::dialog_key;
+    use crate::task_dialog::{DialogKey, dialog_key};
     use crate::terminal::input::{InputMode, key_to_bytes};
-    use crate::text_box::TextBox;
+    use crate::text_box::{Input, TextBox};
 
     /// Windows Vietnamese Telex composing "việt": each step replaces the composing text,
     /// revising chars typed before; the last step commits.
@@ -202,6 +202,28 @@ mod tests {
             }
         }
         assert_eq!(text.text(), "tôi việt", "earlier text is never erased");
+        assert_eq!(marked.get(), 0);
+    }
+
+    /// Ctrl+A, then Telex: the first composing char replaces the selection, the re-typing
+    /// Backspaces only erase composing chars (plain Backspace stays one char).
+    #[test]
+    fn composition_after_select_all_replaces_the_selection_once() {
+        let marked = Cell::new(0);
+        let mut input = Input::from("tôi cũ");
+        input.select_all();
+        for keystroke in telex(&marked) {
+            match dialog_key(&keystroke) {
+                Some(DialogKey::Insert(text)) => {
+                    input.insert(&text);
+                }
+                Some(key) => {
+                    input.edit(&key);
+                }
+                None => {}
+            }
+        }
+        assert_eq!(input, "việt");
         assert_eq!(marked.get(), 0);
     }
 

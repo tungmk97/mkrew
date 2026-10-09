@@ -7,6 +7,7 @@ use mkrew_protocol::{GitSetBaseParams, GitStatus};
 use ulid::Ulid;
 
 use crate::task_dialog::{DialogKey, dialog_key};
+use crate::text_box::Input;
 
 /// What a key does in the base menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +16,8 @@ pub enum Key {
     /// Enter: use the typed ref (empty = auto-detect).
     Save,
     Backspace,
+    DeleteWord,
+    SelectAll,
     Paste,
     Insert(String),
 }
@@ -24,9 +27,11 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         DialogKey::Cancel => Some(Key::Close),
         DialogKey::Enter | DialogKey::Save => Some(Key::Save),
         DialogKey::Backspace => Some(Key::Backspace),
+        DialogKey::DeleteWord => Some(Key::DeleteWord),
+        DialogKey::SelectAll => Some(Key::SelectAll),
         DialogKey::Paste => Some(Key::Paste),
         DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField | DialogKey::SelectAll => None,
+        DialogKey::SwitchField => None,
     }
 }
 
@@ -35,7 +40,7 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
 pub struct BaseDialog {
     pub project_id: Ulid,
     /// The ref being typed; starts as the configured base (empty when auto-detected).
-    pub text: String,
+    pub text: Input,
     /// The base in use when the menu opened, as the menu describes it.
     pub current: String,
     pub busy: bool,
@@ -56,9 +61,9 @@ impl BaseDialog {
         BaseDialog {
             project_id,
             text: if auto {
-                String::new()
+                Input::default()
             } else {
-                base.unwrap_or_default()
+                base.unwrap_or_default().into()
             },
             current,
             busy: false,
@@ -69,7 +74,12 @@ impl BaseDialog {
     /// Edits the typed ref; `true` when it changed.
     pub fn key(&mut self, key: &Key) -> bool {
         match key {
-            Key::Backspace => self.text.pop().is_some(),
+            Key::Backspace => self.text.backspace(),
+            Key::DeleteWord => self.text.delete_word(),
+            Key::SelectAll => {
+                self.text.select_all();
+                false
+            }
             Key::Insert(text) => self.insert(text),
             Key::Close | Key::Save | Key::Paste => false,
         }
@@ -77,10 +87,8 @@ impl BaseDialog {
 
     /// Appends typed or pasted text (a ref is one line). `true` when it changed.
     pub fn insert(&mut self, text: &str) -> bool {
-        let before = self.text.len();
-        self.text
-            .extend(text.chars().filter(|c| *c != '\r' && *c != '\n'));
-        self.text.len() != before
+        let line: String = text.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+        self.text.insert(&line)
     }
 
     /// The `git.set_base` to send: the typed ref, or auto-detection when `auto` or nothing is
@@ -157,6 +165,17 @@ mod tests {
     }
 
     #[test]
+    fn the_ref_takes_select_all_and_ctrl_backspace() {
+        let mut dialog = BaseDialog::new(Ulid::new(), Some(&status(None, true)));
+        dialog.insert("origin/release");
+        assert!(dialog.key(&Key::DeleteWord));
+        assert_eq!(dialog.text, "origin/");
+        dialog.key(&Key::SelectAll);
+        assert!(dialog.insert("main"));
+        assert_eq!(dialog.text, "main");
+    }
+
+    #[test]
     fn auto_detect_or_an_empty_ref_clears_the_base() {
         let id = Ulid::new();
         let mut dialog = BaseDialog::new(id, Some(&status(Some("develop"), false)));
@@ -173,6 +192,8 @@ mod tests {
         assert_eq!(parse("enter"), Some(Key::Save));
         assert_eq!(parse("backspace"), Some(Key::Backspace));
         assert_eq!(parse("ctrl-v"), Some(Key::Paste));
+        assert_eq!(parse("ctrl-backspace"), Some(Key::DeleteWord));
+        assert_eq!(parse("ctrl-a"), Some(Key::SelectAll));
         assert_eq!(parse("tab"), None);
         assert_eq!(parse("ctrl-x"), None);
     }

@@ -236,6 +236,7 @@ impl Compare {
                 let request = Request::GitStatus(GitStatusParams {
                     project_id: self.project_id,
                     worktree_task_id: Some(column.task_id),
+                    repo: None,
                     mode: GitMode::Base,
                     since: Some(column.checkpoint.clone()?),
                 });
@@ -404,6 +405,7 @@ mod tests {
             agent_profile: "fake".into(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Daemon,

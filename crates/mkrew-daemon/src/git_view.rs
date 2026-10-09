@@ -608,6 +608,7 @@ mod tests {
         GitDiffParams {
             project_id: Ulid::new(),
             worktree_task_id: None,
+            repo: None,
             path: String::new(),
             mode,
             staged,
@@ -763,6 +764,7 @@ mod tests {
         let diff = |path: &str, since: &str| {
             let params = GitDiffParams {
                 worktree_task_id: None,
+                repo: None,
                 since: Some(since.to_owned()),
                 ..params(GitMode::Base, false, None)
             };
@@ -823,6 +825,7 @@ mod tests {
         let diff = |path: &str| {
             let params = GitDiffParams {
                 worktree_task_id: None,
+                repo: None,
                 since: Some(tree.clone()),
                 ..params(GitMode::Base, false, None)
             };

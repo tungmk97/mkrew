@@ -1,19 +1,19 @@
-//! The Files view's reads (SPEC §12A): `fs.list` (one folder, `.gitignore`-aware, with git
-//! markers), `fs.read` (text, binary flag, language) and `fs.find` (quick open over a cached
-//! file list that the project watcher invalidates). Blocking; the server runs them in
-//! `spawn_blocking`.
+//! The Files view's reads and writes (SPEC §12A): `fs.list` (one folder, `.gitignore`-aware,
+//! with git markers), `fs.read` (text, binary flag, language, hash), `fs.write` (ADR 0028) and
+//! `fs.find` (quick open over a cached file list that the project watcher invalidates).
+//! Blocking; the server runs them in `spawn_blocking`.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read as _};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use mkrew_protocol::{ChangeKind, FsContent, FsEntry, FsMatch, GitMarker, GitStatus};
+use mkrew_protocol::{ChangeKind, FsContent, FsEntry, FsMatch, FsWritten, GitMarker, GitStatus};
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ulid::Ulid;
 
-use crate::docs::{MAX_BYTES, ReadError};
+use crate::docs::{self, MAX_BYTES, ReadError};
 use crate::watch::ALWAYS_IGNORED;
 
 /// A file with a NUL byte in its first this many bytes is binary (like git).
@@ -129,6 +129,24 @@ pub fn markers(status: &GitStatus) -> HashMap<String, GitMarker> {
     markers
 }
 
+/// The direct child folders of `root` that are git repositories of their own (ADR 0029): a
+/// `.git` folder or file (worktree, submodule) inside. Sorted; hidden folders and
+/// [`ALWAYS_IGNORED`] ones skipped. `.gitignore` is not asked: parents often ignore them.
+// ponytail: depth 1 only; walk deeper (apps/web) when a user asks.
+pub fn child_repos(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut repos: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('.') && !ALWAYS_IGNORED.contains(&name.as_str()))
+        .filter(|name| root.join(name).join(".git").exists())
+        .collect();
+    repos.sort();
+    repos
+}
+
 /// Names of the not-ignored entries directly in `folder`.
 fn visible(folder: &Path) -> HashSet<String> {
     walker(folder)
@@ -221,28 +239,33 @@ pub fn list(
     Ok(entries)
 }
 
+/// The metadata of `file`, which must be an existing regular file.
+fn existing_file(file: &Path) -> Result<std::fs::Metadata, ReadError> {
+    match file.metadata() {
+        Ok(meta) if meta.is_file() => Ok(meta),
+        Ok(_) => Err(ReadError::NotFound),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(ReadError::NotFound),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// `fs.read` of `file` (the project-relative `path`): text up to [`MAX_BYTES`]; larger files
 /// and binary ones (a NUL byte near the start, or not UTF-8) come without content.
 pub fn read(file: &Path, path: String) -> Result<FsContent, ReadError> {
-    let meta = match file.metadata() {
-        Ok(meta) if meta.is_file() => meta,
-        Ok(_) => return Err(ReadError::NotFound),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(ReadError::NotFound),
-        Err(e) => return Err(e.into()),
-    };
-    let size = meta.len();
+    let size = existing_file(file)?.len();
     let too_large = size > MAX_BYTES;
-    let (binary, content) = if too_large {
+    let (binary, content, hash) = if too_large {
         let mut head = Vec::with_capacity(SNIFF_BYTES);
         std::fs::File::open(file)?
             .take(SNIFF_BYTES as u64)
             .read_to_end(&mut head)?;
-        (has_nul(&head), None)
+        (has_nul(&head), None, None)
     } else {
         let bytes = std::fs::read(file)?;
+        let hash = docs::hash(&bytes);
         match String::from_utf8(bytes) {
-            Ok(text) if !has_nul(text.as_bytes()) => (false, Some(text)),
-            _ => (true, None),
+            Ok(text) if !has_nul(text.as_bytes()) => (false, Some(text), Some(hash)),
+            _ => (true, None, None),
         }
     };
     Ok(FsContent {
@@ -252,6 +275,43 @@ pub fn read(file: &Path, path: String) -> Result<FsContent, ReadError> {
         size,
         binary,
         too_large,
+        hash,
+    })
+}
+
+/// `fs.write` of `file` (ADR 0028): replaces its text with `content` if its bytes still hash
+/// to `expected_hash`; otherwise nothing is written and the disk's hash comes back.
+// ponytail: written in place (keeps permissions, symlinks and hard links), not crash-atomic,
+// and a writer between the check and the write is overwritten. Write a temp file and rename
+// it if torn saves ever show up.
+pub fn write(file: &Path, content: &str, expected_hash: &str) -> Result<FsWritten, ReadError> {
+    let len = u64::try_from(content.len()).unwrap_or(u64::MAX);
+    if len > MAX_BYTES {
+        return Err(ReadError::TooLarge(len));
+    }
+    let size = existing_file(file)?.len();
+    if size > MAX_BYTES {
+        return Err(ReadError::TooLarge(size));
+    }
+    // The file may have grown since the check: read at most one byte past the cap.
+    let mut bytes = Vec::new();
+    std::fs::File::open(file)?
+        .take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(ReadError::TooLarge(bytes.len() as u64));
+    }
+    let disk = docs::hash(&bytes);
+    if disk != expected_hash {
+        return Ok(FsWritten {
+            saved: false,
+            hash: disk,
+        });
+    }
+    std::fs::write(file, content)?;
+    Ok(FsWritten {
+        saved: true,
+        hash: docs::hash(content.as_bytes()),
     })
 }
 
@@ -420,6 +480,28 @@ mod tests {
     }
 
     #[test]
+    fn child_repos_are_direct_folders_holding_git_sorted() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = |name: &str| {
+            let path = root.path().join(name);
+            std::fs::create_dir_all(&path).unwrap();
+            path
+        };
+        dir("fe/.git");
+        dir("be/.git");
+        // A worktree or submodule has a `.git` file.
+        std::fs::write(dir("lib").join(".git"), "gitdir: ../x\n").unwrap();
+        dir("docs");
+        dir(".cache/.git");
+        dir("node_modules/pkg/.git");
+        dir("target/.git");
+        dir("apps/web/.git");
+        std::fs::write(root.path().join("file"), "x").unwrap();
+        // Hidden, `node_modules`, `target` and depth-2 repos are skipped; a `.git` file counts.
+        assert_eq!(child_repos(root.path()), ["be", "fe", "lib"]);
+    }
+
+    #[test]
     fn list_respects_gitignore_shows_markers_and_deleted_files() {
         let repo = tempfile::tempdir().unwrap();
         let root = repo.path();
@@ -532,6 +614,73 @@ mod tests {
             Err(ReadError::NotFound)
         ));
         assert!(matches!(read(root, "".into()), Err(ReadError::NotFound)));
+    }
+
+    #[test]
+    fn write_saves_only_over_the_version_that_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "a.txt", b"one\r\n");
+        let read_hash = read(&root.join("a.txt"), "a.txt".into())
+            .unwrap()
+            .hash
+            .unwrap();
+        assert_eq!(read_hash, crate::docs::hash(b"one\r\n"));
+
+        let saved = super::write(&root.join("a.txt"), "two\r\n", &read_hash).unwrap();
+        assert_eq!(
+            (saved.saved, saved.hash.clone()),
+            (true, crate::docs::hash(b"two\r\n"))
+        );
+        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"two\r\n");
+
+        // Someone wrote meanwhile: nothing is written; the disk's hash comes back.
+        std::fs::write(root.join("a.txt"), "agent\n").unwrap();
+        let stale = super::write(&root.join("a.txt"), "mine\n", &saved.hash).unwrap();
+        assert_eq!(
+            (stale.saved, stale.hash.clone()),
+            (false, crate::docs::hash(b"agent\n"))
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "agent\n"
+        );
+        // "Keep mine": the disk's hash overwrites that version.
+        assert!(
+            super::write(&root.join("a.txt"), "mine\n", &stale.hash)
+                .unwrap()
+                .saved
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "mine\n"
+        );
+
+        // Only existing files, at most MAX_BYTES of text.
+        assert!(matches!(
+            super::write(&root.join("new.txt"), "x", "h"),
+            Err(ReadError::NotFound)
+        ));
+        assert!(!root.join("new.txt").exists());
+        assert!(matches!(
+            super::write(root, "x", "h"),
+            Err(ReadError::NotFound)
+        ));
+        let big = "a".repeat(MAX_BYTES as usize + 1);
+        assert!(matches!(
+            super::write(&root.join("a.txt"), &big, &crate::docs::hash(b"mine\n")),
+            Err(ReadError::TooLarge(_))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "mine\n"
+        );
+        // A big file on disk is refused before it is read or hashed.
+        write(root, "huge.txt", &vec![b'a'; MAX_BYTES as usize + 1]);
+        assert!(matches!(
+            super::write(&root.join("huge.txt"), "x", "h"),
+            Err(ReadError::TooLarge(_))
+        ));
     }
 
     #[test]

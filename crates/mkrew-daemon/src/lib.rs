@@ -22,6 +22,7 @@ mod session_log;
 mod settings;
 mod snapshot;
 pub mod spawn;
+mod tabs;
 mod turns;
 mod undo;
 mod usage;
@@ -79,11 +80,22 @@ fn serve(paths: &Paths) -> anyhow::Result<()> {
 
 /// The repo's sample profiles (SPEC §6), copied into the config dir when absent.
 const SAMPLE_PROFILES: &[(&str, &str)] = &[
+    ("bash.toml", include_str!("../../../agents/bash.toml")),
     ("claude.toml", include_str!("../../../agents/claude.toml")),
+    ("cmd.toml", include_str!("../../../agents/cmd.toml")),
     ("codex.toml", include_str!("../../../agents/codex.toml")),
     ("copilot.toml", include_str!("../../../agents/copilot.toml")),
     ("fake.toml", include_str!("../../../agents/fake.toml")),
+    (
+        "git-bash.toml",
+        include_str!("../../../agents/git-bash.toml"),
+    ),
     ("omp.toml", include_str!("../../../agents/omp.toml")),
+    (
+        "powershell.toml",
+        include_str!("../../../agents/powershell.toml"),
+    ),
+    ("pwsh.toml", include_str!("../../../agents/pwsh.toml")),
     ("shell.toml", include_str!("../../../agents/shell.toml")),
 ];
 

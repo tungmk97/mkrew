@@ -1,9 +1,12 @@
-//! Find in the Files viewer (SPEC §12A): the query, its case-insensitive matches in the
-//! opened file's lines, and the current one. Pure and tested headlessly; `main.rs` draws the
-//! bar and `preview::code_view` the highlights.
+//! Find & replace in the Files editor (SPEC §12A): the query, the replacement while the
+//! replace row is shown, the query's case-insensitive matches in the opened file's lines, and
+//! the current one. Pure and tested headlessly; `main.rs` draws the bar and `preview::code_row`
+//! the highlights.
 
 use std::ops::Range;
 use std::rc::Rc;
+
+use crate::text_box::Input;
 
 /// One match: the line (0-based) and the byte range in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +38,9 @@ impl Hits {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TextFind {
-    pub query: String,
+    pub query: Input,
+    /// The replace row's text; `None` = the row is hidden (Ctrl+H shows it).
+    pub replace: Option<Input>,
     hits: Hits,
 }
 
@@ -59,10 +64,16 @@ impl TextFind {
         }
     }
 
-    /// Searches `lines` again (after an edit of the query or a re-read of the file). The
-    /// current match is the first one at or after the previous current position.
+    /// Searches `lines` again (after an edit of the query or the text). The current match is
+    /// the first one at or after the previous current position.
     pub fn search(&mut self, lines: &[String]) {
         let from = self.current().map_or((0, 0), |m| (m.line, m.range.start));
+        self.search_from(lines, from);
+    }
+
+    /// Searches `lines`; the current match is the first at or after `from` (line, byte),
+    /// else the first one.
+    pub fn search_from(&mut self, lines: &[String], from: (usize, usize)) {
         let matches: Vec<Match> = lines
             .iter()
             .enumerate()
@@ -186,7 +197,7 @@ mod tests {
         find.search(&text);
         find.step(true);
         assert_eq!(at(&find), Some((2, 0)));
-        find.query.push('p');
+        find.query.insert("p");
         find.search(&text);
         assert_eq!(find.label(), "2 of 2", "typing on keeps the place");
         find.query = "zz".into();
@@ -197,5 +208,18 @@ mod tests {
         find.query.clear();
         find.search(&text);
         assert_eq!(find.label(), "");
+    }
+
+    #[test]
+    fn a_search_from_a_place_starts_there_and_wraps() {
+        let text = lines(&["ab", "b", "ab"]);
+        let mut find = TextFind {
+            query: "b".into(),
+            ..TextFind::default()
+        };
+        find.search_from(&text, (1, 1));
+        assert_eq!(at(&find), Some((2, 1)));
+        find.search_from(&text, (2, 2));
+        assert_eq!(at(&find), Some((0, 1)), "past the last: the first");
     }
 }

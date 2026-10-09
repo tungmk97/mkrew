@@ -239,7 +239,7 @@ pub fn state_text(state: &RowState) -> String {
 /// any other session its own title.
 pub fn pane_title(session: &Session, ports: &[u16]) -> Option<String> {
     let Some(name) = command_name(session) else {
-        return session.title.clone();
+        return crate::history::title(session).map(str::to_owned);
     };
     if session.state == SessionState::Exited || ports.is_empty() {
         return Some(name.to_owned());
@@ -271,6 +271,7 @@ mod tests {
                 .collect(),
             run_autostart: false,
             default_agent: None,
+            default_shell: None,
             review_globs: None,
             created_at: 0,
             archived: false,
@@ -287,6 +288,7 @@ mod tests {
             agent_profile: "shell".into(),
             kind: SessionKind::Shell,
             title: Some(format!("run:{name}")),
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,

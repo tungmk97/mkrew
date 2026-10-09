@@ -198,6 +198,7 @@ mod tests {
             cols,
             rows: 1,
             lines: vec![],
+            history: vec![],
             cursor: CursorSnapshot {
                 row: 0,
                 col: 0,

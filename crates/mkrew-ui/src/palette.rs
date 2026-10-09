@@ -14,6 +14,7 @@ use crate::history;
 use crate::keymap::{Command, Keymap, KeymapError};
 use crate::quick_open::{Key, match_ranges};
 use crate::split::Direction;
+use crate::text_box::Input;
 
 /// What the window looks like when the palette opens; decides which commands are listed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,10 +183,13 @@ pub fn title(command: Command) -> String {
         Command::CloseTab => "Tabs: Close tab".into(),
         Command::SplitRight => "Panes: Split right".into(),
         Command::SplitDown => "Panes: Split down".into(),
+        Command::SplitAgent => "Panes: New agent pane".into(),
+        Command::SplitShell => "Panes: New shell pane".into(),
         Command::Focus(d) => format!("Panes: Move focus {}", direction(d)),
         Command::Resize(d) => format!("Panes: Resize {}", direction(d)),
         Command::ZoomPane => "Panes: Zoom / unzoom pane".into(),
         Command::ClosePane => "Panes: Close pane".into(),
+        Command::RenamePane => "Panes: Rename pane".into(),
         Command::Copy => "Terminal: Copy".into(),
         Command::Paste => "Terminal: Paste".into(),
         Command::PageUp => "Terminal: Page up".into(),
@@ -205,6 +209,9 @@ pub fn title(command: Command) -> String {
         Command::AddComment => "Comments: Comment on selected lines".into(),
         Command::SendComments => "Comments: Send comments to agent".into(),
         Command::ToggleIgnored => "Files: Toggle ignored files".into(),
+        Command::SaveFile => "Files: Save file".into(),
+        Command::FindInFile => "Files: Find in file".into(),
+        Command::ReplaceInFile => "Files: Replace in file".into(),
         Command::QuickOpen => "Files: Quick open file".into(),
         Command::GitToggleMode => "Git: Toggle Working changes / Against base".into(),
         Command::GitToggleHistory => "Git: Toggle History".into(),
@@ -218,6 +225,7 @@ pub fn title(command: Command) -> String {
         Command::CommandPalette => "Global: Command palette".into(),
         Command::OpenKeymapSettings => "Global: Open keymap settings".into(),
         Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
+        Command::ToggleFullScreen => "Global: Toggle full screen".into(),
     }
 }
 
@@ -232,7 +240,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::NextInbox
         | Command::Peek
         | Command::OpenKeymapSettings
-        | Command::ToggleTheme => true,
+        | Command::ToggleTheme
+        | Command::ToggleFullScreen => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -247,12 +256,15 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::NewTask => context.workspace,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
-        Command::SplitRight | Command::SplitDown => context.workspace && context.tabs > 0,
+        Command::SplitRight | Command::SplitDown | Command::SplitAgent | Command::SplitShell => {
+            context.workspace && context.tabs > 0
+        }
         Command::RenameTab
         | Command::CloseTab
         | Command::Focus(_)
         | Command::Resize(_)
         | Command::ZoomPane
+        | Command::RenamePane
         | Command::ClosePane => on_panes,
         Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
             on_panes && context.terminal
@@ -267,7 +279,10 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::RunTask => in_view(View::Board),
         Command::ToggleDocSource => in_view(View::Docs),
         Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Git),
-        Command::ToggleIgnored => in_view(View::Files),
+        Command::ToggleIgnored
+        | Command::SaveFile
+        | Command::FindInFile
+        | Command::ReplaceInFile => in_view(View::Files),
         Command::GitToggleMode
         | Command::GitToggleHistory
         | Command::GitNextHunk
@@ -442,7 +457,7 @@ fn word_start(chars: &[char], at: usize) -> bool {
 pub struct Palette {
     entries: Vec<Entry>,
     /// Private: every edit must filter again ([`Self::key`], [`Self::insert`]).
-    query: String,
+    query: Input,
     /// Indices into `entries` of the matches, best first, with their matched char indices.
     shown: Vec<(usize, Vec<u32>)>,
     /// Index into the shown rows of the picked one.
@@ -453,7 +468,7 @@ impl Palette {
     pub fn new(entries: Vec<Entry>) -> Self {
         let mut palette = Self {
             entries,
-            query: String::new(),
+            query: Input::default(),
             shown: Vec::new(),
             selected: 0,
         };
@@ -462,7 +477,12 @@ impl Palette {
     }
 
     pub fn query(&self) -> &str {
-        &self.query
+        self.query.as_str()
+    }
+
+    /// Whether Ctrl+A selected the whole query (drawn highlighted).
+    pub fn query_selected(&self) -> bool {
+        self.query.all_selected()
     }
 
     /// Applies a key; Esc, Enter and Ctrl+V are the caller's (close, [`Self::picked`],
@@ -471,10 +491,16 @@ impl Palette {
         match key {
             Key::Move(by) => self.step(by),
             Key::Backspace => {
-                if self.query.pop().is_some() {
+                if self.query.backspace() {
                     self.filter();
                 }
             }
+            Key::DeleteWord => {
+                if self.query.delete_word() {
+                    self.filter();
+                }
+            }
+            Key::SelectAll => self.query.select_all(),
             Key::Insert(text) => self.insert(&text),
             Key::Close | Key::Open | Key::Paste => {}
         }
@@ -482,10 +508,8 @@ impl Palette {
 
     /// Appends typed or pasted text (line breaks dropped) and filters again.
     pub fn insert(&mut self, text: &str) {
-        let before = self.query.len();
-        self.query
-            .extend(text.chars().filter(|c| *c != '\r' && *c != '\n'));
-        if self.query.len() != before {
+        let line: String = text.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+        if self.query.insert(&line) {
             self.filter();
         }
     }
@@ -590,6 +614,7 @@ mod tests {
             run_commands: Vec::new(),
             run_autostart: false,
             default_agent: None,
+            default_shell: None,
             review_globs: None,
             created_at: 0,
             archived,
@@ -606,6 +631,7 @@ mod tests {
             agent_profile: "claude".into(),
             kind: SessionKind::Agent,
             title: title.map(Into::into),
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::default(),
@@ -701,6 +727,7 @@ mod tests {
             Command::NewShellTab,
             Command::CloseTab,
             Command::ClosePane,
+            Command::RenamePane,
             Command::Tab(2),
             Command::NextTab,
             Command::Workspace(2),
@@ -718,6 +745,9 @@ mod tests {
             Command::ToggleDocSource,
             Command::AddComment,
             Command::ToggleIgnored,
+            Command::SaveFile,
+            Command::FindInFile,
+            Command::ReplaceInFile,
         ] {
             assert!(!terminals.contains(&command), "{command:?}");
         }
@@ -748,13 +778,29 @@ mod tests {
             !git.contains(&Command::ClosePane),
             "panes are not on screen"
         );
+        assert!(
+            !git.contains(&Command::RenamePane),
+            "panes are not on screen"
+        );
         assert!(!git.contains(&Command::RunTask));
         assert!(git.contains(&Command::NewShellTab), "shows the terminals");
+        // Like the buttons: from any view (they show Terminals first), once a tab exists.
+        for command in [Command::SplitAgent, Command::SplitShell] {
+            assert!(terminals.contains(&command), "{command:?}");
+            assert!(git.contains(&command), "{command:?}");
+        }
+        let no_tabs = commands(&Context {
+            tabs: 0,
+            ..context(View::Terminals)
+        });
+        assert!(!no_tabs.contains(&Command::SplitAgent));
         assert!(commands(&context(View::Board)).contains(&Command::RunTask));
         let docs = commands(&context(View::Docs));
         assert!(docs.contains(&Command::ToggleDocSource));
         assert!(docs.contains(&Command::SendComments));
         assert!(commands(&context(View::Files)).contains(&Command::ToggleIgnored));
+        assert!(commands(&context(View::Files)).contains(&Command::SaveFile));
+        assert!(commands(&context(View::Files)).contains(&Command::ReplaceInFile));
 
         let lone = commands(&Context {
             workspaces: 1,
@@ -781,7 +827,8 @@ mod tests {
                 Command::NextInbox,
                 Command::Peek,
                 Command::OpenKeymapSettings,
-                Command::ToggleTheme
+                Command::ToggleTheme,
+                Command::ToggleFullScreen
             ]
         );
         assert_eq!(extras(&none), []);
@@ -1018,5 +1065,17 @@ mod tests {
         palette.key(Key::Open);
         palette.key(Key::Close);
         assert_eq!(palette.query(), "vg");
+    }
+
+    #[test]
+    fn the_query_takes_select_all_and_ctrl_backspace() {
+        let mut palette = Palette::new(Vec::new());
+        palette.insert("git push");
+        palette.key(Key::DeleteWord);
+        assert_eq!(palette.query(), "git ");
+        palette.key(Key::SelectAll);
+        assert!(palette.query_selected());
+        palette.key(Key::Insert("view".into()));
+        assert_eq!((palette.query(), palette.query_selected()), ("view", false));
     }
 }

@@ -4,19 +4,19 @@ use std::path::Path;
 use std::sync::Arc;
 
 use mkrew_protocol::{
-    ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams,
-    GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams, GitShowParams,
-    GitStageParams, GitStatusParams, HunkTarget, Outcome, Project,
+    ChangedFile, ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult,
+    GitDiffParams, GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams,
+    GitShowParams, GitStageParams, GitStatusParams, HunkTarget, Outcome, Project, ProjectRef,
 };
 use serde::Serialize;
 use tokio::task::JoinError;
 use ulid::Ulid;
 
-use super::target::Target;
+use super::target::{Target, repo_name};
 use super::{Daemon, ok, store_outcome};
-use crate::docs;
 use crate::git::{GitBackend, Repo};
 use crate::git_view::{self, ViewError};
+use crate::{docs, files};
 
 impl Daemon {
     pub(super) async fn git_status(&self, params: GitStatusParams) -> Outcome {
@@ -27,7 +27,11 @@ impl Daemon {
         }
         // The Git view is open: follow its changes with `git.changed`.
         let target = match self
-            .watched_target(params.project_id, params.worktree_task_id)
+            .watched_target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
             .await
         {
             Ok(target) => target,
@@ -38,6 +42,7 @@ impl Daemon {
             let Target {
                 project: Project { id, base_ref, .. },
                 dir,
+                repo,
                 ..
             } = target;
             git_view::status(
@@ -49,18 +54,26 @@ impl Daemon {
                 params.since.as_deref(),
                 &|| hub.snapshots.tree(&*hub.git, id, &dir),
             )
+            .map(|mut status| {
+                for files in [
+                    &mut status.staged,
+                    &mut status.unstaged,
+                    &mut status.untracked,
+                    &mut status.against_base,
+                ] {
+                    prefix_files(repo.as_deref(), files);
+                }
+                status
+            })
         })
         .await;
         view_outcome("git.status", status)
     }
 
     pub(super) async fn git_diff(&self, params: GitDiffParams) -> Outcome {
-        let Some((path, _)) = docs::relative_path(&params.path) else {
-            let message = format!(
-                "path {:?} must be relative to the project root",
-                params.path
-            );
-            return Outcome::error(ErrorCode::InvalidRequest, message);
+        let path = match project_path(params.repo.as_deref(), &params.path) {
+            Ok(path) => path,
+            Err(outcome) => return outcome,
         };
         if let Some(commit) = params.commit.as_ref().or(params.since.as_ref())
             && let Err(reason) = check_ref(commit)
@@ -68,7 +81,11 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
         let target = match self
-            .target(params.project_id, params.worktree_task_id)
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
             .await
         {
             Ok(target) => target,
@@ -79,6 +96,7 @@ impl Daemon {
             let Target {
                 project: Project { id, base_ref, .. },
                 dir,
+                repo,
                 ..
             } = target;
             let snapshot = || hub.snapshots.tree(&*hub.git, id, &dir);
@@ -91,6 +109,11 @@ impl Daemon {
                 &path,
                 &snapshot,
             )
+            .map(|mut diff| {
+                diff.path = in_repo(repo.as_deref(), &diff.path);
+                diff.old_path = diff.old_path.map(|old| in_repo(repo.as_deref(), &old));
+                diff
+            })
         })
         .await;
         view_outcome("git.diff", diff)
@@ -100,14 +123,16 @@ impl Daemon {
     /// unstaged (stage) or staged (unstage) diff applied to the index.
     pub(super) async fn git_stage(&self, params: GitStageParams, unstage: bool) -> Outcome {
         let method = if unstage { "git.unstage" } else { "git.stage" };
-        let paths = match relative_paths(&params.paths) {
+        let paths = match relative_paths(&params.paths)
+            .and_then(|paths| repo_paths(params.repo.as_deref(), paths))
+        {
             Ok(paths) => paths,
             Err(outcome) => return outcome,
         };
         let hunk = match params.hunk {
             Some(HunkTarget { path, hunk }) if paths.is_empty() => {
-                match relative_paths(std::slice::from_ref(&path)) {
-                    Ok(mut path) => Some((path.remove(0), hunk)),
+                match project_path(params.repo.as_deref(), &path) {
+                    Ok(path) => Some((path, hunk)),
                     Err(outcome) => return outcome,
                 }
             }
@@ -119,7 +144,7 @@ impl Daemon {
         };
         self.git_change(
             method,
-            (params.project_id, params.worktree_task_id),
+            (params.project_id, params.worktree_task_id, params.repo),
             move |git, dir, repo| match &hunk {
                 Some((path, hunk)) => {
                     let patch = mkrew_core::git::hunk_patch(path, hunk);
@@ -139,12 +164,14 @@ impl Daemon {
             let message = "git.discard loses changes: it needs confirm: true";
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
-        let paths = match relative_paths(&params.paths) {
+        let paths = match relative_paths(&params.paths)
+            .and_then(|paths| repo_paths(params.repo.as_deref(), paths))
+        {
             Ok(paths) if !paths.is_empty() => paths,
             Ok(_) => return Outcome::error(ErrorCode::InvalidRequest, "git.discard needs paths"),
             Err(outcome) => return outcome,
         };
-        let target = (params.project_id, params.worktree_task_id);
+        let target = (params.project_id, params.worktree_task_id, params.repo);
         self.git_change("git.discard", target, move |git, dir, _| {
             let mut tracked = Vec::new();
             let mut untracked = Vec::new();
@@ -170,7 +197,7 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
         let message = params.message;
-        let target = (params.project_id, params.worktree_task_id);
+        let target = (params.project_id, params.worktree_task_id, params.repo);
         self.git_change("git.commit", target, move |git, dir, _| {
             git.commit(dir, &message)
                 .map(|commit| GitCommitResult { commit })
@@ -180,19 +207,21 @@ impl Daemon {
 
     /// `git.log`: newest first, the whole folder or one path in it.
     pub(super) async fn git_log(&self, params: GitLogParams) -> Outcome {
-        let path = match params.path.as_deref().map(docs::relative_path) {
+        let path = match params
+            .path
+            .as_deref()
+            .map(|path| project_path(params.repo.as_deref(), path))
+        {
             None => None,
-            Some(Some((path, _))) => Some(path),
-            Some(None) => {
-                let message = format!(
-                    "path {:?} must be relative to the project root",
-                    params.path.unwrap_or_default()
-                );
-                return Outcome::error(ErrorCode::InvalidRequest, message);
-            }
+            Some(Ok(path)) => Some(path),
+            Some(Err(outcome)) => return outcome,
         };
         let dir = match self
-            .target(params.project_id, params.worktree_task_id)
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
             .await
         {
             Ok(target) => target.dir,
@@ -211,16 +240,24 @@ impl Daemon {
         if let Err(reason) = check_ref(&params.commit) {
             return Outcome::error(ErrorCode::InvalidRequest, reason);
         }
-        let dir = match self
-            .target(params.project_id, params.worktree_task_id)
+        let target = match self
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
             .await
         {
-            Ok(target) => target.dir,
+            Ok(target) => target,
             Err(outcome) => return outcome,
         };
+        let (dir, repo) = (target.dir, target.repo);
         let (git, cache) = (Arc::clone(&self.git), Arc::clone(&self.git_cache));
         let detail = tokio::task::spawn_blocking(move || {
-            git_view::show(&*git, &cache, &dir, &params.commit)
+            git_view::show(&*git, &cache, &dir, &params.commit).map(|mut detail| {
+                prefix_files(repo.as_deref(), &mut detail.files);
+                detail
+            })
         })
         .await;
         view_outcome("git.show", detail)
@@ -230,7 +267,7 @@ impl Daemon {
     /// its upstream, never forced). Both may take long; other requests are not held up.
     pub(super) async fn git_remote(&self, params: GitRemoteParams, push: bool) -> Outcome {
         let method = if push { "git.push" } else { "git.fetch" };
-        let target = (params.project_id, params.worktree_task_id);
+        let target = (params.project_id, params.worktree_task_id, params.repo);
         self.git_change(method, target, move |git, dir, _| {
             if push {
                 git_view::push(git, dir)
@@ -248,10 +285,13 @@ impl Daemon {
     async fn git_change<T: Serialize + Send + 'static, E: Into<ViewError>>(
         &self,
         method: &str,
-        (project_id, worktree_task_id): (Ulid, Option<Ulid>),
+        (project_id, worktree_task_id, repo): (Ulid, Option<Ulid>, Option<String>),
         change: impl FnOnce(&dyn GitBackend, &Path, &Repo) -> Result<T, E> + Send + 'static,
     ) -> Outcome {
-        let dir = match self.target(project_id, worktree_task_id).await {
+        let dir = match self
+            .target(project_id, worktree_task_id, repo.as_deref())
+            .await
+        {
             Ok(target) => target.dir,
             Err(outcome) => return outcome,
         };
@@ -287,6 +327,30 @@ impl Daemon {
         }
         store_outcome(updated.map(|_| ()))
     }
+
+    /// `git.repos` (ADR 0029): `""` when the project folder is in a git repository, then each
+    /// direct child folder holding `.git`. Read on every call: folders come and go.
+    pub(super) async fn git_repos(&self, params: ProjectRef) -> Outcome {
+        let target = match self.target(params.project_id, None, None).await {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let git = Arc::clone(&self.git);
+        let repos = tokio::task::spawn_blocking(move || {
+            let root = target.dir;
+            let in_repo = matches!(git.repo(&root), Ok(Some(_)));
+            let mut repos = files::child_repos(&root);
+            if in_repo {
+                repos.insert(0, String::new());
+            }
+            repos
+        })
+        .await;
+        match repos {
+            Ok(repos) => ok(&repos),
+            Err(e) => Outcome::error(ErrorCode::Internal, format!("git.repos failed: {e}")),
+        }
+    }
 }
 
 /// Not a repo / no base / nothing to push to = `invalid_state`; unknown commit = `not_found`;
@@ -313,20 +377,66 @@ fn view_outcome<T: Serialize>(
     }
 }
 
-/// The project-relative, `/`-separated form of each path; `invalid_request` for an absolute
+/// The project-relative, `/`-separated form of `path`; `invalid_request` for an absolute
 /// path or one leaving the project.
-fn relative_paths(paths: &[String]) -> Result<Vec<String>, Outcome> {
-    paths
-        .iter()
-        .map(|path| {
-            docs::relative_path(path)
-                .map(|(path, _)| path)
-                .ok_or_else(|| {
-                    let message = format!("path {path:?} must be relative to the project root");
-                    Outcome::error(ErrorCode::InvalidRequest, message)
-                })
+fn relative(path: &str) -> Result<String, Outcome> {
+    docs::relative_path(path)
+        .map(|(path, _)| path)
+        .ok_or_else(|| {
+            let message = format!("path {path:?} must be relative to the project root");
+            Outcome::error(ErrorCode::InvalidRequest, message)
         })
+}
+
+/// [`relative`] for each of `paths`.
+fn relative_paths(paths: &[String]) -> Result<Vec<String>, Outcome> {
+    paths.iter().map(|path| relative(path)).collect()
+}
+
+/// [`relative`], then made repo-relative by [`repo_path`].
+fn project_path(repo: Option<&str>, path: &str) -> Result<String, Outcome> {
+    relative(path).and_then(|path| repo_path(repo, path))
+}
+
+/// One request path made repo-relative (ADR 0029): it must lie inside `repo` and loses its
+/// `repo/` prefix before git sees it; `invalid_request` otherwise. No repo: unchanged.
+fn repo_path(repo: Option<&str>, path: String) -> Result<String, Outcome> {
+    let Some(repo) = repo_name(repo)? else {
+        return Ok(path);
+    };
+    match path
+        .strip_prefix(repo.as_str())
+        .and_then(|rest| rest.strip_prefix('/'))
+    {
+        Some(inner) if docs::relative_path(inner).is_some() => Ok(inner.to_owned()),
+        _ => {
+            let message = format!("path {path:?} is not in repo {repo:?}");
+            Err(Outcome::error(ErrorCode::InvalidRequest, message))
+        }
+    }
+}
+
+/// [`repo_path`] for each of `paths`.
+fn repo_paths(repo: Option<&str>, paths: Vec<String>) -> Result<Vec<String>, Outcome> {
+    paths
+        .into_iter()
+        .map(|path| repo_path(repo, path))
         .collect()
+}
+
+/// A reply path back to project-relative (ADR 0029): `repo/` in front.
+fn in_repo(repo: Option<&str>, path: &str) -> String {
+    repo.map_or_else(|| path.to_owned(), |repo| format!("{repo}/{path}"))
+}
+
+/// [`in_repo`] for the paths of each file.
+fn prefix_files(repo: Option<&str>, files: &mut [ChangedFile]) {
+    for file in files {
+        file.path = in_repo(repo, &file.path);
+        if let Some(old) = &mut file.old_path {
+            *old = in_repo(repo, old);
+        }
+    }
 }
 
 /// Rejects what can never be a ref and would change a git command line: a leading `-` (read
@@ -345,7 +455,7 @@ fn check_ref(base: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::check_ref;
+    use super::{check_ref, repo_paths};
 
     #[test]
     fn base_refs_that_git_could_read_as_options_are_rejected() {
@@ -354,6 +464,30 @@ mod tests {
         }
         for bad in ["-f", "--force", "a b", "a\tb", "a\nb"] {
             assert!(check_ref(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn repo_paths_must_lie_in_the_repo_and_lose_its_prefix() {
+        let paths = |p: &[&str]| p.iter().map(|p| (*p).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            repo_paths(None, paths(&["a/b"])).ok(),
+            Some(paths(&["a/b"]))
+        );
+        assert_eq!(
+            repo_paths(Some("fe"), paths(&["fe/src/a.ts", "fe/x"])).ok(),
+            Some(paths(&["src/a.ts", "x"]))
+        );
+        // The repo folder itself, a sibling sharing its prefix, another repo, the root.
+        for bad in ["fe", "fe/", "fex/a", "be/a", "a", "fe//x"] {
+            assert!(repo_paths(Some("fe"), paths(&[bad])).is_err(), "{bad}");
+        }
+        // A drive-letter component is only invalid where `relative_path` rejects it.
+        #[cfg(windows)]
+        assert!(repo_paths(Some("fe"), paths(&["fe/C:/x"])).is_err());
+        // The repo name is checked too.
+        for bad in ["../x", "fe/src", ".git", "FE/.git"] {
+            assert!(repo_paths(Some(bad), paths(&["x/a"])).is_err(), "{bad}");
         }
     }
 }

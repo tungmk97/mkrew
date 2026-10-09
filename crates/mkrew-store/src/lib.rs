@@ -28,10 +28,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0011_run_commands.sql"),
     include_str!("../migrations/0012_session_hidden.sql"),
     include_str!("../migrations/0013_project_color.sql"),
+    include_str!("../migrations/0014_project_default_shell.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
-const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color";
+const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -74,6 +75,8 @@ pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 pub struct ProjectChanges<'a> {
     pub name: Option<&'a str>,
     pub default_agent: Option<Option<&'a str>>,
+    /// A shell profile id (checked by the daemon); `Some(None)` clears it.
+    pub default_shell: Option<Option<&'a str>>,
     /// Replaces the whole list (already checked by the caller).
     pub run_commands: Option<&'a [RunCommand]>,
     pub run_autostart: Option<bool>,
@@ -139,6 +142,7 @@ impl Store {
             run_commands: Vec::new(),
             run_autostart: false,
             default_agent: None,
+            default_shell: None,
             review_globs: None,
             created_at: now_ms(),
             archived: false,
@@ -280,6 +284,9 @@ impl Store {
         if let Some(default_agent) = changes.default_agent {
             project.default_agent = default_agent.map(str::to_owned);
         }
+        if let Some(default_shell) = changes.default_shell {
+            project.default_shell = default_shell.map(str::to_owned);
+        }
         if let Some(run_autostart) = changes.run_autostart {
             project.run_autostart = run_autostart;
         }
@@ -288,13 +295,14 @@ impl Store {
         }
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5 WHERE id = ?1",
+            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6 WHERE id = ?1",
             params![
                 id.to_string(),
                 project.name,
                 project.default_agent,
                 project.run_autostart,
-                project.color
+                project.color,
+                project.default_shell
             ],
         )?;
         if let Some(commands) = changes.run_commands {
@@ -1348,6 +1356,7 @@ struct RawProject {
     base_ref: Option<String>,
     run_autostart: bool,
     color: Option<String>,
+    default_shell: Option<String>,
 }
 
 impl RawProject {
@@ -1363,6 +1372,7 @@ impl RawProject {
             base_ref: row.get(7)?,
             run_autostart: row.get(8)?,
             color: row.get(9)?,
+            default_shell: row.get(10)?,
         })
     }
 
@@ -1380,6 +1390,7 @@ impl RawProject {
             run_commands: Vec::new(),
             run_autostart: self.run_autostart,
             default_agent: self.default_agent,
+            default_shell: self.default_shell,
             review_globs,
             created_at: self.created_at,
             archived: self.archived,
@@ -1439,6 +1450,7 @@ impl RawSession {
             agent_profile: self.agent_profile,
             kind: parse_kind(self.kind)?,
             title: self.title,
+            terminal_title: None,
             native_session_id: self.native_session_id,
             state: parse_state(self.state)?,
             state_source: parse_source(self.state_source)?,

@@ -189,7 +189,10 @@ fn spawn_output(
                 Frame::Message(Message::Event(Event::SessionSnapshot(event)))
                     if event.session_id == session_id =>
                 {
-                    write_stdout(&detached, paint(&event.snapshot).as_bytes());
+                    // The history is already in the terminal's scrollback from the first attach.
+                    let mut snapshot = event.snapshot;
+                    snapshot.history.clear();
+                    write_stdout(&detached, paint(&snapshot).as_bytes());
                 }
                 Frame::Message(Message::Event(Event::SessionExited(event)))
                     if event.session_id == session_id =>

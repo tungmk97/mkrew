@@ -3,11 +3,13 @@
 //! Paths are relative to the project root with `/` separators. Commit ids are full hex
 //! hashes. `worktree_task_id` (SPEC §20E.1): work on that task's worktree (the project's
 //! folder inside it) instead of the project folder; paths are then relative to that folder.
+//! `repo` (ADR 0029): run in that direct child folder of the project folder, a git repository
+//! of its own; paths in requests and replies stay relative to the project folder (`fe/src/a.ts`).
 
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-/// Params of requests that only name a project (`git.fetch`, `git.push`).
+/// Params of requests that only name a project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectRef {
     pub project_id: Ulid,
@@ -19,6 +21,10 @@ pub struct GitRemoteParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
 }
 
 // ---- git ----
@@ -39,6 +45,10 @@ pub struct GitStatusParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     #[serde(default)]
     pub mode: GitMode,
     /// [`GitMode::Base`] only: compare from this commit instead of the merge-base (a task's
@@ -113,6 +123,10 @@ pub struct GitDiffParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     pub path: String,
     #[serde(default)]
     pub mode: GitMode,
@@ -188,6 +202,10 @@ pub struct GitStageParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     #[serde(default)]
     pub paths: Vec<String>,
     #[serde(default)]
@@ -207,6 +225,10 @@ pub struct GitDiscardParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     pub paths: Vec<String>,
     #[serde(default)]
     pub confirm: bool,
@@ -218,6 +240,10 @@ pub struct GitCommitParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     pub message: String,
 }
 
@@ -232,6 +258,10 @@ pub struct GitLogParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     #[serde(default = "GitLogParams::default_limit")]
     pub limit: u32,
     /// Only commits touching this path.
@@ -268,6 +298,10 @@ pub struct GitShowParams {
     pub project_id: Ulid,
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     pub commit: String,
 }
 
@@ -314,6 +348,10 @@ pub struct AiGenerateParams {
     /// Run in this task's worktree instead of the project folder.
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
+    /// A direct child folder of the project folder that is its own git repository (ADR 0029);
+    /// `None` = the project folder. Not with `worktree_task_id`.
+    #[serde(default)]
+    pub repo: Option<String>,
     /// Agent profile id; `None` = the project's default agent.
     #[serde(default)]
     pub agent_profile: Option<String>,
@@ -395,6 +433,34 @@ pub struct FsContent {
     pub too_large: bool,
     /// Syntax name guessed from the extension (e.g. `rust`); `None` = plain text.
     pub language: Option<String>,
+    /// Opaque hash of the bytes read, `Some` exactly when `content` is: `fs.write` saves only
+    /// over this version (ADR 0028).
+    #[serde(default)]
+    pub hash: Option<String>,
+}
+
+/// `fs.write` (ADR 0028): replaces the text of an existing file of the project (or task
+/// worktree) if it still has the version that was read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsWriteParams {
+    pub project_id: Ulid,
+    #[serde(default)]
+    pub worktree_task_id: Option<Ulid>,
+    pub path: String,
+    /// The whole new text, line endings as they should be on disk.
+    pub content: String,
+    /// `FsContent::hash` of the version the edit started from.
+    pub expected_hash: String,
+}
+
+/// `fs.write` result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsWritten {
+    /// `false`: the file on disk no longer has `expected_hash`, so nothing was written.
+    pub saved: bool,
+    /// The hash of the file on disk now: the new text's if saved, else the other version's
+    /// (sending it as `expected_hash` overwrites that version: "Keep mine").
+    pub hash: String,
 }
 
 /// `fs.find`: quick open over the project's files.
@@ -487,12 +553,14 @@ mod tests {
             Request::GitStatus(GitStatusParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: Some("fe".into()),
                 mode: GitMode::Base,
                 since: Some("abc".into()),
             }),
             Request::GitDiff(GitDiffParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 path: "src/a.rs".into(),
                 mode: GitMode::Working,
                 staged: true,
@@ -502,12 +570,14 @@ mod tests {
             Request::GitStage(GitStageParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 paths: vec!["a".into()],
                 hunk: None,
             }),
             Request::GitUnstage(GitStageParams {
                 project_id,
                 worktree_task_id: None,
+                repo: None,
                 paths: vec![],
                 hunk: Some(HunkTarget {
                     path: "a".into(),
@@ -517,25 +587,30 @@ mod tests {
             Request::GitDiscard(GitDiscardParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 paths: vec!["a".into()],
                 confirm: true,
             }),
             Request::GitCommit(GitCommitParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 message: "feat: x\n\nbody".into(),
             }),
             Request::GitLog(GitLogParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 limit: 10,
                 path: Some("a".into()),
             }),
             Request::GitShow(GitShowParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 commit: "abc".into(),
             }),
+            Request::GitRepos(ProjectRef { project_id }),
             Request::GitSetBase(GitSetBaseParams {
                 project_id,
                 base_ref: Some("develop".into()),
@@ -543,10 +618,12 @@ mod tests {
             Request::GitFetch(GitRemoteParams {
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
             }),
             Request::GitPush(GitRemoteParams {
                 project_id,
                 worktree_task_id: None,
+                repo: None,
             }),
             Request::FsList(FsListParams {
                 project_id,
@@ -559,6 +636,13 @@ mod tests {
                 worktree_task_id: wt,
                 path: "src/a.rs".into(),
             }),
+            Request::FsWrite(FsWriteParams {
+                project_id,
+                worktree_task_id: wt,
+                path: "src/a.rs".into(),
+                content: "fn a() {}\n".into(),
+                expected_hash: "0123456789abcdef".into(),
+            }),
             Request::FsFind(FsFindParams {
                 project_id,
                 worktree_task_id: wt,
@@ -569,6 +653,7 @@ mod tests {
                 generation_id: sid(),
                 project_id,
                 worktree_task_id: wt,
+                repo: None,
                 agent_profile: Some("claude".into()),
                 kind: AiKind::EnhancePrompt,
                 input: "fix it".into(),
@@ -583,11 +668,13 @@ mod tests {
             "git.commit",
             "git.log",
             "git.show",
+            "git.repos",
             "git.set_base",
             "git.fetch",
             "git.push",
             "fs.list",
             "fs.read",
+            "fs.write",
             "fs.find",
             "ai.generate",
         ];
@@ -704,9 +791,23 @@ mod tests {
             binary: true,
             too_large: false,
             language: None,
+            hash: None,
         };
         let decoded: FsContent = Outcome::ok(&content).unwrap().into_result().unwrap();
         assert_eq!(decoded, content);
+        // A v26 daemon's answer has no hash: the file shows, but it cannot be saved.
+        let old: FsContent = serde_json::from_value(json!({
+            "path": "a", "content": "x", "size": 1, "binary": false, "too_large": false,
+            "language": null
+        }))
+        .unwrap();
+        assert_eq!(old.hash, None);
+        let written = FsWritten {
+            saved: false,
+            hash: "abc".into(),
+        };
+        let decoded: FsWritten = Outcome::ok(&written).unwrap().into_result().unwrap();
+        assert_eq!(decoded, written);
         let entry: FsEntry =
             serde_json::from_value(json!({"name": "src", "path": "src", "is_dir": true})).unwrap();
         assert_eq!(

@@ -153,25 +153,11 @@ impl Daemon {
 
     /// Puts `new` where `old` was in every tab layout of the project.
     fn replace_in_tabs(&self, project_id: Ulid, old: Ulid, new: Ulid) {
-        let updated = {
-            // One lock, so a concurrent `tab.set_layout` is not overwritten.
-            let store = self.store();
-            store.list_tabs(project_id).and_then(|tabs| {
-                tabs.into_iter()
-                    .filter_map(|tab| {
-                        let layout = replace_session(&tab.layout, old, new)?;
-                        Some(store.set_tab_layout(tab.id, &layout))
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-        };
-        match updated {
-            Ok(tabs) => {
-                for tab in tabs {
-                    let _ = self.hub.events.send(Event::TabUpdated(tab));
-                }
-            }
-            Err(e) => tracing::warn!(%project_id, "resumed session not placed in its tab: {e}"),
+        if let Err(e) = self
+            .hub
+            .edit_tabs(project_id, |l| replace_session(l, old, new))
+        {
+            tracing::warn!(%project_id, "resumed session not placed in its tab: {e}");
         }
     }
 
@@ -239,6 +225,7 @@ mod tests {
             agent_profile: "fake".into(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state: SessionState::Exited,
             state_source: StateSource::Daemon,

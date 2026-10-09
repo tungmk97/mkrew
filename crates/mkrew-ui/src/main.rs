@@ -5,6 +5,7 @@
 // No console window next to the app in release builds (debug keeps stderr visible).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -13,11 +14,12 @@ use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
 use gpui::{
-    AnyView, App, Bounds, Context, CursorStyle, DispatchPhase, DragMoveEvent, Entity,
-    ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent, MouseButton,
-    MouseUpEvent, PathPromptOptions, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
-    StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowOptions, anchored, canvas, deferred, div, px, relative, rgb, size, uniform_list,
+    AnyView, App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, DragMoveEvent,
+    Entity, ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent,
+    ListHorizontalSizingBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PathPromptOptions, Pixels, PromptLevel, ScrollHandle, ScrollStrategy, SharedString, StyledText,
+    Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowOptions,
+    anchored, canvas, deferred, div, px, relative, rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
@@ -25,10 +27,10 @@ use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
-    FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, GitCommitResult, GitMarker, GitMode,
-    GitStatus, Outcome, Project, ProjectAddParams, ProjectRef, ProjectUpdateParams,
-    RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams, Session,
-    SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
+    FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
+    GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project, ProjectAddParams, ProjectRef,
+    ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
+    Session, SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
     SessionListParams, SessionPortsEvent, SessionReadParams, SessionReadResult, SessionRef,
     SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionTurnEvent,
     SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabRef,
@@ -44,6 +46,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
+use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
@@ -75,7 +78,7 @@ use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, on_screen, rename_params};
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::TerminalPane;
-use mkrew_ui::text_box;
+use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
 use mkrew_ui::turn::{self, Turns};
@@ -177,6 +180,33 @@ enum Status {
     ListFailed(String),
 }
 
+/// What runs after unsaved Files changes were saved or dropped.
+type AfterSave = Box<dyn FnOnce(&mut Shell, &mut Window, &mut Context<'_, Shell>)>;
+
+/// One choice of a chooser row ([`Shell::chip_row`]); `pick` goes back to its `on_pick`.
+struct Chip<P> {
+    id: SharedString,
+    label: SharedString,
+    tip: String,
+    active: bool,
+    pick: P,
+}
+
+/// What the inline title field edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenameTarget {
+    Tab(Ulid),
+    /// A pane's session (`session.rename`).
+    Session(Ulid),
+}
+
+/// The inline title field: what it renames and the draft.
+#[derive(Debug, Clone)]
+struct Renaming {
+    target: RenameTarget,
+    draft: Input,
+}
+
 struct Shell {
     status: Status,
     /// Dropping it closes the connection.
@@ -211,8 +241,8 @@ struct Shell {
     painted: async_channel::Sender<()>,
     /// Focused while no pane is, so window-level actions (Add workspace) still dispatch.
     focus_handle: FocusHandle,
-    /// The tab whose title is being edited inline, and the draft title.
-    renaming: Option<(Ulid, String)>,
+    /// The tab or pane title being edited inline.
+    renaming: Option<Renaming>,
     /// Focused while renaming; losing it commits the draft.
     rename_focus: FocusHandle,
     _rename_blur: Subscription,
@@ -302,12 +332,21 @@ struct Shell {
     files_scroll: UniformListScrollHandle,
     /// The Files viewer's find field (outside `FILES_CONTEXT`'s arrow keys).
     file_find_focus: FocusHandle,
+    /// The Files find bar's replace field.
+    file_replace_focus: FocusHandle,
     /// Keeps the current find match of the Files viewer in view.
     file_code_scroll: UniformListScrollHandle,
+    /// The Files editor (ADR 0028): typing goes there while it has focus.
+    file_editor_focus: FocusHandle,
+    /// Where the editor's text starts on screen (set while painting), for clicks.
+    file_text_left: Rc<Cell<Pixels>>,
     /// The Docs list filter field.
     docs_filter_focus: FocusHandle,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
+    /// The `git.repos` of each workspace whose Git view was shown (ADR 0029), for the "Repo"
+    /// chooser; kept in memory only.
+    git_repos: HashMap<Ulid, Vec<String>>,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
     git_focus: FocusHandle,
     /// The commit box of the shown Git view (outside `GIT_CONTEXT`, so typing never stages).
@@ -401,6 +440,12 @@ impl Shell {
         // Coming back to the window views the focused pane (a done session leaves the Inbox).
         cx.observe_window_activation(window, |_, _, cx| cx.notify())
             .detach();
+        // Unsaved Files changes (§2.5): the close button asks first.
+        let this = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            this.update(cx, |shell, cx| shell.window_should_close(window, cx))
+                .unwrap_or(true)
+        });
         // Spinner and elapsed/idle times move on their own (§11).
         cx.spawn_in(window, async move |this, cx| {
             let mut last = status::now_ms();
@@ -633,9 +678,13 @@ impl Shell {
             files_focus: cx.focus_handle(),
             files_scroll: UniformListScrollHandle::new(),
             file_find_focus: cx.focus_handle(),
+            file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),
             file_code_scroll: UniformListScrollHandle::new(),
+            file_editor_focus: cx.focus_handle(),
+            file_text_left: Rc::default(),
             git: HashMap::new(),
+            git_repos: HashMap::new(),
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
@@ -1137,6 +1186,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if let Some(kind) = start
+            && self.ask_for_default(project_id, kind, window, cx)
+        {
+            return;
+        }
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -1479,13 +1533,19 @@ impl Shell {
                 }
             }
             quick_open::Key::Backspace => {
-                docs.filter.pop();
+                docs.filter.backspace();
             }
+            quick_open::Key::DeleteWord => {
+                docs.filter.delete_word();
+            }
+            quick_open::Key::SelectAll => docs.filter.select_all(),
             quick_open::Key::Paste => {
                 docs.filter
-                    .push_str(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
+                    .insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
-            quick_open::Key::Insert(text) => docs.filter.push_str(&text),
+            quick_open::Key::Insert(text) => {
+                docs.filter.insert(&text);
+            }
         }
         cx.notify();
     }
@@ -1603,6 +1663,21 @@ impl Shell {
         if self.files_view(project_id).worktree_task_id == target {
             return;
         }
+        if self
+            .files
+            .get(&project_id)
+            .and_then(FilesView::unsaved)
+            .is_some()
+        {
+            return self.leave_file(
+                project_id,
+                Box::new(move |shell, window, cx| {
+                    shell.set_files_target(project_id, target, window, cx);
+                }),
+                window,
+                cx,
+            );
+        }
         self.files
             .insert(project_id, FilesView::new(project_id, target));
         self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -1697,17 +1772,22 @@ impl Shell {
         }));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
-            let code = match read.await {
-                Ok(content) => Ok(background.spawn(async move { Code::new(&content) }).await),
+            let read = match read.await {
+                Ok(content) => Ok(background
+                    .spawn(async move {
+                        let code = Code::new(&content);
+                        (content, code)
+                    })
+                    .await),
                 Err(error) => Err(format!("{error:#}")),
             };
             let _ = this.update_in(cx, |shell, window, cx| {
-                if let Err(error) = &code {
+                if let Err(error) = &read {
                     tracing::warn!(%project_id, path, "fs.read failed: {error}");
                 }
                 let again = shell
                     .files_at(project_id, target)
-                    .and_then(|view| view.read(&path, code));
+                    .and_then(|view| view.read(&path, read));
                 if let Some(path) = again {
                     shell.read_file(project_id, path, window, cx);
                 }
@@ -1738,6 +1818,15 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         window.focus(&self.files_focus, cx);
+        if self.files_view(project_id).leaves_unsaved(path) {
+            let path = path.to_owned();
+            return self.leave_file(
+                project_id,
+                Box::new(move |shell, window, cx| shell.click_file(project_id, &path, window, cx)),
+                window,
+                cx,
+            );
+        }
         let requests = self.files_view(project_id).click(path);
         self.files_requests(project_id, requests, window, cx);
     }
@@ -1754,6 +1843,11 @@ impl Shell {
             return;
         };
         cx.stop_propagation();
+        if key == files_view::Key::Enter
+            && let Some(cursor) = self.files_view(project_id).enter_target()
+        {
+            return self.click_file(project_id, &cursor, window, cx);
+        }
         let view = self.files_view(project_id);
         let requests = view.key(key);
         let cursor = view.cursor.clone();
@@ -1767,23 +1861,26 @@ impl Shell {
         self.files_requests(project_id, requests, window, cx);
     }
 
-    /// Ctrl+Shift+F / "Find" in the Files view: opens the find bar over the opened file, or
-    /// gives it the keyboard again.
-    fn open_file_find(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// Ctrl+F / Ctrl+Shift+F / "Find" (or Ctrl+H for `replace`) in the Files view: opens the
+    /// find bar over the opened file and gives its field the keyboard.
+    fn open_file_find(&mut self, replace: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(project_id) = self.workspace else {
             return;
         };
-        let view = self.files_view(project_id);
-        if view.file.is_none() {
+        if !self.files_view(project_id).open_find(replace) {
             return;
         }
-        view.find.get_or_insert_with(TextFind::default);
-        window.focus(&self.file_find_focus, cx);
-        cx.notify();
+        let field = if replace {
+            &self.file_replace_focus
+        } else {
+            &self.file_find_focus
+        };
+        window.focus(field, cx);
+        self.reveal_file_match(project_id, cx);
     }
 
-    /// Typing edits the query; Enter / Shift+Enter go to the next / previous match; Esc
-    /// closes the bar.
+    /// Typing edits the query; Enter / Shift+Enter go to the next / previous match; Tab goes
+    /// to the replace field when it is shown; Ctrl+Alt+Enter replaces all; Esc closes the bar.
     fn file_find_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -1794,36 +1891,41 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
-        if task_dialog::dialog_key(&event.keystroke) == Some(DialogKey::Paste) {
-            if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                let text = text.replace(['\r', '\n'], " ");
-                self.edit_file_find(project_id, |query| query.push_str(&text), cx);
+        let keystroke = &event.keystroke;
+        let m = keystroke.modifiers;
+        match keystroke.key.as_str() {
+            "enter" if m.control && m.alt => {
+                return self.replace_all_in_file(project_id, window, cx);
             }
+            "tab" if !m.control && !m.alt => {
+                // Tab / Shift+Tab: to the replace field when it is shown.
+                let replacing = (self.files_view(project_id).find.as_ref())
+                    .is_some_and(|find| find.replace.is_some());
+                if replacing {
+                    window.focus(&self.file_replace_focus, cx);
+                    cx.notify();
+                }
+                return;
+            }
+            _ => {}
+        }
+        if let Some(edit) = field_edit(keystroke, cx) {
+            self.edit_file_find(project_id, |query| edit.apply(query), cx);
             return;
         }
-        match find_key(&event.keystroke) {
+        match find_key(keystroke) {
             Some(FindKey::Close) => self.close_file_find(project_id, window, cx),
             // The terminal's names: Enter = "older" = the next match here.
             Some(FindKey::Older) => self.step_file_find(project_id, true, cx),
             Some(FindKey::Newer) => self.step_file_find(project_id, false, cx),
-            Some(FindKey::Backspace) => self.edit_file_find(
-                project_id,
-                |query| {
-                    query.pop();
-                },
-                cx,
-            ),
-            Some(FindKey::Insert(text)) => {
-                self.edit_file_find(project_id, |query| query.push_str(&text), cx);
-            }
-            None => {}
+            _ => {}
         }
     }
 
     fn edit_file_find(
         &mut self,
         project_id: Ulid,
-        edit: impl FnOnce(&mut String),
+        edit: impl FnOnce(&mut Input),
         cx: &mut Context<'_, Self>,
     ) {
         let view = self.files_view(project_id);
@@ -1842,18 +1944,15 @@ impl Shell {
         self.reveal_file_match(project_id, cx);
     }
 
-    /// Scrolls to the current match and selects its line (so "Open in Zed" goes there).
+    /// Scrolls to the current match and selects it in the editor.
     fn reveal_file_match(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         let view = self.files_view(project_id);
-        let line = view
-            .find
-            .as_ref()
-            .and_then(TextFind::current)
-            .map(|m| m.line);
-        if let Some(line) = line {
-            view.line = u32::try_from(line + 1).ok();
+        let found = view.find.as_ref().and_then(TextFind::current).cloned();
+        if let (Some(found), Some(editor)) = (found, view.editor_mut()) {
+            let (start, end) = (found.range.start, found.range.end);
+            editor.select(Pos::new(found.line, start)..Pos::new(found.line, end));
             self.file_code_scroll
-                .scroll_to_item(line, ScrollStrategy::Center);
+                .scroll_to_item(found.line, ScrollStrategy::Center);
         }
         cx.notify();
     }
@@ -1865,8 +1964,314 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.files_view(project_id).find = None;
-        window.focus(&self.files_focus, cx);
+        window.focus(&self.file_editor_focus, cx);
         cx.notify();
+    }
+
+    /// Keys of the replace field:
+    /// - typing edits the replacement;
+    /// - Enter replaces the current match and goes to the next;
+    /// - Ctrl+Alt+Enter replaces all;
+    /// - Tab goes back to the find field;
+    /// - Esc closes the bar.
+    fn file_replace_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let keystroke = &event.keystroke;
+        let m = keystroke.modifiers;
+        match keystroke.key.as_str() {
+            "enter" if m.control && m.alt => {
+                return self.replace_all_in_file(project_id, window, cx);
+            }
+            "enter" if !m.shift && !m.control => {
+                return self.replace_in_file(project_id, window, cx);
+            }
+            "tab" if !m.control && !m.alt => {
+                window.focus(&self.file_find_focus, cx);
+                cx.notify();
+                return;
+            }
+            _ => {}
+        }
+        if let Some(edit) = field_edit(keystroke, cx) {
+            self.edit_file_replace(project_id, |with| edit.apply(with), cx);
+        } else if find_key(keystroke) == Some(FindKey::Close) {
+            self.close_file_find(project_id, window, cx);
+        }
+    }
+
+    fn edit_file_replace(
+        &mut self,
+        project_id: Ulid,
+        edit: impl FnOnce(&mut Input),
+        cx: &mut Context<'_, Self>,
+    ) {
+        let find = self.files_view(project_id).find.as_mut();
+        if let Some(with) = find.and_then(|find| find.replace.as_mut()) {
+            edit(with);
+            cx.notify();
+        }
+    }
+
+    fn replace_in_file(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.files_view(project_id).replace_one() {
+            self.file_edited(project_id, window, cx);
+            self.reveal_file_match(project_id, cx);
+        }
+    }
+
+    fn replace_all_in_file(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.files_view(project_id).replace_all() > 0 {
+            self.file_edited(project_id, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Ctrl+S / "Save" (§12A): `fs.write` of the opened file over the version it was read as.
+    /// `then` runs after a successful save (dropped if a save is already in flight: the user
+    /// asks again).
+    fn save_file(
+        &mut self,
+        project_id: Ulid,
+        then: Option<AfterSave>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(view) = self.files.get_mut(&project_id) else {
+            return;
+        };
+        let target = view.worktree_task_id;
+        let Some(save) = view.begin_save() else {
+            return;
+        };
+        let written = connection.call::<FsWritten>(Request::FsWrite(FsWriteParams {
+            project_id,
+            worktree_task_id: target,
+            path: save.path.clone(),
+            content: save.text,
+            expected_hash: save.expected_hash,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            let written = written.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Err(error) = &written {
+                    tracing::warn!(%project_id, path = %save.path, "fs.write failed: {error}");
+                }
+                let done = matches!(&written, Ok(written) if written.saved);
+                if let Some(view) = shell.files_at(project_id, target) {
+                    view.saved(&save.path, save.point, written);
+                }
+                if let (true, Some(then)) = (done, then) {
+                    then(shell, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Runs `then` once the unsaved changes of `project_id`'s opened file are dealt with:
+    /// - at once if there are none;
+    /// - after "Save" and a successful save;
+    /// - after "Don't save".
+    ///
+    /// "Cancel" keeps everything (§2.5).
+    fn leave_file(
+        &mut self,
+        project_id: Ulid,
+        then: AfterSave,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(path) = (self.files.get(&project_id))
+            .and_then(FilesView::unsaved)
+            .map(str::to_owned)
+        else {
+            return then(self, window, cx);
+        };
+        let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        let workspace = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .map_or_else(String::new, |project| format!(" in {}", project.name));
+        let detail = format!("{path}{workspace} — your changes are lost if you don't save them.");
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Save changes to {name}?"),
+            Some(detail.as_str()),
+            &files_view::LEAVE_ANSWERS,
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let choice = files_view::leave_choice(answer.await.ok());
+            let _ = this.update_in(cx, |shell, window, cx| match choice {
+                Some(files_view::Leave::Save) => {
+                    shell.save_file(project_id, Some(then), window, cx)
+                }
+                Some(files_view::Leave::DontSave) => {
+                    shell.files_view(project_id).discard();
+                    then(shell, window, cx);
+                }
+                None => {}
+            });
+        })
+        .detach();
+    }
+
+    /// The window's close button (§2.5): unsaved Files changes ask first, one file at a time,
+    /// and the window closes once none are left. The workspace that holds them is shown first,
+    /// so a refused save is visible.
+    fn window_should_close(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> bool {
+        let unsaved = (self.files.values())
+            .find(|view| view.unsaved().is_some())
+            .map(|view| view.project_id);
+        let Some(project_id) = unsaved else {
+            return true;
+        };
+        if self.workspace != Some(project_id) {
+            self.activate_workspace(project_id, window, cx);
+        }
+        self.show_view(View::Files, window, cx);
+        let close: AfterSave = Box::new(|shell, window, cx| {
+            if shell.window_should_close(window, cx) {
+                window.remove_window();
+            }
+        });
+        self.leave_file(project_id, close, window, cx);
+        false
+    }
+
+    /// Keys of the Files editor (§12A, VS Code style; not in the keymap, ADR 0028). Keys the
+    /// editor does not take (window shortcuts) bubble on to the keymap.
+    fn file_editor_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(key), Some(project_id)) = (editor::edit_key(&event.keystroke), self.workspace)
+        else {
+            return;
+        };
+        cx.stop_propagation();
+        let page = self.file_page_lines(cx);
+        // An empty clipboard pastes nothing (no empty undo step).
+        let pasted = (key == EditKey::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten()
+            .filter(|text| !text.is_empty());
+        let Some(editor) = self.files_view(project_id).editor_mut() else {
+            return;
+        };
+        let version = editor.version();
+        let copied = match key {
+            EditKey::Copy => editor.selected_text(),
+            EditKey::Cut => editor.cut(),
+            EditKey::Paste => {
+                if let Some(text) = pasted {
+                    editor.insert(&text);
+                }
+                None
+            }
+            key => {
+                editor.key(key, page);
+                None
+            }
+        };
+        let (line, edited) = (editor.cursor().line, editor.version() != version);
+        if let Some(text) = copied {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+        self.file_code_scroll
+            .scroll_to_item(line, ScrollStrategy::Nearest);
+        if edited {
+            self.file_edited(project_id, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// A click (or a drag, `extend`) at window x `x` on line `line` of the editor.
+    fn click_file_text(
+        &mut self,
+        project_id: Ulid,
+        line: usize,
+        x: Pixels,
+        extend: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.file_editor_focus, cx);
+        let cell_width = mkrew_ui::terminal::view::cell_size(window, cx.theme()).0;
+        let cells = ((x - self.file_text_left.get()) / cell_width)
+            .round()
+            .max(0.0) as usize;
+        let Some(editor) = self.files_view(project_id).editor_mut() else {
+            return;
+        };
+        let Some(text) = editor.lines().get(line) else {
+            return;
+        };
+        let col = editor::byte_for_display_col(text, cells);
+        editor.set_cursor(Pos { line, col }, extend);
+        cx.notify();
+    }
+
+    /// After an edit, find follows the new text, and the highlight follows once typing pauses.
+    fn file_edited(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let view = self.files_view(project_id);
+        view.search();
+        let Some(version) = view.shown().map(|shown| shown.editor.version()) else {
+            return;
+        };
+        let target = view.worktree_task_id;
+        let background = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            background.timer(theme::REHIGHLIGHT_DELAY).await;
+            let Ok(Some(content)) = this.update(cx, |shell, _| {
+                shell
+                    .files_at(project_id, target)
+                    .and_then(|view| view.highlight_request(version))
+            }) else {
+                return;
+            };
+            let code = background.spawn(async move { Code::new(&content) }).await;
+            let _ = this.update(cx, |shell, cx| {
+                let view = shell.files_at(project_id, target);
+                if view.is_some_and(|view| view.highlighted(version, code)) {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Lines the editor shows at once (PageUp / PageDown).
+    fn file_page_lines(&self, cx: &App) -> usize {
+        let theme = cx.theme();
+        let row = px(theme.terminal_font_size * theme.terminal_line_height);
+        let shown = self.file_code_scroll.0.borrow().last_item_size;
+        shown
+            .map_or(1, |size| (size.item.height / row).floor() as usize)
+            .max(1)
     }
 
     /// The absolute path of `path` (relative, `/`-separated) in workspace `project_id`, with
@@ -1904,7 +2309,7 @@ impl Shell {
         let Some(view) = self.files.get(&project_id) else {
             return;
         };
-        let (Some(path), line) = (view.file.clone(), view.line) else {
+        let (Some(path), line) = (view.file.clone(), view.line()) else {
             return;
         };
         let Some(full) = self.target_file(project_id, view.worktree_task_id, &path) else {
@@ -1941,7 +2346,7 @@ impl Shell {
             }
         }
         for project_id in git {
-            self.retarget_git(project_id, None);
+            self.retarget_git(project_id, None, None);
             if shown == Some(project_id) && self.view() == View::Git {
                 self.refresh_git(project_id, window, cx);
             }
@@ -1955,12 +2360,16 @@ impl Shell {
             .or_insert_with(|| GitView::new(project_id, None))
     }
 
-    /// The Git view of `project_id` while it still shows `target` (an answer sent for another
-    /// target is dropped).
-    fn git_at(&mut self, project_id: Ulid, target: Option<Ulid>) -> Option<&mut GitView> {
+    /// The Git view of `project_id` while it still shows `at` (task worktree, repository; an
+    /// answer sent for another is dropped).
+    fn git_at(
+        &mut self,
+        project_id: Ulid,
+        at: &(Option<Ulid>, Option<String>),
+    ) -> Option<&mut GitView> {
         self.git
             .get_mut(&project_id)
-            .filter(|view| view.worktree_task_id == target)
+            .filter(|view| view.worktree_task_id == at.0 && view.repo == at.1)
     }
 
     /// The chooser picked `target` (SPEC §20E.1): the Git view starts over on it, in its
@@ -1972,20 +2381,39 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.retarget_git(project_id, target) {
+        if self.retarget_git(project_id, target, None) {
             self.refresh_git(project_id, window, cx);
         }
     }
 
-    /// Puts a fresh Git view of `target` in place (the commit draft is kept); `false` = it
-    /// shows `target` already.
-    fn retarget_git(&mut self, project_id: Ulid, target: Option<Ulid>) -> bool {
+    /// The "Repo" chooser picked `repo` (ADR 0029): the Git view starts over on it.
+    fn set_git_repo(
+        &mut self,
+        project_id: Ulid,
+        repo: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.retarget_git(project_id, None, repo) {
+            self.refresh_git(project_id, window, cx);
+        }
+    }
+
+    /// Puts a fresh Git view of `target` / `repo` in place (the commit draft is kept); `false`
+    /// = it shows them already.
+    fn retarget_git(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        repo: Option<String>,
+    ) -> bool {
         let old = self.git_view(project_id);
-        if old.worktree_task_id == target {
+        if old.worktree_task_id == target && old.repo == repo {
             return false;
         }
         let draft = std::mem::take(&mut old.commit.text);
         let mut view = GitView::new(project_id, target);
+        view.repo = repo;
         view.commit.text = draft;
         self.git.insert(project_id, view);
         self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -1993,10 +2421,52 @@ impl Shell {
         true
     }
 
-    /// Asks the Git view of `project_id` for its status and shown diff again.
+    /// Asks the Git view of `project_id` for its repositories, status and shown diff again.
+    /// Every way the view is shown (show_view, activate_workspace, Retry) goes through it;
+    /// `git.changed` does not (it only re-asks status / diff).
     fn refresh_git(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.load_git_repos(project_id, window, cx);
         let requests = self.git_view(project_id).refresh();
         self.git_requests(project_id, requests, window, cx);
+    }
+
+    /// `git.repos` of `project_id` (ADR 0029): the "Repo" chips; a shown repository that is
+    /// gone, or a workspace folder that is no repository, moves the view to
+    /// [`git_view::pick_repo`] (never while a task worktree is shown: the daemon refuses a
+    /// repo there).
+    fn load_git_repos(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let listed = connection.call::<Vec<String>>(Request::GitRepos(ProjectRef { project_id }));
+        cx.spawn_in(window, async move |this, cx| {
+            let repos = match listed.await {
+                Ok(repos) => repos,
+                Err(error) => {
+                    tracing::warn!(%project_id, "git.repos failed: {error:#}");
+                    return;
+                }
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let view = shell.git_view(project_id);
+                let worktree = view.worktree_task_id;
+                let picked = git_view::pick_repo(view.repo.as_deref(), &repos);
+                shell.git_repos.insert(project_id, repos);
+                // ponytail: the first status of a non-repo root may fail before this answer
+                // and flash "Cannot read the git status"; send status after git.repos if it shows.
+                if worktree.is_none() && shell.retarget_git(project_id, None, picked) {
+                    let requests = shell.git_view(project_id).refresh();
+                    shell.git_requests(project_id, requests, window, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn git_requests(
@@ -2035,7 +2505,7 @@ impl Shell {
         let Some(params) = self.git_view(project_id).begin_log() else {
             return;
         };
-        let target = params.worktree_task_id;
+        let at = (params.worktree_task_id, params.repo.clone());
         let loaded = connection.call::<Vec<Commit>>(Request::GitLog(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
@@ -2043,7 +2513,7 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.log failed: {error}");
                 }
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 let requests = view.logged(loaded);
@@ -2065,7 +2535,7 @@ impl Shell {
             return;
         };
         let params = self.git_view(project_id).show_params(hash.clone());
-        let target = params.worktree_task_id;
+        let at = (params.worktree_task_id, params.repo.clone());
         let loaded = connection.call::<CommitDetail>(Request::GitShow(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
@@ -2073,7 +2543,7 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, commit = hash, "git.show failed: {error}");
                 }
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 let requests = view.commit_shown(&hash, loaded);
@@ -2129,7 +2599,7 @@ impl Shell {
         let Some(params) = self.git_view(project_id).begin_status() else {
             return;
         };
-        let target = params.worktree_task_id;
+        let at = (params.worktree_task_id, params.repo.clone());
         let loaded = connection.call::<GitStatus>(Request::GitStatus(params));
         cx.spawn_in(window, async move |this, cx| {
             let loaded = loaded.await.map_err(|error| format!("{error:#}"));
@@ -2137,7 +2607,7 @@ impl Shell {
                 if let Err(error) = &loaded {
                     tracing::warn!(%project_id, "git.status failed: {error}");
                 }
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 let requests = view.status_loaded(loaded);
@@ -2163,7 +2633,7 @@ impl Shell {
             return;
         };
         let view = self.git_view(project_id);
-        let target = view.worktree_task_id;
+        let at = view.at();
         let (params, serial) = view.begin_session_files(status::now_ms());
         let loaded = connection.call::<SessionFiles>(Request::SessionFiles(params));
         cx.spawn_in(window, async move |this, cx| {
@@ -2175,7 +2645,7 @@ impl Shell {
                 }
             };
             let _ = this.update_in(cx, |shell, window, cx| {
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 let requests = view.session_files_loaded(serial, files);
@@ -2214,9 +2684,12 @@ impl Shell {
         if !view.begin_diff() {
             return;
         }
-        let worktree = view.worktree_task_id;
-        let loaded =
-            connection.call::<FileDiff>(Request::GitDiff(target.params(project_id, worktree)));
+        let at = view.at();
+        let loaded = connection.call::<FileDiff>(Request::GitDiff(target.params(
+            project_id,
+            at.0,
+            at.1.clone(),
+        )));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
             // Syntax highlighting is slow on big diffs: lay out off the UI thread.
@@ -2231,7 +2704,7 @@ impl Shell {
                     tracing::warn!(%project_id, path = target.path, "git.diff failed: {error}");
                 }
                 let again = shell
-                    .git_at(project_id, worktree)
+                    .git_at(project_id, &at)
                     .and_then(|view| view.diff_loaded(&target, loaded));
                 if let Some(target) = again {
                     shell.load_git_diff(project_id, target, window, cx);
@@ -2368,7 +2841,7 @@ impl Shell {
         }
         cx.notify();
         let stage = change.stage;
-        let target = change.params.worktree_task_id;
+        let at = (change.params.worktree_task_id, change.params.repo.clone());
         let sent = connection.request(change.request());
         cx.spawn_in(window, async move |this, cx| {
             let result = match sent.await {
@@ -2380,7 +2853,7 @@ impl Shell {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
                 }
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 let requests = view.staged(result);
@@ -2525,13 +2998,13 @@ impl Shell {
             git_view::Status::Loaded(status) => status.staged.len(),
             git_view::Status::Loading | git_view::Status::Failed(_) => 0,
         };
-        let target = view.worktree_task_id;
+        let at = view.at();
         let params = view.commit.begin(project_id, staged);
         cx.notify();
         let Some(mut params) = params else {
             return;
         };
-        params.worktree_task_id = target;
+        (params.worktree_task_id, params.repo) = at.clone();
         let committed = connection.call::<GitCommitResult>(Request::GitCommit(params));
         cx.spawn_in(window, async move |this, cx| {
             let result = committed
@@ -2542,7 +3015,7 @@ impl Shell {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, "git.commit failed: {error}");
                 }
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 view.commit.committed(result);
@@ -2572,6 +3045,7 @@ impl Shell {
             generation_id,
             project_id,
             worktree_task_id: view.worktree_task_id,
+            repo: view.repo.clone(),
             agent_profile: None,
             kind: AiKind::CommitMessage,
             input: String::new(),
@@ -2609,9 +3083,9 @@ impl Shell {
         if !view.remotes.begin(remote) {
             return;
         }
-        let target = view.worktree_task_id;
+        let at = view.at();
         cx.notify();
-        let sent = connection.request(remote.request(project_id, target));
+        let sent = connection.request(remote.request(project_id, at.0, at.1.clone()));
         cx.spawn_in(window, async move |this, cx| {
             let result = match sent.await {
                 Ok(Outcome::Result(_)) => Ok(()),
@@ -2622,7 +3096,7 @@ impl Shell {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
                 }
-                let Some(view) = shell.git_at(project_id, target) else {
+                let Some(view) = shell.git_at(project_id, &at) else {
                     return;
                 };
                 view.remotes.finished(remote, result);
@@ -2675,7 +3149,10 @@ impl Shell {
                     dialog.insert(&text);
                 }
             }
-            base_dialog::Key::Backspace | base_dialog::Key::Insert(_) => {
+            base_dialog::Key::Backspace
+            | base_dialog::Key::DeleteWord
+            | base_dialog::Key::SelectAll
+            | base_dialog::Key::Insert(_) => {
                 dialog.key(&key);
             }
         }
@@ -3355,7 +3832,10 @@ impl Shell {
                     self.find_files(window, cx);
                 }
             }
-            quick_open::Key::Backspace | quick_open::Key::Insert(_) => {
+            quick_open::Key::Backspace
+            | quick_open::Key::DeleteWord
+            | quick_open::Key::SelectAll
+            | quick_open::Key::Insert(_) => {
                 if open.key(key) {
                     self.find_files(window, cx);
                 }
@@ -3385,12 +3865,46 @@ impl Shell {
             return;
         }
         let project_id = open.project_id;
+        self.open_revealed(project_id, open.worktree_task_id, path, window, cx);
+    }
+
+    /// Quick open's file: asks about unsaved changes first (before the workspace or view
+    /// switches, so Cancel leaves everything as it was). The answer's continuation comes back
+    /// here, because text typed while a save was in flight is unsaved again.
+    fn open_revealed(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let leaves =
+            (self.files_at(project_id, target)).is_some_and(|view| view.leaves_unsaved(&path));
+        if leaves {
+            let reveal: AfterSave = Box::new(move |shell, window, cx| {
+                shell.open_revealed(project_id, target, path, window, cx);
+            });
+            return self.leave_file(project_id, reveal, window, cx);
+        }
+        self.reveal_file(project_id, target, path, window, cx);
+    }
+
+    /// Shows `path` in the Files view of `project_id` (its folders open, the cursor lands on it).
+    fn reveal_file(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
         self.show_view(View::Files, window, cx);
         // Revealed only while the Files view still shows the folder that was searched.
-        let Some(view) = self.files_at(project_id, open.worktree_task_id) else {
+        let Some(view) = self.files_at(project_id, target) else {
             return;
         };
         let requests = view.reveal(&path);
@@ -3511,7 +4025,11 @@ impl Shell {
                     palette.insert(&text);
                 }
             }
-            quick_open::Key::Move(_) | quick_open::Key::Backspace | quick_open::Key::Insert(_) => {
+            quick_open::Key::Move(_)
+            | quick_open::Key::Backspace
+            | quick_open::Key::DeleteWord
+            | quick_open::Key::SelectAll
+            | quick_open::Key::Insert(_) => {
                 palette.key(key);
             }
         }
@@ -4013,6 +4531,19 @@ impl Shell {
     ) {
         let params = workspace_menu::set_default_agent(project_id, &agent);
         self.update_project(params, "Cannot change the default agent", window, cx);
+    }
+
+    /// Makes `shell` the default shell of `project_id` (ADR 0032); the sidebar picks the change
+    /// up from `project.updated`.
+    fn set_default_shell(
+        &mut self,
+        project_id: Ulid,
+        shell: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let params = workspace_menu::set_default_shell(project_id, &shell);
+        self.update_project(params, "Cannot change the default shell", window, cx);
     }
 
     /// Sets (or clears) the workspace color from the menu.
@@ -4760,7 +5291,7 @@ impl Shell {
             return;
         };
         let project_id = dialog.project_id;
-        self.retarget_git(project_id, Some(dialog.task_id));
+        self.retarget_git(project_id, Some(dialog.task_id), None);
         if self.view() == View::Git {
             self.refresh_git(project_id, window, cx);
         }
@@ -4962,7 +5493,7 @@ impl Shell {
                         .task(id)
                         .is_some_and(|task| task.worktree_path.is_some())
                 });
-                self.retarget_git(project_id, target);
+                self.retarget_git(project_id, target, None);
                 self.show_git_since(project_id, since, window, cx);
             }
             None => self.focus_pane(window, cx),
@@ -5165,7 +5696,7 @@ impl Shell {
         let since = Since::task(task_id, &task.title, checkpoint);
         // A worktree task's checkpoint is its worktree's HEAD: compared there.
         let target = task.worktree_path.is_some().then_some(task_id);
-        self.retarget_git(project_id, target);
+        self.retarget_git(project_id, target, None);
         self.show_git_since(project_id, since, window, cx);
     }
 
@@ -5704,6 +6235,7 @@ impl Shell {
             generation_id,
             project_id,
             worktree_task_id: None,
+            repo: None,
             agent_profile: Some(agent_profile),
             kind: AiKind::EnhancePrompt,
             input,
@@ -5793,15 +6325,20 @@ impl Shell {
         match view {
             View::Files => {
                 let files = self.files.get(&project_id)?;
-                let (Some(path), Some(line), files_view::Content::Shown(code)) =
-                    (&files.file, files.line, &files.content)
-                else {
+                let (Some(path), Some(shown)) = (&files.file, files.shown()) else {
                     return None;
                 };
-                let text = code
-                    .lines
-                    .get(usize::try_from(line).ok()?.checked_sub(1)?)?;
-                Some((path.clone(), line, line, text.clone()))
+                // The selected lines, else the caret's line.
+                let editor = &shown.editor;
+                let (first, last) = match editor.selection() {
+                    // A selection ending at a line's start does not include that line.
+                    Some(range) if range.end.col == 0 => (range.start.line, range.end.line - 1),
+                    Some(range) => (range.start.line, range.end.line),
+                    None => (editor.cursor().line, editor.cursor().line),
+                };
+                let text = editor.lines().get(first..=last)?.join("\n");
+                let line = |index: usize| u32::try_from(index + 1).ok();
+                Some((path.clone(), line(first)?, line(last)?, text))
             }
             View::Git => {
                 let git = self.git.get(&project_id)?;
@@ -5994,7 +6531,11 @@ impl Shell {
                 self.prompt_picker_scroll.scroll_to_item(picker.selected);
                 cx.notify();
             }
-            quick_open::Key::Backspace | quick_open::Key::Paste | quick_open::Key::Insert(_) => {}
+            quick_open::Key::Backspace
+            | quick_open::Key::DeleteWord
+            | quick_open::Key::SelectAll
+            | quick_open::Key::Paste
+            | quick_open::Key::Insert(_) => {}
         }
     }
 
@@ -6026,8 +6567,8 @@ impl Shell {
         .detach();
     }
 
-    /// Starts an agent (the workspace's default agent) or a shell in the workspace folder and
-    /// shows it next to the focused pane of the active tab, split along `axis`.
+    /// Starts an agent or a shell (the workspace's default of that kind) in the workspace folder
+    /// and shows it next to the focused pane of the active tab, split along `axis`.
     fn new_pane(
         &mut self,
         kind: SessionKind,
@@ -6049,18 +6590,7 @@ impl Shell {
         else {
             return;
         };
-        self.tab_error = None;
-        let no_default_agent = kind == SessionKind::Agent
-            && self
-                .sidebar
-                .projects()
-                .iter()
-                .any(|project| project.id == project_id && project.default_agent.is_none());
-        if no_default_agent {
-            // The daemon would refuse; let the user pick one (the menu lists the profiles).
-            self.tab_error =
-                Some("Pick a default agent for this workspace, then press + Agent again.".into());
-            self.open_workspace_menu(project_id, window, cx);
+        if self.ask_for_default(project_id, kind, window, cx) {
             return;
         }
         cx.notify();
@@ -6089,6 +6619,31 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// True (after telling the user and opening the workspace menu) when the workspace has no
+    /// default profile of `kind`; the daemon would refuse to start one.
+    fn ask_for_default(
+        &mut self,
+        project_id: Ulid,
+        kind: SessionKind,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        self.tab_error = None;
+        let project = (self.sidebar.projects().iter()).find(|project| project.id == project_id);
+        let (default, what) = match kind {
+            SessionKind::Agent => (project.map(|p| &p.default_agent), "agent"),
+            SessionKind::Shell => (project.map(|p| &p.default_shell), "shell"),
+        };
+        let missing = default.is_some_and(Option::is_none);
+        if missing {
+            self.tab_error = Some(format!(
+                "Pick a default {what} for this workspace, then try again."
+            ));
+            self.open_workspace_menu(project_id, window, cx);
+        }
+        missing
     }
 
     /// A shortcut (SPEC §13). Terminal commands (paste) are handled by the focused pane.
@@ -6132,17 +6687,24 @@ impl Shell {
             }
             window.focus(&self.git_focus, cx);
         }
-        // Same for the Files find field while it has the keyboard (Esc gives it back).
-        if self.file_find_focus.is_focused(window) {
+        // Same for the Files find / replace fields while they have the keyboard (Esc gives it
+        // back), except the Files commands (Ctrl+S, Ctrl+F, Ctrl+H act from there).
+        if self.file_find_focus.is_focused(window) || self.file_replace_focus.is_focused(window) {
             let open = self.view() == View::Files
                 && (self.workspace)
                     .and_then(|id| self.files.get(&id))
                     .is_some_and(|view| view.find.is_some());
-            if open {
+            let files_command = matches!(
+                command,
+                Command::SaveFile | Command::FindInFile | Command::ReplaceInFile
+            );
+            if open && !files_command {
                 cx.propagate();
                 return;
             }
-            window.focus(&self.focus_handle, cx);
+            if !open {
+                window.focus(&self.focus_handle, cx);
+            }
         }
         // Same for the Docs filter while it has the keyboard.
         if self.docs_filter_focus.is_focused(window) {
@@ -6172,9 +6734,12 @@ impl Shell {
                 | Command::PreviousTab
                 | Command::Tab(_)
                 | Command::SplitRight
-                | Command::SplitDown => self.show_view(View::Terminals, window, cx),
+                | Command::SplitDown
+                | Command::SplitAgent
+                | Command::SplitShell => self.show_view(View::Terminals, window, cx),
                 // The rest act on panes that are not on screen.
                 Command::RenameTab
+                | Command::RenamePane
                 | Command::CloseTab
                 | Command::Focus(_)
                 | Command::Resize(_)
@@ -6205,6 +6770,11 @@ impl Shell {
                 cx,
             ),
             Command::RenameTab => self.start_rename(window, cx),
+            Command::RenamePane => {
+                if let Some(session_id) = self.focused_session() {
+                    self.start_pane_rename(session_id, window, cx);
+                }
+            }
             Command::CloseTab => {
                 let active = self
                     .workspace
@@ -6217,6 +6787,9 @@ impl Shell {
             }
             Command::SplitRight => self.split(Axis::Vertical, window, cx),
             Command::SplitDown => self.split(Axis::Horizontal, window, cx),
+            // Exactly the + Agent / + Shell buttons.
+            Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
+            Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
             Command::Focus(direction) => {
                 if self
                     .active_tabs_mut()
@@ -6315,6 +6888,7 @@ impl Shell {
             Command::CommandPalette => self.open_palette(window, cx),
             Command::OpenKeymapSettings => self.open_keymap_settings(cx),
             Command::ToggleTheme => self.toggle_theme(window, cx),
+            Command::ToggleFullScreen => window.toggle_fullscreen(),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
@@ -6330,6 +6904,12 @@ impl Shell {
                 if self.git_commit_shown() {
                     window.focus(&self.git_commit_focus, cx);
                     cx.notify();
+                }
+            }
+            Command::SaveFile => {
+                // Only bound while Files are shown.
+                if let Some(project_id) = self.workspace {
+                    self.save_file(project_id, None, window, cx);
                 }
             }
             Command::ToggleIgnored => {
@@ -6380,13 +6960,15 @@ impl Shell {
             Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {}
             // A focused terminal pane handles it itself.
             Command::Find => match self.view() {
-                View::Files => self.open_file_find(window, cx),
+                View::Files => self.open_file_find(false, window, cx),
                 View::Docs => {
                     window.focus(&self.docs_filter_focus, cx);
                     cx.notify();
                 }
                 _ => {}
             },
+            Command::FindInFile => self.open_file_find(false, window, cx),
+            Command::ReplaceInFile => self.open_file_find(true, window, cx),
         }
     }
 
@@ -6437,50 +7019,134 @@ impl Shell {
         else {
             return;
         };
-        self.renaming = Some((tab.id, tab.title.clone()));
+        self.renaming = Some(Renaming {
+            target: RenameTarget::Tab(tab.id),
+            draft: tab.title.clone().into(),
+        });
         window.focus(&self.rename_focus, cx);
         cx.notify();
     }
 
-    /// Ends the inline edit: `commit` sends `tab.rename` (the title updates with the
-    /// `tab.updated` event); blank or unchanged drafts are dropped. Focus goes back to the pane.
-    fn finish_rename(&mut self, commit: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some((tab_id, draft)) = self.renaming.take() else {
+    /// Starts editing `session_id`'s title inline in its pane header (F2, double-click),
+    /// from the user's own title. Run sessions are named by their command: left alone.
+    fn start_pane_rename(
+        &mut self,
+        session_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == session_id) else {
             return;
         };
-        // Any workspace: switching workspaces mid-edit commits through the blur.
-        let params = self
-            .tabs
-            .values()
-            .find_map(|tabs| tabs.tab(tab_id))
-            .and_then(|tab| rename_params(tab, &draft));
-        if let (true, Some(params), Some(connection)) = (commit, params, self.connection.clone()) {
-            self.tab_error = None;
-            let renamed = connection.call::<TerminalTab>(Request::TabRename(params));
-            cx.spawn_in(window, async move |this, cx| {
-                let renamed = renamed.await;
-                let _ = this.update(cx, |shell, cx| {
-                    match renamed {
-                        // Shown at once, without waiting for the `tab.updated` echo.
-                        Ok(tab) => {
-                            if let Some(tabs) = shell.tabs.get_mut(&tab.project_id) {
-                                tabs.apply(&Event::TabUpdated(tab));
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(%tab_id, "tab.rename failed: {error:#}");
-                            shell.tab_error = Some(format!("Cannot rename the tab: {error:#}"));
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
+        if mkrew_core::run::command_name(session).is_some() {
+            return;
+        }
+        self.renaming = Some(Renaming {
+            target: RenameTarget::Session(session_id),
+            draft: session.title.clone().unwrap_or_default().into(),
+        });
+        window.focus(&self.rename_focus, cx);
+        cx.notify();
+    }
+
+    /// Ends the inline edit: `commit` sends `tab.rename` / `session.rename`; the reply shows
+    /// at once, the `tab.updated` / `session.updated` event tells other clients. Unchanged
+    /// drafts and blank tab titles are dropped (a blank pane title clears it). Focus goes
+    /// back to the pane.
+    fn finish_rename(&mut self, commit: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(Renaming { target, draft }) = self.renaming.take() else {
+            return;
+        };
+        if commit {
+            match target {
+                RenameTarget::Tab(tab_id) => self.rename_tab(tab_id, &draft, window, cx),
+                RenameTarget::Session(session_id) => {
+                    self.rename_session(session_id, &draft, window, cx);
+                }
+            }
         }
         if self.rename_focus.is_focused(window) {
             self.focus_pane(window, cx);
         }
         cx.notify();
+    }
+
+    fn rename_tab(
+        &mut self,
+        tab_id: Ulid,
+        draft: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        // Any workspace: switching workspaces mid-edit commits through the blur.
+        let params = self
+            .tabs
+            .values()
+            .find_map(|tabs| tabs.tab(tab_id))
+            .and_then(|tab| rename_params(tab, draft));
+        if let Some(params) = params {
+            // Shown at once, without waiting for the `tab.updated` echo.
+            let shown = |shell: &mut Self, tab: TerminalTab| {
+                if let Some(tabs) = shell.tabs.get_mut(&tab.project_id) {
+                    tabs.apply(&Event::TabUpdated(tab));
+                }
+            };
+            self.send_rename(Request::TabRename(params), "tab", shown, window, cx);
+        }
+    }
+
+    fn rename_session(
+        &mut self,
+        session_id: Ulid,
+        draft: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let session = (self.sidebar.sessions().iter()).find(|s| s.id == session_id);
+        // The pane may have exited while its rename field was open.
+        if session.is_some_and(|s| s.state == SessionState::Exited) {
+            return;
+        }
+        let params = session.and_then(|session| lifecycle::session_rename_params(session, draft));
+        if let Some(params) = params {
+            // Shown at once (header, sidebar, Inbox), without waiting for the echo.
+            let shown = |shell: &mut Self, session: Session| {
+                // Title only: the reply may predate state events already applied.
+                shell.sidebar.set_title(session.id, session.title);
+            };
+            self.send_rename(Request::SessionRename(params), "pane", shown, window, cx);
+        }
+    }
+
+    /// Sends a `tab.rename` / `session.rename`; `shown` applies the reply, a failure goes to
+    /// the tab bar's error line (`what` names the thing renamed).
+    fn send_rename<T: serde::de::DeserializeOwned + Send + 'static>(
+        &mut self,
+        request: Request,
+        what: &'static str,
+        shown: impl FnOnce(&mut Self, T) + 'static,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.tab_error = None;
+        let renamed = connection.call::<T>(request);
+        cx.spawn_in(window, async move |this, cx| {
+            let renamed = renamed.await;
+            let _ = this.update(cx, |shell, cx| {
+                match renamed {
+                    Ok(renamed) => shown(shell, renamed),
+                    Err(error) => {
+                        tracing::warn!("renaming the {what} failed: {error:#}");
+                        shell.tab_error = Some(format!("Cannot rename the {what}: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Keys typed while renaming edit the draft; Enter commits, Esc cancels.
@@ -6494,18 +7160,25 @@ impl Shell {
         let Some(key) = find_key(&event.keystroke) else {
             return;
         };
-        let Some((_, draft)) = self.renaming.as_mut() else {
+        let Some(renaming) = self.renaming.as_mut() else {
             return;
         };
         match key {
             FindKey::Close => self.finish_rename(false, window, cx),
             FindKey::Older | FindKey::Newer => self.finish_rename(true, window, cx),
-            FindKey::Backspace => {
-                draft.pop();
-                cx.notify();
+            FindKey::Paste => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    renaming.draft.insert(&text.replace(['\r', '\n'], " "));
+                    cx.notify();
+                }
             }
             FindKey::Insert(text) => {
-                draft.push_str(&text);
+                renaming.draft.insert(&text);
+                cx.notify();
+            }
+            // Backspace, Ctrl+Backspace, Ctrl+A.
+            key => {
+                key.edit(&mut renaming.draft);
                 cx.notify();
             }
         }
@@ -7413,9 +8086,9 @@ impl Shell {
             .when(waiting > 0, |el| el.child(list))
     }
 
-    /// The workspace menu: "Open in Zed", "Run setup…", the default agent for new agent
-    /// panes, the workspace color and "Remove workspace…". Floats over the sidebar; a click
-    /// outside closes it.
+    /// The workspace menu: "Open in Zed", "Run setup…", the default agent and the default shell
+    /// for new panes, the workspace color and "Remove workspace…". Floats over the sidebar; a
+    /// click outside closes it.
     fn render_workspace_menu(
         &self,
         menu: &WorkspaceMenu,
@@ -7440,12 +8113,38 @@ impl Shell {
         };
         let agents = agent_rows(
             &menu.agents,
+            SessionKind::Agent,
             current,
             "default-agent",
             theme,
             cx,
             move |shell, agent, window, cx| shell.set_default_agent(project_id, agent, window, cx),
         );
+        let current_shell = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .and_then(|project| project.default_shell.as_deref());
+        // Loading and errors already show once, under the agents.
+        let shells = match &menu.agents {
+            Agents::Loaded(_) => agent_rows(
+                &menu.agents,
+                SessionKind::Shell,
+                current_shell,
+                "default-shell",
+                theme,
+                cx,
+                move |shell, id, window, cx| shell.set_default_shell(project_id, id, window, cx),
+            ),
+            _ => Vec::new(),
+        };
+        let heading = |text: &'static str| {
+            div()
+                .px(px(space::S))
+                .pt(px(space::XS))
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
         let panel = div()
             .id("workspace-menu")
             .w(px(theme::MENU_WIDTH))
@@ -7493,26 +8192,13 @@ impl Shell {
                     })),
             )
             .child(separator())
-            .child(
-                div()
-                    .px(px(space::S))
-                    .pt(px(space::XS))
-                    .text_size(font_size::META)
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Default agent for new panes"),
-            )
+            .child(heading("Default agent for new panes"))
             .children(agents)
             .child(separator())
-            .child(
-                div()
-                    .px(px(space::S))
-                    .pt(px(space::XS))
-                    .text_size(font_size::META)
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Color"),
-            )
+            .child(heading("Default shell for new panes"))
+            .children(shells)
+            .child(separator())
+            .child(heading("Color"))
             .child(
                 div()
                     .flex()
@@ -7594,7 +8280,7 @@ impl Shell {
             .iter()
             .find(|project| project.id == session.project_id)
             .map_or("", |project| project.name.as_str());
-        let name = match &session.title {
+        let name = match history::title(session) {
             Some(title) => format!("{workspace}: {} · {title}", session.agent_profile),
             None => format!("{workspace}: {}", session.agent_profile),
         };
@@ -7649,7 +8335,7 @@ impl Shell {
                         &peek.text,
                         "Reply to the agent",
                         peek.focused,
-                        false,
+                        peek.text.all_selected(),
                         theme,
                     )
                     .when(peek.busy, |el| el.opacity(opacity::DISABLED))
@@ -7903,6 +8589,7 @@ impl Shell {
                 "new-agent-pane",
                 "+ Agent",
                 SessionKind::Agent,
+                self.keymap.label(Command::SplitAgent),
                 theme,
                 cx,
             ))
@@ -7910,6 +8597,7 @@ impl Shell {
                 "new-shell-pane",
                 "+ Shell",
                 SessionKind::Shell,
+                self.keymap.label(Command::SplitShell),
                 theme,
                 cx,
             ))
@@ -8148,7 +8836,7 @@ impl Shell {
                 text,
                 placeholder,
                 setup.focus == Focus::Field(i, which),
-                which == Field::Env && setup.cards[i].env.all_selected(),
+                setup.cards[i].all_selected(which),
                 theme,
             )
             .on_click(cx.listener(move |shell, _, _, cx| {
@@ -8528,7 +9216,7 @@ impl Shell {
                         &docs.filter,
                         "Filter files…",
                         filter_focused,
-                        false,
+                        docs.filter.all_selected(),
                         theme,
                     )
                     .track_focus(&self.docs_filter_focus)
@@ -8919,8 +9607,8 @@ impl Shell {
             .into_any_element()
     }
 
-    /// The opened file: its path, Review in Docs (Markdown) and Open in Zed, then its lines
-    /// (a click selects one for "Open in Zed" at that line), or why it is not shown.
+    /// The opened file: its path (with `●` while unsaved), Save, Review in Docs (Markdown) and
+    /// Open in Zed, then the editor, or why it is not shown.
     fn render_file(
         &self,
         project_id: Ulid,
@@ -8954,8 +9642,12 @@ impl Shell {
                 .flex_1(),
             );
         };
+        let dirty = view.unsaved().is_some();
+        let editable = view
+            .shown()
+            .is_some_and(|shown| !shown.code.binary && !shown.code.too_large);
         let zed_keys = self.keymap.label(Command::OpenInZed);
-        let zed_tip = match view.line {
+        let zed_tip = match view.line() {
             Some(line) => format!("Open this file in Zed at line {line}"),
             None => "Open this file in Zed".to_owned(),
         };
@@ -8988,14 +9680,20 @@ impl Shell {
                     .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child(path.clone()),
+                    .child(format!("{}{path}", if dirty { "● " } else { "" })),
             )
-            .children(view.line.map(|line| {
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(format!("Line {line}"))
+            .children(view.shown().filter(|_| editable).and_then(|shown| {
+                let at = shown.editor.cursor();
+                // The caret is always inside the text (the editor clamps it).
+                let line = shown.editor.lines().get(at.line)?;
+                let col = editor::display_col(line, at.col);
+                Some(
+                    div()
+                        .flex_none()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(format!("Ln {}, Col {}", at.line + 1, col + 1)),
+                )
             }))
             // The Docs view reviews the project folder's files, not a worktree's.
             .when(markdown && view.worktree_task_id.is_none(), |el| {
@@ -9008,6 +9706,20 @@ impl Shell {
                         })),
                 )
             })
+            .when(editable, |el| {
+                el.child(
+                    button("file-save", "Save", theme, dirty)
+                        .flex_none()
+                        .tooltip(tooltip(
+                            theme,
+                            "Save this file",
+                            self.keymap.label(Command::SaveFile),
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.save_file(project_id, None, window, cx);
+                        })),
+                )
+            })
             .child(
                 button("file-find", "Find", theme, false)
                     .flex_none()
@@ -9016,25 +9728,51 @@ impl Shell {
                         "Find in this file",
                         self.keymap.label(Command::Find),
                     ))
-                    .on_click(cx.listener(|shell, _, window, cx| shell.open_file_find(window, cx))),
+                    .on_click(
+                        cx.listener(|shell, _, window, cx| shell.open_file_find(false, window, cx)),
+                    ),
             )
             .child(zed_button("file-zed", false));
         let find_bar = view.find.as_ref().map(|find| {
             let focused = self.file_find_focus.is_focused(window);
-            div()
-                .flex_none()
+            let find_row = div()
                 .flex()
                 .items_center()
                 .gap(px(space::S))
                 .px(px(space::L))
                 .pb(px(space::S))
                 .child(
+                    button(
+                        "file-find-toggle-replace",
+                        if find.replace.is_some() { "▾" } else { "▸" },
+                        theme,
+                        false,
+                    )
+                    .tooltip(tooltip(
+                        theme,
+                        "Toggle replace",
+                        self.keymap.label(Command::ReplaceInFile),
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        let shown = (shell.files_view(project_id).find.as_ref())
+                            .is_some_and(|find| find.replace.is_some());
+                        if !shown {
+                            return shell.open_file_find(true, window, cx);
+                        }
+                        if let Some(find) = &mut shell.files_view(project_id).find {
+                            find.replace = None;
+                        }
+                        window.focus(&shell.file_find_focus, cx);
+                        cx.notify();
+                    })),
+                )
+                .child(
                     text_field(
                         "file-find-field",
                         &find.query,
                         "Find in file",
                         focused,
-                        false,
+                        find.query.all_selected(),
                         theme,
                     )
                     .w(px(theme::FIND_INPUT_WIDTH))
@@ -9076,7 +9814,65 @@ impl Shell {
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             shell.close_file_find(project_id, window, cx);
                         })),
-                )
+                );
+            let replacing = self.file_replace_focus.is_focused(window);
+            let replace_row = find.replace.as_ref().map(|with| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .px(px(space::L))
+                    .pb(px(space::S))
+                    .child(
+                        text_field(
+                            "file-replace-field",
+                            with,
+                            "Replace",
+                            replacing,
+                            with.all_selected(),
+                            theme,
+                        )
+                        .w(px(theme::FIND_INPUT_WIDTH))
+                        .track_focus(&self.file_replace_focus)
+                        .on_key_down(cx.listener(Self::file_replace_key_down))
+                        .relative()
+                        .child(self.typing(
+                            &self.file_replace_focus,
+                            Self::file_replace_key_down,
+                            cx,
+                        ))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            window.focus(&shell.file_replace_focus, cx);
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        button("file-replace-one", "Replace", theme, false)
+                            .tooltip(tooltip(
+                                theme,
+                                "Replace this match and go to the next",
+                                "Enter",
+                            ))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                window.focus(&shell.file_replace_focus, cx);
+                                shell.replace_in_file(project_id, window, cx);
+                            })),
+                    )
+                    .child(
+                        button("file-replace-all", "Replace all", theme, false)
+                            .tooltip(tooltip(theme, "Replace every match", "Ctrl+Alt+Enter"))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                window.focus(&shell.file_replace_focus, cx);
+                                shell.replace_all_in_file(project_id, window, cx);
+                            })),
+                    )
+            });
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .child(find_row)
+                .children(replace_row)
         });
         let body = match &view.content {
             Content::None | Content::Loading => message(theme, None, "Loading…".into(), None)
@@ -9099,8 +9895,8 @@ impl Shell {
                 )),
             )
             .into_any_element(),
-            Content::Shown(code) if code.binary || code.too_large => {
-                let sentence = if code.binary {
+            Content::Shown(shown) if shown.code.binary || shown.code.too_large => {
+                let sentence = if shown.code.binary {
                     "This is a binary file."
                 } else {
                     "This file is too large to show here."
@@ -9109,50 +9905,208 @@ impl Shell {
                     theme,
                     None,
                     sentence.into(),
-                    Some(format!("{} — open it in Zed instead.", size_label(code.size)).into()),
+                    Some(
+                        format!("{} — open it in Zed instead.", size_label(shown.code.size)).into(),
+                    ),
                 )
                 .flex_1()
                 .child(zed_button("file-zed-notice", true))
                 .into_any_element()
             }
-            Content::Shown(code) if code.lines.is_empty() => {
-                message(theme, None, "This file is empty.".into(), None)
-                    .flex_1()
-                    .into_any_element()
-            }
-            Content::Shown(code) => {
-                let this = cx.entity().downgrade();
-                let on_line: preview::OnLine = Rc::new(move |line, _, _, cx| {
-                    let _ = this.update(cx, |shell, cx| {
-                        shell.files_view(project_id).pick_line(line);
-                        cx.notify();
-                    });
-                });
-                preview::code_view(
-                    "file-code",
-                    Rc::clone(code),
-                    view.line,
-                    view.find.as_ref().map(TextFind::hits),
-                    on_line,
-                    theme,
-                )
-                .track_scroll(&self.file_code_scroll)
-                .flex_1()
-                .min_h_0()
-                .px(px(space::L))
-                .pb(px(space::L))
-                .into_any_element()
-            }
+            Content::Shown(shown) => self.render_editor(project_id, shown, window, theme, cx),
         };
+        let disk_banner = view
+            .shown()
+            .filter(|shown| shown.disk_changed.is_some())
+            .map(|_| {
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .px(px(space::L))
+                    .pb(px(space::S))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text))
+                            .child("⚠ Changed on disk — Reload · Keep mine"),
+                    )
+                    .child(
+                        button("file-reload", "Reload", theme, false)
+                            .tooltip(tooltip(
+                                theme,
+                                "Show the file on disk; your changes are dropped",
+                                "",
+                            ))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                let read = shell.files_view(project_id).reload();
+                                let requests = files_view::Requests { list: vec![], read };
+                                shell.files_requests(project_id, requests, window, cx);
+                            })),
+                    )
+                    .child(
+                        button("file-keep-mine", "Keep mine", theme, true)
+                            .tooltip(tooltip(
+                                theme,
+                                "Keep your text; Save overwrites the file on disk",
+                                "",
+                            ))
+                            .on_click(cx.listener(move |shell, _, _, cx| {
+                                shell.files_view(project_id).keep_mine();
+                                cx.notify();
+                            })),
+                    )
+            });
         panel
             .child(header)
             .children(find_bar)
+            .children(disk_banner)
             .children(view.zed_error.clone().map(|error| {
                 notice(theme.text, format!("✕ {error}"))
                     .px(px(space::L))
                     .pb(px(space::S))
             }))
+            .children(
+                view.shown()
+                    .and_then(|shown| shown.save_error.clone())
+                    .map(|error| {
+                        notice(theme.text, format!("✕ {error}"))
+                            .px(px(space::L))
+                            .pb(px(space::S))
+                    }),
+            )
             .child(body)
+    }
+
+    /// The Files editor (§12A, ADR 0028): the lines with the caret, selection, syntax colors
+    /// and find matches. A click places the caret; Shift+click and drag select.
+    fn render_editor(
+        &self,
+        project_id: Ulid,
+        shown: &files_view::Shown,
+        window: &Window,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let focused = self.file_editor_focus.is_focused(window);
+        let cell_width = mkrew_ui::terminal::view::cell_size(window, theme).0;
+        let lines = shown.editor.lines();
+        let total = lines.len();
+        // Widest row in screen cells (tabs and multibyte chars differ from the byte length).
+        let longest = (lines.iter().enumerate())
+            .max_by_key(|(_, line)| editor::display_col(line, line.len()))
+            .map(|(index, _)| index);
+        let text_left = Rc::clone(&self.file_text_left);
+        let row_theme = theme.clone();
+        let list = uniform_list(
+            "file-code",
+            total,
+            cx.processor(move |shell, range: std::ops::Range<usize>, _, cx| {
+                let Some(view) = shell.files.get(&project_id) else {
+                    return Vec::new();
+                };
+                let Some(shown) = view.shown() else {
+                    return Vec::new();
+                };
+                let (editor, code) = (&shown.editor, &shown.code);
+                let hits = view.find.as_ref().map(TextFind::hits);
+                let (cursor, selection) = (editor.cursor(), editor.selection());
+                range
+                    .filter_map(|index| {
+                        let line = editor.lines().get(index)?;
+                        let text = editor::display_line(line);
+                        // Spans of an older text could point past the line: only when it matches.
+                        let fresh = code.lines.get(index).is_some_and(|old| *old == *text);
+                        let spans = (code.spans.get(index))
+                            .filter(|_| fresh)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]);
+                        let found = (hits.as_ref())
+                            .map(|hits| hits.on_line(index))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(range, current)| {
+                                let start = editor::display_byte(line, range.start);
+                                (start..editor::display_byte(line, range.end), current)
+                            })
+                            .collect();
+                        let marks = preview::RowMarks {
+                            caret: (focused && cursor.line == index)
+                                .then(|| editor::display_col(line, cursor.col)),
+                            selected: (selection.as_ref()).and_then(|selection| {
+                                editor::selected_cells(line, index, selection)
+                            }),
+                            found,
+                        };
+                        let row = preview::code_row(
+                            index,
+                            total,
+                            text.into_owned(),
+                            spans,
+                            &marks,
+                            cell_width,
+                            &text_left,
+                            &row_theme,
+                        );
+                        Some(
+                            row.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                                    let x = event.position.x;
+                                    let extend = event.modifiers.shift;
+                                    shell.click_file_text(project_id, index, x, extend, window, cx);
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(
+                                move |shell, event: &MouseMoveEvent, window, cx| {
+                                    let dragging = event.pressed_button == Some(MouseButton::Left)
+                                        && shell.file_editor_focus.is_focused(window);
+                                    if dragging {
+                                        let x = event.position.x;
+                                        shell.click_file_text(
+                                            project_id, index, x, true, window, cx,
+                                        );
+                                    }
+                                },
+                            ))
+                            .into_any_element(),
+                        )
+                    })
+                    .collect()
+            }),
+        )
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .with_width_from_item(longest)
+        .track_scroll(&self.file_code_scroll)
+        .flex_1()
+        .min_h_0()
+        .px(px(space::L))
+        .pb(px(space::L))
+        .font_family(theme.terminal_font_family.clone())
+        .text_size(px(theme.terminal_font_size));
+        div()
+            .id("file-editor")
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .track_focus(&self.file_editor_focus)
+            .on_key_down(cx.listener(Self::file_editor_key_down))
+            // Below the last line too: a click there gives the editor the keyboard.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|shell, _: &MouseDownEvent, window, cx| {
+                    window.focus(&shell.file_editor_focus, cx);
+                    cx.notify();
+                }),
+            )
+            .child(self.typing(&self.file_editor_focus, Self::file_editor_key_down, cx))
+            .child(list)
+            .into_any_element()
     }
 
     /// The workspace's changes (SPEC §12B): the selected file's unified diff, and on its right
@@ -9467,6 +10421,7 @@ impl Shell {
                 }))
         });
         let chooser = self.target_chooser(project_id, view.worktree_task_id, true, theme, cx);
+        let repos = self.repo_chooser(project_id, view, theme, cx);
         let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
         let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
         // Lighter than the active segment's fill, so hovering never looks selected.
@@ -9518,6 +10473,7 @@ impl Shell {
             .px(px(space::M))
             .pt(px(space::XS))
             .children(chooser)
+            .children(repos)
             .child(
                 div()
                     .overflow_hidden()
@@ -9633,19 +10589,110 @@ impl Shell {
         if choices.is_empty() {
             return None;
         }
-        let hover = theme.surface;
         let view = if git { "git" } else { "files" };
-        let chips = choices.into_iter().map(|choice| {
-            let target = choice.worktree_task_id;
-            let active = shown == target;
-            let id = match target {
-                Some(task_id) => SharedString::from(format!("{view}-target-{task_id}")),
-                None => SharedString::from(format!("{view}-target-project")),
-            };
-            let tip = match &choice.branch {
-                Some(branch) => format!("This task's worktree: {branch}"),
-                None => "The workspace folder".to_owned(),
-            };
+        let chips = choices
+            .into_iter()
+            .map(|choice| {
+                let target = choice.worktree_task_id;
+                Chip {
+                    id: match target {
+                        Some(task_id) => SharedString::from(format!("{view}-target-{task_id}")),
+                        None => SharedString::from(format!("{view}-target-project")),
+                    },
+                    tip: match &choice.branch {
+                        Some(branch) => format!("This task's worktree: {branch}"),
+                        None => "The workspace folder".to_owned(),
+                    },
+                    active: shown == target,
+                    label: choice.label.into(),
+                    pick: target,
+                }
+            })
+            .collect();
+        Some(Self::chip_row(
+            "Showing",
+            chips,
+            theme,
+            move |shell, target, window, cx| {
+                if git {
+                    window.focus(&shell.git_focus, cx);
+                    shell.set_git_target(project_id, target, window, cx);
+                } else {
+                    window.focus(&shell.files_focus, cx);
+                    shell.set_files_target(project_id, target, window, cx);
+                }
+            },
+            cx,
+        ))
+    }
+
+    /// "Repo: <workspace> | fe | be" (ADR 0029): which repository of the workspace the Git view
+    /// shows; hidden with fewer than two and while a task worktree is shown (one repository).
+    fn repo_chooser(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::Div> {
+        if view.worktree_task_id.is_some() {
+            return None;
+        }
+        let repos = self.git_repos.get(&project_id)?;
+        let workspace = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|p| p.id == project_id)
+            .map_or("Workspace", |p| p.name.as_str());
+        let chips: Vec<_> = git_view::repo_choices(repos, workspace)
+            .into_iter()
+            .enumerate()
+            .map(|(at, (repo, label))| Chip {
+                id: SharedString::from(format!("git-repo-{at}")),
+                label: SharedString::from(label.to_owned()),
+                tip: match &repo {
+                    Some(repo) => format!("The git repository in {repo}/"),
+                    None => "The workspace folder's git repository".to_owned(),
+                },
+                active: view.repo == repo,
+                pick: repo,
+            })
+            .collect();
+        if chips.is_empty() {
+            return None;
+        }
+        Some(Self::chip_row(
+            "Repo",
+            chips,
+            theme,
+            move |shell, repo, window, cx| {
+                window.focus(&shell.git_focus, cx);
+                shell.set_git_repo(project_id, repo, window, cx);
+            },
+            cx,
+        ))
+    }
+
+    /// A chooser row: `heading`, then one chip per choice. A click on an inactive chip calls
+    /// `on_pick` with its `pick`.
+    fn chip_row<P: Clone + 'static>(
+        heading: &'static str,
+        chips: Vec<Chip<P>>,
+        theme: &Theme,
+        on_pick: impl Fn(&mut Self, P, &mut Window, &mut Context<'_, Self>) + Clone + 'static,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let hover = theme.surface;
+        let chips = chips.into_iter().map(|chip| {
+            let Chip {
+                id,
+                label,
+                tip,
+                active,
+                pick,
+            } = chip;
+            let on_pick = on_pick.clone();
             div()
                 .id(id)
                 .min_w_0()
@@ -9667,27 +10714,19 @@ impl Shell {
                         .hover(move |style| style.bg(rgb(hover)))
                         .active(|style| style.opacity(opacity::ACTIVE))
                         .on_click(cx.listener(move |shell, _, window, cx| {
-                            if git {
-                                window.focus(&shell.git_focus, cx);
-                                shell.set_git_target(project_id, target, window, cx);
-                            } else {
-                                window.focus(&shell.files_focus, cx);
-                                shell.set_files_target(project_id, target, window, cx);
-                            }
+                            on_pick(shell, pick.clone(), window, cx);
                         }))
                 })
-                .child(choice.label)
+                .child(label)
         });
-        Some(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.text_muted)).child("Showing"))
-                .children(chips),
-        )
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(space::XS))
+            .text_size(font_size::META)
+            .child(div().text_color(rgb(theme.text_muted)).child(heading))
+            .children(chips)
     }
 
     /// "Changed by: All | claude #1 | …" (SPEC §20C.4): keeps only the files a session changed
@@ -10585,7 +11624,7 @@ impl Shell {
                     &draft.text,
                     placeholder,
                     focused,
-                    false,
+                    draft.text.all_selected(),
                     theme,
                 )
                 .bg(rgb(theme.surface))
@@ -10700,7 +11739,10 @@ impl Shell {
                 .child(text)
         };
         let field = |id: &'static str, which: Field, text: &str, placeholder: &'static str| {
-            let selected = which == Field::Prompt && dialog.prompt.all_selected();
+            let selected = match which {
+                Field::Title => dialog.title.all_selected(),
+                Field::Prompt => dialog.prompt.all_selected(),
+            };
             text_field(
                 id,
                 text,
@@ -12042,7 +13084,7 @@ impl Shell {
                 &dialog.text,
                 "A branch or ref, e.g. develop or origin/main",
                 true,
-                false,
+                dialog.text.all_selected(),
                 theme,
             ))
             .children(dialog.error.clone().map(error_row))
@@ -12263,7 +13305,7 @@ impl Shell {
                     &dialog.text,
                     "e.g. run the tests",
                     true,
-                    false,
+                    dialog.text.all_selected(),
                     theme,
                 ))
             })
@@ -12627,7 +13669,7 @@ impl Shell {
                 &open.query,
                 "Type part of a file name or path",
                 true,
-                false,
+                open.query.all_selected(),
                 theme,
             ))
             .when(!rows.is_empty(), |el| {
@@ -12777,7 +13819,7 @@ impl Shell {
                 palette.query(),
                 "Type a command, workspace, session or task",
                 true,
-                false,
+                palette.query_selected(),
                 theme,
             ))
             .when(!empty, |el| {
@@ -13297,8 +14339,12 @@ impl Shell {
             .children(tabs.tabs().iter().map(|tab| {
                 let tab_id = tab.id;
                 let is_active = active == Some(tab_id);
-                if let Some((_, draft)) = self.renaming.as_ref().filter(|(id, _)| *id == tab_id) {
-                    return self.render_rename(draft, theme, cx);
+                if let Some(renaming) = self
+                    .renaming
+                    .as_ref()
+                    .filter(|r| r.target == RenameTarget::Tab(tab_id))
+                {
+                    return self.render_rename(&renaming.draft, theme, cx);
                 }
                 // The most urgent state among the tab's panes (SPEC §11).
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
@@ -13435,10 +14481,11 @@ impl Shell {
     /// The title being renamed inline: the draft with a caret, in the active tab's place.
     fn render_rename(
         &self,
-        draft: &str,
+        draft: &Input,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let selected = draft.all_selected();
         div()
             .id("tab-rename")
             .flex()
@@ -13459,14 +14506,20 @@ impl Shell {
             .on_key_down(cx.listener(Self::rename_key_down))
             .relative()
             .child(self.typing(&self.rename_focus, Self::rename_key_down, cx))
-            .child(draft.to_owned())
             .child(
                 div()
-                    .flex_none()
-                    .w(px(theme::BORDER_WIDTH))
-                    .h(font_size::BODY)
-                    .bg(rgb(theme.text)),
+                    .when(selected, |el| el.bg(rgb(theme.terminal_selection_bg)))
+                    .child(draft.as_str().to_owned()),
             )
+            .when(!selected, |el| {
+                el.child(
+                    div()
+                        .flex_none()
+                        .w(px(theme::BORDER_WIDTH))
+                        .h(font_size::BODY)
+                        .bg(rgb(theme.text)),
+                )
+            })
             .into_any_element()
     }
 
@@ -13495,14 +14548,14 @@ impl Shell {
                     .gap(px(space::S))
                     .child(
                         button("empty-new-agent", "New agent", theme, true)
-                            .child(kbd(self.keymap.label(Command::NewAgentTab), theme, true))
+                            .child(kbd(self.keymap.label(Command::SplitAgent), theme, true))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
                             })),
                     )
                     .child(
                         secondary_button("empty-new-shell", "New shell", theme)
-                            .child(kbd(self.keymap.label(Command::NewShellTab), theme, false))
+                            .child(kbd(self.keymap.label(Command::SplitShell), theme, false))
                             .tooltip(tooltip(theme, "New shell pane in the workspace folder", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
@@ -13666,11 +14719,51 @@ impl Shell {
                                 })),
                         )
                 });
+                let renaming = self
+                    .renaming
+                    .as_ref()
+                    .filter(|r| r.target == RenameTarget::Session(session));
+                let title = match renaming {
+                    // Mouse downs stay in the field: the pane's handler would focus the
+                    // terminal, and the blur would commit half-typed text.
+                    Some(renaming) => div()
+                        .flex_1()
+                        .min_w_0()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                        )
+                        .child(self.render_rename(&renaming.draft, theme, cx))
+                        .into_any_element(),
+                    None => {
+                        let renamable = mkrew_core::run::command_name(info).is_none();
+                        div()
+                            .id(SharedString::from(format!("pane-title-{session}")))
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_color(rgb(theme.text_muted))
+                            .children(run::pane_title(info, self.ports.get(info.id)))
+                            // Also the empty space after the agent name of an untitled pane.
+                            .when(renamable, |el| {
+                                el.on_click(cx.listener(
+                                    move |shell, event: &gpui::ClickEvent, window, cx| {
+                                        if event.click_count() == 2 {
+                                            shell.start_pane_rename(session, window, cx);
+                                        }
+                                    },
+                                ))
+                            })
+                            .into_any_element()
+                    }
+                };
                 pane_header(
                     info,
                     self.agent_badge(&info.agent_profile),
                     self.turns.get(session),
-                    self.ports.get(info.id),
+                    title,
                     self.usages.get(session).and_then(usage::context_share),
                     conflict,
                     turns,
@@ -14004,20 +15097,21 @@ fn notice(color: u32, text: String) -> gpui::Div {
         .child(text)
 }
 
-/// A quiet button starting a new agent or shell pane.
+/// A quiet button starting a new agent or shell pane; `keys` = its shortcut label.
 fn new_pane_button(
     id: &'static str,
     label: &'static str,
     kind: SessionKind,
+    keys: String,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let tip = match kind {
         SessionKind::Agent => "New pane with the workspace's default agent",
-        SessionKind::Shell => "New shell pane in the workspace folder",
+        SessionKind::Shell => "New pane with the workspace's default shell",
     };
     button(id, label, theme, false)
-        .tooltip(tooltip(theme, tip, ""))
+        .tooltip(tooltip(theme, tip, keys))
         .on_click(cx.listener(move |shell, _, window, cx| {
             // The toolbar shows it in every view; the new pane is seen in Terminals.
             shell.show_view(View::Terminals, window, cx);
@@ -14217,6 +15311,45 @@ fn drop_catcher(session: Ulid, cx: &Context<'_, Shell>) -> impl IntoElement + us
     )
     .absolute()
     .size_full()
+}
+
+/// What a key does to a one-line field of the Files find bar.
+enum FieldEdit {
+    /// Backspace, Ctrl+Backspace or Ctrl+A.
+    Key(FindKey),
+    Insert(String),
+}
+
+impl FieldEdit {
+    fn apply(self, input: &mut Input) {
+        match self {
+            FieldEdit::Key(key) => {
+                key.edit(input);
+            }
+            FieldEdit::Insert(text) => {
+                input.insert(&text);
+            }
+        }
+    }
+}
+
+/// The edit `keystroke` makes to a find / replace field: Ctrl+V (a clipboard without text
+/// pastes nothing; line breaks become spaces), Backspace, Ctrl+Backspace, Ctrl+A, or typed
+/// text.
+fn field_edit(keystroke: &gpui::Keystroke, cx: &App) -> Option<FieldEdit> {
+    match find_key(keystroke)? {
+        FindKey::Paste => {
+            let text = cx.read_from_clipboard().and_then(|item| item.text());
+            Some(FieldEdit::Insert(
+                text.unwrap_or_default().replace(['\r', '\n'], " "),
+            ))
+        }
+        FindKey::Insert(text) => Some(FieldEdit::Insert(text)),
+        key @ (FindKey::Backspace | FindKey::DeleteWord | FindKey::SelectAll) => {
+            Some(FieldEdit::Key(key))
+        }
+        FindKey::Close | FindKey::Older | FindKey::Newer => None,
+    }
 }
 
 /// Platform text input (IME, Unikey) for the field focused by `focus`, fed to `on_key` (see
@@ -15141,10 +16274,11 @@ fn color_swatch(
         .into_any_element()
 }
 
-/// The rows of an agent-profile list in a menu (`current` checked): loading, the error, an
-/// empty hint or one item per agent; a click calls `pick` with the profile id.
+/// The rows of a profile list (agents or shells) in a menu (`current` checked): loading, the
+/// error, an empty hint or one item per profile; a click calls `pick` with the profile id.
 fn agent_rows(
     agents: &Agents,
+    kind: SessionKind,
     current: Option<&str>,
     id_prefix: &str,
     theme: &Theme,
@@ -15178,12 +16312,15 @@ fn agent_rows(
             ]
         }
         Agents::Loaded(profiles) => {
-            let choices = workspace_menu::agent_choices(profiles, current);
+            let choices = workspace_menu::agent_choices(profiles, kind, current);
             if choices.is_empty() {
-                vec![
-                    muted_line("No agent profiles. Add one to the profiles folder.".into())
-                        .into_any_element(),
-                ]
+                let empty = match kind {
+                    SessionKind::Agent => "No agent profiles. Add one to the profiles folder.",
+                    SessionKind::Shell => {
+                        "No shell found on PATH. Add a shell profile to the profiles folder."
+                    }
+                };
+                vec![muted_line(empty.into()).into_any_element()]
             } else {
                 choices
                     .into_iter()
@@ -15405,8 +16542,6 @@ fn session_row(
         None => row.agent.clone(),
     };
     let hover = theme.hover;
-    // An exited session cannot be attached ("Run again" / "Resume" come later).
-    let live = row.state != SessionState::Exited;
     let row_id = SharedString::from(format!("session-{session_id}"));
     div()
         .id(row_id.clone())
@@ -15418,16 +16553,14 @@ fn session_row(
         .px(px(space::S))
         .rounded(px(radius::SMALL))
         .when(selected, |el| el.bg(rgb(theme.selected)))
-        .when(live, |el| {
-            el.cursor_pointer()
-                .hover(move |style| style.bg(rgb(hover)))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.open_session(session_id, window, cx);
-                }))
-                .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
-                    shell.hover_row(Place::Sidebar, session_id, *hovered, window, cx);
-                }))
-        })
+        .cursor_pointer()
+        .hover(move |style| style.bg(rgb(hover)))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.open_session(session_id, window, cx);
+        }))
+        .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
+            shell.hover_row(Place::Sidebar, session_id, *hovered, window, cx);
+        }))
         .child(status_mark(row.state, now, theme))
         .child(agent_chip(badge, theme))
         .child(
@@ -16072,6 +17205,7 @@ fn run_with_button(
     };
     let agents = agent_rows(
         &menu.agents,
+        SessionKind::Agent,
         current,
         "run-with",
         theme,
@@ -16144,12 +17278,22 @@ fn fan_out_button(
         return div().child(button);
     };
     let choices = match &menu.agents {
-        Agents::Loaded(profiles) => workspace_menu::agent_choices(profiles, None),
+        Agents::Loaded(profiles) => {
+            workspace_menu::agent_choices(profiles, SessionKind::Agent, None)
+        }
         _ => Vec::new(),
     };
     let rows = if choices.is_empty() {
         // Loading, the error or the empty hint; there is nothing to tick.
-        agent_rows(&menu.agents, None, "fan-out", theme, cx, |_, _, _, _| {})
+        agent_rows(
+            &menu.agents,
+            SessionKind::Agent,
+            None,
+            "fan-out",
+            theme,
+            cx,
+            |_, _, _, _| {},
+        )
     } else if choices.len() < TaskFanoutParams::MIN_PROFILES {
         vec![
             div()
@@ -16475,7 +17619,8 @@ fn conflict_badge(
         )
 }
 
-/// A pane's header (SPEC §11): status icon, agent name, session title, an optional conflict
+/// A pane's header (SPEC §11): status icon, agent name, the title (renamed inline with F2 or a
+/// double-click, ADR 0031), an optional conflict
 /// warning, the number of queued sends (§20B.2), the context share (`⚠` and amber from 80 %,
 /// §20E.3), status text and time (with the last turn's summary when done), and an agent's
 /// "Follow in Zed" and "Turns…" (§20C.5, §20C.2); hovering the status shows its source and
@@ -16485,7 +17630,7 @@ fn pane_header(
     session: &Session,
     badge: String,
     turn: Option<&SessionTurnEvent>,
-    ports: &[u16],
+    title: gpui::AnyElement,
     context: Option<ContextShare>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
     turns: Option<gpui::Stateful<gpui::Div>>,
@@ -16512,16 +17657,7 @@ fn pane_header(
                 .text_color(rgb(theme.text))
                 .child(session.agent_profile.clone()),
         )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .text_color(rgb(theme.text_muted))
-                .children(run::pane_title(session, ports)),
-        )
+        .child(title)
         .children(conflict.map(|badge| {
             badge
                 .flex_none()

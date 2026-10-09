@@ -1,0 +1,12 @@
+# PowerShell 7 (`pwsh` on PATH). Pick it as a workspace's default shell in the workspace menu.
+name = "PowerShell"
+icon = "PS"
+kind = "shell"
+command = "pwsh"
+args = ["-NoLogo"]
+prompt_mode = "none"
+
+[state]
+mode = "screen"
+idle_after_ms = 3000
+needs_input_patterns = []

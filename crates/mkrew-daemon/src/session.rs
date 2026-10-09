@@ -17,7 +17,7 @@ use mkrew_protocol::{
     ConflictDetectedEvent, DocChangedEvent, DocComment, Event, GitChangedEvent, HookReportParams,
     QueuedSend, Session, SessionAttachResult, SessionEditedEvent, SessionExitedEvent, SessionKind,
     SessionPortsEvent, SessionQueueEvent, SessionReadResult, SessionState, SessionStateEvent,
-    StateSource,
+    SessionTerminalTitleEvent, StateSource,
 };
 use mkrew_store::Store;
 use portable_pty::{ChildKiller, MasterPty, PtySize, native_pty_system};
@@ -97,6 +97,10 @@ pub struct Hub {
     usage_warned: Mutex<HashSet<String>>,
     /// Ports printed by live run sessions (SPEC §10); memory only.
     pub ports: Mutex<HashMap<Ulid, Vec<u16>>>,
+    /// Cleaned titles agent sessions gave their terminal (ADR 0031); memory only, kept until
+    /// the daemon stops, so exited sessions keep their name in `session.list`.
+    // ponytail: one ≤ 60-char string per titled agent session; prune on exit if it grows.
+    pub terminal_titles: Mutex<HashMap<Ulid, String>>,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -239,6 +243,12 @@ pub enum Command {
     },
     /// A watcher batch attributed to this session (relative paths): goes to its open turn.
     TurnFiles(Vec<String>),
+    /// `session.rename`: the actor owns the row (its next save would undo a store-only
+    /// rename). Replies with the renamed session, also announced as `session.updated`.
+    Rename {
+        title: Option<String>,
+        reply: oneshot::Sender<Session>,
+    },
 }
 
 /// What a session task receives from its PTY threads.
@@ -294,6 +304,7 @@ impl Hub {
             snapshots: Snapshots::default(),
             usage_warned: Mutex::default(),
             ports: Mutex::default(),
+            terminal_titles: Mutex::default(),
         }
     }
 
@@ -305,6 +316,11 @@ impl Hub {
     /// The ports `id` printed, if it is a live run session that printed some.
     pub fn session_ports(&self, id: Ulid) -> Option<Vec<u16>> {
         lock(&self.ports).get(&id).cloned()
+    }
+
+    /// The cleaned terminal title of agent session `id`, if its program set one.
+    pub fn terminal_title(&self, id: Ulid) -> Option<String> {
+        lock(&self.terminal_titles).get(&id).cloned()
     }
 
     pub fn live_count(&self) -> usize {
@@ -1070,6 +1086,13 @@ impl Actor {
                         self.hook_reply = None;
                     }
                     Some(Command::TurnFiles(paths)) => self.turns.add_files(paths),
+                    Some(Command::Rename { title, reply }) => {
+                        self.session.title = title;
+                        self.save();
+                        let _ = self.hub.events.send(Event::SessionUpdated(self.session.clone()));
+                        // The caller may have gone away; the rename stands.
+                        let _ = reply.send(self.session.clone());
+                    }
                     None => commands_open = false,
                 },
                 () = sleep_until(tick_at), if tick_at.is_some() => {
@@ -1110,6 +1133,10 @@ impl Actor {
         // two chunks of a paste; DSR during a paste is rare enough to accept that.)
         if !reply.is_empty() && self.input.try_send(reply).is_err() {
             tracing::debug!(id = %self.session.id, "input queue full or closed; DSR reply dropped");
+        }
+        let title = self.emulator().take_title();
+        if let Some(title) = title {
+            self.on_terminal_title(title.as_deref());
         }
         self.attachments.retain(|a| !a.is_closed());
         for attachment in &self.attachments {
@@ -1349,6 +1376,41 @@ impl Actor {
         }));
     }
 
+    /// Keeps and announces an agent's new terminal title (ADR 0031). Shell titles (paths,
+    /// running commands) are ignored; so are unusable titles (a path, only glyphs), which
+    /// keep the current name. A reset or empty title clears it. Spinner frames clean to the
+    /// same name: announced once.
+    fn on_terminal_title(&mut self, raw: Option<&str>) {
+        if self.session.kind != SessionKind::Agent {
+            return;
+        }
+        let title = match raw.map(str::trim) {
+            None | Some("") => None,
+            Some(raw) => match crate::emulator::clean_title(raw) {
+                Some(title) => Some(title),
+                None => return,
+            },
+        };
+        if title == self.session.terminal_title {
+            return;
+        }
+        self.session.terminal_title.clone_from(&title);
+        {
+            let mut titles = lock(&self.hub.terminal_titles);
+            match &title {
+                Some(title) => titles.insert(self.session.id, title.clone()),
+                None => titles.remove(&self.session.id),
+            };
+        }
+        let _ = self
+            .hub
+            .events
+            .send(Event::SessionTerminalTitle(SessionTerminalTitleEvent {
+                session_id: self.session.id,
+                title,
+            }));
+    }
+
     fn close_master(&mut self) {
         // Closing a pseudo console can block on Windows; keep it off the runtime.
         if let Some(master) = self.master.take() {
@@ -1381,9 +1443,8 @@ impl Actor {
         }
         // Cut off by the daemon stop, not ended by the user or the agent: resume it at the
         // next start (SPEC §8). A reboot leaves the row live instead; startup marks those.
-        if self.hub.stopping.load(Ordering::SeqCst)
-            && let Err(e) = self.hub.store().mark_interrupted(self.session.id)
-        {
+        let stopping = self.hub.stopping.load(Ordering::SeqCst);
+        if stopping && let Err(e) = self.hub.store().mark_interrupted(self.session.id) {
             tracing::warn!(id = %self.session.id, "not marked interrupted: {e}");
         }
         self.session.exit_code = exit_code;
@@ -1396,6 +1457,15 @@ impl Actor {
                 session_id: self.session.id,
                 exit_code,
             }));
+        // A session that exited while the daemon runs has nothing to show: its pane leaves
+        // the tab (ADR 0033; its output stays in History). After `Exited` is stored, so
+        // `show_run_tab`, which lists live sessions only, cannot write a run pane back. Never
+        // while the daemon stops: the pane must stay for the resume at the next start
+        // (SPEC §8, ADR 0017).
+        if !stopping {
+            self.hub
+                .leave_tabs(self.session.project_id, self.session.id);
+        }
         tracing::info!(id = %self.session.id, ?exit_code, "session exited");
     }
 }

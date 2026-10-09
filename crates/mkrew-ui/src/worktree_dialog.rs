@@ -158,6 +158,7 @@ impl WorktreeDialog {
         Request::GitStatus(GitStatusParams {
             project_id: self.project_id,
             worktree_task_id: worktree.then_some(self.task_id),
+            repo: None,
             mode: Default::default(),
             since: None,
         })
@@ -168,6 +169,7 @@ impl WorktreeDialog {
         Request::GitLog(GitLogParams {
             project_id: self.project_id,
             worktree_task_id: worktree.then_some(self.task_id),
+            repo: None,
             limit: GitLogParams::DEFAULT_LIMIT,
             path: None,
         })
@@ -207,6 +209,7 @@ impl WorktreeDialog {
             Step::ConfirmDiscard(plan) => Ok(Request::GitDiscard(GitDiscardParams {
                 project_id: self.project_id,
                 worktree_task_id: Some(self.task_id),
+                repo: None,
                 paths: plan.discardable.clone(),
                 confirm: true,
             })),
@@ -443,6 +446,7 @@ mod tests {
             agent_profile: "claude".into(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Daemon,

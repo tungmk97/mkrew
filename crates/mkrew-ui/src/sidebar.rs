@@ -90,13 +90,13 @@ pub struct SessionRow {
     pub state_source: StateSource,
     /// Unix ms of the last state change.
     pub state_changed_at: i64,
-    pub exit_code: Option<i32>,
 }
 
 impl SessionRow {
-    /// The status text at `now_ms`, e.g. `working · 2m`, `needs input` or `exited (1)`.
+    /// The status text at `now_ms`, e.g. `working · 2m` or `needs input` (a row is never
+    /// exited, so there is no exit code).
     pub fn status_text(&self, now_ms: i64) -> String {
-        status::text(self.state, self.exit_code, self.state_changed_at, now_ms)
+        status::text(self.state, None, self.state_changed_at, now_ms)
     }
 }
 
@@ -200,6 +200,12 @@ impl Sidebar {
         self.sessions.retain(|session| session.id != session_id);
     }
 
+    /// The title from a `session.rename` reply: only the title, because the reply can be older
+    /// than state events already applied.
+    pub fn set_title(&mut self, session_id: Ulid, title: Option<String>) {
+        self.update_session(session_id, |session| session.title = title);
+    }
+
     /// Applies a daemon event.
     pub fn apply(&mut self, event: &Event) -> Change {
         if let Some(since_load) = &mut self.since_load
@@ -227,6 +233,14 @@ impl Sidebar {
                 session.state = SessionState::Exited;
                 session.exit_code = event.exit_code;
             }),
+            Event::SessionUpdated(updated) => {
+                self.update_session(updated.id, |session| *session = updated.clone())
+            }
+            Event::SessionTerminalTitle(event) => {
+                self.update_session(event.session_id, |session| {
+                    session.terminal_title.clone_from(&event.title);
+                })
+            }
             Event::ProjectUpdated(project) => {
                 self.upsert_project(project.clone());
                 Change::Redraw
@@ -249,14 +263,18 @@ impl Sidebar {
         }
     }
 
-    /// Rows to show: each workspace, then (if expanded) its sessions, newest first.
+    /// Rows to show: each workspace, then (if expanded) its live sessions, newest first.
     pub fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
         for project in &self.projects {
             let mut sessions: Vec<&Session> = self
                 .sessions
                 .iter()
-                .filter(|session| session.project_id == project.id)
+                // An exited session cannot be opened: no row (History and the Inbox read it
+                // from `sessions()`; ADR 0033).
+                .filter(|session| {
+                    session.project_id == project.id && session.state != SessionState::Exited
+                })
                 .collect();
             sessions.sort_by_key(|session| std::cmp::Reverse((session.started_at, session.id)));
             let expanded = self.expanded.contains(&project.id);
@@ -287,11 +305,10 @@ impl Sidebar {
                     session_id: session.id,
                     project_id: session.project_id,
                     agent: session.agent_profile.clone(),
-                    title: session.title.clone(),
+                    title: crate::history::title(session).map(str::to_owned),
                     state: session.state,
                     state_source: session.state_source,
                     state_changed_at: session.state_changed_at,
-                    exit_code: session.exit_code,
                 })
             }));
         }
@@ -335,6 +352,7 @@ mod tests {
             run_commands: Vec::new(),
             run_autostart: false,
             default_agent: None,
+            default_shell: None,
             review_globs: None,
             created_at: 0,
             archived: false,
@@ -351,6 +369,7 @@ mod tests {
             agent_profile: "claude".to_owned(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Daemon,
@@ -440,6 +459,49 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_session_shows_its_new_title_and_an_unknown_one_refreshes() {
+        let api = project("api");
+        let live = session(&api, 1, SessionState::Working);
+        let mut sidebar = Sidebar::default();
+        sidebar.load(vec![api.clone()], vec![live.clone()]);
+        let renamed = Session {
+            title: Some("Fix login".into()),
+            ..live
+        };
+        assert_eq!(
+            sidebar.apply(&Event::SessionUpdated(renamed)),
+            Change::Redraw
+        );
+        let Row::Session(row) = &sidebar.rows()[1] else {
+            panic!("expected the session row");
+        };
+        assert_eq!(row.title.as_deref(), Some("Fix login"));
+        let stranger = session(&api, 2, SessionState::Working);
+        assert_eq!(
+            sidebar.apply(&Event::SessionUpdated(stranger)),
+            Change::Refresh
+        );
+    }
+
+    #[test]
+    fn a_rename_reply_sets_only_the_title() {
+        let api = project("api");
+        let live = session(&api, 1, SessionState::Working);
+        let mut sidebar = Sidebar::default();
+        sidebar.load(vec![api.clone()], vec![live.clone()]);
+        // The state moved on after the reply's snapshot was taken.
+        sidebar.apply(&Event::SessionExited(mkrew_protocol::SessionExitedEvent {
+            session_id: live.id,
+            exit_code: Some(3),
+        }));
+        sidebar.set_title(live.id, Some("Fix login".into()));
+        let session = &sidebar.sessions()[0];
+        assert_eq!(session.title.as_deref(), Some("Fix login"));
+        assert_eq!(session.state, SessionState::Exited);
+        assert_eq!(session.exit_code, Some(3));
+    }
+
+    #[test]
     fn workspaces_cycle_in_sidebar_order() {
         let mut sidebar = Sidebar::default();
         assert_eq!(sidebar.workspace_at_offset(None, 1), None);
@@ -511,22 +573,28 @@ mod tests {
         assert!(sidebar.since_load.is_none());
     }
 
+    /// An exited session cannot be opened, so it has no row; History, the Inbox and the pane
+    /// placeholder still read it from `sessions()`. A session this list never saw asks for a
+    /// refresh.
     #[test]
-    fn exit_shows_the_code_and_unknown_sessions_ask_for_a_refresh() {
+    fn an_exited_session_leaves_the_rows_but_stays_listed() {
         let api = project("api");
         let s = session(&api, 1, SessionState::Working);
         let mut sidebar = Sidebar::default();
         sidebar.load(vec![api.clone()], vec![s.clone()]);
+        assert_eq!(session_ids(&sidebar.rows()), vec![s.id]);
 
         let exited = Event::SessionExited(SessionExitedEvent {
             session_id: s.id,
             exit_code: Some(1),
         });
         assert_eq!(sidebar.apply(&exited), Change::Redraw);
-        let Row::Session(row) = &sidebar.rows()[1] else {
-            panic!("expected a session row");
-        };
-        assert_eq!(row.status_text(1_000), "exited (1)");
+        assert_eq!(sidebar.rows()[1], Row::NoSessions { project_id: api.id });
+        let kept = &sidebar.sessions()[0];
+        assert_eq!(
+            (kept.state, kept.exit_code),
+            (SessionState::Exited, Some(1))
+        );
 
         let spawned = Event::SessionState(SessionStateEvent {
             session_id: Ulid::new(),

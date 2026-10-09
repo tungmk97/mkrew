@@ -4,6 +4,7 @@
 use gpui::Keystroke;
 
 use crate::terminal::emulator::Emulator;
+use crate::text_box::Input;
 
 /// What a key press in the find bar does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,17 +16,43 @@ pub enum FindKey {
     /// Shift+Enter: previous match (towards newer output).
     Newer,
     Backspace,
+    /// Ctrl+Backspace (Cmd+Backspace on macOS): delete the word before the end.
+    DeleteWord,
+    /// Ctrl+A (Cmd+A): the next edit replaces the whole text.
+    SelectAll,
+    /// Ctrl+V (Cmd+V): the caller inserts the clipboard text.
+    Paste,
     Insert(String),
+}
+
+impl FindKey {
+    /// Applies an editing key to `input` (the terminal bar, the Files bars, the rename);
+    /// every other key does nothing. `true` when the text changed.
+    pub fn edit(&self, input: &mut Input) -> bool {
+        match self {
+            FindKey::Backspace => input.backspace(),
+            FindKey::DeleteWord => input.delete_word(),
+            FindKey::SelectAll => {
+                input.select_all();
+                false
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The find-bar meaning of `keystroke`; `None` = ignored (it never reaches the PTY).
 pub fn find_key(keystroke: &Keystroke) -> Option<FindKey> {
     let m = keystroke.modifiers;
+    let command = m.platform || m.control;
     match keystroke.key.as_str() {
         "escape" => return Some(FindKey::Close),
         "enter" if m.shift => return Some(FindKey::Newer),
         "enter" => return Some(FindKey::Older),
+        "backspace" if command && !m.alt => return Some(FindKey::DeleteWord),
         "backspace" => return Some(FindKey::Backspace),
+        "v" if command && !m.alt && !m.shift => return Some(FindKey::Paste),
+        "a" if command && !m.alt && !m.shift => return Some(FindKey::SelectAll),
         _ => {}
     }
     // AltGr arrives as Ctrl+Alt with the composed char; plain Ctrl+key types nothing.
@@ -63,14 +90,14 @@ impl FindStatus {
 /// The open find bar of one pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FindBar {
-    query: String,
+    query: Input,
     status: FindStatus,
 }
 
 impl Default for FindBar {
     fn default() -> Self {
         Self {
-            query: String::new(),
+            query: Input::default(),
             status: FindStatus::Empty,
         }
     }
@@ -78,7 +105,12 @@ impl Default for FindBar {
 
 impl FindBar {
     pub fn query(&self) -> &str {
-        &self.query
+        self.query.as_str()
+    }
+
+    /// Whether Ctrl+A selected the whole query (drawn highlighted).
+    pub fn selected(&self) -> bool {
+        self.query.all_selected()
     }
 
     pub fn status(&self) -> FindStatus {
@@ -95,12 +127,14 @@ impl FindBar {
                     self.status = moved(emulator.search_next(key == FindKey::Older));
                 }
             }
-            FindKey::Backspace => {
-                if self.query.pop().is_some() {
+            FindKey::Insert(text) => self.insert(&text, emulator),
+            // The caller reads the clipboard and calls `insert`.
+            FindKey::Paste => {}
+            key => {
+                if key.edit(&mut self.query) {
                     self.search(emulator);
                 }
             }
-            FindKey::Insert(text) => self.insert(&text, emulator),
         }
         true
     }
@@ -108,8 +142,7 @@ impl FindBar {
     /// Appends typed or pasted text (only its first line) and searches again.
     pub fn insert(&mut self, text: &str, emulator: &mut Emulator) {
         let line = text.lines().next().unwrap_or_default();
-        if !line.is_empty() {
-            self.query.push_str(line);
+        if self.query.insert(line) {
             self.search(emulator);
         }
     }
@@ -166,7 +199,11 @@ mod tests {
         assert_eq!(key("backspace"), Some(FindKey::Backspace));
         assert_eq!(key("a"), Some(FindKey::Insert("a".into())));
         assert_eq!(key("shift-a"), Some(FindKey::Insert("A".into())));
-        assert_eq!(key("ctrl-a"), None);
+        assert_eq!(key("ctrl-a"), Some(FindKey::SelectAll));
+        assert_eq!(key("ctrl-v"), Some(FindKey::Paste));
+        assert_eq!(key("ctrl-backspace"), Some(FindKey::DeleteWord));
+        assert_eq!(key("alt-backspace"), Some(FindKey::Backspace));
+        assert_eq!(key("ctrl-b"), None, "other Ctrl+letters still type nothing");
         assert_eq!(key("left"), None);
     }
 
@@ -213,6 +250,31 @@ mod tests {
         // Backspace on an empty query changes nothing.
         bar.key(FindKey::Backspace, &mut emu);
         assert_eq!(bar.status(), FindStatus::Empty);
+    }
+
+    #[test]
+    fn select_all_and_ctrl_backspace_edit_the_query_and_search_again() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"foo bar");
+        let mut bar = FindBar::default();
+        bar.insert("foo bar", &mut emu);
+        assert!(bar.key(FindKey::DeleteWord, &mut emu));
+        assert_eq!(bar.query(), "foo ");
+        assert_eq!(bar.status(), FindStatus::Found);
+
+        bar.key(FindKey::SelectAll, &mut emu);
+        assert!(bar.selected());
+        bar.key(FindKey::Insert("bar".into()), &mut emu);
+        assert_eq!((bar.query(), bar.selected()), ("bar", false));
+        assert_eq!(bar.status(), FindStatus::Found);
+
+        bar.key(FindKey::SelectAll, &mut emu);
+        bar.key(FindKey::Backspace, &mut emu);
+        assert_eq!(bar.query(), "");
+        assert_eq!(bar.status(), FindStatus::Empty);
+        // Paste is the caller's (it reads the clipboard), like in the dialogs.
+        assert!(bar.key(FindKey::Paste, &mut emu));
+        assert_eq!(bar.query(), "");
     }
 
     #[test]

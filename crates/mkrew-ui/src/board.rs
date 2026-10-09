@@ -584,6 +584,7 @@ mod tests {
             agent_profile: "claude".to_owned(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state: SessionState::Working,
             state_source: StateSource::Daemon,

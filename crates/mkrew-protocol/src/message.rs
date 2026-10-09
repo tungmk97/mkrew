@@ -17,9 +17,9 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::files::{
-    AiGenerateParams, AiGeneratedEvent, FsFindParams, FsListParams, FsReadParams, GitChangedEvent,
-    GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams, GitRemoteParams,
-    GitSetBaseParams, GitShowParams, GitStageParams, GitStatusParams, ProjectRef,
+    AiGenerateParams, AiGeneratedEvent, FsFindParams, FsListParams, FsReadParams, FsWriteParams,
+    GitChangedEvent, GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams,
+    GitRemoteParams, GitSetBaseParams, GitShowParams, GitStageParams, GitStatusParams, ProjectRef,
 };
 
 /// One JSON frame.
@@ -134,6 +134,10 @@ pub enum Request {
     /// and turns stay); a live one is asked to stop first (SPEC §7, ADR 0019).
     #[serde(rename = "session.remove")]
     SessionRemove(SessionRef),
+    /// Returns the renamed [`Session`], also announced as `session.updated`; a `null` or blank
+    /// `title` clears it. Run sessions keep their `run:` name (ADR 0031).
+    #[serde(rename = "session.rename")]
+    SessionRename(SessionRenameParams),
     /// Returns [`SessionHistory`]; works for exited sessions too.
     #[serde(rename = "session.history")]
     SessionHistory(SessionRef),
@@ -189,6 +193,10 @@ pub enum Request {
     /// Returns [`CommitDetail`].
     #[serde(rename = "git.show")]
     GitShow(GitShowParams),
+    /// Returns `string[]`: the git repositories of the project folder (ADR 0029). `""` first
+    /// when the folder itself is in a repository, then each direct child folder holding `.git`.
+    #[serde(rename = "git.repos")]
+    GitRepos(ProjectRef),
     /// One-shot text from an agent CLI (SPEC §6 `oneshot`, §12B, §20B.1). Returns nothing
     /// (`null`) once the run started; the answer follows as `ai.generated`.
     #[serde(rename = "ai.generate")]
@@ -207,6 +215,9 @@ pub enum Request {
     /// Returns [`FsContent`].
     #[serde(rename = "fs.read")]
     FsRead(FsReadParams),
+    /// Returns [`FsWritten`] (ADR 0028).
+    #[serde(rename = "fs.write")]
+    FsWrite(FsWriteParams),
     /// Returns `FsMatch[]`, best first.
     #[serde(rename = "fs.find")]
     FsFind(FsFindParams),
@@ -356,6 +367,12 @@ pub enum Event {
     /// A run session printed a new port (SPEC §10).
     #[serde(rename = "session.ports")]
     SessionPorts(SessionPortsEvent),
+    /// A session's title changed (`session.rename`, ADR 0031); carries the whole session.
+    #[serde(rename = "session.updated")]
+    SessionUpdated(Session),
+    /// An agent session's terminal title changed, cleaned (`None` = cleared; ADR 0031).
+    #[serde(rename = "session.terminal_title")]
+    SessionTerminalTitle(SessionTerminalTitleEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -419,6 +436,10 @@ pub struct Project {
     #[serde(default)]
     pub run_autostart: bool,
     pub default_agent: Option<String>,
+    /// Shell profile for new shell panes (ADR 0032); `None` = not picked yet, so a new shell
+    /// pane is refused until the user picks one.
+    #[serde(default)]
+    pub default_shell: Option<String>,
     /// `None` = default globs (SPEC §12).
     pub review_globs: Option<Vec<String>>,
     /// Unix ms.
@@ -456,6 +477,11 @@ pub struct Session {
     pub agent_profile: String,
     pub kind: SessionKind,
     pub title: Option<String>,
+    /// The title the session's agent gave its terminal (OSC 0/2), cleaned; daemon memory
+    /// only, filled in `session.list` / `session.rename` / `session.updated`. Shown when
+    /// `title` is unset (ADR 0031).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_title: Option<String>,
     /// The agent's own session id, used for resume (SPEC §6).
     pub native_session_id: Option<String>,
     pub state: SessionState,
@@ -667,6 +693,13 @@ pub struct ProjectUpdateParams {
         deserialize_with = "present"
     )]
     pub default_agent: Option<Option<String>>,
+    /// `Some(None)` (JSON `null`) clears the default shell.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub default_shell: Option<Option<String>>,
     /// Replaces the whole list; checked and trimmed by the daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_commands: Option<Vec<RunCommand>>,
@@ -950,8 +983,8 @@ pub const UNDO_DIFF_LIMIT: usize = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSpawnParams {
     pub project_id: Ulid,
-    /// `None` = the default for `kind`: the project's `default_agent` for an agent, the
-    /// `shell` profile for a shell. A named profile decides the session kind itself.
+    /// `None` = the default for `kind`: the project's `default_agent` for an agent, its
+    /// `default_shell` for a shell. A named profile decides the session kind itself.
     #[serde(default)]
     pub agent_profile: Option<String>,
     #[serde(default)]
@@ -975,6 +1008,14 @@ pub struct SessionListParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRef {
     pub session_id: Ulid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRenameParams {
+    pub session_id: Ulid,
+    /// Trimmed by the daemon; `None` or blank clears the title.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// `session.history` result: the session's output log files on disk (SPEC §8), oldest first
@@ -1201,13 +1242,17 @@ pub struct SessionAttachResult {
     pub snapshot: ScreenSnapshot,
 }
 
-/// The visible screen of a session's headless emulator (SPEC §7, §8).
+/// The visible screen of a session's headless emulator plus the history above it (SPEC §7, §8).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScreenSnapshot {
     pub cols: u16,
     pub rows: u16,
     /// One entry per visible row, top to bottom. Trailing default blanks are omitted.
     pub lines: Vec<Vec<CellRun>>,
+    /// The main screen's scrollback, oldest first, same row format as `lines` (at most the
+    /// daemon's 200 lines). Empty on the alternate screen, which has no history.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<Vec<CellRun>>,
     pub cursor: CursorSnapshot,
     pub modes: TermModes,
 }
@@ -1295,6 +1340,10 @@ pub struct AgentProfileInfo {
     /// The profile's badge (ADR 0025); absent from older daemons.
     #[serde(default)]
     pub icon: Option<String>,
+    /// The profile's program is found (PATH with PATHEXT, or its absolute path); the UI lists
+    /// only installed shells (ADR 0032).
+    #[serde(default)]
+    pub installed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1340,6 +1389,12 @@ pub struct SessionUsageEvent {
 pub struct SessionPortsEvent {
     pub session_id: Ulid,
     pub ports: Vec<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTerminalTitleEvent {
+    pub session_id: Ulid,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1566,6 +1621,7 @@ mod tests {
                 project_id: sid(),
                 name: Some("demo".into()),
                 default_agent: Some(None),
+                default_shell: None,
                 run_commands: Some(vec![RunCommand {
                     name: "BE".into(),
                     dir: "api".into(),
@@ -1719,6 +1775,10 @@ mod tests {
                 force: true,
             }),
             Request::SessionRemove(SessionRef { session_id: sid() }),
+            Request::SessionRename(SessionRenameParams {
+                session_id: sid(),
+                title: Some("Fix login".into()),
+            }),
             Request::HookReport(HookReportParams {
                 mkrew_session_id: sid(),
                 agent: "claude".into(),
@@ -1847,6 +1907,15 @@ mod tests {
             parse(json!({"project_id": id, "default_agent": "claude"})).default_agent,
             Some(Some("claude".into()))
         );
+        assert_eq!(parse(json!({"project_id": id})).default_shell, None);
+        assert_eq!(
+            parse(json!({"project_id": id, "default_shell": null})).default_shell,
+            Some(None)
+        );
+        assert_eq!(
+            parse(json!({"project_id": id, "default_shell": "pwsh"})).default_shell,
+            Some(Some("pwsh".into()))
+        );
         let autostart = parse(json!({"project_id": id, "run_autostart": true}));
         assert_eq!(autostart.run_autostart, Some(true));
         assert_eq!(autostart.run_commands, None);
@@ -1868,6 +1937,7 @@ mod tests {
             project_id: sid(),
             name: None,
             default_agent: None,
+            default_shell: None,
             run_commands: None,
             run_autostart: None,
             color: None,
@@ -1970,6 +2040,7 @@ mod tests {
                 kind: SessionKind::Agent,
                 command: "mkrew-fakeagent".into(),
                 icon: Some("ƒ".into()),
+                installed: true,
             }],
             errors: vec![ProfileErrorInfo {
                 file: "agents/broken.toml".into(),
@@ -2005,6 +2076,12 @@ mod tests {
                 }],
                 vec![],
             ],
+            history: vec![vec![CellRun {
+                text: "old".into(),
+                fg: TermColor::Default,
+                bg: TermColor::Default,
+                flags: 0,
+            }]],
             cursor: CursorSnapshot {
                 row: 1,
                 col: 0,
@@ -2025,6 +2102,10 @@ mod tests {
         assert_eq!(
             value["data"]["snapshot"]["lines"][0][0],
             json!({"text": "ok", "fg": {"indexed": 1}, "bg": {"rgb": [1, 2, 3]}, "flags": 1})
+        );
+        assert_eq!(
+            value["data"]["snapshot"]["history"][0][0],
+            json!({"text": "old", "fg": "default", "bg": "default", "flags": 0})
         );
         let attach = SessionAttachResult {
             state: SessionState::Idle,
@@ -2073,6 +2154,7 @@ mod tests {
             }],
             run_autostart: true,
             default_agent: Some("claude".into()),
+            default_shell: Some("pwsh".into()),
             review_globs: Some(vec!["docs/**/*.md".into()]),
             created_at: 1,
             archived: false,
@@ -2180,6 +2262,35 @@ mod tests {
             session_id: sid(),
             ports: vec![8080, 5180],
         })));
+        let updated = round_trip(&Message::Event(Event::SessionUpdated(Session {
+            id: sid(),
+            task_id: None,
+            project_id: sid(),
+            agent_profile: "claude".into(),
+            kind: SessionKind::Agent,
+            title: Some("Fix login".into()),
+            terminal_title: None,
+            native_session_id: None,
+            state: SessionState::Working,
+            state_source: StateSource::Screen,
+            state_changed_at: 1,
+            exit_code: None,
+            cols: 80,
+            rows: 24,
+            started_at: 1,
+            ended_at: None,
+        })));
+        let titled = round_trip(&Message::Event(Event::SessionTerminalTitle(
+            SessionTerminalTitleEvent {
+                session_id: sid(),
+                title: Some("Fix login".into()),
+            },
+        )));
+        assert_eq!(titled["event"], "session.terminal_title");
+        assert_eq!(updated["event"], "session.updated");
+        assert_eq!(updated["data"]["title"], "Fix login");
+        // Absent on the wire when unset.
+        assert!(updated["data"].get("terminal_title").is_none());
         let usage = round_trip(&Message::Event(Event::SessionUsage(SessionUsageEvent {
             session_id: sid(),
             input: 10,

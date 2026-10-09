@@ -30,7 +30,11 @@ impl Daemon {
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
         let target = match self
-            .target(params.project_id, params.worktree_task_id)
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
             .await
         {
             Ok(target) => target,

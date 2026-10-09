@@ -1,0 +1,13 @@
+# Git Bash from the default Git for Windows install. Installed somewhere else (e.g. per user under
+# %LOCALAPPDATA%\Programs\Git)? Change `command` to that bin\bash.exe.
+name = "Git Bash"
+icon = "G$"
+kind = "shell"
+command = 'C:\Program Files\Git\bin\bash.exe'
+args = ["--login", "-i"]
+prompt_mode = "none"
+
+[state]
+mode = "screen"
+idle_after_ms = 3000
+needs_input_patterns = []

@@ -10,6 +10,7 @@ use ulid::Ulid;
 
 use crate::inbox::Entry;
 use crate::task_dialog::{DialogKey, dialog_key};
+use crate::text_box::Input;
 
 /// Screen lines shown.
 pub const LINES: u16 = 8;
@@ -51,7 +52,7 @@ pub struct Peek {
     pub place: Place,
     pub screen: Screen,
     /// The reply being typed.
-    pub text: String,
+    pub text: Input,
     /// A `session.send` is in flight.
     pub busy: bool,
     pub error: Option<String>,
@@ -69,7 +70,7 @@ impl Peek {
             session_id,
             place,
             screen: Screen::Reading,
-            text: String::new(),
+            text: Input::default(),
             busy: false,
             error: None,
             focused,
@@ -112,9 +113,9 @@ impl Peek {
             Some(DialogKey::Cancel) => Outcome::Close,
             Some(DialogKey::Enter | DialogKey::Save) => Outcome::Send,
             Some(DialogKey::Paste) => Outcome::Paste,
-            Some(DialogKey::Backspace) => {
+            Some(key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll)) => {
                 if !self.busy {
-                    self.text.pop();
+                    self.text.edit(&key);
                 }
                 Outcome::Edited
             }
@@ -122,7 +123,7 @@ impl Peek {
                 self.insert(&text);
                 Outcome::Edited
             }
-            Some(DialogKey::SwitchField | DialogKey::SelectAll) | None => Outcome::Edited,
+            Some(DialogKey::SwitchField) | None => Outcome::Edited,
         }
     }
 
@@ -132,10 +133,11 @@ impl Peek {
         if self.busy {
             return;
         }
-        self.text.extend(
-            text.chars()
-                .map(|c| if c == '\r' || c == '\n' { ' ' } else { c }),
-        );
+        let line: String = text
+            .chars()
+            .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
+            .collect();
+        self.text.insert(&line);
         self.error = None;
     }
 
@@ -317,6 +319,17 @@ mod tests {
         peek.busy = true;
         peek.sent(Ok(()), true);
         assert_eq!((peek.busy, peek.text.as_str()), (false, ""));
+    }
+
+    #[test]
+    fn the_reply_takes_select_all_and_ctrl_backspace() {
+        let mut peek = Peek::new(Ulid::new(), Place::Inbox, true);
+        peek.insert("go on now");
+        assert_eq!(peek.key(&keystroke("ctrl-backspace")), Outcome::Edited);
+        assert_eq!(peek.text, "go on ");
+        assert_eq!(peek.key(&keystroke("ctrl-a")), Outcome::Edited);
+        peek.insert("y");
+        assert_eq!(peek.text, "y");
     }
 
     #[test]

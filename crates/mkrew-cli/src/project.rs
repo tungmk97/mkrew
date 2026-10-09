@@ -59,6 +59,7 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
             project_id: project.id,
             name: None,
             default_agent: None,
+            default_shell: None,
             run_commands: None,
             run_autostart: Some(run_autostart),
             color: None,

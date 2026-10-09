@@ -2,10 +2,12 @@
 //! request saving them. Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
-use mkrew_protocol::{AgentProfileInfo, Request, Task, TaskCreateParams, TaskUpdateParams};
+use mkrew_protocol::{
+    AgentProfileInfo, Request, SessionKind, Task, TaskCreateParams, TaskUpdateParams,
+};
 use ulid::Ulid;
 
-use crate::text_box::TextBox;
+use crate::text_box::{Input, TextBox};
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
 
 /// Creating a task in a workspace, or editing one.
@@ -34,6 +36,8 @@ pub enum DialogKey {
     /// Tab / Shift+Tab.
     SwitchField,
     Backspace,
+    /// Ctrl+Backspace (Cmd+Backspace on macOS): delete the word before the end.
+    DeleteWord,
     /// Ctrl+V (Cmd+V): the caller inserts the clipboard text.
     Paste,
     /// Ctrl+A (Cmd+A): the next edit replaces the whole text.
@@ -50,6 +54,7 @@ pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
         "enter" if command => return Some(DialogKey::Save),
         "enter" => return Some(DialogKey::Enter),
         "tab" => return Some(DialogKey::SwitchField),
+        "backspace" if command && !m.alt => return Some(DialogKey::DeleteWord),
         "backspace" => return Some(DialogKey::Backspace),
         "v" if command && !m.alt && !m.shift => return Some(DialogKey::Paste),
         "a" if command && !m.alt && !m.shift => return Some(DialogKey::SelectAll),
@@ -79,7 +84,7 @@ pub enum Outcome {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TaskDialog {
     pub mode: Mode,
-    pub title: String,
+    pub title: Input,
     /// The multi-line prompt (§20B.1).
     pub prompt: TextBox,
     /// `None` = the workspace's default agent at run time.
@@ -118,7 +123,7 @@ impl TaskDialog {
         prompt.insert(&text);
         Self {
             mode,
-            title,
+            title: title.into(),
             prompt,
             agent,
             worktree: false,
@@ -161,20 +166,17 @@ impl TaskDialog {
                     Field::Prompt => Field::Title,
                 };
             }
-            DialogKey::Backspace => match self.field {
-                Field::Title => {
-                    self.title.pop();
-                }
-                Field::Prompt => {
-                    self.prompt.key(DialogKey::Backspace);
-                }
-            },
-            DialogKey::Insert(text) => self.insert(&text),
-            DialogKey::SelectAll => {
-                if self.field == Field::Prompt {
-                    self.prompt.key(DialogKey::SelectAll);
+            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
+                match self.field {
+                    Field::Title => {
+                        self.title.edit(&key);
+                    }
+                    Field::Prompt => {
+                        self.prompt.key(key);
+                    }
                 }
             }
+            DialogKey::Insert(text) => self.insert(&text),
             DialogKey::Paste => {}
         }
         Outcome::Edited
@@ -183,11 +185,14 @@ impl TaskDialog {
     /// Types `text` into the focused field; the title stays on one line.
     pub fn insert(&mut self, text: &str) {
         match self.field {
-            Field::Title => self.title.extend(
-                text.replace("\r\n", "\n")
+            Field::Title => {
+                let line: String = text
+                    .replace("\r\n", "\n")
                     .chars()
-                    .map(|c| if c.is_control() { ' ' } else { c }),
-            ),
+                    .map(|c| if c.is_control() { ' ' } else { c })
+                    .collect();
+                self.title.insert(&line);
+            }
             Field::Prompt => self.prompt.insert(text),
         }
     }
@@ -215,7 +220,11 @@ impl TaskDialog {
             selected: self.agent.is_none(),
             icon: None,
         }];
-        choices.extend(agent_choices(profiles, self.agent.as_deref()));
+        choices.extend(agent_choices(
+            profiles,
+            SessionKind::Agent,
+            self.agent.as_deref(),
+        ));
         choices
     }
 
@@ -280,7 +289,7 @@ pub fn confirms_delete(answer: Option<usize>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{SessionKind, TaskStatus};
+    use mkrew_protocol::TaskStatus;
 
     use super::*;
 
@@ -325,6 +334,7 @@ mod tests {
             kind,
             command: id.into(),
             icon: None,
+            installed: true,
         }
     }
 
@@ -341,6 +351,13 @@ mod tests {
         assert_eq!(key("a"), Some(DialogKey::Insert("a".into())));
         assert_eq!(key("ctrl-a"), Some(DialogKey::SelectAll));
         assert_eq!(key("cmd-a"), Some(DialogKey::SelectAll));
+        assert_eq!(key("ctrl-backspace"), Some(DialogKey::DeleteWord));
+        assert_eq!(key("cmd-backspace"), Some(DialogKey::DeleteWord));
+        assert_eq!(
+            key("alt-backspace"),
+            Some(DialogKey::Backspace),
+            "Alt+Backspace is not a Windows field key"
+        );
         assert_eq!(key("ctrl-b"), None, "other Ctrl+letters still type nothing");
     }
 
@@ -369,6 +386,25 @@ mod tests {
         dialog.insert("one\r\ntwo");
         assert_eq!(dialog.title, "a b");
         assert_eq!(dialog.prompt.text(), "one\ntwo");
+    }
+
+    #[test]
+    fn the_title_takes_select_all_and_ctrl_backspace_and_the_prompt_keeps_its_own() {
+        let mut dialog = TaskDialog::edit(task());
+        assert_eq!(dialog.title, "Fix login");
+        dialog.key(DialogKey::SelectAll);
+        dialog.insert("Add tests");
+        assert_eq!(dialog.title, "Add tests", "typing replaces the selection");
+        dialog.key(DialogKey::DeleteWord);
+        assert_eq!(dialog.title, "Add ");
+        dialog.key(DialogKey::SelectAll);
+        dialog.key(DialogKey::Backspace);
+        assert_eq!(dialog.title, "");
+        assert_eq!(dialog.prompt.text(), "Fix the login bug", "untouched");
+
+        dialog.key(DialogKey::SwitchField);
+        dialog.key(DialogKey::DeleteWord);
+        assert_eq!(dialog.prompt.text(), "Fix the login ");
     }
 
     #[test]

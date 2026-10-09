@@ -80,6 +80,7 @@ impl CommitBox {
         Some(GitCommitParams {
             project_id,
             worktree_task_id: None,
+            repo: None,
             message: message.to_owned(),
         })
     }
@@ -147,11 +148,18 @@ impl Remote {
         }
     }
 
-    /// The request on the project folder, or on task worktree `worktree_task_id`.
-    pub fn request(self, project_id: Ulid, worktree_task_id: Option<Ulid>) -> Request {
+    /// The request on the project folder, task worktree `worktree_task_id` or child
+    /// repository `repo`.
+    pub fn request(
+        self,
+        project_id: Ulid,
+        worktree_task_id: Option<Ulid>,
+        repo: Option<String>,
+    ) -> Request {
         let params = GitRemoteParams {
             project_id,
             worktree_task_id,
+            repo,
         };
         match self {
             Remote::Fetch => Request::GitFetch(params),
@@ -268,6 +276,7 @@ mod tests {
             Some(GitCommitParams {
                 project_id,
                 worktree_task_id: None,
+                repo: None,
                 message: "Fix login\n\nBody\nmore".into(),
             })
         );
@@ -367,18 +376,28 @@ mod tests {
     fn one_remote_action_runs_at_a_time_and_failures_are_kept() {
         let project_id = Ulid::new();
         assert_eq!(
-            Remote::Fetch.request(project_id, None),
+            Remote::Fetch.request(project_id, None, None),
             Request::GitFetch(GitRemoteParams {
                 project_id,
                 worktree_task_id: None,
+                repo: None,
             })
         );
         let worktree_task_id = Some(Ulid::new());
         assert_eq!(
-            Remote::Push.request(project_id, worktree_task_id),
+            Remote::Push.request(project_id, worktree_task_id, None),
             Request::GitPush(GitRemoteParams {
                 project_id,
                 worktree_task_id,
+                repo: None,
+            })
+        );
+        assert_eq!(
+            Remote::Push.request(project_id, None, Some("fe".into())),
+            Request::GitPush(GitRemoteParams {
+                project_id,
+                worktree_task_id: None,
+                repo: Some("fe".into()),
             })
         );
 

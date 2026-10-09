@@ -14,6 +14,7 @@ use crate::diagram::{self, Diagram};
 use crate::highlight::{self, Code};
 use crate::markdown::{self, Block, BlockKind};
 use crate::palette;
+use crate::text_box::Input;
 
 /// The file list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,7 +103,7 @@ pub struct Docs {
     pub mode: Mode,
     /// The list filter (fuzzy over the path, SPEC §12); empty = every file. Kept across
     /// relists.
-    pub filter: String,
+    pub filter: Input,
     /// Why the last "Open in Zed" failed.
     pub zed_error: Option<String>,
     /// The selected file's review comments.
@@ -122,7 +123,7 @@ impl Docs {
             selected: None,
             doc: Doc::None,
             mode: Mode::default(),
-            filter: String::new(),
+            filter: Input::default(),
             zed_error: None,
             comments: Comments::default(),
             listing: false,

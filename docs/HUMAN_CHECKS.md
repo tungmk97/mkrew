@@ -15,6 +15,145 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-09 inbox: Shift+Enter, F11, Files editor, several repos, scrollback, pane keys, shells, rename (plan docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md)
+
+- [ ] **Shift+Enter:** in claude, codex, copilot and omp panes, type `a`, Shift+Enter, `b` → two
+  lines in the prompt, nothing sent; Enter sends. In pwsh and Git Bash, Shift+Enter does not run the
+  half-typed command.
+- [ ] **F11:** F11 fills the screen (no title bar, taskbar hidden); F11 again restores the previous
+  size and position; works with a terminal focused; the palette lists "Global: Toggle full screen".
+- [ ] **Save (Files):** restart the daemon first (protocol bumped, now 32; stop it as in the
+  2026-10-07 section below). Then open a CRLF file, edit, Ctrl+S → only the edit changed in
+  Zed/`git diff` (line endings and final newline kept). Edit the same file in Zed while Mkrew has
+  unsaved text and save → "Changed on disk — Reload · Keep mine"; Keep mine writes your text,
+  Reload takes the disk's.
+- [ ] **Files editor:** restart the daemon (protocol v32). Open a `.rs` file:
+  - A click puts the caret there (I-beam pointer).
+  - Arrows, Ctrl+arrows, Home (indent, then line start), End, PgUp and PgDn move the caret;
+    Shift extends; dragging selects; Ctrl+A selects all.
+  - Type Vietnamese in the middle of a line, once with Unikey and once with Windows Telex.
+  - Ctrl+C / X / V work with Zed. Ctrl+V with an empty clipboard changes nothing (no `●`).
+  - Ctrl+Shift+T and the other window shortcuts still work while the editor has focus; on an
+    AltGr layout, AltGr characters type into the text.
+  - Enter keeps the indent. Tab in a Makefile inserts a tab.
+  - Ctrl+Z undoes a typed word at once; Ctrl+Y redoes; Ctrl+Shift+Z still opens Zed.
+  - While there are changes, `●` shows before the path and Save turns primary.
+  - Ctrl+S saves, also from the find field (the find field keeps the keyboard): `●` goes away,
+    `git diff` shows only your change, and a CRLF file stays CRLF (no `^M` churn in `git diff`).
+  - Header shows "Ln N, Col M" for text files only (not for a binary or too large file).
+  - Ctrl+Shift+L with a selection sends the selected lines; without one, the caret's line.
+  - Colors come back ~150 ms after you stop typing.
+  - A long line scrolls sideways.
+  - In light and dark: the caret, the selection and the raised caret row are readable.
+- [ ] **Unsaved edits are kept:**
+  - Edit a file, then let an agent (or Zed) change it. Your text stays and "⚠ Changed on disk —
+    Reload · Keep mine" shows. Reload shows the agent's text. Keep mine, then Ctrl+S, writes yours.
+  - Edit, then click another file, use quick open (Ctrl+Shift+O), or pick a task worktree.
+    "Save changes to <name>?" appears:
+    - Cancel (and Esc) stays.
+    - Don't save opens the other file.
+    - Save saves, then opens it.
+  - Edit, switch workspace and come back: the edit is still unsaved.
+  - Edit and close the window: the same question. Save and Don't save close it; Cancel keeps it
+    open.
+- [ ] **Find & replace:**
+  - Select `foo` on one line and press Ctrl+F: the bar opens with `foo`, and the selected one is
+    current.
+  - Ctrl+H: the replace row opens and its field has the keyboard. Type `bar`. Enter replaces the
+    current match and selects the next one. Ctrl+Alt+Enter (or "Replace all") replaces the rest.
+    `●` shows and nothing is saved until Ctrl+S, which also works from the bar.
+  - Ctrl+Z brings everything back at once.
+  - Replace `a` with `aa`: no endless loop.
+  - The Vietnamese query `việt` matches `VIỆT`.
+  - Tab / Shift+Tab switch fields; Esc closes the bar and typing goes to the editor.
+  - The ▸ / ▾ button shows and hides the replace row; "Replace" and "Replace all" buttons work.
+  - Ctrl+V in both fields pastes one line. Ctrl+Alt+1…9 does not switch tabs while a find/replace
+    field has the keyboard (it is AltGr there); after Esc it jumps tabs again.
+  - Ctrl+Shift+H still toggles ignored files; Ctrl+Shift+1 still shows the Board.
+  - Check light and dark.
+- [ ] **Several git repositories in one workspace (ADR 0029):** make a folder `root/` with `fe/`
+  and `be/`, each a `git init` repository with a commit, and no `.git` in `root/`. Add `root/` as
+  a workspace.
+  - Files view: the `fe` and `be` folders show the change dot when they have changes; inside
+    `fe/`, a modified file shows `M`, a new one `?`.
+  - In a terminal in `fe/`, `git commit --allow-empty -m x` → the Git view of that repo refreshes
+    by itself (no Refresh click).
+  - A third folder `docs/` without `.git` never shows as a repository.
+- [ ] **Git view Repo chooser (ADR 0029):** with the same `root/` (each repo with an edited file):
+  the Git view shows no "Cannot read the git status" (at most a blink) and the header shows
+  "Repo  be  fe" with `be` active, listing `be`'s files. Click `fe` → its branch, files and diff;
+  the commit draft stays. With `root/` itself a repository too, the first chip is the workspace
+  name. A workspace with one repository shows no Repo row; with a task worktree shown the Repo row
+  is hidden. Check dark and light.
+- [ ] **Stage / commit per repository:** in `fe` stage a file and a hunk, Discard another, ✦
+  writes a message about `fe` only, Ctrl+Enter commits → `git -C fe log -1` has it, `be`
+  unchanged. History lists `fe`'s commits only; Open in Zed opens `fe/<file>`; a diff comment
+  lands on `fe/<file>`. Fetch / Push act on `fe` (its upstream shown).
+- [ ] **Terminal commit refreshes:** with `fe` shown, run `git -C fe commit --allow-empty -m x`
+  in a terminal → the History / ahead count updates within ~1 s without clicking.
+- [ ] **Scrollback after a tab switch (ADR 0030):** in a pwsh pane run
+  `1..300 | % { "line $_" }`, then Ctrl+Tab to another tab and back. Also try opening the Board and
+  coming back, and minimizing and restoring. Each time, the mouse wheel and Shift+PgUp scroll back
+  about 200 lines above the screen (to around `line 100`), the screen looks the same as before the
+  switch, and typing returns to the live prompt. Do the same in a claude pane after a long answer.
+  `mk attach <session>` in Windows Terminal: its scrollbar shows the same lines above the screen.
+- [ ] **Alt+Shift+A / Alt+Shift+S:** with a terminal focused, Alt+Shift+A splits the focused pane to
+  the right with the workspace's default agent and Alt+Shift+S with its default shell, the same as
+  + Agent / + Shell; from Board / Files / Git they switch to Terminals first. The buttons' tooltips
+  and the empty tab's chips show the keys; the palette lists "Panes: New agent pane" / "… shell pane".
+  - A terminal no longer gets Alt+Shift+A / Alt+Shift+S as ESC A / ESC S (readline); rebind
+    `split_agent` / `split_shell` in keymap.toml if needed.
+- [ ] **Default shell (ADR 0032):** after the daemon restart, `<config>\mkrew\agents\` holds
+  `pwsh.toml`, `powershell.toml`, `cmd.toml`, `bash.toml` and `git-bash.toml` next to your edited
+  files (none overwritten). In a workspace without a default shell, + Shell (or Alt+Shift+S,
+  Ctrl+Shift+T) shows "Pick a default shell…" and opens the workspace menu. "Default shell for new
+  panes" lists only shells found on this machine. Pick PowerShell → + Shell opens pwsh in the
+  workspace folder (`$PSVersionTable` shows 7). Pick Git Bash → `pwd` is the workspace folder.
+  The Run button still runs through `shell` (cmd), as before. If `pwsh` is installed only as a
+  WindowsApps app-execution alias, check it still shows as installed in the menu (the lookup uses
+  `is_file`).
+- [ ] **Rename pane (ADR 0031):**
+  - Focus an agent pane and press F2: the header title becomes a field. Type `Fix login` and
+    press Enter. The header, the sidebar row, the Inbox entry (when it needs input) and its OS
+    notification all show `Fix login`.
+  - F2, then Esc: nothing changes. F2, clear the text, Enter: the pane has no title again.
+  - Double-click the header title, or the empty space after the agent name: the same field opens.
+  - Stop and restart the daemon (`mk daemon stop`, reopen Mkrew): the resumed pane keeps its name.
+  - On a Run pane (`▶ Run`), F2 and double-click do nothing.
+  - A TUI in a pane (vim, htop) no longer gets F2; rebind `rename_pane` in keymap.toml if needed.
+- [ ] **Auto pane name (ADR 0031):** restart the daemon first (protocol bumped, now 32).
+  - Start a claude pane and ask it to fix something. Within a turn, the header, the sidebar row
+    and the palette's "Go to session" show Claude's conversation title without the spinner glyph,
+    and it does not flicker while Claude works.
+  - F2, type `Mine`, Enter: `Mine` shows everywhere and stays while Claude keeps working.
+  - F2, clear the text, Enter: Claude's title is back.
+  - A pwsh pane never gets an automatic name.
+- [ ] **Field keys (Ctrl+A, Ctrl+Backspace, Ctrl+V):** in each of these, type `hello world`,
+  press Ctrl+Backspace → `hello ` (again → empty); type `one two`, press Ctrl+A (the text is
+  highlighted, no caret), type `x` → just `x`; Ctrl+A then Backspace → empty; Ctrl+V pastes the
+  clipboard text (one line in single-line fields). Fields: task dialog title and prompt, card
+  composer (Ctrl+Shift+Enter), commit box, Run setup (name, folder, command, env file and env),
+  comment box, broadcast, peek reply, quick open (Ctrl+Shift+O), command palette (the list
+  re-filters), Docs filter, base branch menu, terminal find (Ctrl+Shift+F; Ctrl+V pastes, matches
+  follow), Files find and replace (Ctrl+F, Ctrl+H) and the tab / pane rename (F2 / Ctrl+Shift+R).
+  In the Vietnamese IME (Unikey, Telex): type `việt nam`, Ctrl+Backspace → `việt `; Ctrl+A, then
+  type `tieengs` → only the new word; plain Backspace still removes one letter. Ctrl+Backspace in
+  a terminal pane still deletes a word of the shell line (^W). Ctrl+Alt+1…9 types the AltGr
+  character (or nothing) in the Files find bar, and jumps tabs again after Esc.
+- [ ] **Run ■ / ↻:** set up two commands (a dev server and one more) and press ▶. ■ on one (the
+  Run menu row) → its pane leaves the `run` tab at once and the other keeps running; ■ on the last
+  → the `run` tab is empty. ▶ again → panes are back. ↻ on one → still one pane per command, in the
+  same place, with fresh output (no "Session exited" pane beside it). A command that ends by itself
+  (`echo hi`) → its pane leaves the tab.
+- [ ] **Exited sessions clean up (ADR 0033):** `exit` in a shell pane → the pane and its sidebar row
+  disappear (the sibling pane fills the space; a zoomed pane unzooms); quit an agent (`/exit`) →
+  the same; ✕ on a live shell pane → no `✕ exited` row left behind. History (toolbar) still lists
+  them with their exit code and replays their output. A workspace with no live session shows
+  "No sessions". **Daemon restart:** with a live agent pane (one with a resumable conversation) open,
+  `mk daemon stop`, start Mkrew again → the pane resumes in the same place (it was not removed).
+  Remove a workspace that has a live agent pane → its panes leave the tabs; adding the folder again
+  resumes a task's agent (the pane is not restored; open it from the sidebar).
+
 ### To verify — 2026-10-08 inbox 3: dots, drop, paste, icons, redesign (plan docs/superpowers/plans/2026-10-08-inbox-dots-drop-paste-redesign.md)
 
 - [ ] **Hooks (user setup, item 18):** run `mk integration install claude`, `… codex`, `… omp`,
@@ -92,7 +231,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify — 2026-10-07 workspace, files and docs fixes (plan docs/superpowers/plans/2026-10-07-workspace-files-docs-fixes.md)
 
-The protocol is now v26, and `target\debug\mk.exe` is already rebuilt at v26, so
+The protocol was v26 at the end of this plan (later plans bump it further), and
+`target\debug\mk.exe` is rebuilt with every bump, so
 `target\debug\mk daemon stop` cannot stop an older daemon (it answers "version mismatch"). Every
 build (dev and the installed Mkrew in `%LOCALAPPDATA%\Programs\Mkrew`) uses the same daemon, and
 ending it stops all running agents and run commands at once, with no graceful shutdown. So first

@@ -13,21 +13,51 @@ use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler};
 use mkrew_protocol::{CellRun, CursorSnapshot, ScreenSnapshot, TermColor, TermModes};
 
-/// Small on purpose: long history lives in the session log file (SPEC §8).
+/// Small on purpose: long history lives in the session log file (SPEC §8). Attach snapshots
+/// carry all of it, so a re-attached pane can scroll back (ADR 0030).
 pub const SCROLLBACK_LINES: usize = 200;
 
-/// Collects bytes the terminal sends back to the program (e.g. DSR replies).
-/// ConPTY asks for the cursor position on startup and stalls until it gets an answer.
+/// Characters kept of a terminal title used as a pane name.
+pub const TITLE_MAX_CHARS: usize = 60;
+
+/// A terminal title as a pane name (ADR 0031): leading spinner and status glyphs (Claude's
+/// `✳ `) and blanks dropped, at most [`TITLE_MAX_CHARS`] characters. `None` when nothing
+/// usable is left, or for a path (ConPTY and shells title a console with a path).
+// ponytail: also drops a leading `(` or `#` of a real title; a glyph list if that bites.
+pub fn clean_title(raw: &str) -> Option<String> {
+    let title = raw
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .trim_end();
+    if title.is_empty() || title.contains('\\') {
+        return None;
+    }
+    Some(title.chars().take(TITLE_MAX_CHARS).collect())
+}
+
+/// Collects what the terminal reports to its owner: bytes to send back to the program (e.g.
+/// DSR replies; ConPTY asks for the cursor position on startup and stalls until it gets an
+/// answer) and the last title the program set (OSC 0/2, ADR 0031).
 #[derive(Clone, Default)]
 struct ReplyListener {
     replies: Arc<Mutex<Vec<u8>>>,
+    /// `Some` once the title changed since [`Emulator::take_title`]; `Some(None)` = reset.
+    title: Arc<Mutex<Option<Option<String>>>>,
 }
 
 impl EventListener for ReplyListener {
     fn send_event(&self, event: Event) {
-        if let Event::PtyWrite(text) = event {
-            let mut replies = self.replies.lock().unwrap_or_else(PoisonError::into_inner);
-            replies.extend_from_slice(text.as_bytes());
+        match event {
+            Event::PtyWrite(text) => {
+                let mut replies = self.replies.lock().unwrap_or_else(PoisonError::into_inner);
+                replies.extend_from_slice(text.as_bytes());
+            }
+            Event::Title(title) => {
+                *self.title.lock().unwrap_or_else(PoisonError::into_inner) = Some(Some(title));
+            }
+            Event::ResetTitle => {
+                *self.title.lock().unwrap_or_else(PoisonError::into_inner) = Some(None);
+            }
+            _ => {}
         }
     }
 }
@@ -62,6 +92,16 @@ impl Emulator {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         std::mem::take(&mut *replies)
+    }
+
+    /// The title the program set (`Some(Some)`) or reset (`Some(None)`) since the last call;
+    /// `None` when it did neither.
+    pub fn take_title(&self) -> Option<Option<String>> {
+        self.listener
+            .title
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 
     /// Visible lines from the top of the screen down to the cursor row, trailing blanks
@@ -137,47 +177,60 @@ impl Emulator {
         self.term.mode().contains(TermMode::BRACKETED_PASTE)
     }
 
-    /// The visible screen, cursor and input modes (`session.attach`, SPEC §7).
-    pub fn snapshot(&self) -> ScreenSnapshot {
-        let grid = self.term.grid();
-        let lines = (0..self.term.screen_lines())
-            .map(|row| {
-                let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
-                let mut runs: Vec<CellRun> = Vec::new();
-                for col in 0..self.term.columns() {
-                    let cell = &line[Column(col)];
-                    if cell
-                        .flags
-                        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-                    {
-                        continue;
-                    }
-                    let (fg, bg, flags) = (color(cell.fg), color(cell.bg), run_flags(cell.flags));
-                    match runs.last_mut() {
-                        Some(run) if (run.fg, run.bg, run.flags) == (fg, bg, flags) => {
-                            run.text.push(cell.c);
-                        }
-                        _ => runs.push(CellRun {
-                            text: cell.c.into(),
-                            fg,
-                            bg,
-                            flags,
-                        }),
-                    }
-                    if let (Some(run), Some(zerowidth)) = (runs.last_mut(), cell.zerowidth()) {
-                        run.text.extend(zerowidth);
-                    }
+    // ponytail: history rows drop alacritty's WRAPLINE flag (each is painted as its own line), so
+    // a wrapped long line copies as two lines and does not re-flow on resize; carry a per-row
+    // `wrapped` bit in `ScreenSnapshot` if that matters.
+    /// One grid row (screen row ≥ 0, history row < 0) as style runs: wide-char spacers skipped,
+    /// trailing default blanks trimmed.
+    fn runs(&self, line: Line) -> Vec<CellRun> {
+        let row = &self.term.grid()[line];
+        let mut runs: Vec<CellRun> = Vec::new();
+        for col in 0..self.term.columns() {
+            let cell = &row[Column(col)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            let (fg, bg, flags) = (color(cell.fg), color(cell.bg), run_flags(cell.flags));
+            match runs.last_mut() {
+                Some(run) if (run.fg, run.bg, run.flags) == (fg, bg, flags) => {
+                    run.text.push(cell.c);
                 }
-                trim_trailing_blanks(&mut runs);
-                runs
-            })
+                _ => runs.push(CellRun {
+                    text: cell.c.into(),
+                    fg,
+                    bg,
+                    flags,
+                }),
+            }
+            if let (Some(run), Some(zerowidth)) = (runs.last_mut(), cell.zerowidth()) {
+                run.text.extend(zerowidth);
+            }
+        }
+        trim_trailing_blanks(&mut runs);
+        runs
+    }
+
+    /// The visible screen, the history above it, the cursor and the input modes
+    /// (`session.attach`, SPEC §7).
+    pub fn snapshot(&self) -> ScreenSnapshot {
+        let lines = (0..self.term.screen_lines())
+            .map(|row| self.runs(Line(i32::try_from(row).unwrap_or(i32::MAX))))
             .collect();
-        let point = grid.cursor.point;
+        // Oldest first. On the alternate screen the active grid has no history (alacritty
+        // builds it with 0 lines), so this is empty there without a mode check.
+        let history = (self.term.topmost_line().0..0)
+            .map(|line| self.runs(Line(line)))
+            .collect();
+        let point = self.term.grid().cursor.point;
         let mode = self.term.mode();
         ScreenSnapshot {
             cols: to_u16(self.term.columns()),
             rows: to_u16(self.term.screen_lines()),
             lines,
+            history,
             cursor: CursorSnapshot {
                 row: to_u16(usize::try_from(point.line.0).unwrap_or(0)),
                 col: to_u16(point.column.0),
@@ -290,6 +343,35 @@ mod tests {
     }
 
     #[test]
+    fn osc_titles_are_taken_once_and_the_latest_wins() {
+        let mut emu = Emulator::new(20, 4);
+        assert_eq!(emu.take_title(), None);
+        emu.advance("\x1b]0;✳ Fix login\x07".as_bytes());
+        assert_eq!(emu.take_title(), Some(Some("✳ Fix login".to_owned())));
+        assert_eq!(emu.take_title(), None, "already taken");
+        // On a fresh terminal: push the (unset) title, set one, pop: the program reset it.
+        let mut emu = Emulator::new(20, 4);
+        emu.advance(b"\x1b[22t\x1b]2;x\x07\x1b[23t");
+        assert_eq!(emu.take_title(), Some(None));
+    }
+
+    #[test]
+    fn clean_titles_drop_leading_glyphs_paths_and_overflow() {
+        assert_eq!(clean_title("✳ Fix login").as_deref(), Some("Fix login"));
+        assert_eq!(
+            clean_title("⠋  Sửa lỗi đăng nhập ").as_deref(),
+            Some("Sửa lỗi đăng nhập")
+        );
+        assert_eq!(clean_title("✳ "), None);
+        assert_eq!(clean_title(r"C:\Program Files\nodejs\node.exe"), None);
+        let long = "a".repeat(80);
+        assert_eq!(
+            clean_title(&long).map(|t| t.chars().count()),
+            Some(TITLE_MAX_CHARS)
+        );
+    }
+
+    #[test]
     fn cursor_position_request_is_answered() {
         let mut emu = Emulator::new(10, 5);
         assert_eq!(emu.advance(b"\x1b[2;3H\x1b[6n"), b"\x1b[2;3R");
@@ -384,5 +466,36 @@ mod tests {
         let mut emu = Emulator::new(10, 2);
         emu.advance(b"a\r\nb\r\nc");
         assert_eq!(emu.lines_to_cursor(), ["b", "c"]);
+    }
+
+    /// Attach snapshots carry what scrolled off the main screen, oldest first; the alternate
+    /// screen has none (ADR 0030).
+    #[test]
+    fn snapshot_carries_main_screen_history() {
+        let text = |rows: &[Vec<CellRun>]| -> Vec<String> {
+            rows.iter()
+                .map(|runs| runs.iter().map(|run| run.text.as_str()).collect())
+                .collect()
+        };
+        let mut emu = Emulator::new(10, 2);
+        for n in 0..10 {
+            emu.advance(format!("line{n}\r\n").as_bytes());
+        }
+        let snap = emu.snapshot();
+        // 10 lines + the cursor's empty row on a 2-row screen: 9 scrolled off.
+        assert_eq!(
+            text(&snap.history),
+            (0..9).map(|n| format!("line{n}")).collect::<Vec<_>>()
+        );
+        assert_eq!(text(&snap.lines), ["line9", ""]);
+
+        // Home first: alacritty copies the cursor row into the alt grid.
+        emu.advance(b"\x1b[?1049h\x1b[Halt");
+        let snap = emu.snapshot();
+        assert!(snap.history.is_empty(), "{:?}", snap.history);
+        assert_eq!(text(&snap.lines), ["alt", ""]);
+        // Leaving the alternate screen brings the history back.
+        emu.advance(b"\x1b[?1049l");
+        assert_eq!(emu.snapshot().history.len(), 9);
     }
 }

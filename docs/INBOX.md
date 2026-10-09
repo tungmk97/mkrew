@@ -24,77 +24,90 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
   - Done: `mkrew.exe` icon (Explorer, window, taskbar, Alt+Tab) embedded via `crates/mkrew-ui/build.rs` + `resources/windows/mkrew.ico` (16–256 px).
   - Left: installer icon (`SetupIconFile=` in `packaging/mkrew.iss`, `.wxs` icon); `mk.exe` / `mkrew-daemon.exe` icons if wanted; logo (glyph) in the app (sidebar header / About); lockup in `README.md`.
   - Regenerate the `.ico` whenever the SVG changes (render 16,20,24,32,40,48,64,256 px).
-- [x] I want to redesign the look of this GPUI desktop app so it feels modern, simple, and calm. This is a visual/UX refactor only: keep all existing behavior, actions, state, and data flow working exactly as they do now. → plan: docs/superpowers/plans/2026-10-08-inbox-dots-drop-paste-redesign.md Task 5–10
-## Reference material
-- `design/reference/theme.rs`, `design/reference/sidebar.rs`, `design/reference/app_shell.rs` are a reference implementation of the target design written against plain gpui primitives. Use them as the source of truth for layout, spacing, and colors, but adapt them to this codebase's real structs, actions, and GPUI version rather than pasting them in blindly.
-- Screenshots of the current UI (if present) are in `design/reference/`.
+- [x] Terminal and inside agent: add Shift + Enter for wrting in the new line → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 1
+- [x] Files module: when viewing a file need to have a short cut for find and replace content: can follow to vscode style if needed, and also need short cut for find, replate replace all action → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 7
+- [x] Files Module: I expected I can edit information there not just read → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 3, 4, 5, 6
+- [x] Git module: also need support a case where I open an Root folter container FE and BE, then git shold dected there are 2 diffreence git repo and also need to support in this case → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 8, 9
+- [x] Support F11 to view full screen → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 2
+- [x] Add a short cut to rename pain, good if we can also auto rename base on what I'm working, if this feature is not too big → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 13, 14
+- [x] in terminal agent, sometime I cannot scroll on top over 1 page showing in the screen, please fix → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 10
+- [x] Add short cut for '+ Agent' which is open new agent by split current tab now → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 11
+- [x] Add short cut for '+ Shell' and user must to select default shell user want to use same as agent concept → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 11, 12
+- [x] Check all input field in this app should suppport Ctrl A, Ctrl Backspace... same as standard for input field so that can easy to update the value.... → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 15
+- [x] Running command, when a server user click stop: should remove this terminal, user click restart: don't create new one stop exisitng terminal then start again → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 16
+- [x] when a shell or agent is stopped, it still showing in the sidebar cannot clickable can just remove, so need auto clean up the workspace also, there're no meaning when juz show to remove because cannot click able anymore juz to close → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 17
+- [ ] **1. Title bar + toolbar redesign** [feat] (redesign A1, A2, A3, A4; merged: "Run toolbar colors")
+  - Source: `docs/superpowers/specs/2026-10-10-ui-redesign-options.md` (all redesign IDs below point there). Keep the current background colors.
+  - One custom title bar replaces the OS title bar and the 44 px toolbar: Mkrew logo (see the logo item above), workspace name ▾ (switcher dropdown), git branch, views Board / Terminals / Docs / Files / Git, then History, + Agent, + Shell, Run, and drawn ─ □ ✕ window controls.
+  - Windows: drag area, double-click to maximize, Win11 Snap Layouts on □, resize edges. macOS/Linux keep working. Needs an ADR (amends ADR 0027) and a SPEC §10 update.
+  - Git branch + `Git N` badge on the Git view (N = changed files). Must work for a workspace with 1 repo AND a folder holding N repos (ADR 0029 child repos, the root may have no `.git`): 1 repo → `⎇ master`; N repos → `⎇ N repos`, hover/menu lists each repo's branch; badge = changed files summed over all repos. Never blank just because the root has no `.git`.
+  - Run button colors: Stop red, Restart amber/orange, Run/Start green — same colors on the icons and hover states, in the title bar and in the ▾ dropdown.
+  - Perf: `git.status` only for the shown workspace, on switch and on `git.changed`; no polling, nothing for hidden workspaces.
 
-## Before writing code
-1. Explore the repo and find: the root window view, the workspace sidebar, the top bar (tabs, Run, History, + Agent, + Shell), the right-hand view rail (Board / Terminals / Docs / Files / Git), the empty "This tab has no panes" state, and the Inbox section.
-2. Check which GPUI version we use (the `render` signature, `Context<Self>` vs `ViewContext`, `Application` vs `App`) and whether we have an icon/SVG asset setup or a `ui` component crate. Prefer real icons over unicode glyphs if they exist.
-3. Find where colors are currently defined. If they are scattered, consolidate them.
-4. Write a short plan that lists the files you'll touch and wait for my OK before making large changes.
+- [ ] **2. Usage data: omp usage, cache split, model** [feat] (redesign B6, B8, B9)
+  - omp sessions get token usage like Claude/Codex: a new `[usage] format` for omp's session file (check the current omp format, record fixtures from a real file) and `[usage]` in `agents/omp.toml`. Then `ctx %` and token totals show for omp panes.
+  - Split cache tokens (read / write) out of `input` in `session.usage`, for every format that has them.
+  - Read the model name of the newest message (Claude `message.model`, Codex/omp equivalent) and send it with `session.usage`.
+  - Protocol bump + SPEC §20E.3 update. Still no cost/$ (SPEC: no money estimate).
+  - Perf: same incremental read at turn end as today; no file watching, no mid-turn reads.
 
-## Target design
+- [ ] **3. Status bar + hide sidebar** [feat] (redesign A13, A12 status part, C1 sidebar part; after item 2)
+  - Thin bar at the window bottom: sidebar toggle button, inbox state (`Inbox clear` / `N need you`; click = jump to the next one, like Ctrl+Shift+I), git HEAD short hash; for the focused agent pane: context % bar, in/out tokens, cache, model, elapsed time; right end: right-panel toggle (wired in item 7).
+  - Git: 1 repo → short hash; N repos → `N repos`, hover lists each repo's branch + hash. A root without `.git` still shows its child repos.
+  - Only real data: no $, no tok/s. A field with no data is hidden, not shown as 0.
+  - Toggle sidebar: palette command + keymap default (SPEC §13).
+  - Perf: re-render only on `session.usage`, focus change, inbox change, `git.changed`.
 
-### Theme (dark + light mode)
-Use `design/reference/theme.rs` as the model. It defines a `Theme` struct stored as a GPUI global, with `Theme::dark()` and `Theme::light()` palettes, a `ThemeMode` (System / Light / Dark), and an `ActiveTheme` trait so views can call `cx.theme()`.
+- [ ] **4. Workspace sidebar redesign + cleanup** [enh] (redesign A5, A6, A7, A8, A9 second line, A12 card removal; after item 3)
+  - Filter box "Filter sessions…" at the top (matches workspace, agent, title).
+  - Chips `All N` / `Working N` / `Needs you N` under it; "Needs you" counts needs_input and done-not-yet-viewed sessions (what the Inbox lists today).
+  - Remove the Inbox card at the sidebar bottom (the chips + status bar replace it; peek on hover stays).
+  - Header: + add workspace and a collapse/expand-all button.
+  - Workspace row: summary text `1 working` / `2 idle` instead of the token total.
+  - Session row: only the time on the right (e.g. `17m`), no "idle" word — the status icon (working, asking, idle) already shows it. The selected row gets a second line with the session/task title.
+  - After right-click → Change color on a project, stay on the current view instead of navigating to that project.
+  - Replace the project color palette with 8–10 clearly distinct hues that are readable in both light and dark themes.
+  - Perf: filter and counts on the client, O(sessions) per render.
 
-Requirements:
-- Every color in every view must come from `cx.theme()`. No hardcoded hex values in view code, and no `const` color values. Read the theme once at the top of `render` (`let t = cx.theme().clone();` or borrow it) and pass it into helper functions that build elements.
-- Note that `design/reference/sidebar.rs` and `app_shell.rs` still use the old `const` colors (SIDEBAR, BG, TEXT, ...). Map each one to the matching `Theme` field (SIDEBAR → `t.sidebar`, BG → `t.bg`, etc.), and replace the old `tint(color, alpha)` calls for workspace avatars with `t.tint(color)`.
-- Startup: call `theme::init(ThemeMode::System, window, cx)` before the root view renders. Load the user's saved mode if we have settings persistence; otherwise default to System.
-- In the root view, subscribe with `cx.observe_window_appearance(window, ...)` and call `theme::sync_with_system`, so System mode follows OS changes live without a restart.
-- Add a theme toggle as a ghost icon button in the toolbar, left of History. It cycles System → Light → Dark, and its icon or tooltip shows the current mode (monitor / sun / moon). If we have a settings screen, also add a "Theme" select there. Persist the chosen mode if settings persistence exists.
-- If we have a keymap, add an action `ToggleTheme` (no default binding needed).
-- The light palette must keep the same hierarchy as dark: the sidebar a shade off from the main bg, very soft dividers, the active segment reading as a raised white pill with a border, and the accent-filled Run and New agent buttons with white text.
-- Check contrast in light mode: muted text on the sidebar and status labels must stay readable. Adjust the light values in `theme.rs` if something is too faint, and tell me what you changed.
+- [ ] **5. Terminal tabs + pane header** [enh] (redesign A10, A11; merged: "Pane improvements")
+  - Tab strip: icon per tab type (agent badge / shell `>_`), status dot, title; on the right `+` (new tab), a split button and a `⋯` menu (split right/down, rename, close).
+  - Pane header: breadcrumb `<workspace> › <folder> › <agent>` + one status pill `Working · 1h 25m` on the left. Remove the status/time text from the pane's top-right bar (the pill replaces it, so status shows once). Follow in Zed and Turns stay on the right.
+    - Open question: keep the pill (mockup A11) or no status in the pane at all (older note "already shown elsewhere")? Default: one pill on the left.
+  - Right-click menu on panes:
+    - "Rename" (inline edit, Enter to save, Esc to cancel)
+    - "Change color" (same palette as projects, item 4)
 
-Add to Verify:
-- Switch between System, Light, and Dark at runtime and confirm every surface updates immediately, with no leftover dark pieces in light mode or the reverse.
-- Change the OS appearance while in System mode and confirm the app follows.
-- Check both themes with these states visible: hover, selected session, active tab, working pulse, the Inbox in both its empty and non-empty states, and the empty-state buttons.
+- [ ] **6. Pin feature** (after items 4 and 5)
+  - Add Pin/Unpin to the right-click menu for:
+    - Workspace → Project
+    - Workspace → Project → Terminal / Agent
+    - Terminal → Terminal tab
+  - Pinned items move to the top of their list (or the left, for tabs) and show a pin icon.
+  - Pin state persists across app restarts.
 
-### Layout
-`[Sidebar 280px] | [Toolbar 44px / Tab strip 38px (Terminals only) / Content]`
-- Remove the right-hand vertical rail entirely.
+- [ ] **7. Right panel (session inspector)** [feat] (redesign B1, B2, B3, C1 panel part; after items 2 and 3)
+  - Panel on the right of Terminals, closed by default; toggled by the status bar button + a key (SPEC §13); width resizable and remembered. Shows the focused pane's session.
+  - Session card: agent, title, state + time, usage from item 2 (ctx %, tokens, model); buttons "Open transcript" (the agent's transcript file, paths already located by the usage reader) and "Stop" (asks first, like closing a running pane).
+  - Changes card: `M 23 ?3` + "Review diff" → opens the Git view on that repo. 1 or N repos: one line per repo with changes; a root without `.git` still lists its child repos.
+  - Not included (dropped in the review): cost, subagent card, tool calls, "Rules in effect".
+  - Perf: the terminal loses ~300 px of columns while open (agent TUI reflows once); git data shared with item 1.
 
-### Sidebar
-- Header: "Workspaces" (12px, medium, muted) on the left and a + icon button on the right. Height 44px so it lines up with the toolbar.
-- Workspace row (30px): chevron, an 18px rounded avatar with the first letter (tinted bg plus the workspace's color), and the name. If any sessions are working, show an accent pill with a pulsing dot and the count. The ⋯ button appears only on row hover (group_hover).
-- Sessions are indented under a 1px left guide line. Session row (28px): status dot, name, status label, and elapsed time right-aligned.
-  - Working: accent dot that pulses (opacity 0.35↔1, 1.4s).
-  - Idle: hollow ring.
-  - Needs input: amber dot.
-- The selected session gets the selected background and a medium-weight name.
-- Inbox: a card pinned at the bottom with an icon tile. When empty, show a green check and "Nothing needs you right now."; otherwise show an amber "!" and "N waiting for you".
+- [ ] **8. Plan checklist in the right panel** [feat] (redesign B4, A9 progress bar; after item 7)
+  - Link a plan `.md` to a session (default: pick the file from the panel; remembered per session across restarts).
+  - Panel shows `Plan <name> 6/20`, a progress bar and the checklist from `- [ ]` / `- [x]` lines (first unchecked highlighted, "N more" collapsed). The selected sidebar session row shows the same progress bar.
+  - Live: the daemon watches only the linked file (debounced) and sends the counts. No "Setup/Tasks/Finish" phase bar.
+  - Perf: one file watcher per linked plan; parsing is tiny.
 
-### Toolbar (44px, bottom divider)
-- Left: a segmented control with Board / Terminals / Docs / Files / Git, replacing the old right rail. The active segment gets the active-segment bg, text color, and medium weight.
-- Right: History, + Agent, and + Shell as ghost buttons (muted text, hover bg), then Run as a split button: accent "▶ Run" plus a ▾ menu half separated by a faint white divider.
+- [ ] **9. File navigation & Markdown preview** (merged: redesign B16)
+  - Add "Open in File Explorer", "Open In Zed" item to the right-click menu on files in the file view and on workspace/project folders and the Files module. It opens the OS file explorer at that location (Explorer, Finder, or the Linux file manager).
+  - In terminal panes (agent conversations and shells), detect file paths (relative or absolute, optionally with `:line`) and URLs. Ctrl+Click (Cmd+Click on macOS) opens a file in the Files view at the line, a URL in the browser. Show an underline/pointer while Ctrl/Cmd is held.
+  - When opening a `.md` file in Files, show a rendered preview by default with a toggle for raw/source mode. Render ` ```mermaid ` blocks as diagrams. Use clean typography for headings, lists, tables, and code blocks, and support light/dark themes.
+  - Perf: detect links only on the hovered row while Ctrl/Cmd is held; never in the terminal render/parse path.
 
-### Tab strip (38px, Terminals view only)
-- The active tab is a raised pill (surface bg plus border). Inactive tabs show muted text with a hover bg.
-- Tab close ✕ is always visible on the active tab and only on hover for the others. Clicking it must not activate the tab.
-- Keep the existing new-tab "+" behavior.
-
-### Empty state
-Centered, with a max width of about 320px:
-- A 44px icon tile
-- A 15px medium title, "No panes in this tab"
-- A muted line: "Start an agent or a shell, or pick a session from the sidebar."
-- A primary "New agent" button and a secondary "New shell" button, each with a keyboard-shortcut chip. Use the real keybindings from the keymap; show ⌘ on macOS and Ctrl elsewhere.
-
-Other views with no content should use the same empty-state component.
-
-## Constraints
-- Do not change business logic, persistence, or the action and keybinding definitions; only the views and styling.
-- Factor out reusable pieces (ghost/primary/secondary button, kbd chip, empty state, status dot) instead of duplicating them.
-- Keep text from wrapping in narrow spots (truncate with an ellipsis).
-- Respect the existing focus and keyboard navigation.
-
-## Verify
-- Run `cargo check` and `cargo clippy` after each major step and fix all errors and warnings you introduced.
-- Run the app and confirm the following still work: switching views, creating, closing, and switching tabs, Run and its menu, + Agent, + Shell, History, expanding and collapsing workspaces, selecting sessions, and the inbox states.
-- Finish with a short summary of what changed, file by file, plus anything you couldn't match from the reference and why.
-```
+- [ ] **10. Git module: diff view modes**
+  - In the file changes view, add a toggle to switch between:
+    - **Unified (1 pane)**: additions and deletions inline in a single view
+    - **Split (2 pane)**: original on the left, modified on the right, with synced scrolling
+  - Highlight added, removed, and modified lines with clear colors in both modes.
+  - Remember the selected mode across files and app restarts.
+  - Works for every repo of the workspace (1 or N repos, ADR 0029 repo chooser).

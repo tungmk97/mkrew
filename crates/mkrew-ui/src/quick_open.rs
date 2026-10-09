@@ -10,6 +10,7 @@ use mkrew_protocol::{FsFindParams, FsMatch};
 use ulid::Ulid;
 
 use crate::task_dialog::{DialogKey, dialog_key};
+use crate::text_box::Input;
 
 /// What a key press in the finder means.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +22,10 @@ pub enum Key {
     /// Enter (or Ctrl+Enter).
     Open,
     Backspace,
+    /// Ctrl+Backspace: delete the word before the end.
+    DeleteWord,
+    /// Ctrl+A: the next edit replaces the whole query.
+    SelectAll,
     /// Ctrl+V: the caller inserts the clipboard text.
     Paste,
     Insert(String),
@@ -39,9 +44,11 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         DialogKey::Cancel => Some(Key::Close),
         DialogKey::Enter | DialogKey::Save => Some(Key::Open),
         DialogKey::Backspace => Some(Key::Backspace),
+        DialogKey::DeleteWord => Some(Key::DeleteWord),
+        DialogKey::SelectAll => Some(Key::SelectAll),
         DialogKey::Paste => Some(Key::Paste),
         DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField | DialogKey::SelectAll => None,
+        DialogKey::SwitchField => None,
     }
 }
 
@@ -60,7 +67,7 @@ pub struct QuickOpen {
     /// The task worktree the Files view shows (`None` = the project folder): searched and
     /// revealed there.
     pub worktree_task_id: Option<Ulid>,
-    pub query: String,
+    pub query: Input,
     pub results: Results,
     /// Index of the picked match.
     pub selected: usize,
@@ -75,7 +82,7 @@ impl QuickOpen {
         Self {
             project_id,
             worktree_task_id,
-            query: String::new(),
+            query: Input::default(),
             results: Results::Loading,
             selected: 0,
             composer: None,
@@ -89,7 +96,7 @@ impl QuickOpen {
         let params = FsFindParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
-            query: self.query.clone(),
+            query: self.query.as_str().to_owned(),
             limit: FsFindParams::DEFAULT_LIMIT,
         };
         (self.sent, params)
@@ -117,7 +124,12 @@ impl QuickOpen {
                 self.step(by);
                 false
             }
-            Key::Backspace => self.query.pop().is_some(),
+            Key::Backspace => self.query.backspace(),
+            Key::DeleteWord => self.query.delete_word(),
+            Key::SelectAll => {
+                self.query.select_all();
+                false
+            }
             Key::Insert(text) => self.insert(&text),
             Key::Close | Key::Open | Key::Paste => false,
         }
@@ -126,10 +138,8 @@ impl QuickOpen {
     /// Appends typed or pasted text (line breaks dropped: a path is one line). Returns `true`
     /// when the query changed.
     pub fn insert(&mut self, text: &str) -> bool {
-        let before = self.query.len();
-        self.query
-            .extend(text.chars().filter(|c| *c != '\r' && *c != '\n'));
-        self.query.len() != before
+        let line: String = text.chars().filter(|c| *c != '\r' && *c != '\n').collect();
+        self.query.insert(&line)
     }
 
     /// Moves the pick by `by`, wrapping around the list.
@@ -261,6 +271,21 @@ mod tests {
     }
 
     #[test]
+    fn select_all_and_ctrl_backspace_edit_the_query() {
+        let mut open = QuickOpen::new(Ulid::new(), None);
+        open.insert("src/main.rs");
+        assert!(open.key(Key::DeleteWord), "the query changed: search again");
+        assert_eq!(open.query, "src/main.");
+        assert!(!open.key(Key::SelectAll), "only the highlight changes");
+        assert!(open.query.all_selected());
+        assert!(open.insert("lib"));
+        assert_eq!(open.query, "lib", "typing replaces the selection");
+        open.key(Key::SelectAll);
+        assert!(open.key(Key::Backspace));
+        assert_eq!(open.query, "");
+    }
+
+    #[test]
     fn keys() {
         let parse = |text: &str| key(&Keystroke::parse(text).unwrap());
         assert_eq!(parse("up"), Some(Key::Move(-1)));
@@ -270,6 +295,8 @@ mod tests {
         assert_eq!(parse("ctrl-enter"), Some(Key::Open));
         assert_eq!(parse("backspace"), Some(Key::Backspace));
         assert_eq!(parse("ctrl-v"), Some(Key::Paste));
+        assert_eq!(parse("ctrl-backspace"), Some(Key::DeleteWord));
+        assert_eq!(parse("ctrl-a"), Some(Key::SelectAll));
         assert_eq!(parse("tab"), None);
         assert_eq!(parse("ctrl-up"), None);
         assert_eq!(parse("ctrl-x"), None);

@@ -8,6 +8,7 @@ use ulid::Ulid;
 
 use crate::history;
 use crate::task_dialog::{DialogKey, dialog_key};
+use crate::text_box::Input;
 
 /// How one session's send went.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +74,7 @@ pub struct Broadcast {
     pub project_id: Ulid,
     pub rows: Vec<Row>,
     /// The text being typed (one line; Enter sends).
-    pub text: String,
+    pub text: Input,
     /// The row ↑ / ↓ move and Tab toggles.
     pub cursor: usize,
 }
@@ -106,7 +107,7 @@ impl Broadcast {
         Self {
             project_id,
             rows,
-            text: String::new(),
+            text: Input::default(),
             cursor: 0,
         }
     }
@@ -141,9 +142,9 @@ impl Broadcast {
                 self.toggle(self.cursor);
                 Outcome::Edited
             }
-            Some(DialogKey::Backspace) => {
+            Some(key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll)) => {
                 if !self.busy() {
-                    self.text.pop();
+                    self.text.edit(&key);
                 }
                 Outcome::Edited
             }
@@ -151,7 +152,7 @@ impl Broadcast {
                 self.insert(&text);
                 Outcome::Edited
             }
-            Some(DialogKey::SelectAll) | None => Outcome::Edited,
+            None => Outcome::Edited,
         }
     }
 
@@ -172,10 +173,11 @@ impl Broadcast {
         if self.busy() {
             return;
         }
-        self.text.extend(
-            text.chars()
-                .map(|c| if c == '\r' || c == '\n' { ' ' } else { c }),
-        );
+        let line: String = text
+            .chars()
+            .map(|c| if c == '\r' || c == '\n' { ' ' } else { c })
+            .collect();
+        self.text.insert(&line);
     }
 
     /// Whether Send can act: some row checked, some text, nothing in flight.
@@ -250,6 +252,7 @@ mod tests {
             agent_profile: "claude".into(),
             kind,
             title: title.map(Into::into),
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,
@@ -332,6 +335,18 @@ mod tests {
         assert_eq!(press(&mut dialog, "escape"), Outcome::Close);
         assert_eq!(press(&mut dialog, "enter"), Outcome::Send);
         assert_eq!(press(&mut dialog, "ctrl-v"), Outcome::Paste);
+    }
+
+    #[test]
+    fn the_text_takes_select_all_and_ctrl_backspace() {
+        let mut dialog = two();
+        dialog.insert("run the tests");
+        assert_eq!(press(&mut dialog, "ctrl-backspace"), Outcome::Edited);
+        assert_eq!(dialog.text, "run the ");
+        assert_eq!(press(&mut dialog, "ctrl-a"), Outcome::Edited);
+        assert!(dialog.text.all_selected());
+        dialog.insert("go");
+        assert_eq!(dialog.text, "go");
     }
 
     #[test]

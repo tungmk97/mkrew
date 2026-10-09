@@ -3,14 +3,15 @@
 //! highlighted code (SPEC §12A). Only [`inline`] and [`token_color`] are pure (and tested);
 //! the rest maps the model onto theme tokens.
 
+use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, FontStyle, FontWeight, HighlightStyle, Hsla, MouseButton, MouseDownEvent,
-    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, UniformList, Window, div, img,
-    px, relative, rgb, uniform_list,
+    AnyElement, App, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla, MouseButton,
+    MouseDownEvent, Pixels, SharedString, StrikethroughStyle, StyledText, UnderlineStyle,
+    UniformList, Window, canvas, div, img, px, relative, rgb, uniform_list,
 };
 
 use crate::comments::Selection;
@@ -18,7 +19,6 @@ use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
-use crate::text_find::Hits;
 use crate::theme::{self, Theme, font_size, radius, space, weight};
 
 /// The text of `runs` joined, and the byte range, style and "is a link" of every run that is
@@ -476,67 +476,87 @@ pub fn code_line(
     StyledText::new(text).with_highlights(highlights)
 }
 
-/// The Files viewer (SPEC §12A): `code` with line numbers and syntax colors; a click on a line
-/// calls `on_line` (Shift is ignored), `selected` is shown like a selection, and the find
-/// matches in `found` are highlighted.
-pub fn code_view(
-    id: &'static str,
-    code: Rc<Code>,
-    selected: Option<u32>,
-    found: Option<Hits>,
-    on_line: OnLine,
+/// What one row of the Files editor shows besides its text. Caret and selection are in screen
+/// cells (tabs count as `TAB`); `found` is in bytes of the drawn text.
+#[derive(Debug, Default)]
+pub struct RowMarks {
+    pub caret: Option<usize>,
+    pub selected: Option<Range<usize>>,
+    pub found: Vec<(Range<usize>, bool)>,
+}
+
+/// One row of the Files editor (SPEC §12A): its number, then `text` (tabs already spaces) in
+/// the syntax colors of `spans`, with the find matches, over the selected cells, with the
+/// caret. The caret's row is raised and its number accented. `text_left` learns where the text
+/// starts on screen, so a click can be turned into a column.
+#[allow(clippy::too_many_arguments)]
+pub fn code_row(
+    index: usize,
+    total: usize,
+    text: String,
+    spans: &[(Range<usize>, Token)],
+    marks: &RowMarks,
+    cell_width: Pixels,
+    text_left: &Rc<Cell<Pixels>>,
     theme: &Theme,
-) -> UniformList {
-    let total = code.lines.len();
-    let (font_family, font_size) = (theme.terminal_font_family.clone(), theme.terminal_font_size);
+) -> Div {
     let line_height = theme.terminal_font_size * theme.terminal_line_height;
-    let theme = theme.clone();
-    uniform_list(id, total, move |range, _, _| {
-        range
-            .map(|index| {
-                let line = code.lines.get(index).map(String::as_str).unwrap_or("");
-                let spans = code.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
-                let number = u32::try_from(index + 1).unwrap_or(u32::MAX);
-                let on_line = Rc::clone(&on_line);
-                let picked = selected == Some(number);
-                let marks = found
-                    .as_ref()
-                    .map(|hits| hits.on_line(index))
-                    .unwrap_or_default();
-                // A raised band plus an accent number: syntax colors and muted comments stay
-                // ≥ 4.5:1 on it (the terminal selection color would not).
-                div()
-                    .w_full()
-                    .h(px(line_height))
-                    .flex()
-                    .gap(px(space::L))
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .when(picked, |el| el.bg(rgb(theme.surface_raised)))
-                    .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, window, cx| {
-                        on_line(number, false, window, cx);
-                    })
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(rgb(if picked {
-                                theme.accent
-                            } else {
-                                theme.text_muted
-                            }))
-                            .child(gutter(index + 1, total)),
+    let cells = move |n: usize| cell_width * n as f32;
+    let current = marks.caret.is_some();
+    let text_left = Rc::clone(text_left);
+    div()
+        .w_full()
+        .h(px(line_height))
+        .flex()
+        .gap(px(space::L))
+        .whitespace_nowrap()
+        .cursor(CursorStyle::IBeam)
+        // A raised band plus an accent number: syntax colors and muted comments stay
+        // ≥ 4.5:1 on it.
+        .when(current, |el| el.bg(rgb(theme.surface_raised)))
+        .child(
+            div()
+                .flex_none()
+                .text_color(rgb(if current {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                }))
+                .child(gutter(index + 1, total)),
+        )
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .text_color(rgb(theme.text))
+                .child(
+                    canvas(
+                        move |bounds, _, _| text_left.set(bounds.left()),
+                        |_, (), _, _| {},
                     )
-                    .child(div().text_color(rgb(theme.text)).child(code_line(
-                        line.to_owned(),
-                        spans,
-                        &marks,
-                        &theme,
-                    )))
-            })
-            .collect()
-    })
-    .font_family(font_family)
-    .text_size(px(font_size))
+                    .absolute()
+                    .size_full(),
+                )
+                .children(marks.selected.clone().map(|selected| {
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(cells(selected.start))
+                        .w(cells(selected.end - selected.start))
+                        .bg(rgb(theme.terminal_selection_bg))
+                }))
+                .child(code_line(text, spans, &marks.found, theme))
+                .children(marks.caret.map(|at| {
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(cells(at))
+                        .w(px(theme::CARET_WIDTH))
+                        .bg(rgb(theme.text))
+                })),
+        )
 }
 
 #[cfg(test)]

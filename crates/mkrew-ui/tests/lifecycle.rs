@@ -127,6 +127,7 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
         project_id: project.id,
         name: None,
         default_agent: Some(Some("fake".into())),
+        default_shell: None,
         run_commands: None,
         run_autostart: None,
         color: None,

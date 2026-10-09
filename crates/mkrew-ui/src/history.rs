@@ -117,12 +117,17 @@ fn ended_at(session: &Session) -> i64 {
     session.ended_at.unwrap_or(session.state_changed_at)
 }
 
-/// The row's title: the session title, else its agent profile.
-pub fn label(session: &Session) -> String {
+/// A session's name (ADR 0031): the user's title, else the title its agent gave the terminal.
+pub fn title(session: &Session) -> Option<&str> {
     session
         .title
-        .clone()
-        .unwrap_or_else(|| session.agent_profile.clone())
+        .as_deref()
+        .or(session.terminal_title.as_deref())
+}
+
+/// The row's title: [`title`], else its agent profile.
+pub fn label(session: &Session) -> String {
+    title(session).unwrap_or(&session.agent_profile).to_owned()
 }
 
 /// The row's details at `now_ms`: `exited (1) · ran 4m · 2h ago`.
@@ -213,6 +218,7 @@ mod tests {
             agent_profile: "claude".into(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Daemon,
@@ -306,6 +312,20 @@ mod tests {
         assert!(!failed(&row));
         row.title = Some("Fix login".into());
         assert_eq!(label(&row), "Fix login");
+    }
+
+    #[test]
+    fn the_users_title_wins_then_the_terminal_title_then_the_agent() {
+        let mut s = session(Ulid::new(), SessionState::Working, None);
+        assert_eq!((title(&s), label(&s).as_str()), (None, "claude"));
+        s.terminal_title = Some("Fix login".into());
+        assert_eq!(label(&s), "Fix login");
+        s.title = Some("Mine".into());
+        assert_eq!(title(&s), Some("Mine"));
+        assert_eq!(label(&s), "Mine");
+        // Clearing the user's title shows the terminal title again.
+        s.title = None;
+        assert_eq!(title(&s), Some("Fix login"));
     }
 
     #[test]

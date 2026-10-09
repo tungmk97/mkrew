@@ -131,7 +131,11 @@ fn notice(hub: &Hub, session_id: Ulid, alert: Alert) -> Option<Notice> {
         }
     };
     let project = store.get_project(session.project_id).ok()?;
-    let name = session.title.unwrap_or(session.agent_profile);
+    // The user's name, else the agent's own title, else the profile (ADR 0031).
+    let name = session
+        .title
+        .or_else(|| hub.terminal_title(session_id))
+        .unwrap_or(session.agent_profile);
     Some(Notice {
         session_id,
         project_id: project.id,
@@ -313,6 +317,7 @@ mod tests {
                 agent_profile: "claude".into(),
                 kind: SessionKind::Agent,
                 title: title.map(Into::into),
+                terminal_title: None,
                 native_session_id: None,
                 state: SessionState::Working,
                 state_source: StateSource::Daemon,

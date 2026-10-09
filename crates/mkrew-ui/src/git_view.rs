@@ -60,12 +60,19 @@ pub struct Target {
 }
 
 impl Target {
-    /// The `git.diff` showing this file (of a task worktree, if `worktree_task_id`).
-    pub fn params(&self, project_id: Ulid, worktree_task_id: Option<Ulid>) -> GitDiffParams {
+    /// The `git.diff` showing this file (of a task worktree, if `worktree_task_id`; of child
+    /// repository `repo`).
+    pub fn params(
+        &self,
+        project_id: Ulid,
+        worktree_task_id: Option<Ulid>,
+        repo: Option<String>,
+    ) -> GitDiffParams {
         let commit = |group| self.commit.clone().filter(|_| self.group == group);
         GitDiffParams {
             project_id,
             worktree_task_id,
+            repo,
             path: self.path.clone(),
             mode: if matches!(self.group, Group::Base | Group::Since) {
                 GitMode::Base
@@ -349,6 +356,7 @@ impl StageRequest {
 pub struct Discard {
     pub project_id: Ulid,
     pub worktree_task_id: Option<Ulid>,
+    pub repo: Option<String>,
     pub target: Target,
     /// The same path also has staged changes (they stay).
     pub also_staged: bool,
@@ -380,6 +388,7 @@ impl Discard {
         GitDiscardParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
+            repo: self.repo.clone(),
             paths: vec![self.target.path.clone()],
             confirm: true,
         }
@@ -401,6 +410,33 @@ pub struct Requests {
 
 /// How far back "Changed by" looks for the sessions that changed files (SPEC §20C.4).
 pub const CHANGED_BY_WINDOW_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// The "Repo" chips (ADR 0029): `(repo, label)` per repository of `git.repos`, `""` (the
+/// workspace folder) labelled `workspace`; none with fewer than two (the row is hidden).
+pub fn repo_choices<'a>(repos: &'a [String], workspace: &'a str) -> Vec<(Option<String>, &'a str)> {
+    if repos.len() < 2 {
+        return Vec::new();
+    }
+    repos
+        .iter()
+        .map(|repo| match repo.as_str() {
+            "" => (None, workspace),
+            name => (Some(name.to_owned()), name),
+        })
+        .collect()
+}
+
+/// The repository to show once `git.repos` answered: the shown one while it is listed, else
+/// the workspace folder when it is one (listed first as `""`), else the first child one.
+/// `None` = the workspace folder.
+pub fn pick_repo(shown: Option<&str>, repos: &[String]) -> Option<String> {
+    if let Some(shown) = shown
+        && repos.iter().any(|repo| repo == shown)
+    {
+        return Some(shown.to_owned());
+    }
+    repos.first().filter(|first| !first.is_empty()).cloned()
+}
 
 /// The "Changed by" filter: `session.files` of the last 24 h, and the session whose files are
 /// kept (`None` = All).
@@ -427,6 +463,9 @@ pub struct GitView {
     pub project_id: Ulid,
     /// The task worktree shown instead of the project folder (SPEC §20E.1).
     pub worktree_task_id: Option<Ulid>,
+    /// The child repository shown (ADR 0029); `None` = the workspace folder's. Set by
+    /// `Shell::retarget_git` only: a repo change is a fresh view.
+    pub repo: Option<String>,
     pub mode: GitMode,
     pub status: Status,
     pub selected: Option<Target>,
@@ -476,6 +515,7 @@ impl GitView {
         GitView {
             project_id,
             worktree_task_id,
+            repo: None,
             mode: GitMode::Working,
             status: Status::Loading,
             selected: None,
@@ -502,6 +542,12 @@ impl GitView {
         }
     }
 
+    /// What the view shows: the task worktree and the repository (late answers for another
+    /// are dropped).
+    pub fn at(&self) -> (Option<Ulid>, Option<String>) {
+        (self.worktree_task_id, self.repo.clone())
+    }
+
     /// A `git.status` is about to be sent: its params, or `None` when one is in flight already
     /// (it is sent again once that one answers).
     pub fn begin_status(&mut self) -> Option<GitStatusParams> {
@@ -515,6 +561,7 @@ impl GitView {
         Some(GitStatusParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
+            repo: self.repo.clone(),
             mode: listed.0,
             since: listed.1,
         })
@@ -941,6 +988,7 @@ impl GitView {
         Some(GitLogParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
+            repo: self.repo.clone(),
             limit: GitLogParams::DEFAULT_LIMIT,
             path: None,
         })
@@ -987,6 +1035,7 @@ impl GitView {
         GitShowParams {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
+            repo: self.repo.clone(),
             commit: hash,
         }
     }
@@ -1211,6 +1260,7 @@ impl GitView {
             params: GitStageParams {
                 project_id: self.project_id,
                 worktree_task_id: self.worktree_task_id,
+                repo: self.repo.clone(),
                 paths: [Some(file.path.clone()), file.old_path.clone()]
                     .into_iter()
                     .flatten()
@@ -1237,6 +1287,7 @@ impl GitView {
             params: GitStageParams {
                 project_id: self.project_id,
                 worktree_task_id: self.worktree_task_id,
+                repo: self.repo.clone(),
                 paths: vec![],
                 hunk: Some(HunkTarget {
                     path: selected.path.clone(),
@@ -1294,6 +1345,7 @@ impl GitView {
         Some(Discard {
             project_id: self.project_id,
             worktree_task_id: self.worktree_task_id,
+            repo: self.repo.clone(),
             target: target.clone(),
             also_staged: also_staged.is_some(),
             busy: false,
@@ -1551,15 +1603,22 @@ mod tests {
     #[test]
     fn diff_params_follow_the_group() {
         let project = Ulid::new();
-        let staged = target(Group::Staged, "a").params(project, None);
+        let staged = target(Group::Staged, "a").params(project, None, None);
         assert!(staged.staged);
         assert_eq!(staged.mode, GitMode::Working);
-        assert!(!target(Group::Untracked, "a").params(project, None).staged);
+        assert!(
+            !target(Group::Untracked, "a")
+                .params(project, None, None)
+                .staged
+        );
         assert_eq!(
-            target(Group::Base, "a").params(project, None).mode,
+            target(Group::Base, "a").params(project, None, None).mode,
             GitMode::Base
         );
-        assert_eq!(target(Group::Base, "a").params(project, None).since, None);
+        assert_eq!(
+            target(Group::Base, "a").params(project, None, None).since,
+            None
+        );
     }
 
     #[test]
@@ -1699,7 +1758,7 @@ mod tests {
             commit: Some("abc".into()),
         };
         assert_eq!(requests.diff, Some(shown.clone()));
-        let diff = shown.params(view.project_id, None);
+        let diff = shown.params(view.project_id, None, None);
         assert_eq!(diff.mode, GitMode::Base);
         assert_eq!((diff.commit, diff.since.as_deref()), (None, Some("abc")));
         assert_eq!(Stage::of(Group::Since), None);
@@ -1870,12 +1929,79 @@ mod tests {
         assert!(view.apply(&changed(task_id)).status);
         let staged = target(Group::Staged, "a.rs");
         let untracked = target(Group::Untracked, "new.txt");
-        assert_eq!(staged.params(project_id, task_id).worktree_task_id, task_id);
+        let staged_params = staged.params(project_id, task_id, None);
+        assert_eq!(staged_params.worktree_task_id, task_id);
         let change = view.file_change(&staged).unwrap();
         assert_eq!(change.params.worktree_task_id, task_id);
         let discard = view.discard(&untracked).unwrap();
         assert_eq!(discard.params().worktree_task_id, task_id);
         assert_eq!(view.show_params("abc".into()).worktree_task_id, task_id);
+    }
+
+    fn repos(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    #[test]
+    fn repo_chips_show_with_two_repositories_and_name_the_workspace_folder() {
+        assert_eq!(repo_choices(&repos(&[]), "EA"), vec![]);
+        // One repository: nothing to choose.
+        assert_eq!(repo_choices(&repos(&["fe"]), "EA"), vec![]);
+        assert_eq!(repo_choices(&repos(&[""]), "EA"), vec![]);
+        assert_eq!(
+            repo_choices(&repos(&["", "be", "fe"]), "EA"),
+            vec![
+                (None, "EA"),
+                (Some("be".to_owned()), "be"),
+                (Some("fe".to_owned()), "fe"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_shown_repo_is_kept_while_listed_else_the_default_is_picked() {
+        // The workspace folder is no repository: the first child one, not an error.
+        assert_eq!(
+            pick_repo(None, &repos(&["be", "fe"])),
+            Some("be".to_owned())
+        );
+        // Kept when the list refreshes.
+        assert_eq!(
+            pick_repo(Some("fe"), &repos(&["be", "fe"])),
+            Some("fe".to_owned())
+        );
+        // Gone (folder removed or renamed): back to the default.
+        assert_eq!(pick_repo(Some("fe"), &repos(&["", "be"])), None);
+        assert_eq!(
+            pick_repo(Some("fe"), &repos(&["be"])),
+            Some("be".to_owned())
+        );
+        // The workspace folder is a repository: it stays the default.
+        assert_eq!(pick_repo(None, &repos(&["", "fe"])), None);
+        // No repository at all: the workspace folder (its error says why).
+        assert_eq!(pick_repo(Some("fe"), &repos(&[])), None);
+    }
+
+    #[test]
+    fn a_repo_view_sends_its_repo_on_every_git_request() {
+        let fe = Some("fe".to_owned());
+        let mut view = GitView::new(Ulid::new(), None);
+        view.repo = fe.clone();
+        assert_eq!(view.at(), (None, fe.clone()));
+        assert_eq!(view.begin_status().unwrap().repo, fe);
+        view.status_loaded(Ok(working()));
+        assert_eq!(view.show_params("abc".into()).repo, fe);
+        let staged = target(Group::Staged, "a.rs");
+        assert_eq!(view.file_change(&staged).unwrap().params.repo, fe);
+        assert_eq!(
+            view.discard(&target(Group::Untracked, "new.txt"))
+                .unwrap()
+                .params()
+                .repo,
+            fe
+        );
+        view.toggle_history();
+        assert_eq!(view.begin_log().unwrap().repo, fe);
     }
 
     #[test]
@@ -2118,7 +2244,7 @@ mod tests {
         assert_eq!(history_labels(&view), ["b true", "  x", "  y", "a false"]);
         assert!(!view.commit_box_shown());
         // The commit's diff asks for that commit's file; nothing stages it.
-        let params = commit_target("b", "x").params(view.project_id, None);
+        let params = commit_target("b", "x").params(view.project_id, None, None);
         assert_eq!(params.commit.as_deref(), Some("b"));
         assert_eq!(view.stage_key(Stage::Stage), None);
         assert_eq!(view.discard(&commit_target("b", "x")), None);
@@ -2305,6 +2431,7 @@ mod tests {
             agent_profile: "fake".into(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,
@@ -2357,7 +2484,7 @@ mod tests {
             (GitMode::Base, Some("tree3"))
         );
         let requests = view.status_loaded(Ok(since(&["a.rs"])));
-        let diff = requests.diff.unwrap().params(view.project_id, None);
+        let diff = requests.diff.unwrap().params(view.project_id, None, None);
         assert_eq!(
             (diff.mode, diff.since.as_deref()),
             (GitMode::Base, Some("tree3"))

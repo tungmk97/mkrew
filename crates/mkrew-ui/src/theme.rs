@@ -128,6 +128,12 @@ pub const MENU_WIDTH: f32 = 240.0;
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
 
+/// Width of the Files editor's caret.
+pub const CARET_WIDTH: f32 = 2.0;
+
+/// The Files editor highlights its text again this long after the last keystroke.
+pub const REHIGHLIGHT_DELAY: Duration = Duration::from_millis(150);
+
 /// Minimum width of a tab title while it is renamed inline.
 pub const TAB_RENAME_MIN_WIDTH: f32 = 120.0;
 

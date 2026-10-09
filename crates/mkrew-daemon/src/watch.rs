@@ -89,14 +89,19 @@ impl Filter {
         Some(relative_path)
     }
 
-    /// `path` is a file of the root's `.git` dir that moves when commits, branches or the
-    /// index change (`HEAD`, `index`, `packed-refs`, `refs/…`): the git state changed even
-    /// when no working file did.
+    /// `path` is a file of the root's `.git` dir, or of a direct child folder's (a repository
+    /// of its own, ADR 0029), that moves when commits, branches or the index change (`HEAD`,
+    /// `index`, `packed-refs`, `refs/…`): the git state changed even when no working file did.
     pub fn is_git_state(&self, path: &Path) -> bool {
-        let Ok(relative) = path
-            .strip_prefix(&self.root)
-            .and_then(|p| p.strip_prefix(".git"))
-        else {
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        let in_child = || {
+            let mut parts = relative.components();
+            parts.next();
+            parts.as_path().strip_prefix(".git").ok()
+        };
+        let Some(relative) = relative.strip_prefix(".git").ok().or_else(in_child) else {
             return false;
         };
         let mut parts = relative.components().map(|c| c.as_os_str());
@@ -359,29 +364,36 @@ mod tests {
     }
 
     #[test]
-    fn git_state_is_head_index_and_refs_of_the_root_git_dir() {
+    fn git_state_is_head_index_and_refs_of_the_root_or_a_child_git_dir() {
         let (dir, filter) = filter("");
-        let git = dir.path().join(".git");
-        for state in [
-            "HEAD",
-            "index",
-            "packed-refs",
-            "refs/heads/main",
-            "refs/tags/v1",
-        ] {
-            assert!(filter.is_git_state(&git.join(state)), "{state}");
+        for git in [dir.path().join(".git"), dir.path().join("fe").join(".git")] {
+            for state in [
+                "HEAD",
+                "index",
+                "packed-refs",
+                "refs/heads/main",
+                "refs/tags/v1",
+            ] {
+                assert!(
+                    filter.is_git_state(&git.join(state)),
+                    "{}",
+                    git.join(state).display()
+                );
+            }
+            for other in [
+                "index.lock",
+                "refs",
+                "objects/ab/cdef",
+                "logs/HEAD",
+                "HEAD/x",
+            ] {
+                assert!(!filter.is_git_state(&git.join(other)), "{other}");
+            }
         }
-        for other in [
-            "index.lock",
-            "refs",
-            "objects/ab/cdef",
-            "logs/HEAD",
-            "HEAD/x",
-        ] {
-            assert!(!filter.is_git_state(&git.join(other)), "{other}");
-        }
-        assert!(!filter.is_git_state(&dir.path().join("sub/.git/HEAD")));
+        // Only direct child repositories (ADR 0029), never deeper ones or plain files.
+        assert!(!filter.is_git_state(&dir.path().join("apps/web/.git/HEAD")));
         assert!(!filter.is_git_state(&dir.path().join("HEAD")));
+        assert!(!filter.is_git_state(&dir.path().join("fe/HEAD")));
     }
 
     #[tokio::test(start_paused = true)]

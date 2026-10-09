@@ -1,0 +1,12 @@
+# Windows PowerShell 5 (built into Windows).
+name = "Windows PowerShell"
+icon = "PS5"
+kind = "shell"
+command = "powershell"
+args = ["-NoLogo"]
+prompt_mode = "none"
+
+[state]
+mode = "screen"
+idle_after_ms = 3000
+needs_input_patterns = []

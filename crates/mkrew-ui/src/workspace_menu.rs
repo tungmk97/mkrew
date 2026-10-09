@@ -1,5 +1,5 @@
-//! The workspace menu (SPEC §10): "Open in Zed", "Run setup…", the default agent, and removing
-//! the workspace. Pure and tested headlessly; `main.rs` renders it.
+//! The workspace menu (SPEC §10): "Open in Zed", "Run setup…", the default agent and shell, and
+//! removing the workspace. Pure and tested headlessly; `main.rs` renders it.
 
 use mkrew_protocol::{AgentProfileInfo, ProjectUpdateParams, SessionKind};
 use ulid::Ulid;
@@ -39,12 +39,18 @@ impl WorkspaceMenu {
     }
 }
 
-/// The agent profiles (shells are not agents), with `current` selected. A `current` that no
-/// longer has a profile stays listed, marked missing, so the setting is never hidden.
-pub fn agent_choices(profiles: &[AgentProfileInfo], current: Option<&str>) -> Vec<AgentChoice> {
+/// The profiles of `kind` (agents, or shells found on PATH), with `current` selected. A
+/// `current` that no longer has a listed profile stays, marked missing, so the setting is never
+/// hidden.
+pub fn agent_choices(
+    profiles: &[AgentProfileInfo],
+    kind: SessionKind,
+    current: Option<&str>,
+) -> Vec<AgentChoice> {
     let mut choices: Vec<AgentChoice> = profiles
         .iter()
-        .filter(|profile| profile.kind == SessionKind::Agent)
+        // Shells the machine lacks are hidden (several samples ship); agents always show.
+        .filter(|profile| profile.kind == kind && (kind == SessionKind::Agent || profile.installed))
         .map(|profile| AgentChoice {
             id: profile.id.clone(),
             label: profile.name.clone(),
@@ -55,9 +61,14 @@ pub fn agent_choices(profiles: &[AgentProfileInfo], current: Option<&str>) -> Ve
     if let Some(current) = current
         && !choices.iter().any(|choice| choice.selected)
     {
+        let why = if profiles.iter().any(|profile| profile.id == current) {
+            "not installed"
+        } else {
+            "profile missing"
+        };
         choices.push(AgentChoice {
             id: current.to_owned(),
-            label: format!("{current} (profile missing)"),
+            label: format!("{current} ({why})"),
             selected: true,
             icon: None,
         });
@@ -71,6 +82,20 @@ pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
         project_id,
         name: None,
         default_agent: Some(Some(agent.to_owned())),
+        default_shell: None,
+        run_commands: None,
+        run_autostart: None,
+        color: None,
+    }
+}
+
+/// `project.update` making `shell` the workspace's default shell (ADR 0032).
+pub fn set_default_shell(project_id: Ulid, shell: &str) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        project_id,
+        name: None,
+        default_agent: None,
+        default_shell: Some(Some(shell.to_owned())),
         run_commands: None,
         run_autostart: None,
         color: None,
@@ -83,6 +108,7 @@ pub fn set_color(project_id: Ulid, color: Option<&str>) -> ProjectUpdateParams {
         project_id,
         name: None,
         default_agent: None,
+        default_shell: None,
         run_commands: None,
         run_autostart: None,
         color: Some(color.map(str::to_owned)),
@@ -103,6 +129,7 @@ mod tests {
             kind,
             command: id.into(),
             icon: None,
+            installed: true,
         }
     }
 
@@ -123,7 +150,7 @@ mod tests {
 
     #[test]
     fn lists_agents_only_with_the_current_one_selected() {
-        let choices = agent_choices(&profiles(), Some("codex"));
+        let choices = agent_choices(&profiles(), SessionKind::Agent, Some("codex"));
         assert_eq!(
             rows(&choices),
             [("claude", "Claude Code", false), ("codex", "Codex", true)]
@@ -132,19 +159,52 @@ mod tests {
 
     #[test]
     fn no_default_selects_nothing() {
-        let choices = agent_choices(&profiles(), None);
+        let choices = agent_choices(&profiles(), SessionKind::Agent, None);
         assert!(choices.iter().all(|c| !c.selected));
         assert_eq!(choices.len(), 2);
     }
 
     #[test]
     fn a_default_without_a_profile_stays_visible() {
-        let choices = agent_choices(&profiles(), Some("omp"));
+        let choices = agent_choices(&profiles(), SessionKind::Agent, Some("omp"));
         assert_eq!(
             rows(&choices).last(),
             Some(&("omp", "omp (profile missing)", true))
         );
-        assert!(agent_choices(&[], Some("omp"))[0].selected);
+        assert!(agent_choices(&[], SessionKind::Agent, Some("omp"))[0].selected);
+    }
+
+    #[test]
+    fn shells_list_only_installed_shell_profiles() {
+        let mut list = profiles();
+        list.push(profile("pwsh", "PowerShell", SessionKind::Shell));
+        list.push(AgentProfileInfo {
+            installed: false,
+            ..profile("bash", "Bash", SessionKind::Shell)
+        });
+        list.push(AgentProfileInfo {
+            installed: false,
+            ..profile("omp", "Oh My Pi", SessionKind::Agent)
+        });
+        assert_eq!(
+            rows(&agent_choices(&list, SessionKind::Shell, Some("pwsh"))),
+            [("shell", "Shell", false), ("pwsh", "PowerShell", true)]
+        );
+        // Agents stay listed when missing: a spawn then names the PATH it searched.
+        assert!(
+            agent_choices(&list, SessionKind::Agent, None)
+                .iter()
+                .any(|choice| choice.id == "omp")
+        );
+        // A default shell that is no longer found stays visible, like a missing agent.
+        assert_eq!(
+            rows(&agent_choices(&list, SessionKind::Shell, Some("bash"))).last(),
+            Some(&("bash", "bash (not installed)", true))
+        );
+        assert_eq!(
+            rows(&agent_choices(&list, SessionKind::Shell, Some("zsh"))).last(),
+            Some(&("zsh", "zsh (profile missing)", true))
+        );
     }
 
     #[test]

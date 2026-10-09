@@ -195,6 +195,7 @@ mod tests {
             agent_profile: "claude".into(),
             kind: SessionKind::Agent,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state: SessionState::Done,
             state_source: StateSource::Daemon,

@@ -95,6 +95,7 @@ fn snapshot_and_output_batch_into_runs() {
                 CellRun::DIM,
             )],
         ],
+        history: vec![],
         cursor: CursorSnapshot {
             row: 2,
             col: 2,

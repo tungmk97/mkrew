@@ -348,6 +348,7 @@ mod tests {
             agent_profile: "shell".into(),
             kind,
             title: title.map(Into::into),
+            terminal_title: None,
             native_session_id: None,
             state: SessionState::Working,
             state_source: StateSource::Screen,

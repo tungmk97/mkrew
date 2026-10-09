@@ -1,0 +1,11 @@
+# Command Prompt (Windows).
+name = "Command Prompt"
+icon = "C:>"
+kind = "shell"
+command = "cmd"
+prompt_mode = "none"
+
+[state]
+mode = "screen"
+idle_after_ms = 3000
+needs_input_patterns = []

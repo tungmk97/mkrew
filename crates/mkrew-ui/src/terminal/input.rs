@@ -24,7 +24,12 @@ pub fn key_to_bytes(keystroke: &Keystroke, mode: InputMode) -> Option<Vec<u8>> {
     let modifier = 1 + u8::from(m.shift) + 2 * u8::from(m.alt) + 4 * u8::from(m.control);
 
     if let Some(bytes) = special_key(&keystroke.key, m.control, m.shift, modifier, mode) {
-        return Some(with_alt(bytes, m.alt && !is_csi(&keystroke.key)));
+        // Shift+Enter already starts with ESC: Alt adds nothing.
+        let shift_enter = m.shift && keystroke.key == "enter";
+        return Some(with_alt(
+            bytes,
+            m.alt && !is_csi(&keystroke.key) && !shift_enter,
+        ));
     }
     // AltGr arrives as Ctrl+Alt with the composed char in `key_char`: send the char as is.
     let altgr = m.control && m.alt;
@@ -134,6 +139,10 @@ fn special_key(
     mode: InputMode,
 ) -> Option<Vec<u8>> {
     let bytes = match key {
+        // Shift+Enter: the Alt+Enter form, which agents read as "new line" (Claude, Codex,
+        // Copilot, omp). Without kitty / win32-input mode nothing else reaches them through
+        // ConPTY intact; shells see Alt+Enter, which pwsh and readline leave unbound.
+        "enter" if shift => vec![0x1b, b'\r'],
         "enter" => b"\r".to_vec(),
         // Word rubout: ^W. PSReadLine's default Windows mode binds Ctrl+w (not Alt+Backspace),
         // like readline and pi-tui; `\x08` reads as a plain Backspace in most TUIs.
@@ -383,6 +392,22 @@ mod tests {
     fn alt_prefixes_escape() {
         assert_eq!(bytes("alt-b", Some("b"), NORMAL), Some(b"\x1bb".to_vec()));
         assert_eq!(bytes("alt-enter", None, NORMAL), Some(b"\x1b\r".to_vec()));
+    }
+
+    /// Shift+Enter is the Alt+Enter form (ESC CR): Claude, Codex, Copilot and omp insert a
+    /// new line instead of submitting; plain and Ctrl+Enter still submit.
+    #[test]
+    fn shift_enter_is_a_newline_for_agents() {
+        for mode in [NORMAL, APP] {
+            assert_eq!(bytes("shift-enter", None, mode), Some(b"\x1b\r".to_vec()));
+            // One ESC, not two (ESC ESC CR would read as Esc, then Alt+Enter).
+            assert_eq!(
+                bytes("alt-shift-enter", None, mode),
+                Some(b"\x1b\r".to_vec())
+            );
+            assert_eq!(bytes("enter", None, mode), Some(b"\r".to_vec()));
+            assert_eq!(bytes("ctrl-enter", None, mode), Some(b"\r".to_vec()));
+        }
     }
 
     #[test]

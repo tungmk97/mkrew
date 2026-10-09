@@ -2,8 +2,8 @@
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
 use mkrew_protocol::{
-    Request, Session, SessionKind, SessionSpawnParams, SessionState, Task, TaskFanoutParams,
-    TaskRunParams, TaskUpdateParams,
+    Request, Session, SessionKind, SessionRenameParams, SessionSpawnParams, SessionState, Task,
+    TaskFanoutParams, TaskRunParams, TaskUpdateParams,
 };
 use ulid::Ulid;
 
@@ -16,8 +16,8 @@ pub const RUNNING_WARN_ABOVE: usize = 12;
 const SPAWN_COLS: u16 = 80;
 const SPAWN_ROWS: u16 = 24;
 
-/// `session.spawn` for a new pane: an agent from the workspace's default profile or the shell,
-/// started in the project folder (the daemon's cwd for every session of a project).
+/// `session.spawn` for a new pane: an agent from the workspace's default profile or its default
+/// shell, started in the project folder (the daemon's cwd for every session of a project).
 pub fn spawn_params(
     project_id: Ulid,
     tab_id: Option<Ulid>,
@@ -25,7 +25,7 @@ pub fn spawn_params(
 ) -> SessionSpawnParams {
     SessionSpawnParams {
         project_id,
-        // `None` = the project's `default_agent` for an agent, the `shell` profile for a shell.
+        // `None` = the project's `default_agent` for an agent, its `default_shell` for a shell.
         agent_profile: None,
         kind,
         tab_id,
@@ -33,6 +33,16 @@ pub fn spawn_params(
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
     }
+}
+
+/// The `session.rename` for an edited pane title, trimmed; blank clears the title. `None`
+/// when nothing changes (ADR 0031).
+pub fn session_rename_params(session: &Session, draft: &str) -> Option<SessionRenameParams> {
+    let title = Some(draft.trim()).filter(|title| !title.is_empty());
+    (title != session.title.as_deref()).then(|| SessionRenameParams {
+        session_id: session.id,
+        title: title.map(str::to_owned),
+    })
 }
 
 /// `task.run` for a card's Run: the daemon picks the agent and folder; the session starts at
@@ -170,6 +180,7 @@ mod tests {
             agent_profile: "fake".into(),
             kind,
             title: None,
+            terminal_title: None,
             native_session_id: None,
             state,
             state_source: mkrew_protocol::StateSource::Daemon,
@@ -199,6 +210,21 @@ mod tests {
         let run = run_params(task);
         assert_eq!(run.task_id, task);
         assert_eq!((run.cols, run.rows), (shell.cols, shell.rows));
+    }
+
+    #[test]
+    fn session_rename_params_trim_clear_and_skip_unchanged() {
+        let mut named = session(Ulid::new(), SessionKind::Agent, SessionState::Working);
+        let params = session_rename_params(&named, "  Fix login  ").unwrap();
+        assert_eq!(params.session_id, named.id);
+        assert_eq!(params.title.as_deref(), Some("Fix login"));
+        // Blank on an untitled pane: nothing to do.
+        assert_eq!(session_rename_params(&named, "   "), None);
+        named.title = Some("Fix login".into());
+        assert_eq!(session_rename_params(&named, " Fix login "), None);
+        // Blank clears an existing title.
+        let cleared = session_rename_params(&named, "  ").unwrap();
+        assert_eq!(cleared.title, None);
     }
 
     #[test]

@@ -14,6 +14,7 @@ fn session(project_id: Ulid, started_at: i64) -> Session {
         agent_profile: "fake".into(),
         kind: SessionKind::Agent,
         title: None,
+        terminal_title: None,
         native_session_id: None,
         state: SessionState::Starting,
         state_source: StateSource::Daemon,
@@ -1222,4 +1223,46 @@ fn project_color_persists_and_clears() {
     };
     store.update_project(p.id, none).unwrap();
     assert_eq!(open(&dir).get_project(p.id).unwrap().color, None);
+}
+
+#[test]
+fn project_default_shell_persists_and_clears() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    assert_eq!(p.default_shell, None);
+    let pwsh = ProjectChanges {
+        default_shell: Some(Some("pwsh")),
+        ..ProjectChanges::default()
+    };
+    let updated = store.update_project(p.id, pwsh).unwrap();
+    assert_eq!(updated.default_agent, None, "only the shell changes");
+    assert_eq!(
+        open(&dir)
+            .get_project(p.id)
+            .unwrap()
+            .default_shell
+            .as_deref(),
+        Some("pwsh")
+    );
+    // Changing another field keeps it.
+    let agent = ProjectChanges {
+        default_agent: Some(Some("claude")),
+        ..ProjectChanges::default()
+    };
+    store.update_project(p.id, agent).unwrap();
+    assert_eq!(
+        open(&dir)
+            .get_project(p.id)
+            .unwrap()
+            .default_shell
+            .as_deref(),
+        Some("pwsh")
+    );
+    let none = ProjectChanges {
+        default_shell: Some(None),
+        ..ProjectChanges::default()
+    };
+    store.update_project(p.id, none).unwrap();
+    assert_eq!(open(&dir).get_project(p.id).unwrap().default_shell, None);
 }

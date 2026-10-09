@@ -16,16 +16,25 @@ pub fn paint(snapshot: &ScreenSnapshot) -> String {
         "\x1b[?1049l"
     });
     out.push_str("\x1b[H\x1b[2J");
+    // History: write each line from the top and let line feeds scroll it off the screen, so the
+    // receiving terminal keeps it as scrollback. `rows - 1` extra feeds push the last written
+    // line out too; the screen is blank again for the absolute rows below. The alternate
+    // screen has no scrollback (the daemon sends none there; skip it anyway).
+    if !modes.alt_screen && !snapshot.history.is_empty() {
+        for runs in &snapshot.history {
+            push_runs(&mut out, runs);
+            out.push_str("\r\n");
+        }
+        for _ in 1..snapshot.rows {
+            out.push('\n');
+        }
+    }
     for (row, runs) in snapshot.lines.iter().enumerate() {
         if runs.is_empty() {
             continue;
         }
         let _ = write!(out, "\x1b[{};1H", row + 1);
-        for run in runs {
-            sgr(&mut out, run);
-            out.push_str(&run.text);
-        }
-        out.push_str("\x1b[0m");
+        push_runs(&mut out, runs);
     }
     // Mouse: the snapshot only says "some mode is on"; button-event tracking is the common one.
     for (on, set) in [
@@ -70,6 +79,15 @@ fn sgr(out: &mut String, run: &CellRun) {
     color(out, run.fg, 30, 90, 38);
     color(out, run.bg, 40, 100, 48);
     out.push('m');
+}
+
+/// One row's styled runs, then the style reset.
+fn push_runs(out: &mut String, runs: &[CellRun]) {
+    for run in runs {
+        sgr(out, run);
+        out.push_str(&run.text);
+    }
+    out.push_str("\x1b[0m");
 }
 
 /// `base` + n for ANSI 0–7, `bright` + n − 8 for 8–15, `extended;5;n` / `extended;2;r;g;b` else.
@@ -121,6 +139,7 @@ mod tests {
                     CellRun::UNDERLINE | CellRun::INVERSE,
                 )],
             ],
+            history: vec![],
             cursor: CursorSnapshot {
                 row: 2,
                 col: 1,
@@ -140,6 +159,42 @@ mod tests {
             "\x1b[3;2H\x1b[?25l",
         );
         assert_eq!(paint(&snapshot), expected);
+    }
+
+    /// History goes before the screen and only on the main screen; it never changes how the
+    /// screen itself is painted.
+    #[test]
+    fn history_is_painted_only_on_the_main_screen() {
+        let mut snapshot = ScreenSnapshot {
+            cols: 20,
+            rows: 3,
+            lines: vec![vec![run("$ ", TermColor::Default, TermColor::Default, 0)]],
+            history: vec![],
+            cursor: CursorSnapshot {
+                row: 0,
+                col: 2,
+                visible: true,
+            },
+            modes: TermModes::default(),
+        };
+        let without = paint(&snapshot);
+        snapshot.history = vec![
+            vec![run("old", TermColor::Indexed(1), TermColor::Default, 0)],
+            vec![],
+        ];
+        // Two history lines, then rows - 1 = 2 feeds, then the same screen as before.
+        assert_eq!(
+            paint(&snapshot),
+            without.replacen(
+                "\x1b[2J",
+                "\x1b[2J\x1b[0;31mold\x1b[0m\r\n\x1b[0m\r\n\n\n",
+                1
+            )
+        );
+        snapshot.modes.alt_screen = true;
+        let alt = paint(&snapshot);
+        snapshot.history.clear();
+        assert_eq!(alt, paint(&snapshot));
     }
 
     #[test]

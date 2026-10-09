@@ -10,6 +10,7 @@ use mkrew_protocol::{
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
+use crate::text_box::Input;
 
 /// Lines picked in the preview (a block) or the source (a line); 1-based, inclusive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,7 +140,7 @@ pub struct Draft {
     pub target: Target,
     /// A new comment's quote, taken when the draft opened (the file may change meanwhile).
     pub quote: String,
-    pub text: String,
+    pub text: Input,
     /// Its request is in flight.
     pub busy: bool,
     pub error: Option<String>,
@@ -152,7 +153,7 @@ impl Draft {
         Draft {
             target,
             quote,
-            text: String::new(),
+            text: Input::default(),
             busy: false,
             error: None,
             serial,
@@ -164,10 +165,10 @@ impl Draft {
             DialogKey::Cancel => return Outcome::Cancel,
             DialogKey::Enter | DialogKey::Save => return Outcome::Submit,
             // The caller inserts the clipboard text.
-            DialogKey::SwitchField | DialogKey::Paste | DialogKey::SelectAll => {}
-            DialogKey::Backspace => {
+            DialogKey::SwitchField | DialogKey::Paste => {}
+            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
                 if !self.busy {
-                    self.text.pop();
+                    self.text.edit(&key);
                 }
             }
             DialogKey::Insert(text) => self.insert(&text),
@@ -180,7 +181,7 @@ impl Draft {
         if self.busy {
             return;
         }
-        self.text.push_str(&text.replace("\r\n", "\n"));
+        self.text.insert(&text.replace("\r\n", "\n"));
         self.error = None;
     }
 }
@@ -607,5 +608,26 @@ mod tests {
         assert!(matches!(&comments.list, List::Loaded(list) if list.len() == 2));
         let draft = comments.draft.as_mut().unwrap();
         assert_eq!(draft.key(DialogKey::Cancel), Outcome::Cancel);
+    }
+
+    #[test]
+    fn a_draft_takes_select_all_and_ctrl_backspace_unless_it_is_saving() {
+        let mut draft = Draft::new(
+            Target::New(Selection { start: 1, end: 1 }),
+            String::new(),
+            1,
+        );
+        draft.insert("why this");
+        draft.key(DialogKey::DeleteWord);
+        assert_eq!(draft.text, "why ");
+        draft.key(DialogKey::SelectAll);
+        draft.key(DialogKey::Insert("ok".into()));
+        assert_eq!(draft.text, "ok");
+
+        draft.busy = true;
+        draft.key(DialogKey::SelectAll);
+        draft.key(DialogKey::DeleteWord);
+        assert_eq!(draft.text, "ok", "frozen while saving");
+        assert!(!draft.text.all_selected());
     }
 }

@@ -125,8 +125,8 @@ impl Emulator {
         *self.last_grid.get_mut() = None;
     }
 
-    /// A fresh emulator showing `snapshot` (screen, cursor, modes); output frames that follow
-    /// the snapshot continue from it.
+    /// A fresh emulator showing `snapshot` (history as scrollback, screen, cursor, modes);
+    /// output frames that follow the snapshot continue from it.
     pub fn from_snapshot(snapshot: &ScreenSnapshot) -> Self {
         let mut emulator = Self::new(
             usize::from(snapshot.cols.max(1)),
@@ -706,6 +706,7 @@ mod tests {
                 vec![],
                 vec![],
             ],
+            history: vec![],
             cursor: CursorSnapshot {
                 row: 1,
                 col: 0,
@@ -731,5 +732,50 @@ mod tests {
         assert!(grid.rows[0][0].flags.contains(Flags::BOLD));
         emu.advance(b"a.txt");
         assert_eq!(emu.grid().to_text(), "$ ls\na.txt\n\n");
+    }
+
+    /// A pane re-attached after a tab switch (or an overflow resnapshot) scrolls back into the
+    /// daemon's history; the live screen and the output that follows are unchanged (ADR 0030).
+    #[test]
+    fn snapshot_history_is_scrollable() {
+        let line = |text: &str| {
+            vec![CellRun {
+                text: text.into(),
+                fg: TermColor::Default,
+                bg: TermColor::Default,
+                flags: 0,
+            }]
+        };
+        let mut snapshot = ScreenSnapshot {
+            cols: 10,
+            rows: 3,
+            lines: vec![line("$ ls"), line("a.txt"), vec![]],
+            history: vec![],
+            cursor: CursorSnapshot {
+                row: 2,
+                col: 0,
+                visible: true,
+            },
+            modes: TermModes::default(),
+        };
+        let screen = Emulator::from_snapshot(&snapshot).grid();
+        snapshot.history = (0..5).map(|n| line(&format!("old{n}"))).collect();
+
+        let mut emu = Emulator::from_snapshot(&snapshot);
+        assert_eq!(
+            emu.grid(),
+            screen,
+            "the live screen is the same with history"
+        );
+        // The history sits right above the screen, in order.
+        emu.scroll_lines(3);
+        assert_eq!(emu.grid().to_text(), "old2\nold3\nold4\n");
+        emu.scroll_lines(1_000_000);
+        let top = emu.grid().to_text();
+        assert!(top.contains("old0\nold1\n"), "{top}");
+        // Output continues on the live screen.
+        emu.scroll_to_bottom();
+        emu.advance(b"b.txt");
+        assert_eq!(emu.grid().to_text(), "$ ls\na.txt\nb.txt\n");
     }
 }

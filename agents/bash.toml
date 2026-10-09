@@ -1,0 +1,13 @@
+# The first `bash` on PATH: the system bash on Linux / macOS. On Windows this is often WSL's
+# (WindowsApps\bash.exe); use `git-bash` for Git Bash.
+name = "Bash"
+icon = "$"
+kind = "shell"
+command = "bash"
+args = ["--login", "-i"]
+prompt_mode = "none"
+
+[state]
+mode = "screen"
+idle_after_ms = 3000
+needs_input_patterns = []

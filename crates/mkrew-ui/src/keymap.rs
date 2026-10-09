@@ -6,7 +6,8 @@
 //! already bound to another command is reported and that entry keeps its default.
 //!
 //! While a terminal has focus only bound keystrokes are intercepted; everything else goes to
-//! the session, so the defaults avoid plain `Ctrl+<letter>` (Ctrl+C, Ctrl+R… reach the agent).
+//! the session, so the defaults avoid plain `Ctrl+<letter>` (Ctrl+C, Ctrl+R… reach the agent),
+//! except Files-only commands (ADR 0028).
 
 use std::path::Path;
 
@@ -33,12 +34,18 @@ pub enum Command {
     CloseTab,
     SplitRight,
     SplitDown,
+    /// Split the focused pane to the right with the workspace's default agent (+ Agent).
+    SplitAgent,
+    /// Split the focused pane to the right with the workspace's default shell (+ Shell).
+    SplitShell,
     Focus(Direction),
     /// Move the divider next to the focused pane.
     Resize(Direction),
     /// Toggle the focused pane filling the whole tab.
     ZoomPane,
     ClosePane,
+    /// Edit the focused pane's (session's) title inline in its header.
+    RenamePane,
     /// Terminal only: copy the mouse selection.
     Copy,
     /// Terminal only: paste the clipboard (bracketed when the program asked for it).
@@ -75,6 +82,12 @@ pub enum Command {
     ShowFiles,
     /// Files only: show or hide git-ignored files in the tree.
     ToggleIgnored,
+    /// Files only: save the opened file (Ctrl+S, ADR 0028).
+    SaveFile,
+    /// Files only: open the find bar over the opened file (Ctrl+F).
+    FindInFile,
+    /// Files only: open the find bar with its replace row (Ctrl+H).
+    ReplaceInFile,
     /// Show the active workspace's Git view.
     ShowGit,
     /// Git only: switch between Working changes and Against base.
@@ -101,6 +114,8 @@ pub enum Command {
     OpenKeymapSettings,
     /// Cycle the theme System → Light → Dark (ADR 0027), saved as `[ui] theme`.
     ToggleTheme,
+    /// Toggle the window filling the whole screen (not remembered across restarts).
+    ToggleFullScreen,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -150,6 +165,8 @@ impl Command {
             Command::CloseTab,
             Command::SplitRight,
             Command::SplitDown,
+            Command::SplitAgent,
+            Command::SplitShell,
             Command::Focus(Direction::Left),
             Command::Focus(Direction::Right),
             Command::Focus(Direction::Up),
@@ -160,6 +177,7 @@ impl Command {
             Command::Resize(Direction::Down),
             Command::ZoomPane,
             Command::ClosePane,
+            Command::RenamePane,
             Command::Copy,
             Command::Paste,
             Command::PageUp,
@@ -178,6 +196,9 @@ impl Command {
             Command::SendComments,
             Command::ShowFiles,
             Command::ToggleIgnored,
+            Command::SaveFile,
+            Command::FindInFile,
+            Command::ReplaceInFile,
             Command::ShowGit,
             Command::GitToggleMode,
             Command::GitToggleHistory,
@@ -192,6 +213,7 @@ impl Command {
             Command::CommandPalette,
             Command::OpenKeymapSettings,
             Command::ToggleTheme,
+            Command::ToggleFullScreen,
         ]);
         all
     }
@@ -212,6 +234,8 @@ impl Command {
             Command::CloseTab => "close_tab".into(),
             Command::SplitRight => "split_right".into(),
             Command::SplitDown => "split_down".into(),
+            Command::SplitAgent => "split_agent".into(),
+            Command::SplitShell => "split_shell".into(),
             Command::Focus(Direction::Left) => "focus_left".into(),
             Command::Focus(Direction::Right) => "focus_right".into(),
             Command::Focus(Direction::Up) => "focus_up".into(),
@@ -222,6 +246,7 @@ impl Command {
             Command::Resize(Direction::Down) => "resize_down".into(),
             Command::ZoomPane => "zoom_pane".into(),
             Command::ClosePane => "close_pane".into(),
+            Command::RenamePane => "rename_pane".into(),
             Command::Copy => "copy".into(),
             Command::Paste => "paste".into(),
             Command::PageUp => "page_up".into(),
@@ -240,6 +265,9 @@ impl Command {
             Command::SendComments => "send_comments".into(),
             Command::ShowFiles => "show_files".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
+            Command::SaveFile => "save_file".into(),
+            Command::FindInFile => "find_in_file".into(),
+            Command::ReplaceInFile => "replace_in_file".into(),
             Command::ShowGit => "show_git".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
             Command::GitToggleHistory => "git_toggle_history".into(),
@@ -254,6 +282,7 @@ impl Command {
             Command::CommandPalette => "command_palette".into(),
             Command::OpenKeymapSettings => "open_keymap_settings".into(),
             Command::ToggleTheme => "toggle_theme".into(),
+            Command::ToggleFullScreen => "toggle_full_screen".into(),
         }
     }
 
@@ -279,6 +308,8 @@ impl Command {
             Command::CloseTab => "ctrl-shift-w".into(),
             Command::SplitRight => "alt-shift-=".into(),
             Command::SplitDown => "alt-shift--".into(),
+            Command::SplitAgent => "alt-shift-a".into(),
+            Command::SplitShell => "alt-shift-s".into(),
             Command::Focus(Direction::Left) => "alt-left".into(),
             Command::Focus(Direction::Right) => "alt-right".into(),
             Command::Focus(Direction::Up) => "alt-up".into(),
@@ -289,6 +320,7 @@ impl Command {
             Command::Resize(Direction::Down) => "alt-shift-down".into(),
             Command::ZoomPane => "ctrl-shift-m".into(),
             Command::ClosePane => "ctrl-shift-x".into(),
+            Command::RenamePane => "f2".into(),
             Command::Copy => "ctrl-shift-c".into(),
             Command::Paste => "ctrl-shift-v".into(),
             Command::PageUp => "shift-pageup".into(),
@@ -307,6 +339,9 @@ impl Command {
             Command::SendComments => "ctrl-shift-s".into(),
             Command::ShowFiles => "ctrl-shift-4".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
+            Command::SaveFile => "ctrl-s".into(),
+            Command::FindInFile => "ctrl-f".into(),
+            Command::ReplaceInFile => "ctrl-h".into(),
             Command::ShowGit => "ctrl-shift-5".into(),
             Command::GitToggleMode => "b".into(),
             Command::GitToggleHistory => "h".into(),
@@ -321,6 +356,7 @@ impl Command {
             Command::CommandPalette => "ctrl-shift-p".into(),
             Command::OpenKeymapSettings => "ctrl-,".into(),
             Command::ToggleTheme => "ctrl-shift-j".into(),
+            Command::ToggleFullScreen => "f11".into(),
         }
     }
 
@@ -334,7 +370,10 @@ impl Command {
             Command::RunTask => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
             Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
-            Command::ToggleIgnored => Some(FILES_CONTEXT),
+            Command::ToggleIgnored
+            | Command::SaveFile
+            | Command::FindInFile
+            | Command::ReplaceInFile => Some(FILES_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -652,6 +691,12 @@ mod tests {
         assert_eq!(bound("ctrl-shift-tab"), Some(Command::PreviousTab));
         assert_eq!(bound("alt-left"), Some(Command::Focus(Direction::Left)));
         assert_eq!(bound("alt-shift--"), Some(Command::SplitDown));
+        // The + Agent / + Shell buttons (split right with the workspace default).
+        assert_eq!(bound("alt-shift-a"), Some(Command::SplitAgent));
+        assert_eq!(bound("alt-shift-s"), Some(Command::SplitShell));
+        assert_eq!(keymap.label(Command::SplitShell), "Alt+Shift+S");
+        // Global like the split keys: a focused terminal no longer gets ESC A / ESC S.
+        assert_eq!(Command::SplitAgent.context(), None);
         assert_eq!(bound("ctrl-shift-x"), Some(Command::ClosePane));
         assert_eq!(bound("ctrl-shift-c"), Some(Command::Copy));
         assert_eq!(bound("shift-pageup"), Some(Command::PageUp));
@@ -659,6 +704,10 @@ mod tests {
         assert_eq!(bound("ctrl-shift-f"), Some(Command::Find));
         assert_eq!(bound("ctrl-shift-r"), Some(Command::RenameTab));
         assert_eq!(bound("ctrl-shift-m"), Some(Command::ZoomPane));
+        assert_eq!(bound("f2"), Some(Command::RenamePane));
+        assert_eq!(keymap.label(Command::RenamePane), "F2");
+        // Global: also while a terminal has focus (it no longer gets ESC O Q).
+        assert_eq!(Command::RenamePane.context(), None);
         assert_eq!(bound("ctrl-shift-z"), Some(Command::OpenInZed));
         assert_eq!(bound("ctrl-shift-i"), Some(Command::NextInbox));
         assert_eq!(bound("ctrl-shift-space"), Some(Command::Peek));
@@ -673,6 +722,14 @@ mod tests {
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
         assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowFiles));
         assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
+        // Files only: plain Ctrl+S saves the opened file (the terminal never has focus there).
+        assert_eq!(bound("ctrl-s"), Some(Command::SaveFile));
+        assert_eq!(Command::SaveFile.context(), Some(FILES_CONTEXT));
+        assert_eq!(bound("ctrl-f"), Some(Command::FindInFile));
+        assert_eq!(bound("ctrl-h"), Some(Command::ReplaceInFile));
+        for command in [Command::FindInFile, Command::ReplaceInFile] {
+            assert_eq!(command.context(), Some(FILES_CONTEXT), "{command:?}");
+        }
         assert_eq!(bound("ctrl-shift-5"), Some(Command::ShowGit));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
@@ -680,6 +737,10 @@ mod tests {
         assert_eq!(bound("ctrl-shift-p"), Some(Command::CommandPalette));
         assert_eq!(bound("ctrl-,"), Some(Command::OpenKeymapSettings));
         assert_eq!(keymap.label(Command::OpenKeymapSettings), "Ctrl+,");
+        assert_eq!(bound("f11"), Some(Command::ToggleFullScreen));
+        assert_eq!(keymap.label(Command::ToggleFullScreen), "F11");
+        // Global: also while a terminal has focus (it no longer gets ESC[23~).
+        assert_eq!(Command::ToggleFullScreen.context(), None);
         assert_eq!(Command::OpenKeymapSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),
@@ -746,12 +807,14 @@ mod tests {
             assert_eq!(keymap.command_for(&keystroke), None, "{keys} is bound");
             assert_eq!(key_to_bytes(&keystroke, mode), Some(bytes), "{keys}");
         }
-        // No default is a plain Ctrl+<letter>.
+        // No default is a plain Ctrl+<letter>, except in the Files view (ADR 0028): no
+        // terminal has focus there (SPEC §13).
         for (command, keys) in keymap.bindings() {
             let m = keys.modifiers;
             let plain_ctrl = m.control && !m.shift && !m.alt && keys.key.len() == 1;
+            let letter = keys.key.chars().all(|c| c.is_ascii_alphabetic());
             assert!(
-                !plain_ctrl || !keys.key.chars().all(|c| c.is_ascii_alphabetic()),
+                !plain_ctrl || !letter || command.context() == Some(FILES_CONTEXT),
                 "{command:?}"
             );
         }

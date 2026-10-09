@@ -17,22 +17,22 @@ use mkrew_protocol::{
     CommentListParams, CommentRef, CommentReplyParams, CommentSendParams, CommentStatus, Commit,
     CommitDetail, DaemonStatusResult, DocChangedEvent, DocComment, DocContent, DocFile,
     DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent,
-    FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams, GitChangedEvent, GitCommitParams,
-    GitCommitResult, GitDiffParams, GitDiscardParams, GitLogParams, GitMarker, GitMode,
-    GitRemoteParams, GitSetBaseParams, GitShowParams, GitStageParams, GitStatus, GitStatusParams,
-    HelloParams, HelloResult, HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION,
-    Project, ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult,
-    Request, ResponseError, RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot,
-    Session, SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams,
-    SessionHistory, SessionInputParams, SessionKillParams, SessionKind, SessionListParams,
-    SessionPortsEvent, SessionQueueEvent, SessionReadParams, SessionReadResult, SessionRef,
-    SessionResizeParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionUsageEvent, SessionWaitParams,
-    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabRef,
-    TabRenameParams, TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams,
-    TaskDeletedEvent, TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef,
-    TurnRestoreParams, UndoPreview, encode,
+    FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
+    GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
+    GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitShowParams,
+    GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
+    HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef,
+    ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError, RunCommand,
+    RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session, SessionAttachResult,
+    SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory, SessionInputParams,
+    SessionKillParams, SessionKind, SessionListParams, SessionPortsEvent, SessionQueueEvent,
+    SessionReadParams, SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams,
+    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
+    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
+    Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -678,6 +678,7 @@ fn startup_marks_stale_sessions_exited() {
                 agent_profile: "fake".into(),
                 kind: SessionKind::Agent,
                 title: None,
+                terminal_title: None,
                 native_session_id: None,
                 state: SessionState::Working,
                 state_source: StateSource::Screen,
@@ -731,11 +732,42 @@ fn startup_marks_stale_sessions_exited() {
 fn agent_profiles_lists_samples_and_broken_files() {
     let env = Env::new();
     env.write_profile("broken", "name = \"Broken\"\ncommand = \"x\"\nbogus = 1\n");
+    env.write_profile(
+        "ghost",
+        "kind = \"shell\"\ncommand = \"mkrew-no-such-shell\"\n",
+    );
     let (_daemon, mut client) = env.start();
 
     let result: AgentProfilesResult = client.call(Request::AgentProfiles).into_result().unwrap();
     let ids: Vec<&str> = result.profiles.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["claude", "codex", "copilot", "fake", "omp", "shell"]);
+    assert_eq!(
+        ids,
+        [
+            "bash",
+            "claude",
+            "cmd",
+            "codex",
+            "copilot",
+            "fake",
+            "ghost",
+            "git-bash",
+            "omp",
+            "powershell",
+            "pwsh",
+            "shell"
+        ]
+    );
+    let installed = |id: &str| {
+        result
+            .profiles
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .installed
+    };
+    // The OS default shell always resolves; a shell missing from PATH is marked for the UI.
+    assert!(installed("shell"));
+    assert!(!installed("ghost"));
     assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
     let error = &result.errors[0];
     assert!(error.file.ends_with("broken.toml"), "{error:?}");
@@ -976,7 +1008,7 @@ text = "Reading files"
 [[step]]
 action = "spinner"
 text = "Planning"
-ms = 600
+ms = 2500
 [[step]]
 action = "ask"
 [[step]]
@@ -997,7 +1029,7 @@ action = "print"
 text = "four"
 [[step]]
 action = "sleep"
-ms = 3500
+ms = 10000
 "#;
 
 /// Hook+screen mode: `mk hook fake …` drives needs_input/working/done; idle comes from the
@@ -1020,13 +1052,39 @@ action = "hook"
 event = "busy"
 [[step]]
 action = "sleep"
-ms = 12000
+ms = 20000
 [[step]]
 action = "hook"
 event = "done"
 [[step]]
 action = "sleep"
 ms = 300
+"#;
+
+/// The fake agent's `omp` scenario (crates/mkrew-fakeagent/scenarios/omp.toml) with quiet gaps
+/// of 9 s against the profile's `idle_after_ms` of 3000.
+const OMP_SCENARIO: &str = r#"
+[[step]]
+action = "spinner"
+text = "Thinking"
+ms = 1500
+[[step]]
+action = "print"
+text = "Answered: the build uses cargo."
+[[step]]
+action = "sleep"
+ms = 9000
+[[step]]
+action = "spinner"
+text = "Editing src/lib.rs"
+ms = 1500
+[[step]]
+action = "print"
+text = "Edited src/lib.rs"
+color = "green"
+[[step]]
+action = "sleep"
+ms = 9000
 "#;
 
 /// Records every `session.state` event of `ids` until all have exited, typing `y⏎` into a
@@ -1080,6 +1138,9 @@ fn fake_agents_go_through_every_state_transition() {
     let env = Env::new();
     // `mk` next to the fake agent: its `hook` steps run `mk hook fake <event>`.
     built_bin("mk");
+    // Quiet gaps far beyond each profile's `idle_after`, so a stalled daemon still sees Idle.
+    let omp_scenario = env.dir.path().join("omp-scenario.toml");
+    std::fs::write(&omp_scenario, OMP_SCENARIO).unwrap();
     for (name, scenario) in [("screen", SCREEN_SCENARIO), ("hooks", HOOK_SCENARIO)] {
         let path = env.dir.path().join(format!("{name}.toml"));
         std::fs::write(&path, scenario).unwrap();
@@ -1100,12 +1161,14 @@ fn fake_agents_go_through_every_state_transition() {
     let hooks = idle_after(hooks, "8000").replace("mode = \"screen\"", "mode = \"hook+screen\"");
     assert!(hooks.contains("hook+screen"), "{hooks}");
     env.write_profile("hooks", &hooks);
-    // The shipped omp profile, running the fake agent's `omp` scenario.
+    // The shipped omp profile, running a copy of the fake agent's `omp` scenario with longer
+    // quiet gaps.
     let omp = include_str!("../../../agents/omp.toml").replace(
         "command = \"omp\"",
         &format!(
-            "command = '{}'\nargs = ['--scenario', 'omp']",
-            built_bin("mkrew-fakeagent").display()
+            "command = '{}'\nargs = ['--scenario', '{}']",
+            built_bin("mkrew-fakeagent").display(),
+            omp_scenario.display()
         ),
     );
     assert!(omp.contains("--scenario"), "{omp}");
@@ -1929,6 +1992,17 @@ fn session_read_shows_the_prompt_line_and_the_answer_goes_through() {
     client.stop();
 }
 
+/// The editor scenarios wait for an answer before their `done` hook: the watcher has recorded
+/// `notes.txt` (it saw the file only after its quiet period) before the turn can end.
+fn answer_after_watcher_saw_notes(env: &Env, client: &mut Client, id: Ulid) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !changed_files(env, id).contains("notes.txt") {
+        assert!(Instant::now() < deadline, "notes.txt never recorded");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    client.input(id, b"go\r").into_result::<()>().unwrap();
+}
+
 /// A fake agent edits two files (one twice, with hooks) and writes a third (no hook) in one
 /// turn; at `done`, `session.turn` carries each path once, relative, sorted (SPEC §20A.3).
 #[test]
@@ -1940,7 +2014,7 @@ fn a_turn_that_edits_two_files_reports_both() {
         "[[step]]\naction = \"hook\"\nevent = \"busy\"\n\n\
          [[step]]\naction = \"write_file\"\npath = \"notes.txt\"\ncontent = \"x\"\n\n\
          [[step]]\naction = \"edit_files\"\npaths = [\"src/b.rs\", \"a.rs\", \"a.rs\"]\n\n\
-         [[step]]\naction = \"sleep\"\nms = 1500\n\n\
+         [[step]]\naction = \"ask\"\ntext = \"go\"\n\n\
          [[step]]\naction = \"hook\"\nevent = \"done\"\n\n\
          [[step]]\naction = \"ask\"\n",
     )
@@ -1962,6 +2036,7 @@ fn a_turn_that_edits_two_files_reports_both() {
     let project = client.add_project(&env.repo());
     let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
     let id = spawned.session_id;
+    answer_after_watcher_saw_notes(&env, &mut client, id);
 
     let event =
         client.wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id));
@@ -2074,7 +2149,7 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
          [[step]]\naction = \"hook\"\nevent = \"busy\"\n\n\
          [[step]]\naction = \"write_file\"\npath = \"notes.txt\"\ncontent = \"x\\n\"\n\n\
          [[step]]\naction = \"edit_files\"\npaths = [\"a.txt\", \"a.txt\"]\n\n\
-         [[step]]\naction = \"sleep\"\nms = 1500\n\n\
+         [[step]]\naction = \"ask\"\ntext = \"go\"\n\n\
          [[step]]\naction = \"hook\"\nevent = \"done\"\n\n\
          [[step]]\naction = \"ask\"\n",
     )
@@ -2093,6 +2168,7 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
     let project = client.add_project(&repo);
     let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
     let id = spawned.session_id;
+    answer_after_watcher_saw_notes(&env, &mut client, id);
 
     let event = client
         .wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id && t.n == 2));
@@ -2327,6 +2403,7 @@ fn hook_edits_are_announced_attributed_and_diffed_since_a_turn() {
         .call(Request::GitStatus(GitStatusParams {
             project_id: project.id,
             worktree_task_id: None,
+            repo: None,
             mode: GitMode::Base,
             since: Some(start.clone()),
         }))
@@ -2343,6 +2420,7 @@ fn hook_edits_are_announced_attributed_and_diffed_since_a_turn() {
         .call(Request::GitDiff(GitDiffParams {
             project_id: project.id,
             worktree_task_id: None,
+            repo: None,
             path: "a.txt".into(),
             mode: GitMode::Base,
             staged: false,
@@ -2732,6 +2810,19 @@ fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
         project_id: project.id,
         name: None,
         default_agent: Some(agent.map(str::to_owned)),
+        default_shell: None,
+        run_commands: None,
+        run_autostart: None,
+        color: None,
+    })
+}
+
+fn set_default_shell(project: &Project, shell: Option<&str>) -> Request {
+    Request::ProjectUpdate(ProjectUpdateParams {
+        project_id: project.id,
+        name: None,
+        default_agent: None,
+        default_shell: Some(shell.map(str::to_owned)),
         run_commands: None,
         run_autostart: None,
         color: None,
@@ -2753,6 +2844,23 @@ fn list_tabs(client: &mut Client, project: &Project) -> Vec<TerminalTab> {
         }))
         .into_result()
         .unwrap()
+}
+
+/// Polls `tab.list` until the project's first tab has exactly `layout`. A pane leaves its tab a
+/// moment after the session's exit is listed (the daemon edits the tab right after storing it).
+fn wait_layout(client: &mut Client, project: &Project, layout: &serde_json::Value) {
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let tabs = list_tabs(client, project);
+        if tabs.first().is_some_and(|t| t.layout == *layout) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "layout never became {layout}: {tabs:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[test]
@@ -3059,6 +3167,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         Request::GitStatus(GitStatusParams {
             project_id: project.id,
             worktree_task_id: None,
+            repo: None,
             mode,
             since: None,
         })
@@ -3067,6 +3176,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         Request::GitDiff(GitDiffParams {
             project_id: project.id,
             worktree_task_id: None,
+            repo: None,
             path: path.into(),
             mode,
             staged: false,
@@ -3078,6 +3188,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         Request::GitStatus(GitStatusParams {
             project_id: project.id,
             worktree_task_id: None,
+            repo: None,
             mode: GitMode::Base,
             since: Some(since.into()),
         })
@@ -3086,6 +3197,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
         Request::GitDiff(GitDiffParams {
             project_id: project.id,
             worktree_task_id: None,
+            repo: None,
             path: "a.txt".into(),
             mode: GitMode::Base,
             staged: false,
@@ -3168,6 +3280,7 @@ fn git_status_and_diff_follow_the_project_base_and_reject_bad_input() {
     let missing = Request::GitStatus(GitStatusParams {
         project_id: Ulid::new(),
         worktree_task_id: None,
+        repo: None,
         mode: GitMode::Working,
         since: None,
     });
@@ -3204,6 +3317,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         let request = Request::GitStatus(GitStatusParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             mode: GitMode::Working,
             since: None,
         });
@@ -3215,12 +3329,14 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
     let by_path = |paths: &[&str]| GitStageParams {
         project_id: id,
         worktree_task_id: None,
+        repo: None,
         paths: paths.iter().map(|&p| p.to_owned()).collect(),
         hunk: None,
     };
     let by_hunk = |hunk: &mkrew_protocol::Hunk| GitStageParams {
         project_id: id,
         worktree_task_id: None,
+        repo: None,
         paths: vec![],
         hunk: Some(HunkTarget {
             path: "a.txt".into(),
@@ -3231,6 +3347,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         let request = Request::GitDiff(GitDiffParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             path: "a.txt".into(),
             mode: GitMode::Working,
             staged,
@@ -3287,6 +3404,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         Request::GitDiscard(GitDiscardParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             paths: vec!["a.txt".into(), "new.txt".into()],
             confirm,
         })
@@ -3308,6 +3426,7 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         Request::GitCommit(GitCommitParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             message: message.into(),
         })
     };
@@ -3331,12 +3450,14 @@ fn git_stage_unstage_discard_and_commit_with_git_changed_events() {
         Request::GitStage(by_path(&["../x"])),
         Request::GitStage(GitStageParams {
             worktree_task_id: None,
+            repo: None,
             hunk: by_hunk(&unstaged[0]).hunk,
             ..by_path(&["a.txt"])
         }),
         Request::GitDiscard(GitDiscardParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             paths: vec![],
             confirm: true,
         }),
@@ -3372,6 +3493,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
         Request::GitLog(GitLogParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             limit: GitLogParams::DEFAULT_LIMIT,
             path: path.map(str::to_owned),
         })
@@ -3380,6 +3502,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
         Request::GitShow(GitShowParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             commit: commit.into(),
         })
     };
@@ -3407,6 +3530,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     let push = Request::GitPush(GitRemoteParams {
         project_id: id,
         worktree_task_id: None,
+        repo: None,
     });
     assert_eq!(
         error_code(client.call(push.clone())),
@@ -3434,6 +3558,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     let fetch = Request::GitFetch(GitRemoteParams {
         project_id: id,
         worktree_task_id: None,
+        repo: None,
     });
     let _: () = client.call(fetch).into_result().unwrap();
     client.wait_event(&changed_event);
@@ -3441,6 +3566,7 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
         .call(Request::GitStatus(GitStatusParams {
             project_id: id,
             worktree_task_id: None,
+            repo: None,
             mode: GitMode::Working,
             since: None,
         }))
@@ -3448,6 +3574,166 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
         .unwrap();
     assert_eq!(status.upstream.as_deref(), Some("origin/main"));
     assert_eq!((status.ahead, status.behind), (0, 1));
+    client.stop();
+}
+
+/// ADR 0029: a workspace folder that is no repository holds `fe/` and `be/` repositories.
+/// `git.repos` finds them; `repo` routes each request; paths stay project-relative; a commit in
+/// one leaves the other alone; the watcher follows a child's `.git`; fs.list marks both.
+#[test]
+fn git_requests_reach_child_repositories_with_project_relative_paths() {
+    let env = Env::new();
+    let root = env.repo();
+    for name in ["fe", "be"] {
+        let repo = root.join(name);
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        git(&repo, &["config", "core.autocrlf", "false"]);
+        // The daemon's own `git commit` needs an identity in the repo.
+        git(&repo, &["config", "user.name", "t"]);
+        git(&repo, &["config", "user.email", "t@t"]);
+        git(&repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("x.txt"), "one\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-q", "-m", "one"]);
+        std::fs::write(repo.join("x.txt"), "one\ntwo\n").unwrap();
+    }
+    std::fs::create_dir(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/a.md"), "# A\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&root).id;
+    let repos: Vec<String> = client
+        .call(Request::GitRepos(ProjectRef { project_id: id }))
+        .into_result()
+        .unwrap();
+    assert_eq!(repos, ["be", "fe"]);
+    let status_of = |repo: Option<&str>| {
+        Request::GitStatus(GitStatusParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: repo.map(str::to_owned),
+            mode: GitMode::Working,
+            since: None,
+        })
+    };
+    let names = |files: &[mkrew_protocol::ChangedFile]| -> Vec<String> {
+        files.iter().map(|f| f.path.clone()).collect()
+    };
+    let fe: GitStatus = client.call(status_of(Some("fe"))).into_result().unwrap();
+    assert_eq!(names(&fe.unstaged), ["fe/x.txt"]);
+    // The project folder itself is no repository.
+    assert_eq!(
+        error_code(client.call(status_of(None))),
+        ErrorCode::InvalidState
+    );
+    let diff: FileDiff = client
+        .call(Request::GitDiff(GitDiffParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: Some("fe".into()),
+            path: "fe/x.txt".into(),
+            mode: GitMode::Working,
+            staged: false,
+            commit: None,
+            since: None,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!((diff.path.as_str(), diff.added), ("fe/x.txt", 1));
+
+    // Stage and commit in be: fe keeps its change and its history.
+    let stage = |repo: &str, path: &str| {
+        Request::GitStage(GitStageParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: Some(repo.into()),
+            paths: vec![path.into()],
+            hunk: None,
+        })
+    };
+    let _: () = client.call(stage("be", "be/x.txt")).into_result().unwrap();
+    let committed: GitCommitResult = client
+        .call(Request::GitCommit(GitCommitParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: Some("be".into()),
+            message: "two".into(),
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        committed.commit,
+        git(&root.join("be"), &["rev-parse", "HEAD"])
+    );
+    assert_eq!(git(&root.join("fe"), &["log", "-1", "--format=%s"]), "one");
+    let fe: GitStatus = client.call(status_of(Some("fe"))).into_result().unwrap();
+    assert!(fe.staged.is_empty());
+    assert_eq!(names(&fe.unstaged), ["fe/x.txt"]);
+    let shown: CommitDetail = client
+        .call(Request::GitShow(GitShowParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: Some("be".into()),
+            commit: committed.commit.clone(),
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(names(&shown.files), ["be/x.txt"]);
+
+    // fs.list of the root: the repo folders carry the change dot, markers sit under fe/.
+    let list = |client: &mut Client, dir: &str| -> Vec<FsEntry> {
+        let request = Request::FsList(FsListParams {
+            project_id: id,
+            worktree_task_id: None,
+            dir: dir.into(),
+            show_ignored: false,
+        });
+        client.call(request).into_result().unwrap()
+    };
+    let top = list(&mut client, "");
+    let dotted: Vec<&str> = top
+        .iter()
+        .filter(|e| e.has_changes)
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(dotted, ["fe"]);
+    let in_fe = list(&mut client, "fe");
+    let x = in_fe.iter().find(|e| e.path == "fe/x.txt").unwrap();
+    assert_eq!(x.marker, Some(GitMarker::Modified));
+
+    // `git.status` started the watcher: a commit in fe from a terminal is reported.
+    std::thread::sleep(Duration::from_millis(500));
+    client.call(Request::DaemonStatus);
+    client.events.clear();
+    git(
+        &root.join("fe"),
+        &["commit", "-q", "--allow-empty", "-m", "outside"],
+    );
+    client.wait_event(&Event::GitChanged(GitChangedEvent {
+        project_id: id,
+        worktree_task_id: None,
+    }));
+
+    // Bad repo names, paths outside the repo, repo + task worktree.
+    for bad in [
+        stage("../x", "x.txt"),
+        stage("fe/.git", "fe/.git/x"),
+        stage(".git", ".git/x"),
+        stage("fe/src", "fe/src/a"),
+        stage("fe", "be/x.txt"),
+        stage("fe", "x.txt"),
+        // A plain folder is no repository: git would walk up to the parent one.
+        stage("docs", "docs/a.md"),
+        Request::GitStatus(GitStatusParams {
+            project_id: id,
+            worktree_task_id: Some(Ulid::new()),
+            repo: Some("fe".into()),
+            mode: GitMode::Working,
+            since: None,
+        }),
+    ] {
+        assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    }
     client.stop();
 }
 
@@ -3470,6 +3756,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
             project_id: project.id,
             name: None,
             default_agent: None,
+            default_shell: None,
             run_commands: Some(vec![raw]),
             run_autostart: Some(true),
             color: None,
@@ -3496,6 +3783,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
         project_id: project.id,
         name: None,
         default_agent: None,
+        default_shell: None,
         run_commands: Some(vec![bad]),
         run_autostart: None,
         color: None,
@@ -3567,6 +3855,30 @@ fn spawn_defaults_to_the_project_agent_or_the_shell_and_fills_an_empty_tab() {
     };
     client.wait_event(&Event::TabUpdated(placed));
 
+    // No default shell yet: refused like a missing default agent (ADR 0032).
+    assert_eq!(
+        error_code(client.call(spawn_params(&project, SessionKind::Shell, Some(tab.id)))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(set_default_shell(&project, Some("fake")))),
+        ErrorCode::InvalidRequest,
+        "an agent is not a shell"
+    );
+    assert_eq!(
+        error_code(client.call(set_default_shell(&project, Some("nope")))),
+        ErrorCode::NotFound
+    );
+    let with_shell: Project = client
+        .call(set_default_shell(&project, Some("shell")))
+        .into_result()
+        .unwrap();
+    assert_eq!(with_shell.default_shell.as_deref(), Some("shell"));
+    assert_eq!(
+        with_shell.default_agent.as_deref(),
+        Some("fake"),
+        "left unchanged"
+    );
     let shell: SessionSpawnResult = client
         .call(spawn_params(&project, SessionKind::Shell, Some(tab.id)))
         .into_result()
@@ -4116,6 +4428,7 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
     profile(
         "quits",
         "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-8\"\n\
+         [[step]]\naction = \"sleep\"\nms = 1500\n\
          [[step]]\naction = \"exit\"\ncode = 0\n",
     );
 
@@ -4139,13 +4452,16 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
         .call(create_tab(&project, "agents"))
         .into_result()
         .unwrap();
-    client
-        .call(Request::TabSetLayout(TabSetLayoutParams {
-            tab_id: tab.id,
-            layout: layout(shown.session_id),
-        }))
-        .into_result::<()>()
-        .unwrap();
+    let set_layout = |client: &mut Client, shown: Ulid| {
+        client
+            .call(Request::TabSetLayout(TabSetLayoutParams {
+                tab_id: tab.id,
+                layout: layout(shown),
+            }))
+            .into_result::<()>()
+            .unwrap();
+    };
+    set_layout(&mut client, shown.session_id);
     for id in [shown.session_id, hidden.session_id] {
         let deadline = Instant::now() + TIMEOUT;
         while client.session(id).native_session_id.is_none() {
@@ -4153,7 +4469,20 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+    client
+        .call(rename(shown.session_id, Some("Fix login")))
+        .into_result::<Session>()
+        .unwrap();
     client.wait_state(quit.session_id, SessionState::Exited);
+    // The exit hook removes `quit`'s leaf a moment after the exit is stored. Once it has run it
+    // never runs for `quit` again, so the layout written next keeps the leaf of the session
+    // that exited before the stop (a pane left over from an older version).
+    wait_layout(
+        &mut client,
+        &project,
+        &json!({"session": shown.session_id.to_string()}),
+    );
+    set_layout(&mut client, shown.session_id);
     assert_eq!(
         client.session(quit.session_id).native_session_id.as_deref(),
         Some("native-8")
@@ -4181,6 +4510,11 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
         ),
         (None, "resumable", Some("native-7"))
     );
+    assert_eq!(
+        resumed.title.as_deref(),
+        Some("Fix login"),
+        "the resumed pane keeps its name"
+    );
     client.wait_state(resumed.id, SessionState::NeedsInput);
     let attached: SessionAttachResult = client.attach(resumed.id).into_result().unwrap();
     let screen = screen_text(&attached.snapshot);
@@ -4207,6 +4541,60 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
         list_tabs(&mut client, &project)[0].layout,
         layout(newest.id)
     );
+    client.stop();
+}
+
+/// ADR 0033: a session that exits while the daemon runs leaves its tab (shell or agent
+/// alike, the sibling takes its place); a daemon stop does not, so the pane is still there
+/// for the resume (ADR 0017) after the restart.
+#[test]
+fn an_exited_session_leaves_its_tab_but_a_daemon_stop_keeps_the_pane() {
+    let env = Env::new();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    client
+        .call(set_default_shell(&project, Some("shell")))
+        .into_result::<Project>()
+        .unwrap();
+    let shell = |client: &mut Client| -> Ulid {
+        client
+            .call(spawn_params(&project, SessionKind::Shell, None))
+            .into_result::<SessionSpawnResult>()
+            .unwrap()
+            .session_id
+    };
+    let (a, b) = (shell(&mut client), shell(&mut client));
+    let tab: TerminalTab = client
+        .call(create_tab(&project, "shells"))
+        .into_result()
+        .unwrap();
+    client
+        .call(Request::TabSetLayout(TabSetLayoutParams {
+            tab_id: tab.id,
+            layout: pair(a, b),
+        }))
+        .into_result::<()>()
+        .unwrap();
+
+    // `a` ends while the daemon runs: its pane goes, `b` takes the whole tab.
+    client
+        .call(Request::SessionKill(SessionKillParams {
+            session_id: a,
+            force: true,
+        }))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(a, SessionState::Exited);
+    let alone = json!({"session": b.to_string()});
+    wait_layout(&mut client, &project, &alone);
+    // The session itself is still listed: History keeps its exit code and output.
+    assert_eq!(client.session(a).state, SessionState::Exited);
+
+    // The daemon stop ends `b` too, but its pane stays for the next start.
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    assert_eq!(list_tabs(&mut client, &project)[0].layout, alone);
     client.stop();
 }
 
@@ -4456,6 +4844,7 @@ fn fs_and_git_requests_target_a_task_worktree() {
         let request = Request::GitStatus(GitStatusParams {
             project_id: project.id,
             worktree_task_id,
+            repo: None,
             mode: GitMode::Working,
             since: None,
         });
@@ -4489,6 +4878,7 @@ fn fs_and_git_requests_target_a_task_worktree() {
     let stage = Request::GitStage(GitStageParams {
         project_id: project.id,
         worktree_task_id: wt,
+        repo: None,
         paths: vec!["made.txt".into()],
         hunk: None,
     });
@@ -4496,6 +4886,7 @@ fn fs_and_git_requests_target_a_task_worktree() {
     let commit = Request::GitCommit(GitCommitParams {
         project_id: project.id,
         worktree_task_id: wt,
+        repo: None,
         message: "made in the worktree".into(),
     });
     let made: GitCommitResult = client.call(commit).into_result().unwrap();
@@ -4503,6 +4894,7 @@ fn fs_and_git_requests_target_a_task_worktree() {
         let request = Request::GitLog(GitLogParams {
             project_id: project.id,
             worktree_task_id,
+            repo: None,
             limit: 10,
             path: None,
         });
@@ -4514,6 +4906,7 @@ fn fs_and_git_requests_target_a_task_worktree() {
     let show = Request::GitShow(GitShowParams {
         project_id: project.id,
         worktree_task_id: wt,
+        repo: None,
         commit: made.commit,
     });
     let detail: CommitDetail = client.call(show).into_result().unwrap();
@@ -4928,6 +5321,45 @@ fn fs_list_read_and_find_follow_file_changes() {
         error_code(client.call(read("nope.rs"))),
         ErrorCode::NotFound
     );
+    let save = |path: &str, content: &str, expected_hash: &str| {
+        Request::FsWrite(FsWriteParams {
+            project_id: id,
+            worktree_task_id: None,
+            path: path.into(),
+            content: content.into(),
+            expected_hash: expected_hash.into(),
+        })
+    };
+    assert_eq!(binary.hash, None);
+    let read_hash = content.hash.clone().expect("text has a hash");
+    let saved: FsWritten = client
+        .call(save("src/main.rs", "fn main() { saved() }\n", &read_hash))
+        .into_result()
+        .unwrap();
+    assert!(saved.saved);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("src/main.rs")).unwrap(),
+        "fn main() { saved() }\n"
+    );
+    let reread: FsContent = client.call(read("src/main.rs")).into_result().unwrap();
+    assert_eq!(reread.hash.as_deref(), Some(saved.hash.as_str()));
+    // An old hash saves nothing.
+    let stale: FsWritten = client
+        .call(save("src/main.rs", "lost\n", &read_hash))
+        .into_result()
+        .unwrap();
+    assert_eq!((stale.saved, stale.hash), (false, saved.hash));
+    for (path, code) in [
+        ("../x", ErrorCode::InvalidRequest),
+        (".git/HEAD", ErrorCode::InvalidRequest),
+        ("new.rs", ErrorCode::NotFound),
+    ] {
+        assert_eq!(
+            error_code(client.call(save(path, "x", "h"))),
+            code,
+            "{path}"
+        );
+    }
     let missing = Request::FsList(FsListParams {
         project_id: id,
         worktree_task_id: None,
@@ -4968,6 +5400,7 @@ fn generate(project_id: Ulid, profile: Option<&str>, kind: AiKind, input: &str) 
         generation_id,
         project_id,
         worktree_task_id: None,
+        repo: None,
         agent_profile: profile.map(str::to_owned),
         kind,
         input: input.into(),
@@ -5104,6 +5537,7 @@ fn set_runs(project: &Project, commands: Vec<RunCommand>, autostart: Option<bool
         project_id: project.id,
         name: None,
         default_agent: None,
+        default_shell: None,
         run_commands: Some(commands),
         run_autostart: autostart,
         color: None,
@@ -5253,12 +5687,22 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
     assert_ne!(new_be, be_id);
     assert_eq!(client.session(be_id).state, SessionState::Exited);
     assert_ne!(client.session(fe_id).state, SessionState::Exited);
-    assert_eq!(
-        list_tabs(&mut client, &project)[0].layout,
-        pair(new_be, fe_id)
+    // The old BE's exit must not take the new BE's pane with it.
+    wait_layout(&mut client, &project, &pair(new_be, fe_id));
+    // Stopping FE removes only FE's pane: the new BE's leaf stays, alone.
+    client
+        .call(run_stop(&project, Some("FE")))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(fe_id, SessionState::Exited);
+    wait_layout(
+        &mut client,
+        &project,
+        &json!({"session": new_be.to_string()}),
     );
 
-    // A command removed from the setup still stops with "stop all".
+    // A command removed from the setup still stops with "stop all", and a stopped command's
+    // pane leaves the run tab (the last one leaves an empty tab).
     client
         .call(set_runs(&project, Vec::new(), None))
         .into_result::<Project>()
@@ -5269,6 +5713,7 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
         .unwrap();
     client.wait_state(new_be, SessionState::Exited);
     client.wait_state(fe_id, SessionState::Exited);
+    wait_layout(&mut client, &project, &serde_json::Value::Null);
     client.stop();
 }
 
@@ -5404,6 +5849,8 @@ fn run_commands_auto_start_after_a_daemon_restart_and_end_with_their_command() {
     assert_eq!(sessions.len(), 1);
     // The typed line ends the shell together with the command.
     client.wait_state(sessions[0].id, SessionState::Exited);
+    // The command ended by itself: its pane left the run tab.
+    wait_layout(&mut client, &project, &serde_json::Value::Null);
 
     // Restarting an exited command starts it again.
     std::fs::remove_file(&marker).unwrap();
@@ -5600,6 +6047,135 @@ fn removed_sessions_stop_and_leave_the_list() {
     client.stop();
 }
 
+fn rename(session_id: Ulid, title: Option<&str>) -> Request {
+    Request::SessionRename(SessionRenameParams {
+        session_id,
+        title: title.map(Into::into),
+    })
+}
+
+/// `session.rename` (ADR 0031): a live session keeps the name through its own later saves
+/// (state changes, exit); an exited one is renamed in the store; blank clears; run sessions
+/// and `run:` titles are refused.
+#[test]
+fn sessions_are_renamed_live_and_exited_but_run_sessions_refuse() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.repo();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+
+    let renamed: Session = client
+        .call(rename(id, Some("  Fix login  ")))
+        .into_result()
+        .unwrap();
+    assert_eq!(renamed.title.as_deref(), Some("Fix login"));
+    client.wait_event_where(|e| {
+        matches!(e, Event::SessionUpdated(s) if s.id == id && s.title.as_deref() == Some("Fix login"))
+    });
+    // The actor's final save (exit) keeps the new title.
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    let exited = client.wait_state(id, SessionState::Exited);
+    assert_eq!(exited.title.as_deref(), Some("Fix login"));
+
+    // Exited: renamed in the store; blank clears.
+    let cleared: Session = client.call(rename(id, Some("   "))).into_result().unwrap();
+    assert_eq!(cleared.title, None);
+    assert_eq!(client.session(id).title, None);
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.title.is_none()),
+    );
+    assert_eq!(
+        error_code(client.call(rename(id, Some("run:web")))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(rename(Ulid::new(), Some("x")))),
+        ErrorCode::NotFound
+    );
+
+    // A run session is named by its command.
+    let web = run_command("web", ".", &long("echo up", "echo up"));
+    client
+        .call(set_runs(&project, vec![web], None))
+        .into_result::<Project>()
+        .unwrap();
+    let started: RunStarted = client
+        .call(run_start(&project, None))
+        .into_result()
+        .unwrap();
+    let web = started.sessions[0].session_id;
+    assert_eq!(
+        error_code(client.call(rename(web, Some("mine")))),
+        ErrorCode::InvalidState
+    );
+    client
+        .call(run_stop(&project, None))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(web, SessionState::Exited);
+    client.stop();
+}
+
+/// An agent's OSC title names its session (ADR 0031): cleaned, announced once per change,
+/// listed with the session; a user title is kept beside it.
+#[test]
+fn agent_terminal_titles_name_the_session_once_per_change() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("titled.toml");
+    // Two spinner frames of one title in separate batches (the sleeps keep the daemon from
+    // merging them), then a real change, then the prompt.
+    std::fs::write(
+        &scenario,
+        "[[step]]\naction = \"print\"\ntext = \"\\u001b]0;\\u2733 Fix login\\u0007\"\n\n\
+         [[step]]\naction = \"sleep\"\nms = 300\n\n\
+         [[step]]\naction = \"print\"\ntext = \"\\u001b]0;\\u2736 Fix login\\u0007\"\n\n\
+         [[step]]\naction = \"sleep\"\nms = 300\n\n\
+         [[step]]\naction = \"print\"\ntext = \"\\u001b]0;\\u2736 Fix tests\\u0007\"\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    env.write_fake_profile_as(
+        "titled",
+        &format!("['--scenario', '{}']", scenario.display()),
+    );
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "titled").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+    // ConPTY may announce its own initial title: only the cleaned ones are looked at.
+    let ours = |e: &Event| match e {
+        Event::SessionTerminalTitle(t) if t.session_id == id => {
+            t.title.clone().filter(|t| t.starts_with("Fix "))
+        }
+        _ => None,
+    };
+    client.wait_event_where(|e| ours(e).as_deref() == Some("Fix tests"));
+    let announced: Vec<String> = client.events.iter().filter_map(ours).collect();
+    assert_eq!(announced, ["Fix login", "Fix tests"]);
+    assert_eq!(
+        client.session(id).terminal_title.as_deref(),
+        Some("Fix tests")
+    );
+
+    // The user's name is stored beside it (clients show it first).
+    let renamed: Session = client.call(rename(id, Some("Mine"))).into_result().unwrap();
+    assert_eq!(
+        (renamed.title.as_deref(), renamed.terminal_title.as_deref()),
+        (Some("Mine"), Some("Fix tests"))
+    );
+    assert_eq!(client.events.iter().filter_map(ours).count(), 2);
+    client.stop();
+}
+
 #[test]
 fn workspace_colors_are_set_cleared_and_checked() {
     let env = Env::new();
@@ -5610,6 +6186,7 @@ fn workspace_colors_are_set_cleared_and_checked() {
             project_id: project.id,
             name: None,
             default_agent: None,
+            default_shell: None,
             run_commands: None,
             run_autostart: None,
             color: Some(color.map(Into::into)),
