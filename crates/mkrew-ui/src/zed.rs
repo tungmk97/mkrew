@@ -4,6 +4,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, PoisonError};
 
 use mkrew_core::lookup::{self, has_extension};
 
@@ -23,10 +24,22 @@ pub enum ZedError {
     },
 }
 
+/// The `zed` that last started. [`open`] runs on the UI thread and a `PATH` × `PATHEXT` scan is
+/// hundreds of file checks on Windows, so a hit is kept; only a miss or a failed start scans.
+static FOUND: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 /// Opens `path` (at `line`) in Zed. Returns once `zed` is started; it hands the path to the
 /// running Zed (or starts it) and exits on its own.
 pub fn open(path: &Path, line: Option<u32>) -> Result<(), ZedError> {
-    open_with(lookup::find(OsStr::new("zed")), path, line)
+    let mut found = FOUND.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(zed) = found.clone()
+        && open_with(Some(zed), path, line).is_ok()
+    {
+        return Ok(());
+    }
+    // Not found yet, or moved/uninstalled since: look again.
+    *found = lookup::find(OsStr::new("zed"));
+    open_with(found.clone(), path, line).inspect_err(|_| *found = None)
 }
 
 /// [`open`] with `zed` already looked up (`None` = not found).

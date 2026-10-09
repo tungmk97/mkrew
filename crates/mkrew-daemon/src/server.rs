@@ -145,7 +145,12 @@ impl Daemon {
                             }
                         });
                     }
-                    Err(e) => tracing::warn!("accept failed: {e}"),
+                    Err(e) => {
+                        tracing::warn!("accept failed: {e}");
+                        // A persistent failure (e.g. no pipe instance can be created) would
+                        // otherwise spin a core and flood the log.
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
                 },
                 _ = shutdown.changed() => {
                     tracing::info!("daemon.stop received, shutting down");

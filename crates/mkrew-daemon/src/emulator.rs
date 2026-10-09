@@ -75,10 +75,11 @@ impl Emulator {
         (0..=last)
             .map(|row| {
                 let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
-                let text: String = (0..self.term.columns())
+                let mut text: String = (0..self.term.columns())
                     .map(|c| line[Column(c)].c)
                     .collect();
-                text.trim_end().to_owned()
+                text.truncate(text.trim_end().len());
+                text
             })
             .collect()
     }
@@ -107,7 +108,7 @@ impl Emulator {
             .rev()
             .map(|row| {
                 let line = &grid[Line(i32::try_from(row).unwrap_or(i32::MAX))];
-                let text: String = (0..self.term.columns())
+                let mut text: String = (0..self.term.columns())
                     .map(|c| &line[Column(c)])
                     .filter(|cell| {
                         !cell
@@ -116,7 +117,8 @@ impl Emulator {
                     })
                     .map(|cell| cell.c)
                     .collect();
-                text.trim_end().to_owned()
+                text.truncate(text.trim_end().len());
+                text
             })
             .filter(|text| !text.is_empty())
             .take(count)

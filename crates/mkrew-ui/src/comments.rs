@@ -76,12 +76,14 @@ pub fn threads(comments: &[DocComment]) -> Vec<Thread<'_>> {
         })
         .collect();
     threads.sort_by_key(|thread| (thread.root.start_line, thread.root.created_at));
+    let at: std::collections::HashMap<CommentId, usize> = threads
+        .iter()
+        .enumerate()
+        .map(|(index, thread)| (thread.root.id, index))
+        .collect();
     for reply in comments.iter().filter(|c| c.parent_id.is_some()) {
-        if let Some(thread) = threads
-            .iter_mut()
-            .find(|thread| Some(thread.root.id) == reply.parent_id)
-        {
-            thread.replies.push(reply);
+        if let Some(&index) = reply.parent_id.as_ref().and_then(|id| at.get(id)) {
+            threads[index].replies.push(reply);
         }
     }
     for thread in &mut threads {

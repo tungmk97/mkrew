@@ -264,7 +264,7 @@ impl GitBackend for GitCli {
             .arg(commit)
             .args(to)
             .args(["--", "."]);
-        Ok(String::from_utf8_lossy(&run(command)?).into_owned())
+        run(command).map(text)
     }
 
     fn untracked_files(&self, dir: &Path) -> io::Result<Vec<String>> {
@@ -412,7 +412,7 @@ impl GitBackend for GitCli {
     fn file_diff(&self, dir: &Path, path: &str, side: Side<'_>) -> io::Result<String> {
         let mut command = diff_command(dir, side);
         command.args(["--src-prefix=a/", "--dst-prefix=b/", "--", path]);
-        Ok(String::from_utf8_lossy(&run(command)?).into_owned())
+        run(command).map(text)
     }
 
     fn untracked_diff(&self, dir: &Path, path: &str) -> io::Result<String> {
@@ -428,7 +428,7 @@ impl GitBackend for GitCli {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(io::Error::other(format!("git failed: {}", stderr.trim())));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(text(output.stdout))
     }
 
     fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool> {
@@ -889,6 +889,11 @@ fn nul_separated(bytes: &[u8]) -> Vec<String> {
         .filter(|p| !p.is_empty())
         .map(|p| String::from_utf8_lossy(p).into_owned())
         .collect()
+}
+
+/// Git's output as text without copying it when it is UTF-8 (diffs can be hundreds of MB).
+fn text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// `git -C <dir>` with null stdio except stdout, ignoring any repo forced by the daemon's

@@ -71,6 +71,9 @@ pub struct FilesView {
     /// Listings by folder path (`""` = the root).
     dirs: HashMap<String, Listing>,
     expanded: HashSet<String>,
+    /// The visible rows laid out from `dirs` / `expanded` (see [`Self::relayout`]): the
+    /// render and every key read them, so they are not rebuilt (and cloned) per frame.
+    rows: Rc<[Row]>,
     /// The tree cursor (a file or folder path).
     pub cursor: Option<String>,
     /// The opened file's path.
@@ -104,6 +107,7 @@ impl FilesView {
             show_ignored: false,
             dirs: HashMap::new(),
             expanded: HashSet::new(),
+            rows: Rc::new([]),
             cursor: None,
             file: None,
             content: Content::None,
@@ -132,7 +136,10 @@ impl FilesView {
     /// An `fs.list` of `dir` is about to be sent; `false` = one is in flight already (it is
     /// sent again once that one answers).
     pub fn begin_list(&mut self, dir: &str) -> bool {
-        self.dirs.entry(dir.to_owned()).or_insert(Listing::Loading);
+        if !self.dirs.contains_key(dir) {
+            self.dirs.insert(dir.to_owned(), Listing::Loading);
+            self.relayout();
+        }
         if !self.listing.insert(dir.to_owned()) {
             self.list_again.insert(dir.to_owned());
             return false;
@@ -158,6 +165,7 @@ impl FilesView {
                 return vec![dir.to_owned()];
             }
             self.dirs.remove(dir);
+            self.relayout();
             return vec![];
         }
         let mut list: Vec<String> = again.then(|| dir.to_owned()).into_iter().collect();
@@ -181,17 +189,23 @@ impl FilesView {
             },
         };
         self.dirs.insert(dir.to_owned(), listing);
+        self.relayout();
         list
     }
 
     /// The visible rows, top to bottom: folders first as the daemon sorts them, open folders
     /// followed by their children.
-    pub fn rows(&self) -> Vec<Row> {
+    pub fn rows(&self) -> Rc<[Row]> {
+        Rc::clone(&self.rows)
+    }
+
+    /// Lays the rows out again; called by everything that changes `dirs` or `expanded`.
+    fn relayout(&mut self) {
         let mut rows = Vec::new();
         if let Listing::Loaded(entries) = self.root() {
             self.push_rows(entries, 0, &mut rows);
         }
-        rows
+        self.rows = rows.into();
     }
 
     fn push_rows(&self, entries: &[FsEntry], depth: usize, rows: &mut Vec<Row>) {
@@ -220,8 +234,8 @@ impl FilesView {
     }
 
     fn entry(&self, path: &str) -> Option<FsEntry> {
-        self.rows().into_iter().find_map(|row| match row {
-            Row::Entry { entry, .. } if entry.path == path => Some(entry),
+        self.rows.iter().find_map(|row| match row {
+            Row::Entry { entry, .. } if entry.path == path => Some(entry.clone()),
             _ => None,
         })
     }
@@ -244,13 +258,16 @@ impl FilesView {
     /// Opens or closes folder `dir`; opening lists it unless already listed.
     pub fn toggle(&mut self, dir: &str) -> Requests {
         if self.expanded.remove(dir) {
+            self.relayout();
             return Requests::default();
         }
         self.expand(dir)
     }
 
     fn expand(&mut self, dir: &str) -> Requests {
-        self.expanded.insert(dir.to_owned());
+        if self.expanded.insert(dir.to_owned()) {
+            self.relayout();
+        }
         let list = match self.dirs.get(dir) {
             Some(Listing::Loaded(_) | Listing::Loading) => vec![],
             Some(Listing::Failed(_)) | None => vec![dir.to_owned()],
@@ -343,15 +360,15 @@ impl FilesView {
 
     /// Moves the cursor or opens/closes folders.
     pub fn key(&mut self, key: Key) -> Requests {
-        let rows: Vec<(FsEntry, usize, bool)> = self
-            .rows()
-            .into_iter()
+        let rows = self.rows();
+        let rows: Vec<(&FsEntry, usize, bool)> = rows
+            .iter()
             .filter_map(|row| match row {
                 Row::Entry {
                     entry,
                     depth,
                     expanded,
-                } => Some((entry, depth, expanded)),
+                } => Some((entry, *depth, *expanded)),
                 Row::Note { .. } => None,
             })
             .collect();
@@ -367,7 +384,7 @@ impl FilesView {
             self.cursor = Some(first.0.path.clone());
             return Requests::default();
         };
-        let (entry, depth, expanded) = rows[at].clone();
+        let (entry, depth, expanded) = rows[at];
         let mut moved = |to: usize| self.cursor = Some(rows[to].0.path.clone());
         match key {
             Key::Up => moved(at.saturating_sub(1)),
@@ -397,6 +414,7 @@ impl FilesView {
         self.show_ignored = !self.show_ignored;
         self.generation += 1;
         self.dirs.retain(|dir, _| self.listing.contains(dir));
+        self.relayout();
         Requests {
             list: vec![String::new()],
             read: None,
@@ -428,6 +446,7 @@ impl FilesView {
         let open = self.open_dirs();
         self.dirs
             .retain(|dir, listing| open.contains(dir) || matches!(listing, Listing::Loading));
+        self.relayout();
         Requests {
             list: open,
             read: self.file.clone(),
@@ -437,12 +456,12 @@ impl FilesView {
     /// The root and every open folder on screen (not those inside a closed or deleted
     /// folder), top to bottom.
     fn open_dirs(&self) -> Vec<String> {
-        let open = self.rows().into_iter().filter_map(|row| match row {
+        let open = self.rows.iter().filter_map(|row| match row {
             Row::Entry {
                 entry,
                 expanded: true,
                 ..
-            } => Some(entry.path),
+            } => Some(entry.path.clone()),
             _ => None,
         });
         std::iter::once(String::new()).chain(open).collect()
@@ -494,7 +513,7 @@ mod tests {
 
     fn paths(view: &FilesView) -> Vec<String> {
         view.rows()
-            .into_iter()
+            .iter()
             .map(|row| match row {
                 Row::Entry {
                     entry,
@@ -502,11 +521,11 @@ mod tests {
                     expanded,
                 } => format!(
                     "{}{}{}",
-                    "  ".repeat(depth),
+                    "  ".repeat(*depth),
                     entry.path,
-                    if expanded { "/" } else { "" }
+                    if *expanded { "/" } else { "" }
                 ),
-                Row::Note { depth, text } => format!("{}({text})", "  ".repeat(depth)),
+                Row::Note { depth, text } => format!("{}({text})", "  ".repeat(*depth)),
             })
             .collect()
     }

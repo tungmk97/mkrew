@@ -29,24 +29,27 @@ pub enum Frame {
 
 /// Encodes a frame including its length prefix.
 pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
-    let (kind, payload) = match frame {
-        Frame::Message(message) => (KIND_JSON, serde_json::to_vec(message)?),
+    // Build header + payload in one buffer; the length prefix is patched in at the end.
+    let mut out = match frame {
+        Frame::Message(message) => {
+            let mut out = vec![0, 0, 0, 0, KIND_JSON];
+            serde_json::to_writer(&mut out, message)?;
+            out
+        }
         Frame::Output { session_id, data } => {
-            let mut payload = Vec::with_capacity(ULID_LEN + data.len());
-            payload.extend_from_slice(&session_id.to_bytes());
-            payload.extend_from_slice(data);
-            (KIND_OUTPUT, payload)
+            let mut out = Vec::with_capacity(HEADER_LEN + 1 + ULID_LEN + data.len());
+            out.extend_from_slice(&[0, 0, 0, 0, KIND_OUTPUT]);
+            out.extend_from_slice(&session_id.to_bytes());
+            out.extend_from_slice(data);
+            out
         }
     };
-    let len = payload.len() + 1;
+    let len = out.len() - HEADER_LEN;
     if len > MAX_FRAME_LEN {
         return Err(ProtocolError::FrameTooLarge(len));
     }
-    let mut out = Vec::with_capacity(HEADER_LEN + len);
     // `len <= MAX_FRAME_LEN` (16 MiB) was checked above, so it fits in a u32.
-    out.extend_from_slice(&(len as u32).to_be_bytes());
-    out.push(kind);
-    out.extend_from_slice(&payload);
+    out[..HEADER_LEN].copy_from_slice(&(len as u32).to_be_bytes());
     Ok(out)
 }
 

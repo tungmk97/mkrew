@@ -60,11 +60,12 @@ impl Client {
 
     /// Blocks until the next frame arrives (responses, events or session output).
     pub fn next_frame(&mut self) -> anyhow::Result<Frame> {
-        let mut buf = [0u8; 64 * 1024];
         loop {
             if let Some(frame) = self.decoder.next_frame()? {
                 return Ok(frame);
             }
+            // Only zeroed when a read is needed, not for frames already decoded.
+            let mut buf = [0u8; 64 * 1024];
             let n = self.stream.read(&mut buf)?;
             if n == 0 {
                 bail!("the daemon closed the connection");

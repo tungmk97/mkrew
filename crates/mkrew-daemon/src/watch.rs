@@ -45,6 +45,12 @@ impl Filter {
     /// `is_dir` only matters for directory-only patterns (`build/`); `None` = unknown (the path
     /// is gone): ignored if it would be as a file or as a directory.
     pub fn relative(&self, path: &Path, is_dir: Option<bool>) -> Option<String> {
+        self.relative_with(path, || is_dir)
+    }
+
+    /// [`Filter::relative`] asking `is_dir` only for a path the cheap checks keep, so an event
+    /// storm under `.git`, `target` or `node_modules` costs no `stat` per path.
+    fn relative_with(&self, path: &Path, is_dir: impl FnOnce() -> Option<bool>) -> Option<String> {
         let relative = path.strip_prefix(&self.root).ok()?;
         let mut parts = Vec::new();
         for component in relative.components() {
@@ -63,6 +69,7 @@ impl Filter {
             return None;
         }
         let relative_path = parts.join("/");
+        let is_dir = is_dir();
         if is_dir != Some(true) && crate::docs::is_markdown(&relative_path) {
             return Some(relative_path);
         }
@@ -86,7 +93,10 @@ impl Filter {
     /// index change (`HEAD`, `index`, `packed-refs`, `refs/…`): the git state changed even
     /// when no working file did.
     pub fn is_git_state(&self, path: &Path) -> bool {
-        let Ok(relative) = path.strip_prefix(self.root.join(".git")) else {
+        let Ok(relative) = path
+            .strip_prefix(&self.root)
+            .and_then(|p| p.strip_prefix(".git"))
+        else {
             return false;
         };
         let mut parts = relative.components().map(|c| c.as_os_str());
@@ -146,11 +156,12 @@ async fn debounce(
         *git |= paths.iter().any(|path| filter.is_git_state(path));
         // Files only: a directory "changes" whenever an entry in it does.
         batch.extend(paths.iter().filter_map(|path| {
-            let is_dir = path.metadata().ok().map(|m| m.is_dir());
-            if is_dir == Some(true) {
-                return None;
-            }
-            filter.relative(path, is_dir)
+            let mut is_dir = None;
+            let relative = filter.relative_with(path, || {
+                is_dir = path.metadata().ok().map(|m| m.is_dir());
+                is_dir
+            });
+            relative.filter(|_| is_dir != Some(true))
         }));
     };
     while let Some(paths) = rx.recv().await {

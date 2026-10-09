@@ -252,14 +252,17 @@ fn highlight(lines: &[String], syntax: &SyntaxReference) -> Vec<Vec<(Range<usize
     let set = syntaxes();
     let mut highlighter = HighlightLines::new(syntax, token_theme());
     let mut failed = false;
+    let mut with_ending = String::new();
     lines
         .iter()
         .map(|line| {
             if failed {
                 return Vec::new();
             }
-            // The "newlines" syntaxes expect each line to end in `\n`.
-            let with_ending = format!("{line}\n");
+            // The "newlines" syntaxes expect each line to end in `\n`; one buffer for all lines.
+            with_ending.clear();
+            with_ending.push_str(line);
+            with_ending.push('\n');
             let Ok(regions) = highlighter.highlight_line(&with_ending, set) else {
                 failed = true;
                 return Vec::new();

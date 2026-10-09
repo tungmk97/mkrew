@@ -113,7 +113,7 @@ impl Tracker {
         }
         let path = self.path.clone()?;
         match self.read_appended(&path) {
-            Ok(appended) => self.reader.feed(&appended),
+            Ok(usage) => usage,
             Err(e) => {
                 tracing::debug!(path = %path.display(), "reading the transcript failed: {e}");
                 // Moved or deleted: look for it again at the next turn end.
@@ -123,7 +123,9 @@ impl Tracker {
         }
     }
 
-    fn read_appended(&mut self, path: &Path) -> std::io::Result<Vec<u8>> {
+    /// Feeds what was appended since the reader's offset, in chunks: the first read of a long
+    /// transcript would otherwise sit in memory whole.
+    fn read_appended(&mut self, path: &Path) -> std::io::Result<Option<Usage>> {
         let mut file = File::open(path)?;
         if file.metadata()?.len() < self.reader.offset() {
             // Rewritten from scratch: count again.
@@ -132,9 +134,17 @@ impl Tracker {
             self.path = path;
         }
         file.seek(SeekFrom::Start(self.reader.offset()))?;
-        let mut appended = Vec::new();
-        file.read_to_end(&mut appended)?;
-        Ok(appended)
+        let mut chunk = vec![0; 1024 * 1024];
+        loop {
+            match file.read(&mut chunk) {
+                Ok(0) => return Ok(self.reader.usage()),
+                Ok(n) => {
+                    self.reader.feed(&chunk[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     fn restart(&mut self) {

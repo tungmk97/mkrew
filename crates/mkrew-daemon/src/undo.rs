@@ -1,6 +1,7 @@
 //! "Undo task" (ADR 0005): restore the project folder to the task's checkpoint and delete the
 //! untracked files created since. Blocking; the server runs it in `spawn_blocking`.
 
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io;
 use std::path::Path;
@@ -79,7 +80,11 @@ pub fn restore_turn(
     let (created, changed): (Vec<_>, Vec<_>) = files.into_iter().partition(|c| c.added);
     let changed: Vec<String> = changed.into_iter().map(|c| c.path).collect();
     snapshots.checkout(git, project, dir, start, &changed)?;
-    for path in created.iter().filter(|c| confirmed.contains(&c.path)) {
+    let confirmed: HashSet<&str> = confirmed.iter().map(String::as_str).collect();
+    for path in created
+        .iter()
+        .filter(|c| confirmed.contains(c.path.as_str()))
+    {
         // `git clean` would keep files the agent staged; these paths come from git, inside
         // `dir`.
         match std::fs::remove_file(dir.join(&path.path)) {
@@ -146,9 +151,10 @@ pub fn undo(
         return Ok(Undone::Stale);
     }
     git.restore(dir, checkpoint)?;
+    let confirmed: HashSet<&str> = confirmed.iter().map(String::as_str).collect();
     let created: Vec<String> = created_since(dir, git.untracked_files(dir)?, since)
         .into_iter()
-        .filter(|path| confirmed.contains(path))
+        .filter(|path| confirmed.contains(path.as_str()))
         .collect();
     if created.is_empty() {
         return Ok(Undone::Done);

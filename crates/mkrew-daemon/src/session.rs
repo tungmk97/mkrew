@@ -460,7 +460,7 @@ impl Hub {
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let (turn_jobs, jobs) = mpsc::unbounded_channel();
         // In `tasks`, so shutdown waits for the end snapshot of turns cut off by the exit.
-        lock(&self.tasks).spawn(turns::record(
+        self.spawn_task(turns::record(
             Arc::clone(self),
             session.id,
             session.project_id,
@@ -499,8 +499,17 @@ impl Hub {
         if let Some(banner) = banner {
             actor.on_banner(&banner);
         }
-        lock(&self.tasks).spawn(actor.run(rx, commands));
+        self.spawn_task(actor.run(rx, commands));
         Ok(())
+    }
+
+    /// Spawns `task` into `tasks`, which shutdown waits for. Finished tasks are reaped first:
+    /// a `JoinSet` keeps each one's allocation until it is joined, which would otherwise grow
+    /// with every session the daemon ever ran.
+    fn spawn_task(&self, task: impl Future<Output = ()> + Send + 'static) {
+        let mut tasks = lock(&self.tasks);
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(task);
     }
 
     /// Starts the usage task of an agent session whose profile has `[usage]` (SPEC §20E.3);
@@ -517,7 +526,7 @@ impl Hub {
         match usage::track(Arc::clone(self), session.id, config) {
             Ok((ends, task)) => {
                 // In `tasks`, so shutdown waits for the read of the last turn's end.
-                lock(&self.tasks).spawn(task);
+                self.spawn_task(task);
                 Some(ends)
             }
             Err(warning) => {
@@ -853,9 +862,11 @@ impl Hub {
         }
     }
 
-    /// Sends `command` to a live session; `false` if it is not running.
+    /// Sends `command` to a live session; `false` if it is not running. A full command queue
+    /// (a busy session) does not lose it: it is sent from a task once there is room. Must run
+    /// inside the tokio runtime.
     pub fn command(&self, id: Ulid, command: Command) -> bool {
-        self.sender(id).is_some_and(|s| s.try_send(command).is_ok())
+        self.sender(id).is_some_and(|s| send_soon(s, command))
     }
 
     /// The command channel of a live session (waits for room instead of failing when full).
@@ -880,7 +891,7 @@ impl Hub {
             live.drain().collect()
         };
         for (_, live) in live {
-            let _ = live.commands.try_send(Command::Kill { force: false });
+            send_soon(live.commands, Command::Kill { force: false });
         }
         let mut tasks = std::mem::take(&mut *lock(&self.tasks));
         let all_done = async { while tasks.join_next().await.is_some() {} };
@@ -894,6 +905,21 @@ impl Hub {
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Plain maps: still consistent if a holder panicked.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Sends `command` now, or from a task once the queue has room; `false` if the session task
+/// is gone. Must run inside the tokio runtime.
+fn send_soon(commands: mpsc::Sender<Command>, command: Command) -> bool {
+    match commands.try_send(command) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(command)) => {
+            tokio::spawn(async move {
+                let _ = commands.send(command).await;
+            });
+            true
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => false,
+    }
 }
 
 /// One session task: the only owner of the session's emulator, state machine and log.

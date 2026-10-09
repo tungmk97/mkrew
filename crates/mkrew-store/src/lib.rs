@@ -182,8 +182,13 @@ impl Store {
             let rows = stmt.query_map([], RawProject::from_row)?;
             rows.map(|r| r?.into_project()).collect::<Result<_>>()?
         };
+        // One query for every project's run commands instead of one per project.
+        let mut commands = std::collections::HashMap::<String, Vec<RunCommand>>::new();
+        for (project_id, command) in self.run_commands_where(None)? {
+            commands.entry(project_id).or_default().push(command);
+        }
         for project in &mut projects {
-            project.run_commands = self.run_commands(project.id)?;
+            project.run_commands = commands.remove(&project.id.to_string()).unwrap_or_default();
         }
         Ok(projects)
     }
@@ -226,29 +231,42 @@ impl Store {
 
     /// The project's run commands, in order.
     fn run_commands(&self, project_id: Ulid) -> Result<Vec<RunCommand>> {
+        Ok(self
+            .run_commands_where(Some(project_id))?
+            .into_iter()
+            .map(|(_, command)| command)
+            .collect())
+    }
+
+    /// Run commands of one project (`Some`) or of all of them, with their project id, in order.
+    fn run_commands_where(&self, project_id: Option<Ulid>) -> Result<Vec<(String, RunCommand)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT name, dir, command, env_file, env FROM run_command
-             WHERE project_id = ?1 ORDER BY position",
+            "SELECT project_id, name, dir, command, env_file, env FROM run_command
+             WHERE ?1 IS NULL OR project_id = ?1 ORDER BY project_id, position",
         )?;
-        let rows = stmt.query_map([project_id.to_string()], |row| {
+        let rows = stmt.query_map([project_id.map(|id| id.to_string())], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?;
         rows.map(|row| {
-            let (name, dir, command, env_file, env) = row?;
+            let (project_id, name, dir, command, env_file, env) = row?;
             let env = serde_json::from_str(&env).map_err(|_| corrupt("run_command.env", env))?;
-            Ok(RunCommand {
-                name,
-                dir,
-                command,
-                env_file,
-                env,
-            })
+            Ok((
+                project_id,
+                RunCommand {
+                    name,
+                    dir,
+                    command,
+                    env_file,
+                    env,
+                },
+            ))
         })
         .collect()
     }

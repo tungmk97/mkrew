@@ -168,6 +168,11 @@ pub fn list(
         "" => name.to_owned(),
         dir => format!("{dir}/{name}"),
     };
+    // Every folder holding a changed path, once (not a scan of all markers per entry).
+    let changed_dirs: HashSet<&str> = markers
+        .keys()
+        .flat_map(|p| p.match_indices('/').map(move |(at, _)| &p[..at]))
+        .collect();
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&folder)? {
         let entry = entry?;
@@ -182,9 +187,7 @@ pub fn list(
         let is_dir = entry.path().is_dir();
         let path = path_of(&name);
         let (marker, has_changes) = if is_dir {
-            let prefix = format!("{path}/");
-            let changed = markers.keys().any(|p| p.starts_with(&prefix));
-            (None, changed)
+            (None, changed_dirs.contains(path.as_str()))
         } else {
             (markers.get(&path).copied(), false)
         };

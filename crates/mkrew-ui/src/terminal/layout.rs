@@ -285,9 +285,12 @@ pub fn cell_at(
 }
 
 /// Per-row cache of rendered rows: a row is rebuilt only when its cells or cursor changed
-/// ("re-layout only dirty rows", SPEC §10).
+/// ("re-layout only dirty rows", SPEC §10). A row that output scrolled to another index is
+/// reused from there, so a streaming agent does not re-shape the whole screen each frame.
 pub struct RowCache<T> {
     rows: Vec<Option<CachedRow<T>>>,
+    /// Last frame's rows not reused yet this frame, at their old index.
+    previous: Vec<Option<CachedRow<T>>>,
 }
 
 struct CachedRow<T> {
@@ -296,14 +299,31 @@ struct CachedRow<T> {
     value: T,
 }
 
+impl<T> CachedRow<T> {
+    fn shows(&self, cells: &[GridCell], cursor_col: Option<usize>) -> bool {
+        self.cursor_col == cursor_col && self.cells == cells
+    }
+}
+
 impl<T> Default for RowCache<T> {
     fn default() -> Self {
-        Self { rows: Vec::new() }
+        Self {
+            rows: Vec::new(),
+            previous: Vec::new(),
+        }
     }
 }
 
 impl<T> RowCache<T> {
-    /// Returns the cached value for row `index`, calling `build` only if the row is dirty.
+    /// Starts a frame of `len` rows: last frame's rows become reusable at any index.
+    pub fn start_frame(&mut self, len: usize) {
+        std::mem::swap(&mut self.rows, &mut self.previous);
+        self.rows.clear();
+        self.rows.resize_with(len, || None);
+    }
+
+    /// Returns the cached value for row `index`, calling `build` only if no cached row (this
+    /// frame's at `index`, or last frame's at any index) shows the same cells and cursor.
     pub fn row(
         &mut self,
         index: usize,
@@ -314,12 +334,22 @@ impl<T> RowCache<T> {
         if self.rows.len() <= index {
             self.rows.resize_with(index + 1, || None);
         }
-        let slot = &mut self.rows[index];
-        let fresh = matches!(slot, Some(row) if row.cursor_col == cursor_col && row.cells == cells);
-        if !fresh {
-            *slot = None;
+        let shows = |slot: &Option<CachedRow<T>>| {
+            slot.as_ref()
+                .is_some_and(|row| row.shows(cells, cursor_col))
+        };
+        if !shows(&self.rows[index]) {
+            // Same index first (most rows), else wherever scrolling moved it.
+            // ponytail: linear scan per missed row (rows² compares worst case, most exit on the
+            // first cell); hash rows if huge grids show up in profiles.
+            let reused = if self.previous.get(index).is_some_and(shows) {
+                Some(index)
+            } else {
+                self.previous.iter().position(shows)
+            };
+            self.rows[index] = reused.and_then(|at| self.previous[at].take());
         }
-        &slot
+        &self.rows[index]
             .get_or_insert_with(|| CachedRow {
                 cells: cells.to_vec(),
                 cursor_col,
@@ -328,14 +358,10 @@ impl<T> RowCache<T> {
             .value
     }
 
-    /// Drops rows past `len` (after the grid shrank).
-    pub fn truncate(&mut self, len: usize) {
-        self.rows.truncate(len);
-    }
-
     /// Forgets everything (font or theme changed).
     pub fn clear(&mut self) {
         self.rows.clear();
+        self.previous.clear();
     }
 }
 
@@ -516,6 +542,29 @@ mod tests {
         assert_eq!(get(&mut cache, 1, &a, Some(0)), 4, "cursor moved in");
         cache.clear();
         assert_eq!(get(&mut cache, 0, &a, None), 5);
+    }
+
+    #[test]
+    fn row_cache_reuses_rows_that_scrolled_and_drops_stale_ones() {
+        let mut cache = RowCache::default();
+        let mut builds = 0;
+        let (a, b, c) = (row(b"a", 4), row(b"b", 4), row(b"c", 4));
+        let mut get = |cache: &mut RowCache<u32>, index, cells: &[GridCell]| {
+            *cache.row(index, cells, None, || {
+                builds += 1;
+                builds
+            })
+        };
+        cache.start_frame(2);
+        assert_eq!((get(&mut cache, 0, &a), get(&mut cache, 1, &b)), (1, 2));
+        // One line of output scrolled `b` up to row 0.
+        cache.start_frame(2);
+        assert_eq!(get(&mut cache, 0, &b), 2, "scrolled row reused");
+        assert_eq!(get(&mut cache, 1, &c), 3, "new row built");
+        // `a` scrolled away last frame: not kept around.
+        cache.start_frame(2);
+        assert_eq!(get(&mut cache, 0, &a), 4);
+        assert_eq!(get(&mut cache, 1, &c), 3);
     }
 
     #[test]

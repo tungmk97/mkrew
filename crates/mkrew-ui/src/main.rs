@@ -1104,8 +1104,7 @@ impl Shell {
                 }
                 Err(error) => {
                     tracing::warn!(%project_id, "tab.list failed: {error:#}");
-                    shell.loading_tabs.remove(&project_id);
-                    shell.early_tab_events.clear();
+                    shell.tabs_load_failed(project_id);
                     if shell.project_of_reveal() == Some(project_id) {
                         shell.reveal = None;
                     }
@@ -1171,7 +1170,7 @@ impl Shell {
                         tracing::warn!(%project_id, "tab.create failed: {error:#}");
                         let error = format!("{error:#}");
                         if first {
-                            shell.loading_tabs.remove(&project_id);
+                            shell.tabs_load_failed(project_id);
                             shell.list_failed(error);
                         } else {
                             shell.tab_error = Some(format!("Cannot add a tab: {error}"));
@@ -1208,6 +1207,15 @@ impl Shell {
         self.fill_empty_tab(project_id, window, cx);
         self.sync_panes(window, cx);
         cx.notify();
+    }
+
+    /// `project_id`'s tabs failed to load: it stops loading and its buffered `tab.updated`
+    /// events go (other workspaces still loading keep theirs).
+    fn tabs_load_failed(&mut self, project_id: Ulid) {
+        self.loading_tabs.remove(&project_id);
+        self.early_tab_events.retain(
+            |event| !matches!(event, Event::TabUpdated(tab) if tab.project_id == project_id),
+        );
     }
 
     fn project_of(&self, session: Ulid) -> Option<Ulid> {
@@ -4717,7 +4725,7 @@ impl Shell {
     fn follow_wait(&mut self, wait: follow::Wait, window: &mut Window, cx: &mut Context<'_, Self>) {
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(wait.delay).await;
-            let _ = this.update(cx, |shell, _| {
+            let _ = this.update(cx, |shell, cx| {
                 let Some(edit) = shell.follow.due(wait) else {
                     return;
                 };
@@ -4731,9 +4739,19 @@ impl Shell {
                 else {
                     return;
                 };
-                if let Err(error) = zed::open(&full, edit.line) {
-                    tracing::warn!(%session_id, path = edit.path, "follow in Zed failed: {error}");
-                }
+                // The PATH lookup and process spawn stay off the UI thread: this fires on
+                // every followed edit, not on a click.
+                cx.background_executor()
+                    .spawn(async move {
+                        if let Err(error) = zed::open(&full, edit.line) {
+                            tracing::warn!(
+                                %session_id,
+                                path = edit.path,
+                                "follow in Zed failed: {error}"
+                            );
+                        }
+                    })
+                    .detach();
             });
         })
         .detach();
@@ -8637,7 +8655,7 @@ impl Shell {
                     .into_any_element()
             }
             files_view::Listing::Loaded(_) => {
-                let rows = Rc::new(view.rows());
+                let rows = view.rows();
                 let cursor = view.cursor.clone();
                 let opened = view.file.clone();
                 let focused = self.files_focus.is_focused(window);
@@ -15355,7 +15373,7 @@ fn task_card(
     let selected = cards.selected == Some(task_id);
     let group = SharedString::from(format!("card-{task_id}"));
     let edit_hover = theme.border;
-    let preview_theme = theme.clone();
+    let preview_style = PopupStyle::of(theme);
     div()
         .id(group.clone())
         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -15367,9 +15385,9 @@ fn task_card(
                 title: card.title.clone(),
             },
             move |dragged, _, _, cx| {
-                let theme = preview_theme.clone();
+                let style = preview_style.clone();
                 let title = dragged.title.clone().into();
-                cx.new(|_| CardPreview { theme, title })
+                cx.new(|_| CardPreview { style, title })
             },
         )
         .flex_none()
@@ -16197,12 +16215,12 @@ fn status_tooltip(
     source: StateSource,
     changed_at: i64,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-    let theme = theme.clone();
+    let style = PopupStyle::of(theme);
     move |_, cx| {
         let text = status::hover(state, source, changed_at, status::now_ms()).into();
-        let theme = theme.clone();
+        let style = style.clone();
         cx.new(|_| Tooltip {
-            theme,
+            style,
             text,
             keys: SharedString::default(),
         })
@@ -16216,24 +16234,47 @@ fn tooltip(
     text: &str,
     keys: impl Into<SharedString>,
 ) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
-    let theme = theme.clone();
+    let style = PopupStyle::of(theme);
     let text = SharedString::from(text.to_owned());
     let keys = keys.into();
     move |_, cx| {
-        let (theme, text, keys) = (theme.clone(), text.clone(), keys.clone());
-        cx.new(|_| Tooltip { theme, text, keys }).into()
+        let (style, text, keys) = (style.clone(), text.clone(), keys.clone());
+        cx.new(|_| Tooltip { style, text, keys }).into()
+    }
+}
+
+/// The theme tokens a tooltip or drag preview draws with: these closures are built for every
+/// hoverable element on every frame, so they carry this instead of a whole [`Theme`].
+#[derive(Clone)]
+struct PopupStyle {
+    border: u32,
+    surface_raised: u32,
+    text: u32,
+    text_muted: u32,
+    ui_font_family: SharedString,
+}
+
+impl PopupStyle {
+    fn of(theme: &Theme) -> Self {
+        Self {
+            border: theme.border,
+            surface_raised: theme.surface_raised,
+            text: theme.text,
+            text_muted: theme.text_muted,
+            ui_font_family: theme.ui_font_family.clone(),
+        }
     }
 }
 
 /// What follows the pointer while a card is dragged: a lifted copy of its title.
 struct CardPreview {
-    theme: Theme,
+    style: PopupStyle,
     title: SharedString,
 }
 
 impl Render for CardPreview {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = &self.theme;
+        let theme = &self.style;
         div()
             .w(px(theme::BOARD_COLUMN_MIN_WIDTH))
             .p(px(space::M))
@@ -16252,14 +16293,14 @@ impl Render for CardPreview {
 }
 
 struct Tooltip {
-    theme: Theme,
+    style: PopupStyle,
     text: SharedString,
     keys: SharedString,
 }
 
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
-        let theme = &self.theme;
+        let theme = &self.style;
         div()
             .flex()
             .gap(px(space::S))

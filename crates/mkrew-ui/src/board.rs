@@ -2,6 +2,8 @@
 //! position, kept live by `task.updated` / `task.deleted`. Each card shows its newest session's
 //! status (§11) and run time. Pure and tested headlessly; `main.rs` renders it.
 
+use std::collections::HashSet;
+
 use mkrew_core::task::{self, Placement};
 use mkrew_protocol::{Event, Session, SessionState, Task, TaskMoveParams, TaskStatus};
 use ulid::Ulid;
@@ -320,6 +322,9 @@ impl Board {
         sessions: &[Session],
     ) -> Vec<Column> {
         let tasks = self.ordered(project_id);
+        // Built once per call: `fanout::children` scans every task and formats a prefix, which
+        // only fan-out originals need (this runs on every board render).
+        let originals: HashSet<Ulid> = self.tasks.iter().filter_map(|t| t.fanout_of).collect();
         COLUMNS
             .iter()
             .map(|&status| Column {
@@ -328,7 +333,11 @@ impl Board {
                     .iter()
                     .filter(|task| task.status == status)
                     .map(|task| {
-                        let children = fanout::children(task, &self.tasks, sessions);
+                        let children = if originals.contains(&task.id) {
+                            fanout::children(task, &self.tasks, sessions)
+                        } else {
+                            Vec::new()
+                        };
                         // A group card runs no agent of its own.
                         let agent = match children.len() {
                             0 => task

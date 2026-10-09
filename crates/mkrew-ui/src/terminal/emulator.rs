@@ -4,6 +4,7 @@
 //! emulator never writes back to the PTY.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
@@ -99,6 +100,9 @@ pub struct Emulator {
     search: Option<RefCell<RegexSearch>>,
     /// Match the last [`Emulator::search_next`] moved to.
     current_match: Option<Match>,
+    /// The last [`Emulator::shared_grid`]; every `&mut self` method drops it, so it always shows
+    /// the current state. Saves rebuilding the grid on frames where this pane did not change.
+    last_grid: RefCell<Option<Arc<Grid>>>,
 }
 
 impl Emulator {
@@ -112,7 +116,13 @@ impl Emulator {
             parser: Processor::new(),
             search: None,
             current_match: None,
+            last_grid: RefCell::default(),
         }
+    }
+
+    /// The terminal state changed: the next [`Emulator::shared_grid`] rebuilds.
+    fn changed(&mut self) {
+        *self.last_grid.get_mut() = None;
     }
 
     /// A fresh emulator showing `snapshot` (screen, cursor, modes); output frames that follow
@@ -133,11 +143,13 @@ impl Emulator {
 
     pub fn advance(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
+        self.changed();
         self.recheck_current_match();
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
         self.term.resize(TermSize::new(cols, rows));
+        self.changed();
         self.recheck_current_match();
     }
 
@@ -146,6 +158,7 @@ impl Emulator {
     /// a valid regex.
     pub fn set_search(&mut self, pattern: &str) -> bool {
         self.current_match = None;
+        self.changed();
         if pattern.is_empty() {
             self.search = None;
             return true;
@@ -169,6 +182,7 @@ impl Emulator {
 
     fn search_from_view(&mut self, older: bool, max_lines: Option<usize>) -> bool {
         let (top, bottom) = self.view_lines();
+        self.changed();
         let Some(search) = self.search.as_mut() else {
             return false;
         };
@@ -262,16 +276,19 @@ impl Emulator {
     pub fn scroll_page(&mut self, up: bool) {
         self.term
             .scroll_display(if up { Scroll::PageUp } else { Scroll::PageDown });
+        self.changed();
     }
 
     /// Scrolls the view by `lines` (positive = into the history).
     pub fn scroll_lines(&mut self, lines: i32) {
         self.term.scroll_display(Scroll::Delta(lines));
+        self.changed();
     }
 
     /// Back to the live screen (typing does this).
     pub fn scroll_to_bottom(&mut self) {
         self.term.scroll_display(Scroll::Bottom);
+        self.changed();
     }
 
     /// Starts a selection at a visible cell (row 0 = top of the view). `side` = which half of
@@ -279,6 +296,7 @@ impl Emulator {
     pub fn start_selection(&mut self, row: usize, col: usize, side: Side) {
         let point = self.view_point(row, col);
         self.term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+        self.changed();
     }
 
     /// Moves the end of the current selection; no-op without one.
@@ -287,10 +305,13 @@ impl Emulator {
         if let Some(selection) = self.term.selection.as_mut() {
             selection.update(point, side);
         }
+        self.changed();
     }
 
     pub fn clear_selection(&mut self) {
-        self.term.selection = None;
+        if self.term.selection.take().is_some() {
+            self.changed();
+        }
     }
 
     /// Selected text (lines joined with `\n`, trailing blanks trimmed); `None` if nothing is
@@ -306,6 +327,12 @@ impl Emulator {
         // Screen sizes are u16 and the history 10k lines, so these fit in i32.
         let line = row as i32 - self.display_offset() as i32;
         Point::new(Line(line), Column(col))
+    }
+
+    /// [`Emulator::grid`], built once per change and shared (the view paints every frame).
+    pub fn shared_grid(&self) -> Arc<Grid> {
+        let mut last = self.last_grid.borrow_mut();
+        Arc::clone(last.get_or_insert_with(|| Arc::new(self.grid())))
     }
 
     pub fn grid(&self) -> Grid {
@@ -469,6 +496,22 @@ mod tests {
         emu.clear_selection();
         assert_eq!(emu.selection_text(), None);
         assert!(!emu.grid().rows[0][1].selected);
+    }
+
+    #[test]
+    fn shared_grid_is_rebuilt_after_every_change() {
+        let mut emu = Emulator::new(10, 3);
+        emu.advance(b"hello");
+        let first = emu.shared_grid();
+        assert!(Arc::ptr_eq(&first, &emu.shared_grid()), "unchanged: reused");
+        emu.start_selection(0, 0, Side::Left);
+        emu.update_selection(0, 1, Side::Right);
+        assert!(emu.shared_grid().rows[0][1].selected);
+        emu.clear_selection();
+        assert!(!emu.shared_grid().rows[0][1].selected);
+        emu.advance(b"!");
+        assert_eq!(*emu.shared_grid(), emu.grid());
+        assert_eq!(emu.shared_grid().to_text().lines().next(), Some("hello!"));
     }
 
     #[test]

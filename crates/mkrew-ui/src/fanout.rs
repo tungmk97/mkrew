@@ -102,6 +102,10 @@ pub fn children(original: &Task, tasks: &[Task], sessions: &[Session]) -> Vec<Ch
         .iter()
         .filter(|task| task.fanout_of == Some(original.id))
         .collect();
+    if children.is_empty() {
+        // Most cards never fanned out: no title prefix to build (runs per card per frame).
+        return Vec::new();
+    }
     children.sort_by_key(|task| (task.created_at, task.id));
     let prefix = format!("{} · ", original.title);
     children

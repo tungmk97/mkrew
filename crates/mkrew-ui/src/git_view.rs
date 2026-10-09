@@ -690,13 +690,26 @@ impl GitView {
         changers.into_iter().map(|(_, changer)| changer).collect()
     }
 
-    /// The label of the filtered session, while filtering.
+    /// The label of the filtered session, while filtering (its [`Changer`] label).
     pub fn changed_by_label(&self, sessions: &[Session]) -> Option<String> {
-        let session = self.changed_by.session?;
-        self.changers(sessions)
-            .into_iter()
-            .find(|changer| changer.session_id == session)
-            .map(|changer| changer.label)
+        let id = self.changed_by.session?;
+        let changed = self
+            .changed_by
+            .files
+            .get(&id)
+            .is_some_and(|paths| !paths.is_empty());
+        if self.history.is_some() || !changed {
+            return None;
+        }
+        match sessions.iter().find(|s| s.id == id) {
+            Some(session) => Some(session_label(session, sessions)),
+            // An ended session's number depends on the other ended ones.
+            None => self
+                .changers(sessions)
+                .into_iter()
+                .find(|changer| changer.session_id == id)
+                .map(|changer| changer.label),
+        }
     }
 
     fn select_none(&mut self) {
@@ -794,13 +807,7 @@ impl GitView {
             return vec![];
         };
         let checkpoint = self.since.as_ref().map(|since| since.checkpoint.clone());
-        // "Changed by": only the filtered session's files.
-        let kept = self.changed_by.session.map(|id| {
-            self.changed_by
-                .files
-                .get(&id)
-                .map_or(&[][..], Vec::as_slice)
-        });
+        let kept = self.kept();
         let group = |group: Group, files: &[ChangedFile]| {
             files
                 .iter()
@@ -827,18 +834,37 @@ impl GitView {
         }
     }
 
+    /// "Changed by": only the filtered session's files (`None` = All).
+    fn kept(&self) -> Option<&[String]> {
+        self.changed_by.session.map(|id| {
+            self.changed_by
+                .files
+                .get(&id)
+                .map_or(&[][..], Vec::as_slice)
+        })
+    }
+
     /// Whether the commit box is on screen: Working changes of a loaded status, with changes
-    /// listed or a draft typed.
+    /// listed or a draft typed. (Asked every frame: no [`Self::files`] copy.)
     pub fn commit_box_shown(&self) -> bool {
-        self.section() == Section::Working
-            && matches!(self.status, Status::Loaded(_))
-            && (!self.files().is_empty() || !self.commit.text.text().is_empty())
+        if self.section() != Section::Working {
+            return false;
+        }
+        let Status::Loaded(status) = &self.status else {
+            return false;
+        };
+        let kept = self.kept();
+        let any_file = [&status.staged, &status.unstaged, &status.untracked]
+            .into_iter()
+            .flatten()
+            .any(|file| kept.is_none_or(|kept| kept.contains(&file.path)));
+        any_file || !self.commit.text.text().is_empty()
     }
 
     /// The changed-file list: in Working mode each non-empty group under its title; in the
     /// History the commits, the selected one followed by its files (or why there are none).
     pub fn list_rows(&self) -> Vec<ListRow> {
-        let files = self.files();
+        let mut files = self.files();
         if let Some(history) = &self.history {
             let mut rows = Vec::new();
             for commit in history.commits() {
@@ -854,10 +880,11 @@ impl GitView {
                     Detail::Loaded(listed) if listed.is_empty() => {
                         rows.push(ListRow::Note("No files changed.".into()));
                     }
+                    // Only the expanded commit lists its files: they move in once.
                     Detail::Loaded(_) => rows.extend(
                         files
-                            .iter()
-                            .map(|(target, file)| ListRow::File(target.clone(), file.clone())),
+                            .drain(..)
+                            .map(|(target, file)| ListRow::File(target, file)),
                     ),
                     Detail::None | Detail::Loading => rows.push(ListRow::Note("Loading…".into())),
                     // The diff panel shows the error and Retry.
@@ -874,20 +901,20 @@ impl GitView {
                 .map(|(target, file)| ListRow::File(target, file))
                 .collect();
         }
-        let mut rows = Vec::new();
-        for group in [Group::Staged, Group::Unstaged, Group::Untracked] {
-            let members: Vec<_> = files
-                .iter()
-                .filter(|(target, _)| target.group == group)
-                .collect();
-            if members.is_empty() {
-                continue;
-            }
-            rows.push(ListRow::Header(group, members.len()));
+        // `files` lists the groups one after another (Staged, Unstaged, Untracked).
+        let counts: Vec<(Group, usize)> = files
+            .chunk_by(|(a, _), (b, _)| a.group == b.group)
+            .map(|members| (members[0].0.group, members.len()))
+            .collect();
+        let mut rows = Vec::with_capacity(files.len() + counts.len());
+        let mut files = files.into_iter();
+        for (group, count) in counts {
+            rows.push(ListRow::Header(group, count));
             rows.extend(
-                members
-                    .into_iter()
-                    .map(|(target, file)| ListRow::File(target.clone(), file.clone())),
+                files
+                    .by_ref()
+                    .take(count)
+                    .map(|(target, file)| ListRow::File(target, file)),
             );
         }
         rows
@@ -1137,12 +1164,41 @@ impl GitView {
         }
     }
 
-    /// The listed file `target` stands for.
-    pub fn file(&self, target: &Target) -> Option<ChangedFile> {
-        self.files()
-            .into_iter()
-            .find(|(listed, _)| listed == target)
-            .map(|(_, file)| file)
+    /// The listed file `target` stands for (the same lookup as [`Self::files`], without
+    /// copying the list: the render asks it every frame).
+    pub fn file(&self, target: &Target) -> Option<&ChangedFile> {
+        let (files, commit, kept) = if let Some(history) = &self.history {
+            if target.group != Group::Commit {
+                return None;
+            }
+            (history.files(), history.selected.as_ref(), None)
+        } else {
+            let Status::Loaded(status) = &self.status else {
+                return None;
+            };
+            let files = match (self.mode, &self.since, target.group) {
+                (GitMode::Working, _, Group::Staged) => &status.staged,
+                (GitMode::Working, _, Group::Unstaged) => &status.unstaged,
+                (GitMode::Working, _, Group::Untracked) => &status.untracked,
+                (GitMode::Base, None, Group::Base) | (GitMode::Base, Some(_), Group::Since) => {
+                    &status.against_base
+                }
+                _ => return None,
+            };
+            let checkpoint = self
+                .since
+                .as_ref()
+                .map(|since| &since.checkpoint)
+                .filter(|_| target.group == Group::Since);
+            (files.as_slice(), checkpoint, self.kept())
+        };
+        if target.commit.as_ref() != commit {
+            return None;
+        }
+        files
+            .iter()
+            .filter(|file| kept.is_none_or(|kept| kept.contains(&file.path)))
+            .find(|file| file.path == target.path)
     }
 
     /// Stages / unstages the whole listed file `target` (new, deleted and untracked files can
@@ -1155,7 +1211,7 @@ impl GitView {
             params: GitStageParams {
                 project_id: self.project_id,
                 worktree_task_id: self.worktree_task_id,
-                paths: [Some(file.path), file.old_path]
+                paths: [Some(file.path.clone()), file.old_path.clone()]
                     .into_iter()
                     .flatten()
                     .collect(),

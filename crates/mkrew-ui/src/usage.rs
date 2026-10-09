@@ -85,15 +85,28 @@ impl Usages {
     /// Total tokens of `project_id`: per task its [`Usages::task_total`], plus every session
     /// not started for a task. `None` while none of them reported usage.
     pub fn workspace_total(&self, project_id: Ulid, sessions: &[Session]) -> Option<u64> {
-        let mut tasks = HashSet::new();
-        sessions
-            .iter()
-            .filter(|session| session.project_id == project_id)
-            .filter_map(|session| match session.task_id {
-                Some(task_id) if tasks.insert(task_id) => self.task_total(task_id, sessions),
-                Some(_) => None,
-                None => self.total(session.id),
-            })
+        // One pass (it runs per sidebar row per frame): per task its newest session with usage.
+        let mut newest: HashMap<Ulid, ((i64, Ulid), u64)> = HashMap::new();
+        let mut loose: Option<u64> = None;
+        for session in sessions.iter().filter(|s| s.project_id == project_id) {
+            let Some(total) = self.total(session.id) else {
+                continue;
+            };
+            match session.task_id {
+                Some(task_id) => {
+                    let key = (session.started_at, session.id);
+                    let slot = newest.entry(task_id).or_insert((key, total));
+                    if key > slot.0 {
+                        *slot = (key, total);
+                    }
+                }
+                None => *loose.get_or_insert(0) += total,
+            }
+        }
+        newest
+            .into_values()
+            .map(|(_, total)| total)
+            .chain(loose)
             .reduce(|a, b| a + b)
     }
 }

@@ -8,6 +8,7 @@
 
 use std::io::Read;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use mkrew_core::Paths;
@@ -16,6 +17,8 @@ use serde_json::Value;
 use ulid::Ulid;
 
 const ENV_SESSION_ID: &str = "MKREW_SESSION_ID";
+/// How long a hook waits for the daemon before giving up (agents block on their hooks).
+const REPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
     let Some(id) = std::env::var(ENV_SESSION_ID)
@@ -35,13 +38,26 @@ pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
         Ok(text)
     })?;
     let paths = Paths::from_env()?;
-    let mut client = crate::project::connect(&paths)?;
-    client.call::<()>(Request::HookReport(HookReportParams {
+    let report = Request::HookReport(HookReportParams {
         mkrew_session_id,
         agent,
         event,
         payload,
-    }))?;
+    });
+    // The agent waits for this hook (Claude up to 60 s per event): a wedged daemon must not
+    // stall it, so give up after `REPORT_TIMEOUT`. Exiting ends the stuck thread.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let sent = crate::project::connect(&paths).and_then(|mut c| c.call::<()>(report));
+        let _ = tx.send(sent);
+    });
+    match rx.recv_timeout(REPORT_TIMEOUT) {
+        Ok(sent) => sent?,
+        Err(_) => bail!(
+            "the daemon did not answer within {}s",
+            REPORT_TIMEOUT.as_secs()
+        ),
+    }
     Ok(ExitCode::SUCCESS)
 }
 

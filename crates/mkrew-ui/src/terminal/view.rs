@@ -29,7 +29,7 @@ use crate::composer::{attachment_ext, typed_paths};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindStatus, find_key};
-use crate::terminal::input::{KeyAction, key_action, paste_bytes, wheel_bytes};
+use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::theme::{self, Theme, font_size, radius, space};
 
@@ -216,7 +216,8 @@ impl TerminalPane {
     /// action handler stops them first. Plain Ctrl+C copies a selection instead, also in an
     /// exited pane (ADR 0022).
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
-        let selected = self.emulator.selection_text().is_some();
+        // Only plain Ctrl+C reads the selection: building its text per keystroke costs O(selection).
+        let selected = is_copy_key(&event.keystroke) && self.emulator.selection_text().is_some();
         let mode = self.emulator.input_mode();
         match key_action(&event.keystroke, selected, self.exited.is_some(), mode) {
             KeyAction::Copy => {
@@ -658,7 +659,7 @@ struct TerminalElement {
 /// The grid at the pane's final size (read after fitting) and the cell size measured once per
 /// frame.
 struct Prepainted {
-    grid: Grid,
+    grid: std::sync::Arc<Grid>,
     cell_width: Pixels,
     line_height: Pixels,
 }
@@ -734,7 +735,7 @@ impl Element for TerminalElement {
             self.pane.update(cx, |pane, cx| pane.fit(cols, rows, cx));
         }
         Prepainted {
-            grid: self.pane.read(cx).emulator.grid(),
+            grid: self.pane.read(cx).emulator.shared_grid(),
             cell_width,
             line_height,
         }
@@ -766,7 +767,7 @@ impl Element for TerminalElement {
         let origin = bounds.origin + point(padding, padding);
 
         let mut rows = self.rows.borrow_mut();
-        rows.truncate(grid.rows.len());
+        rows.start_frame(grid.rows.len());
         let cursor = grid.cursor;
         for (index, cells) in grid.rows.iter().enumerate() {
             let cursor_col = (cursor.visible && cursor.row == index).then_some(cursor.col);

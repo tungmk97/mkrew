@@ -22,7 +22,7 @@ pub fn paint(snapshot: &ScreenSnapshot) -> String {
         }
         let _ = write!(out, "\x1b[{};1H", row + 1);
         for run in runs {
-            out.push_str(&sgr(run));
+            sgr(&mut out, run);
             out.push_str(&run.text);
         }
         out.push_str("\x1b[0m");
@@ -52,8 +52,8 @@ pub fn paint(snapshot: &ScreenSnapshot) -> String {
 pub const RESET: &str =
     "\x1b[0m\x1b[?1049l\x1b[?1l\x1b[?2004l\x1b[?1002l\x1b[?1006l\x1b[?1004l\x1b>\x1b[?25h";
 
-fn sgr(run: &CellRun) -> String {
-    let mut out = String::from("\x1b[0");
+fn sgr(out: &mut String, run: &CellRun) {
+    out.push_str("\x1b[0");
     for (flag, code) in [
         (CellRun::BOLD, 1),
         (CellRun::DIM, 2),
@@ -67,10 +67,9 @@ fn sgr(run: &CellRun) -> String {
             let _ = write!(out, ";{code}");
         }
     }
-    color(&mut out, run.fg, 30, 90, 38);
-    color(&mut out, run.bg, 40, 100, 48);
+    color(out, run.fg, 30, 90, 38);
+    color(out, run.bg, 40, 100, 48);
     out.push('m');
-    out
 }
 
 /// `base` + n for ANSI 0–7, `bright` + n − 8 for 8–15, `extended;5;n` / `extended;2;r;g;b` else.

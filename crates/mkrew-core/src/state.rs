@@ -145,15 +145,20 @@ impl StateMachine {
         if self.patterns.is_empty() {
             return false;
         }
-        let mut tail: Vec<&str> = screen
+        // Fill the tail back to front so it reads top-down without a reversed Vec.
+        let mut tail = [""; PATTERN_TAIL_LINES];
+        let mut n = 0;
+        for line in screen
             .iter()
             .rev()
             .map(|l| l.trim_end())
             .filter(|l| !l.is_empty())
             .take(PATTERN_TAIL_LINES)
-            .collect();
-        tail.reverse();
-        let text = tail.join("\n");
+        {
+            n += 1;
+            tail[PATTERN_TAIL_LINES - n] = line;
+        }
+        let text = tail[PATTERN_TAIL_LINES - n..].join("\n");
         self.patterns.iter().any(|p| p.is_match(&text))
     }
 
