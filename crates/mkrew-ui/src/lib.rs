@@ -57,6 +57,7 @@ pub mod scrollbar;
 pub mod sidebar;
 pub mod split;
 pub mod status;
+pub mod stt;
 pub mod tabs;
 pub mod task_dialog;
 pub mod terminal;

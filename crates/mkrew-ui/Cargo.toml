@@ -52,6 +52,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # Same major as mkrew-protocol so `Ulid` types match.
 ulid = { version = "1", features = ["serde"] }
+# HTTPS POST of voice recordings to the speech-to-text API (SPEC §20G, ADR 0045); blocking
+# (runs on the background executor), rustls so no OpenSSL on any OS.
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 
 [build-dependencies]
 # App icon resource (build.rs); same version gpui already builds with.
