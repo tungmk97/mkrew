@@ -22,6 +22,8 @@ pub struct Settings {
     pub ui: UiSettings,
     /// `[terminal]`: the terminal font; also used by the Files and Git code views.
     pub terminal: FontSettings,
+    /// `[voice]`: speech to text for voice input (SPEC §20G, ADR 0045).
+    pub voice: VoiceSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -84,6 +86,41 @@ impl Default for ZedSettings {
     fn default() -> Self {
         Self {
             follow_debounce_ms: 1500,
+        }
+    }
+}
+
+/// The default `[voice] prompt`: words Whisper should spell as written, in both languages, so
+/// English coding terms in Vietnamese speech stay English.
+pub const VOICE_PROMPT_DEFAULT: &str = "Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé.";
+
+/// `[voice]` (SPEC §20G): an OpenAI-compatible speech-to-text endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct VoiceSettings {
+    /// API root; the request goes to `{base_url}/audio/transcriptions`.
+    pub base_url: String,
+    pub model: String,
+    /// Name of the environment variable holding the API key; empty = send no key (a local
+    /// server). The key itself is never read from this file.
+    pub api_key_env: String,
+    /// ISO-639-1 code (`vi`, `en`); empty = the model detects it per recording.
+    pub language: String,
+    /// Spelling and style hint (Whisper `prompt`, 224 tokens at most); empty = none.
+    pub prompt: String,
+    /// A recording stops by itself after this many seconds.
+    pub max_seconds: u32,
+}
+
+impl Default for VoiceSettings {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.groq.com/openai/v1".into(),
+            model: "whisper-large-v3-turbo".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            language: String::new(),
+            prompt: VOICE_PROMPT_DEFAULT.into(),
+            max_seconds: 120,
         }
     }
 }
@@ -299,7 +336,20 @@ pub fn template() -> &'static str {
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
      [terminal]\n\
      # font_family = \"\"\n\
-     # font_size = 13\n"
+     # font_size = 13\n\
+     \n\
+     # Voice input (Ctrl+Shift+D): speech to text over an OpenAI-compatible API, Groq by\n\
+     # default (OpenAI and local servers work too). The API key is read from the environment\n\
+     # variable named by api_key_env (empty: no key); restart Mkrew after setting it.\n\
+     # language: empty detects it per recording; \"vi\" or \"en\" forces one.\n\
+     # prompt: words the model should spell as written.\n\
+     [voice]\n\
+     # base_url = \"https://api.groq.com/openai/v1\"\n\
+     # model = \"whisper-large-v3-turbo\"\n\
+     # api_key_env = \"GROQ_API_KEY\"\n\
+     # language = \"\"\n\
+     # prompt = \"Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé.\"\n\
+     # max_seconds = 120\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -365,6 +415,12 @@ mod tests {
         assert!(settings.awake.keep_awake);
         assert_eq!(settings.composer.file_ref, "@{path}");
         assert_eq!(settings.zed.follow_debounce_ms, 1500);
+        assert_eq!(settings.voice.base_url, "https://api.groq.com/openai/v1");
+        assert_eq!(settings.voice.model, "whisper-large-v3-turbo");
+        assert_eq!(settings.voice.api_key_env, "GROQ_API_KEY");
+        assert_eq!(settings.voice.language, "");
+        assert_eq!(settings.voice.prompt, VOICE_PROMPT_DEFAULT);
+        assert_eq!(settings.voice.max_seconds, 120);
         assert_eq!(settings.ui.font_family, "");
         assert_eq!(settings.ui.font_size, FontSize(13));
         assert_eq!(settings.ui.theme, ThemeMode::System);
@@ -451,6 +507,7 @@ font_size = 15
                     font_family: "JetBrains Mono".into(),
                     font_size: FontSize(15),
                 },
+                voice: VoiceSettings::default(),
             }
         );
     }
@@ -472,6 +529,31 @@ font_size = 15
         let message = parse_err("[zed]\nfollow_debounce_ms = \"fast\"\n");
         assert!(message.starts_with("settings.toml:2:"), "{message}");
         assert!(message.contains("invalid type"), "{message}");
+    }
+
+    #[test]
+    fn voice_section_parses_another_provider_and_rejects_a_key() {
+        let voice = parse(
+            Path::new("settings.toml"),
+            "[voice]\nbase_url = \"https://api.openai.com/v1\"\nmodel = \"gpt-4o-mini-transcribe\"\n\
+             api_key_env = \"OPENAI_API_KEY\"\nlanguage = \"vi\"\nmax_seconds = 30\n",
+        )
+        .unwrap()
+        .voice;
+        assert_eq!(
+            voice,
+            VoiceSettings {
+                base_url: "https://api.openai.com/v1".into(),
+                model: "gpt-4o-mini-transcribe".into(),
+                api_key_env: "OPENAI_API_KEY".into(),
+                language: "vi".into(),
+                prompt: VOICE_PROMPT_DEFAULT.into(),
+                max_seconds: 30,
+            }
+        );
+        // The key itself never lives in the file (SPEC §20G).
+        let message = parse_err("[voice]\napi_key = \"gsk_x\"\n");
+        assert!(message.contains("unknown field `api_key`"), "{message}");
     }
 
     #[test]
