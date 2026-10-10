@@ -7594,9 +7594,15 @@ impl Shell {
             voice::State::Idle | voice::State::Message(_) => {}
         }
         // Read per start: a hand edit of `[voice]` applies to the next recording.
-        let settings = mkrew_core::settings::load(&self.settings_file)
-            .unwrap_or_default()
-            .voice;
+        let settings = match mkrew_core::settings::load(&self.settings_file) {
+            Ok(settings) => settings.voice,
+            // Never fall back to the default provider: audio goes only where the user said (§1).
+            Err(error) => {
+                self.voice = voice::State::Message(format!("✕ Voice: settings.toml: {error:#}"));
+                cx.notify();
+                return;
+            }
+        };
         let key = match stt::api_key(&settings, |name| std::env::var(name).ok()) {
             Ok(key) => key,
             Err(error) => {
@@ -7694,7 +7700,10 @@ impl Shell {
         let pane = self
             .panes
             .values()
-            .find(|pane| pane.read(cx).has_focus(window, cx))
+            .find(|pane| {
+                let pane = pane.read(cx);
+                !pane.is_exited() && pane.has_focus(window, cx)
+            })
             .cloned();
         if let Some(pane) = pane {
             pane.update(cx, |pane, cx| pane.type_text(text, cx));

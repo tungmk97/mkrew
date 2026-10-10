@@ -703,6 +703,11 @@ impl TerminalPane {
         .detach();
     }
 
+    /// The session has ended; the pane takes no input.
+    pub fn is_exited(&self) -> bool {
+        self.exited.is_some()
+    }
+
     /// Types `text` as one paste into a live session (dropped or pasted paths, §20B.5).
     pub fn type_text(&mut self, text: &str, cx: &mut Context<'_, Self>) {
         if self.exited.is_some() || text.is_empty() {
