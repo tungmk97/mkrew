@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::highlight::Token;
 use mkrew_protocol::{ChangeKind, DiffLineKind, GitChangedEvent, Hunk};

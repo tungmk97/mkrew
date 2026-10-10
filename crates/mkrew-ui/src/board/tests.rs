@@ -1,4 +1,3 @@
-
 use mkrew_protocol::{SessionKind, StateSource, TaskDeletedEvent};
 
 use super::*;

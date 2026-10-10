@@ -1,4 +1,3 @@
-
 use mkrew_protocol::{SessionExitedEvent, SessionStateEvent};
 
 use super::*;

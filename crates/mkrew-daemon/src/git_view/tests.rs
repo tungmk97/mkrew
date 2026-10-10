@@ -1,4 +1,3 @@
-
 use std::process::Command;
 
 use mkrew_protocol::DiffLineKind;

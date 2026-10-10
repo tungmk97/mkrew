@@ -1,4 +1,3 @@
-
 use super::*;
 use mkrew_protocol::{GitChangedEvent, GitMarker};
 
