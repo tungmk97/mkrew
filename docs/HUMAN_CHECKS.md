@@ -15,6 +15,10 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-10 large-file split (plan docs/superpowers/plans/2026-10-10-split-large-files.md)
+
+Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests and nine inline test modules split). Tests, clippy and a verbatim-move check passed. Please click through once: Board (drag a card), Docs (open, comment), Files (open, find, edit, save), Git (stage, diff split/unified, commit box), palette, quick open, peek, a run, the worktree/turns/history dialogs, theme toggle, compact sidebar. Expected: everything behaves exactly as before.
+
 ### To verify — 2026-10-10 "Starting agent" loading mark
 
 - [ ] **Loading mark (dark and light):** + Agent (title bar), New agent (empty tab) and
