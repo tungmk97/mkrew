@@ -18880,12 +18880,15 @@ fn session_row(
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
     let time = row.time_text(now);
-    // Only the selected row spells the title out on a second line (SPEC §11); the others keep
-    // `agent · title` on one line. `progress` is the plan bar of the selected row, last in the
-    // column under the name / title lines.
+    // Only the selected row spells the title out on a second line under the agent (SPEC §11).
+    // The other agent rows show just the title (the agent chip already names the agent);
+    // terminal rows keep `powershell · title` (their chip does not say which shell).
+    // `progress` is the plan bar of the selected row, last in the column under the name /
+    // title lines.
     let (name, subtitle) = match (&row.title, selected) {
         (Some(title), true) => (row.agent.clone(), Some(title.clone())),
-        (Some(title), false) => (format!("{} · {title}", row.agent), None),
+        (Some(title), false) if row.shell => (format!("{} · {title}", row.agent), None),
+        (Some(title), false) => (title.clone(), None),
         (None, _) => (row.agent.clone(), None),
     };
     let hover = theme.hover;
@@ -18961,13 +18964,18 @@ fn session_row(
                 ),
         )
         .when(row.pinned, |el| el.child(pin_mark()))
-        .children(time.map(|time| {
+        // A right-aligned slot of a minimum width, kept without a time, so every row's time
+        // and title end in one column.
+        .child(
             div()
                 .flex_none()
+                .min_w(theme::rems_px(theme::SESSION_TIME_WIDTH))
+                .flex()
+                .justify_end()
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
-                .child(time)
-        }))
+                .children(time),
+        )
         .child(
             row_action(
                 SharedString::from(format!("session-remove-{session_id}")),

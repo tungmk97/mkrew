@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mkrew_protocol::{Event, Project, Session, SessionState, StateSource};
+use mkrew_protocol::{Event, Project, Session, SessionKind, SessionState, StateSource};
 use ulid::Ulid;
 
 use crate::history;
@@ -150,6 +150,9 @@ pub struct SessionRow {
     /// Agent profile id (`shell` for shell sessions).
     pub agent: String,
     pub title: Option<String>,
+    /// A terminal (shell profile): its row keeps `powershell · title`, the chip alone does not
+    /// say which shell it is.
+    pub shell: bool,
     pub state: SessionState,
     pub state_source: StateSource,
     /// Unix ms of the last state change.
@@ -436,6 +439,7 @@ impl Sidebar {
                     project_id: session.project_id,
                     agent: session.agent_profile.clone(),
                     title: history::title(session).map(str::to_owned),
+                    shell: session.kind == SessionKind::Shell,
                     state: session.state,
                     state_source: session.state_source,
                     state_changed_at: session.state_changed_at,
@@ -526,7 +530,7 @@ impl Sidebar {
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{SessionExitedEvent, SessionKind, SessionStateEvent};
+    use mkrew_protocol::{SessionExitedEvent, SessionStateEvent};
 
     use super::*;
 
@@ -1087,6 +1091,7 @@ mod tests {
             project_id: api.id,
             agent: "claude".into(),
             title: None,
+            shell: false,
             state,
             state_source: StateSource::Daemon,
             state_changed_at: 0,

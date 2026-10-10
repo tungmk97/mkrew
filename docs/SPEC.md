@@ -886,9 +886,11 @@ color alone.
 - Workspace row: a summary of its sessions (`1 working`, `2 idle`, `1 working · 1 needs you ·
   2 idle`) and `?` if any needs_input; no token total (the status bar shows usage of the focused
   agent). Sidebar session rows hang under a faint guide line: status mark, agent chip, name and,
-  on the right, only the time of a working or idle session (`17m`; the status icon already says
-  the state, its hover says it in words). The selected row has a second line with the
-  session/task title (the other rows show `agent · title` on one line).
+  on the right in a fixed right-aligned column, only the time of a working or idle session
+  (`17m`; the status icon already says the state, its hover says it in words). The selected row
+  has a second line with the session/task title under the agent; the other agent rows show just
+  the title (the chip names the agent), terminal rows keep `powershell · title`. Agent terminal
+  titles drop omp's leading `π` logo (ADR 0031).
 - Pinned workspaces, sessions and tabs lead their lists and show 📌 next to the name (§10 Pin);
   the order does not change a pane's status.
 - Hovering a status shows its source (hook/screen) and when it last changed.

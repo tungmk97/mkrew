@@ -21,13 +21,17 @@ pub const SCROLLBACK_LINES: usize = 200;
 pub const TITLE_MAX_CHARS: usize = 60;
 
 /// A terminal title as a pane name (ADR 0031): leading spinner and status glyphs (Claude's
-/// `✳ `) and blanks dropped, at most [`TITLE_MAX_CHARS`] characters. `None` when nothing
-/// usable is left, or for a path (ConPTY and shells title a console with a path).
+/// `✳ `), omp's `π` logo (`π ⋮ Plan…`; the agent chip already shows it) and blanks dropped,
+/// at most [`TITLE_MAX_CHARS`] characters. `None` when nothing usable is left, or for a path
+/// (ConPTY and shells title a console with a path).
 // ponytail: also drops a leading `(` or `#` of a real title; a glyph list if that bites.
 pub fn clean_title(raw: &str) -> Option<String> {
-    let title = raw
-        .trim_start_matches(|c: char| !c.is_alphanumeric())
-        .trim_end();
+    let glyph = |c: char| !c.is_alphanumeric();
+    let mut title = raw.trim_start_matches(glyph);
+    if let Some(rest) = title.strip_prefix("π ") {
+        title = rest.trim_start_matches(glyph);
+    }
+    let title = title.trim_end();
     if title.is_empty() || title.contains('\\') {
         return None;
     }
@@ -363,6 +367,13 @@ mod tests {
             Some("Sửa lỗi đăng nhập")
         );
         assert_eq!(clean_title("✳ "), None);
+        assert_eq!(
+            clean_title("π ⋮ Plan workspace").as_deref(),
+            Some("Plan workspace")
+        );
+        assert_eq!(clean_title("π > Review").as_deref(), Some("Review"));
+        assert_eq!(clean_title("π ").as_deref(), None);
+        assert_eq!(clean_title("πr² area").as_deref(), Some("πr² area"));
         assert_eq!(clean_title(r"C:\Program Files\nodejs\node.exe"), None);
         let long = "a".repeat(80);
         assert_eq!(

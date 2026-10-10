@@ -73,6 +73,9 @@ pub const STATUS_DOT_GAP: f32 = 2.0;
 /// Width of every status mark, so glyph and dot rows line up (3 × 4 + 2 × 2 = 16). These three
 /// are px at the default 13 px body and scale with `[ui] font_size` ([`rems_px`]).
 pub const STATUS_MARK_WIDTH: f32 = space::L;
+/// Narrowest the time column on the right of a session row gets (fits `1h 5m`), so times and
+/// titles line up.
+pub const SESSION_TIME_WIDTH: f32 = space::XXL;
 
 /// A square glyph button (theme toggle, sidebar +).
 pub const ICON_BUTTON_SIZE: f32 = 26.0;

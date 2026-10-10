@@ -15,6 +15,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-10 sidebar session rows
+
+- [ ] **Rows (dark and light):** an omp session's row shows its title without `omp · ` and
+  without the leading `π`; the selected row shows `omp` then the title (no `π ⋮`). A terminal
+  row (PowerShell…) still shows `powershell · title`. Times (`5s`, `43m`, `1h 5m`) end in one
+  right-aligned column; rows without a time keep the same title width. Existing titles update
+  on the next title change of the agent.
+
 ### To verify — 2026-10-10 inbox: redesign (plan docs/superpowers/plans/2026-10-10-inbox-redesign.md)
 
 - [ ] **Run colors:** in light and dark, with a workspace that has two run commands:
