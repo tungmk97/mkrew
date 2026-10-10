@@ -162,6 +162,13 @@ pub const FIND_INPUT_WIDTH: f32 = 200.0;
 /// Width of the Files editor's caret.
 pub const CARET_WIDTH: f32 = 2.0;
 
+/// The scroll bar over the right edge of the Files editor and the Markdown preview: its
+/// grab area, the thumb drawn in it (round ends of `radius::SMALL`), and the shortest thumb
+/// (a 2 MB file still gets one you can grab).
+pub const SCROLLBAR_WIDTH: f32 = space::M;
+pub const SCROLLBAR_THUMB_WIDTH: f32 = space::S;
+pub const SCROLLBAR_MIN_THUMB: f32 = space::XL;
+
 /// The Files editor highlights its text again this long after the last keystroke.
 pub const REHIGHLIGHT_DELAY: Duration = Duration::from_millis(150);
 

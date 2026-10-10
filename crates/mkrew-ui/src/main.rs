@@ -79,6 +79,7 @@ use mkrew_ui::quick_open::{self, QuickOpen, Results};
 use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::run::{self, Ports, RowState, RunAction, Summary};
 use mkrew_ui::run_setup::{self, RunSetup};
+use mkrew_ui::scrollbar;
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
 use mkrew_ui::status;
@@ -392,6 +393,8 @@ struct Shell {
     file_replace_focus: FocusHandle,
     /// Keeps the current find match of the Files viewer in view.
     file_code_scroll: UniformListScrollHandle,
+    /// Where the Files editor's scroll bar thumb is held while it is dragged.
+    file_code_drag: scrollbar::Drag,
     /// The Files editor (ADR 0028): typing goes there while it has focus.
     file_editor_focus: FocusHandle,
     /// Where the editor's text starts on screen (set while painting), for clicks.
@@ -772,6 +775,7 @@ impl Shell {
             file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),
             file_code_scroll: UniformListScrollHandle::new(),
+            file_code_drag: scrollbar::Drag::default(),
             file_editor_focus: cx.focus_handle(),
             file_text_left: Rc::default(),
             git: HashMap::new(),
@@ -11761,6 +11765,11 @@ impl Shell {
             )
             .child(self.typing(&self.file_editor_focus, Self::file_editor_key_down, cx))
             .child(list)
+            .child(scrollbar::bar(
+                scrollbar::Source::Handle(self.file_code_scroll.0.borrow().base_handle.clone()),
+                Rc::clone(&self.file_code_drag),
+                theme,
+            ))
             .into_any_element()
     }
 

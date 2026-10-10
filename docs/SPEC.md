@@ -959,7 +959,9 @@ Only edit this file. When done, for EACH comment run:
   (Ctrl = file), PgUp/PgDn, Backspace/Delete (Ctrl = word), Enter keeps the indent, Tab, Ctrl+A,
   Ctrl+Z / Ctrl+Y undo/redo, Ctrl+C/X/V. Line endings and the final newline are kept. Unsaved
   changes show `●` before the path; Ctrl+S or "Save" writes the file (`fs.write`). Files > 2 MB
-  or binary: a read-only notice and "Open in Zed".
+  or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
+  view is (only when the file is taller than the view): drag its thumb, or press the track to
+  jump there.
 - Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
   Save finds another version on disk, a banner "Changed on disk — Reload · Keep mine" offers
   "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Opening another file,

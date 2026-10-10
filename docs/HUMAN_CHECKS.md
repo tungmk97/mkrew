@@ -15,6 +15,18 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-10 file viewer scroll bar and large files (plan docs/superpowers/plans/2026-10-10-file-viewer-scroll.md)
+
+- [ ] **Editor bar (dark and light):** open a long source file in Files. A thin rounded thumb
+  sits on the right edge; its size is the visible share; it moves as you scroll with the wheel,
+  PgDn, Ctrl+End and Find (Enter).
+- [ ] **Drag:** click in the text (the editor has focus), then drag the thumb up and down, also
+  with the pointer over the text and outside the window, and release there. Only scrolling
+  happens: the caret does not move, nothing gets selected, and the thumb goes back to its idle
+  color on release. Pressing the track above or below the thumb jumps there.
+- [ ] **Short file:** a file that fits on screen shows no bar; a click at the far right end of a
+  long line still puts the caret there.
+
 ### To verify — 2026-10-10 sidebar session rows
 
 - [ ] **Rows (dark and light):** an omp session's row shows its title without `omp · ` and
