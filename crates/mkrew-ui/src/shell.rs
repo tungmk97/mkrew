@@ -9,3 +9,14 @@ pub(crate) mod menus;
 pub(crate) mod pane_render;
 pub(crate) mod sidebar;
 pub(crate) mod widgets;
+
+mod comments;
+pub(crate) mod docs;
+mod files;
+pub(crate) mod files_render;
+pub(crate) mod git;
+mod git_dialogs;
+pub(crate) mod git_diff;
+mod git_render;
+pub(crate) mod git_rows;
+mod send_dialog;
