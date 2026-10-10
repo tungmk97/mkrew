@@ -717,6 +717,24 @@ impl TerminalPane {
         self.input(data, cx);
     }
 
+    /// Voice text (§20G): typed into the find query like an IME commit while the find bar has
+    /// the keyboard, else pasted into the session like [`Self::type_text`].
+    pub fn type_voice(&mut self, text: &str, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if !self.find_focus.is_focused(window) {
+            return self.type_text(text, cx);
+        }
+        // An open composition belongs to what the user typed, not to the voice text.
+        self.ime_marked.marked_for(&self.find_focus).set(0);
+        for keystroke in crate::ime::keys(&std::cell::Cell::new(0), text, false) {
+            let event = KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: false,
+            };
+            self.find_key_down(&event, window, cx);
+        }
+    }
+
     /// Sends typed or pasted bytes; a scrolled-back view returns to the live screen first.
     /// Sends `data` to the session. Anything sent (keys, paste, dropped paths, wheel arrows)
     /// clears the selection, so a later Ctrl+C interrupts again (ADR 0022).

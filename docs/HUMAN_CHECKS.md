@@ -41,6 +41,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Other provider:** set `[voice] base_url = "https://api.openai.com/v1"`,
   `model = "gpt-4o-mini-transcribe"` and `api_key_env = "OPENAI_API_KEY"` (with that variable
   set). Voice input works the same.
+- [ ] **Focus moved:** start dictating in the composer, stop, then click the Git file list while
+  `◌ Transcribing…` shows. Nothing is staged or toggled; the text is on the clipboard and the
+  status bar says so.
+- [ ] **Broken settings:** put an invalid line in settings.toml, then press Ctrl+Shift+D. The
+  status bar shows `✕ Voice: …` naming the file and line, and no recording starts.
+- [ ] **Exited pane:** focus a pane whose session has exited and dictate. The text is on the
+  clipboard.
+- [ ] **Terminal find bar:** press Ctrl+F in a pane and dictate. The text lands in the find
+  query, not in the agent.
 
 ### To verify — 2026-10-10 "Starting agent" loading mark
 

@@ -7598,7 +7598,7 @@ impl Shell {
             Ok(settings) => settings.voice,
             // Never fall back to the default provider: audio goes only where the user said (§1).
             Err(error) => {
-                self.voice = voice::State::Message(format!("✕ Voice: settings.toml: {error:#}"));
+                self.voice = voice::State::Message(format!("✕ Voice: {error}"));
                 cx.notify();
                 return;
             }
@@ -7686,7 +7686,9 @@ impl Shell {
             .borrow()
             .clone()
             .filter(|(focus, _)| focus.is_focused(window));
-        if let Some((_, on_key)) = field {
+        if let Some((focus, on_key)) = field {
+            // An open composition belongs to what the user typed, not to the voice text.
+            self.ime_marked.marked_for(&focus).set(0);
             for keystroke in ime::keys(&Cell::new(0), text, false) {
                 let event = KeyDownEvent {
                     keystroke,
@@ -7706,7 +7708,7 @@ impl Shell {
             })
             .cloned();
         if let Some(pane) = pane {
-            pane.update(cx, |pane, cx| pane.type_text(text, cx));
+            pane.update(cx, |pane, cx| pane.type_voice(text, window, cx));
             return true;
         }
         false
@@ -20753,6 +20755,9 @@ impl Render for Tooltip {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        // Voice input types into the field whose typing canvas registers again during this
+        // frame's paint (§20G); a field that is gone from the screen is no target.
+        self.typing_target.replace(None);
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         if let Some(launched) = self.launched {
             if !self.first_frame_logged {

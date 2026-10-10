@@ -25,6 +25,7 @@ pub fn api_key(
     }
 }
 
+/// The transcription endpoint of an API root (`base_url`, with or without a trailing slash).
 pub fn url(base_url: &str) -> String {
     format!("{}/audio/transcriptions", base_url.trim_end_matches('/'))
 }

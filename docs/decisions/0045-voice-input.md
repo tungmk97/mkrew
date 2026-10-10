@@ -30,7 +30,8 @@
 - The clip is sent as 16-bit mono WAV in multipart form data (ureq, rustls) to
   `{base_url}/audio/transcriptions`. The key comes from the environment variable that
   `api_key_env` names; it is never stored in `settings.toml`.
-- Recordings under 0.3 s, or with a peak under 0.01, are not sent: Whisper invents text for silence.
+- Recordings under 0.3 s, or with less than 0.15 s of sound above 1 % of full scale (RMS over
+  30 ms), are not sent: Whisper invents text for silence.
 - The text, with whitespace collapsed to single spaces, is typed like an IME commit into the text
   field that has the keyboard when it arrives, or pasted into the focused terminal pane. If
   neither has focus, it goes to the clipboard.
@@ -43,5 +44,5 @@
 - Linux builds need `libasound2-dev`, which CI now installs. On macOS, voice input needs
   `NSMicrophoneUsageDescription` in the app bundle's Info.plist; packaging is not changed here.
 - On Windows, "Let desktop apps access your microphone" must be on (Settings → Privacy).
-- Voice text reaches a field one char at a time, like an IME commit, so the Files editor gets
-  one undo step per char.
+- Voice text reaches a field like an IME commit, one char at a time; in the Files editor it
+  joins the current typing run as one undo step.

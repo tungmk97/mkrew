@@ -1552,7 +1552,7 @@ model = "whisper-large-v3-turbo"
 api_key_env = "GROQ_API_KEY"  # env var holding the key ("" = no key, local server); never the key itself
 language = ""               # "" = detected per recording; "vi" | "en" forces one
 prompt = "Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé."
-max_seconds = 120           # a recording stops by itself after this
+max_seconds = 120           # 1–600; a recording stops by itself after this
 ```
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
@@ -1831,8 +1831,9 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    data, with `model`, `response_format=json`, `temperature=0`, and `language` / `prompt` when set.
    The timeout is 60 s. The key is read from the environment variable that `api_key_env` names
    (never from `settings.toml`) and sent as `Authorization: Bearer`; an empty `api_key_env` sends
-   no key. Recordings under 0.3 s, or with a peak under 1 % of full scale, are not sent ("too
-   short", "heard nothing"), because Whisper invents text for silence. API errors show the API's
+   no key. Recordings under 0.3 s, or with less than 0.15 s of sound above 1 % of full scale (RMS
+   over 30 ms), are not sent ("too short", "heard nothing"), because Whisper invents text for
+   silence, and the shortcut's own key click must not count as speech. API errors show the API's
    `error.message`.
 4. **Where the text goes.** Whitespace collapses to single spaces, because a line break would be
    Enter and send the text to an agent. When the text arrives, it is typed into the text field

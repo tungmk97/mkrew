@@ -11,8 +11,12 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// Shorter recordings are a slip of the shortcut, not speech.
 pub const MIN_SECONDS: f32 = 0.3;
-/// A peak below this (about -40 dBFS) is silence; Whisper invents text for silence.
-pub const MIN_PEAK: f32 = 0.01;
+/// A 30 ms frame with an RMS below this (about -40 dBFS) is silence; Whisper invents text for
+/// silence.
+pub const MIN_LEVEL: f32 = 0.01;
+/// A clip with less sound than this (in frames at or above `MIN_LEVEL`) is not sent: one key
+/// click (the shortcut press itself) must not pass for speech.
+pub const MIN_VOICED_SECONDS: f32 = 0.15;
 
 /// The shell's voice input.
 #[derive(Default)]
@@ -48,8 +52,17 @@ impl Clip {
         if seconds < MIN_SECONDS {
             bail!("too short: press the shortcut, speak, then press it again");
         }
-        let peak = self.samples.iter().fold(0f32, |peak, s| peak.max(s.abs()));
-        if peak < MIN_PEAK {
+        let frame = (self.rate as usize * 30 / 1000).max(1);
+        let voiced: usize = self
+            .samples
+            .chunks(frame)
+            .filter(|frame| {
+                let energy = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32;
+                energy.sqrt() >= MIN_LEVEL
+            })
+            .map(<[f32]>::len)
+            .sum();
+        if (voiced as f32 / self.rate.max(1) as f32) < MIN_VOICED_SECONDS {
             bail!("heard nothing: is the microphone muted?");
         }
         Ok(wav(&self.samples, self.rate))
@@ -212,9 +225,44 @@ mod tests {
         assert!(short.contains("too short"), "{short}");
         let silent = clip(2000, 0.005).into_wav().unwrap_err().to_string();
         assert!(silent.contains("heard nothing"), "{silent}");
-        // The peak is by magnitude: a negative-only signal is speech too.
+        // The level is by magnitude: a negative-only signal is speech too.
         assert_eq!(clip(2000, -0.5).into_wav().unwrap().len(), 44 + 4000);
         // Exactly the minimum length and just above the minimum level are sent.
         assert_eq!(clip(300, 0.02).into_wav().unwrap().len(), 44 + 600);
+        // Exactly the minimum sound (5 frames of 30 ms = 0.15 s) in a quiet second is sent.
+        let mut samples = vec![0.0; 1000];
+        samples[..150].fill(0.5);
+        assert_eq!(
+            Clip {
+                samples,
+                rate: 1000
+            }
+            .into_wav()
+            .unwrap()
+            .len(),
+            44 + 2000
+        );
+        // One frame short of it is not.
+        let mut samples = vec![0.0; 1000];
+        samples[..120].fill(0.5);
+        let few = Clip {
+            samples,
+            rate: 1000,
+        }
+        .into_wav()
+        .unwrap_err()
+        .to_string();
+        assert!(few.contains("heard nothing"), "{few}");
+        // A key click (a 10 ms spike) in 2 s of silence is not speech.
+        let mut samples = vec![0.0; 2000];
+        samples[500..510].fill(0.9);
+        let click = Clip {
+            samples,
+            rate: 1000,
+        }
+        .into_wav()
+        .unwrap_err()
+        .to_string();
+        assert!(click.contains("heard nothing"), "{click}");
     }
 }

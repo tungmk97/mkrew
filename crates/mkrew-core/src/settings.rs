@@ -108,8 +108,20 @@ pub struct VoiceSettings {
     pub language: String,
     /// Spelling and style hint (Whisper `prompt`, 224 tokens at most); empty = none.
     pub prompt: String,
-    /// A recording stops by itself after this many seconds.
+    /// A recording stops by itself after this many seconds (1–600, checked when parsed).
+    #[serde(deserialize_with = "voice_max_seconds")]
     pub max_seconds: u32,
+}
+
+fn voice_max_seconds<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let seconds = u32::deserialize(deserializer)?;
+    if (1..=600).contains(&seconds) {
+        Ok(seconds)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "max_seconds must be 1–600 seconds, got {seconds}"
+        )))
+    }
 }
 
 impl Default for VoiceSettings {
@@ -343,6 +355,7 @@ pub fn template() -> &'static str {
      # variable named by api_key_env (empty: no key); restart Mkrew after setting it.\n\
      # language: empty detects it per recording; \"vi\" or \"en\" forces one.\n\
      # prompt: words the model should spell as written.\n\
+     # max_seconds: 1–600; a recording stops by itself after this.\n\
      [voice]\n\
      # base_url = \"https://api.groq.com/openai/v1\"\n\
      # model = \"whisper-large-v3-turbo\"\n\
@@ -554,6 +567,16 @@ font_size = 15
         // The key itself never lives in the file (SPEC §20G).
         let message = parse_err("[voice]\napi_key = \"gsk_x\"\n");
         assert!(message.contains("unknown field `api_key`"), "{message}");
+    }
+
+    #[test]
+    fn voice_max_seconds_outside_1_to_600_is_an_error() {
+        let message = parse_err("[voice]\nmax_seconds = 0\n");
+        assert!(message.starts_with("settings.toml:2:"), "{message}");
+        assert!(message.contains("1–600"), "{message}");
+        assert!(parse_err("[voice]\nmax_seconds = 601\n").contains("1–600"));
+        let ok = parse(Path::new("settings.toml"), "[voice]\nmax_seconds = 600\n").unwrap();
+        assert_eq!(ok.voice.max_seconds, 600);
     }
 
     #[test]
