@@ -63,6 +63,7 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
             run_commands: None,
             run_autostart: Some(run_autostart),
             color: None,
+            pinned: None,
         }))?;
         let state = if updated.run_autostart { "on" } else { "off" };
         println!("run auto-start of {}: {state}", updated.name);

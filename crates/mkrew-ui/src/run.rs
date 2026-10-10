@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::theme::Theme;
 use mkrew_core::run::{MAX_PORTS, command_name};
 use mkrew_protocol::{Event, Project, Session, SessionPortsEvent, SessionState};
 use ulid::Ulid;
@@ -13,6 +14,23 @@ pub enum RunAction {
     Start,
     Restart,
     Stop,
+}
+
+/// The glyph color of a Run control and the faint fill it shows on hover: Start green,
+/// Restart amber, Stop red, in the title bar button and in the ▾ menu alike (SPEC §10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionColors {
+    pub fg: u32,
+    pub tint: u32,
+}
+
+pub fn action_colors(action: RunAction, theme: &Theme) -> ActionColors {
+    let (fg, tint) = match action {
+        RunAction::Start => (theme.status_done, theme.success_bg),
+        RunAction::Restart => (theme.status_needs_input, theme.warning_bg),
+        RunAction::Stop => (theme.status_exited, theme.danger_bg),
+    };
+    ActionColors { fg, tint }
 }
 
 /// Ports of live run sessions: loaded per workspace with `session.ports`, then kept live by
@@ -277,6 +295,7 @@ mod tests {
             archived: false,
             base_ref: None,
             color: None,
+            pinned: false,
         }
     }
 
@@ -289,6 +308,7 @@ mod tests {
             kind: SessionKind::Shell,
             title: Some(format!("run:{name}")),
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,
@@ -298,6 +318,8 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 
@@ -411,5 +433,31 @@ mod tests {
             ..be
         };
         assert_eq!(pane_title(&shell, &[8080]).as_deref(), Some("notes"));
+    }
+
+    /// The glyph stays visible on every surface it sits on (title bar, menu panel, its own
+    /// hover fill), and the idle green Run button keeps readable text.
+    #[test]
+    fn run_action_colors_are_visible_in_both_themes() {
+        use crate::theme::contrast;
+        for theme in [Theme::dark(), Theme::light()] {
+            for action in [RunAction::Start, RunAction::Restart, RunAction::Stop] {
+                let colors = action_colors(action, &theme);
+                for bg in [theme.bg, theme.hover, theme.surface_raised, colors.tint] {
+                    let ratio = contrast(colors.fg, bg);
+                    assert!(
+                        ratio >= 3.0,
+                        "{action:?} {:06X} on {bg:06X}: {ratio:.2}",
+                        colors.fg
+                    );
+                }
+            }
+            let fill = action_colors(RunAction::Start, &theme).fg;
+            assert!(contrast(theme.on_accent, fill) >= 3.0);
+            // A hovered tint differs from the menu panel it sits on.
+            for action in [RunAction::Start, RunAction::Restart, RunAction::Stop] {
+                assert_ne!(action_colors(action, &theme).tint, theme.surface_raised);
+            }
+        }
     }
 }

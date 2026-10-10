@@ -96,6 +96,7 @@ fn spawns_the_daemon_once_then_reuses_it() {
         run_commands: None,
         run_autostart: None,
         color: None,
+        pinned: None,
     }));
     let listed = first.call::<Vec<Project>>(Request::ProjectList);
     assert_eq!(block_on(renamed).unwrap().name, "renamed");

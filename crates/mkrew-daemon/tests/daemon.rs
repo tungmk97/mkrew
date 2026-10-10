@@ -21,18 +21,20 @@ use mkrew_protocol::{
     GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
     GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitShowParams,
     GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
-    HunkTarget, Message, Outcome, PROTOCOL_VERSION, Project, ProjectAddParams, ProjectRef,
-    ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError, RunCommand,
-    RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session, SessionAttachResult,
-    SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory, SessionInputParams,
-    SessionKillParams, SessionKind, SessionListParams, SessionPortsEvent, SessionQueueEvent,
-    SessionReadParams, SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams,
-    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
+    HunkTarget, Message, Outcome, PROTOCOL_VERSION, PlanItem, Project, ProjectAddParams,
+    ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError,
+    RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session,
+    SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory,
+    SessionInputParams, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
+    SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionQueueEvent, SessionReadParams,
+    SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams, SessionSendParams,
+    SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabRef, TabRenameParams, TabSetLayoutParams,
-    Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
-    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
-    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, encode,
+    TabCreateParams, TabListParams, TabMoveParams, TabPinParams, TabRef, TabRenameParams,
+    TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent,
+    TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams,
+    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams,
+    UndoPreview, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -679,6 +681,7 @@ fn startup_marks_stale_sessions_exited() {
                 kind: SessionKind::Agent,
                 title: None,
                 terminal_title: None,
+                color: None,
                 native_session_id: None,
                 state: SessionState::Working,
                 state_source: StateSource::Screen,
@@ -688,6 +691,8 @@ fn startup_marks_stale_sessions_exited() {
                 rows: 24,
                 started_at: 1,
                 ended_at: None,
+                pinned: false,
+                plan_path: None,
             })
             .unwrap();
     }
@@ -2104,13 +2109,24 @@ fn a_turn_end_reads_token_usage_from_the_agent_transcript() {
     let Event::SessionUsage(usage) = event else {
         unreachable!()
     };
-    // The totals of `mkrew-core`'s Claude fixture.
+    // The located file (`Path` equality ignores the `/` the test's `join` mixed in).
+    let located = usage.transcript.as_deref().expect("a located transcript");
+    assert_eq!(
+        std::path::Path::new(located),
+        transcripts.join("native-7.jsonl")
+    );
+    // The totals of `mkrew-core`'s Claude fixture: cache split out of `input` (ADR 0035),
+    // the context as before, the model of the newest main-thread message.
     let expected = SessionUsageEvent {
         session_id: id,
-        input: (2 + 688 + 48215) + (3 + 9000) + (1 + 1200 + 48903),
+        input: 2 + 3 + 1,
         output: 206 + 40 + 512,
+        cache_read: 48215 + 9000 + 48903,
+        cache_write: 688 + 1200,
         context: 1 + 1200 + 48903,
         context_window: Some(200_000),
+        model: Some("claude-opus-5".into()),
+        transcript: usage.transcript.clone(),
     };
     assert_eq!(usage, expected);
     let listed: Vec<SessionUsageEvent> = client
@@ -2124,6 +2140,70 @@ fn a_turn_end_reads_token_usage_from_the_agent_transcript() {
         project_id: Ulid::new(),
     }));
     assert_eq!(error_code(unknown), ErrorCode::NotFound);
+    client.stop();
+}
+
+/// `session.usage` lists an event stored before the cache split (no cache fields, no model)
+/// as it was: both cache fields 0, no model, the old `input` (SPEC §20E.3, ADR 0035).
+#[test]
+fn session_usage_lists_events_stored_before_the_cache_split() {
+    let env = Env::new();
+    std::fs::create_dir_all(env.data_dir()).unwrap();
+    let session_id = Ulid::new();
+    let project_id = {
+        let store = Store::open(&env.data_dir().join("mkrew.db")).unwrap();
+        let project = store.add_project(env.dir.path(), None).unwrap();
+        store
+            .insert_session(&Session {
+                id: session_id,
+                task_id: None,
+                project_id: project.id,
+                agent_profile: "fake".into(),
+                kind: SessionKind::Agent,
+                title: None,
+                terminal_title: None,
+                color: None,
+                native_session_id: None,
+                state: SessionState::Exited,
+                state_source: StateSource::Daemon,
+                state_changed_at: 1,
+                exit_code: None,
+                cols: 80,
+                rows: 24,
+                started_at: 1,
+                ended_at: Some(2),
+                pinned: false,
+                plan_path: None,
+            })
+            .unwrap();
+        let old = json!({
+            "session_id": session_id, "input": 1_000, "output": 20, "context": 900,
+            "context_window": 200_000
+        });
+        store
+            .insert_session_event(session_id, "usage", &old, 10)
+            .unwrap();
+        project.id
+    };
+    let (_daemon, mut client) = env.start();
+    let listed: Vec<SessionUsageEvent> = client
+        .call(Request::SessionUsage(ProjectRef { project_id }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        listed,
+        [SessionUsageEvent {
+            session_id,
+            input: 1_000,
+            output: 20,
+            cache_read: 0,
+            cache_write: 0,
+            context: 900,
+            context_window: Some(200_000),
+            model: None,
+            transcript: None,
+        }]
+    );
     client.stop();
 }
 
@@ -2814,6 +2894,7 @@ fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
         run_commands: None,
         run_autostart: None,
         color: None,
+        pinned: None,
     })
 }
 
@@ -2826,6 +2907,7 @@ fn set_default_shell(project: &Project, shell: Option<&str>) -> Request {
         run_commands: None,
         run_autostart: None,
         color: None,
+        pinned: None,
     })
 }
 
@@ -3760,6 +3842,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
             run_commands: Some(vec![raw]),
             run_autostart: Some(true),
             color: None,
+            pinned: None,
         }))
         .into_result()
         .unwrap();
@@ -3787,6 +3870,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
         run_commands: Some(vec![bad]),
         run_autostart: None,
         color: None,
+        pinned: None,
     }));
     assert_eq!(error_code(refused), ErrorCode::InvalidRequest);
     client.stop();
@@ -4473,6 +4557,20 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
         .call(rename(shown.session_id, Some("Fix login")))
         .into_result::<Session>()
         .unwrap();
+    let repo = env.repo();
+    std::fs::write(repo.join("PLAN.md"), "- [ ] a\n- [x] b\n").unwrap();
+    client
+        .call(link_plan(shown.session_id, Some("PLAN.md")))
+        .into_result::<Session>()
+        .unwrap();
+    client
+        .call(pin(shown.session_id, true))
+        .into_result::<Session>()
+        .unwrap();
+    client
+        .call(set_color(shown.session_id, Some("teal")))
+        .into_result::<Session>()
+        .unwrap();
     client.wait_state(quit.session_id, SessionState::Exited);
     // The exit hook removes `quit`'s leaf a moment after the exit is stored. Once it has run it
     // never runs for `quit` again, so the layout written next keeps the leaf of the session
@@ -4515,6 +4613,31 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
         Some("Fix login"),
         "the resumed pane keeps its name"
     );
+    assert!(resumed.pinned, "the resumed pane keeps its pin");
+    assert_eq!(
+        resumed.color.as_deref(),
+        Some("teal"),
+        "the resumed pane keeps its color"
+    );
+    assert_eq!(
+        resumed.plan_path.as_deref(),
+        Some("PLAN.md"),
+        "the resumed pane keeps its plan"
+    );
+    let plans: Vec<SessionPlanEvent> = client
+        .call(Request::SessionPlan(ProjectRef {
+            project_id: project.id,
+        }))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        plans
+            .iter()
+            .map(|p| (p.session_id, p.done, p.total))
+            .collect::<Vec<_>>(),
+        [(resumed.id, 1, 2)],
+        "and watches it again"
+    );
     client.wait_state(resumed.id, SessionState::NeedsInput);
     let attached: SessionAttachResult = client.attach(resumed.id).into_result().unwrap();
     let screen = screen_text(&attached.snapshot);
@@ -4537,6 +4660,7 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
         .iter()
         .max_by_key(|s| (s.started_at, s.id))
         .unwrap();
+    assert!(newest.pinned, "every resume carries the pin on");
     assert_eq!(
         list_tabs(&mut client, &project)[0].layout,
         layout(newest.id)
@@ -5541,6 +5665,7 @@ fn set_runs(project: &Project, commands: Vec<RunCommand>, autostart: Option<bool
         run_commands: Some(commands),
         run_autostart: autostart,
         color: None,
+        pinned: None,
     })
 }
 
@@ -5676,6 +5801,14 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
         .collect();
     assert_eq!(ids, [(be_id, false), (fe_id, false)]);
 
+    client
+        .call(set_color(be_id, Some("teal")))
+        .into_result::<Session>()
+        .unwrap();
+    client
+        .call(pin(be_id, true))
+        .into_result::<Session>()
+        .unwrap();
     // Restarting BE replaces it in the first slot; FE keeps running.
     let restarted: RunStarted = client
         .call(run_restart(&project, Some("BE")))
@@ -5685,6 +5818,11 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
     let new_be = restarted.sessions[0].session_id;
     assert!(restarted.sessions[0].started);
     assert_ne!(new_be, be_id);
+    let new_be_session = client.session(new_be);
+    assert_eq!(
+        (new_be_session.color.as_deref(), new_be_session.pinned),
+        (Some("teal"), true)
+    );
     assert_eq!(client.session(be_id).state, SessionState::Exited);
     assert_ne!(client.session(fe_id).state, SessionState::Exited);
     // The old BE's exit must not take the new BE's pane with it.
@@ -6054,6 +6192,17 @@ fn rename(session_id: Ulid, title: Option<&str>) -> Request {
     })
 }
 
+fn pin(session_id: Ulid, pinned: bool) -> Request {
+    Request::SessionPin(SessionPinParams { session_id, pinned })
+}
+
+fn link_plan(session_id: Ulid, path: Option<&str>) -> Request {
+    Request::SessionLinkPlan(SessionLinkPlanParams {
+        session_id,
+        path: path.map(Into::into),
+    })
+}
+
 /// `session.rename` (ADR 0031): a live session keeps the name through its own later saves
 /// (state changes, exit); an exited one is renamed in the store; blank clears; run sessions
 /// and `run:` titles are refused.
@@ -6116,6 +6265,317 @@ fn sessions_are_renamed_live_and_exited_but_run_sessions_refuse() {
         error_code(client.call(rename(web, Some("mine")))),
         ErrorCode::InvalidState
     );
+    client
+        .call(run_stop(&project, None))
+        .into_result::<()>()
+        .unwrap();
+    client.wait_state(web, SessionState::Exited);
+    client.stop();
+}
+
+/// `session.link_plan` (ADR 0039): the checklist is announced at once and after each
+/// change of the file; a change that keeps the checklist sends nothing; a deleted file reports
+/// an error; unlinking stops the watch. Bad links are refused and change nothing.
+#[test]
+fn a_linked_plan_reports_its_checklist_until_it_is_unlinked() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.repo();
+    let plan = repo.join("PLAN.md");
+    std::fs::write(&plan, "# Plan\n- [x] a\n- [ ] b\n").unwrap();
+    std::fs::write(repo.join("notes.txt"), "- [ ] x\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+
+    for bad in ["notes.txt", "missing.md"] {
+        assert_eq!(
+            error_code(client.call(link_plan(id, Some(bad)))),
+            ErrorCode::InvalidRequest,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        error_code(client.call(link_plan(Ulid::new(), Some("PLAN.md")))),
+        ErrorCode::NotFound
+    );
+    assert_eq!(client.session(id).plan_path, None);
+
+    let linked: Session = client
+        .call(link_plan(id, Some(plan.to_str().unwrap())))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        linked.plan_path.as_deref(),
+        Some("PLAN.md"),
+        "inside the project: stored relative"
+    );
+    assert_eq!(client.session(id).plan_path.as_deref(), Some("PLAN.md"));
+    let counts = |done: u32, total: u32| {
+        move |e: &Event| {
+            matches!(e, Event::SessionPlan(p) if p.session_id == id
+                && (p.done, p.total) == (done, total) && p.error.is_none())
+        }
+    };
+    let Event::SessionPlan(first) = client.wait_event_where(counts(1, 2)) else {
+        unreachable!()
+    };
+    assert_eq!(first.name, "PLAN");
+    assert_eq!(
+        first.items,
+        [
+            PlanItem {
+                done: true,
+                text: "a".into()
+            },
+            PlanItem {
+                done: false,
+                text: "b".into()
+            }
+        ]
+    );
+    let listed = |client: &mut Client| -> Vec<SessionPlanEvent> {
+        client
+            .call(Request::SessionPlan(ProjectRef {
+                project_id: project.id,
+            }))
+            .into_result()
+            .unwrap()
+    };
+    assert_eq!(listed(&mut client), vec![first]);
+
+    // A prose-only edit keeps the checklist: nothing is announced (wait out the debounce).
+    std::fs::write(&plan, "# Plan, renamed\n- [x] a\n- [ ] b\n").unwrap();
+    std::thread::sleep(Duration::from_millis(1200));
+    std::fs::write(&plan, "# Plan, renamed\n- [x] a\n- [x] b\n").unwrap();
+    client.wait_event_where(counts(2, 2));
+    let announced = client
+        .events
+        .iter()
+        .filter(|e| matches!(e, Event::SessionPlan(p) if p.session_id == id))
+        .count();
+    assert_eq!(
+        announced, 2,
+        "the link and the edit; the prose edit sent nothing"
+    );
+
+    std::fs::remove_file(&plan).unwrap();
+    let Event::SessionPlan(gone) = client.wait_event_where(
+        |e| matches!(e, Event::SessionPlan(p) if p.session_id == id && p.error.is_some()),
+    ) else {
+        unreachable!()
+    };
+    assert_eq!((gone.total, gone.items.len()), (0, 0));
+
+    let unlinked: Session = client.call(link_plan(id, None)).into_result().unwrap();
+    assert_eq!(unlinked.plan_path, None);
+    assert!(listed(&mut client).is_empty());
+    let seen = client.events.len();
+    std::fs::write(&plan, "- [ ] a\n- [ ] b\n- [ ] c\n").unwrap();
+    std::thread::sleep(Duration::from_millis(1200));
+    client.session(id); // reads what the daemon pushed meanwhile
+    assert!(
+        !client.events[seen..]
+            .iter()
+            .any(|e| matches!(e, Event::SessionPlan(_))),
+        "no watch after unlink"
+    );
+    client.stop();
+}
+
+/// `session.pin` (SPEC §7): like a rename, a live session keeps its pin through its own later
+/// saves (state changes, exit); an exited one is pinned in the store; both are announced.
+#[test]
+fn sessions_are_pinned_live_and_exited_and_keep_the_pin_through_saves() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+    assert!(!client.session(id).pinned);
+
+    let pinned: Session = client.call(pin(id, true)).into_result().unwrap();
+    assert!(pinned.pinned);
+    client.wait_event_where(|e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.pinned));
+    // The actor's final save (exit) keeps the pin.
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    let exited = client.wait_state(id, SessionState::Exited);
+    assert!(exited.pinned);
+
+    // Exited: unpinned in the store.
+    let unpinned: Session = client.call(pin(id, false)).into_result().unwrap();
+    assert!(!unpinned.pinned);
+    assert!(!client.session(id).pinned);
+    client.wait_event_where(|e| matches!(e, Event::SessionUpdated(s) if s.id == id && !s.pinned));
+    assert_eq!(
+        error_code(client.call(pin(Ulid::new(), true))),
+        ErrorCode::NotFound
+    );
+    client.stop();
+}
+
+/// `tab.pin` and `project.update` `pinned`: stored, announced, `position` untouched, kept by
+/// other changes, and still there after a daemon restart.
+#[test]
+fn workspace_and_tab_pins_persist_across_daemon_restart() {
+    let env = Env::new();
+    let (mut daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let _first: TerminalTab = client
+        .call(create_tab(&project, "one"))
+        .into_result()
+        .unwrap();
+    let second: TerminalTab = client
+        .call(create_tab(&project, "two"))
+        .into_result()
+        .unwrap();
+    let tab_pin = |tab: &TerminalTab, pinned| {
+        Request::TabPin(TabPinParams {
+            tab_id: tab.id,
+            pinned,
+        })
+    };
+    let pin_project = |pinned| {
+        Request::ProjectUpdate(ProjectUpdateParams {
+            project_id: project.id,
+            name: None,
+            default_agent: None,
+            default_shell: None,
+            run_commands: None,
+            run_autostart: None,
+            color: None,
+            pinned: Some(pinned),
+        })
+    };
+
+    let pinned: TerminalTab = client.call(tab_pin(&second, true)).into_result().unwrap();
+    assert!(pinned.pinned);
+    assert_eq!(
+        pinned.position, second.position,
+        "pinning never moves a tab"
+    );
+    client.wait_event(&Event::TabUpdated(pinned));
+    let unknown = Request::TabPin(TabPinParams {
+        tab_id: Ulid::new(),
+        pinned: true,
+    });
+    assert_eq!(error_code(client.call(unknown)), ErrorCode::NotFound);
+
+    let saved: Project = client.call(pin_project(true)).into_result().unwrap();
+    assert!(saved.pinned);
+    client.wait_event(&Event::ProjectUpdated(saved));
+    // Another field changes, the pin stays.
+    let other: Project = client
+        .call(set_default_agent(&project, None))
+        .into_result()
+        .unwrap();
+    assert!(other.pinned);
+
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
+    assert!(listed[0].pinned);
+    let tabs = list_tabs(&mut client, &project);
+    let tabs: Vec<(&str, bool)> = tabs.iter().map(|t| (t.title.as_str(), t.pinned)).collect();
+    assert_eq!(tabs, [("one", false), ("two", true)]);
+
+    let unpinned: TerminalTab = client.call(tab_pin(&second, false)).into_result().unwrap();
+    assert!(!unpinned.pinned);
+    assert_eq!(
+        unpinned.position, second.position,
+        "unpinning keeps the position"
+    );
+    let unpinned: Project = client.call(pin_project(false)).into_result().unwrap();
+    assert!(!unpinned.pinned);
+    client.stop();
+}
+
+fn set_color(session_id: Ulid, color: Option<&str>) -> Request {
+    Request::SessionSetColor(SessionSetColorParams {
+        session_id,
+        color: color.map(Into::into),
+    })
+}
+
+/// `session.set_color` (ADR 0037): a live session keeps its color through its own later
+/// saves (state changes, exit); an exited one is colored in the store; `null` clears; a name
+/// outside the palette is refused; run sessions may be colored.
+#[test]
+fn sessions_are_colored_live_and_exited_and_the_name_is_checked() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.repo();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+
+    let colored: Session = client
+        .call(set_color(id, Some("teal")))
+        .into_result()
+        .unwrap();
+    assert_eq!(colored.color.as_deref(), Some("teal"));
+    client.wait_event_where(|e| {
+        matches!(e, Event::SessionUpdated(s) if s.id == id && s.color.as_deref() == Some("teal"))
+    });
+    // The actor's final save (exit) keeps the color.
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    let exited = client.wait_state(id, SessionState::Exited);
+    assert_eq!(exited.color.as_deref(), Some("teal"));
+
+    // Exited: colored in the store; null clears.
+    let red: Session = client
+        .call(set_color(id, Some("red")))
+        .into_result()
+        .unwrap();
+    assert_eq!(red.color.as_deref(), Some("red"));
+    assert_eq!(client.session(id).color.as_deref(), Some("red"));
+    let cleared: Session = client.call(set_color(id, None)).into_result().unwrap();
+    assert_eq!(cleared.color, None);
+    assert_eq!(client.session(id).color, None);
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.color.is_none()),
+    );
+
+    assert_eq!(
+        error_code(client.call(set_color(id, Some("#ff0000")))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(set_color(Ulid::new(), Some("red")))),
+        ErrorCode::NotFound
+    );
+
+    // A run session is named by its command, but its color is free.
+    let web = run_command("web", ".", &long("echo up", "echo up"));
+    client
+        .call(set_runs(&project, vec![web], None))
+        .into_result::<Project>()
+        .unwrap();
+    let started: RunStarted = client
+        .call(run_start(&project, None))
+        .into_result()
+        .unwrap();
+    let web = started.sessions[0].session_id;
+    let blue: Session = client
+        .call(set_color(web, Some("blue")))
+        .into_result()
+        .unwrap();
+    assert_eq!(blue.color.as_deref(), Some("blue"));
     client
         .call(run_stop(&project, None))
         .into_result::<()>()
@@ -6190,11 +6650,17 @@ fn workspace_colors_are_set_cleared_and_checked() {
             run_commands: None,
             run_autostart: None,
             color: Some(color.map(Into::into)),
+            pinned: None,
         })
     };
     let teal: Project = client.call(color(Some("teal"))).into_result().unwrap();
     assert_eq!(teal.color.as_deref(), Some("teal"));
     client.wait_event(&Event::ProjectUpdated(teal));
+    // Every palette name is accepted, including `lime` (added in 2026-10-10).
+    for name in WORKSPACE_COLORS {
+        let set: Project = client.call(color(Some(name))).into_result().unwrap();
+        assert_eq!(set.color.as_deref(), Some(name));
+    }
     assert_eq!(
         error_code(client.call(color(Some("#ff0000")))),
         ErrorCode::InvalidRequest

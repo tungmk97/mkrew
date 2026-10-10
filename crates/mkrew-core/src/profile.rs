@@ -50,6 +50,7 @@ pub struct UsageConfig {
 pub enum UsageFormat {
     ClaudeJsonl,
     CodexJsonl,
+    OmpJsonl,
     Unknown(String),
 }
 
@@ -58,6 +59,7 @@ impl UsageFormat {
         match name {
             "claude_jsonl" => Self::ClaudeJsonl,
             "codex_jsonl" => Self::CodexJsonl,
+            "omp_jsonl" => Self::OmpJsonl,
             other => Self::Unknown(other.to_owned()),
         }
     }
@@ -473,6 +475,8 @@ needs_input_patterns = ['(?i)do you want to', '(?i)\(y/n\)']
         assert_eq!(p.usage, Some(expected));
         let p = parse("command = \"x\"\n[usage]\nformat = \"codex_jsonl\"").unwrap();
         assert_eq!(p.usage.unwrap().format, UsageFormat::CodexJsonl);
+        let p = parse("command = \"x\"\n[usage]\nformat = \"omp_jsonl\"").unwrap();
+        assert_eq!(p.usage.unwrap().format, UsageFormat::OmpJsonl);
         let p = parse("command = \"x\"\n[usage]\nformat = \"gemini\"").unwrap();
         assert_eq!(
             p.usage.unwrap().format,
@@ -678,5 +682,6 @@ oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
         };
         assert_eq!(format("claude"), Some(UsageFormat::ClaudeJsonl));
         assert_eq!(format("codex"), Some(UsageFormat::CodexJsonl));
+        assert_eq!(format("omp"), Some(UsageFormat::OmpJsonl));
     }
 }

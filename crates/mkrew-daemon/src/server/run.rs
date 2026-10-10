@@ -24,15 +24,15 @@ impl Daemon {
     /// Starts the targeted commands that are not running; answers with all targets.
     pub(super) async fn run_start(&self, params: RunStartParams) -> Outcome {
         let _starting = self.run_starting.lock().await;
-        self.start_runs(params)
+        self.start_runs(params, &[])
     }
 
     /// Stops the targets, waits until they exited, then starts them like `run_start`. Targets
     /// that could not start again are refused before anything stops.
     pub(super) async fn run_restart(&self, params: RunStartParams) -> Outcome {
         let _starting = self.run_starting.lock().await;
-        let project = match self.project_sessions(params.project_id) {
-            Ok((project, _)) => project,
+        let (project, before) = match self.project_sessions(params.project_id) {
+            Ok(found) => found,
             Err(outcome) => return outcome,
         };
         let targets = match targets(&project, params.name.as_deref()) {
@@ -55,7 +55,7 @@ impl Daemon {
                 "the run commands did not stop within 10 s",
             );
         }
-        self.start_runs(params)
+        self.start_runs(params, &before)
     }
 
     /// Asks the targets to terminate; ok when nothing runs.
@@ -91,8 +91,9 @@ impl Daemon {
         }
     }
 
-    /// `run_start` without the lock (`run_restart` holds it already).
-    fn start_runs(&self, params: RunStartParams) -> Outcome {
+    /// `run_start` without the lock (`run_restart` holds it already). `replaced` are the
+    /// sessions a restart stopped: their color and pin carry over by command name.
+    fn start_runs(&self, params: RunStartParams, replaced: &[Session]) -> Outcome {
         if params.cols == 0 || params.rows == 0 {
             return Outcome::error(ErrorCode::InvalidRequest, "cols and rows must be > 0");
         }
@@ -127,11 +128,14 @@ impl Daemon {
             };
             let program = crate::launch::program(&profile);
             for (command, (dir, env)) in to_start {
+                let old = live_run(replaced, &command.name);
                 let start = Start {
                     project: project.clone(),
                     profile: profile.clone(),
                     task_id: None,
                     title: Some(run::session_title(&command.name)),
+                    color: old.and_then(|s| s.color.clone()),
+                    pinned: old.is_some_and(|s| s.pinned),
                     cols: params.cols,
                     rows: params.rows,
                     typed: Some(run::typed_line(&program, &command.command)),
@@ -139,6 +143,7 @@ impl Daemon {
                     dir: Some(dir),
                     banner: None,
                     env,
+                    plan_path: None,
                 };
                 match self.start_session(start) {
                     Ok(session_id) => {

@@ -4,6 +4,7 @@
 - Status: accepted
 - Milestone: inbox 2026-10-08
 - Supersedes: 0023
+- Amended by: 0034 (the toolbar became part of the custom title bar)
 
 ## Context
 

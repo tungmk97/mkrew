@@ -1,5 +1,6 @@
-//! Sidebar Inbox (SPEC §10, §11): every session that needs input, or is done and not yet
-//! viewed, newest first. Pure and tested headlessly; `main.rs` renders the entries.
+//! The "needs you" set (SPEC §10, §11): every session that needs input, or is done and not yet
+//! viewed, newest first. It feeds the sidebar's `Needs you` chip, the status bar and "next
+//! Inbox entry". Pure and tested headlessly.
 
 use std::collections::HashMap;
 
@@ -43,68 +44,14 @@ impl Viewed {
     }
 }
 
-/// The last non-blank screen line of each Inbox entry (§20A.4), read once when the entry
-/// appears (`session.read lines=1`); a later state change appears again and reads again.
-#[derive(Debug, Default)]
-pub struct LastLines {
-    /// Session → `state_changed_at` of the read entry and its line (`None` while reading,
-    /// or when the screen was blank or the read failed).
-    lines: HashMap<Ulid, (i64, Option<String>)>,
-}
-
-impl LastLines {
-    /// The entries to read now: those without a line for their current state change. They
-    /// count as reading from here on; sessions that left the Inbox are forgotten.
-    pub fn to_read(&mut self, entries: &[Entry]) -> Vec<(Ulid, i64)> {
-        self.lines
-            .retain(|id, _| entries.iter().any(|e| e.session_id == *id));
-        let mut to_read = Vec::new();
-        for e in entries {
-            if self
-                .lines
-                .get(&e.session_id)
-                .is_none_or(|(at, _)| *at != e.state_changed_at)
-            {
-                self.lines.insert(e.session_id, (e.state_changed_at, None));
-                to_read.push((e.session_id, e.state_changed_at));
-            }
-        }
-        to_read
-    }
-
-    /// The read of `session` at `state_changed_at` returned `lines`; ignored if the entry
-    /// changed since.
-    pub fn read(&mut self, session: Ulid, state_changed_at: i64, lines: &[String]) {
-        if let Some((at, line)) = self.lines.get_mut(&session)
-            && *at == state_changed_at
-        {
-            *line = lines
-                .iter()
-                .rev()
-                .map(|l| l.trim())
-                .find(|l| !l.is_empty())
-                .map(str::to_owned);
-        }
-    }
-
-    /// The read of `session` at `state_changed_at` failed: the next [`LastLines::to_read`]
-    /// asks again.
-    pub fn forget(&mut self, session: Ulid, state_changed_at: i64) {
-        if self
-            .lines
-            .get(&session)
-            .is_some_and(|(at, _)| *at == state_changed_at)
-        {
-            self.lines.remove(&session);
-        }
-    }
-
-    /// The line shown under `entry`, if read.
-    pub fn get(&self, entry: &Entry) -> Option<&str> {
-        match self.lines.get(&entry.session_id) {
-            Some((at, Some(line))) if *at == entry.state_changed_at => Some(line),
-            _ => None,
-        }
+/// A session that needs the user: it asks for input, or it finished and its pane was not
+/// focused since (a later `done` shows again). The one definition behind the Inbox entries,
+/// the sidebar chip and the status bar.
+pub fn needs_you(session: &Session, viewed: &Viewed) -> bool {
+    match session.state {
+        SessionState::NeedsInput => true,
+        SessionState::Done => !viewed.seen(session),
+        _ => false,
     }
 }
 
@@ -113,11 +60,7 @@ impl LastLines {
 pub fn entries(projects: &[Project], sessions: &[Session], viewed: &Viewed) -> Vec<Entry> {
     let mut entries: Vec<Entry> = sessions
         .iter()
-        .filter(|session| match session.state {
-            SessionState::NeedsInput => true,
-            SessionState::Done => !viewed.seen(session),
-            _ => false,
-        })
+        .filter(|session| needs_you(session, viewed))
         .filter_map(|session| {
             let project = projects.iter().find(|p| p.id == session.project_id)?;
             Some(Entry {
@@ -157,6 +100,15 @@ pub fn next(entries: &[Entry], focused: Option<&Session>) -> Option<Ulid> {
         .get(after)
         .or_else(|| entries.first())
         .map(|entry| entry.session_id)
+}
+
+/// The status bar's Inbox state: `Inbox clear`, `1 needs you`, `3 need you`.
+pub fn label(waiting: usize) -> String {
+    match waiting {
+        0 => "Inbox clear".to_owned(),
+        1 => "1 needs you".to_owned(),
+        n => format!("{n} need you"),
+    }
 }
 
 /// What a clicked OS notification shows.
@@ -205,6 +157,7 @@ mod tests {
             archived: false,
             base_ref: None,
             color: None,
+            pinned: false,
         }
     }
 
@@ -217,6 +170,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: Some("fix login".to_owned()),
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::Hook,
@@ -226,6 +180,8 @@ mod tests {
             rows: 24,
             started_at: 0,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 
@@ -345,44 +301,29 @@ mod tests {
     }
 
     #[test]
-    fn last_lines_are_read_once_per_appearance() {
+    fn needs_you_is_input_wanted_or_done_and_unseen() {
         let api = project("api");
-        let mut asking = session(&api, SessionState::NeedsInput, 5);
-        let projects = [api];
-        let mut last = LastLines::default();
-        let listed = entries(&projects, &[asking.clone()], &Viewed::default());
-        assert_eq!(last.to_read(&listed), vec![(asking.id, 5)]);
-        // Reading: not asked again, nothing shown yet.
-        assert!(last.to_read(&listed).is_empty());
-        assert_eq!(last.get(&listed[0]), None);
-
-        last.read(
-            asking.id,
-            5,
-            &["Continue?".to_owned(), "  Apply edit? (y/n)  ".to_owned()],
-        );
-        assert_eq!(last.get(&listed[0]), Some("Apply edit? (y/n)"));
-        assert!(last.to_read(&listed).is_empty());
-
-        // A new state change re-reads; a late answer of the old read is ignored.
-        asking.state_changed_at = 9;
-        let listed = entries(&projects, &[asking.clone()], &Viewed::default());
-        assert_eq!(last.get(&listed[0]), None);
-        assert_eq!(last.to_read(&listed), vec![(asking.id, 9)]);
-        last.read(asking.id, 5, &["old".to_owned()]);
-        assert_eq!(last.get(&listed[0]), None);
-        last.read(asking.id, 9, &["   ".to_owned()]);
-        assert_eq!(last.get(&listed[0]), None);
-
-        // A failed read is asked again; a stale failure is ignored.
-        last.forget(asking.id, 5);
-        assert!(last.to_read(&listed).is_empty());
-        last.forget(asking.id, 9);
-        assert_eq!(last.to_read(&listed), vec![(asking.id, 9)]);
-
-        // Leaving the Inbox forgets it; coming back reads again.
-        assert!(last.to_read(&[]).is_empty());
-        assert_eq!(last.to_read(&listed), vec![(asking.id, 9)]);
+        let asking = session(&api, SessionState::NeedsInput, 1);
+        let done = session(&api, SessionState::Done, 2);
+        let seen = session(&api, SessionState::Done, 3);
+        let working = session(&api, SessionState::Working, 4);
+        let idle = session(&api, SessionState::Idle, 5);
+        let mut viewed = Viewed::default();
+        viewed.view(&seen);
+        let all = [asking.clone(), done.clone(), seen.clone(), working, idle];
+        let flagged: Vec<Ulid> = all
+            .iter()
+            .filter(|s| needs_you(s, &viewed))
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(flagged, vec![asking.id, done.id]);
+        // The chips and the status bar count exactly what the Inbox lists.
+        let listed: Vec<Ulid> = entries(&[api], &all, &viewed)
+            .iter()
+            .map(|e| e.session_id)
+            .collect();
+        assert_eq!(listed.len(), flagged.len());
+        assert!(flagged.iter().all(|id| listed.contains(id)));
     }
 
     #[test]
@@ -390,5 +331,12 @@ mod tests {
         let api = project("api");
         let orphan = session(&project("gone"), SessionState::NeedsInput, 1);
         assert!(entries(&[api], &[orphan], &Viewed::default()).is_empty());
+    }
+
+    #[test]
+    fn the_status_bar_names_the_inbox_state() {
+        assert_eq!(label(0), "Inbox clear");
+        assert_eq!(label(1), "1 needs you");
+        assert_eq!(label(3), "3 need you");
     }
 }

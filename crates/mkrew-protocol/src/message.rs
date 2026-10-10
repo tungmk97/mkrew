@@ -79,6 +79,9 @@ pub enum Request {
     TabClose(TabRef),
     #[serde(rename = "tab.move")]
     TabMove(TabMoveParams),
+    /// Returns the [`TerminalTab`]; also broadcast as `tab.updated`.
+    #[serde(rename = "tab.pin")]
+    TabPin(TabPinParams),
     #[serde(rename = "tab.set_layout")]
     TabSetLayout(TabSetLayoutParams),
     #[serde(rename = "task.list")]
@@ -138,6 +141,13 @@ pub enum Request {
     /// `title` clears it. Run sessions keep their `run:` name (ADR 0031).
     #[serde(rename = "session.rename")]
     SessionRename(SessionRenameParams),
+    /// Returns the [`Session`]; also broadcast as `session.updated`.
+    #[serde(rename = "session.pin")]
+    SessionPin(SessionPinParams),
+    /// Returns the [`Session`] with the new color, also announced as `session.updated`; `null`
+    /// clears it, a name outside [`WORKSPACE_COLORS`] is `invalid_request` (ADR 0037).
+    #[serde(rename = "session.set_color")]
+    SessionSetColor(SessionSetColorParams),
     /// Returns [`SessionHistory`]; works for exited sessions too.
     #[serde(rename = "session.history")]
     SessionHistory(SessionRef),
@@ -244,6 +254,16 @@ pub enum Request {
     /// Returns `SessionPortsEvent[]`: the ports of the project's live run sessions (SPEC §10).
     #[serde(rename = "session.ports")]
     SessionPorts(ProjectRef),
+    /// Returns the [`Session`] (also announced as `session.updated`): links the Markdown file
+    /// `path` as the plan of a live session, or unlinks it (`null`). The daemon announces
+    /// `session.plan` at once and after each change of the file. `invalid_request` for a path
+    /// that is not a readable `.md` file (ADR 0039).
+    #[serde(rename = "session.link_plan")]
+    SessionLinkPlan(SessionLinkPlanParams),
+    /// Returns `SessionPlanEvent[]`: the checklist of each live session of the project that
+    /// has a plan (for a client that connects later).
+    #[serde(rename = "session.plan")]
+    SessionPlan(ProjectRef),
 }
 
 /// Body of a response: `"result"` on success, `"error"` on failure.
@@ -367,12 +387,17 @@ pub enum Event {
     /// A run session printed a new port (SPEC §10).
     #[serde(rename = "session.ports")]
     SessionPorts(SessionPortsEvent),
-    /// A session's title changed (`session.rename`, ADR 0031); carries the whole session.
+    /// A session's title, color, pin or plan link changed (`session.rename`,
+    /// `session.set_color`, `session.pin`, `session.link_plan`; ADR 0031, ADR 0037, ADR 0039);
+    /// carries the whole session.
     #[serde(rename = "session.updated")]
-    SessionUpdated(Session),
+    SessionUpdated(Box<Session>),
     /// An agent session's terminal title changed, cleaned (`None` = cleared; ADR 0031).
     #[serde(rename = "session.terminal_title")]
     SessionTerminalTitle(SessionTerminalTitleEvent),
+    /// The checklist of a linked plan changed (ADR 0039).
+    #[serde(rename = "session.plan")]
+    SessionPlan(SessionPlanEvent),
 }
 
 // ---- shared models (SPEC §5) ----
@@ -419,9 +444,11 @@ pub enum SessionKind {
     Shell,
 }
 
-/// Workspace color names (SPEC §14, ADR 0020); clients map them to theme tokens.
-pub const WORKSPACE_COLORS: [&str; 8] = [
-    "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink",
+/// Workspace color names (SPEC §14, ADR 0020); clients map them to theme tokens. The order is
+/// the palette order of `Theme.workspace_colors`; names are only ever added, because they are
+/// stored in `project.color`.
+pub const WORKSPACE_COLORS: [&str; 9] = [
+    "red", "orange", "yellow", "lime", "green", "teal", "blue", "purple", "pink",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -451,6 +478,9 @@ pub struct Project {
     /// One of [`WORKSPACE_COLORS`]; `None` = no color.
     #[serde(default)]
     pub color: Option<String>,
+    /// Pinned workspaces lead the sidebar (SPEC §10).
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// One command of a project's Run button (SPEC §10, ADR 0018): typed into its own shell in
@@ -482,6 +512,9 @@ pub struct Session {
     /// `title` is unset (ADR 0031).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_title: Option<String>,
+    /// One of [`WORKSPACE_COLORS`] (ADR 0037): the pane's color; `None` = no color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     /// The agent's own session id, used for resume (SPEC §6).
     pub native_session_id: Option<String>,
     pub state: SessionState,
@@ -494,6 +527,13 @@ pub struct Session {
     /// Unix ms.
     pub started_at: i64,
     pub ended_at: Option<i64>,
+    /// Pinned sessions lead their workspace's sidebar list (SPEC §10). Set with `session.pin`.
+    #[serde(default)]
+    pub pinned: bool,
+    /// The linked plan `.md` (`session.link_plan`): relative to the project folder with `/`
+    /// when it lies inside, else absolute. `None` = no plan (SPEC §5, ADR 0039).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_path: Option<String>,
 }
 
 /// A terminal tab of a workspace (SPEC §5 `terminal_tab`).
@@ -507,6 +547,10 @@ pub struct TerminalTab {
     /// Split tree whose leaves are session ids (SPEC §5); opaque to the daemon.
     /// `null` until the first pane is placed.
     pub layout: serde_json::Value,
+    /// Pinned tabs sit left of the others, each group in `position` order (SPEC §10). Set with
+    /// `tab.pin`, which leaves `position` alone, so unpinning puts the tab back.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// Board column of a task (SPEC §5 `task.status`).
@@ -713,6 +757,9 @@ pub struct ProjectUpdateParams {
         deserialize_with = "present"
     )]
     pub color: Option<Option<String>>,
+    /// Pin or unpin the workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 /// `project.run_start` / `project.run_restart`: `name` = one command, none = all.
@@ -804,6 +851,13 @@ pub struct TabRenameParams {
 pub struct TabMoveParams {
     pub tab_id: Ulid,
     pub position: f64,
+}
+
+/// `tab.pin`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabPinParams {
+    pub tab_id: Ulid,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1016,6 +1070,29 @@ pub struct SessionRenameParams {
     /// Trimmed by the daemon; `None` or blank clears the title.
     #[serde(default)]
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionLinkPlanParams {
+    pub session_id: Ulid,
+    /// A path picked by the user (absolute) or relative to the project folder; `None` unlinks.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// `session.pin`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionPinParams {
+    pub session_id: Ulid,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionSetColorParams {
+    pub session_id: Ulid,
+    /// A [`WORKSPACE_COLORS`] name; `None` clears the color.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// `session.history` result: the session's output log files on disk (SPEC §8), oldest first
@@ -1369,19 +1446,34 @@ pub struct SessionExitedEvent {
     pub exit_code: Option<i32>,
 }
 
-/// Token totals of an agent session, read from its transcript (SPEC §20E.3).
+/// Token totals of an agent session, read from its transcript (SPEC §20E.3, ADR 0035).
+/// `input + cache_read + cache_write + output` is every token of the conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionUsageEvent {
     pub session_id: Ulid,
-    /// Input tokens over the agent's whole conversation.
+    /// Fresh input tokens over the agent's whole conversation, cache excluded. An event stored
+    /// before protocol 33 still has the cache in here (and 0 in both cache fields).
     pub input: u64,
     /// Output tokens over the agent's whole conversation.
     pub output: u64,
+    /// Input tokens served from the prompt cache.
+    #[serde(default)]
+    pub cache_read: u64,
+    /// Input tokens written to the prompt cache (0 for agents without that figure).
+    #[serde(default)]
+    pub cache_write: u64,
     /// Context size of the newest message.
     pub context: u64,
     /// The profile's `context_window`, when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
+    /// The model of the newest message, when the transcript names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// The agent's transcript file (an absolute path on the daemon's machine, which is the
+    /// UI's: the socket is local, SPEC §3), once located. Sent again when it changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
 }
 
 /// A run session's ports (SPEC §10): every port it printed so far, at most 4, in order.
@@ -1389,6 +1481,28 @@ pub struct SessionUsageEvent {
 pub struct SessionPortsEvent {
     pub session_id: Ulid,
     pub ports: Vec<u16>,
+}
+
+/// One `- [ ]` / `- [x]` line of a plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanItem {
+    pub done: bool,
+    pub text: String,
+}
+
+/// The checklist of a session's linked plan (ADR 0039).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionPlanEvent {
+    pub session_id: Ulid,
+    /// The file name without `.md`.
+    pub name: String,
+    pub done: u32,
+    pub total: u32,
+    /// The first items in file order (at most 200); `total` counts all of them.
+    pub items: Vec<PlanItem>,
+    /// Why the file could not be read (then the counts are 0); the link stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1537,6 +1651,23 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A stored `project.color` must keep passing the daemon's check after the palette grew.
+    #[test]
+    fn workspace_colors_keep_the_names_stored_before_lime_was_added() {
+        for old in [
+            "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink",
+        ] {
+            assert!(WORKSPACE_COLORS.contains(&old), "{old}");
+        }
+        assert!(WORKSPACE_COLORS.contains(&"lime"));
+        let mut sorted = WORKSPACE_COLORS;
+        sorted.sort_unstable();
+        assert!(
+            sorted.windows(2).all(|pair| pair[0] != pair[1]),
+            "unique names"
+        );
+    }
+
     fn sid() -> Ulid {
         Ulid::from_parts(1_700_000_000_000, 7)
     }
@@ -1631,6 +1762,7 @@ mod tests {
                 }]),
                 run_autostart: Some(true),
                 color: Some(Some("teal".into())),
+                pinned: Some(true),
             }),
             Request::ProjectRunStart(RunStartParams {
                 project_id: sid(),
@@ -1663,6 +1795,10 @@ mod tests {
             Request::TabMove(TabMoveParams {
                 tab_id: sid(),
                 position: 0.5,
+            }),
+            Request::TabPin(TabPinParams {
+                tab_id: sid(),
+                pinned: true,
             }),
             Request::TabSetLayout(TabSetLayoutParams {
                 tab_id: sid(),
@@ -1754,6 +1890,15 @@ mod tests {
             }),
             Request::SessionUsage(ProjectRef { project_id: sid() }),
             Request::SessionPorts(ProjectRef { project_id: sid() }),
+            Request::SessionLinkPlan(SessionLinkPlanParams {
+                session_id: sid(),
+                path: Some("docs/PLAN.md".into()),
+            }),
+            Request::SessionLinkPlan(SessionLinkPlanParams {
+                session_id: sid(),
+                path: None,
+            }),
+            Request::SessionPlan(ProjectRef { project_id: sid() }),
             Request::TurnRestorePreview(TurnRef {
                 session_id: sid(),
                 n: 2,
@@ -1778,6 +1923,14 @@ mod tests {
             Request::SessionRename(SessionRenameParams {
                 session_id: sid(),
                 title: Some("Fix login".into()),
+            }),
+            Request::SessionPin(SessionPinParams {
+                session_id: sid(),
+                pinned: true,
+            }),
+            Request::SessionSetColor(SessionSetColorParams {
+                session_id: sid(),
+                color: Some("teal".into()),
             }),
             Request::HookReport(HookReportParams {
                 mkrew_session_id: sid(),
@@ -1932,6 +2085,12 @@ mod tests {
             parse(json!({"project_id": id, "color": "teal"})).color,
             Some(Some("teal".into()))
         );
+        // A pin is a plain bool: absent = unchanged, `false` = unpin.
+        assert_eq!(parse(json!({"project_id": id})).pinned, None);
+        assert_eq!(
+            parse(json!({"project_id": id, "pinned": false})).pinned,
+            Some(false)
+        );
         // Unchanged fields are left out on the wire, a cleared one is `null`.
         let keep = ProjectUpdateParams {
             project_id: sid(),
@@ -1941,6 +2100,7 @@ mod tests {
             run_commands: None,
             run_autostart: None,
             color: None,
+            pinned: None,
         };
         assert_eq!(
             serde_json::to_value(&keep).unwrap(),
@@ -2160,6 +2320,7 @@ mod tests {
             archived: false,
             base_ref: Some("develop".into()),
             color: Some("teal".into()),
+            pinned: true,
         })));
         let tab = round_trip(&Message::Event(Event::TabUpdated(TerminalTab {
             id: sid(),
@@ -2167,9 +2328,11 @@ mod tests {
             title: "Agents".into(),
             position: 1.0,
             layout: serde_json::Value::Null,
+            pinned: true,
         })));
         assert_eq!(tab["event"], "tab.updated");
         assert_eq!(tab["data"]["layout"], serde_json::Value::Null);
+        assert_eq!(tab["data"]["pinned"], true);
         let clicked = round_trip(&Message::Event(Event::NotificationClicked(
             NotificationClickedEvent {
                 session_id: sid(),
@@ -2262,7 +2425,7 @@ mod tests {
             session_id: sid(),
             ports: vec![8080, 5180],
         })));
-        let updated = round_trip(&Message::Event(Event::SessionUpdated(Session {
+        let updated = round_trip(&Message::Event(Event::SessionUpdated(Box::new(Session {
             id: sid(),
             task_id: None,
             project_id: sid(),
@@ -2270,6 +2433,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: Some("Fix login".into()),
             terminal_title: None,
+            color: Some("teal".into()),
             native_session_id: None,
             state: SessionState::Working,
             state_source: StateSource::Screen,
@@ -2279,7 +2443,9 @@ mod tests {
             rows: 24,
             started_at: 1,
             ended_at: None,
-        })));
+            pinned: true,
+            plan_path: None,
+        }))));
         let titled = round_trip(&Message::Event(Event::SessionTerminalTitle(
             SessionTerminalTitleEvent {
                 session_id: sid(),
@@ -2289,20 +2455,93 @@ mod tests {
         assert_eq!(titled["event"], "session.terminal_title");
         assert_eq!(updated["event"], "session.updated");
         assert_eq!(updated["data"]["title"], "Fix login");
+        assert_eq!(updated["data"]["pinned"], true);
         // Absent on the wire when unset.
         assert!(updated["data"].get("terminal_title").is_none());
-        let usage = round_trip(&Message::Event(Event::SessionUsage(SessionUsageEvent {
+        assert_eq!(updated["data"]["color"], "teal");
+        // A plan link is absent on the wire when unset.
+        assert!(updated["data"].get("plan_path").is_none());
+        let plan = round_trip(&Message::Event(Event::SessionPlan(SessionPlanEvent {
             session_id: sid(),
-            input: 10,
-            output: 2,
-            context: 7,
-            context_window: None,
+            name: "PLAN".into(),
+            done: 1,
+            total: 2,
+            items: vec![
+                PlanItem {
+                    done: true,
+                    text: "a".into(),
+                },
+                PlanItem {
+                    done: false,
+                    text: "b".into(),
+                },
+            ],
+            error: None,
         })));
+        assert_eq!(plan["event"], "session.plan");
+        assert_eq!(
+            plan["data"],
+            json!({
+                "session_id": sid(), "name": "PLAN", "done": 1, "total": 2,
+                "items": [{ "done": true, "text": "a" }, { "done": false, "text": "b" }]
+            })
+        );
+        // An older daemon's session has no color: it reads as none.
+        let mut old = updated["data"].clone();
+        old.as_object_mut().unwrap().remove("color");
+        assert_eq!(serde_json::from_value::<Session>(old).unwrap().color, None);
+        let usage = round_trip(&Message::Event(Event::SessionUsage(usage_event())));
         assert_eq!(usage["event"], "session.usage");
         assert_eq!(
             usage["data"],
-            json!({ "session_id": sid(), "input": 10, "output": 2, "context": 7 })
+            json!({
+                "session_id": sid(), "input": 10, "output": 2, "cache_read": 5,
+                "cache_write": 1, "context": 7, "model": "claude-opus-5"
+            })
         );
+        // Stored by a daemon before the cache split (SPEC §20E.3, ADR 0035): no cache
+        // fields, no model. It must still read, with the new fields at their defaults.
+        let old: SessionUsageEvent = serde_json::from_value(json!({
+            "session_id": sid(), "input": 10, "output": 2, "context": 7, "context_window": 200000
+        }))
+        .unwrap();
+        assert_eq!(
+            (
+                old.cache_read,
+                old.cache_write,
+                old.model,
+                old.context_window
+            ),
+            (0, 0, None, Some(200_000))
+        );
+        let with_path = round_trip(&Message::Event(Event::SessionUsage(SessionUsageEvent {
+            transcript: Some("C:\\Users\\a\\.claude\\projects\\p\\s1.jsonl".into()),
+            ..usage_event()
+        })));
+        assert_eq!(
+            with_path["data"]["transcript"],
+            "C:\\Users\\a\\.claude\\projects\\p\\s1.jsonl"
+        );
+        // A `session.usage` stored before the field existed still reads.
+        let old: SessionUsageEvent = serde_json::from_value(
+            json!({ "session_id": sid(), "input": 1, "output": 2, "context": 3 }),
+        )
+        .unwrap();
+        assert_eq!(old.transcript, None);
+    }
+
+    fn usage_event() -> SessionUsageEvent {
+        SessionUsageEvent {
+            session_id: sid(),
+            input: 10,
+            output: 2,
+            cache_read: 5,
+            cache_write: 1,
+            context: 7,
+            context_window: None,
+            model: Some("claude-opus-5".into()),
+            transcript: None,
+        }
     }
 
     #[test]

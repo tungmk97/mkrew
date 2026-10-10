@@ -9,6 +9,7 @@ pub mod git;
 pub mod hook;
 pub mod lookup;
 pub mod paths;
+pub mod plan;
 pub mod profile;
 pub mod prompt;
 pub mod review;

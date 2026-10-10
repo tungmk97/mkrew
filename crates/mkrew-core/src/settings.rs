@@ -125,13 +125,48 @@ impl ThemeMode {
     }
 }
 
-/// `[ui]`: the app font and theme (SPEC §14, §20.0).
+/// `[ui] diff_mode` (SPEC §12B): how the Git diff viewer lays out a file's changes. The
+/// diff header toggle writes it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffMode {
+    /// One column: removed lines, then the added ones.
+    #[default]
+    Unified,
+    /// Two columns: the old file on the left, the new one on the right.
+    Split,
+}
+
+impl DiffMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            DiffMode::Unified => "unified",
+            DiffMode::Split => "split",
+        }
+    }
+
+    /// The other mode (what the toggle switches to).
+    pub fn other(self) -> DiffMode {
+        match self {
+            DiffMode::Unified => DiffMode::Split,
+            DiffMode::Split => DiffMode::Unified,
+        }
+    }
+}
+
+/// `[ui] inspector_width` default, px (the UI clamps what it reads to its own limits).
+pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
+
+/// `[ui]`: the app font, theme, diff layout (and panel width) (SPEC §14, §12B, §20.0).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiSettings {
     pub font_family: String,
     pub font_size: FontSize,
     pub theme: ThemeMode,
+    pub diff_mode: DiffMode,
+    /// Width of the session panel right of Terminals, px (SPEC §10); dragging its edge saves it.
+    pub inspector_width: u16,
 }
 
 impl Default for UiSettings {
@@ -141,18 +176,20 @@ impl Default for UiSettings {
             font_family: font.font_family,
             font_size: font.font_size,
             theme: ThemeMode::System,
+            diff_mode: DiffMode::Unified,
+            inspector_width: INSPECTOR_WIDTH_DEFAULT,
         }
     }
 }
 
-/// `src` with `[ui] theme = "<mode>"`: replaces an uncommented `theme =` line inside `[ui]`,
-/// else inserts one right after the `[ui]` header, else appends a `[ui]` section. Everything
-/// else (comments, order, other keys, CRLF line ends) is kept byte for byte. Forms this does not
-/// recognise (`ui.theme = …`, an inline `ui = {…}`) can yield invalid TOML: callers parse the
-/// result before writing it.
-pub fn set_ui_theme(src: &str, mode: ThemeMode) -> String {
+/// `src` with `[ui] <key> = <value>` (`value` is a TOML literal such as `"dark"` or `320`):
+/// replaces an uncommented `<key> =` line inside `[ui]`, else inserts one right after the `[ui]`
+/// header, else appends a `[ui]` section. Everything else (comments, order, other keys, CRLF
+/// line ends) is kept byte for byte. Forms this does not recognise (`ui.theme = …`, an inline
+/// `ui = {…}`) can yield invalid TOML: callers parse the result before writing it.
+pub fn set_ui_value(src: &str, key: &str, value: &str) -> String {
     let eol = if src.contains("\r\n") { "\r\n" } else { "\n" };
-    let line = format!("theme = \"{}\"", mode.name());
+    let line = format!("{key} = {value}");
     // `[ui]`, `[ ui ]` and `[ui] # note` are the same table header.
     let is_ui_header = |l: &&str| {
         let code = l.split('#').next().unwrap_or_default();
@@ -173,12 +210,13 @@ pub fn set_ui_theme(src: &str, mode: ThemeMode) -> String {
         .iter()
         .position(|l| l.trim_start().starts_with('['))
         .map_or(lines.len(), |i| header + 1 + i);
-    let is_theme = |l: &&str| {
+    // `key` followed by `=`: `theme_x = …` is another key.
+    let is_key = |l: &&str| {
         l.trim_start()
-            .strip_prefix("theme")
+            .strip_prefix(key)
             .is_some_and(|rest| rest.trim_start().starts_with('='))
     };
-    match lines[header + 1..end].iter().position(is_theme) {
+    match lines[header + 1..end].iter().position(is_key) {
         Some(i) => lines[header + 1 + i] = &line,
         None => lines.insert(header + 1, &line),
     }
@@ -189,10 +227,10 @@ pub fn set_ui_theme(src: &str, mode: ThemeMode) -> String {
     out
 }
 
-/// Saves `[ui] theme = "<mode>"` in `path` (the template when it is missing) with
-/// [`set_ui_theme`]. Writes nothing when the file does not parse or the edit would not parse
-/// (an unusual `ui` form), so a good file never turns bad.
-pub fn write_ui_theme(path: &Path, mode: ThemeMode) -> Result<(), SettingsError> {
+/// Saves `[ui] <key> = <value>` in `path` (the template when it is missing) with
+/// [`set_ui_value`]. Writes nothing when the file does not parse or the edit would not parse
+/// (an unusual `ui` form, a value of the wrong type), so a good file never turns bad.
+pub fn write_ui_value(path: &Path, key: &str, value: &str) -> Result<(), SettingsError> {
     let io_error = |e: io::Error| SettingsError {
         file: path.to_path_buf(),
         line_col: None,
@@ -204,7 +242,7 @@ pub fn write_ui_theme(path: &Path, mode: ThemeMode) -> Result<(), SettingsError>
         Err(e) => return Err(io_error(e)),
     };
     parse(path, &src)?;
-    let out = set_ui_theme(&src, mode);
+    let out = set_ui_value(&src, key, value);
     parse(path, &out)?;
     std::fs::write(path, out).map_err(io_error)
 }
@@ -247,11 +285,15 @@ pub fn template() -> &'static str {
      # follow_debounce_ms = 1500\n\
      \n\
      # App font: an installed family name (empty: the system UI font); size 8–32 px.\n\
-     # Theme: system (follows the OS), light or dark; the toolbar toggle writes it.\n\
+     # Theme: system (follows the OS), light or dark; the title bar toggle writes it.\n\
+     # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
+     # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
      # theme = \"system\"\n\
+     # diff_mode = \"unified\"\n\
+     # inspector_width = 300\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -299,6 +341,14 @@ pub fn parse(file: &Path, src: &str) -> Result<Settings, SettingsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn set_theme(src: &str, mode: ThemeMode) -> String {
+        set_ui_value(src, "theme", &format!("\"{}\"", mode.name()))
+    }
+
+    fn write_theme(path: &Path, mode: ThemeMode) -> Result<(), SettingsError> {
+        write_ui_value(path, "theme", &format!("\"{}\"", mode.name()))
+    }
 
     fn parse_err(src: &str) -> String {
         parse(Path::new("settings.toml"), src)
@@ -394,6 +444,8 @@ font_size = 15
                     font_family: "Inter".into(),
                     font_size: FontSize(14),
                     theme: ThemeMode::System,
+                    diff_mode: DiffMode::Unified,
+                    inspector_width: INSPECTOR_WIDTH_DEFAULT,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
@@ -486,9 +538,61 @@ font_size = 15
     }
 
     #[test]
+    fn ui_diff_mode_parses_and_defaults_to_unified() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!(ui("").diff_mode, DiffMode::Unified);
+        assert_eq!(ui("[ui]\ndiff_mode = \"split\"").diff_mode, DiffMode::Split);
+        // Another [ui] key does not change it.
+        assert_eq!(ui("[ui]\ntheme = \"dark\"").diff_mode, DiffMode::Unified);
+        assert!(parse_err("[ui]\ndiff_mode = \"side\"").contains("unknown variant `side`"));
+        // [terminal] has no diff_mode.
+        assert!(
+            parse_err("[terminal]\ndiff_mode = \"split\"").contains("unknown field `diff_mode`")
+        );
+    }
+
+    #[test]
+    fn writing_diff_mode_keeps_theme_and_comments() {
+        let src = "[ui]\n# diff_mode = \"unified\"\ntheme = \"dark\"\n";
+        let out = set_ui_value(src, "diff_mode", "\"split\"");
+        let ui = parse(Path::new("s.toml"), &out).expect(&out).ui;
+        assert_eq!((ui.diff_mode, ui.theme), (DiffMode::Split, ThemeMode::Dark));
+        assert!(
+            out.contains("# diff_mode = \"unified\""),
+            "the user's comment stays: {out}"
+        );
+        // A second write replaces the line instead of adding another.
+        let again = set_ui_value(&out, "diff_mode", "\"unified\"");
+        assert_eq!(
+            parse(Path::new("s.toml"), &again)
+                .expect(&again)
+                .ui
+                .diff_mode,
+            DiffMode::Unified
+        );
+        assert_eq!(
+            again.matches("diff_mode =").count(),
+            2,
+            "comment + one key: {again}"
+        );
+    }
+
+    #[test]
+    fn write_ui_value_saves_diff_mode_into_the_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        write_ui_value(&path, "diff_mode", "\"split\"").unwrap();
+        assert_eq!(load(&path).unwrap().ui.diff_mode, DiffMode::Split);
+        // A file that does not parse is left alone.
+        std::fs::write(&path, "[ui\n").unwrap();
+        assert!(write_ui_value(&path, "diff_mode", "\"unified\"").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[ui\n");
+    }
+
+    #[test]
     fn set_ui_theme_keeps_comments_and_other_keys() {
         let src = "# mine\n[ui]\n# theme = \"system\"\nfont_size = 15\ntheme = \"light\"\n\n[terminal]\nfont_size = 12\n";
-        let out = set_ui_theme(src, ThemeMode::Dark);
+        let out = set_theme(src, ThemeMode::Dark);
         assert_eq!(out, src.replace("theme = \"light\"", "theme = \"dark\""));
         assert_eq!(
             parse(Path::new("s.toml"), &out).unwrap().ui.theme,
@@ -498,15 +602,15 @@ font_size = 15
 
     #[test]
     fn set_ui_theme_inserts_ui_section() {
-        let with_ui = set_ui_theme("[ui]\nfont_size = 15\n", ThemeMode::Light);
+        let with_ui = set_theme("[ui]\nfont_size = 15\n", ThemeMode::Light);
         assert_eq!(with_ui, "[ui]\ntheme = \"light\"\nfont_size = 15\n");
-        let without = set_ui_theme("[zed]\nfollow_debounce_ms = 1\n", ThemeMode::Dark);
+        let without = set_theme("[zed]\nfollow_debounce_ms = 1\n", ThemeMode::Dark);
         assert_eq!(
             without,
             "[zed]\nfollow_debounce_ms = 1\n\n[ui]\ntheme = \"dark\"\n"
         );
         assert_eq!(
-            set_ui_theme("", ThemeMode::System),
+            set_theme("", ThemeMode::System),
             "[ui]\ntheme = \"system\"\n"
         );
     }
@@ -518,7 +622,7 @@ font_size = 15
             "[ ui ]\nfont_size = 15\n",
             "[ui]#x\nfont_size = 15\n",
         ] {
-            let out = set_ui_theme(src, ThemeMode::Dark);
+            let out = set_theme(src, ThemeMode::Dark);
             let settings = parse(Path::new("s.toml"), &out).expect(&out);
             assert_eq!(settings.ui.theme, ThemeMode::Dark, "{out}");
             assert_eq!(settings.ui.font_size, FontSize(15), "{out}");
@@ -529,11 +633,11 @@ font_size = 15
     fn set_ui_theme_keeps_crlf_line_endings() {
         let src = "[ui]\r\nfont_size = 15\r\n";
         assert_eq!(
-            set_ui_theme(src, ThemeMode::Light),
+            set_theme(src, ThemeMode::Light),
             "[ui]\r\ntheme = \"light\"\r\nfont_size = 15\r\n"
         );
         assert_eq!(
-            set_ui_theme("[zed]\r\n", ThemeMode::Dark),
+            set_theme("[zed]\r\n", ThemeMode::Dark),
             "[zed]\r\n\r\n[ui]\r\ntheme = \"dark\"\r\n"
         );
     }
@@ -543,17 +647,74 @@ font_size = 15
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         // Missing: the template plus the theme.
-        write_ui_theme(&path, ThemeMode::Dark).unwrap();
+        write_theme(&path, ThemeMode::Dark).unwrap();
         assert_eq!(load(&path).unwrap().ui.theme, ThemeMode::Dark);
         // A dotted `ui.font_size` key: the edit would declare `ui` twice, so nothing is written.
         let dotted = "ui.font_size = 15\n";
         std::fs::write(&path, dotted).unwrap();
-        assert!(write_ui_theme(&path, ThemeMode::Light).is_err());
+        assert!(write_theme(&path, ThemeMode::Light).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), dotted);
         // A file that does not parse is left alone.
         std::fs::write(&path, "[ui\n").unwrap();
-        assert!(write_ui_theme(&path, ThemeMode::Light).is_err());
+        assert!(write_theme(&path, ThemeMode::Light).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "[ui\n");
+    }
+
+    #[test]
+    fn inspector_width_parses_and_defaults_to_300() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!(ui("").inspector_width, INSPECTOR_WIDTH_DEFAULT);
+        assert_eq!(INSPECTOR_WIDTH_DEFAULT, 300);
+        assert_eq!(ui("[ui]\ninspector_width = 420").inspector_width, 420);
+        // A negative or fractional width is a typed error, not a silent default.
+        assert!(parse_err("[ui]\ninspector_width = -1").contains("invalid value"));
+        assert!(parse_err("[ui]\ninspector_width = \"wide\"").contains("invalid type"));
+    }
+
+    #[test]
+    fn set_ui_value_replaces_only_its_own_key() {
+        // `inspector_width_x` and the commented line are not `inspector_width`; the other keys stay.
+        let src = "[ui]\n# inspector_width = 300\ninspector_width_x = 1\ninspector_width = 300 # px\nfont_size = 15\n";
+        let out = set_ui_value(src, "inspector_width", "420");
+        assert_eq!(
+            out,
+            "[ui]\n# inspector_width = 300\ninspector_width_x = 1\ninspector_width = 420\nfont_size = 15\n"
+        );
+    }
+
+    #[test]
+    fn set_ui_value_adds_the_key_or_the_section_and_keeps_crlf() {
+        assert_eq!(
+            set_ui_value("[ui]\r\nfont_size = 15\r\n", "inspector_width", "320"),
+            "[ui]\r\ninspector_width = 320\r\nfont_size = 15\r\n"
+        );
+        assert_eq!(
+            set_ui_value(
+                "# mine\n[zed]\nfollow_debounce_ms = 1\n",
+                "inspector_width",
+                "320"
+            ),
+            "# mine\n[zed]\nfollow_debounce_ms = 1\n\n[ui]\ninspector_width = 320\n"
+        );
+        let out = set_ui_value("[ui]\nfont_size = 15\n", "inspector_width", "320");
+        let settings = parse(Path::new("s.toml"), &out).unwrap();
+        assert_eq!(
+            (settings.ui.inspector_width, settings.ui.font_size),
+            (320, FontSize(15))
+        );
+    }
+
+    #[test]
+    fn write_ui_value_saves_next_to_the_other_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        // Missing file: the template plus the value.
+        write_ui_value(&path, "inspector_width", "400").unwrap();
+        assert_eq!(load(&path).unwrap().ui.inspector_width, 400);
+        write_theme(&path, ThemeMode::Dark).unwrap();
+        write_ui_value(&path, "inspector_width", "350").unwrap();
+        let ui = load(&path).unwrap().ui;
+        assert_eq!((ui.inspector_width, ui.theme), (350, ThemeMode::Dark));
     }
 
     #[test]

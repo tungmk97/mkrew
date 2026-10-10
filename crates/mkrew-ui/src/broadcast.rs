@@ -253,6 +253,7 @@ mod tests {
             kind,
             title: title.map(Into::into),
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,
@@ -262,6 +263,8 @@ mod tests {
             rows: 24,
             started_at: 0,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 

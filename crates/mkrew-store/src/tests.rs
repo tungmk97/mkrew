@@ -15,6 +15,7 @@ fn session(project_id: Ulid, started_at: i64) -> Session {
         kind: SessionKind::Agent,
         title: None,
         terminal_title: None,
+        color: None,
         native_session_id: None,
         state: SessionState::Starting,
         state_source: StateSource::Daemon,
@@ -24,6 +25,8 @@ fn session(project_id: Ulid, started_at: i64) -> Session {
         rows: 40,
         started_at,
         ended_at: None,
+        pinned: false,
+        plan_path: None,
     }
 }
 
@@ -160,6 +163,35 @@ fn sessions_insert_update_list() {
     );
     assert_eq!(store.list_sessions(Some(a.id)).unwrap(), vec![s1]);
     assert_eq!(store.list_sessions(Some(b.id)).unwrap(), vec![s2]);
+}
+
+/// A session's color is stored, changed by `update_session` (the actor's every save writes it,
+/// so a live session keeps it) and cleared with `None`.
+#[test]
+fn session_color_is_stored_updated_and_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let mut s = Session {
+        color: Some("teal".into()),
+        ..session(p.id, 1)
+    };
+    store.insert_session(&s).unwrap();
+    assert_eq!(
+        store.get_session(s.id).unwrap().color.as_deref(),
+        Some("teal")
+    );
+
+    s.color = Some("red".into());
+    store.update_session(&s).unwrap();
+    assert_eq!(
+        store.list_sessions(None).unwrap()[0].color.as_deref(),
+        Some("red")
+    );
+
+    s.color = None;
+    store.update_session(&s).unwrap();
+    assert_eq!(store.get_session(s.id).unwrap().color, None);
 }
 
 #[test]
@@ -1202,6 +1234,39 @@ fn hidden_sessions_leave_the_list_but_keep_their_history() {
     ));
 }
 
+/// A session's linked plan (ADR 0039) is stored with it, survives a reopen, and follows
+/// the session's own saves (the actor owns the row): changed, then cleared.
+#[test]
+fn a_linked_plan_is_saved_with_the_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let mut linked = session(p.id, 1);
+    linked.plan_path = Some("docs/PLAN.md".into());
+    store.insert_session(&linked).unwrap();
+    let plain = session(p.id, 2);
+    store.insert_session(&plain).unwrap();
+    drop(store);
+
+    let store = open(&dir);
+    assert_eq!(
+        store.get_session(linked.id).unwrap().plan_path.as_deref(),
+        Some("docs/PLAN.md")
+    );
+    assert_eq!(
+        store.list_sessions(Some(p.id)).unwrap(),
+        vec![linked.clone(), plain]
+    );
+
+    linked.plan_path = Some("/elsewhere/other.md".into());
+    linked.state = SessionState::Idle;
+    store.update_session(&linked).unwrap();
+    assert_eq!(store.get_session(linked.id).unwrap(), linked);
+    linked.plan_path = None;
+    store.update_session(&linked).unwrap();
+    assert_eq!(store.get_session(linked.id).unwrap().plan_path, None);
+}
+
 #[test]
 fn project_color_persists_and_clears() {
     let dir = tempfile::tempdir().unwrap();
@@ -1223,6 +1288,54 @@ fn project_color_persists_and_clears() {
     };
     store.update_project(p.id, none).unwrap();
     assert_eq!(open(&dir).get_project(p.id).unwrap().color, None);
+}
+
+#[test]
+fn pinned_persists_for_workspaces_sessions_and_tabs() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    assert!(!p.pinned);
+
+    // Workspace: another change keeps the pin.
+    let pin = ProjectChanges {
+        pinned: Some(true),
+        ..ProjectChanges::default()
+    };
+    assert!(store.update_project(p.id, pin).unwrap().pinned);
+    let teal = ProjectChanges {
+        color: Some(Some("teal")),
+        ..ProjectChanges::default()
+    };
+    store.update_project(p.id, teal).unwrap();
+    assert!(open(&dir).get_project(p.id).unwrap().pinned);
+
+    // Session: inserted pinned; a save that does not touch the pin keeps it; update_session
+    // is what a live session's task writes, so it must carry the flag both ways.
+    let mut s = Session {
+        pinned: true,
+        ..session(p.id, 1)
+    };
+    store.insert_session(&s).unwrap();
+    assert!(open(&dir).get_session(s.id).unwrap().pinned);
+    s.state = SessionState::Working;
+    store.update_session(&s).unwrap();
+    assert!(store.get_session(s.id).unwrap().pinned);
+    s.pinned = false;
+    store.update_session(&s).unwrap();
+    assert!(!open(&dir).list_sessions(None).unwrap()[0].pinned);
+
+    // Tab: pinning leaves the position, so unpinning returns it to its place.
+    let tab = store.create_tab(p.id, "one", None).unwrap();
+    assert!(!tab.pinned);
+    let pinned = store.set_tab_pinned(tab.id, true).unwrap();
+    assert!(pinned.pinned);
+    assert_eq!(pinned.position, tab.position);
+    assert_eq!(open(&dir).list_tabs(p.id).unwrap(), vec![pinned]);
+    assert!(matches!(
+        store.set_tab_pinned(Ulid::new(), true),
+        Err(StoreError::TabNotFound(_))
+    ));
 }
 
 #[test]

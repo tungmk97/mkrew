@@ -29,10 +29,13 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0012_session_hidden.sql"),
     include_str!("../migrations/0013_project_color.sql"),
     include_str!("../migrations/0014_project_default_shell.sql"),
+    include_str!("../migrations/0015_session_color.sql"),
+    include_str!("../migrations/0016_pinned.sql"),
+    include_str!("../migrations/0017_session_plan.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
-const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell";
+const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell, pinned";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -82,6 +85,8 @@ pub struct ProjectChanges<'a> {
     pub run_autostart: Option<bool>,
     /// A `WORKSPACE_COLORS` name (checked by the daemon); `Some(None)` clears it.
     pub color: Option<Option<&'a str>>,
+    /// `Some(false)` unpins; `None` leaves it.
+    pub pinned: Option<bool>,
 }
 
 pub struct Store {
@@ -148,6 +153,7 @@ impl Store {
             archived: false,
             base_ref: None,
             color: None,
+            pinned: false,
         };
         let inserted = self.conn.execute(
             "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -293,16 +299,20 @@ impl Store {
         if let Some(color) = changes.color {
             project.color = color.map(str::to_owned);
         }
+        if let Some(pinned) = changes.pinned {
+            project.pinned = pinned;
+        }
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6 WHERE id = ?1",
+            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6, pinned = ?7 WHERE id = ?1",
             params![
                 id.to_string(),
                 project.name,
                 project.default_agent,
                 project.run_autostart,
                 project.color,
-                project.default_shell
+                project.default_shell,
+                project.pinned
             ],
         )?;
         if let Some(commands) = changes.run_commands {
@@ -348,7 +358,7 @@ impl Store {
     /// Tabs of a project in tab-bar order.
     pub fn list_tabs(&self, project_id: Ulid) -> Result<Vec<TerminalTab>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, project_id, title, position, layout FROM terminal_tab
+            "SELECT id, project_id, title, position, layout, pinned FROM terminal_tab
              WHERE project_id = ?1 ORDER BY position, id",
         )?;
         let rows = stmt.query_map([project_id.to_string()], RawTab::from_row)?;
@@ -357,7 +367,7 @@ impl Store {
 
     pub fn get_tab(&self, id: Ulid) -> Result<TerminalTab> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, project_id, title, position, layout FROM terminal_tab WHERE id = ?1",
+            "SELECT id, project_id, title, position, layout, pinned FROM terminal_tab WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id.to_string()], RawTab::from_row)?;
         match rows.next() {
@@ -388,6 +398,7 @@ impl Store {
             title: title.to_owned(),
             position,
             layout: serde_json::Value::Null,
+            pinned: false,
         };
         self.conn.execute(
             "INSERT INTO terminal_tab (id, project_id, title, position, layout)
@@ -415,6 +426,15 @@ impl Store {
             id,
             "UPDATE terminal_tab SET position = ?2 WHERE id = ?1",
             position,
+        )
+    }
+
+    /// Pins or unpins the tab. `position` stays, so unpinning puts it back in place.
+    pub fn set_tab_pinned(&self, id: Ulid, pinned: bool) -> Result<TerminalTab> {
+        self.update_tab(
+            id,
+            "UPDATE terminal_tab SET pinned = ?2 WHERE id = ?1",
+            pinned,
         )
     }
 
@@ -703,8 +723,8 @@ impl Store {
         self.conn.execute(
             "INSERT INTO session (id, task_id, project_id, agent_profile, kind, title,
                 native_session_id, state, exit_code, cols, rows, started_at, ended_at,
-                state_source, state_changed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                state_source, state_changed_at, color, pinned, plan_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 session.id.to_string(),
                 session.task_id.map(|id| id.to_string()),
@@ -721,6 +741,9 @@ impl Store {
                 session.ended_at,
                 source_str(session.state_source),
                 session.state_changed_at,
+                session.color,
+                session.pinned,
+                session.plan_path,
             ],
         )?;
         Ok(())
@@ -731,7 +754,8 @@ impl Store {
     pub fn update_session(&self, session: &Session) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE session SET title = ?2, native_session_id = ?3, state = ?4, exit_code = ?5,
-                cols = ?6, rows = ?7, ended_at = ?8, state_source = ?9, state_changed_at = ?10
+                cols = ?6, rows = ?7, ended_at = ?8, state_source = ?9, state_changed_at = ?10,
+                color = ?11, pinned = ?12, plan_path = ?13
              WHERE id = ?1",
             params![
                 session.id.to_string(),
@@ -744,6 +768,9 @@ impl Store {
                 session.ended_at,
                 source_str(session.state_source),
                 session.state_changed_at,
+                session.color,
+                session.pinned,
+                session.plan_path,
             ],
         )?;
         if changed == 0 {
@@ -787,7 +814,8 @@ impl Store {
     pub fn list_sessions(&self, project_id: Option<Ulid>) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
-                state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at
+                state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at,
+                color, pinned, plan_path
              FROM session WHERE (?1 IS NULL OR project_id = ?1) AND hidden = 0
              ORDER BY started_at, id",
         )?;
@@ -799,7 +827,8 @@ impl Store {
     pub fn get_session(&self, id: Ulid) -> Result<Session> {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
-                state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at
+                state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at,
+                color, pinned, plan_path
              FROM session WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id.to_string()], RawSession::from_row)?;
@@ -1357,6 +1386,7 @@ struct RawProject {
     run_autostart: bool,
     color: Option<String>,
     default_shell: Option<String>,
+    pinned: bool,
 }
 
 impl RawProject {
@@ -1373,6 +1403,7 @@ impl RawProject {
             run_autostart: row.get(8)?,
             color: row.get(9)?,
             default_shell: row.get(10)?,
+            pinned: row.get(11)?,
         })
     }
 
@@ -1396,6 +1427,7 @@ impl RawProject {
             archived: self.archived,
             base_ref: self.base_ref,
             color: self.color,
+            pinned: self.pinned,
         })
     }
 }
@@ -1416,6 +1448,9 @@ struct RawSession {
     ended_at: Option<i64>,
     state_source: String,
     state_changed_at: i64,
+    color: Option<String>,
+    pinned: bool,
+    plan_path: Option<String>,
 }
 
 impl RawSession {
@@ -1436,6 +1471,9 @@ impl RawSession {
             ended_at: row.get(12)?,
             state_source: row.get(13)?,
             state_changed_at: row.get(14)?,
+            color: row.get(15)?,
+            pinned: row.get(16)?,
+            plan_path: row.get(17)?,
         })
     }
 
@@ -1451,6 +1489,7 @@ impl RawSession {
             kind: parse_kind(self.kind)?,
             title: self.title,
             terminal_title: None,
+            color: self.color,
             native_session_id: self.native_session_id,
             state: parse_state(self.state)?,
             state_source: parse_source(self.state_source)?,
@@ -1460,6 +1499,8 @@ impl RawSession {
             rows: self.rows,
             started_at: self.started_at,
             ended_at: self.ended_at,
+            pinned: self.pinned,
+            plan_path: self.plan_path,
         })
     }
 }
@@ -1470,6 +1511,7 @@ struct RawTab {
     title: String,
     position: f64,
     layout: String,
+    pinned: bool,
 }
 
 impl RawTab {
@@ -1480,6 +1522,7 @@ impl RawTab {
             title: row.get(2)?,
             position: row.get(3)?,
             layout: row.get(4)?,
+            pinned: row.get(5)?,
         })
     }
 
@@ -1491,6 +1534,7 @@ impl RawTab {
             position: self.position,
             layout: serde_json::from_str(&self.layout)
                 .map_err(|_| corrupt("terminal_tab.layout", self.layout))?,
+            pinned: self.pinned,
         })
     }
 }

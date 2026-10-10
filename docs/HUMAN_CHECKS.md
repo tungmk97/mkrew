@@ -15,6 +15,212 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-10 inbox: redesign (plan docs/superpowers/plans/2026-10-10-inbox-redesign.md)
+
+- [ ] **Run colors:** in light and dark, with a workspace that has two run commands:
+  - Idle: `▶ Run` and `▾` are green (text readable). Hover dims them slightly.
+  - Running: `↻` is amber and `■` red; hovering each shows a faint amber / red fill and keeps the glyph color.
+  - Open `▾`: the row `↻` is amber, `■` red, `▶` green; hovering shows the same tints (visible on the panel in both themes).
+
+- [ ] **Title bar, window (Windows):** `cargo run -p mkrew-ui` (or the installed app). One 44 px bar on top, no OS title bar:
+  - Drag the empty part of the bar → the window moves. Double-click it → maximizes; again → restores.
+  - Hover □ (also when maximized, then ❐) → the Windows 11 Snap Layouts flyout shows; pick a layout → the window snaps. Click □ → maximize / restore; ─ minimizes; ✕ closes (terminals keep running in the daemon); ✕ is red on hover.
+  - Resize from all four edges and all four corners, including the top edge (a thin strip at the very top) and the top-right corner next to ✕. Try at 100 % and 150 % display scaling.
+  - Drag it down from maximized → restores under the cursor. Win+Arrow keys work. Minimum size stops at 1100 × 560 with nothing overlapping; a long workspace name / branch truncate with `…`.
+  - F11: full screen hides ─ □ ✕; F11 again brings them back.
+  - Open a dialog (Ctrl+Shift+P palette, a task dialog with some typed text): the shade covers the sidebar and main area but not the title bar. Drag, double-click and ─ □ ✕ still work; the logo, workspace name, branch chip, views, theme toggle, History, + Agent / + Shell and Run do nothing (no hover) and the dialog keeps its text and focus; Esc closes the dialog, then they work again.
+  - With the daemon stopped (no workspace shown): the logo, drag area and ─ □ ✕ still show and work.
+- [ ] **Title bar, macOS / Linux (if available):** macOS: traffic lights sit at the left (not over the logo), dragging the bar moves the window, double-click zooms or minimizes as System Settings says. Linux: the OS title bar is there and the Mkrew bar below it has no ─ □ ✕.
+- [ ] **Workspace switcher:** click the workspace name ▾ → every workspace with its avatar, ✓ on the shown one; click another → switches (sidebar highlight, tabs, branch chip follow) and the dropdown closes; click outside / Esc-less outside click closes it; "Add workspace…" opens the folder picker. Alt+1/Alt+2 and sidebar clicks still switch and close an open dropdown.
+- [ ] **Branch chip and `Git N` badge:**
+  - A workspace that is one repo (branch `master`) → `⎇ master`; edit a file → `Git 1` appears within about a second; stage + edit the same file again → still `Git 1`; add an untracked file → `Git 2`; commit everything → the badge disappears.
+  - A folder holding `fe/` and `be/` repos, no `.git` at the root → `⎇ 2 repos`; hovering lists `fe — main · 1a2b3c4` and `be — …`; change one file in each → `Git 2`; a click on the chip opens the Git view.
+  - A folder with a single child repo → `⎇ <its branch>`. A folder with no repository → no chip and no badge (the bar is not blank otherwise).
+  - Detached HEAD (`git checkout <hash>`) → `⎇ detached`.
+  - Switch workspaces back and forth: each shows its own branch; with the Terminals view shown (Git view never opened), a commit made in a terminal updates the chip.
+- [ ] **Layout after the title bar:** sidebar header is "Workspaces +" (no logo), the sidebar and the main area reach the window bottom, no clipped tab strip; the Peek popover, quick open and the palette still open centered and the Run ▾ menu and the workspace menu (⋯) still drop below their buttons.
+- [ ] **Usage cache split (Claude, Codex):** after one turn in each, restart the daemon, run another
+  turn, hover the pane header `ctx N%`: the text reads `… tokens used (X in, Y cached, Z out)`, `X`
+  is small (fresh input only) and `Y` is most of the input. `ctx N%` and the total on the task
+  card equal what they were before this change for the same session (compare with
+  Claude `/context` and Codex `/status`). A session that had no turn end since the upgrade still
+  shows its old `ctx` and total, with no `cached` in the hover. The model name is not shown yet
+  (the status bar of a later task shows it).
+- [ ] **omp usage:** run `mk integration install omp` if not done, start an omp agent pane, finish one
+  turn: the pane header shows `ctx N%` and a token total on the task card. If it only
+  appears after the NEXT turn, omp's turn-end hook fires before the last line is flushed: note it
+  here (the reader keeps its offset, so nothing is lost). Interrupt a turn with Esc: ctx % and total
+  do not drop to 0. Compare `ctx N%` with omp's own context figure. `context_window` in
+  `agents/omp.toml` is 200000 for every model: set your model's real window in your profile copy
+  and check the percentage follows.
+- [ ] **Status bar:** a thin bar sits at the bottom in every view (Board, Terminals, Docs, Files,
+  Git), in dark and light; nothing overlaps the dialogs; the `◧` glyph renders (not a box); with a
+  dialog open the bar's `◧` and Inbox text do nothing.
+- [ ] **Toggle sidebar:** the `◧` button, Ctrl+Shift+B (also with a terminal focused) and the
+  palette's "Global: Toggle sidebar" hide and show the sidebar; panes fill the width and the shell
+  inside re-wraps; the tooltip flips between "Hide sidebar" and "Show sidebar"; the sidebar is back
+  after a restart (not remembered).
+- [ ] **Status bar Inbox:** with nothing waiting it reads `Inbox clear` (no pointer, no click);
+  when an agent asks a question it reads `1 needs you` in amber; clicking it jumps to that pane
+  like Ctrl+Shift+I; focusing a done pane makes it count down.
+- [ ] **Status bar git:** one repo → the 7-char HEAD hash (hover: `branch · hash`); a folder with
+  no `.git` holding two repos → `2 repos`, hover lists both; with one child repo it shows that
+  hash; a new repo with no commit shows nothing; after `git commit` the hash changes without
+  reopening the Git view.
+- [ ] **Status bar agent fields:** focus a claude / codex / omp pane: after a turn the bar shows
+  the context meter and `ctx N%`, `in … · out …`, cache and the model; the time counts up
+  (`working · 12s` in the pane header and `12s` in the bar agree, also at 1m and 1h 5m). A fresh
+  agent with no turn yet shows no usage fields at all (no `0`). A shell pane, and the Board / Docs
+  / Files / Git views, show none. An agent whose profile has no `[usage]` shows no usage fields.
+- [ ] **Status bar redraw:** with Task Manager open and every pane idle, the app's CPU stays at
+  zero (the bar adds no timer).
+- [ ] **Hidden sidebar and its popovers:** hide the sidebar, then (a) Ctrl+Shift+Space (or the
+  palette's Peek) → the sidebar comes back with the peek open and typing/Esc work; (b) with a peek
+  focused press Ctrl+Shift+B → the sidebar hides, the peek closes and the terminal gets the
+  keyboard back; (c) with no default agent set, + Agent while hidden → the sidebar returns with the
+  workspace menu open (not an invisible stuck focus).
+- [ ] **Change color stays put:** with workspace A shown, right-click workspace B (or its `⋯`) →
+  pick a color. The view stays on A (no switch to B, no session opened), the menu closes, B's
+  avatar takes the color. Repeat with the menu sitting over session rows of B and over A's rows;
+  also click the menu's padding and a separator: nothing behind reacts. The Run menu (▾), the
+  workspace switcher, "Run with…" and "Several agents…" still close on a click outside.
+- [ ] **Workspace palette:** the workspace menu shows 9 swatches + "no color"; in dark and in light
+  every swatch is easy to tell from its neighbours and visible on the menu background; give
+  workspaces 3 neighbouring colors (e.g. red, orange, yellow) and check the sidebar avatars (letter
+  on a tint) are distinct and the letters stay readable on the hovered and the selected row. A
+  workspace that was `teal`/`pink`/… before keeps its color (a new shade of the same name).
+- [ ] **Sidebar filter and chips:** `Filter sessions…` at the top; type a workspace name, an agent
+  name and part of a session title: only matching sessions show, in open workspaces, others vanish;
+  two words match across fields; Backspace, Ctrl+Backspace, Ctrl+A and paste work; Esc clears it and
+  gives the keyboard back to the terminal; an unmatched text shows "No sessions match."; Vietnamese
+  Telex typing works. Chips `All N` / `Working N` / `Needs you N` show the right numbers and narrow
+  the list; `Needs you` matches the status bar's "N need you" (needs input + done not yet viewed;
+  focusing a done pane counts it down).
+- [ ] **No Inbox card:** nothing sits under the workspace list; hovering a session row still opens
+  the peek popover; Ctrl+Shift+Space peeks the first session that needs you even when its
+  workspace is collapsed or the filter hides it (the sidebar opens it), ↑ / ↓ cycle, Esc closes.
+- [ ] **Peek leaves with its row:** chip `Needs you`, hover a needs-input row, click the reply field,
+  send `y`: the session turns working, its row leaves the list and the peek closes with the keyboard
+  back in the terminal (no invisible popover holding the keys). Typing in the sidebar filter with
+  AltGr characters types them (no tab switch).
+- [ ] **Sidebar header and rows:** `+` adds a workspace; the `▾`/`▸` button collapses or expands
+  all (its tooltip flips); the workspace row says `1 working` / `2 idle` (no token total) and
+  keeps the amber `?` when something needs input; a session row shows only the time (`17m`) on
+  the right (none for needs-input / done), the status icon hover still explains the state; the
+  selected row shows the session title on a second line (rows without a title stay one line), the
+  row does not jump in height otherwise.
+- [ ] **Tab strip (item 5):** each tab shows an icon before its status mark: the agent's badge chip
+  for an agent pane, `>_` for a shell, nothing for a tab with no panes; a tab with two panes shows
+  the icon of the pane that has focus and changes when you focus the other. The status mark still
+  shows the most urgent pane. `+`, `◫` and `⋯` sit at the right end (check the `◫` glyph is not a
+  box). `+` makes a tab; `◫` splits the focused pane to the right (same as Alt+Shift+=).
+- [ ] **Tab menu:** `⋯` and a right-click on any tab (also an inactive one) open Split right / Split
+  down / Rename / Close with their shortcuts; the clicked tab becomes active; Rename edits that
+  tab's title inline; Close closes that tab; a click outside closes the menu.
+- [ ] **Shortcuts close menus:** open the tab `⋯` menu, the Run ▾ menu and the workspace switcher
+  (one at a time), press Ctrl+Shift+P or Ctrl+Shift+1 → the menu closes (no menu floats over the
+  palette or the Board).
+- [ ] **Pane header (item 5):** `<workspace> › <agent>` after the agent chip (an agent started on a
+  worktree task shows `<workspace> › <branch> › <agent>`); one pill `Working · 1m` with the three
+  dots, then the pane title; no status/time text at the right, only `⧗ queued`, the context share,
+  Follow in Zed and Turns…; the pill turns `Needs input` / `Idle · 3m` / `Done · 2 files · 1m` with the
+  state; hovering it shows `working · from hook · 12s ago`. Narrow a pane (2×2 split): the
+  breadcrumb is clipped with `…`, the pill and the buttons stay whole.
+- [ ] **Pane menu (item 5):** right-click a pane header → Rename / Change color; Rename edits the title
+  in place (Enter saves, Esc cancels; the menu closes); on a Run pane Rename is greyed. Pick a color:
+  the agent chip is tinted, a thin line of that color shows under the header, the border and pill are
+  unchanged; the first swatch (empty ring) clears it. Colors look distinct in light and dark.
+  Restart the daemon (`mk daemon stop`, reopen): the color and name come back on the resumed pane.
+  Open the same pane from the sidebar and from a second UI window: the color shows in both.
+- [ ] **Pin workspace:** right-click a workspace row → Pin: it jumps to the top of the sidebar with
+  📌 after its name; Unpin puts it back among the others by age. Restart the app and the daemon:
+  the pin is still there. The next / previous workspace shortcuts follow the new order.
+- [ ] **Pin session:** right-click a sidebar session row → the pane menu opens at the pointer with
+  Pin, Rename, Change color; Pin moves the row above newer ones with 📌; Unpin returns it.
+  Right-clicking a pane header shows the same Pin / Unpin. Stop and restart the daemon: the
+  resumed pane is still pinned.
+- [ ] **Pin tab:** right-click a tab (or its `⋯`) → Pin: the tab moves to the far left with 📌;
+  Unpin returns it to its old place; Ctrl+Tab visits tabs in the shown order.
+- [ ] **Pin icon:** 📌 is readable in the dark and light themes and at a small and a large
+  `[ui] font_size`, sits on the same line as the name, and does not change any row or tab height.
+- [ ] **Session panel:** it is closed at start. Click `◨` at the right end of the status bar (or
+  `Ctrl+Shift+Y` with a terminal focused): a column opens right of the terminals; the agent TUI
+  redraws once, narrower. Click another pane: the card follows it. `Ctrl+Shift+Y` again closes it.
+  In Git or Files, `Ctrl+Shift+Y` shows Terminals with the panel open.
+- [ ] **Resize:** hover the panel's left edge (the cursor becomes ↔), drag left and right: the
+  width follows the pointer between 240 and 560 px, never more than half the window. Release,
+  quit and restart Mkrew, open the panel: same width, and `settings.toml` has `inspector_width`
+  (comments and other keys untouched). A click on the edge without dragging writes nothing.
+- [ ] **Session card:** for a Claude pane after a turn: agent, title, `working · 2m` / `idle · 30s`,
+  ctx %, tokens, cache and model rows. A shell pane shows no usage rows and no transcript.
+  **Open transcript** opens the `.jsonl` in Zed (disabled with the tooltip "No transcript yet"
+  before the first turn ends); with Zed missing, the sidebar shows the install hint.
+- [ ] **Stop:** on a running agent, **Stop** asks "This session is still running."; Cancel does
+  nothing; Stop ends it and the pane closes by itself. On a shell, Stop ends it without asking.
+- [ ] **Changes card (one repo):** in a git workspace with 2 edited files and 1 new file the panel
+  shows `<workspace> M 2 ?1 Review diff`; edit another file: it updates without reopening the
+  panel. **Review diff** opens the Git view on that repo; clean → `Working tree clean`.
+- [ ] **Changes card (several repos):** on a folder without `.git` holding repos `fe` and `be`,
+  only the one with changes has a line (`fe M 3`), and Review diff opens the Git view on `fe`
+  (the Repo chips show `fe` selected). A folder with no repo shows no Changes card.
+- [ ] **Plan card (item 8):** open the right panel on an agent pane → "Plan" with **Link plan…** →
+  pick a `.md` with `- [ ]` / `- [x]` lines → the card shows `Plan <name> a/b`, a bar, up to 8
+  rows with the first unchecked one in the accent color and `N more` below; the selected sidebar
+  row shows the same bar under its second line, other rows none. Tick a box in the file with an
+  editor (also one that saves through a temp file, e.g. Notepad or VS Code) → the counts and bar
+  change within about a second, no click. A prose-only edit changes nothing on screen.
+- [ ] **Plan link life:** **Change…** with a `.txt` file → an error line in the card, the old plan
+  stays; **Unlink** → the card offers **Link plan…** again and the sidebar bar is gone; editing the
+  file afterwards does nothing. Link, delete the file → the card shows "no such file" and keeps
+  Change / Unlink; put the file back → the counts return. Link, restart the daemon and the UI →
+  the resumed pane still shows the plan. Light and dark theme: the bar track and fill are visible.
+- [ ] **Open in File Explorer / Zed:** right-click a file in the Files tree → "Open in File
+  Explorer" opens Explorer with that file selected; on a folder row it opens the folder; on the
+  blank part below the rows it opens the workspace folder (with a task worktree chosen: the
+  worktree). "Open in Zed" opens Zed on the file or folder (an error shows in the sidebar if `zed`
+  is missing). A click outside closes the menu; right-clicking another row moves it. Right-click
+  a workspace in the sidebar → "Open in File Explorer" opens its folder.
+- [ ] **Ctrl+Click links:** in an agent pane or a shell, `echo https://example.com/a?b=1.` then
+  hold Ctrl over the URL: underline + hand pointer, only on the URL (not the final `.`); Ctrl+Click
+  opens the browser. `echo crates/mkrew-ui/src/main.rs:120:5` (and `.\Cargo.toml`, and an absolute
+  `C:\…\main.rs:12`): underline, Ctrl+Click opens the Files view on that file with the caret on
+  line 120, scrolled into view; a path that does not exist, a folder, or a file outside the
+  workspace gets no underline and Ctrl+Click selects as usual. Pressing/releasing Ctrl with the
+  pointer at rest toggles the underline in the focused pane (in another pane it updates when the
+  pointer moves); the pointer leaving the pane clears it; scrolling the wheel clears it, and a
+  Ctrl+Click opens what is under the pointer now. A pane of a worktree task resolves paths in its
+  worktree and switches Files to it. With unsaved text in Files, Ctrl+Click on another file asks
+  Save / Don't save / Cancel. On macOS use Cmd. Terminal CPU stays flat while a flood runs with
+  Ctrl held.
+- [ ] **Markdown preview in Files:** open a `.md` file in Files → rendered page (headings with
+  rules, lists, tables, highlighted code blocks, a ```` ```mermaid ```` block drawn as a diagram),
+  `Preview | Source` in the header. Source = the editor: type a few words (● shows), switch to
+  Preview → the words are in the page, switch back → caret and undo intact, nothing lost; Ctrl+S
+  saves from either mode. Ctrl+F in Preview switches to Source with the bar open. Edit the file in
+  Zed (no unsaved text) → the page follows. Ctrl+Click `README.md:12` in a terminal → Source,
+  caret on line 12. Toggle the theme: the page and the diagram follow (light + dark). A 2 MB
+  `.md` does not freeze the window while it renders.
+  Source → Ctrl+F (bar focused) → click Preview → Ctrl+Shift+P opens the palette and Esc works
+  (the keyboard is not stuck in the hidden find field).
+- [ ] **Git diff Unified / Split:** in Git, select a changed text file. The header shows
+  `Unified | Split` (not for a binary or too-large file). Click Split: two columns, old on the
+  left and new on the right, one scroll bar moving both; a line edited in place is amber on both
+  sides, a new line is green on the right with an empty left cell, a removed line is red on the
+  left with an empty right cell, unchanged lines show on both sides, `⋯ N unchanged lines` and the
+  hunk header span the full width (Stage hunk still on it). Both themes: text readable on all
+  colors. Narrow window: long lines clip inside their half, nothing overlaps. In Unified too, a
+  line edited in place (its `−` and `+` rows) is amber, a pure add green, a pure delete red.
+- [ ] **Diff mode is remembered and global:** pick Split, select other files, switch to History and a
+  commit's file, switch the repo chip of a workspace with several repos: still Split. Quit and
+  restart: still Split; `settings.toml` has `diff_mode = "split"`. Edit it to `"unified"` while the
+  app runs: the diff changes within a second. `diff_mode = "side"` shows a settings error in the
+  palette and keeps the current mode.
+- [ ] **Diff keys and comments in both modes:** with the Git list focused, `d` toggles the mode (the
+  tooltip and the palette entry "Git: Toggle Unified / Split diff" show it); `n` / `p` bring the
+  hunk header to the top in both; switching mode keeps the current hunk in view. In Split, click a
+  right-column line: accent bar and number on the right half; Shift+click extends; Ctrl+Alt+M adds
+  a comment that quotes those lines; clicking a left-only (removed) line does nothing.
+
 ### To verify — 2026-10-09 inbox: Shift+Enter, F11, Files editor, several repos, scrollback, pane keys, shells, rename (plan docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md)
 
 - [ ] **Shift+Enter:** in claude, codex, copilot and omp panes, type `a`, Shift+Enter, `b` → two
@@ -147,7 +353,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   (`echo hi`) → its pane leaves the tab.
 - [ ] **Exited sessions clean up (ADR 0033):** `exit` in a shell pane → the pane and its sidebar row
   disappear (the sibling pane fills the space; a zoomed pane unzooms); quit an agent (`/exit`) →
-  the same; ✕ on a live shell pane → no `✕ exited` row left behind. History (toolbar) still lists
+  the same; ✕ on a live shell pane → no `✕ exited` row left behind. History (toolbar) (superseded by ADR 0034/0036) still lists
   them with their exit code and replays their output. A workspace with no live session shows
   "No sessions". **Daemon restart:** with a live agent pane (one with a resumable conversation) open,
   `mk daemon stop`, start Mkrew again → the pane resumes in the same place (it was not removed).
@@ -177,16 +383,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Agent icons:** after a daemon restart + UI reconnect, your existing profiles show ✻ claude,
   ⌬ codex, π omp, ⊙ copilot, >_ shell as bordered chips in the sidebar rows, pane headers, Inbox
   rows, board cards and the Run with… / default agent menus (glyphs, not boxes; light + dark).
-- [ ] **Theme:** the toolbar toggle cycles System (◐) → Light (☀) → Dark (☾); every surface
+- [ ] **Theme:** the toolbar toggle (superseded by ADR 0034/0036) cycles System (◐) → Light (☀) → Dark (☾); every surface
   updates at once, no dark pieces left in light or the reverse; `settings.toml` gets
   `[ui] theme = "…"` with your comments kept; Ctrl+Shift+J does the same. In System mode, change
   Windows' app mode → the app follows live. A broken settings.toml → the toggle still switches,
   the palette shows the error, the file is untouched.
 - [ ] **Both themes, these states visible:** hover, selected session, active tab, working dots,
-  the Inbox card empty and non-empty, the empty-state buttons with their Ctrl+Shift+A / T chips.
+  the Inbox card empty and non-empty (superseded by ADR 0034/0036), the empty-state buttons with their Ctrl+Shift+A / T chips.
   Muted text on the sidebar and status labels is readable in light mode. Screenshots of each
   view in light and dark for §14 (`docs/screenshots/`).
-- [ ] **Layout:** no right rail; toolbar 44 px with the segmented views; switching views, Run and
+- [ ] **Layout:** no right rail; toolbar 44 px with the segmented views (superseded by ADR 0034/0036); switching views, Run and
   its ▾ menu, History, + Agent, + Shell (also from Board/Docs/Files/Git), creating / closing /
   switching tabs, ✕ on an inactive tab closes it without activating it, expanding and collapsing
   workspaces, ⋯ on hover, selecting sessions. At `[ui] font_size = 20` nothing clips.
@@ -894,7 +1100,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **Broadcast** (criterion 6): two real agents (Claude + Codex, one working, one idle) →
     palette "Agent: Broadcast to agents…" → both checked → type + Enter → each agent gets the text
     once, rows show "queued" / "sent"; kill one and send again → "failed: …".
-  - **Inbox last line** (criterion 7): an agent waiting in the Inbox shows its last non-blank
+  - **Inbox last line** (superseded by ADR 0034/0036) (criterion 7): an agent waiting in the Inbox shows its last non-blank
     screen line (e.g. the `(y/n)` prompt) under its name.
   - **§14 design check**: dark + light screenshots of the peek popover (needs_input with `y`/`n`
     and a plain one), the broadcast dialog after a send with mixed results, an Inbox row with last
@@ -2008,7 +2214,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   To verify: `cargo clippy` on Linux/macOS; on Windows run a fake agent that works for a while
   and check `powercfg /requests` (as admin) lists `mkrew-daemon` under SYSTEM, and that it is gone
   ~5 s after the agent stops; a shell session running a command never appears there.
-- (T9.8, ADR 0011) **Turn summary + Inbox last line:** the summary reads `done · 3 files · 4m`
+- (T9.8, ADR 0011) **Turn summary + Inbox last line:** (superseded by ADR 0034/0036) the summary reads `done · 3 files · 4m`
   (app duration style, not `4 min`); only the latest turn of a session is kept, and only while
   the UI runs (a UI started after the turn ended shows plain `done`). The Inbox last line is read
   once per entry appearance (`session.read lines=1`), so it does not follow later output; the row
@@ -2135,6 +2341,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   fixtures are hand-trimmed copies of those shapes. An unknown `[usage] format` name is not a
   profile error (no usage + one warning). Sample profiles now set `context_window` 200000
   (claude) and 258400 (codex): check both against the models you use.
+  Changed 2026-10-10: `input` is fresh input only, the cache has its own fields (ADR 0035).
 - (T13.10a) **Usage wiring:** added request `session.usage` (`project_id` → newest usage per
   session, stored as `session_event` kind `usage` on change) so the UI can show totals after a
   reconnect or daemon restart (SPEC §20E protocol line updated; protocol v23). Usage is read only
@@ -2143,7 +2350,7 @@ _Decisions the agent made on its own. Override them here if you disagree._
   re-reads the same transcript from the start, so the UI must not add up a task's sessions
   (show the newest one). Claude `/clear` (new session id) starts a new transcript and totals.
   Codex: when several rollout files contain the id, the last by path (newest date) is read.
-- (T13.10b) **Usage display:** total = input + output (`12.3k tok` on cards, bare `12.3k` on
+- (T13.10b) **Usage display:** total = input + cache_read + cache_write + output (`12.3k tok` on cards, bare `12.3k` on
   sidebar rows, details on hover). A card shows its newest session that reported usage (a just
   resumed run keeps showing the earlier one until its first turn ends); a group (fan-out
   original) card shows none. A sidebar workspace row adds, per task, that same session plus

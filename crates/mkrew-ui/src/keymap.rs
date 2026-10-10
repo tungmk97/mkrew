@@ -102,6 +102,8 @@ pub enum Command {
     GitUnstage,
     /// Git only: move the keyboard to the commit message box (Working changes).
     GitFocusCommit,
+    /// Git only: switch the diff viewer between Unified and Split.
+    GitToggleDiffMode,
     /// Fuzzy-find a file of the active workspace and open it in the Files view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
@@ -116,6 +118,11 @@ pub enum Command {
     ToggleTheme,
     /// Toggle the window filling the whole screen (not remembered across restarts).
     ToggleFullScreen,
+    /// Hide or show the workspace sidebar (not remembered across restarts).
+    ToggleSidebar,
+    /// Show or hide the session panel right of Terminals (SPEC §10); from another view it
+    /// shows Terminals with the panel open.
+    ToggleInspector,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -207,6 +214,7 @@ impl Command {
             Command::GitStage,
             Command::GitUnstage,
             Command::GitFocusCommit,
+            Command::GitToggleDiffMode,
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
@@ -214,6 +222,8 @@ impl Command {
             Command::OpenKeymapSettings,
             Command::ToggleTheme,
             Command::ToggleFullScreen,
+            Command::ToggleSidebar,
+            Command::ToggleInspector,
         ]);
         all
     }
@@ -276,6 +286,7 @@ impl Command {
             Command::GitStage => "git_stage".into(),
             Command::GitUnstage => "git_unstage".into(),
             Command::GitFocusCommit => "git_focus_commit".into(),
+            Command::GitToggleDiffMode => "git_toggle_diff_mode".into(),
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
@@ -283,6 +294,8 @@ impl Command {
             Command::OpenKeymapSettings => "open_keymap_settings".into(),
             Command::ToggleTheme => "toggle_theme".into(),
             Command::ToggleFullScreen => "toggle_full_screen".into(),
+            Command::ToggleSidebar => "toggle_sidebar".into(),
+            Command::ToggleInspector => "toggle_inspector".into(),
         }
     }
 
@@ -350,6 +363,7 @@ impl Command {
             Command::GitStage => "s".into(),
             Command::GitUnstage => "u".into(),
             Command::GitFocusCommit => "c".into(),
+            Command::GitToggleDiffMode => "d".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
@@ -357,6 +371,8 @@ impl Command {
             Command::OpenKeymapSettings => "ctrl-,".into(),
             Command::ToggleTheme => "ctrl-shift-j".into(),
             Command::ToggleFullScreen => "f11".into(),
+            Command::ToggleSidebar => "ctrl-shift-b".into(),
+            Command::ToggleInspector => "ctrl-shift-y".into(),
         }
     }
 
@@ -380,6 +396,7 @@ impl Command {
             | Command::GitPreviousHunk
             | Command::GitStage
             | Command::GitUnstage
+            | Command::GitToggleDiffMode
             | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
@@ -741,6 +758,14 @@ mod tests {
         assert_eq!(keymap.label(Command::ToggleFullScreen), "F11");
         // Global: also while a terminal has focus (it no longer gets ESC[23~).
         assert_eq!(Command::ToggleFullScreen.context(), None);
+        assert_eq!(bound("ctrl-shift-b"), Some(Command::ToggleSidebar));
+        assert_eq!(keymap.label(Command::ToggleSidebar), "Ctrl+Shift+B");
+        // Global: it works while a terminal has focus.
+        assert_eq!(Command::ToggleSidebar.context(), None);
+        assert_eq!(bound("ctrl-shift-y"), Some(Command::ToggleInspector));
+        assert_eq!(keymap.label(Command::ToggleInspector), "Ctrl+Shift+Y");
+        // Global: also while a terminal has focus (it must not reach the agent).
+        assert_eq!(Command::ToggleInspector.context(), None);
         assert_eq!(Command::OpenKeymapSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),
@@ -785,6 +810,7 @@ mod tests {
             ("s", Command::GitStage),
             ("u", Command::GitUnstage),
             ("c", Command::GitFocusCommit),
+            ("d", Command::GitToggleDiffMode),
         ] {
             assert_eq!(bound(keys), Some(command), "{keys}");
             assert_eq!(command.context(), Some(GIT_CONTEXT), "{command:?}");

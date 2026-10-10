@@ -585,6 +585,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state: SessionState::Working,
             state_source: StateSource::Daemon,
@@ -594,6 +595,8 @@ mod tests {
             rows: 24,
             started_at,
             ended_at,
+            pinned: false,
+            plan_path: None,
         }
     }
 

@@ -6,4 +6,5 @@ pub mod emulator;
 pub mod find;
 pub mod input;
 pub mod layout;
+pub mod links;
 pub mod view;

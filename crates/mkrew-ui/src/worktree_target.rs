@@ -76,6 +76,14 @@ pub fn project_dir(project_path: &Path, worktree_root: &Path) -> PathBuf {
     }
 }
 
+/// `rel` (`/`-separated, relative to `base`) below `base` with native separators. An empty
+/// `rel` is `base` itself, without a trailing separator (the OS file manager needs that).
+pub fn join_relative(base: PathBuf, rel: &str) -> PathBuf {
+    rel.split('/')
+        .filter(|part| !part.is_empty())
+        .fold(base, |full, part| full.join(part))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +135,21 @@ mod tests {
             .join(" | ");
         insta::assert_snapshot!(line);
         assert_eq!(choices[1].worktree_task_id, Some(Ulid(4)));
+    }
+
+    /// The Files tree's root is `""`: Explorer must get the folder itself, not `proj\`.
+    #[test]
+    fn a_relative_path_joins_below_its_folder_and_empty_means_the_folder() {
+        let base = PathBuf::from("proj");
+        assert_eq!(
+            join_relative(base.clone(), "src/a.rs"),
+            Path::new("proj").join("src").join("a.rs")
+        );
+        assert_eq!(join_relative(base.clone(), "").as_os_str(), "proj");
+        assert_eq!(
+            join_relative(base, "src//a.rs/"),
+            Path::new("proj").join("src").join("a.rs")
+        );
     }
 
     #[test]

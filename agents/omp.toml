@@ -11,3 +11,9 @@ oneshot = "omp -p --no-session"  # one-shot text; prompt on stdin
 mode = "hook+screen"
 idle_after_ms = 3000
 needs_input_patterns = []
+
+# Token usage from omp's session file (SPEC §20E.3). The window is not in that file and omp runs
+# many models: set it to the context window of the model you use, or remove the line for no ctx %.
+[usage]
+format = "omp_jsonl"
+context_window = 200000         # tokens, for the ctx % shown

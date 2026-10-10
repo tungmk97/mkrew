@@ -73,7 +73,7 @@ impl SettingsHolder {
     }
 }
 
-/// A running settings watcher; dropping it stops watching.
+/// A running one-file watcher; dropping it stops watching.
 pub struct Watch {
     _watcher: RecommendedWatcher,
 }
@@ -81,8 +81,17 @@ pub struct Watch {
 /// Watches the directory of the settings file and reloads `holder` [`QUIET`] after the file
 /// last changed. Must run inside the tokio runtime.
 pub fn watch(holder: Arc<SettingsHolder>) -> ::notify::Result<Watch> {
-    let dir = holder.path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let name: Option<OsString> = holder.path.file_name().map(Into::into);
+    let path = holder.path.clone();
+    watch_file(&path, move || holder.reload())
+}
+
+/// Calls `on_change` [`QUIET`] after the file `path` last changed, was created, replaced or
+/// removed. Watches its directory (non-recursive) and filters on the file name, because
+/// editors save through a temp file + rename. Must run inside the tokio runtime; dropping the
+/// [`Watch`] stops it (a change still pending then is delivered once more).
+pub fn watch_file(path: &Path, on_change: impl Fn() + Send + 'static) -> ::notify::Result<Watch> {
+    let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let name: Option<OsString> = path.file_name().map(Into::into);
     let (tx, rx) = mpsc::unbounded_channel();
     let mut watcher = ::notify::recommended_watcher(
         move |event: ::notify::Result<::notify::Event>| match event {
@@ -93,11 +102,11 @@ pub fn watch(holder: Arc<SettingsHolder>) -> ::notify::Result<Watch> {
                 }
             }
             Ok(_) => {}
-            Err(e) => tracing::warn!("settings watcher error: {e}"),
+            Err(e) => tracing::warn!("file watcher error: {e}"),
         },
     )?;
     watcher.watch(&dir, RecursiveMode::NonRecursive)?;
-    tokio::spawn(debounce(rx, move || holder.reload()));
+    tokio::spawn(debounce(rx, on_change));
     Ok(Watch { _watcher: watcher })
 }
 

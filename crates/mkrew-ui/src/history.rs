@@ -219,6 +219,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::Daemon,
@@ -228,6 +229,8 @@ mod tests {
             rows: 24,
             started_at: 1_000,
             ended_at,
+            pinned: false,
+            plan_path: None,
         }
     }
 

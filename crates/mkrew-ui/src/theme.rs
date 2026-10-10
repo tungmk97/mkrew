@@ -74,11 +74,9 @@ pub const STATUS_DOT_GAP: f32 = 2.0;
 /// are px at the default 13 px body and scale with `[ui] font_size` ([`rems_px`]).
 pub const STATUS_MARK_WIDTH: f32 = space::L;
 
-/// The Inbox card's header tile (✓ / !).
-pub const INBOX_TILE_SIZE: f32 = 28.0;
 /// A square glyph button (theme toggle, sidebar +).
 pub const ICON_BUTTON_SIZE: f32 = 26.0;
-/// Inset of the toolbar's segmented control around its segments.
+/// Inset of the title bar's segmented control around its segments.
 pub const SEGMENT_PADDING: f32 = 2.0;
 
 /// Borders are 1 px and faint.
@@ -94,6 +92,17 @@ pub const DIAGRAM_FONT: &str = "Segoe UI, Helvetica Neue, DejaVu Sans, sans-seri
 /// Size of a new main window.
 pub const WINDOW_WIDTH: f32 = 1200.0;
 pub const WINDOW_HEIGHT: f32 = 760.0;
+/// Smallest main window: the title bar's contents fit (ADR 0034).
+pub const WINDOW_MIN_WIDTH: f32 = 1100.0;
+pub const WINDOW_MIN_HEIGHT: f32 = 560.0;
+/// One ─ □ ✕ button of the Windows title bar (the system caption button width).
+pub const WINDOW_CONTROL_WIDTH: f32 = 46.0;
+/// Room for the macOS traffic lights at the left of the title bar.
+pub const MAC_TRAFFIC_LIGHTS_WIDTH: f32 = 72.0;
+/// Where the macOS traffic lights sit ((x, y) in px).
+pub const MAC_TRAFFIC_LIGHT_POS: (f32, f32) = (12.0, 14.0);
+/// Longest workspace name / branch chip in the title bar before it truncates.
+pub const TITLE_CHIP_MAX_WIDTH: f32 = 160.0;
 
 /// Opacity of a hovered / pressed filled button, and of secondary text inside a button.
 pub mod opacity {
@@ -115,14 +124,28 @@ pub mod opacity {
 /// and `space::XS` from the tab's edges.
 pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
+/// Thickness of the accent line under the header of a colored pane (ADR 0037).
+pub const PANE_ACCENT_WIDTH: f32 = 2.0;
+
 /// Width of the workspace sidebar.
 pub const SIDEBAR_WIDTH: f32 = 280.0;
+
+/// Narrowest and widest the session panel gets when dragged (SPEC §10); `[ui] inspector_width`
+/// is clamped to them.
+pub const INSPECTOR_MIN_WIDTH: f32 = 240.0;
+pub const INSPECTOR_MAX_WIDTH: f32 = 560.0;
+
+/// Width of the grab area on the session panel's left edge.
+pub const INSPECTOR_GRIP_WIDTH: f32 = 6.0;
+
+/// Width of the label column of the session card's usage rows (fits "Context" at META size).
+pub const INSPECTOR_LABEL_WIDTH: f32 = 56.0;
 
 /// Min height of a board column header row: the Todo header's `New task` button at the
 /// default UI font size, so every column's cards start at the same height (ADR 0023).
 pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 
-/// Width of a popover menu (the workspace menu).
+/// Width of a popover menu (every `menu_panel` popover).
 pub const MENU_WIDTH: f32 = 240.0;
 
 /// Width of the query field in a terminal's find bar.
@@ -380,7 +403,7 @@ pub struct Theme {
     pub accent: u32,
     /// Accent-colored text on `bg` / `accent_bg` (links, the selected view).
     pub accent_text: u32,
-    /// A faint accent fill (selected toolbar segment, accent chips).
+    /// A faint accent fill (selected title bar segment, accent chips).
     pub accent_bg: u32,
     /// Text and glyphs on an `accent` fill (primary buttons).
     pub on_accent: u32,
@@ -389,6 +412,8 @@ pub struct Theme {
     /// Faint needs-input and done fills behind their text.
     pub warning_bg: u32,
     pub success_bg: u32,
+    /// Faint error fill (hover of a Stop control); the red twin of `warning_bg` / `success_bg`.
+    pub danger_bg: u32,
     /// Alpha of a workspace color tint (avatars, [`Theme::tint`]).
     pub tint_alpha: u8,
     /// The shade behind a modal dialog, RGBA.
@@ -410,6 +435,10 @@ pub struct Theme {
     pub diff_add_text: u32,
     pub diff_del_bg: u32,
     pub diff_del_text: u32,
+    /// A line changed in place: the paired removed + added rows of the diff (Unified and both
+    /// Split halves).
+    pub diff_mod_bg: u32,
+    pub diff_mod_text: u32,
     pub diff_hunk_header: u32,
     /// Files and diff viewer syntax colors (harmonized with the ANSI palette; comments use
     /// `text_muted`).
@@ -421,7 +450,7 @@ pub struct Theme {
     /// ANSI 0–15, harmonized with the tokens above.
     pub ansi: [u32; 16],
     /// Workspace colors, in [`WORKSPACE_COLORS`] order (≥ 3:1 on every surface, ADR 0020).
-    pub workspace_colors: [u32; 8],
+    pub workspace_colors: [u32; WORKSPACE_COLORS.len()],
     /// Dark appearance (picks diagram images, ADR 0021).
     pub dark: bool,
     /// The chosen mode (`[ui] theme`); `dark` is what it resolved to.
@@ -507,6 +536,7 @@ impl Theme {
             on_accent_divider: 0x0000_0040,
             warning_bg: 0x3A3020,
             success_bg: 0x1D3A31,
+            danger_bg: 0x3A2327,
             tint_alpha: 0x2E,
             pane_focus_border: 0x4A528E,
             terminal_selection_bg: 0x353B60,
@@ -521,6 +551,8 @@ impl Theme {
             diff_add_text: 0x7DD3A0,
             diff_del_bg: 0x3D2226,
             diff_del_text: 0xF2A0A4,
+            diff_mod_bg: 0x3A3320,
+            diff_mod_text: 0xE6C77A,
             diff_hunk_header: 0x2C2E37,
             syntax_keyword: 0xC28CF0,
             syntax_string: 0x7DD3A0,
@@ -532,7 +564,8 @@ impl Theme {
                 0x6E7079, 0xF2A0A4, 0x7DD3A0, 0xF0C674, 0xA3AFFF, 0xD8B4FE, 0x8BE0EC, 0xF5F6F8,
             ],
             workspace_colors: [
-                0xE5676B, 0xF0955A, 0xE3C14E, 0x4CB782, 0x5EC4D6, 0x7C8CFF, 0xC28CF0, 0xF08CC0,
+                0xF87171, 0xFB923C, 0xFACC15, 0xA3E635, 0x4ADE80, 0x2DD4BF, 0x60A5FA, 0xC084FC,
+                0xF472B6,
             ],
             dark: true,
             ..Self::shared()
@@ -561,6 +594,7 @@ impl Theme {
             on_accent_divider: 0xFFFF_FF59,
             warning_bg: 0xFDF3E1,
             success_bg: 0xE1F5EC,
+            danger_bg: 0xFDECEC,
             tint_alpha: 0x24,
             pane_focus_border: 0xA7ADEA,
             terminal_selection_bg: 0xCACEF2,
@@ -575,6 +609,8 @@ impl Theme {
             diff_add_text: 0x1E6B3A,
             diff_del_bg: 0xFDEEEE,
             diff_del_text: 0xA61B1B,
+            diff_mod_bg: 0xFFF6DB,
+            diff_mod_text: 0x7A5200,
             diff_hunk_header: 0xF6F7F9,
             // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
             syntax_keyword: 0x8A3FB8,
@@ -588,7 +624,8 @@ impl Theme {
                 0x6B6D76, 0xE5676B, 0x38A169, 0xD69E2E, 0x3B47B8, 0xB37FEB, 0x31A3B8, 0x55575F,
             ],
             workspace_colors: [
-                0xC53030, 0xC05621, 0x975A16, 0x2F855A, 0x1F8A9E, 0x4F5BD5, 0x8A3FB8, 0xB83280,
+                0xDC2626, 0xD9560B, 0xA16207, 0x4D7C0F, 0x15803D, 0x0F766E, 0x2563EB, 0x9333EA,
+                0xDB2777,
             ],
             dark: false,
             ..Self::shared()
@@ -617,6 +654,7 @@ impl Theme {
             on_accent_divider: 0,
             warning_bg: 0,
             success_bg: 0,
+            danger_bg: 0,
             tint_alpha: 0,
             // Black at ~35 %, in both appearances.
             scrim: 0x0000_0059,
@@ -633,6 +671,8 @@ impl Theme {
             diff_add_text: 0,
             diff_del_bg: 0,
             diff_del_text: 0,
+            diff_mod_bg: 0,
+            diff_mod_text: 0,
             diff_hunk_header: 0,
             syntax_keyword: 0,
             syntax_string: 0,
@@ -640,7 +680,7 @@ impl Theme {
             syntax_type: 0,
             syntax_function: 0,
             ansi: [0; 16],
-            workspace_colors: [0; 8],
+            workspace_colors: [0; WORKSPACE_COLORS.len()],
             dark: false,
             mode: ThemeMode::System,
             ui_font_family: UI_FONT.into(),
@@ -683,7 +723,7 @@ pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
     cx.set_global(Theme::resolve(mode, os_dark).with_fonts(&fonts));
 }
 
-/// System → Light → Dark → System (the toolbar toggle, `ToggleTheme`).
+/// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
 pub fn next_mode(mode: ThemeMode) -> ThemeMode {
     match mode {
         ThemeMode::System => ThemeMode::Light,
@@ -701,6 +741,11 @@ pub fn mode_glyph(mode: ThemeMode) -> &'static str {
     }
 }
 
+/// Marks a pinned workspace, session row or tab (SPEC §10). Plain text like the other glyphs:
+/// on Windows GPUI draws it as a color emoji through DirectWrite's font fallback (Segoe UI
+/// Emoji), so it ignores `text_color`.
+pub const PIN_GLYPH: &str = "📌";
+
 /// A design size in px at the default 13 px body, as rems: it grows with `[ui] font_size`
 /// (ADR 0024) instead of clipping text.
 pub fn rems_px(px: f32) -> Rems {
@@ -708,10 +753,22 @@ pub fn rems_px(px: f32) -> Rems {
 }
 
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
-pub const TOOLBAR_HEIGHT: f32 = 44.0;
+/// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
+pub const TITLE_BAR_HEIGHT: f32 = 44.0;
 pub const TAB_STRIP_HEIGHT: f32 = 38.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 28.0;
+/// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row
+/// (ADR 0039). The track is `Theme::border`, the fill `Theme::accent` (both themes).
+pub const PLAN_BAR_HEIGHT: f32 = 4.0;
+pub const PLAN_ROW_BAR_HEIGHT: f32 = 2.0;
+/// The status bar at the window bottom (SPEC §10), in px at the default font size. It draws
+/// with existing tokens (`sidebar` background, `divider` top line, `text_muted`,
+/// `status_needs_input`, `accent`, `border`), so dark and light need no new values.
+pub const STATUS_BAR_HEIGHT: f32 = 24.0;
+/// The context meter's track.
+pub const STATUS_BAR_METER_WIDTH: f32 = 48.0;
+pub const STATUS_BAR_METER_HEIGHT: f32 = 4.0;
 pub const WORKSPACE_AVATAR_SIZE: f32 = 18.0;
 pub const EMPTY_STATE_MAX_WIDTH: f32 = 320.0;
 pub const EMPTY_STATE_TILE: f32 = 44.0;
@@ -865,9 +922,18 @@ mod tests {
 
     #[test]
     fn layout_heights_scale_with_the_ui_font() {
-        // 44 px at the default 13 px body; at 20 px the toolbar is 44 × 20 / 13.
+        // 44 px at the default 13 px body; at 20 px the title bar is 44 × 20 / 13.
         assert_eq!(rems_px(44.0), gpui::rems(44.0 / 13.0));
-        assert_eq!(rems_px(TOOLBAR_HEIGHT).0 * 20.0, 44.0 * 20.0 / 13.0);
+        assert_eq!(rems_px(TITLE_BAR_HEIGHT).0 * 20.0, 44.0 * 20.0 / 13.0);
+    }
+
+    /// ✕ on the red hover of the Close button must stay readable in both themes.
+    #[test]
+    fn window_close_hover_is_readable() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let ratio = contrast(theme.on_accent, theme.status_exited);
+            assert!(ratio >= 3.0, "{ratio:.2}");
+        }
     }
 
     #[test]
@@ -924,10 +990,26 @@ mod tests {
                 // Comments and line numbers.
                 theme.text_muted,
             ] {
-                for bg in [theme.diff_add_bg, theme.diff_del_bg] {
+                for bg in [theme.diff_add_bg, theme.diff_del_bg, theme.diff_mod_bg] {
                     let ratio = contrast(fg, bg);
                     assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
                 }
+            }
+        }
+    }
+
+    /// Added, removed and modified (a line changed in place, Split diff) lines read on
+    /// their own backgrounds, in both appearances.
+    #[test]
+    fn diff_line_colors_read_on_their_backgrounds() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for (fg, bg) in [
+                (theme.diff_add_text, theme.diff_add_bg),
+                (theme.diff_del_text, theme.diff_del_bg),
+                (theme.diff_mod_text, theme.diff_mod_bg),
+            ] {
+                let ratio = contrast(fg, bg);
+                assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
             }
         }
     }
@@ -959,22 +1041,77 @@ mod tests {
         assert!(motion::SLOW <= Duration::from_millis(180));
     }
 
+    /// Hue angle (0..360) of an `0xRRGGBB` color.
+    fn hue(color: u32) -> f32 {
+        let [r, g, b] = [16, 8, 0].map(|shift| ((color >> shift) & 0xFF) as f32);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let d = max - min;
+        if d == 0.0 {
+            return 0.0;
+        }
+        let sector = if max == r {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        sector * 60.0
+    }
+
     #[test]
-    fn workspace_colors_stand_out_from_the_surfaces() {
+    fn workspace_colors_stand_out_from_every_surface_and_from_each_other() {
         for theme in [Theme::dark(), Theme::light()] {
-            for color in theme.workspace_colors {
-                // WCAG 1.4.11: graphical objects ≥ 3:1.
-                for bg in [theme.bg, theme.surface, theme.surface_raised] {
+            // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
+            let surfaces = [
+                theme.bg,
+                theme.surface,
+                theme.surface_raised,
+                theme.sidebar,
+                theme.card,
+                theme.hover,
+                theme.selected,
+            ];
+            for (name, color) in WORKSPACE_COLORS.iter().zip(theme.workspace_colors) {
+                for bg in surfaces {
+                    // WCAG 1.4.11: graphical objects ≥ 3:1.
                     let ratio = contrast(color, bg);
-                    assert!(ratio >= 3.0, "{color:06X} on {bg:06X}: {ratio:.2}");
+                    assert!(
+                        ratio >= 3.0,
+                        "{name} {color:06X} on {bg:06X} (dark: {}): {ratio:.2}",
+                        theme.dark
+                    );
                 }
             }
+            // Clearly distinct: neighbouring hues (round the color wheel) differ by ≥ 12°.
+            let mut hues: Vec<f32> = theme.workspace_colors.iter().map(|c| hue(*c)).collect();
+            hues.sort_by(f32::total_cmp);
+            for pair in hues.windows(2) {
+                assert!(pair[1] - pair[0] >= 12.0, "hues too close: {hues:?}");
+            }
+            let wrap = hues[0] + 360.0 - hues[hues.len() - 1];
+            assert!(wrap >= 12.0, "hues too close round the wheel: {hues:?}");
+            // Every name has a color; a hex value or unknown name has none.
+            for name in WORKSPACE_COLORS {
+                assert!(theme.workspace_color(name).is_some(), "{name}");
+            }
+            let teal = WORKSPACE_COLORS.iter().position(|n| *n == "teal").unwrap();
             assert_eq!(
                 theme.workspace_color("teal"),
-                Some(theme.workspace_colors[4])
+                Some(theme.workspace_colors[teal])
             );
             assert_eq!(theme.workspace_color("#ff0000"), None);
         }
+    }
+
+    #[test]
+    fn the_palette_keeps_every_name_a_workspace_may_already_have() {
+        for old in [
+            "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink",
+        ] {
+            assert!(Theme::dark().workspace_color(old).is_some(), "{old}");
+        }
+        assert!(Theme::dark().workspace_color("lime").is_some());
     }
 
     #[test]

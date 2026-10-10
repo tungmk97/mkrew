@@ -35,3 +35,13 @@
 ## Amendment 2026-10-08 (ADR 0027)
 
 The dot became the workspace's first letter on a tint of its color (the redesign's avatar).
+
+## Amendment 2026-10-10 (inbox redesign, item 4)
+
+The palette was too close in places (dark blue/purple, light orange/yellow) and had no lime. It
+is now nine names: red, orange, yellow, **lime**, green, teal, blue, purple, pink. Every old name
+stays valid (stored values and the daemon check are untouched; `lime` is the only new name); the
+protocol stays as it is (`color` was already an optional string). The per-appearance tokens were
+re-picked: neighbouring hues differ by at least 12° on the color wheel, and each color is ≥ 3:1
+on `bg`, `surface`, `surface-raised`, `sidebar`, `card`, `hover` and `selected` in both themes
+(tests in `theme.rs`). Values are in SPEC §14.

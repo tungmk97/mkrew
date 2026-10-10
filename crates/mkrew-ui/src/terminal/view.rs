@@ -6,16 +6,18 @@
 //! batch, then waits for the `painted` signal, so bursts coalesce into one repaint per frame.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use alacritty_terminal::index::Side;
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId, Entity,
-    FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId,
-    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, ScrollWheelEvent, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle,
-    Window, canvas, div, fill, font, point, px, relative, rgb, size,
+    EventEmitter, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
+    InspectorElementId, KeyDownEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style,
+    TextAlign, TextRun, UnderlineStyle, Window, canvas, div, fill, font, point, px, relative, rgb,
+    size,
 };
 use mkrew_protocol::{
     AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
@@ -30,6 +32,7 @@ use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
+use crate::terminal::links::{self, Target};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space};
 
 /// Cell width guess used only until the terminal font is resolved.
@@ -64,6 +67,35 @@ pub struct TerminalPane {
     find_clicked: bool,
     /// Composing IME chars typed into the PTY or the find bar so far (see `crate::ime`).
     ime_marked: Rc<crate::ime::Composing<FocusHandle>>,
+    /// `None` = no links (the history's replay pane). `Some(base)`: URLs, and with a `base`
+    /// (the project folder, or the task worktree of the pane's agent) file paths.
+    links: Option<Option<PathBuf>>,
+    /// The link under the pointer while Ctrl / Cmd is held, and the cell it was looked up for
+    /// (the row is read again only when the pointer moves to another cell).
+    hover_link: Option<HoverLink>,
+    probed: Option<(usize, usize)>,
+}
+
+/// Ctrl+Click (Cmd+Click on macOS) on a link of the terminal: the shell opens it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenLink {
+    Url(String),
+    /// A file of the pane's folder: its Files path (`/` separators) and the line to show.
+    File {
+        path: String,
+        line: Option<u32>,
+    },
+}
+
+impl EventEmitter<OpenLink> for TerminalPane {}
+
+/// The link under the pointer while Ctrl / Cmd is held: its row and cells, for the underline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HoverLink {
+    row: usize,
+    start: usize,
+    end: usize,
+    open: OpenLink,
 }
 
 /// Window position of the grid's top-left cell and the cell size.
@@ -135,11 +167,19 @@ impl TerminalPane {
             find_focus: cx.focus_handle(),
             find_clicked: false,
             ime_marked: Rc::default(),
+            links: None,
+            hover_link: None,
+            probed: None,
         }
     }
 
     pub fn session_id(&self) -> Ulid {
         self.session_id
+    }
+
+    /// Turns on Ctrl+Click links; `base` is where typed relative paths start (`None` = URLs only).
+    pub fn set_links(&mut self, base: Option<PathBuf>) {
+        self.links = Some(base);
     }
 
     /// Sends keyboard input to this pane; keeps it where it is if the pane (terminal or its
@@ -300,6 +340,70 @@ impl TerminalPane {
         ))
     }
 
+    /// The cell under `position` when it is inside the painted grid.
+    fn cell_inside(&self, position: Point<Pixels>) -> Option<(usize, usize)> {
+        let geometry = self.geometry?;
+        let at = position - geometry.origin;
+        let (cols, rows) = self.emulator.size();
+        let inside = at.x >= px(0.)
+            && at.y >= px(0.)
+            && at.x < geometry.cell_width * cols as f32
+            && at.y < geometry.line_height * rows as f32;
+        let (row, col, _) = self.cell_at(position).filter(|_| inside)?;
+        Some((row, col))
+    }
+
+    /// The link at a cell, read from that row of the cached grid only.
+    fn link_in(&self, row: usize, col: usize) -> Option<HoverLink> {
+        let base = self.links.as_ref()?;
+        let cells = self.emulator.shared_grid().row_chars(row)?;
+        let link = links::link_at(&cells, col)?;
+        let open = match link.target {
+            Target::Url(url) => OpenLink::Url(url),
+            Target::Path { path, line } => OpenLink::File {
+                path: links::resolve(base.as_deref()?, &path)?,
+                line,
+            },
+        };
+        Some(HoverLink {
+            row,
+            start: link.start,
+            end: link.end,
+            open,
+        })
+    }
+
+    /// Ctrl / Cmd held (or not) with the pointer at `position`: finds the link under it, or
+    /// drops the one shown. One row is read, and only when the pointer moved to another cell,
+    /// so holding the key costs nothing while output streams; without the key nothing runs.
+    fn update_link(&mut self, held: bool, position: Point<Pixels>, cx: &mut Context<'_, Self>) {
+        if self.links.is_none() {
+            return;
+        }
+        let cell = if held {
+            self.cell_inside(position)
+        } else {
+            None
+        };
+        if cell == self.probed {
+            return;
+        }
+        self.probed = cell;
+        let found = cell.and_then(|(row, col)| self.link_in(row, col));
+        if found != self.hover_link {
+            self.hover_link = found;
+            cx.notify();
+        }
+    }
+
+    /// Drops the link under the pointer and forgets the probed cell.
+    fn clear_link(&mut self, cx: &mut Context<'_, Self>) {
+        self.probed = None;
+        if self.hover_link.take().is_some() {
+            cx.notify();
+        }
+    }
+
     fn mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -308,6 +412,18 @@ impl TerminalPane {
     ) {
         if std::mem::take(&mut self.find_clicked) {
             return;
+        }
+        // Ctrl+Click (Cmd+Click) on a link opens it: no selection starts, and the pane does
+        // not take the keyboard from the view the link opens.
+        if event.modifiers.secondary() && self.links.is_some() {
+            // Looked up again here: output or the wheel may have moved the text since the pointer
+            // last changed cell. One row is read per click.
+            let link =
+                (self.cell_inside(event.position)).and_then(|(row, col)| self.link_in(row, col));
+            if let Some(link) = link {
+                cx.emit(link.open);
+                return;
+            }
         }
         window.focus(&self.focus_handle, cx);
         if let Some((row, col, side)) = self.cell_at(event.position) {
@@ -323,6 +439,7 @@ impl TerminalPane {
         _window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.update_link(event.modifiers.secondary(), event.position, cx);
         if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
             return;
         }
@@ -368,6 +485,8 @@ impl TerminalPane {
             }
         } else {
             self.emulator.scroll_lines(whole);
+            // The text moved under the pointer: the link shown (and the cell probed) is stale.
+            self.clear_link(cx);
             cx.notify();
         }
     }
@@ -635,6 +754,7 @@ impl Render for TerminalPane {
         div()
             .size_full()
             .relative()
+            .id(SharedString::from(self.session_id.to_string()))
             .flex()
             .flex_col()
             .key_context(TERMINAL_CONTEXT)
@@ -645,7 +765,24 @@ impl Render for TerminalPane {
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::mouse_up))
-            .cursor(CursorStyle::IBeam)
+            .cursor(if self.hover_link.is_some() {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::IBeam
+            })
+            // The pointer leaving the pane drops the link (and its hand pointer).
+            .on_hover(cx.listener(|pane, hovered: &bool, _, cx| {
+                if !*hovered {
+                    pane.clear_link(cx);
+                }
+            }))
+            // Pressing or releasing Ctrl / Cmd with the pointer at rest: only the focused pane
+            // gets this; the others update when the pointer moves.
+            .on_modifiers_changed(
+                cx.listener(|pane, event: &ModifiersChangedEvent, window, cx| {
+                    pane.update_link(event.modifiers.secondary(), window.mouse_position(), cx);
+                }),
+            )
             .on_scroll_wheel(cx.listener(Self::scroll_wheel))
             .child(TerminalElement {
                 pane: cx.entity(),
@@ -833,6 +970,20 @@ impl Element for TerminalElement {
                 // A failed glyph paint only loses that glyph; keep painting the frame.
                 let _ = line.paint(at, line_height, TextAlign::Left, None, window, cx);
             }
+        }
+        // The link under the pointer: one underline in the accent color, outside the row cache.
+        if let Some(link) = &self.pane.read(cx).hover_link
+            && link.row < grid.rows.len()
+        {
+            let thickness = px(theme.terminal_underline_thickness);
+            let underline = Bounds::new(
+                point(
+                    origin.x + cell_width * link.start as f32,
+                    origin.y + line_height * (link.row + 1) as f32 - thickness,
+                ),
+                size(cell_width * (link.end - link.start) as f32, thickness),
+            );
+            window.paint_quad(fill(underline, hsla(theme.accent)));
         }
         let pane = self.pane.read(cx);
         let (focus, marked) = (pane.focus_handle.clone(), pane.ime_marked.clone());

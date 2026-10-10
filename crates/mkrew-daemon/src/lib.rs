@@ -16,6 +16,7 @@ pub mod ipc;
 mod launch;
 pub mod lock;
 mod notify;
+mod plan;
 mod server;
 mod session;
 mod session_log;

@@ -10,11 +10,12 @@
 use std::rc::Rc;
 
 use gpui::Keystroke;
+use mkrew_core::settings::DiffMode;
 use mkrew_protocol::{
-    ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, Event, FileDiff,
-    GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitShowParams, GitStageParams,
-    GitStatus, GitStatusParams, HunkTarget, Request, Session, SessionFiles, SessionFilesParams,
-    SessionState,
+    ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, DiffLineKind, Event,
+    FileDiff, GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitShowParams,
+    GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request, Session, SessionFiles,
+    SessionFilesParams, SessionState,
 };
 use ulid::Ulid;
 
@@ -203,11 +204,71 @@ pub enum DiffRow {
     Line(DiffLine),
 }
 
+/// One row of the Split diff viewer; indices point into [`Shown::rows`] (its `spans` and line
+/// data are reused).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitRow {
+    /// A gap or hunk-header row (`rows[.0]`), drawn across both halves.
+    Span(usize),
+    /// An unchanged line (`rows[.0]`): old number on the left, new number on the right.
+    Same(usize),
+    /// Removed line `old` on the left, added line `new` on the right. Both present = the line
+    /// was modified; one `None` = the other half is empty padding.
+    Change {
+        old: Option<usize>,
+        new: Option<usize>,
+    },
+}
+
+/// The Split rows of `rows`. Inside a hunk a run of removed lines and the run of added lines
+/// after it are paired in order and the shorter side is padded; unchanged lines are on both
+/// sides; gap and hunk rows end a run and span both halves.
+pub fn split_rows(rows: &[DiffRow]) -> Vec<SplitRow> {
+    fn flush(out: &mut Vec<SplitRow>, removed: &mut Vec<usize>, added: &mut Vec<usize>) {
+        for i in 0..removed.len().max(added.len()) {
+            out.push(SplitRow::Change {
+                old: removed.get(i).copied(),
+                new: added.get(i).copied(),
+            });
+        }
+        removed.clear();
+        added.clear();
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    let (mut removed, mut added) = (Vec::new(), Vec::new());
+    for (at, row) in rows.iter().enumerate() {
+        match row {
+            DiffRow::Line(line) if matches!(line.kind, DiffLineKind::Del) => {
+                // A removed line after added ones starts the next change.
+                if !added.is_empty() {
+                    flush(&mut out, &mut removed, &mut added);
+                }
+                removed.push(at);
+            }
+            DiffRow::Line(line) if matches!(line.kind, DiffLineKind::Add) => added.push(at),
+            DiffRow::Line(_) => {
+                flush(&mut out, &mut removed, &mut added);
+                out.push(SplitRow::Same(at));
+            }
+            DiffRow::Gap(_) | DiffRow::Hunk(_) => {
+                flush(&mut out, &mut removed, &mut added);
+                out.push(SplitRow::Span(at));
+            }
+        }
+    }
+    flush(&mut out, &mut removed, &mut added);
+    out
+}
+
 /// A loaded diff and its rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub diff: FileDiff,
     pub rows: Vec<DiffRow>,
+    /// The Split layout of `rows` ([`split_rows`]); never longer than `rows`.
+    pub split: Vec<SplitRow>,
+    /// Per row, the line is half of a removed + added pair (see [`SplitRow::Change`]).
+    pub modified: Vec<bool>,
     /// Per row, the syntax spans of its line (tabs expanded; empty for other rows).
     pub spans: Vec<Spans>,
     /// Some line has syntax spans (its other text is then drawn as plain text).
@@ -240,7 +301,22 @@ impl Shown {
             .flatten()
             .max()
             .unwrap_or(1);
+        let split = split_rows(&rows);
+        // Rows of a removed + added pair: a line changed in place (amber in both modes).
+        let mut modified = vec![false; rows.len()];
+        for row in &split {
+            if let SplitRow::Change {
+                old: Some(old),
+                new: Some(new),
+            } = *row
+            {
+                modified[old] = true;
+                modified[new] = true;
+            }
+        }
         Shown {
+            split,
+            modified,
             number_width: largest.to_string().len(),
             diff,
             rows,
@@ -249,9 +325,24 @@ impl Shown {
         }
     }
 
-    /// The row index of hunk `hunk`'s header.
-    pub fn hunk_row(&self, hunk: usize) -> Option<usize> {
-        self.rows.iter().position(|row| *row == DiffRow::Hunk(hunk))
+    /// The number of rows the list draws in `mode`.
+    pub fn list_len(&self, mode: DiffMode) -> usize {
+        match mode {
+            DiffMode::Unified => self.rows.len(),
+            DiffMode::Split => self.split.len(),
+        }
+    }
+
+    /// The list row of hunk `hunk`'s header in `mode` (what n / p scroll to).
+    pub fn hunk_row(&self, hunk: usize, mode: DiffMode) -> Option<usize> {
+        let at = self
+            .rows
+            .iter()
+            .position(|row| *row == DiffRow::Hunk(hunk))?;
+        match mode {
+            DiffMode::Unified => Some(at),
+            DiffMode::Split => self.split.iter().position(|row| *row == SplitRow::Span(at)),
+        }
     }
 
     /// What a diff comment on new-side lines `selection` quotes: the shown new-side lines in
@@ -1564,6 +1655,23 @@ mod tests {
         Shown::new(diff(hunks))
     }
 
+    fn del(old: u32) -> DiffLine {
+        line(DiffLineKind::Del, Some(old), None)
+    }
+
+    fn add(new: u32) -> DiffLine {
+        line(DiffLineKind::Add, None, Some(new))
+    }
+
+    fn ctx(old: u32, new: u32) -> DiffLine {
+        line(DiffLineKind::Context, Some(old), Some(new))
+    }
+
+    /// A hunk holding `lines` (its counts only matter for the gaps between hunks).
+    fn hunk_of(lines: Vec<DiffLine>, base: Hunk) -> Hunk {
+        Hunk { lines, ..base }
+    }
+
     /// A Working view with [`working`] loaded and its first file selected.
     fn loaded() -> GitView {
         let mut view = GitView::new(Ulid::new(), None);
@@ -2027,8 +2135,8 @@ mod tests {
                 "hunk 0", "line", "gap 6", "hunk 1", "line", "gap 9", "hunk 2", "line"
             ]
         );
-        assert_eq!(shown.hunk_row(1), Some(3));
-        assert_eq!(shown.hunk_row(3), None);
+        assert_eq!(shown.hunk_row(1, DiffMode::Unified), Some(3));
+        assert_eq!(shown.hunk_row(3, DiffMode::Unified), None);
         assert_eq!(shown.number_width, 2, "line 21 is the largest");
         // A first hunk further down starts with a gap.
         assert_eq!(rows(&diff(vec![hunk(5, 2, 5, 2)]))[0], DiffRow::Gap(4));
@@ -2055,6 +2163,192 @@ mod tests {
             "{:?}",
             shown.spans[4]
         );
+    }
+
+    /// Rows of `hunk_of(…)` below: 0 = hunk header, then the lines in order.
+    #[test]
+    fn split_pairs_a_change_in_order_and_pads_the_shorter_side() {
+        // ctx, 3 removed, 2 added, ctx.
+        let shown = Shown::new(diff(vec![hunk_of(
+            vec![ctx(1, 1), del(2), del(3), del(4), add(2), add(3), ctx(5, 4)],
+            hunk(1, 1, 1, 1),
+        )]));
+        assert_eq!(
+            shown.split,
+            [
+                SplitRow::Span(0),
+                SplitRow::Same(1),
+                SplitRow::Change {
+                    old: Some(2),
+                    new: Some(5)
+                },
+                SplitRow::Change {
+                    old: Some(3),
+                    new: Some(6)
+                },
+                SplitRow::Change {
+                    old: Some(4),
+                    new: None
+                },
+                SplitRow::Same(7),
+            ]
+        );
+        // More added than removed: the left side is padded.
+        let shown = Shown::new(diff(vec![hunk_of(
+            vec![del(2), add(2), add(3), add(4)],
+            hunk(1, 1, 1, 1),
+        )]));
+        assert_eq!(
+            shown.split,
+            [
+                SplitRow::Span(0),
+                SplitRow::Change {
+                    old: Some(1),
+                    new: Some(2)
+                },
+                SplitRow::Change {
+                    old: None,
+                    new: Some(3)
+                },
+                SplitRow::Change {
+                    old: None,
+                    new: Some(4)
+                },
+            ]
+        );
+        // A pure insertion and a pure deletion are one-sided (base `hunk(1, 1, 1, 1)` keeps
+        // the first hunk free of a leading gap row).
+        let shown = Shown::new(diff(vec![hunk_of(vec![add(1), add(2)], hunk(1, 1, 1, 1))]));
+        assert_eq!(
+            shown.split[1..],
+            [
+                SplitRow::Change {
+                    old: None,
+                    new: Some(1)
+                },
+                SplitRow::Change {
+                    old: None,
+                    new: Some(2)
+                },
+            ]
+        );
+        let shown = Shown::new(diff(vec![hunk_of(vec![del(1)], hunk(1, 1, 1, 0))]));
+        assert_eq!(
+            shown.split[1..],
+            [SplitRow::Change {
+                old: Some(1),
+                new: None
+            }]
+        );
+    }
+
+    /// Unified colors a changed-in-place line amber: only rows of a removed + added pair.
+    #[test]
+    fn only_paired_rows_are_modified() {
+        // rows: 0 hunk, 1 ctx, 2 del, 3 del, 4 add, 5 ctx, 6 add (lone), 7 ctx, 8 del (lone).
+        let shown = Shown::new(diff(vec![hunk_of(
+            vec![
+                ctx(1, 1),
+                del(2),
+                del(3),
+                add(2),
+                ctx(4, 3),
+                add(4),
+                ctx(5, 5),
+                del(6),
+            ],
+            hunk(1, 1, 1, 1),
+        )]));
+        assert_eq!(
+            shown.modified,
+            [false, false, true, false, true, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn split_never_pairs_across_a_gap_or_a_hunk_header() {
+        // Hunk 0 ends with a removed line, hunk 1 (far below) starts with an added one.
+        let shown = Shown::new(diff(vec![
+            hunk_of(vec![del(1)], hunk(1, 1, 1, 0)),
+            hunk_of(vec![add(10)], hunk(10, 1, 10, 1)),
+        ]));
+        // rows: 0 hunk, 1 del, 2 gap, 3 hunk, 4 add.
+        assert_eq!(
+            shown.split,
+            [
+                SplitRow::Span(0),
+                SplitRow::Change {
+                    old: Some(1),
+                    new: None
+                },
+                SplitRow::Span(2),
+                SplitRow::Span(3),
+                SplitRow::Change {
+                    old: None,
+                    new: Some(4)
+                },
+            ]
+        );
+    }
+
+    /// Comment picking and the quote read new-side numbers: the right side must hold every
+    /// new-side line, in order, and only added / unchanged lines; the left side the old ones.
+    #[test]
+    fn split_sides_keep_every_old_and_new_line_in_order() {
+        let shown = Shown::new(diff(vec![hunk_of(
+            vec![
+                ctx(1, 1),
+                del(2),
+                add(2),
+                add(3),
+                ctx(3, 4),
+                del(4),
+                ctx(5, 5),
+            ],
+            hunk(1, 5, 1, 5),
+        )]));
+        let line_at = |at: usize| match &shown.rows[at] {
+            DiffRow::Line(line) => line.clone(),
+            other => panic!("not a line: {other:?}"),
+        };
+        let (mut olds, mut news) = (Vec::new(), Vec::new());
+        for row in &shown.split {
+            let (left, right) = match row {
+                SplitRow::Span(_) => continue,
+                SplitRow::Same(at) => (Some(*at), Some(*at)),
+                SplitRow::Change { old, new } => {
+                    assert!(
+                        old.iter()
+                            .all(|&at| matches!(line_at(at).kind, DiffLineKind::Del))
+                    );
+                    assert!(
+                        new.iter()
+                            .all(|&at| matches!(line_at(at).kind, DiffLineKind::Add))
+                    );
+                    (*old, *new)
+                }
+            };
+            olds.extend(left.and_then(|at| line_at(at).old_line));
+            news.extend(right.and_then(|at| line_at(at).new_line));
+        }
+        assert_eq!(olds, [1, 2, 3, 4, 5]);
+        assert_eq!(news, [1, 2, 3, 4, 5]);
+    }
+
+    /// Hunk navigation (n / p) scrolls to the header's row of the mode on screen.
+    #[test]
+    fn hunk_rows_follow_the_diff_mode() {
+        let shown = Shown::new(diff(vec![
+            hunk_of(vec![ctx(1, 1), del(2), add(2), add(3)], hunk(1, 2, 1, 3)),
+            hunk(10, 1, 10, 1),
+        ]));
+        // Unified: hunk, ctx, del, add, add, gap, hunk, ctx. Split pairs del+add: one row less.
+        assert_eq!(shown.hunk_row(1, DiffMode::Unified), Some(6));
+        assert_eq!(shown.hunk_row(1, DiffMode::Split), Some(5));
+        assert_eq!(shown.hunk_row(0, DiffMode::Split), Some(0));
+        assert_eq!(shown.hunk_row(2, DiffMode::Split), None);
+        assert_eq!(shown.list_len(DiffMode::Unified), 8);
+        assert_eq!(shown.list_len(DiffMode::Split), 7);
     }
 
     fn paths(request: &StageRequest) -> (Stage, Vec<String>, Option<u32>) {
@@ -2432,6 +2726,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,
@@ -2441,6 +2736,8 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 

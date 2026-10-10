@@ -101,6 +101,8 @@ pub struct Hub {
     /// the daemon stops, so exited sessions keep their name in `session.list`.
     // ponytail: one ≤ 60-char string per titled agent session; prune on exit if it grows.
     pub terminal_titles: Mutex<HashMap<Ulid, String>>,
+    /// Linked plans of live sessions, each with its file watcher (ADR 0039).
+    pub plans: crate::plan::Plans,
 }
 
 /// Idle time owed by flood handling: 1/[`PACE_IDLE_DIVISOR`] of the time spent, minus the idle
@@ -249,6 +251,26 @@ pub enum Command {
         title: Option<String>,
         reply: oneshot::Sender<Session>,
     },
+    /// `session.set_color`: like `Rename`, the actor owns the row. Replies with the session,
+    /// also announced as `session.updated`.
+    SetColor {
+        color: Option<String>,
+        reply: oneshot::Sender<Session>,
+    },
+    /// `session.pin`: the actor owns the row (see `Rename`). Replies with the session, also
+    /// announced as `session.updated`.
+    Pin {
+        pinned: bool,
+        reply: oneshot::Sender<Session>,
+    },
+    /// `session.link_plan`: the actor owns the row (its next save would undo a store-only
+    /// change). `plan_path` is the stored form, `file` the resolved path to watch; both
+    /// `None` unlinks. Replies with the updated session, also announced as `session.updated`.
+    LinkPlan {
+        plan_path: Option<String>,
+        file: Option<PathBuf>,
+        reply: oneshot::Sender<Session>,
+    },
 }
 
 /// What a session task receives from its PTY threads.
@@ -305,6 +327,7 @@ impl Hub {
             usage_warned: Mutex::default(),
             ports: Mutex::default(),
             terminal_titles: Mutex::default(),
+            plans: crate::plan::Plans::default(),
         }
     }
 
@@ -472,6 +495,12 @@ impl Hub {
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
         self.watch_project(session.project_id, &project_dir, false);
+        // A resumed session keeps its plan (SPEC §8): read and watch it again.
+        if let Some(plan) = &session.plan_path {
+            let file = project_dir.join(plan);
+            self.plans
+                .set(&self.events, session.id, session.project_id, Some(file));
+        }
         let (sends, sends_rx) = mpsc::unbounded_channel();
         tokio::spawn(write_sends(session.id, sends_rx, shared_input, commands_tx));
         let (turn_jobs, jobs) = mpsc::unbounded_channel();
@@ -1089,8 +1118,33 @@ impl Actor {
                     Some(Command::Rename { title, reply }) => {
                         self.session.title = title;
                         self.save();
-                        let _ = self.hub.events.send(Event::SessionUpdated(self.session.clone()));
+                        let _ = self.hub.events.send(Event::SessionUpdated(Box::new(self.session.clone())));
                         // The caller may have gone away; the rename stands.
+                        let _ = reply.send(self.session.clone());
+                    }
+                    Some(Command::SetColor { color, reply }) => {
+                        self.session.color = color;
+                        self.save();
+                        let _ = self.hub.events.send(Event::SessionUpdated(Box::new(self.session.clone())));
+                        let _ = reply.send(self.session.clone());
+                    }
+                    Some(Command::Pin { pinned, reply }) => {
+                        self.session.pinned = pinned;
+                        self.save();
+                        let _ = self.hub.events.send(Event::SessionUpdated(Box::new(self.session.clone())));
+                        let _ = reply.send(self.session.clone());
+                    }
+                    Some(Command::LinkPlan { plan_path, file, reply }) => {
+                        self.session.plan_path = plan_path;
+                        self.save();
+                        let _ = self.hub.events.send(Event::SessionUpdated(Box::new(self.session.clone())));
+                        // After `session.updated`, so a client knows the link before its counts.
+                        self.hub.plans.set(
+                            &self.hub.events,
+                            self.session.id,
+                            self.session.project_id,
+                            file,
+                        );
                         let _ = reply.send(self.session.clone());
                     }
                     None => commands_open = false,
@@ -1425,6 +1479,7 @@ impl Actor {
         lock(&self.hub.ports).remove(&self.session.id);
         self.close_master();
         lock(&self.hub.live).remove(&self.session.id);
+        self.hub.plans.stop(self.session.id);
         self.hub.unwatch_idle_project(self.session.project_id);
         // No one is left to answer a later `Resnapshot`: hand out the final screen now.
         self.attachments

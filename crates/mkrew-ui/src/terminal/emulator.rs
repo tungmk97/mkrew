@@ -20,6 +20,7 @@ use mkrew_protocol::ScreenSnapshot;
 use mkrew_protocol::paint::paint;
 
 use crate::terminal::input::InputMode;
+use crate::terminal::links::SPACER;
 
 /// UI-side scrollback for attached panes (SPEC §10).
 const SCROLLBACK_LINES: usize = 10_000;
@@ -88,6 +89,24 @@ impl Grid {
             out.push('\n');
         }
         out
+    }
+
+    /// The chars of screen row `row`, one per cell (a wide char's second cell is
+    /// [`SPACER`]), for link detection; `None` past the last row.
+    pub fn row_chars(&self, row: usize) -> Option<Vec<char>> {
+        let spacers = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
+        let cells = self.rows.get(row)?;
+        Some(
+            (cells.iter())
+                .map(|cell| {
+                    if cell.flags.intersects(spacers) {
+                        SPACER
+                    } else {
+                        cell.c
+                    }
+                })
+                .collect(),
+        )
     }
 }
 
@@ -456,6 +475,20 @@ mod tests {
         let grid = emu.grid();
         assert!(grid.rows[0][1].flags.contains(Flags::WIDE_CHAR));
         assert_eq!(grid.to_text(), "a日b\n");
+    }
+
+    /// Link detection indexes cells by column: one char per cell, a wide char's second cell
+    /// is the spacer.
+    #[test]
+    fn a_row_has_one_char_per_cell() {
+        let mut emu = Emulator::new(8, 1);
+        emu.advance("a日b".as_bytes());
+        let grid = emu.grid();
+        assert_eq!(
+            grid.row_chars(0),
+            Some(vec!['a', '日', SPACER, 'b', ' ', ' ', ' ', ' '])
+        );
+        assert_eq!(grid.row_chars(1), None);
     }
 
     #[test]

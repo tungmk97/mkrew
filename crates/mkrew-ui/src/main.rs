@@ -15,25 +15,28 @@ use std::time::{Duration, Instant};
 use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, DragMoveEvent,
-    Entity, ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent,
+    EmptyView, Entity, ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent,
     ListHorizontalSizingBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PathPromptOptions, Pixels, PromptLevel, ScrollHandle, ScrollStrategy, SharedString, StyledText,
-    Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowOptions,
-    anchored, canvas, deferred, div, px, relative, rgb, size, uniform_list,
+    PathPromptOptions, Pixels, Point, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
+    StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowControlArea, WindowOptions, anchored, canvas, deferred, div, point, px, relative, rgb,
+    size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
+use mkrew_core::settings::DiffMode;
 use mkrew_protocol::{
     AgentProfilesResult, AiGenerateParams, AiGeneratedEvent, AiKind, ChangeKind, CommentContext,
     CommentId, CommentListParams, CommentRef, Commit, CommitDetail, DEFAULT_COLS, DEFAULT_ROWS,
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
-    GitCommitResult, GitMarker, GitMode, GitStatus, Outcome, Project, ProjectAddParams, ProjectRef,
-    ProjectUpdateParams, RemoveWorktreeResult, Request, RunStartParams, RunStarted, RunStopParams,
-    Session, SessionAttachResult, SessionFiles, SessionHistory, SessionKillParams, SessionKind,
-    SessionListParams, SessionPortsEvent, SessionReadParams, SessionReadResult, SessionRef,
-    SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionTurnEvent,
-    SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabRef,
+    GitCommitResult, GitMarker, GitMode, GitStatus, GitStatusParams, Outcome, Project,
+    ProjectAddParams, ProjectRef, ProjectUpdateParams, RemoveWorktreeResult, Request,
+    RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
+    SessionHistory, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
+    SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult, SessionRef,
+    SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionUnqueueParams,
+    SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabPinParams, TabRef,
     TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
     TaskStatus, TerminalTab, Turn, UndoPreview, WORKSPACE_COLORS,
 };
@@ -44,6 +47,7 @@ use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
+use mkrew_ui::context_menu::{PaneMenu, TabMenu};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
@@ -53,18 +57,22 @@ use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
 use mkrew_ui::git_history::{self, Commits};
+use mkrew_ui::git_summary::{GitSummary, RepoSummary};
 use mkrew_ui::git_view::{self, GitView, Since};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::ime;
-use mkrew_ui::inbox::{self, Entry, Jump, LastLines, Viewed};
+use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
+use mkrew_ui::inspector;
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
     GIT_CONTEXT, Keymap, KeymapError, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::palette::{self, Extra, Palette};
-use mkrew_ui::peek::{self, Peek, Place};
+use mkrew_ui::pane_text;
+use mkrew_ui::peek::{self, Peek};
+use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
 use mkrew_ui::quick_open::{self, QuickOpen, Results};
@@ -74,14 +82,14 @@ use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
 use mkrew_ui::status;
-use mkrew_ui::tabs::{Tab, Tabs, newest_unplaced, on_screen, rename_params};
+use mkrew_ui::tabs::{Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, tab_kind};
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
-use mkrew_ui::terminal::view::TerminalPane;
+use mkrew_ui::terminal::view::{OpenLink, TerminalPane};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
-use mkrew_ui::turn::{self, Turns};
+use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::usage::{self, ContextShare, Usages};
@@ -100,6 +108,11 @@ const DRAIN_BATCH: usize = 256;
 
 /// Title of a workspace's first tab; later ones are numbered.
 const FIRST_TAB_TITLE: &str = "Terminal";
+
+/// Windows and macOS draw their own title bar (ADR 0034); elsewhere the OS bar stays.
+const CUSTOM_TITLE_BAR: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+/// Only Windows draws ─ □ ✕ (macOS keeps its traffic lights).
+const DRAWN_CONTROLS: bool = cfg!(target_os = "windows");
 
 fn main() {
     let launched = Instant::now();
@@ -145,8 +158,18 @@ fn main() {
             ))),
             titlebar: Some(TitlebarOptions {
                 title: Some("Mkrew".into()),
-                ..Default::default()
+                appears_transparent: CUSTOM_TITLE_BAR,
+                traffic_light_position: cfg!(target_os = "macos").then(|| {
+                    let (x, y) = theme::MAC_TRAFFIC_LIGHT_POS;
+                    point(px(x), px(y))
+                }),
             }),
+            window_min_size: Some(size(
+                px(theme::WINDOW_MIN_WIDTH),
+                px(theme::WINDOW_MIN_HEIGHT),
+            )),
+            // macOS: we move the window from our own bar, so AppKit must not delay the click.
+            app_owns_titlebar_drag: cfg!(target_os = "macos"),
             ..Default::default()
         };
         let mode = settings.ui.theme;
@@ -207,6 +230,19 @@ struct Renaming {
     draft: Input,
 }
 
+/// The right-click menu of a Files tree row or of the tree itself (SPEC §12A): Open in File
+/// Explorer, Open in Zed.
+struct FileMenu {
+    project_id: Ulid,
+    /// The worktree the Files view showed when the menu opened (`None` = the project folder).
+    target: Option<Ulid>,
+    /// Relative to that folder, `/` separators; `""` = the folder itself.
+    path: String,
+    is_dir: bool,
+    /// Window position of the click.
+    position: gpui::Point<gpui::Pixels>,
+}
+
 struct Shell {
     status: Status,
     /// Dropping it closes the connection.
@@ -265,10 +301,18 @@ struct Shell {
     prompts_dir: PathBuf,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
+    /// The open right-click menu of the Files tree.
+    file_menu: Option<FileMenu>,
+    /// The open tab menu (Pin, Split right / down, Rename, Close).
+    tab_menu: Option<TabMenu>,
+    /// The open pane menu (Pin, Rename, Change color).
+    pane_menu: Option<PaneMenu>,
     /// The open "Run setup" of a workspace (modal).
     run_setup: Option<RunSetup>,
     /// The workspace whose Run menu (▾) is open.
     run_menu: Option<Ulid>,
+    /// The title bar's workspace dropdown is open.
+    workspace_switcher: bool,
     /// The run tab to show once its `tab.updated` arrives (it may trail `project.run_start`).
     run_reveal: Option<Ulid>,
     /// Ports of live run sessions (SPEC §10).
@@ -279,12 +323,17 @@ struct Shell {
     broadcast: Option<Broadcast>,
     /// Done sessions already seen, so they leave the Inbox.
     viewed: Viewed,
-    /// The last screen line under each Inbox entry.
-    last_lines: LastLines,
     /// Each session's last turn, summarized while it is done.
     turns: Turns,
     /// Each session's newest token usage (SPEC §20E.3).
     usages: Usages,
+    /// Each linked session's plan checklist (ADR 0039).
+    plans: Plans,
+    /// Why the last link / unlink of a session failed (a file that is not a readable `.md`),
+    /// shown in that session's Plan card.
+    plan_error: Option<(Ulid, String)>,
+    /// The sidebar is hidden (Toggle sidebar). Not remembered across restarts.
+    sidebar_hidden: bool,
     /// Every workspace's task cards.
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
@@ -320,6 +369,12 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
+    /// The session panel right of Terminals is open (closed at every start; SPEC §10).
+    inspector_open: bool,
+    /// Its width in px, from `[ui] inspector_width` and the drag.
+    inspector_width: f32,
+    /// The edge was dragged since the last mouse-up: the width is saved when it ends.
+    inspector_dragging: bool,
     /// The Docs view of every workspace it was shown for.
     docs: HashMap<Ulid, Docs>,
     /// Focused while a Docs comment or reply draft takes keys (the draft stays on blur).
@@ -347,6 +402,12 @@ struct Shell {
     /// The `git.repos` of each workspace whose Git view was shown (ADR 0029), for the "Repo"
     /// chooser; kept in memory only.
     git_repos: HashMap<Ulid, Vec<String>>,
+    /// The title bar's branch chip and `Git N` badge: the shown workspace only (hidden ones
+    /// are never loaded), in memory only.
+    git_summary: Option<(Ulid, GitSummary)>,
+    /// A summary request is in flight / another change arrived meanwhile.
+    git_summary_busy: bool,
+    git_summary_again: bool,
     /// Focused while a Git view is shown, so its single-key shortcuts work.
     git_focus: FocusHandle,
     /// The commit box of the shown Git view (outside `GIT_CONTEXT`, so typing never stages).
@@ -354,6 +415,8 @@ struct Shell {
     /// Keep the selected changed file and the current hunk in view.
     git_files_scroll: UniformListScrollHandle,
     git_diff_scroll: UniformListScrollHandle,
+    /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
+    diff_mode: DiffMode,
     /// The open "Discard changes" confirmation of a Git view file (modal).
     git_discard: Option<git_view::Discard>,
     /// The open base menu of a Git view (modal).
@@ -399,6 +462,8 @@ struct Shell {
     peek_hover: peek::Hover,
     /// Focused while the peek popover has the keyboard.
     peek_focus: FocusHandle,
+    /// Focused while the sidebar's filter box has the keyboard.
+    filter_focus: FocusHandle,
     /// What had the keyboard before the peek took it; it gets it back on close.
     peek_return: Option<(FocusHandle, Option<Ulid>)>,
     /// Focused while a dialog is open; the task dialog's keys edit the draft.
@@ -424,6 +489,12 @@ impl Shell {
     ) -> Self {
         let keymap_file = paths.keymap_file();
         let settings_file = paths.settings_file();
+        // A broken settings file keeps the defaults, like the other reads here.
+        let ui = mkrew_core::settings::load(&settings_file)
+            .unwrap_or_default()
+            .ui;
+        let diff_mode = ui.diff_mode;
+        let inspector_width = inspector::saved_width(ui.inspector_width);
         let prompts_dir = paths.prompts_dir();
         // System mode follows the OS live (ADR 0027).
         cx.observe_window_appearance(window, |_, window, cx| {
@@ -453,7 +524,6 @@ impl Shell {
                 cx.background_executor().timer(theme::STATUS_TICK).await;
                 let now = status::now_ms();
                 let ticked = this.update_in(cx, |shell, window, cx| {
-                    let sessions = shell.sidebar.sessions();
                     // ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows
                     // in a profile.
                     let modified = std::fs::metadata(&shell.settings_file)
@@ -472,12 +542,21 @@ impl Shell {
                                     theme::refresh(mode, window, cx);
                                     cx.refresh_windows();
                                 }
+                                // `theme::reload` only returns fonts and theme; a hand edit of
+                                // `diff_mode` applies too (the file just parsed, so this
+                                // second read only happens when it changed).
+                                if let Ok(settings) =
+                                    mkrew_core::settings::load(&shell.settings_file)
+                                {
+                                    shell.apply_diff_mode(settings.ui.diff_mode);
+                                }
                             }
                             // The last good settings stay; the palette lists why (§20.0).
                             Err(error) => shell.settings_error = Some(error),
                         }
                         cx.notify();
                     }
+                    let sessions = shell.sidebar.sessions();
                     let board_due = shell.workspace.is_some_and(|project_id| {
                         shell.view() == View::Board
                             && shell.board.redraw_due(project_id, sessions, last, now)
@@ -574,11 +653,12 @@ impl Shell {
                 shell.panes.clear();
                 shell.attach_errors.clear();
                 shell.renaming = None;
-                shell.workspace_menu = None;
+                shell.close_menus();
                 shell.run_setup = None;
-                shell.run_menu = None;
                 shell.run_reveal = None;
                 shell.ports = Ports::default();
+                shell.plans = Plans::default();
+                shell.plan_error = None;
                 shell.broadcast = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
@@ -601,6 +681,7 @@ impl Shell {
                 shell.docs.clear();
                 shell.files.clear();
                 shell.git.clear();
+                shell.git_summary = None;
                 window.focus(&shell.focus_handle, cx);
                 cx.notify();
             });
@@ -644,16 +725,25 @@ impl Shell {
             settings_file,
             prompts_dir,
             workspace_menu: None,
+            file_menu: None,
+            tab_menu: None,
+            pane_menu: None,
             run_setup: None,
             run_menu: None,
+            workspace_switcher: false,
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),
             broadcast: None,
             viewed: Viewed::default(),
-            last_lines: LastLines::default(),
             turns: Turns::default(),
             usages: Usages::default(),
+            plans: Plans::default(),
+            plan_error: None,
+            sidebar_hidden: false,
+            inspector_open: false,
+            inspector_width,
+            inspector_dragging: false,
             board: Board::default(),
             board_error: None,
             conflicts: Conflicts::default(),
@@ -685,10 +775,14 @@ impl Shell {
             file_text_left: Rc::default(),
             git: HashMap::new(),
             git_repos: HashMap::new(),
+            git_summary: None,
+            git_summary_busy: false,
+            git_summary_again: false,
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
             git_diff_scroll: UniformListScrollHandle::new(),
+            diff_mode,
             git_discard: None,
             git_base: None,
             task_dialog: None,
@@ -711,6 +805,7 @@ impl Shell {
             peek: None,
             peek_hover: peek::Hover::default(),
             peek_focus: cx.focus_handle(),
+            filter_focus: cx.focus_handle(),
             peek_return: None,
             dialog_focus: cx.focus_handle(),
             prompt_scroll: ScrollHandle::new(),
@@ -775,6 +870,7 @@ impl Shell {
                         shell.sidebar.load(projects, sessions);
                         shell.load_usage(window, cx);
                         shell.load_ports(window, cx);
+                        shell.load_plans(window, cx);
                         shell.status = Status::Connected;
                         let current = shell
                             .workspace
@@ -801,7 +897,6 @@ impl Shell {
                 shell
                     .conflicts
                     .prune(&shell.board, shell.sidebar.sessions());
-                shell.read_last_lines(window, cx);
                 if shell.peek.is_some() {
                     shell.update_peek(false, window, cx);
                 }
@@ -869,6 +964,34 @@ impl Shell {
                         tracing::warn!("session.ports failed: {error:#}");
                         // Asked again on the next refresh.
                         shell.ports.request_failed(project_id);
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
+    /// Reads the plans of each listed workspace not read yet (ADR 0039); events keep them live.
+    fn load_plans(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let projects = self.sidebar.projects().iter().map(|project| project.id);
+        for project_id in self.plans.to_request(projects.collect::<Vec<_>>()) {
+            let listed = connection
+                .call::<Vec<SessionPlanEvent>>(Request::SessionPlan(ProjectRef { project_id }));
+            cx.spawn_in(window, async move |this, cx| {
+                let listed = listed.await;
+                let _ = this.update(cx, |shell, cx| match listed {
+                    Ok(listed) => {
+                        if shell.plans.load(listed) {
+                            cx.notify();
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("session.plan failed: {error:#}");
+                        // Asked again on the next refresh.
+                        shell.plans.request_failed(project_id);
                     }
                 });
             })
@@ -1128,6 +1251,16 @@ impl Shell {
     ) {
         let switched = self.workspace != Some(project_id);
         self.workspace = Some(project_id);
+        self.workspace_switcher = false;
+        if switched {
+            self.close_menus();
+            self.end_inspector_drag();
+            // Nothing is kept for the workspace that is no longer shown.
+            self.git_summary = None;
+        }
+        if switched || self.git_summary.is_none() {
+            self.load_git_summary(project_id, window, cx);
+        }
         if !self.tabs.contains_key(&project_id) {
             self.load_tabs(project_id, window, cx);
         }
@@ -1426,7 +1559,12 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
+        self.close_menus();
         let shown = self.views.insert(project_id, view).unwrap_or_default();
+        if view != View::Terminals {
+            // The panel (and its grip) leaves with Terminals: end a drag in progress.
+            self.end_inspector_drag();
+        }
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);
         }
@@ -1791,6 +1929,35 @@ impl Shell {
                 if let Some(path) = again {
                     shell.read_file(project_id, path, window, cx);
                 }
+                shell.show_pending_line(project_id, target);
+                shell.build_preview(project_id, window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Parses the `.md` file of the Files view of `project_id` for its preview when it is
+    /// shown as one and its text moved on, off the UI thread (highlighting and Mermaid are
+    /// slow). Asks again when the text changed while it ran.
+    fn build_preview(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(view) = self.files.get_mut(&project_id) else {
+            return;
+        };
+        let target = view.worktree_task_id;
+        let Some((stamp, text)) = view.preview_request() else {
+            return;
+        };
+        let background = cx.background_executor().clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let page = background
+                .spawn(async move { Shown::from_text(&text) })
+                .await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if let Some(view) = shell.files_at(project_id, target) {
+                    view.preview_ready(stamp, page);
+                }
+                shell.build_preview(project_id, window, cx);
                 cx.notify();
             });
         })
@@ -2282,10 +2449,10 @@ impl Shell {
             .projects()
             .iter()
             .find(|p| p.id == project_id)?;
-        Some(
-            path.split('/')
-                .fold(PathBuf::from(&project.path), |full, part| full.join(part)),
-        )
+        Some(worktree_target::join_relative(
+            PathBuf::from(&project.path),
+            path,
+        ))
     }
 
     /// [`Self::workspace_file`] in task worktree `target` when there is one (SPEC §20E.1).
@@ -2300,7 +2467,7 @@ impl Shell {
             .find(|p| p.id == project_id)?;
         let root = self.board.task(task_id)?.worktree_path.as_deref()?;
         let dir = worktree_target::project_dir(Path::new(&project.path), Path::new(root));
-        Some(path.split('/').fold(dir, |full, part| full.join(part)))
+        Some(worktree_target::join_relative(dir, path))
     }
 
     /// Opens the opened file of the Files view in Zed, at the selected line if any; a failure
@@ -2399,6 +2566,23 @@ impl Shell {
         }
     }
 
+    /// "Review diff" on the Changes card: the Git view of `repo` (`""` = the workspace folder),
+    /// in its working changes. `retarget_git` first, so `show_view`'s refresh already asks for
+    /// that repository (it stays: `pick_repo` keeps a listed repo). A view that already showed
+    /// the repository may sit on History / Against base: `show(Working)` brings it back (its
+    /// requests are dropped, the refresh asks status again).
+    fn review_diff(
+        &mut self,
+        project_id: Ulid,
+        repo: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.retarget_git(project_id, None, (!repo.is_empty()).then_some(repo));
+        let _ = self.git_view(project_id).show(git_view::Section::Working);
+        self.show_view(View::Git, window, cx);
+    }
+
     /// Puts a fresh Git view of `target` / `repo` in place (the commit draft is kept); `false`
     /// = it shows them already.
     fn retarget_git(
@@ -2464,6 +2648,63 @@ impl Shell {
                     shell.git_requests(project_id, requests, window, cx);
                 }
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The summary of the shown workspace (None until loaded, and for other workspaces).
+    fn git_summary(&self) -> Option<&GitSummary> {
+        self.git_summary
+            .as_ref()
+            .filter(|(id, _)| Some(*id) == self.workspace)
+            .map(|(_, summary)| summary)
+    }
+
+    /// `git.repos`, then one `git.status` per repository, for the shown workspace (title bar).
+    /// Asked on a workspace switch and on its `git.changed`, never polled and never for a
+    /// hidden workspace. One request set at a time: a change that arrives meanwhile asks once
+    /// more when it answers.
+    fn load_git_summary(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if self.git_summary_busy {
+            self.git_summary_again = true;
+            return;
+        }
+        self.git_summary_busy = true;
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = git_summary_of(&connection, project_id).await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                shell.git_summary_busy = false;
+                let again = std::mem::take(&mut shell.git_summary_again);
+                let shown = shell.workspace;
+                match loaded {
+                    // An answer for a workspace that is no longer shown is dropped.
+                    Ok(summary) if shown == Some(project_id) => {
+                        let same = matches!(
+                            &shell.git_summary,
+                            Some((id, old)) if *id == project_id && *old == summary
+                        );
+                        if !same {
+                            shell.git_summary = Some((project_id, summary));
+                            cx.notify();
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(%project_id, "git summary failed: {error:#}"),
+                }
+                if let Some(shown) = shown
+                    && (again || shown != project_id)
+                {
+                    shell.load_git_summary(shown, window, cx);
+                }
             });
         })
         .detach();
@@ -2771,6 +3012,7 @@ impl Shell {
             }
             return;
         }
+        let mode = self.diff_mode;
         let view = self.git_view(project_id);
         let requests = view.key(key);
         let selected = view.selected.clone();
@@ -2781,7 +3023,7 @@ impl Shell {
             git_view::ListRow::Header(..) | git_view::ListRow::Note(_) => false,
         });
         let hunk_row = match (&view.diff, view.hunk) {
-            (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk),
+            (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
             _ => None,
         };
         if let Some(at) = file_row {
@@ -3865,7 +4107,81 @@ impl Shell {
             return;
         }
         let project_id = open.project_id;
-        self.open_revealed(project_id, open.worktree_task_id, path, window, cx);
+        self.open_revealed(project_id, open.worktree_task_id, path, None, window, cx);
+    }
+
+    /// Where links typed in `session`'s terminal point: its project, the task worktree its
+    /// agent runs in (`None` = the project folder) and that folder.
+    fn link_scope(&self, session: Ulid) -> Option<(Ulid, Option<Ulid>, PathBuf)> {
+        let session = self.sidebar.sessions().iter().find(|s| s.id == session)?;
+        let project = (self.sidebar.projects().iter()).find(|p| p.id == session.project_id)?;
+        let project_dir = PathBuf::from(&project.path);
+        let worktree = session
+            .task_id
+            .and_then(|id| self.board.task(id))
+            .and_then(|task| Some((task.id, task.worktree_path.as_deref()?)));
+        Some(match worktree {
+            Some((task, root)) => (
+                project.id,
+                Some(task),
+                worktree_target::project_dir(&project_dir, Path::new(root)),
+            ),
+            None => (project.id, None, project_dir),
+        })
+    }
+
+    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file in the Files view.
+    fn open_terminal_link(
+        &mut self,
+        session: Ulid,
+        link: &OpenLink,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match link {
+            OpenLink::Url(url) => cx.open_url(url),
+            OpenLink::File { path, line } => {
+                let Some((project_id, target, _)) = self.link_scope(session) else {
+                    return;
+                };
+                self.open_file_at(project_id, target, path.clone(), *line, window, cx);
+            }
+        }
+    }
+
+    /// Shows `path` of the Files view on `target` (the project, or a task worktree) with the
+    /// caret on `line`. Another target starts the view over, so unsaved text is asked about
+    /// first (as the chooser does).
+    fn open_file_at(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: String,
+        line: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.files_view(project_id).worktree_task_id != target {
+            if self.files_view(project_id).unsaved().is_some() {
+                let again: AfterSave = Box::new(move |shell, window, cx| {
+                    shell.open_file_at(project_id, target, path, line, window, cx);
+                });
+                return self.leave_file(project_id, again, window, cx);
+            }
+            self.set_files_target(project_id, target, window, cx);
+        }
+        self.open_revealed(project_id, target, path, line, window, cx);
+    }
+
+    /// Puts the caret on the line a link asked for and scrolls there, once the file is shown
+    /// (after `reveal` when it already was, after the read otherwise).
+    fn show_pending_line(&mut self, project_id: Ulid, target: Option<Ulid>) {
+        if let Some(line) =
+            (self.files_at(project_id, target)).and_then(FilesView::apply_pending_line)
+        {
+            self.file_code_scroll
+                .scroll_to_item(line, ScrollStrategy::Center);
+        }
     }
 
     /// Quick open's file: asks about unsaved changes first (before the workspace or view
@@ -3876,6 +4192,7 @@ impl Shell {
         project_id: Ulid,
         target: Option<Ulid>,
         path: String,
+        line: Option<u32>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -3883,11 +4200,11 @@ impl Shell {
             (self.files_at(project_id, target)).is_some_and(|view| view.leaves_unsaved(&path));
         if leaves {
             let reveal: AfterSave = Box::new(move |shell, window, cx| {
-                shell.open_revealed(project_id, target, path, window, cx);
+                shell.open_revealed(project_id, target, path, line, window, cx);
             });
             return self.leave_file(project_id, reveal, window, cx);
         }
-        self.reveal_file(project_id, target, path, window, cx);
+        self.reveal_file(project_id, target, path, line, window, cx);
     }
 
     /// Shows `path` in the Files view of `project_id` (its folders open, the cursor lands on it).
@@ -3896,6 +4213,7 @@ impl Shell {
         project_id: Ulid,
         target: Option<Ulid>,
         path: String,
+        line: Option<u32>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -3907,7 +4225,7 @@ impl Shell {
         let Some(view) = self.files_at(project_id, target) else {
             return;
         };
-        let requests = view.reveal(&path);
+        let requests = view.reveal(&path, line);
         let at = view.rows().iter().position(
             |row| matches!(row, files_view::Row::Entry { entry, .. } if entry.path == path),
         );
@@ -3916,6 +4234,7 @@ impl Shell {
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
+        self.show_pending_line(project_id, target);
     }
 
     /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
@@ -4164,6 +4483,18 @@ impl Shell {
             || self.run_setup.is_some()
     }
 
+    /// Closes every transient popover menu. Called by every bound command.
+    fn close_menus(&mut self) {
+        self.tab_menu = None;
+        self.pane_menu = None;
+        self.workspace_menu = None;
+        self.file_menu = None;
+        self.run_menu = None;
+        self.workspace_switcher = false;
+        self.run_with = None;
+        self.fan_out = None;
+    }
+
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the
     /// board is shown).
     fn focused_session(&self) -> Option<Ulid> {
@@ -4275,15 +4606,25 @@ impl Shell {
                 };
                 let snapshot = buffered.snapshot.unwrap_or(attached.snapshot);
                 let painted = shell.painted.clone();
+                let base = shell.link_scope(session).map(|(_, _, dir)| dir);
                 let pane = cx.new(|cx| {
                     let mut pane =
                         TerminalPane::new(session, &snapshot, connection, painted, window, cx);
+                    pane.set_links(base);
                     pane.feed(&buffered.output);
                     if let Some(exit_code) = buffered.exited {
                         pane.set_exited(exit_code);
                     }
                     pane
                 });
+                cx.subscribe_in(
+                    &pane,
+                    window,
+                    move |shell, _, link: &OpenLink, window, cx| {
+                        shell.open_terminal_link(session, link, window, cx);
+                    },
+                )
+                .detach();
                 shell.panes.insert(session, pane);
                 if shell.focused_session() == Some(session) {
                     shell.focus_pane(window, cx);
@@ -4347,6 +4688,70 @@ impl Shell {
         .detach();
     }
 
+    /// Picks a Markdown file and links it as `session_id`'s plan (`session.link_plan`).
+    fn pick_plan(&mut self, session_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.plan_error = None;
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Link plan".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let path = match picked.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.plan_error = Some((
+                            session_id,
+                            format!("Cannot open the file picker: {error:#}"),
+                        ));
+                        cx.notify();
+                    });
+                    None
+                }
+            };
+            let Some(path) = path else {
+                return;
+            };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let path = path.to_string_lossy().into_owned();
+                shell.link_plan(session_id, Some(path), window, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Links `path` as the plan of `session_id`, or unlinks with `None`. The daemon answers with
+    /// `session.updated` and `session.plan`; only a refusal is kept here.
+    fn link_plan(
+        &mut self,
+        session_id: Ulid,
+        path: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.plan_error = None;
+        cx.notify();
+        let linked = connection.call::<Session>(Request::SessionLinkPlan(SessionLinkPlanParams {
+            session_id,
+            path,
+        }));
+        cx.spawn_in(window, async move |this, cx| {
+            if let Err(error) = linked.await {
+                let _ = this.update(cx, |shell, cx| {
+                    shell.plan_error = Some((session_id, format!("{error:#}")));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     /// Opens the menu of `project_id` (closing any other) and lists the agent profiles for it.
     fn open_workspace_menu(
         &mut self,
@@ -4357,6 +4762,8 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
+        self.sidebar_hidden = false;
+        self.file_menu = None;
         self.workspace_menu = Some(WorkspaceMenu::new(project_id));
         cx.notify();
         let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
@@ -4397,6 +4804,79 @@ impl Shell {
         cx.notify();
     }
 
+    /// "Open in File Explorer" on a workspace: opens its folder in the OS file manager.
+    fn open_workspace_in_explorer(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
+        self.workspace_menu = None;
+        if let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) {
+            cx.open_with_system(Path::new(&project.path));
+        }
+        cx.notify();
+    }
+
+    /// Right click on a Files tree row (`path`) or on the tree itself (`""`).
+    fn open_file_menu(
+        &mut self,
+        project_id: Ulid,
+        path: String,
+        is_dir: bool,
+        position: gpui::Point<gpui::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
+        self.close_menus();
+        self.file_menu = Some(FileMenu {
+            project_id,
+            target,
+            path,
+            is_dir,
+            position,
+        });
+        cx.notify();
+    }
+
+    /// "Open in File Explorer" on a Files path: a file is shown selected in its folder, a
+    /// folder is opened.
+    fn open_path_in_explorer(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: &str,
+        is_dir: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.file_menu = None;
+        if let Some(full) = self.target_file(project_id, target, path) {
+            if is_dir {
+                cx.open_with_system(&full);
+            } else {
+                cx.reveal_path(&full);
+            }
+        }
+        cx.notify();
+    }
+
+    /// "Open in Zed" on a Files path (a file or a folder); a failure shows in the sidebar,
+    /// like the workspace menu's.
+    fn open_path_in_zed(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.file_menu = None;
+        if let Some(full) = self.target_file(project_id, target, path) {
+            match zed::open(&full, None) {
+                Ok(()) => self.sidebar_error = None,
+                Err(error) => {
+                    tracing::warn!(path = %full.display(), "open in Zed failed: {error}");
+                    self.sidebar_error = Some(error.to_string());
+                }
+            }
+        }
+        cx.notify();
+    }
+
     /// Ctrl+,: writes the commented `keymap.toml` template if the file is missing and opens it
     /// in Zed; a failure shows in the sidebar. Changes apply after a restart.
     fn open_keymap_settings(&mut self, cx: &mut Context<'_, Self>) {
@@ -4429,6 +4909,41 @@ impl Shell {
         cx.notify();
     }
 
+    /// `ToggleInspector` / the status-bar button: opens or closes the session panel; from
+    /// another view it shows Terminals with the panel open (the panel lives there only).
+    fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.workspace.is_none() {
+            return;
+        }
+        if self.view() != View::Terminals {
+            self.inspector_open = true;
+            self.show_view(View::Terminals, window, cx);
+        } else {
+            self.inspector_open = !self.inspector_open;
+            if !self.inspector_open {
+                // The grip is gone: no mouse-up will end a drag in progress.
+                self.end_inspector_drag();
+            }
+        }
+        cx.notify();
+    }
+
+    /// The edge was released: saves the dragged width as `[ui] inspector_width` (one write per
+    /// drag; the file is hand-edited config). A file that does not parse is not written; the
+    /// palette lists why (§20.0).
+    fn end_inspector_drag(&mut self) {
+        if !std::mem::take(&mut self.inspector_dragging) {
+            return;
+        }
+        // Clamped to 240–560 by `width_from_pointer`, so it fits a u16.
+        let width = (self.inspector_width.round() as u16).to_string();
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "inspector_width", &width)
+        {
+            self.settings_error = Some(error.to_string());
+        }
+    }
+
     /// Cycles System → Light → Dark (ADR 0027) and saves it as `[ui] theme`. A settings file
     /// that does not parse is not written; the mode still changes for this session and the
     /// palette lists why (§20.0).
@@ -4436,9 +4951,47 @@ impl Shell {
         let mode = theme::next_mode(cx.theme().mode);
         theme::refresh(mode, window, cx);
         cx.notify();
-        if let Err(error) = mkrew_core::settings::write_ui_theme(&self.settings_file, mode) {
+        let value = format!("\"{}\"", mode.name());
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "theme", &value)
+        {
             self.settings_error = Some(error.to_string());
         }
+    }
+
+    /// Makes `mode` the diff layout (every file and repo) and keeps the current hunk in view
+    /// (the two layouts have different row counts). False when nothing changed.
+    fn apply_diff_mode(&mut self, mode: DiffMode) -> bool {
+        if self.diff_mode == mode {
+            return false;
+        }
+        self.diff_mode = mode;
+        let hunk_row = self
+            .workspace
+            .and_then(|project_id| self.git.get(&project_id))
+            .and_then(|view| match (&view.diff, view.hunk) {
+                (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
+                _ => None,
+            });
+        self.git_diff_scroll
+            .scroll_to_item(hunk_row.unwrap_or(0), ScrollStrategy::Top);
+        true
+    }
+
+    /// Switches the Git diff viewer to `mode` and saves `[ui] diff_mode`. A settings file that
+    /// does not parse keeps the choice for this run; the palette says why (§20.0).
+    fn set_diff_mode(&mut self, mode: DiffMode, cx: &mut Context<'_, Self>) {
+        if !self.apply_diff_mode(mode) {
+            return;
+        }
+        if let Err(error) = mkrew_core::settings::write_ui_value(
+            &self.settings_file,
+            "diff_mode",
+            &format!("\"{}\"", mode.name()),
+        ) {
+            self.settings_error = Some(error.to_string());
+        }
+        cx.notify();
     }
 
     /// The prompt picker's empty state: opens the prompts folder (created if missing) in Zed
@@ -4556,6 +5109,19 @@ impl Shell {
     ) {
         let params = workspace_menu::set_color(project_id, color);
         self.update_project(params, "Cannot change the color", window, cx);
+    }
+
+    /// "Pin" / "Unpin" in the workspace menu: `project.update` with `pinned`; the
+    /// `project.updated` event re-sorts the sidebar.
+    fn pin_workspace(
+        &mut self,
+        project_id: Ulid,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let params = workspace_menu::set_pinned(project_id, pinned);
+        self.update_project(params, "Cannot pin the workspace", window, cx);
     }
 
     /// Closes the workspace menu and sends `project.update`; a failure shows in the sidebar
@@ -6648,6 +7214,8 @@ impl Shell {
 
     /// A shortcut (SPEC §13). Terminal commands (paste) are handled by the focused pane.
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // A shortcut ends every open popover (they never own the keyboard).
+        self.close_menus();
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
         // Its own shortcut closes the palette again.
@@ -6693,7 +7261,7 @@ impl Shell {
             let open = self.view() == View::Files
                 && (self.workspace)
                     .and_then(|id| self.files.get(&id))
-                    .is_some_and(|view| view.find.is_some());
+                    .is_some_and(|view| view.find.is_some() && !view.previewing());
             let files_command = matches!(
                 command,
                 Command::SaveFile | Command::FindInFile | Command::ReplaceInFile
@@ -6714,6 +7282,16 @@ impl Shell {
             }
             window.focus(&self.focus_handle, cx);
         }
+        // Same for the sidebar filter while it has the keyboard, except the shortcuts that
+        // leave it (Peek, Toggle sidebar).
+        if self.filter_focus.is_focused(window) {
+            if matches!(command, Command::Peek | Command::ToggleSidebar) {
+                self.focus_pane(window, cx);
+            } else {
+                cx.propagate();
+                return;
+            }
+        }
         // Same for the focused pane's composer (§20B.1), unless it went away. Its own shortcut
         // keeps it focused (Ctrl+Shift+Enter would read as Ctrl+Enter: send).
         if self.composer_focus.is_focused(window) {
@@ -6724,6 +7302,11 @@ impl Shell {
                 return;
             }
             self.focus_pane(window, cx);
+        }
+        // A shortcut that acts ends the peek too (it restores the keyboard first, so a shortcut
+        // typed in the peek still runs); its own shortcut toggles it below.
+        if *command != Command::Peek {
+            self.close_peek(window, cx);
         }
         if self.view() != View::Terminals {
             match *command {
@@ -6853,28 +7436,13 @@ impl Shell {
                 Some(project_id) => self.open_in_zed(project_id, cx),
                 None => {}
             },
-            Command::NextInbox => {
-                let entries = inbox::entries(
-                    self.sidebar.projects(),
-                    self.sidebar.sessions(),
-                    &self.viewed,
-                );
-                let focused = self.focused_session().and_then(|id| {
-                    self.sidebar
-                        .sessions()
-                        .iter()
-                        .find(|session| session.id == id)
-                });
-                if let Some(session) = inbox::next(&entries, focused) {
-                    self.open_session(session, window, cx);
-                }
-            }
+            Command::NextInbox => self.jump_next_inbox(window, cx),
             // Again while it has the keyboard closes it.
             Command::Peek => {
                 if self.peek.as_ref().is_some_and(|peek| peek.focused) {
                     self.close_peek(window, cx);
                 } else if let Some(first) = self.inbox_entries().first() {
-                    self.open_peek(first.session_id, Place::Inbox, true, window, cx);
+                    self.open_peek(first.session_id, true, window, cx);
                 }
             }
             Command::OpenComposer => self.open_composer(window, cx),
@@ -6889,6 +7457,8 @@ impl Shell {
             Command::OpenKeymapSettings => self.open_keymap_settings(cx),
             Command::ToggleTheme => self.toggle_theme(window, cx),
             Command::ToggleFullScreen => window.toggle_fullscreen(),
+            Command::ToggleSidebar => self.toggle_sidebar(window, cx),
+            Command::ToggleInspector => self.toggle_inspector(window, cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
@@ -6906,6 +7476,7 @@ impl Shell {
                     cx.notify();
                 }
             }
+            Command::GitToggleDiffMode => self.set_diff_mode(self.diff_mode.other(), cx),
             Command::SaveFile => {
                 // Only bound while Files are shown.
                 if let Some(project_id) = self.workspace {
@@ -7027,6 +7598,25 @@ impl Shell {
         cx.notify();
     }
 
+    /// Opens the menu of `tab_id` at `position`: the tab becomes the active one first, because
+    /// Split and Rename act on the active tab.
+    fn open_tab_menu(
+        &mut self,
+        tab_id: Ulid,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.workspace_menu = None;
+        self.pane_menu = None;
+        if let Some(tabs) = self.active_tabs_mut() {
+            tabs.activate(tab_id);
+        }
+        self.tab_menu = Some(TabMenu { tab_id, position });
+        self.sync_panes(window, cx);
+        cx.notify();
+    }
+
     /// Starts editing `session_id`'s title inline in its pane header (F2, double-click),
     /// from the user's own title. Run sessions are named by their command: left alone.
     fn start_pane_rename(
@@ -7091,7 +7681,13 @@ impl Shell {
                     tabs.apply(&Event::TabUpdated(tab));
                 }
             };
-            self.send_rename(Request::TabRename(params), "tab", shown, window, cx);
+            self.send_edit(
+                Request::TabRename(params),
+                "Cannot rename the tab",
+                shown,
+                window,
+                cx,
+            );
         }
     }
 
@@ -7114,16 +7710,112 @@ impl Shell {
                 // Title only: the reply may predate state events already applied.
                 shell.sidebar.set_title(session.id, session.title);
             };
-            self.send_rename(Request::SessionRename(params), "pane", shown, window, cx);
+            self.send_edit(
+                Request::SessionRename(params),
+                "Cannot rename the pane",
+                shown,
+                window,
+                cx,
+            );
         }
     }
 
-    /// Sends a `tab.rename` / `session.rename`; `shown` applies the reply, a failure goes to
-    /// the tab bar's error line (`what` names the thing renamed).
-    fn send_rename<T: serde::de::DeserializeOwned + Send + 'static>(
+    /// "Pin" / "Unpin" of a session (sidebar row or pane menu): `session.pin`. The
+    /// `session.updated` event that follows moves the row.
+    fn pin_session(
+        &mut self,
+        session_id: Ulid,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.pane_menu = None;
+        let params = SessionPinParams { session_id, pinned };
+        self.send_edit(
+            Request::SessionPin(params),
+            "Cannot pin the pane",
+            |_: &mut Self, _: serde_json::Value| {},
+            window,
+            cx,
+        );
+    }
+
+    /// "Pin" / "Unpin" of a tab (tab menu): `tab.pin`. The `tab.updated` event that follows
+    /// moves the tab.
+    fn pin_tab(
+        &mut self,
+        tab_id: Ulid,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.tab_menu = None;
+        let params = TabPinParams { tab_id, pinned };
+        self.send_edit(
+            Request::TabPin(params),
+            "Cannot pin the tab",
+            |_: &mut Self, _: serde_json::Value| {},
+            window,
+            cx,
+        );
+    }
+
+    /// Sets (or clears) the color of `session_id`'s pane from its menu.
+    fn set_pane_color(
+        &mut self,
+        session_id: Ulid,
+        color: Option<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.pane_menu = None;
+        let params = (self.sidebar.sessions().iter())
+            .find(|s| s.id == session_id)
+            .and_then(|session| lifecycle::session_color_params(session, color));
+        if let Some(params) = params {
+            // Shown at once (header, chip), without waiting for the echo.
+            let shown = |shell: &mut Self, session: Session| {
+                shell.sidebar.set_color(session.id, session.color);
+            };
+            self.send_edit(
+                Request::SessionSetColor(params),
+                "Cannot change the pane color",
+                shown,
+                window,
+                cx,
+            );
+        }
+        cx.notify();
+    }
+
+    /// Opens the menu of `session_id`'s pane at `position`, focusing the pane.
+    fn open_pane_menu(
+        &mut self,
+        session_id: Ulid,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.workspace_menu = None;
+        self.tab_menu = None;
+        if let Some(tabs) = self.active_tabs_mut() {
+            tabs.focus(session_id);
+        }
+        // Keyboard focus follows the highlighted pane (typed keys, F2, Ctrl+W).
+        self.focus_pane(window, cx);
+        self.pane_menu = Some(PaneMenu {
+            session_id,
+            position,
+        });
+        cx.notify();
+    }
+
+    /// Sends a `tab.rename` / `session.rename` / `session.set_color` / `session.pin` / `tab.pin`; `shown` applies the
+    /// reply, a failure goes to the tab bar's error line after `failure`.
+    fn send_edit<T: serde::de::DeserializeOwned + Send + 'static>(
         &mut self,
         request: Request,
-        what: &'static str,
+        failure: &'static str,
         shown: impl FnOnce(&mut Self, T) + 'static,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -7132,15 +7824,15 @@ impl Shell {
             return;
         };
         self.tab_error = None;
-        let renamed = connection.call::<T>(request);
+        let edited = connection.call::<T>(request);
         cx.spawn_in(window, async move |this, cx| {
-            let renamed = renamed.await;
+            let edited = edited.await;
             let _ = this.update(cx, |shell, cx| {
-                match renamed {
-                    Ok(renamed) => shown(shell, renamed),
+                match edited {
+                    Ok(edited) => shown(shell, edited),
                     Err(error) => {
-                        tracing::warn!("renaming the {what} failed: {error:#}");
-                        shell.tab_error = Some(format!("Cannot rename the {what}: {error:#}"));
+                        tracing::warn!("{failure}: {error:#}");
+                        shell.tab_error = Some(format!("{failure}: {error:#}"));
                     }
                 }
                 cx.notify();
@@ -7182,6 +7874,42 @@ impl Shell {
                 cx.notify();
             }
         }
+    }
+
+    /// Keys typed in the sidebar's filter box edit it; Esc clears it and gives the keyboard
+    /// back to the pane, Enter just gives it back.
+    fn filter_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = find_key(&event.keystroke) else {
+            return;
+        };
+        match key {
+            FindKey::Close => {
+                self.sidebar.filter_mut().clear();
+                self.focus_pane(window, cx);
+            }
+            FindKey::Older | FindKey::Newer => self.focus_pane(window, cx),
+            FindKey::Paste => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    self.sidebar
+                        .filter_mut()
+                        .insert(&text.replace(['\r', '\n'], " "));
+                }
+            }
+            FindKey::Insert(text) => {
+                self.sidebar.filter_mut().insert(&text);
+            }
+            // Backspace, Ctrl+Backspace, Ctrl+A.
+            key => {
+                key.edit(self.sidebar.filter_mut());
+            }
+        }
+        cx.notify();
     }
 
     /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕). Its
@@ -7342,47 +8070,38 @@ impl Shell {
         .detach();
     }
 
-    /// Reads the last screen line of every Inbox entry that just appeared (§20A.4).
-    fn read_last_lines(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
-            return;
-        };
-        let entries = inbox::entries(
-            self.sidebar.projects(),
-            self.sidebar.sessions(),
-            &self.viewed,
-        );
-        for (session_id, changed_at) in self.last_lines.to_read(&entries) {
-            let read =
-                connection.call::<SessionReadResult>(Request::SessionRead(SessionReadParams {
-                    session_id,
-                    lines: 1,
-                }));
-            cx.spawn_in(window, async move |this, cx| {
-                let read = read.await;
-                let _ = this.update(cx, |shell, cx| match read {
-                    Ok(read) => {
-                        shell.last_lines.read(session_id, changed_at, &read.lines);
-                        cx.notify();
-                    }
-                    // E.g. the session ended meanwhile: read again on the next state change
-                    // or refresh while it is still listed.
-                    Err(error) => {
-                        tracing::debug!(%session_id, "session.read failed: {error:#}");
-                        shell.last_lines.forget(session_id, changed_at);
-                    }
-                });
-            })
-            .detach();
-        }
-    }
-
     fn inbox_entries(&self) -> Vec<Entry> {
         inbox::entries(
             self.sidebar.projects(),
             self.sidebar.sessions(),
             &self.viewed,
         )
+    }
+
+    /// Hiding also closes what only the sidebar draws (the peek, the workspace menu), so the
+    /// keyboard never stays in an invisible peek.
+    fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.sidebar_hidden = !self.sidebar_hidden;
+        if self.sidebar_hidden {
+            self.close_peek(window, cx);
+            self.workspace_menu = None;
+        }
+        cx.notify();
+    }
+
+    /// Opens the Inbox entry after the focused pane's session (wrapping); nothing while the
+    /// Inbox is empty. The key and the status bar's Inbox state both land here.
+    fn jump_next_inbox(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let entries = self.inbox_entries();
+        let focused = self.focused_session().and_then(|id| {
+            self.sidebar
+                .sessions()
+                .iter()
+                .find(|session| session.id == id)
+        });
+        if let Some(session) = inbox::next(&entries, focused) {
+            self.open_session(session, window, cx);
+        }
     }
 
     /// Whether `session_id` can be peeked: listed and live (`session.read` needs a live one).
@@ -7393,21 +8112,25 @@ impl Shell {
             .any(|session| session.id == session_id && session.state != SessionState::Exited)
     }
 
-    /// Opens the peek of `session_id` next to its row in `place` (§20A.1). With `focused` the
-    /// keyboard moves into it; a peek that already had the keyboard keeps it.
+    /// Opens the peek of `session_id` next to its row (§20A.1). With `focused` the keyboard
+    /// moves into it and its row is revealed; a peek that already had the keyboard keeps it.
     fn open_peek(
         &mut self,
         session_id: Ulid,
-        place: Place,
         focused: bool,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.peekable(session_id) {
+        if self.modal_open() || !self.peekable(session_id) {
             return;
         }
+        // A keyboard peek hangs on the session's row: open its workspace, drop what hides it.
+        if focused && let Some(project_id) = self.project_of(session_id) {
+            self.sidebar.reveal(project_id);
+        }
         let had_keyboard = self.peek.as_ref().is_some_and(|peek| peek.focused);
-        self.peek = Some(Peek::new(session_id, place, focused || had_keyboard));
+        self.sidebar_hidden = false;
+        self.peek = Some(Peek::new(session_id, focused || had_keyboard));
         if focused && !had_keyboard {
             self.take_peek_focus(window, cx);
         }
@@ -7482,30 +8205,24 @@ impl Shell {
         .detach();
     }
 
-    /// After sessions changed: the peek closes once its session ended, reads the screen again
-    /// when its session's state `changed`, and follows a session that left the Inbox to its
-    /// sidebar row if it is in use (an unused one closes).
+    /// After sessions changed: the peek closes once its session ended or its row is no longer
+    /// shown (a chip or filter now hides it), and reads the screen again when its session's
+    /// state `changed`.
     fn update_peek(&mut self, changed: bool, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(peek) = self.peek.as_ref() else {
             return;
         };
         let session_id = peek.session_id;
-        if !self.peekable(session_id) {
+        // The popover only draws on its row: without the row it would be invisible but keep
+        // the keyboard.
+        let row_shown = self
+            .sidebar
+            .view(&self.viewed)
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::Session(row) if row.session_id == session_id));
+        if !self.peekable(session_id) || !row_shown {
             return self.close_peek(window, cx);
-        }
-        let left_inbox = peek.place == Place::Inbox
-            && !self
-                .inbox_entries()
-                .iter()
-                .any(|entry| entry.session_id == session_id);
-        if left_inbox {
-            if peek.yields_to_hover() {
-                return self.close_peek(window, cx);
-            }
-            if let Some(peek) = self.peek.as_mut() {
-                peek.place = Place::Sidebar;
-            }
-            cx.notify();
         }
         if changed {
             self.read_peek(window, cx);
@@ -7516,32 +8233,31 @@ impl Shell {
     /// (unless the open peek is in use); leaving lets an unused hover peek close.
     fn hover_row(
         &mut self,
-        place: Place,
         session_id: Ulid,
         hovered: bool,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         if !hovered {
-            self.peek_hover.leave(place, session_id);
+            self.peek_hover.leave(session_id);
             self.close_unused_peek(window, cx);
             return;
         }
-        let serial = self.peek_hover.enter(place, session_id);
+        let serial = self.peek_hover.enter(session_id);
         cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(theme::PEEK_HOVER_DELAY)
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {
-                let Some((place, session_id)) = shell.peek_hover.fire(serial) else {
+                let Some(session_id) = shell.peek_hover.fire(serial) else {
                     return;
                 };
                 let shown = shell
                     .peek
                     .as_ref()
-                    .is_some_and(|peek| (peek.place, peek.session_id) == (place, session_id));
+                    .is_some_and(|peek| peek.session_id == session_id);
                 if !shown && shell.peek.as_ref().is_none_or(Peek::yields_to_hover) {
-                    shell.open_peek(session_id, place, false, window, cx);
+                    shell.open_peek(session_id, false, window, cx);
                 }
             });
         })
@@ -7572,7 +8288,7 @@ impl Shell {
                 let Some(peek) = shell.peek.as_ref() else {
                     return;
                 };
-                if !peek.stays(shell.peek_hover.is_over(peek.place, peek.session_id)) {
+                if !peek.stays(shell.peek_hover.is_over(peek.session_id)) {
                     shell.close_peek(window, cx);
                 }
             });
@@ -7580,7 +8296,8 @@ impl Shell {
         .detach();
     }
 
-    /// Typing edits the reply, Enter sends it, ↑ / ↓ peek the other Inbox entries, Esc closes.
+    /// Typing edits the reply, Enter sends it, ↑ / ↓ peek the other sessions that need you, Esc
+    /// closes.
     fn peek_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -7605,14 +8322,12 @@ impl Shell {
                     cx.notify();
                 }
             }
-            // A sidebar peek has no Inbox place to cycle from.
-            peek::Outcome::Cycle(_) if peek.place == Place::Sidebar => {}
             peek::Outcome::Cycle(by) => {
                 let current = peek.session_id;
                 if let Some(next) = peek::cycle(&self.inbox_entries(), current, by)
                     && next != current
                 {
-                    self.open_peek(next, Place::Inbox, true, window, cx);
+                    self.open_peek(next, true, window, cx);
                 }
             }
         }
@@ -7686,7 +8401,6 @@ impl Shell {
     ) -> bool {
         let mut fed: Vec<Entity<TerminalPane>> = Vec::new();
         let mut layout_changed = false;
-        let mut inbox_changed = false;
         let mut peek_changed = false;
         for incoming in batch {
             if let Incoming::Event(event) = &incoming {
@@ -7700,6 +8414,9 @@ impl Shell {
                 if self.usages.apply(event) {
                     cx.notify();
                 }
+                if self.plans.apply(event) {
+                    cx.notify();
+                }
                 if self.ports.apply(event) {
                     cx.notify();
                 }
@@ -7710,7 +8427,6 @@ impl Shell {
                     self.follow_wait(wait, window, cx);
                 }
                 if let Event::SessionState(state) = event {
-                    inbox_changed = true;
                     peek_changed |= self
                         .peek
                         .as_ref()
@@ -7755,6 +8471,12 @@ impl Shell {
                 if matches!(event, Event::GitChanged(_)) {
                     self.files_event(event, window, cx);
                     self.git_event(event, window, cx);
+                    if let Event::GitChanged(changed) = event
+                        && changed.worktree_task_id.is_none()
+                        && self.workspace == Some(changed.project_id)
+                    {
+                        self.load_git_summary(changed.project_id, window, cx);
+                    }
                 }
                 if let Event::AiGenerated(done) = event {
                     let result = ai_result(done);
@@ -7783,9 +8505,6 @@ impl Shell {
         if layout_changed {
             self.sync_panes(window, cx);
             cx.notify();
-        }
-        if inbox_changed {
-            self.read_last_lines(window, cx);
         }
         if self.peek.is_some() {
             self.update_peek(peek_changed, window, cx);
@@ -7824,41 +8543,147 @@ impl Shell {
         &self,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let shown = self.focused_session();
         let connected = self.connection.is_some();
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
+        let view = self.sidebar.view(&self.viewed);
+        let any_open = self.sidebar.any_expanded();
         let header = div()
             .flex_none()
-            .h(theme::rems_px(theme::TOOLBAR_HEIGHT))
+            .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
             .flex()
             .items_center()
             .justify_between()
             .px(px(space::M))
             .child(
                 div()
+                    .text_size(font_size::META)
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text_muted))
+                    .child("Workspaces"),
+            );
+        let header = header.when(connected && self.sidebar.is_empty(), |header| {
+            header.child(
+                icon_button("add-workspace", "+", theme)
+                    .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.add_workspace(window, cx);
+                    })),
+            )
+        });
+        let header = header.when(connected && !self.sidebar.is_empty(), |header| {
+            header.child(
+                div()
                     .flex()
                     .items_center()
-                    .gap(px(space::S))
-                    .child(logo(theme))
+                    .gap(px(space::XS))
                     .child(
-                        div()
-                            .text_size(font_size::META)
-                            .font_weight(FontWeight(weight::MEDIUM))
-                            .text_color(rgb(theme.text_muted))
-                            .child("Workspaces"),
+                        icon_button(
+                            "collapse-workspaces",
+                            if any_open { "▾" } else { "▸" },
+                            theme,
+                        )
+                        .tooltip(tooltip(
+                            theme,
+                            if any_open {
+                                "Collapse all workspaces"
+                            } else {
+                                "Expand all workspaces"
+                            },
+                            "",
+                        ))
+                        .on_click(cx.listener(|shell, _, _, cx| {
+                            shell.sidebar.toggle_all();
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        icon_button("add-workspace", "+", theme)
+                            .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.add_workspace(window, cx);
+                            })),
                     ),
             )
-            .when(connected, |header| {
-                header.child(
-                    icon_button("add-workspace", "+", theme)
-                        .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.add_workspace(window, cx);
-                        })),
+        });
+        let filter_focused = self.filter_focus.is_focused(window);
+        let controls = (connected && !self.sidebar.is_empty()).then(|| {
+            let filter = self.sidebar.filter();
+            let hover = theme.hover;
+            let chip =
+                |id: &'static str, label: &'static str, count: usize, which: sidebar::Chip| {
+                    let active = self.sidebar.chip() == which;
+                    div()
+                        .id(id)
+                        .flex_none()
+                        .px(px(space::S))
+                        .rounded_full()
+                        .cursor_pointer()
+                        .text_size(font_size::META)
+                        .when(active, |el| {
+                            el.bg(rgb(theme.accent_bg))
+                                .text_color(rgb(theme.accent_text))
+                        })
+                        .when(!active, |el| {
+                            el.text_color(rgb(theme.text_muted))
+                                .hover(move |style| style.bg(rgb(hover)))
+                        })
+                        .child(format!("{label} {count}"))
+                        .on_click(cx.listener(move |shell, _, _, cx| {
+                            shell.sidebar.set_chip(which);
+                            cx.notify();
+                        }))
+                };
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap(px(space::S))
+                .px(px(space::M))
+                .pb(px(space::S))
+                .child(
+                    // A tracked element takes the keyboard on a click.
+                    text_field(
+                        "sidebar-filter",
+                        filter.as_str(),
+                        "Filter sessions…",
+                        filter_focused,
+                        filter.all_selected(),
+                        theme,
+                    )
+                    .track_focus(&self.filter_focus)
+                    .on_key_down(cx.listener(Self::filter_key_down))
+                    .when(filter_focused, |el| {
+                        el.relative().child(self.typing(
+                            &self.filter_focus,
+                            Self::filter_key_down,
+                            cx,
+                        ))
+                    }),
                 )
-            });
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::XS))
+                        .child(chip("chip-all", "All", view.counts.all, sidebar::Chip::All))
+                        .child(chip(
+                            "chip-working",
+                            "Working",
+                            view.counts.working,
+                            sidebar::Chip::Working,
+                        ))
+                        .child(chip(
+                            "chip-needs-you",
+                            "Needs you",
+                            view.counts.needs_you,
+                            sidebar::Chip::NeedsYou,
+                        )),
+                )
+        });
         let errors = [&self.sidebar_error, &self.keymap_error].map(|error| {
             error.clone().map(|error| {
                 div()
@@ -7895,7 +8720,7 @@ impl Shell {
             };
             let mut list = Vec::new();
             let mut sessions = Vec::new();
-            for row in self.sidebar.rows() {
+            for row in view.rows {
                 match row {
                     Row::Workspace(row) => {
                         if !sessions.is_empty() {
@@ -7906,12 +8731,9 @@ impl Shell {
                             .workspace_menu
                             .as_ref()
                             .filter(|menu| menu.project_id == row.project_id);
-                        let tokens = self
-                            .usages
-                            .workspace_total(row.project_id, self.sidebar.sessions());
                         let summary = self.run_summary(row.project_id);
                         let run_tip = summary.any_live().then(|| summary.tooltip());
-                        let row = workspace_row(row, active, run_tip, tokens, now, theme, cx);
+                        let row = workspace_row(row, active, run_tip, theme, cx);
                         list.push(match menu {
                             // The menu drops down from below its row.
                             Some(menu) => div()
@@ -7924,16 +8746,11 @@ impl Shell {
                     Row::Session(row) => {
                         let (selected, session_id) =
                             (shown == Some(row.session_id), row.session_id);
+                        // One lookup, for the selected row only.
+                        let progress = selected.then(|| self.plans.fraction(session_id)).flatten();
                         let badge = self.agent_badge(&row.agent);
-                        let row = session_row(row, badge, selected, now, theme, cx);
-                        sessions.push(self.with_peek(
-                            row,
-                            Place::Sidebar,
-                            session_id,
-                            now,
-                            theme,
-                            cx,
-                        ));
+                        let row = session_row(row, badge, selected, progress, now, theme, cx);
+                        sessions.push(self.with_peek(row, session_id, now, theme, cx));
                     }
                     Row::NoSessions { .. } => sessions.push(
                         div()
@@ -7949,6 +8766,18 @@ impl Shell {
             if !sessions.is_empty() {
                 list.push(guide(sessions));
             }
+            if list.is_empty() && self.sidebar.filtering() {
+                // A query or chip that nothing matches.
+                list.push(
+                    div()
+                        .px(px(space::S))
+                        .py(px(space::XS))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child("No sessions match.")
+                        .into_any_element(),
+                );
+            }
             div()
                 .flex()
                 .flex_col()
@@ -7956,15 +8785,7 @@ impl Shell {
                 .children(list)
                 .into_any_element()
         };
-        let inbox = (connected && !self.sidebar.is_empty()).then(|| {
-            let entries = inbox::entries(
-                self.sidebar.projects(),
-                self.sidebar.sessions(),
-                &self.viewed,
-            );
-            self.render_inbox(entries, now, theme, cx)
-        });
-        // The workspace list scrolls; the Inbox stays in view below it.
+        // The header and the filter stay in view; the workspace list scrolls below them.
         div()
             .flex_none()
             .w(px(theme::SIDEBAR_WIDTH))
@@ -7975,6 +8796,8 @@ impl Shell {
             .border_r(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
+            .child(header)
+            .children(controls)
             .child(
                 div()
                     .id("sidebar")
@@ -7983,110 +8806,203 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .overflow_y_scroll()
-                    .child(header)
                     .children(errors.into_iter().flatten())
                     .child(body),
             )
-            .children(inbox)
     }
 
-    /// The Inbox below the workspaces (§10): sessions needing input or freshly done.
-    fn render_inbox(
-        &self,
-        entries: Vec<Entry>,
-        now: i64,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let waiting = entries.len();
-        let (glyph, color, fill, title) = match waiting {
-            0 => (
-                "✓",
-                theme.status_done,
-                theme.success_bg,
-                "Nothing needs you right now.".to_owned(),
-            ),
-            n => (
-                "!",
-                theme.status_needs_input,
-                theme.warning_bg,
-                format!("{n} waiting for you"),
-            ),
-        };
-        let header = div()
-            .id("inbox-header")
-            .flex()
-            .items_center()
-            .gap(px(space::S))
+    /// The status bar (SPEC §10): sidebar toggle, Inbox state, git HEAD; then the focused agent
+    /// pane's usage. Everything is read from state the shell already keeps: it never asks the
+    /// daemon and has no timer (its elapsed time refreshes with the `STATUS_TICK` redraw).
+    /// The last child is the right-panel toggle (`inspector_toggle`).
+    fn render_status_bar(&self, now: i64, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
+        let hover = theme.hover;
+        // Behind a dialog the buttons do nothing, like the keys (`Shell::run`).
+        let modal = self.modal_open();
+        let toggle = div()
+            .id("toggle-sidebar")
+            .flex_none()
+            .px(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .text_color(rgb(theme.text_muted))
+            .hover(move |style| style.bg(rgb(hover)))
             .tooltip(tooltip(
                 theme,
-                "Jump to next item needing attention",
-                self.keymap.label(Command::NextInbox),
+                if self.sidebar_hidden {
+                    "Show sidebar"
+                } else {
+                    "Hide sidebar"
+                },
+                self.keymap.label(Command::ToggleSidebar),
             ))
-            .child(
+            .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
+            .child("◧")
+            .when(modal, |el| el.relative().child(inert_layer()));
+
+        let waiting = self.inbox_entries().len();
+        let inbox = div()
+            .id("status-inbox")
+            .flex_none()
+            .px(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .text_color(rgb(if waiting > 0 {
+                theme.status_needs_input
+            } else {
+                theme.text_muted
+            }))
+            .child(inbox::label(waiting))
+            // Nothing to jump to while clear: no pointer, no hover, no click.
+            .when(waiting > 0, |el| {
+                el.cursor_pointer()
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .tooltip(tooltip(
+                        theme,
+                        "Jump to next item needing attention",
+                        self.keymap.label(Command::NextInbox),
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.jump_next_inbox(window, cx);
+                    }))
+            })
+            .when(modal, |el| el.relative().child(inert_layer()));
+
+        let git = self
+            .git_summary()
+            .and_then(|git| Some((git.head_label()?, git.branch_tooltip()?)))
+            .map(|(label, lines)| {
                 div()
+                    .id("status-git")
                     .flex_none()
-                    .size(theme::rems_px(theme::INBOX_TILE_SIZE))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(radius::SMALL))
-                    .bg(rgb(fill))
-                    .text_color(rgb(color))
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .child(glyph),
-            )
+                    .text_color(rgb(theme.text_muted))
+                    .tooltip(tooltip(theme, &lines, ""))
+                    .child(label)
+            });
+
+        let agent = self
+            .focused_session()
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
+            .filter(|session| session.kind == SessionKind::Agent)
+            .map(|session| self.status_agent_fields(session, now, theme))
+            .unwrap_or_default();
+
+        div()
+            .flex_none()
+            .h(theme::rems_px(theme::STATUS_BAR_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(space::M))
+            .px(px(space::S))
+            .overflow_hidden()
+            .bg(rgb(theme.sidebar))
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .font_family(theme.ui_font_family.clone())
+            .text_size(font_size::META)
+            .child(toggle)
+            .child(inbox)
+            .children(git)
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_size(font_size::META)
-                            .font_weight(FontWeight(weight::MEDIUM))
-                            .text_color(rgb(theme.text))
-                            .child("Inbox"),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .child(title),
-                    ),
-            );
-        let list = div()
-            .flex()
-            .flex_col()
-            .children(entries.into_iter().map(|entry| {
-                let last_line = self.last_lines.get(&entry).map(str::to_owned);
-                let (turn, session_id) = (self.turns.get(entry.session_id), entry.session_id);
-                let badge = self.agent_badge(&entry.agent);
-                let row = inbox_row(entry, badge, last_line, turn, now, theme, cx);
-                self.with_peek(row, Place::Inbox, session_id, now, theme, cx)
-            }));
-        // A card pinned at the bottom; at most half the sidebar, a long Inbox scrolls.
-        div()
-            .id("inbox")
-            .flex_none()
-            .max_h(relative(0.5))
-            .overflow_y_scroll()
-            .m(px(space::S))
-            .p(px(space::M))
-            .flex()
-            .flex_col()
-            .gap(px(space::S))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.card))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .child(header)
-            .when(waiting > 0, |el| el.child(list))
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::M))
+                    .children(agent),
+            )
+            .child(self.inspector_toggle(theme, cx))
     }
 
-    /// The workspace menu: "Open in Zed", "Run setup…", the default agent and the default shell
+    /// The right-end status-bar button: shows or hides the session panel.
+    fn inspector_toggle(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let hover = theme.hover;
+        div()
+            .id("toggle-inspector")
+            .flex_none()
+            .px(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .text_color(rgb(if self.inspector_open {
+                theme.accent_text
+            } else {
+                theme.text_muted
+            }))
+            .when(self.inspector_open, |el| el.bg(rgb(theme.accent_bg)))
+            .when(!self.inspector_open, |el| {
+                el.hover(move |style| style.bg(rgb(hover)))
+            })
+            .tooltip(tooltip(
+                theme,
+                if self.inspector_open {
+                    "Hide session panel"
+                } else {
+                    "Show session panel"
+                },
+                self.keymap.label(Command::ToggleInspector),
+            ))
+            .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
+            .child("◨")
+            .when(self.modal_open(), |el| el.relative().child(inert_layer()))
+    }
+
+    /// The focused agent's fields, in order: context meter, tokens, cache, model, elapsed.
+    /// Each is left out without data (never `0`): no usage entry yet, no window, no cache,
+    /// no model, a state without a time (`needs input`, `done`, `exited`).
+    fn status_agent_fields(
+        &self,
+        session: &Session,
+        now: i64,
+        theme: &Theme,
+    ) -> Vec<gpui::AnyElement> {
+        let text = |text: String| {
+            div()
+                .flex_none()
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+                .into_any_element()
+        };
+        let mut fields = Vec::new();
+        if let Some(shown) = self.usages.get(session.id).map(usage::fields) {
+            fields.extend(
+                shown
+                    .context
+                    .map(|share| context_meter(&share, theme).into_any_element()),
+            );
+            fields.extend(shown.tokens.map(text));
+            fields.extend(shown.cache.map(text));
+            fields.extend(shown.model.map(text));
+        }
+        // The pane header's time (`status::time`), so the two never disagree.
+        if let Some(time) = status::time(session.state, session.state_changed_at, now) {
+            fields.push(
+                div()
+                    .id("status-elapsed")
+                    .flex_none()
+                    .text_color(rgb(theme.text_muted))
+                    .tooltip(tooltip(
+                        theme,
+                        &status::hover(
+                            session.state,
+                            session.state_source,
+                            session.state_changed_at,
+                            now,
+                        ),
+                        "",
+                    ))
+                    .child(time)
+                    .into_any_element(),
+            );
+        }
+        fields
+    }
+
+    /// The workspace menu: "Pin", "Open in Zed", "Run setup…", the default agent and the default shell
     /// for new panes, the workspace color and "Remove workspace…". Floats over the sidebar; a
     /// click outside closes it.
     fn render_workspace_menu(
@@ -8105,6 +9021,9 @@ impl Shell {
         let current_color = (self.sidebar.projects().iter())
             .find(|project| project.id == project_id)
             .and_then(|project| project.color.as_deref());
+        let pinned = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .is_some_and(|project| project.pinned);
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
@@ -8145,22 +9064,23 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let panel = div()
-            .id("workspace-menu")
-            .w(px(theme::MENU_WIDTH))
-            .flex()
-            .flex_col()
-            .p(px(space::XS))
-            .rounded(px(radius::MEDIUM))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface_raised))
-            .shadow_md()
-            .font_family(theme.ui_font_family.clone())
+        let panel = menu_panel("workspace-menu", theme)
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.workspace_menu = None;
                 cx.notify();
             }))
+            .child(
+                menu_item("pin-workspace".into(), theme)
+                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
+                        "Unpin"
+                    } else {
+                        "Pin"
+                    }))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.pin_workspace(project_id, !pinned, window, cx);
+                    })),
+            )
+            .child(separator())
             .child(
                 menu_item("open-in-zed".into(), theme)
                     .child(
@@ -8176,6 +9096,18 @@ impl Shell {
                     )
                     .on_click(cx.listener(move |shell, _, _, cx| {
                         shell.open_in_zed(project_id, cx);
+                    })),
+            )
+            .child(
+                menu_item("open-in-explorer".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Open in File Explorer"),
+                    )
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.open_workspace_in_explorer(project_id, cx);
                     })),
             )
             .child(separator())
@@ -8203,12 +9135,30 @@ impl Shell {
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap(px(space::S))
+                    .gap(px(space::XS))
                     .px(px(space::S))
                     .py(px(space::S))
-                    .child(color_swatch(project_id, None, current_color, theme, cx))
+                    .child(color_swatch(
+                        "workspace-color",
+                        None,
+                        current_color,
+                        theme,
+                        cx,
+                        move |shell, color, window, cx| {
+                            shell.set_workspace_color(project_id, color, window, cx);
+                        },
+                    ))
                     .children(WORKSPACE_COLORS.iter().map(|name| {
-                        color_swatch(project_id, Some(*name), current_color, theme, cx)
+                        color_swatch(
+                            "workspace-color",
+                            Some(*name),
+                            current_color,
+                            theme,
+                            cx,
+                            move |shell, color, window, cx| {
+                                shell.set_workspace_color(project_id, color, window, cx);
+                            },
+                        )
                     })),
             )
             .child(separator())
@@ -8233,12 +9183,234 @@ impl Shell {
         .into_any_element()
     }
 
-    /// `row` with the peek popover hung at its top right when the peek shows `session_id`
-    /// from `place`.
+    /// The Files tree's right-click menu at the click position; a click outside closes it.
+    fn render_file_menu(
+        &self,
+        menu: &FileMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let (project_id, target, is_dir) = (menu.project_id, menu.target, menu.is_dir);
+        let (explorer_path, zed_path) = (menu.path.clone(), menu.path.clone());
+        let item = |id: &'static str, label: &'static str| {
+            menu_item(id.into(), theme)
+                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
+        };
+        let panel = menu_panel("file-menu", theme)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.file_menu = None;
+                cx.notify();
+            }))
+            .child(
+                item("file-menu-explorer", "Open in File Explorer").on_click(cx.listener(
+                    move |shell, _, _, cx| {
+                        shell.open_path_in_explorer(project_id, target, &explorer_path, is_dir, cx);
+                    },
+                )),
+            )
+            .child(item("file-menu-zed", "Open in Zed").on_click(cx.listener(
+                move |shell, _, _, cx| {
+                    shell.open_path_in_zed(project_id, target, &zed_path, cx);
+                },
+            )));
+        deferred(
+            anchored()
+                .position(menu.position)
+                .snap_to_window_with_margin(px(space::S))
+                .child(panel),
+        )
+        .into_any_element()
+    }
+
+    /// The tab menu: Pin, Split right, Split down, Rename, Close (shortcuts on the right). Floats at
+    /// the click; a click outside closes it.
+    fn render_tab_menu(
+        &self,
+        menu: &TabMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let tab_id = menu.tab_id;
+        let pinned = (self.tabs.values())
+            .find_map(|tabs| tabs.tab(tab_id))
+            .is_some_and(|tab| tab.pinned);
+        let separator = || {
+            div()
+                .h(px(theme::BORDER_WIDTH))
+                .my(px(space::XS))
+                .bg(rgb(theme.border))
+        };
+        let item = |id: &'static str, label: &'static str, command: Command| {
+            menu_item(id.into(), theme)
+                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
+                .child(
+                    div()
+                        .text_size(font_size::META)
+                        .child(self.keymap.label(command)),
+                )
+        };
+        let panel = menu_panel("tab-menu", theme)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.tab_menu = None;
+                cx.notify();
+            }))
+            .child(
+                menu_item("pin-tab".into(), theme)
+                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
+                        "Unpin"
+                    } else {
+                        "Pin"
+                    }))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.pin_tab(tab_id, !pinned, window, cx);
+                    })),
+            )
+            .child(separator())
+            .child(
+                item("tab-menu-split-right", "Split right", Command::SplitRight).on_click(
+                    cx.listener(|shell, _, window, cx| {
+                        shell.tab_menu = None;
+                        shell.run(&Run(Command::SplitRight), window, cx);
+                    }),
+                ),
+            )
+            .child(
+                item("tab-menu-split-down", "Split down", Command::SplitDown).on_click(
+                    cx.listener(|shell, _, window, cx| {
+                        shell.tab_menu = None;
+                        shell.run(&Run(Command::SplitDown), window, cx);
+                    }),
+                ),
+            )
+            .child(
+                item("tab-menu-rename", "Rename", Command::RenameTab).on_click(cx.listener(
+                    |shell, _, window, cx| {
+                        shell.tab_menu = None;
+                        shell.start_rename(window, cx);
+                    },
+                )),
+            )
+            .child(
+                item("tab-menu-close", "Close", Command::CloseTab).on_click(cx.listener(
+                    move |shell, _, window, cx| {
+                        shell.tab_menu = None;
+                        shell.close_tab(tab_id, window, cx);
+                    },
+                )),
+            );
+        deferred(
+            anchored()
+                .position(menu.position)
+                .snap_to_window_with_margin(px(space::S))
+                .child(panel),
+        )
+        .into_any_element()
+    }
+
+    /// The pane menu: Pin, Rename (inline, like F2; greyed for a run pane, which is named by its
+    /// command) and the color swatches of the workspace palette. Floats at the click.
+    fn render_pane_menu(
+        &self,
+        menu: &PaneMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        let session_id = menu.session_id;
+        let session = self
+            .sidebar
+            .sessions()
+            .iter()
+            .find(|s| s.id == session_id)?;
+        let renamable = mkrew_core::run::command_name(session).is_none();
+        let current = session.color.as_deref();
+        let pinned = session.pinned;
+        let separator = || {
+            div()
+                .h(px(theme::BORDER_WIDTH))
+                .my(px(space::XS))
+                .bg(rgb(theme.border))
+        };
+        let panel = menu_panel("pane-menu", theme)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.pane_menu = None;
+                cx.notify();
+            }))
+            .child(
+                menu_item("pin-pane".into(), theme)
+                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
+                        "Unpin"
+                    } else {
+                        "Pin"
+                    }))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.pin_session(session_id, !pinned, window, cx);
+                    })),
+            )
+            .child(separator())
+            .child(
+                menu_item("pane-menu-rename".into(), theme)
+                    .child(div().flex_1().text_color(rgb(theme.text)).child("Rename"))
+                    .child(
+                        div()
+                            .text_size(font_size::META)
+                            .child(self.keymap.label(Command::RenamePane)),
+                    )
+                    .when(renamable, |el| {
+                        el.on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.pane_menu = None;
+                            shell.start_pane_rename(session_id, window, cx);
+                        }))
+                    })
+                    .when(!renamable, |el| el.opacity(opacity::DISABLED)),
+            )
+            .child(separator())
+            .child(
+                div()
+                    .px(px(space::S))
+                    .pt(px(space::XS))
+                    .text_size(font_size::META)
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text_muted))
+                    .child("Change color"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(space::S))
+                    .p(px(space::S))
+                    .children(
+                        std::iter::once(None)
+                            .chain(WORKSPACE_COLORS.iter().map(|name| Some(*name)))
+                            .map(|color| {
+                                color_swatch(
+                                    "pane-color",
+                                    color,
+                                    current,
+                                    theme,
+                                    cx,
+                                    move |shell, color, window, cx| {
+                                        shell.set_pane_color(session_id, color, window, cx);
+                                    },
+                                )
+                            }),
+                    ),
+            );
+        Some(
+            deferred(
+                anchored()
+                    .position(menu.position)
+                    .snap_to_window_with_margin(px(space::S))
+                    .child(panel),
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// `row` with the peek popover hung at its top right when the peek shows `session_id`.
     fn with_peek(
         &self,
         row: gpui::AnyElement,
-        place: Place,
         session_id: Ulid,
         now: i64,
         theme: &Theme,
@@ -8247,7 +9419,7 @@ impl Shell {
         let popover = self
             .peek
             .as_ref()
-            .filter(|peek| (peek.place, peek.session_id) == (place, session_id))
+            .filter(|peek| peek.session_id == session_id && !self.modal_open())
             .and_then(|peek| self.render_peek(peek, now, theme, cx));
         match popover {
             Some(popover) => div()
@@ -8354,13 +9526,11 @@ impl Shell {
             "Sending…".to_owned()
         } else if !peek.focused {
             format!(
-                "Click the field to reply · {} peeks the Inbox",
+                "Click the field to reply · {} peeks the first session that needs you",
                 self.keymap.label(Command::Peek)
             )
-        } else if peek.place == Place::Inbox {
-            "Enter sends · ↑ ↓ other Inbox entries · Esc closes".to_owned()
         } else {
-            "Enter sends · Esc closes".to_owned()
+            "Enter sends · ↑ ↓ other sessions that need you · Esc closes".to_owned()
         };
         let panel = div()
             .id("peek")
@@ -8471,21 +9641,37 @@ impl Shell {
         };
         let view = self.view();
         let main = div().flex_1().min_w_0().h_full().flex().flex_col();
-        let main = main.child(self.render_toolbar(project_id, view, theme, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
             (View::Files, _) => main.child(self.render_files(project_id, theme, window, cx)),
             (View::Git, _) => main.child(self.render_git(project_id, theme, window, cx)),
-            (View::Terminals, Some(tabs)) => main
-                .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
-                .child(self.render_tab(
-                    tabs,
-                    now,
-                    self.composer_focus.is_focused(window),
-                    theme,
-                    cx,
-                )),
+            (View::Terminals, Some(tabs)) => {
+                let terminals = div()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(self.render_tab_bar(project_id, tabs, now, theme, cx))
+                    .child(self.render_tab(
+                        tabs,
+                        now,
+                        self.composer_focus.is_focused(window),
+                        theme,
+                        cx,
+                    ));
+                main.child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(terminals)
+                        .when(self.inspector_open, |el| {
+                            el.child(self.render_inspector(project_id, now, theme, cx))
+                        }),
+                )
+            }
             (View::Terminals, None) => {
                 let (sentence, detail) = self.status_line();
                 main.child(message(theme, None, sentence, detail).flex_1())
@@ -8494,17 +9680,168 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The toolbar above every view (SPEC §10, ADR 0027): the views as a segmented control on
-    /// the left; the theme toggle, History, + Agent, + Shell and Run on the right.
-    fn render_toolbar(
+    /// The title bar above everything (SPEC §10, ADR 0034): logo, workspace switcher,
+    /// branch chip and views on the left; a drag area; the theme toggle, History, "+ Agent",
+    /// "+ Shell" and Run; on Windows ─ □ ✕. Without a workspace only the logo, the drag area and
+    /// the controls show, so the window can always be moved and closed.
+    fn render_title_bar(
         &self,
-        project_id: Ulid,
+        shown: View,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        let workspace = self.workspace.filter(|_| self.connection.is_some());
+        let mode = match theme.mode {
+            theme::ThemeMode::System => "Theme: System",
+            theme::ThemeMode::Light => "Theme: Light",
+            theme::ThemeMode::Dark => "Theme: Dark",
+        };
+        // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
+        // and the window controls stay live (they never touch the app's state).
+        let modal = self.modal_open();
+        let mut left = div()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(div().flex_none().child(logo(theme)));
+        if let Some(project_id) = workspace {
+            left = left
+                .child(self.render_workspace_switcher(project_id, theme, cx))
+                .children(self.render_branch_chip(theme, cx))
+                .child(self.render_view_tabs(shown, theme, cx));
+        }
+        // A sibling of the controls, never their parent: the first area a hit test finds wins.
+        let drag = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .window_control_area(WindowControlArea::Drag)
+            .when(cfg!(target_os = "macos"), |el| {
+                el.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, event: &MouseDownEvent, window, _| {
+                        if event.click_count == 2 {
+                            window.titlebar_double_click();
+                        } else {
+                            window.start_window_move();
+                        }
+                    }),
+                )
+            });
+        let mut bar = div()
+            .flex_none()
+            .h(theme::rems_px(theme::TITLE_BAR_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .pl(px(if cfg!(target_os = "macos") {
+                theme::MAC_TRAFFIC_LIGHTS_WIDTH
+            } else {
+                space::M
+            }))
+            .bg(rgb(theme.bg))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .font_family(theme.ui_font_family.clone())
+            .child(left.when(modal, |el| el.relative().child(inert_layer())))
+            .child(drag);
+        let controls = DRAWN_CONTROLS && !window.is_fullscreen();
+        let mut right = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .when(!controls, |el| el.pr(px(space::M)))
+            .child(
+                icon_button("toggle-theme", theme::mode_glyph(theme.mode), theme)
+                    .tooltip(tooltip(
+                        theme,
+                        mode,
+                        self.keymap.label(Command::ToggleTheme),
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.toggle_theme(window, cx);
+                    })),
+            );
+        if let Some(project_id) = workspace {
+            right = right
+                .child(
+                    button("history", "History", theme, false)
+                        .flex_none()
+                        .tooltip(tooltip(
+                            theme,
+                            "Logs of the workspace's finished sessions",
+                            "",
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.show_history(project_id, window, cx);
+                        })),
+                )
+                .child(new_pane_button(
+                    "new-agent-pane",
+                    "+ Agent",
+                    SessionKind::Agent,
+                    self.keymap.label(Command::SplitAgent),
+                    theme,
+                    cx,
+                ))
+                .child(new_pane_button(
+                    "new-shell-pane",
+                    "+ Shell",
+                    SessionKind::Shell,
+                    self.keymap.label(Command::SplitShell),
+                    theme,
+                    cx,
+                ))
+                .child(self.render_run_button(project_id, theme, cx));
+        }
+        bar = bar.child(right.when(modal, |el| el.relative().child(inert_layer())));
+        if controls {
+            // No click handlers: Windows hit-tests these areas (`HTMINBUTTON` / `HTMAXBUTTON` /
+            // `HTCLOSE`) and runs the action itself; `HTMAXBUTTON` also brings the Snap
+            // Layouts flyout.
+            let max_glyph = if window.is_maximized() { "❐" } else { "□" };
+            bar = bar.child(
+                div()
+                    .flex_none()
+                    .h_full()
+                    .flex()
+                    .child(window_control(
+                        "win-min",
+                        "─",
+                        WindowControlArea::Min,
+                        theme,
+                    ))
+                    .child(window_control(
+                        "win-max",
+                        max_glyph,
+                        WindowControlArea::Max,
+                        theme,
+                    ))
+                    .child(window_control(
+                        "win-close",
+                        "✕",
+                        WindowControlArea::Close,
+                        theme,
+                    )),
+            );
+        }
+        bar
+    }
+
+    /// The views as a segmented control; the Git one carries the `Git N` badge (N = changed
+    /// files over all repositories of the workspace, hidden at 0).
+    fn render_view_tabs(
+        &self,
         shown: View,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let hover = theme.hover;
-        let segments = div()
+        let changed = self.git_summary().map_or(0, GitSummary::changed);
+        div()
             .flex_none()
             .flex()
             .items_center()
@@ -8515,6 +9852,9 @@ impl Shell {
                 let active = view == shown;
                 div()
                     .id(SharedString::from(format!("view-{}", view.title())))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
                     .px(px(space::M))
                     .py(px(space::XS))
                     .rounded(px(radius::SMALL))
@@ -8543,65 +9883,173 @@ impl Shell {
                         shell.show_view(view, window, cx);
                     }))
                     .child(view.title())
-            }));
-        let mode = match theme.mode {
-            theme::ThemeMode::System => "Theme: System",
-            theme::ThemeMode::Light => "Theme: Light",
-            theme::ThemeMode::Dark => "Theme: Dark",
-        };
-        div()
-            .flex_none()
-            .h(theme::rems_px(theme::TOOLBAR_HEIGHT))
+                    .when(view == View::Git && changed > 0, |el| {
+                        el.child(
+                            div()
+                                .px(px(space::XS))
+                                .rounded(px(radius::SMALL))
+                                .bg(rgb(theme.accent_bg))
+                                .text_size(font_size::META)
+                                .text_color(rgb(theme.accent_text))
+                                .child(changed.to_string()),
+                        )
+                    })
+            }))
+    }
+
+    /// `⎇ master` / `⎇ 2 repos` (tooltip: one line per repository); a click shows the Git
+    /// view. Nothing while the summary is not loaded or the folder holds no repository.
+    fn render_branch_chip(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        let summary = self.git_summary()?;
+        let label = summary.branch_label()?;
+        let tip = summary.branch_tooltip().unwrap_or_default();
+        let hover = theme.hover;
+        Some(
+            div()
+                .id("title-branch")
+                .min_w_0()
+                .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .cursor_pointer()
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text_muted))
+                .hover(move |style| style.bg(rgb(hover)))
+                .active(|style| style.opacity(opacity::ACTIVE))
+                .tooltip(tooltip(theme, &tip, ""))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    shell.show_view(View::Git, window, cx);
+                }))
+                .child(label)
+                .into_any_element(),
+        )
+    }
+
+    /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and
+    /// "Add workspace…".
+    fn render_workspace_switcher(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let projects = self.sidebar.projects();
+        let current = projects.iter().find(|project| project.id == project_id);
+        let name = current.map_or("Workspace", |project| project.name.as_str());
+        let color = current
+            .and_then(|project| project.color.as_deref())
+            .and_then(|name| theme.workspace_color(name));
+        let hover = theme.hover;
+        let button = div()
+            .id("workspace-switch")
+            .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(px(space::S))
-            .px(px(space::M))
-            .bg(rgb(theme.bg))
-            .border_b(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .font_family(theme.ui_font_family.clone())
-            .child(segments)
-            .child(div().flex_1())
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .text_size(font_size::BODY)
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text))
+            .hover(move |style| style.bg(rgb(hover)))
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .tooltip(tooltip(
+                theme,
+                "Switch workspace",
+                self.keymap.label(Command::NextWorkspace),
+            ))
+            // An open menu already closed on this mouse down (outside it): the click reopens it.
+            .on_click(cx.listener(|shell, _, _, cx| {
+                shell.workspace_switcher = true;
+                cx.notify();
+            }))
+            .child(workspace_avatar(name, color, theme))
             .child(
-                icon_button("toggle-theme", theme::mode_glyph(theme.mode), theme)
-                    .tooltip(tooltip(
-                        theme,
-                        mode,
-                        self.keymap.label(Command::ToggleTheme),
-                    ))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.toggle_theme(window, cx);
-                    })),
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(name.to_owned()),
             )
             .child(
-                button("history", "History", theme, false)
+                div()
                     .flex_none()
-                    .tooltip(tooltip(
-                        theme,
-                        "Logs of the workspace's finished sessions",
-                        "",
-                    ))
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .child("▾"),
+            );
+        let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
+            let rows = projects.iter().map(|project| {
+                let id = project.id;
+                let color = project
+                    .color
+                    .as_deref()
+                    .and_then(|name| theme.workspace_color(name));
+                menu_item(SharedString::from(format!("switch-{id}")), theme)
+                    .child(workspace_avatar(&project.name, color, theme))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_color(rgb(theme.text))
+                            .child(project.name.clone()),
+                    )
+                    .when(id == project_id, |el| {
+                        el.child(div().text_color(rgb(theme.accent_text)).child("✓"))
+                    })
                     .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.show_history(project_id, window, cx);
-                    })),
+                        cx.stop_propagation();
+                        shell.activate_workspace(id, window, cx);
+                    }))
+            });
+            let panel = menu_panel("workspace-switch-panel", theme)
+                .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                    shell.workspace_switcher = false;
+                    cx.notify();
+                }))
+                .children(rows)
+                .child(
+                    div()
+                        .h(px(theme::BORDER_WIDTH))
+                        .my(px(space::XS))
+                        .bg(rgb(theme.border)),
+                )
+                .child(
+                    menu_item("switch-add".into(), theme)
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_color(rgb(theme.text))
+                                .child("Add workspace…"),
+                        )
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.workspace_switcher = false;
+                            shell.add_workspace(window, cx);
+                        })),
+                );
+            deferred(
+                anchored()
+                    .snap_to_window_with_margin(px(space::S))
+                    .child(div().pt(px(space::XS)).child(panel)),
             )
-            .child(new_pane_button(
-                "new-agent-pane",
-                "+ Agent",
-                SessionKind::Agent,
-                self.keymap.label(Command::SplitAgent),
-                theme,
-                cx,
-            ))
-            .child(new_pane_button(
-                "new-shell-pane",
-                "+ Shell",
-                SessionKind::Shell,
-                self.keymap.label(Command::SplitShell),
-                theme,
-                cx,
-            ))
-            .child(self.render_run_button(project_id, theme, cx))
+        });
+        div().child(button).children(menu).into_any_element()
     }
 
     /// The Run button (SPEC §10): a split accent button, `▶ Run` (or the running count and
@@ -8619,17 +10067,21 @@ impl Shell {
         } else {
             summary.tooltip()
         };
-        let main = button("run-main", summary.label(), theme, !live)
-            .flex_none()
-            .when(!live, |el| el.rounded_r_none())
-            .when(summary.warning(), |el| {
-                el.text_color(rgb(theme.status_needs_input))
-            })
-            .tooltip(tooltip(theme, &tip, ""))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.run_main_click(project_id, window, cx);
-            }));
-        let open = self.run_menu == Some(project_id);
+        let main = if live {
+            button("run-main", summary.label(), theme, false)
+        } else {
+            run_fill_button("run-main", summary.label(), theme)
+        }
+        .flex_none()
+        .when(!live, |el| el.rounded_r_none())
+        .when(summary.warning(), |el| {
+            el.text_color(rgb(theme.status_needs_input))
+        })
+        .tooltip(tooltip(theme, &tip, ""))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.run_main_click(project_id, window, cx);
+        }));
+        let open = self.run_menu == Some(project_id) && !self.modal_open();
         let mut bar = div()
             .flex_none()
             .flex()
@@ -8647,7 +10099,7 @@ impl Shell {
                 ("run-stop", "■", "Stop all run commands", RunAction::Stop),
             ] {
                 bar = bar.child(
-                    button(id, label, theme, false)
+                    run_icon_button(id, label, action, theme)
                         .flex_none()
                         .tooltip(tooltip(theme, tip, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -8657,7 +10109,12 @@ impl Shell {
             }
         }
         // The ▾ half of the split button: same fill, a faint divider on its left.
-        let menu = button("run-menu", "▾", theme, !live).when(!live, |el| {
+        let menu = if live {
+            button("run-menu", "▾", theme, false)
+        } else {
+            run_fill_button("run-menu", "▾", theme)
+        }
+        .when(!live, |el| {
             el.rounded_l_none()
                 .border_l(px(theme::BORDER_WIDTH))
                 .border_color(gpui::rgba(theme.on_accent_divider))
@@ -8688,7 +10145,6 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let hover = theme.surface_raised;
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
@@ -8739,13 +10195,15 @@ impl Shell {
                 );
             for &(label, tip, action) in controls {
                 let name = row.name.clone();
+                let colors = run::action_colors(action, theme);
                 line = line.child(
                     div()
                         .id(SharedString::from(format!("run-{label}-{}", row.name)))
                         .px(px(space::XS))
                         .rounded(px(radius::SMALL))
                         .cursor_pointer()
-                        .hover(move |style| style.bg(rgb(hover)))
+                        .text_color(rgb(colors.fg))
+                        .hover(move |style| style.bg(rgb(colors.tint)))
                         .tooltip(tooltip(theme, tip, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             // Not a click on what lies under the menu (a card, a pane).
@@ -8757,19 +10215,7 @@ impl Shell {
             }
             rows.push(line.into_any_element());
         }
-        let panel = div()
-            .id("run-menu-panel")
-            .w(px(theme::MENU_WIDTH))
-            .flex()
-            .flex_col()
-            .p(px(space::XS))
-            .rounded(px(radius::MEDIUM))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface_raised))
-            .shadow_md()
-            .font_family(theme.ui_font_family.clone())
-            .occlude()
+        let panel = menu_panel("run-menu-panel", theme)
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.run_menu = None;
                 cx.notify();
@@ -9314,7 +10760,21 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child(file_path.clone()),
             )
-            .child(self.doc_mode_toggle(project_id, docs.mode, theme, cx))
+            .child(self.mode_toggle(
+                "doc-mode",
+                docs.mode,
+                [(Mode::Preview, "Preview"), (Mode::Source, "Source")],
+                "Toggle preview / source",
+                self.keymap.label(Command::ToggleDocSource).into(),
+                move |shell, _, _, cx| {
+                    if let Some(docs) = shell.docs.get_mut(&project_id) {
+                        docs.toggle_mode();
+                        cx.notify();
+                    }
+                },
+                theme,
+                cx,
+            ))
             .child(self.add_comment_button(
                 project_id,
                 CommentContext::Doc,
@@ -9399,32 +10859,10 @@ impl Shell {
                     .pb(px(space::L))
                     .into_any_element()
                 }
-                Mode::Preview => div()
-                    .id("doc-preview")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .px(px(space::XL))
-                    .py(px(space::L))
-                    .child(
-                        div()
-                            .w_full()
-                            .max_w(px(theme::DOC_PREVIEW_MAX_WIDTH))
-                            .mx_auto()
-                            .flex()
-                            .flex_col()
-                            .gap(px(space::M))
-                            .text_size(px(theme::doc::BODY))
-                            .line_height(relative(theme::doc::LINE_HEIGHT))
-                            .children(preview_blocks(
-                                project_id,
-                                shown,
-                                docs.comments.selection,
-                                theme,
-                                cx,
-                            )),
-                    )
-                    .into_any_element(),
+                Mode::Preview => preview_page(
+                    "doc-preview",
+                    preview_blocks(project_id, shown, docs.comments.selection, theme, cx),
+                ),
             },
         };
         let margin = margin_shown(&docs.doc)
@@ -9596,6 +11034,20 @@ impl Shell {
                     .pb(px(space::S))
                     .track_focus(&self.files_focus)
                     .on_key_down(cx.listener(Self::files_key_down))
+                    // Right click on the header or the blank part of the tree = the folder
+                    // itself (rows stop the event first).
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
+                            shell.open_file_menu(
+                                project_id,
+                                String::new(),
+                                true,
+                                event.position,
+                                cx,
+                            );
+                        }),
+                    )
                     .child(header)
                     .children(
                         self.target_chooser(project_id, view.worktree_task_id, false, theme, cx)
@@ -9651,6 +11103,29 @@ impl Shell {
             Some(line) => format!("Open this file in Zed at line {line}"),
             None => "Open this file in Zed".to_owned(),
         };
+        let mode_toggle = (view.is_markdown() && editable).then(|| {
+            self.mode_toggle(
+                "file-mode",
+                view.mode,
+                [(Mode::Preview, "Preview"), (Mode::Source, "Source")],
+                "Toggle preview / source",
+                "".into(),
+                move |shell, _, window, cx| {
+                    shell.files_view(project_id).toggle_mode();
+                    shell.build_preview(project_id, window, cx);
+                    // The find fields are not drawn in Preview: give the keyboard back.
+                    if shell.files_view(project_id).previewing()
+                        && (shell.file_find_focus.is_focused(window)
+                            || shell.file_replace_focus.is_focused(window))
+                    {
+                        window.focus(&shell.focus_handle, cx);
+                    }
+                    cx.notify();
+                },
+                theme,
+                cx,
+            )
+        });
         let zed_button = |id: &'static str, primary: bool| {
             button(id, "Open in Zed", theme, primary)
                 .flex_none()
@@ -9659,9 +11134,7 @@ impl Shell {
                     shell.open_file_in_zed(project_id, cx);
                 }))
         };
-        let markdown = path
-            .rsplit_once('.')
-            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"));
+        let markdown = view.is_markdown();
         let review_path = path.clone();
         let header = div()
             .flex_none()
@@ -9695,6 +11168,7 @@ impl Shell {
                         .child(format!("Ln {}, Col {}", at.line + 1, col + 1)),
                 )
             }))
+            .children(mode_toggle)
             // The Docs view reviews the project folder's files, not a worktree's.
             .when(markdown && view.worktree_task_id.is_none(), |el| {
                 el.child(
@@ -9733,147 +11207,155 @@ impl Shell {
                     ),
             )
             .child(zed_button("file-zed", false));
-        let find_bar = view.find.as_ref().map(|find| {
-            let focused = self.file_find_focus.is_focused(window);
-            let find_row = div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .px(px(space::L))
-                .pb(px(space::S))
-                .child(
-                    button(
-                        "file-find-toggle-replace",
-                        if find.replace.is_some() { "▾" } else { "▸" },
-                        theme,
-                        false,
-                    )
-                    .tooltip(tooltip(
-                        theme,
-                        "Toggle replace",
-                        self.keymap.label(Command::ReplaceInFile),
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        let shown = (shell.files_view(project_id).find.as_ref())
-                            .is_some_and(|find| find.replace.is_some());
-                        if !shown {
-                            return shell.open_file_find(true, window, cx);
-                        }
-                        if let Some(find) = &mut shell.files_view(project_id).find {
-                            find.replace = None;
-                        }
-                        window.focus(&shell.file_find_focus, cx);
-                        cx.notify();
-                    })),
-                )
-                .child(
-                    text_field(
-                        "file-find-field",
-                        &find.query,
-                        "Find in file",
-                        focused,
-                        find.query.all_selected(),
-                        theme,
-                    )
-                    .w(px(theme::FIND_INPUT_WIDTH))
-                    .track_focus(&self.file_find_focus)
-                    .on_key_down(cx.listener(Self::file_find_key_down))
-                    .relative()
-                    .child(self.typing(&self.file_find_focus, Self::file_find_key_down, cx))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        window.focus(&shell.file_find_focus, cx);
-                        cx.notify();
-                    })),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .child(find.label()),
-                )
-                .child(
-                    button("file-find-previous", "↑", theme, false)
-                        .tooltip(tooltip(theme, "Previous match", "Shift+Enter"))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            window.focus(&shell.file_find_focus, cx);
-                            shell.step_file_find(project_id, false, cx);
-                        })),
-                )
-                .child(
-                    button("file-find-next", "↓", theme, false)
-                        .tooltip(tooltip(theme, "Next match", "Enter"))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            window.focus(&shell.file_find_focus, cx);
-                            shell.step_file_find(project_id, true, cx);
-                        })),
-                )
-                .child(
-                    button("file-find-close", "✕", theme, false)
-                        .tooltip(tooltip(theme, "Close", "Esc"))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.close_file_find(project_id, window, cx);
-                        })),
-                );
-            let replacing = self.file_replace_focus.is_focused(window);
-            let replace_row = find.replace.as_ref().map(|with| {
-                div()
+        let find_bar = view
+            .find
+            .as_ref()
+            .filter(|_| !view.previewing())
+            .map(|find| {
+                let focused = self.file_find_focus.is_focused(window);
+                let find_row = div()
                     .flex()
                     .items_center()
                     .gap(px(space::S))
                     .px(px(space::L))
                     .pb(px(space::S))
                     .child(
+                        button(
+                            "file-find-toggle-replace",
+                            if find.replace.is_some() { "▾" } else { "▸" },
+                            theme,
+                            false,
+                        )
+                        .tooltip(tooltip(
+                            theme,
+                            "Toggle replace",
+                            self.keymap.label(Command::ReplaceInFile),
+                        ))
+                        .on_click(cx.listener(
+                            move |shell, _, window, cx| {
+                                let shown = (shell.files_view(project_id).find.as_ref())
+                                    .is_some_and(|find| find.replace.is_some());
+                                if !shown {
+                                    return shell.open_file_find(true, window, cx);
+                                }
+                                if let Some(find) = &mut shell.files_view(project_id).find {
+                                    find.replace = None;
+                                }
+                                window.focus(&shell.file_find_focus, cx);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
                         text_field(
-                            "file-replace-field",
-                            with,
-                            "Replace",
-                            replacing,
-                            with.all_selected(),
+                            "file-find-field",
+                            &find.query,
+                            "Find in file",
+                            focused,
+                            find.query.all_selected(),
                             theme,
                         )
                         .w(px(theme::FIND_INPUT_WIDTH))
-                        .track_focus(&self.file_replace_focus)
-                        .on_key_down(cx.listener(Self::file_replace_key_down))
+                        .track_focus(&self.file_find_focus)
+                        .on_key_down(cx.listener(Self::file_find_key_down))
                         .relative()
-                        .child(self.typing(
-                            &self.file_replace_focus,
-                            Self::file_replace_key_down,
-                            cx,
-                        ))
+                        .child(self.typing(&self.file_find_focus, Self::file_find_key_down, cx))
                         .on_click(cx.listener(|shell, _, window, cx| {
-                            window.focus(&shell.file_replace_focus, cx);
+                            window.focus(&shell.file_find_focus, cx);
                             cx.notify();
                         })),
                     )
                     .child(
-                        button("file-replace-one", "Replace", theme, false)
-                            .tooltip(tooltip(
-                                theme,
-                                "Replace this match and go to the next",
-                                "Enter",
-                            ))
+                        div()
+                            .flex_1()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(find.label()),
+                    )
+                    .child(
+                        button("file-find-previous", "↑", theme, false)
+                            .tooltip(tooltip(theme, "Previous match", "Shift+Enter"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
-                                window.focus(&shell.file_replace_focus, cx);
-                                shell.replace_in_file(project_id, window, cx);
+                                window.focus(&shell.file_find_focus, cx);
+                                shell.step_file_find(project_id, false, cx);
                             })),
                     )
                     .child(
-                        button("file-replace-all", "Replace all", theme, false)
-                            .tooltip(tooltip(theme, "Replace every match", "Ctrl+Alt+Enter"))
+                        button("file-find-next", "↓", theme, false)
+                            .tooltip(tooltip(theme, "Next match", "Enter"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
-                                window.focus(&shell.file_replace_focus, cx);
-                                shell.replace_all_in_file(project_id, window, cx);
+                                window.focus(&shell.file_find_focus, cx);
+                                shell.step_file_find(project_id, true, cx);
                             })),
                     )
+                    .child(
+                        button("file-find-close", "✕", theme, false)
+                            .tooltip(tooltip(theme, "Close", "Esc"))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                shell.close_file_find(project_id, window, cx);
+                            })),
+                    );
+                let replacing = self.file_replace_focus.is_focused(window);
+                let replace_row = find.replace.as_ref().map(|with| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .px(px(space::L))
+                        .pb(px(space::S))
+                        .child(
+                            text_field(
+                                "file-replace-field",
+                                with,
+                                "Replace",
+                                replacing,
+                                with.all_selected(),
+                                theme,
+                            )
+                            .w(px(theme::FIND_INPUT_WIDTH))
+                            .track_focus(&self.file_replace_focus)
+                            .on_key_down(cx.listener(Self::file_replace_key_down))
+                            .relative()
+                            .child(self.typing(
+                                &self.file_replace_focus,
+                                Self::file_replace_key_down,
+                                cx,
+                            ))
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| {
+                                    window.focus(&shell.file_replace_focus, cx);
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(
+                            button("file-replace-one", "Replace", theme, false)
+                                .tooltip(tooltip(
+                                    theme,
+                                    "Replace this match and go to the next",
+                                    "Enter",
+                                ))
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    window.focus(&shell.file_replace_focus, cx);
+                                    shell.replace_in_file(project_id, window, cx);
+                                })),
+                        )
+                        .child(
+                            button("file-replace-all", "Replace all", theme, false)
+                                .tooltip(tooltip(theme, "Replace every match", "Ctrl+Alt+Enter"))
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    window.focus(&shell.file_replace_focus, cx);
+                                    shell.replace_all_in_file(project_id, window, cx);
+                                })),
+                        )
+                });
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .child(find_row)
+                    .children(replace_row)
             });
-            div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .child(find_row)
-                .children(replace_row)
-        });
         let body = match &view.content {
             Content::None | Content::Loading => message(theme, None, "Loading…".into(), None)
                 .flex_1()
@@ -9913,6 +11395,7 @@ impl Shell {
                 .child(zed_button("file-zed-notice", true))
                 .into_any_element()
             }
+            Content::Shown(_) if view.previewing() => self.render_md_preview(view, theme),
             Content::Shown(shown) => self.render_editor(project_id, shown, window, theme, cx),
         };
         let disk_banner = view
@@ -11005,6 +12488,19 @@ impl Shell {
             theme,
             cx,
         );
+        let diff_toggle = self.mode_toggle(
+            "git-diff-mode",
+            self.diff_mode,
+            [(DiffMode::Unified, "Unified"), (DiffMode::Split, "Split")],
+            "Unified (one column) or Split (old | new) diff",
+            self.keymap.label(Command::GitToggleDiffMode).into(),
+            |shell, mode, window, cx| {
+                window.focus(&shell.git_focus, cx);
+                shell.set_diff_mode(mode, cx);
+            },
+            theme,
+            cx,
+        );
         let zed_keys = self.keymap.label(Command::OpenInZed);
         let zed_button = |id: &'static str, primary: bool| {
             button(id, "Open in Zed", theme, primary)
@@ -11034,6 +12530,10 @@ impl Shell {
             .as_ref()
             .filter(|shown| !shown.diff.binary)
             .map(|shown| (shown.diff.added, shown.diff.removed));
+        // Unified | Split (global, remembered): only for a diff that has lines to lay out.
+        let has_lines = shown.as_ref().is_some_and(|shown| {
+            !shown.diff.binary && !shown.diff.too_large && !shown.rows.is_empty()
+        });
         let header = div()
             .flex_none()
             .flex()
@@ -11069,6 +12569,7 @@ impl Shell {
                     .tooltip(tooltip(theme, "Next / previous hunk", keys))
                     .child(label)
             }))
+            .when(has_lines, |header| header.child(diff_toggle))
             .children(view.file_change(&selected).map(|change| {
                 let (label, tip, command) = match change.stage {
                     git_view::Stage::Stage => {
@@ -11158,6 +12659,7 @@ impl Shell {
             .into_any_element(),
             git_view::Diff::Shown(shown) => {
                 let shown = Rc::clone(shown);
+                let mode = self.diff_mode;
                 let current = view.hunk;
                 // Hunk headers get a stage / unstage action when the file can go by hunk.
                 let hunk_stage = view.hunk_change(0).map(|change| change.stage);
@@ -11165,67 +12667,95 @@ impl Shell {
                 let can_comment = view.can_comment();
                 let line_height = theme.terminal_font_size * theme.terminal_line_height;
                 let row_theme = theme.clone();
-                let rows = shown.rows.len();
+                let rows = shown.list_len(mode);
                 uniform_list(
                     "git-diff",
                     rows,
                     cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
                         range
-                            .filter_map(|index| Some((index, shown.rows.get(index)?)))
-                            .map(|(index, row)| {
-                                let frame = git_diff_row(
-                                    &shown,
-                                    index,
-                                    current,
-                                    picked,
-                                    line_height,
-                                    &row_theme,
-                                );
-                                match (row, hunk_stage) {
-                                    (git_view::DiffRow::Hunk(hunk), Some(stage)) => frame
-                                        .child(hunk_stage_button(
-                                            project_id, *hunk, stage, &row_theme, cx,
-                                        ))
-                                        .into_any_element(),
-                                    // New-side lines can be picked for a comment; hover
-                                    // previews the pick bar.
-                                    (git_view::DiffRow::Line(line), _) => match line
-                                        .new_line
-                                        .filter(|_| can_comment)
-                                    {
-                                        Some(number) => frame
-                                            .cursor_pointer()
-                                            .when(
-                                                !picked.is_some_and(|p| p.contains(number, number)),
-                                                |el| {
-                                                    let border = row_theme.border;
-                                                    el.hover(move |style| {
-                                                        style.border_color(rgb(border))
-                                                    })
-                                                },
-                                            )
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(
-                                                    move |shell,
-                                                          event: &gpui::MouseDownEvent,
-                                                          window,
-                                                          cx| {
-                                                        shell.pick_diff_line(
-                                                            project_id,
-                                                            number,
-                                                            event.modifiers.shift,
-                                                            window,
+                            .filter_map(|index| {
+                                Some(match mode {
+                                    DiffMode::Unified => {
+                                        let row = shown.rows.get(index)?;
+                                        let frame = git_diff_row(
+                                            &shown,
+                                            index,
+                                            current,
+                                            picked,
+                                            line_height,
+                                            &row_theme,
+                                        );
+                                        match (row, hunk_stage) {
+                                            (git_view::DiffRow::Hunk(hunk), Some(stage)) => frame
+                                                .child(hunk_stage_button(
+                                                    project_id, *hunk, stage, &row_theme, cx,
+                                                ))
+                                                .into_any_element(),
+                                            // New-side lines can be picked for a comment; hover
+                                            // previews the pick bar.
+                                            (git_view::DiffRow::Line(line), _) => {
+                                                match line.new_line.filter(|_| can_comment) {
+                                                    Some(number) => pick_on_click(
+                                                        frame,
+                                                        project_id,
+                                                        number,
+                                                        picked,
+                                                        row_theme.border,
+                                                        cx,
+                                                    )
+                                                    .into_any_element(),
+                                                    None => frame.into_any_element(),
+                                                }
+                                            }
+                                            _ => frame.into_any_element(),
+                                        }
+                                    }
+                                    DiffMode::Split => match shown.split.get(index)? {
+                                        // Gap and hunk rows span both halves.
+                                        git_view::SplitRow::Span(at) => {
+                                            let frame = git_diff_row(
+                                                &shown,
+                                                *at,
+                                                current,
+                                                picked,
+                                                line_height,
+                                                &row_theme,
+                                            );
+                                            match (shown.rows.get(*at)?, hunk_stage) {
+                                                (git_view::DiffRow::Hunk(hunk), Some(stage)) => {
+                                                    frame
+                                                        .child(hunk_stage_button(
+                                                            project_id, *hunk, stage, &row_theme,
                                                             cx,
-                                                        );
-                                                    },
+                                                        ))
+                                                        .into_any_element()
+                                                }
+                                                _ => frame.into_any_element(),
+                                            }
+                                        }
+                                        // Only the new (right) half is pickable: comments
+                                        // anchor on new-side lines.
+                                        row => git_split_row(
+                                            &shown,
+                                            row,
+                                            picked,
+                                            line_height,
+                                            &row_theme,
+                                            |half, number| match number.filter(|_| can_comment) {
+                                                Some(number) => pick_on_click(
+                                                    half,
+                                                    project_id,
+                                                    number,
+                                                    picked,
+                                                    row_theme.border,
+                                                    cx,
                                                 ),
-                                            )
-                                            .into_any_element(),
-                                        None => frame.into_any_element(),
+                                                None => half,
+                                            },
+                                        )
+                                        .into_any_element(),
                                     },
-                                    _ => frame.into_any_element(),
-                                }
+                                })
                             })
                             .collect()
                     }),
@@ -11647,50 +13177,75 @@ impl Shell {
             }))
     }
 
-    /// Preview / Source segments; the inactive one switches (as Ctrl+Shift+E does).
-    fn doc_mode_toggle(
+    /// A segmented control over two modes (Docs and Files Preview / Source, Git Unified /
+    /// Split); the inactive segment runs `switch` with its mode. `id` prefixes the segments'
+    /// element ids (`(id, index)`).
+    #[allow(clippy::too_many_arguments)]
+    fn mode_toggle<M: Copy + PartialEq + 'static>(
         &self,
-        project_id: Ulid,
-        mode: Mode,
+        id: &'static str,
+        mode: M,
+        options: [(M, &'static str); 2],
+        tip: &'static str,
+        keys: SharedString,
+        switch: impl Fn(&mut Self, M, &mut Window, &mut Context<'_, Self>) + Clone + 'static,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
-        let keys = self.keymap.label(Command::ToggleDocSource);
         let hover = theme.surface_raised;
-        div().flex_none().flex().gap(px(space::XS)).children(
-            [
-                (Mode::Preview, "doc-mode-preview", "Preview"),
-                (Mode::Source, "doc-mode-source", "Source"),
-            ]
-            .map(|(target, id, label)| {
-                let active = target == mode;
-                div()
-                    .id(id)
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .tooltip(tooltip(theme, "Toggle preview / source", keys.clone()))
-                    .when(active, |el| {
-                        el.bg(rgb(theme.surface_raised))
-                            .font_weight(FontWeight(weight::MEDIUM))
-                            .text_color(rgb(theme.text))
-                    })
-                    .when(!active, |el| {
-                        el.cursor_pointer()
-                            .text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .on_click(cx.listener(move |shell, _, _, cx| {
-                                if let Some(docs) = shell.docs.get_mut(&project_id) {
-                                    docs.toggle_mode();
-                                    cx.notify();
-                                }
-                            }))
-                    })
-                    .child(label)
-            }),
-        )
+        div()
+            .flex_none()
+            .flex()
+            .gap(px(space::XS))
+            .children(
+                options
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (target, label))| {
+                        let active = target == mode;
+                        let switch = switch.clone();
+                        div()
+                            .id((id, index))
+                            .px(px(space::S))
+                            .py(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .text_size(font_size::BODY)
+                            .tooltip(tooltip(theme, tip, keys.clone()))
+                            .when(active, |el| {
+                                el.bg(rgb(theme.surface_raised))
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                                    .text_color(rgb(theme.text))
+                            })
+                            .when(!active, |el| {
+                                el.cursor_pointer()
+                                    .text_color(rgb(theme.text_muted))
+                                    .hover(move |style| style.bg(rgb(hover)))
+                                    .active(|style| style.opacity(opacity::ACTIVE))
+                                    .on_click(cx.listener(move |shell, _, window, cx| {
+                                        switch(shell, target, window, cx);
+                                    }))
+                            })
+                            .child(label)
+                    }),
+            )
+    }
+
+    /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
+    /// (unsaved edits included).
+    fn render_md_preview(&self, view: &FilesView, theme: &Theme) -> gpui::AnyElement {
+        match view.preview() {
+            None => message(theme, None, "Rendering the preview…".into(), None)
+                .flex_1()
+                .into_any_element(),
+            Some(shown) if shown.blocks.is_empty() => {
+                message(theme, None, "This file is empty.".into(), None)
+                    .flex_1()
+                    .into_any_element()
+            }
+            Some(shown) => {
+                preview_page("file-preview", preview::blocks(&shown.blocks, shown, theme))
+            }
+        }
     }
 
     /// "New task" with its shortcut: the primary action of the empty board, else quiet.
@@ -14315,6 +15870,371 @@ impl Shell {
             .into_any_element()
     }
 
+    /// The session panel (SPEC §10): the focused pane's cards, right of Terminals. Rendered
+    /// only while open; it is a sibling of the panes, never inside the terminal element.
+    fn render_inspector(
+        &self,
+        project_id: Ulid,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let session = self
+            .focused_session()
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        let grip = div()
+            .id("inspector-grip")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left_0()
+            .w(px(theme::INSPECTOR_GRIP_WIDTH))
+            .cursor(CursorStyle::ResizeLeftRight)
+            .on_drag(InspectorGrip, |_, _, _, cx| cx.new(|_| EmptyView))
+            .on_drag_move(
+                cx.listener(|shell, event: &DragMoveEvent<InspectorGrip>, window, cx| {
+                    cx.set_active_drag_cursor_style(CursorStyle::ResizeLeftRight, window);
+                    // ponytail: live width, one `session.resize` per changed column count;
+                    // throttle if an agent TUI flickers while dragging.
+                    shell.inspector_width = inspector::width_from_pointer(
+                        f32::from(window.viewport_size().width),
+                        f32::from(event.event.position.x),
+                    );
+                    shell.inspector_dragging = true;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, _| shell.end_inspector_drag()),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, _| shell.end_inspector_drag()),
+            );
+        let cards = div()
+            .id("inspector-body")
+            .size_full()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::M))
+            .children(match session {
+                Some(session) => vec![self.render_session_card(session, now, theme, cx)],
+                None => vec![meta_line(theme, "No session focused".into()).into_any_element()],
+            })
+            // Follows the workspace, not the focused pane.
+            .children(
+                self.render_changes_card(project_id, theme, cx)
+                    .map(IntoElement::into_any_element),
+            )
+            .children(
+                session
+                    .filter(|s| s.kind == SessionKind::Agent && s.state != SessionState::Exited)
+                    .map(|s| self.render_plan_card(s, theme, cx)),
+            );
+        div()
+            .flex_none()
+            .w(px(self.inspector_width))
+            .h_full()
+            .relative()
+            .border_l(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .bg(rgb(theme.bg))
+            .font_family(theme.ui_font_family.clone())
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text))
+            .child(cards)
+            .child(grip)
+            .into_any_element()
+    }
+
+    /// One line per repository with changes (`M 23 ?3` + Review diff); `None` when the
+    /// workspace has no repository (the card is hidden).
+    fn render_changes_card(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::Div> {
+        let workspace = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|p| p.id == project_id)
+            .map_or("workspace", |p| p.name.as_str());
+        let lines = inspector::changes_card(self.git_summary(), workspace)?;
+        let card = inspector_card(theme, "Changes");
+        if lines.is_empty() {
+            return Some(card.child(meta_line(theme, "Working tree clean".into())));
+        }
+        Some(
+            card.children(lines.into_iter().enumerate().map(|(i, line)| {
+                let repo = line.repo.clone();
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(div().flex_1().min_w_0().truncate().child(line.label))
+                    .children(
+                        line.modified.map(|text| {
+                            div().flex_none().text_color(rgb(theme.accent)).child(text)
+                        }),
+                    )
+                    .children(line.untracked.map(|text| {
+                        div()
+                            .flex_none()
+                            .text_color(rgb(theme.diff_add_text))
+                            .child(text)
+                    }))
+                    .child(
+                        row_action(
+                            SharedString::from(format!("inspector-review-{i}")),
+                            "Review diff",
+                            theme,
+                        )
+                        .flex_none()
+                        .tooltip(tooltip(theme, "Open the Git view on this repository", ""))
+                        .on_click(cx.listener(
+                            move |shell, _, window, cx| {
+                                shell.review_diff(project_id, repo.clone(), window, cx);
+                            },
+                        )),
+                    )
+            })),
+        )
+    }
+
+    /// The right panel's Plan card for an agent session (ADR 0039): the linked file's
+    /// progress and checklist, or a button to link one.
+    fn render_plan_card(
+        &self,
+        session: &Session,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let id = session.id;
+        let linked = session.plan_path.is_some();
+        let card = self.plans.get(id).map(plan::card);
+        let title = match (&card, &session.plan_path) {
+            (Some(card), _) => format!("Plan {}", card.name),
+            (None, Some(path)) => format!("Plan {}", plan::name_of(path)),
+            (None, None) => "Plan".to_owned(),
+        };
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(font_size::BODY)
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text))
+                    .child(title),
+            )
+            .children(
+                card.as_ref()
+                    .filter(|card| card.error.is_none())
+                    .map(|card| meta_line(theme, card.count.clone().into()).flex_none()),
+            );
+        let body = match &card {
+            Some(card) => match &card.error {
+                Some(error) => div().child(
+                    div()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.diff_del_text))
+                        .child(error.clone()),
+                ),
+                None => div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
+                    .child(progress_bar(card.fraction, theme::PLAN_BAR_HEIGHT, theme))
+                    .children(card.rows.iter().map(|row| plan_row(row, theme)))
+                    .children(
+                        (card.more > 0)
+                            .then(|| meta_line(theme, format!("{} more", card.more).into())),
+                    ),
+            },
+            None if linked => div().child(meta_line(theme, "Reading the plan…".into())),
+            None => div().child(meta_line(
+                theme,
+                "Link a Markdown checklist to follow this session's progress.".into(),
+            )),
+        };
+        let actions = if linked {
+            div()
+                .flex()
+                .gap(px(space::S))
+                .child(
+                    quiet_button("plan-change", "Change…", theme, theme.hover).on_click(
+                        cx.listener(move |shell, _, window, cx| shell.pick_plan(id, window, cx)),
+                    ),
+                )
+                .child(
+                    quiet_button("plan-unlink", "Unlink", theme, theme.hover).on_click(
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.link_plan(id, None, window, cx);
+                        }),
+                    ),
+                )
+        } else {
+            div().flex().child(
+                button("plan-link", "Link plan…", theme, true).on_click(
+                    cx.listener(move |shell, _, window, cx| shell.pick_plan(id, window, cx)),
+                ),
+            )
+        };
+        inspector_card(theme, "Plan")
+            .child(header)
+            .child(body)
+            .child(actions)
+            .children(
+                self.plan_error
+                    .as_ref()
+                    .filter(|(sid, _)| *sid == id)
+                    .map(|(_, error)| {
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.diff_del_text))
+                            .child(error.clone())
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// Agent, title, state + time, usage, Open transcript and Stop of `session`.
+    fn render_session_card(
+        &self,
+        session: &Session,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let card = inspector::session_card(session, self.usages.get(session.id), now);
+        let id = session.id;
+        let open = match &card.transcript {
+            Some(_) => button("inspector-transcript", "Open transcript", theme, false)
+                .tooltip(tooltip(
+                    theme,
+                    "Open the agent's transcript file in Zed",
+                    "",
+                ))
+                .on_click(cx.listener(move |shell, _, _, cx| shell.open_transcript(id, cx)))
+                .into_any_element(),
+            None => disabled_button("inspector-transcript", "Open transcript", theme, false)
+                .tooltip(tooltip(theme, "No transcript yet", ""))
+                .into_any_element(),
+        };
+        let stop = match inspector::stop_action(Some(session)) {
+            inspector::StopAction::Nothing => None,
+            action => Some(action),
+        }
+        .map(|action| {
+            let hint = if action == inspector::StopAction::Ask {
+                "Stop this session (asks first)"
+            } else {
+                "Stop this shell"
+            };
+            danger_button("inspector-stop", "Stop", theme)
+                .tooltip(tooltip(theme, hint, ""))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    shell.stop_session(id, window, cx);
+                }))
+        });
+        inspector_card(theme, "Session")
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(agent_chip(self.agent_badge(&session.agent_profile), theme))
+                    .child(div().min_w_0().truncate().child(card.agent.clone()))
+                    .child(div().flex_1())
+                    .child(status_mark(session.state, now, theme)),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .child(card.title.clone()),
+            )
+            .child(meta_line(theme, card.state.clone().into()))
+            .children(card.usage.iter().map(|(label, value)| {
+                div()
+                    .flex()
+                    .gap(px(space::S))
+                    .text_size(font_size::META)
+                    .child(
+                        div()
+                            .w(theme::rems_px(theme::INSPECTOR_LABEL_WIDTH))
+                            .flex_none()
+                            .text_color(rgb(theme.text_muted))
+                            .child(*label),
+                    )
+                    .child(div().min_w_0().truncate().child(value.clone()))
+            }))
+            .child(div().flex().gap(px(space::S)).child(open).children(stop))
+            .into_any_element()
+    }
+
+    /// "Open transcript": the agent's `.jsonl` in Zed. A failure (Zed missing, file gone) shows
+    /// in the sidebar like the other Zed actions.
+    fn open_transcript(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
+        let Some(path) = self
+            .usages
+            .get(session)
+            .and_then(|usage| usage.transcript.clone())
+        else {
+            return;
+        };
+        match zed::open(Path::new(&path), None) {
+            Ok(()) => self.sidebar_error = None,
+            Err(error) => {
+                tracing::warn!(%session, path, "open transcript failed: {error}");
+                self.sidebar_error = Some(error.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    /// The card's Stop: `session.kill`. A running agent asks first; the pane stays until the
+    /// session exits (ADR 0033).
+    fn stop_session(&mut self, session: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let action =
+            inspector::stop_action(self.sidebar.sessions().iter().find(|s| s.id == session));
+        match action {
+            inspector::StopAction::Nothing => {}
+            inspector::StopAction::Kill => self.kill(session, window, cx),
+            inspector::StopAction::Ask => {
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    "This session is still running.",
+                    Some("Stops the agent. Its pane closes when it exits."),
+                    &inspector::STOP_ANSWERS,
+                    cx,
+                );
+                cx.spawn_in(window, async move |this, cx| {
+                    if !task_dialog::confirms_delete(answer.await.ok()) {
+                        return;
+                    }
+                    let _ = this.update_in(cx, |shell, window, cx| {
+                        // It may have exited while the dialog was open.
+                        if !shell.is_exited(session) {
+                            shell.kill(session, window, cx);
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
+    }
+
     fn render_tab_bar(
         &self,
         project_id: Ulid,
@@ -14349,6 +16269,11 @@ impl Shell {
                 // The most urgent state among the tab's panes (SPEC §11).
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
                 let group = SharedString::from(format!("tab-{tab_id}"));
+                let icon = match tab_kind(tab, self.sidebar.sessions()) {
+                    TabKind::Agent(profile) => Some(agent_chip(self.agent_badge(&profile), theme)),
+                    TabKind::Shell => Some(agent_chip(">_".to_owned(), theme)),
+                    TabKind::Empty => None,
+                };
                 div()
                     .id(group.clone())
                     .group(group.clone())
@@ -14388,6 +16313,13 @@ impl Shell {
                             cx.notify();
                         }),
                     )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                            shell.open_tab_menu(tab_id, event.position, window, cx);
+                        }),
+                    )
+                    .children(icon)
                     .when_some(urgent, |el, session| {
                         el.tooltip(status_tooltip(
                             theme,
@@ -14397,6 +16329,7 @@ impl Shell {
                         ))
                         .child(status_mark(session.state, now, theme))
                     })
+                    .when(tab.pinned, |el| el.child(pin_mark()))
                     .child(tab.title.clone())
                     .child(
                         row_action(
@@ -14428,14 +16361,7 @@ impl Shell {
                     )
                     .into_any_element()
             }))
-            .child(
-                button("new-tab", "+", theme, false)
-                    .tooltip(tooltip(theme, "New tab", ""))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.create_tab(project_id, None, window, cx);
-                    })),
-            )
-            // Pushes the notices and pane actions to the right.
+            // Pushes the notices, Close pane and the + / split / ⋯ group to the right.
             .child(div().flex_1())
             .children(
                 self.tab_error
@@ -14474,6 +16400,35 @@ impl Shell {
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_focused_pane(window, cx);
                         })),
+                )
+            })
+            .child(
+                button("new-tab", "+", theme, false)
+                    .tooltip(tooltip(theme, "New tab", ""))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.create_tab(project_id, None, window, cx);
+                    })),
+            )
+            .child(
+                button("tab-split", "◫", theme, false)
+                    .tooltip(tooltip(
+                        theme,
+                        "Split right",
+                        self.keymap.label(Command::SplitRight),
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.run(&Run(Command::SplitRight), window, cx);
+                    })),
+            )
+            .when_some(active, |bar, tab_id| {
+                bar.child(
+                    button("tab-menu-button", "⋯", theme, false)
+                        .tooltip(tooltip(theme, "Tab menu", ""))
+                        .on_click(cx.listener(
+                            move |shell, event: &gpui::ClickEvent, window, cx| {
+                                shell.open_tab_menu(tab_id, event.position(), window, cx);
+                            },
+                        )),
                 )
             })
     }
@@ -14759,17 +16714,42 @@ impl Shell {
                             .into_any_element()
                     }
                 };
+                let workspace = (self.sidebar.projects().iter())
+                    .find(|project| project.id == info.project_id)
+                    .map(|project| project.name.as_str());
+                let folder = pane_text::folder(info.task_id.and_then(|id| self.board.task(id)));
+                let breadcrumb =
+                    pane_text::breadcrumb(workspace, folder.as_deref(), &info.agent_profile);
+                let pill = pane_text::pill_text(
+                    info.state,
+                    info.exit_code,
+                    info.state_changed_at,
+                    now,
+                    self.turns.get(session),
+                );
+                let color = info
+                    .color
+                    .as_deref()
+                    .and_then(|name| theme.workspace_color(name));
                 pane_header(
                     info,
                     self.agent_badge(&info.agent_profile),
-                    self.turns.get(session),
+                    breadcrumb,
+                    pill,
                     title,
                     self.usages.get(session).and_then(usage::context_share),
                     conflict,
                     turns,
                     queued,
+                    color,
                     now,
                     theme,
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                        shell.open_pane_menu(session, event.position, window, cx);
+                    }),
                 )
             }))
             .child(div().flex_1().min_h_0().child(content))
@@ -15113,10 +17093,41 @@ fn new_pane_button(
     button(id, label, theme, false)
         .tooltip(tooltip(theme, tip, keys))
         .on_click(cx.listener(move |shell, _, window, cx| {
-            // The toolbar shows it in every view; the new pane is seen in Terminals.
+            // The title bar shows it in every view; the new pane is seen in Terminals.
             shell.show_view(View::Terminals, window, cx);
             shell.new_pane(kind, Axis::Vertical, window, cx);
         }))
+}
+
+/// The repositories of `project_id` and each one's Working-mode status. Asking `git.repos`
+/// first means a root without `.git` never sends the status that would fail. The status
+/// requests go out together; a repository whose status fails is left out (logged).
+async fn git_summary_of(connection: &Connection, project_id: Ulid) -> anyhow::Result<GitSummary> {
+    let names = connection
+        .call::<Vec<String>>(Request::GitRepos(ProjectRef { project_id }))
+        .await?;
+    let pending: Vec<_> = names
+        .into_iter()
+        .map(|name| {
+            let params = GitStatusParams {
+                project_id,
+                worktree_task_id: None,
+                repo: (!name.is_empty()).then(|| name.clone()),
+                mode: GitMode::Working,
+                since: None,
+            };
+            let status = connection.call::<GitStatus>(Request::GitStatus(params));
+            (name, status)
+        })
+        .collect();
+    let mut repos = Vec::new();
+    for (name, status) in pending {
+        match status.await {
+            Ok(status) => repos.push(RepoSummary::of(&name, &status)),
+            Err(error) => tracing::warn!(%project_id, repo = name, "git.status failed: {error:#}"),
+        }
+    }
+    Ok(GitSummary { repos })
 }
 
 /// Fire-and-forget `session.detach`; a failure is logged.
@@ -15168,6 +17179,35 @@ fn button(
     } else {
         quiet_button(id, label, theme, theme.hover)
     }
+}
+
+/// The idle Run button: a green fill (`Start`'s color) with `on_accent` text, like a primary
+/// [`button`] in green.
+fn run_fill_button(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    button_frame(id, label)
+        .bg(rgb(run::action_colors(RunAction::Start, theme).fg))
+        .text_color(rgb(theme.on_accent))
+        .font_weight(FontWeight(weight::MEDIUM))
+        .hover(|style| style.opacity(opacity::HOVER))
+        .active(|style| style.opacity(opacity::ACTIVE))
+}
+
+/// A ghost glyph button of a live Run: the glyph in the action's color, its tint on hover.
+fn run_icon_button(
+    id: &'static str,
+    label: &'static str,
+    action: RunAction,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let colors = run::action_colors(action, theme);
+    button_frame(id, label)
+        .text_color(rgb(colors.fg))
+        .hover(move |style| style.bg(rgb(colors.tint)))
+        .active(|style| style.opacity(opacity::ACTIVE))
 }
 
 /// A secondary button: surface background with a faint border (the empty state's New shell).
@@ -15259,6 +17299,44 @@ fn kbd(text: String, theme: &Theme, on_accent: bool) -> gpui::Div {
             .text_color(rgb(theme.text_muted))
             .child(text)
     }
+}
+
+/// Covers a group of title bar controls while a dialog is open: it swallows the mouse, so the
+/// controls neither click nor hover.
+fn inert_layer() -> gpui::Div {
+    div().absolute().inset_0().occlude()
+}
+
+/// One ─ □ ✕ button of the Windows title bar. `area` makes Windows treat it as the system
+/// caption button (hover shows here; the click and the Snap Layouts flyout are the system's).
+fn window_control(
+    id: &'static str,
+    glyph: &'static str,
+    area: WindowControlArea,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let close = matches!(area, WindowControlArea::Close);
+    let (hover, on_hover) = (theme.hover, theme.on_accent);
+    let red = theme.status_exited;
+    div()
+        .id(id)
+        .window_control_area(area)
+        .flex_none()
+        .w(theme::rems_px(theme::WINDOW_CONTROL_WIDTH))
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(font_size::BODY)
+        .text_color(rgb(theme.text_muted))
+        .hover(move |style| {
+            if close {
+                style.bg(rgb(red)).text_color(rgb(on_hover))
+            } else {
+                style.bg(rgb(hover))
+            }
+        })
+        .child(glyph)
 }
 
 /// A square ghost button holding one glyph (theme toggle, sidebar +).
@@ -15442,6 +17520,31 @@ fn text_field(
         })
 }
 
+/// The preview's page: a scrolling, centered column of `blocks` (ADR 0021), shared by Docs
+/// and the Files view's `.md` files.
+fn preview_page(id: &'static str, blocks: Vec<gpui::AnyElement>) -> gpui::AnyElement {
+    div()
+        .id(id)
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .px(px(space::XL))
+        .py(px(space::L))
+        .child(
+            div()
+                .w_full()
+                .max_w(px(theme::DOC_PREVIEW_MAX_WIDTH))
+                .mx_auto()
+                .flex()
+                .flex_col()
+                .gap(px(space::M))
+                .text_size(px(theme::doc::BODY))
+                .line_height(relative(theme::doc::LINE_HEIGHT))
+                .children(blocks),
+        )
+        .into_any_element()
+}
+
 /// The preview's top-level blocks, each picked by a click (Shift extends) to comment on its
 /// lines; picked ones are highlighted.
 fn preview_blocks(
@@ -15517,6 +17620,28 @@ fn ai_result(done: &AiGeneratedEvent) -> Result<String, String> {
     }
 }
 
+/// Payload of a drag of the session panel's left edge (a resize, nothing is dropped).
+struct InspectorGrip;
+
+/// A card of the session panel: a muted title over its content (a block on `card`, like a board
+/// card). The Changes and Plan cards use it too.
+fn inspector_card(theme: &Theme, title: &'static str) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(px(space::S))
+        .p(px(space::M))
+        .rounded(px(radius::MEDIUM))
+        .bg(rgb(theme.card))
+        .child(
+            div()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(title),
+        )
+}
+
 /// A muted one-line note (e.g. "Loading comments…").
 fn meta_line(theme: &Theme, text: SharedString) -> gpui::Div {
     div()
@@ -15586,6 +17711,7 @@ fn file_row(
         GitMarker::Untracked => ("?", theme.diff_add_text, "Untracked"),
     });
     let path = entry.path.clone();
+    let (menu_path, is_dir) = (entry.path.clone(), entry.is_dir);
     div()
         .id(SharedString::from(format!("file-{}", entry.path)))
         .w_full()
@@ -15656,6 +17782,13 @@ fn file_row(
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.click_file(project_id, &path, window, cx);
         }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
+                shell.open_file_menu(project_id, menu_path.clone(), is_dir, event.position, cx);
+                cx.stop_propagation();
+            }),
+        )
         .into_any_element()
 }
 
@@ -16062,15 +18195,14 @@ fn git_diff_row(
                 )
         }
         git_view::DiffRow::Line(line) => {
-            let (bg, fg, sign) = match line.kind {
-                DiffLineKind::Add => (Some(theme.diff_add_bg), theme.diff_add_text, "+"),
-                DiffLineKind::Del => (Some(theme.diff_del_bg), theme.diff_del_text, "−"),
-                DiffLineKind::Context => (None, theme.text, " "),
+            let modified = shown.modified.get(index).copied().unwrap_or(false);
+            let (bg, fg, sign) = match (line.kind, modified) {
+                (DiffLineKind::Add, false) => (Some(theme.diff_add_bg), theme.diff_add_text, "+"),
+                (DiffLineKind::Del, false) => (Some(theme.diff_del_bg), theme.diff_del_text, "−"),
+                (DiffLineKind::Add, true) => (Some(theme.diff_mod_bg), theme.diff_mod_text, "+"),
+                (DiffLineKind::Del, true) => (Some(theme.diff_mod_bg), theme.diff_mod_text, "−"),
+                (DiffLineKind::Context, _) => (None, theme.text, " "),
             };
-            let spans = shown.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
-            // In a highlighted diff, text outside tokens is plain text (the sign and background
-            // still tell added from removed); unhighlighted diffs keep the diff text colors.
-            let text_color = if shown.highlighted { theme.text } else { fg };
             let is_picked = line
                 .new_line
                 .zip(picked)
@@ -16091,18 +18223,7 @@ fn git_diff_row(
                                 .child(number(line.new_line)),
                         ),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(space::S))
-                        .child(div().text_color(rgb(fg)).child(sign))
-                        .child(div().text_color(rgb(text_color)).child(preview::code_line(
-                            line.text.replace('\t', highlight::TAB),
-                            spans,
-                            &[],
-                            theme,
-                        ))),
-                )
+                .child(diff_code(shown, index, line, sign, fg, theme))
                 .when(line.no_newline, |el| {
                     el.child(
                         div()
@@ -16112,6 +18233,177 @@ fn git_diff_row(
                 })
         }
     }
+}
+
+/// A diff line's `sign` and text (tabs expanded, syntax colors of `shown.spans[index]`): the
+/// part of a row after the numbers, in Unified and in each Split half. In a highlighted diff,
+/// text outside tokens is plain text (the sign and background still tell added from removed);
+/// unhighlighted diffs keep the diff text color `fg`.
+fn diff_code(
+    shown: &git_view::Shown,
+    index: usize,
+    line: &mkrew_protocol::DiffLine,
+    sign: &'static str,
+    fg: u32,
+    theme: &Theme,
+) -> gpui::Div {
+    let spans = shown.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
+    let text_color = if shown.highlighted { theme.text } else { fg };
+    div()
+        .flex()
+        .gap(px(space::S))
+        .child(div().text_color(rgb(fg)).child(sign))
+        .child(div().text_color(rgb(text_color)).child(preview::code_line(
+            line.text.replace('\t', highlight::TAB),
+            spans,
+            &[],
+            theme,
+        )))
+}
+
+/// Which half of a Split row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiffSide {
+    Old,
+    New,
+}
+
+/// One half of a Split row: the old (left) or new (right) line `index` of `shown.rows`, or an
+/// empty padding cell. `modified` = the row pairs a removed with an added line (amber on both
+/// halves); otherwise removed / added lines keep the delete / add colors. Both halves have the
+/// pick bar's width, so the columns line up; only the new side shows the picked bar.
+fn split_half(
+    shown: &git_view::Shown,
+    index: Option<usize>,
+    side: DiffSide,
+    modified: bool,
+    picked: Option<Selection>,
+    theme: &Theme,
+) -> gpui::Div {
+    let half = div()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .overflow_hidden()
+        .flex()
+        .items_center()
+        .gap(px(space::M))
+        .px(px(space::M))
+        .border_l(px(theme::DIFF_PICK_BAR_WIDTH))
+        .border_color(gpui::transparent_black())
+        .whitespace_nowrap();
+    let Some((at, git_view::DiffRow::Line(line))) =
+        index.and_then(|at| Some((at, shown.rows.get(at)?)))
+    else {
+        return half;
+    };
+    let (bg, fg, sign) = match (line.kind, modified) {
+        (DiffLineKind::Add, false) => (Some(theme.diff_add_bg), theme.diff_add_text, "+"),
+        (DiffLineKind::Del, false) => (Some(theme.diff_del_bg), theme.diff_del_text, "−"),
+        (DiffLineKind::Add, true) => (Some(theme.diff_mod_bg), theme.diff_mod_text, "+"),
+        (DiffLineKind::Del, true) => (Some(theme.diff_mod_bg), theme.diff_mod_text, "−"),
+        (DiffLineKind::Context, _) => (None, theme.text, " "),
+    };
+    let number = match side {
+        DiffSide::Old => line.old_line,
+        DiffSide::New => line.new_line,
+    };
+    let is_picked = side == DiffSide::New
+        && line
+            .new_line
+            .zip(picked)
+            .is_some_and(|(n, picked)| picked.contains(n, n));
+    half.when_some(bg, |el, bg| el.bg(rgb(bg)))
+        .when(is_picked, |el| el.border_color(rgb(theme.accent)))
+        .child(
+            div()
+                .flex_none()
+                .text_color(rgb(if is_picked {
+                    theme.accent
+                } else {
+                    theme.text_muted
+                }))
+                .child(match number {
+                    Some(n) => format!("{n:>width$}", width = shown.number_width),
+                    None => " ".repeat(shown.number_width),
+                }),
+        )
+        .child(diff_code(shown, at, line, sign, fg, theme))
+        .when(line.no_newline, |el| {
+            el.child(
+                div()
+                    .text_color(rgb(theme.text_muted))
+                    .child("(no newline at end of file)"),
+            )
+        })
+}
+
+/// A Split row that pairs lines (`Same` / `Change`; spans are drawn by [`git_diff_row`]):
+/// old half, a 1 px divider, new half. `on_new_half` gets the new half and its new-side line
+/// number (`None` for padding) so the caller can make it pickable for a comment.
+fn git_split_row(
+    shown: &git_view::Shown,
+    row: &git_view::SplitRow,
+    picked: Option<Selection>,
+    line_height: f32,
+    theme: &Theme,
+    on_new_half: impl FnOnce(gpui::Div, Option<u32>) -> gpui::Div,
+) -> gpui::Div {
+    let (old, new, modified) = match row {
+        git_view::SplitRow::Same(at) => (Some(*at), Some(*at), false),
+        git_view::SplitRow::Change { old, new } => (*old, *new, old.is_some() && new.is_some()),
+        git_view::SplitRow::Span(_) => (None, None, false),
+    };
+    let new_number = new.and_then(|at| match shown.rows.get(at) {
+        Some(git_view::DiffRow::Line(line)) => line.new_line,
+        _ => None,
+    });
+    div()
+        .w_full()
+        .h(px(line_height))
+        .flex()
+        .items_center()
+        .child(split_half(
+            shown,
+            old,
+            DiffSide::Old,
+            modified,
+            picked,
+            theme,
+        ))
+        .child(
+            div()
+                .flex_none()
+                .w(px(theme::BORDER_WIDTH))
+                .h_full()
+                .bg(rgb(theme.border)),
+        )
+        .child(on_new_half(
+            split_half(shown, new, DiffSide::New, modified, picked, theme),
+            new_number,
+        ))
+}
+
+/// Makes `el` (a diff row, or the new half of a Split row) pick new-side line `number` for a
+/// comment on click; hover previews the pick bar unless the line is already picked.
+fn pick_on_click(
+    el: gpui::Div,
+    project_id: Ulid,
+    number: u32,
+    picked: Option<Selection>,
+    border: u32,
+    cx: &Context<'_, Shell>,
+) -> gpui::Div {
+    el.cursor_pointer()
+        .when(!picked.is_some_and(|p| p.contains(number, number)), |el| {
+            el.hover(move |style| style.border_color(rgb(border)))
+        })
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
+                shell.pick_diff_line(project_id, number, event.modifiers.shift, window, cx);
+            }),
+        )
 }
 
 /// A file size for people: bytes, KB or MB (1024-based, one decimal).
@@ -16239,14 +18531,36 @@ fn menu_item(id: SharedString, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
-/// One color choice of the workspace menu: a filled dot (`None` = an empty ring = no
-/// color); the current one is ringed in the text color.
+/// The floating panel of a menu drawn in a `deferred(anchored(..))` (workspace, switcher, Run ▾,
+/// Run with, Several agents, tab, pane and Files menus). It occludes the mouse: gpui hit-tests every hitbox
+/// until one blocks, so without `.occlude()` a click on the menu also reaches the row or card
+/// painted under it (a color pick would navigate to the row behind the swatch).
+fn menu_panel(id: impl Into<gpui::ElementId>, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .w(px(theme::MENU_WIDTH))
+        .flex()
+        .flex_col()
+        .p(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .bg(rgb(theme.surface_raised))
+        .shadow_md()
+        .font_family(theme.ui_font_family.clone())
+        .occlude()
+}
+
+/// One color choice of a color menu: a filled dot (`None` = an empty ring = no color); the
+/// current one is ringed in the text color. A click calls `pick`; the element id is
+/// `<id_prefix>-<color>`.
 fn color_swatch(
-    project_id: Ulid,
+    id_prefix: &'static str,
     color: Option<&'static str>,
     current: Option<&str>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
+    pick: impl Fn(&mut Shell, Option<&'static str>, &mut Window, &mut Context<'_, Shell>) + 'static,
 ) -> gpui::AnyElement {
     let fill = color.and_then(|name| theme.workspace_color(name));
     let ring = if color == current {
@@ -16256,7 +18570,7 @@ fn color_swatch(
     };
     div()
         .id(SharedString::from(format!(
-            "workspace-color-{}",
+            "{id_prefix}-{}",
             color.unwrap_or("none")
         )))
         .flex_none()
@@ -16269,7 +18583,7 @@ fn color_swatch(
         .hover(|style| style.opacity(opacity::HOVER))
         .tooltip(tooltip(theme, color.unwrap_or("No color"), ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.set_workspace_color(project_id, color, window, cx);
+            pick(shell, color, window, cx);
         }))
         .into_any_element()
 }
@@ -16368,8 +18682,6 @@ fn workspace_row(
     row: WorkspaceRow,
     active: bool,
     run_tip: Option<String>,
-    tokens: Option<u64>,
-    now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -16427,6 +18739,7 @@ fn workspace_row(
                 .text_color(rgb(theme.text))
                 .child(row.name),
         )
+        .when(row.pinned, |el| el.child(pin_mark()))
         .when_some(run_tip, |el, tip| {
             el.child(
                 div()
@@ -16437,36 +18750,13 @@ fn workspace_row(
                     .child("▶"),
             )
         })
-        .when_some(tokens, |el, tokens| {
+        .when_some(row.summary.clone(), |el, summary| {
             el.child(
                 div()
-                    .id(SharedString::from(format!("workspace-tokens-{project_id}")))
                     .flex_none()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
-                    .tooltip(tooltip(
-                        theme,
-                        "Tokens used by this workspace's agents (input + output)",
-                        "",
-                    ))
-                    .child(usage::format_count(tokens)),
-            )
-        })
-        .when(row.working > 0, |el| {
-            // Same working dots as the session rows (§11), in an accent pill.
-            el.child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .px(px(space::S))
-                    .rounded_full()
-                    .bg(rgb(theme.accent_bg))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.accent_text))
-                    .child(status_mark(SessionState::Working, now, theme))
-                    .child(row.working.to_string()),
+                    .child(summary),
             )
         })
         .when(row.needs_input, |el| {
@@ -16503,6 +18793,14 @@ fn workspace_row(
         .into_any_element()
 }
 
+/// The pin before the name of a pinned workspace, session or tab.
+fn pin_mark() -> gpui::Div {
+    div()
+        .flex_none()
+        .text_size(font_size::META)
+        .child(theme::PIN_GLYPH)
+}
+
 /// A workspace's first letter on a tint of its color (SPEC §10, ADR 0020); muted without one.
 /// The letter is `text` (see [`Theme::avatar_colors`]); the tint carries the color.
 fn workspace_avatar(name: &str, color: Option<u32>, theme: &Theme) -> gpui::Div {
@@ -16527,30 +18825,82 @@ fn workspace_avatar(name: &str, color: Option<u32>, theme: &Theme) -> gpui::Div 
         )
 }
 
+/// A thin progress bar: `fraction` (0–1) of the track in the accent color.
+fn progress_bar(fraction: f32, height: f32, theme: &Theme) -> gpui::Div {
+    div()
+        .w_full()
+        .h(px(height))
+        .rounded(px(radius::SMALL))
+        .overflow_hidden()
+        .bg(rgb(theme.border))
+        .child(div().h_full().w(relative(fraction)).bg(rgb(theme.accent)))
+}
+
+/// One checklist line of the Plan card: a check box and the item text; the first unchecked
+/// item is in the accent text color, checked ones are muted.
+fn plan_row(row: &plan::Row, theme: &Theme) -> gpui::Div {
+    let color = match (row.done, row.current) {
+        (true, _) => theme.text_muted,
+        (false, true) => theme.accent_text,
+        (false, false) => theme.text_dim,
+    };
+    let check = div()
+        .flex_none()
+        .mt(px(space::XS / 2.0))
+        .w(px(theme::DOC_TASK_BOX_SIZE))
+        .h(px(theme::DOC_TASK_BOX_SIZE))
+        .rounded(px(radius::SMALL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(if row.done { theme.accent } else { theme.subtle }))
+        .when(row.done, |el| el.bg(rgb(theme.accent)));
+    div()
+        .flex()
+        .items_start()
+        .gap(px(space::S))
+        .child(check)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(font_size::BODY)
+                .text_color(rgb(color))
+                .when(row.current, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                .child(row.text.clone()),
+        )
+}
+
 fn session_row(
     row: SessionRow,
     badge: String,
     selected: bool,
+    progress: Option<f32>,
     now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
-    let status_text = row.status_text(now);
-    let name = match &row.title {
-        Some(title) => format!("{} · {title}", row.agent),
-        None => row.agent.clone(),
+    let time = row.time_text(now);
+    // Only the selected row spells the title out on a second line (SPEC §11); the others keep
+    // `agent · title` on one line. `progress` is the plan bar of the selected row, last in the
+    // column under the name / title lines.
+    let (name, subtitle) = match (&row.title, selected) {
+        (Some(title), true) => (row.agent.clone(), Some(title.clone())),
+        (Some(title), false) => (format!("{} · {title}", row.agent), None),
+        (None, _) => (row.agent.clone(), None),
     };
     let hover = theme.hover;
     let row_id = SharedString::from(format!("session-{session_id}"));
     div()
         .id(row_id.clone())
         .group(row_id.clone())
-        .h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
+        .min_h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
         .flex()
         .items_center()
         .gap(px(space::S))
         .px(px(space::S))
+        .when(subtitle.is_some() || progress.is_some(), |el| {
+            el.py(px(space::XS))
+        })
         .rounded(px(radius::SMALL))
         .when(selected, |el| el.bg(rgb(theme.selected)))
         .cursor_pointer()
@@ -16558,35 +18908,66 @@ fn session_row(
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.open_session(session_id, window, cx);
         }))
-        .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
-            shell.hover_row(Place::Sidebar, session_id, *hovered, window, cx);
-        }))
-        .child(status_mark(row.state, now, theme))
-        .child(agent_chip(badge, theme))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(font_size::BODY)
-                .text_color(rgb(theme.text))
-                .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
-                .child(name),
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                // Show the pane first: the menu's Rename edits the pane header's title, which
+                // exists only for the pane on screen (same as a left click).
+                shell.open_session(session_id, window, cx);
+                shell.open_pane_menu(session_id, event.position, window, cx);
+            }),
         )
+        .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
+            shell.hover_row(session_id, *hovered, window, cx);
+        }))
         .child(
+            // The icon says the state; its hover says it in words and when it changed.
             div()
                 .id(SharedString::from(format!("session-status-{session_id}")))
                 .flex_none()
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
                 .tooltip(status_tooltip(
                     theme,
                     row.state,
                     row.state_source,
                     row.state_changed_at,
                 ))
-                .child(status_text),
+                .child(status_mark(row.state, now, theme)),
         )
+        .child(agent_chip(badge, theme))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(font_size::BODY)
+                        .text_color(rgb(theme.text))
+                        .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                        .child(name),
+                )
+                .children(subtitle.map(|title| {
+                    div()
+                        .truncate()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(title)
+                }))
+                .children(
+                    progress
+                        .map(|fraction| progress_bar(fraction, theme::PLAN_ROW_BAR_HEIGHT, theme)),
+                ),
+        )
+        .when(row.pinned, |el| el.child(pin_mark()))
+        .children(time.map(|time| {
+            div()
+                .flex_none()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(time)
+        }))
         .child(
             row_action(
                 SharedString::from(format!("session-remove-{session_id}")),
@@ -16602,96 +18983,6 @@ fn session_row(
                 cx.stop_propagation();
                 shell.remove_session(session_id, window, cx);
             })),
-        )
-        .into_any_element()
-}
-
-/// One Inbox line: status icon, `workspace: agent · title` over the last screen line, and the
-/// status (with the last turn's summary when done); a click shows the pane.
-fn inbox_row(
-    entry: Entry,
-    badge: String,
-    last_line: Option<String>,
-    turn: Option<&SessionTurnEvent>,
-    now: i64,
-    theme: &Theme,
-    cx: &mut Context<'_, Shell>,
-) -> gpui::AnyElement {
-    let session_id = entry.session_id;
-    let name = match &entry.title {
-        Some(title) => format!("{}: {} · {title}", entry.workspace, entry.agent),
-        None => format!("{}: {}", entry.workspace, entry.agent),
-    };
-    let hover = theme.surface_raised;
-    div()
-        .id(SharedString::from(format!("inbox-{session_id}")))
-        .flex()
-        // Icon and status line up with the name, above the last screen line.
-        .items_baseline()
-        .gap(px(space::S))
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(hover)))
-        .active(|style| style.opacity(opacity::ACTIVE))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.open_session(session_id, window, cx);
-        }))
-        .on_hover(cx.listener(move |shell, hovered: &bool, window, cx| {
-            shell.hover_row(Place::Inbox, session_id, *hovered, window, cx);
-        }))
-        .child(
-            div()
-                .flex_none()
-                .text_size(font_size::BODY)
-                .child(status_mark(entry.state, now, theme)),
-        )
-        .child(agent_chip(badge, theme))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap()
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text))
-                        .child(name),
-                )
-                .children(last_line.map(|line| {
-                    div()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap()
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .child(line)
-                })),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!("inbox-status-{session_id}")))
-                .flex_none()
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .tooltip(status_tooltip(
-                    theme,
-                    entry.state,
-                    entry.state_source,
-                    entry.state_changed_at,
-                ))
-                .child(turn::status_text(
-                    entry.state,
-                    None,
-                    entry.state_changed_at,
-                    now,
-                    turn,
-                )),
         )
         .into_any_element()
 }
@@ -17216,19 +19507,7 @@ fn run_with_button(
             shell.run_task_with(task_id, agent, window, cx);
         },
     );
-    let panel = div()
-        .id("run-with-menu")
-        .w(px(theme::MENU_WIDTH))
-        .flex()
-        .flex_col()
-        .p(px(space::XS))
-        .rounded(px(radius::MEDIUM))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .bg(rgb(theme.surface_raised))
-        .shadow_md()
-        .font_family(theme.ui_font_family.clone())
-        .occlude()
+    let panel = menu_panel("run-with-menu", theme)
         .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
             shell.run_with = None;
             cx.notify();
@@ -17367,19 +19646,7 @@ fn fan_out_button(
     } else {
         run.opacity(opacity::DISABLED)
     };
-    let panel = div()
-        .id("fan-out-menu")
-        .w(px(theme::MENU_WIDTH))
-        .flex()
-        .flex_col()
-        .p(px(space::XS))
-        .rounded(px(radius::MEDIUM))
-        .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .bg(rgb(theme.surface_raised))
-        .shadow_md()
-        .font_family(theme.ui_font_family.clone())
-        .occlude()
+    let panel = menu_panel("fan-out-menu", theme)
         .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
             shell.fan_out = None;
             cx.notify();
@@ -17619,22 +19886,62 @@ fn conflict_badge(
         )
 }
 
-/// A pane's header (SPEC §11): status icon, agent name, the title (renamed inline with F2 or a
-/// double-click, ADR 0031), an optional conflict
-/// warning, the number of queued sends (§20B.2), the context share (`⚠` and amber from 80 %,
-/// §20E.3), status text and time (with the last turn's summary when done), and an agent's
-/// "Follow in Zed" and "Turns…" (§20C.5, §20C.2); hovering the status shows its source and
-/// last change.
+/// The status bar's context meter: a thin track filled to the share, then `ctx 62%`. From
+/// 80 % (`ContextShare::warning`) the fill and the text turn amber, as in the pane header.
+fn context_meter(share: &ContextShare, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    let color = if share.warning {
+        theme.status_needs_input
+    } else {
+        theme.accent
+    };
+    div()
+        .id("status-context")
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .text_color(rgb(if share.warning {
+            theme.status_needs_input
+        } else {
+            theme.text_muted
+        }))
+        .tooltip(tooltip(theme, &share.hover, ""))
+        .child(
+            div()
+                .w(theme::rems_px(theme::STATUS_BAR_METER_WIDTH))
+                .h(px(theme::STATUS_BAR_METER_HEIGHT))
+                .rounded_full()
+                .bg(rgb(theme.border))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(f32::from(share.fill_percent) / 100.0))
+                        .rounded_full()
+                        .bg(rgb(color)),
+                ),
+        )
+        .child(share.label.clone())
+}
+
+/// A pane's header (SPEC §11): the agent badge, the `<workspace> › <folder> › <agent>`
+/// breadcrumb, one status pill (status mark + `Working · 1h 25m`, with the last turn's summary
+/// when done; hovering it shows the status source and last change), the title (renamed inline
+/// with F2 or a double-click, ADR 0031), an optional conflict warning, the number of queued
+/// sends (§20B.2), the context share (`⚠` and amber from 80 %, §20E.3), and on the right an
+/// agent's "Follow in Zed" and "Turns…" (§20C.5, §20C.2). A colored pane (ADR 0037) tints its
+/// chip and draws an accent line under the header.
 #[allow(clippy::too_many_arguments)]
 fn pane_header(
     session: &Session,
     badge: String,
-    turn: Option<&SessionTurnEvent>,
+    breadcrumb: String,
+    pill: String,
     title: gpui::AnyElement,
     context: Option<ContextShare>,
     conflict: Option<gpui::Stateful<gpui::Div>>,
     turns: Option<gpui::Stateful<gpui::Div>>,
     queued: usize,
+    color: Option<u32>,
     now: i64,
     theme: &Theme,
 ) -> gpui::Div {
@@ -17646,16 +19953,46 @@ fn pane_header(
         .gap(px(space::S))
         .px(px(space::S))
         .py(px(space::XS))
+        // Transparent without a color, so the header keeps its height.
+        .border_b(px(theme::PANE_ACCENT_WIDTH))
+        .border_color(match color {
+            Some(color) => Hsla::from(rgb(color)),
+            None => gpui::transparent_black(),
+        })
         .font_family(theme.ui_font_family.clone())
         .text_size(font_size::META)
-        .child(status_mark(state, now, theme))
-        .child(agent_chip(badge, theme))
+        .child(agent_chip(badge, theme).when_some(color, |chip, color| {
+            chip.bg(theme.tint(color)).border_color(rgb(color))
+        }))
         .child(
             div()
-                .flex_none()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text))
-                .child(session.agent_profile.clone()),
+                .child(breadcrumb),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("pane-status-{}", session.id)))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .px(px(space::S))
+                .rounded_full()
+                .bg(rgb(theme.surface_raised))
+                .text_color(rgb(theme.text_muted))
+                .tooltip(status_tooltip(
+                    theme,
+                    state,
+                    session.state_source,
+                    changed_at,
+                ))
+                .child(status_mark(state, now, theme))
+                .child(pill),
         )
         .child(title)
         .children(conflict.map(|badge| {
@@ -17687,25 +20024,6 @@ fn pane_header(
                     share.label
                 })
         }))
-        .child(
-            div()
-                .id(SharedString::from(format!("pane-status-{}", session.id)))
-                .flex_none()
-                .text_color(rgb(theme.text_muted))
-                .tooltip(status_tooltip(
-                    theme,
-                    state,
-                    session.state_source,
-                    changed_at,
-                ))
-                .child(turn::status_text(
-                    state,
-                    session.exit_code,
-                    changed_at,
-                    now,
-                    turn,
-                )),
-        )
         .children(turns)
 }
 
@@ -17925,6 +20243,7 @@ impl Render for Shell {
         div()
             .size_full()
             .flex()
+            .flex_col()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
             .when(self.view() == View::Board, |el| {
@@ -17935,76 +20254,110 @@ impl Render for Shell {
                 el.key_context(FILES_CONTEXT)
             })
             .on_action(cx.listener(Self::run))
-            .child(self.render_sidebar(now, &theme, cx))
-            .child(self.render_main(now, &theme, window, cx))
-            .children(
-                self.task_dialog
-                    .as_ref()
-                    .map(|dialog| self.render_task_dialog(dialog, &theme, cx)),
+            .child(self.render_title_bar(self.view(), &theme, window, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .relative()
+                    // Hidden: not built at all (nothing to lay out or paint).
+                    .children(
+                        (!self.sidebar_hidden)
+                            .then(|| self.render_sidebar(now, &theme, window, cx)),
+                    )
+                    .child(self.render_main(now, &theme, window, cx))
+                    .children(
+                        self.task_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_task_dialog(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.undo_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.worktree_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_worktree_dialog(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.compare
+                            .as_ref()
+                            .map(|compare| self.render_compare(compare, now, &theme, cx)),
+                    )
+                    .children(
+                        self.turns_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_turns_dialog(dialog, now, &theme, cx)),
+                    )
+                    .children(
+                        self.git_discard
+                            .as_ref()
+                            .map(|dialog| self.render_git_discard(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.git_base
+                            .as_ref()
+                            .map(|dialog| self.render_git_base(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.run_setup
+                            .as_ref()
+                            .map(|setup| self.render_run_setup(setup, &theme, cx)),
+                    )
+                    .children(
+                        self.broadcast
+                            .as_ref()
+                            .map(|dialog| self.render_broadcast(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.history
+                            .as_ref()
+                            .map(|dialog| self.render_history(dialog, now, &theme, cx)),
+                    )
+                    .children(self.doc_dialog.as_ref().map(|dialog| match dialog {
+                        DocDialog::Send(dialog) => self.render_send_dialog(dialog, now, &theme, cx),
+                        DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
+                    }))
+                    .children(
+                        self.quick_open
+                            .as_ref()
+                            .map(|open| self.render_quick_open(open, &theme, cx)),
+                    )
+                    .children(
+                        self.palette
+                            .as_ref()
+                            .map(|palette| self.render_palette(palette, &theme, cx)),
+                    )
+                    .children(
+                        self.prompt_picker
+                            .as_ref()
+                            .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
+                    )
+                    .children(
+                        self.tab_menu
+                            .as_ref()
+                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .map(|menu| self.render_tab_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        self.pane_menu
+                            .as_ref()
+                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .and_then(|menu| self.render_pane_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        (self.file_menu.as_ref())
+                            .filter(|menu| {
+                                self.workspace == Some(menu.project_id)
+                                    && self.view() == View::Files
+                                    && !self.modal_open()
+                            })
+                            .map(|menu| self.render_file_menu(menu, &theme, cx)),
+                    ),
             )
-            .children(
-                self.undo_dialog
-                    .as_ref()
-                    .map(|dialog| self.render_undo_dialog(dialog, &theme, cx)),
-            )
-            .children(
-                self.worktree_dialog
-                    .as_ref()
-                    .map(|dialog| self.render_worktree_dialog(dialog, &theme, cx)),
-            )
-            .children(
-                self.compare
-                    .as_ref()
-                    .map(|compare| self.render_compare(compare, now, &theme, cx)),
-            )
-            .children(
-                self.turns_dialog
-                    .as_ref()
-                    .map(|dialog| self.render_turns_dialog(dialog, now, &theme, cx)),
-            )
-            .children(
-                self.git_discard
-                    .as_ref()
-                    .map(|dialog| self.render_git_discard(dialog, &theme, cx)),
-            )
-            .children(
-                self.git_base
-                    .as_ref()
-                    .map(|dialog| self.render_git_base(dialog, &theme, cx)),
-            )
-            .children(
-                self.run_setup
-                    .as_ref()
-                    .map(|setup| self.render_run_setup(setup, &theme, cx)),
-            )
-            .children(
-                self.broadcast
-                    .as_ref()
-                    .map(|dialog| self.render_broadcast(dialog, &theme, cx)),
-            )
-            .children(
-                self.history
-                    .as_ref()
-                    .map(|dialog| self.render_history(dialog, now, &theme, cx)),
-            )
-            .children(self.doc_dialog.as_ref().map(|dialog| match dialog {
-                DocDialog::Send(dialog) => self.render_send_dialog(dialog, now, &theme, cx),
-                DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
-            }))
-            .children(
-                self.quick_open
-                    .as_ref()
-                    .map(|open| self.render_quick_open(open, &theme, cx)),
-            )
-            .children(
-                self.palette
-                    .as_ref()
-                    .map(|palette| self.render_palette(palette, &theme, cx)),
-            )
-            .children(
-                self.prompt_picker
-                    .as_ref()
-                    .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
-            )
+            .child(self.render_status_bar(now, &theme, cx))
     }
 }

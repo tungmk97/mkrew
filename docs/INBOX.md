@@ -36,7 +36,7 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
 - [x] Check all input field in this app should suppport Ctrl A, Ctrl Backspace... same as standard for input field so that can easy to update the value.... → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 15
 - [x] Running command, when a server user click stop: should remove this terminal, user click restart: don't create new one stop exisitng terminal then start again → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 16
 - [x] when a shell or agent is stopped, it still showing in the sidebar cannot clickable can just remove, so need auto clean up the workspace also, there're no meaning when juz show to remove because cannot click able anymore juz to close → plan: docs/superpowers/plans/2026-10-09-inbox-editor-git-repos-keys.md Task 17
-- [ ] **1. Title bar + toolbar redesign** [feat] (redesign A1, A2, A3, A4; merged: "Run toolbar colors")
+- [x] **1. Title bar + toolbar redesign** [feat] (redesign A1, A2, A3, A4; merged: "Run toolbar colors") → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 1, 2, 3
   - Source: `docs/superpowers/specs/2026-10-10-ui-redesign-options.md` (all redesign IDs below point there). Keep the current background colors.
   - One custom title bar replaces the OS title bar and the 44 px toolbar: Mkrew logo (see the logo item above), workspace name ▾ (switcher dropdown), git branch, views Board / Terminals / Docs / Files / Git, then History, + Agent, + Shell, Run, and drawn ─ □ ✕ window controls.
   - Windows: drag area, double-click to maximize, Win11 Snap Layouts on □, resize edges. macOS/Linux keep working. Needs an ADR (amends ADR 0027) and a SPEC §10 update.
@@ -44,21 +44,21 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
   - Run button colors: Stop red, Restart amber/orange, Run/Start green — same colors on the icons and hover states, in the title bar and in the ▾ dropdown.
   - Perf: `git.status` only for the shown workspace, on switch and on `git.changed`; no polling, nothing for hidden workspaces.
 
-- [ ] **2. Usage data: omp usage, cache split, model** [feat] (redesign B6, B8, B9)
+- [x] **2. Usage data: omp usage, cache split, model** [feat] (redesign B6, B8, B9) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 4, 5
   - omp sessions get token usage like Claude/Codex: a new `[usage] format` for omp's session file (check the current omp format, record fixtures from a real file) and `[usage]` in `agents/omp.toml`. Then `ctx %` and token totals show for omp panes.
   - Split cache tokens (read / write) out of `input` in `session.usage`, for every format that has them.
   - Read the model name of the newest message (Claude `message.model`, Codex/omp equivalent) and send it with `session.usage`.
   - Protocol bump + SPEC §20E.3 update. Still no cost/$ (SPEC: no money estimate).
   - Perf: same incremental read at turn end as today; no file watching, no mid-turn reads.
 
-- [ ] **3. Status bar + hide sidebar** [feat] (redesign A13, A12 status part, C1 sidebar part; after item 2)
+- [x] **3. Status bar + hide sidebar** [feat] (redesign A13, A12 status part, C1 sidebar part; after item 2) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 6
   - Thin bar at the window bottom: sidebar toggle button, inbox state (`Inbox clear` / `N need you`; click = jump to the next one, like Ctrl+Shift+I), git HEAD short hash; for the focused agent pane: context % bar, in/out tokens, cache, model, elapsed time; right end: right-panel toggle (wired in item 7).
   - Git: 1 repo → short hash; N repos → `N repos`, hover lists each repo's branch + hash. A root without `.git` still shows its child repos.
   - Only real data: no $, no tok/s. A field with no data is hidden, not shown as 0.
   - Toggle sidebar: palette command + keymap default (SPEC §13).
   - Perf: re-render only on `session.usage`, focus change, inbox change, `git.changed`.
 
-- [ ] **4. Workspace sidebar redesign + cleanup** [enh] (redesign A5, A6, A7, A8, A9 second line, A12 card removal; after item 3)
+- [x] **4. Workspace sidebar redesign + cleanup** [enh] (redesign A5, A6, A7, A8, A9 second line, A12 card removal; after item 3) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 7, 8, 9
   - Filter box "Filter sessions…" at the top (matches workspace, agent, title).
   - Chips `All N` / `Working N` / `Needs you N` under it; "Needs you" counts needs_input and done-not-yet-viewed sessions (what the Inbox lists today).
   - Remove the Inbox card at the sidebar bottom (the chips + status bar replace it; peek on hover stays).
@@ -69,7 +69,7 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
   - Replace the project color palette with 8–10 clearly distinct hues that are readable in both light and dark themes.
   - Perf: filter and counts on the client, O(sessions) per render.
 
-- [ ] **5. Terminal tabs + pane header** [enh] (redesign A10, A11; merged: "Pane improvements")
+- [x] **5. Terminal tabs + pane header** [enh] (redesign A10, A11; merged: "Pane improvements") → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 10, 11, 12
   - Tab strip: icon per tab type (agent badge / shell `>_`), status dot, title; on the right `+` (new tab), a split button and a `⋯` menu (split right/down, rename, close).
   - Pane header: breadcrumb `<workspace> › <folder> › <agent>` + one status pill `Working · 1h 25m` on the left. Remove the status/time text from the pane's top-right bar (the pill replaces it, so status shows once). Follow in Zed and Turns stay on the right.
     - Open question: keep the pill (mockup A11) or no status in the pane at all (older note "already shown elsewhere")? Default: one pill on the left.
@@ -77,7 +77,7 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
     - "Rename" (inline edit, Enter to save, Esc to cancel)
     - "Change color" (same palette as projects, item 4)
 
-- [ ] **6. Pin feature** (after items 4 and 5)
+- [x] **6. Pin feature** (after items 4 and 5) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 13, 14
   - Add Pin/Unpin to the right-click menu for:
     - Workspace → Project
     - Workspace → Project → Terminal / Agent
@@ -85,26 +85,26 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
   - Pinned items move to the top of their list (or the left, for tabs) and show a pin icon.
   - Pin state persists across app restarts.
 
-- [ ] **7. Right panel (session inspector)** [feat] (redesign B1, B2, B3, C1 panel part; after items 2 and 3)
+- [x] **7. Right panel (session inspector)** [feat] (redesign B1, B2, B3, C1 panel part; after items 2 and 3) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 15, 16
   - Panel on the right of Terminals, closed by default; toggled by the status bar button + a key (SPEC §13); width resizable and remembered. Shows the focused pane's session.
   - Session card: agent, title, state + time, usage from item 2 (ctx %, tokens, model); buttons "Open transcript" (the agent's transcript file, paths already located by the usage reader) and "Stop" (asks first, like closing a running pane).
   - Changes card: `M 23 ?3` + "Review diff" → opens the Git view on that repo. 1 or N repos: one line per repo with changes; a root without `.git` still lists its child repos.
   - Not included (dropped in the review): cost, subagent card, tool calls, "Rules in effect".
   - Perf: the terminal loses ~300 px of columns while open (agent TUI reflows once); git data shared with item 1.
 
-- [ ] **8. Plan checklist in the right panel** [feat] (redesign B4, A9 progress bar; after item 7)
+- [x] **8. Plan checklist in the right panel** [feat] (redesign B4, A9 progress bar; after item 7) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 17, 18
   - Link a plan `.md` to a session (default: pick the file from the panel; remembered per session across restarts).
   - Panel shows `Plan <name> 6/20`, a progress bar and the checklist from `- [ ]` / `- [x]` lines (first unchecked highlighted, "N more" collapsed). The selected sidebar session row shows the same progress bar.
   - Live: the daemon watches only the linked file (debounced) and sends the counts. No "Setup/Tasks/Finish" phase bar.
   - Perf: one file watcher per linked plan; parsing is tiny.
 
-- [ ] **9. File navigation & Markdown preview** (merged: redesign B16)
+- [x] **9. File navigation & Markdown preview** (merged: redesign B16) → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 19, 20, 21
   - Add "Open in File Explorer", "Open In Zed" item to the right-click menu on files in the file view and on workspace/project folders and the Files module. It opens the OS file explorer at that location (Explorer, Finder, or the Linux file manager).
   - In terminal panes (agent conversations and shells), detect file paths (relative or absolute, optionally with `:line`) and URLs. Ctrl+Click (Cmd+Click on macOS) opens a file in the Files view at the line, a URL in the browser. Show an underline/pointer while Ctrl/Cmd is held.
   - When opening a `.md` file in Files, show a rendered preview by default with a toggle for raw/source mode. Render ` ```mermaid ` blocks as diagrams. Use clean typography for headings, lists, tables, and code blocks, and support light/dark themes.
   - Perf: detect links only on the hovered row while Ctrl/Cmd is held; never in the terminal render/parse path.
 
-- [ ] **10. Git module: diff view modes**
+- [x] **10. Git module: diff view modes** → plan: docs/superpowers/plans/2026-10-10-inbox-redesign.md Task 22
   - In the file changes view, add a toggle to switch between:
     - **Unified (1 pane)**: additions and deletions inline in a single view
     - **Split (2 pane)**: original on the left, modified on the right, with synced scrolling

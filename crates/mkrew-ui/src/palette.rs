@@ -220,12 +220,15 @@ pub fn title(command: Command) -> String {
         Command::GitStage => "Git: Stage selected file or hunk".into(),
         Command::GitUnstage => "Git: Unstage selected file or hunk".into(),
         Command::GitFocusCommit => "Git: Focus commit message".into(),
+        Command::GitToggleDiffMode => "Git: Toggle Unified / Split diff".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
         Command::CommandPalette => "Global: Command palette".into(),
         Command::OpenKeymapSettings => "Global: Open keymap settings".into(),
         Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
         Command::ToggleFullScreen => "Global: Toggle full screen".into(),
+        Command::ToggleSidebar => "Global: Toggle sidebar".into(),
+        Command::ToggleInspector => "View: Toggle session panel".into(),
     }
 }
 
@@ -241,7 +244,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::Peek
         | Command::OpenKeymapSettings
         | Command::ToggleTheme
-        | Command::ToggleFullScreen => true,
+        | Command::ToggleFullScreen
+        | Command::ToggleSidebar => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -253,6 +257,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ShowFiles
         | Command::ShowGit
         | Command::QuickOpen
+        | Command::ToggleInspector
         | Command::NewTask => context.workspace,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
@@ -289,6 +294,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitPreviousHunk
         | Command::GitStage
         | Command::GitUnstage
+        | Command::GitToggleDiffMode
         | Command::GitFocusCommit => in_view(View::Git),
     }
 }
@@ -620,6 +626,7 @@ mod tests {
             archived,
             base_ref: None,
             color: None,
+            pinned: false,
         }
     }
 
@@ -632,6 +639,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: title.map(Into::into),
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::default(),
@@ -641,6 +649,8 @@ mod tests {
             rows: 24,
             started_at: 0,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 
@@ -709,7 +719,7 @@ mod tests {
 
     #[test]
     fn commands_carry_their_shortcut() {
-        let (keymap, errors) = Keymap::parse("new_shell_tab = \"ctrl-shift-y\"\n");
+        let (keymap, errors) = Keymap::parse("new_shell_tab = \"ctrl-shift-g\"\n");
         assert_eq!(errors, []);
         let all = entries(&keymap, &context(View::Terminals), &[], &[], &[]);
         let shell = all
@@ -717,7 +727,7 @@ mod tests {
             .find(|entry| entry.action == Action::Run(Command::NewShellTab))
             .unwrap();
         assert_eq!(shell.title, "Tabs: New shell tab");
-        assert_eq!(shell.shortcut, "Ctrl+Shift+Y");
+        assert_eq!(shell.shortcut, "Ctrl+Shift+G");
     }
 
     #[test]
@@ -732,6 +742,7 @@ mod tests {
             Command::NextTab,
             Command::Workspace(2),
             Command::ShowGit,
+            Command::ToggleInspector,
         ] {
             assert!(terminals.contains(&command), "{command:?}");
         }
@@ -784,6 +795,10 @@ mod tests {
         );
         assert!(!git.contains(&Command::RunTask));
         assert!(git.contains(&Command::NewShellTab), "shows the terminals");
+        assert!(
+            git.contains(&Command::ToggleInspector),
+            "shows the terminals"
+        );
         // Like the buttons: from any view (they show Terminals first), once a tab exists.
         for command in [Command::SplitAgent, Command::SplitShell] {
             assert!(terminals.contains(&command), "{command:?}");
@@ -828,7 +843,8 @@ mod tests {
                 Command::Peek,
                 Command::OpenKeymapSettings,
                 Command::ToggleTheme,
-                Command::ToggleFullScreen
+                Command::ToggleFullScreen,
+                Command::ToggleSidebar
             ]
         );
         assert_eq!(extras(&none), []);

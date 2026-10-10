@@ -2,8 +2,8 @@
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
 use mkrew_protocol::{
-    Request, Session, SessionKind, SessionRenameParams, SessionSpawnParams, SessionState, Task,
-    TaskFanoutParams, TaskRunParams, TaskUpdateParams,
+    Request, Session, SessionKind, SessionRenameParams, SessionSetColorParams, SessionSpawnParams,
+    SessionState, Task, TaskFanoutParams, TaskRunParams, TaskUpdateParams,
 };
 use ulid::Ulid;
 
@@ -42,6 +42,18 @@ pub fn session_rename_params(session: &Session, draft: &str) -> Option<SessionRe
     (title != session.title.as_deref()).then(|| SessionRenameParams {
         session_id: session.id,
         title: title.map(str::to_owned),
+    })
+}
+
+/// The `session.set_color` for a picked color (`None` = no color); `None` when nothing
+/// changes (ADR 0037).
+pub fn session_color_params(
+    session: &Session,
+    color: Option<&str>,
+) -> Option<SessionSetColorParams> {
+    (color != session.color.as_deref()).then(|| SessionSetColorParams {
+        session_id: session.id,
+        color: color.map(str::to_owned),
     })
 }
 
@@ -181,6 +193,7 @@ mod tests {
             kind,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: mkrew_protocol::StateSource::Daemon,
@@ -190,6 +203,8 @@ mod tests {
             rows: 24,
             started_at: 0,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 
@@ -225,6 +240,20 @@ mod tests {
         // Blank clears an existing title.
         let cleared = session_rename_params(&named, "  ").unwrap();
         assert_eq!(cleared.title, None);
+    }
+
+    #[test]
+    fn session_color_params_skip_unchanged_and_clear_with_none() {
+        let mut pane = session(Ulid::new(), SessionKind::Agent, SessionState::Working);
+        let params = session_color_params(&pane, Some("teal")).unwrap();
+        assert_eq!(params.session_id, pane.id);
+        assert_eq!(params.color.as_deref(), Some("teal"));
+        // No color on an uncolored pane: nothing to send.
+        assert_eq!(session_color_params(&pane, None), None);
+        pane.color = Some("teal".into());
+        assert_eq!(session_color_params(&pane, Some("teal")), None);
+        let cleared = session_color_params(&pane, None).unwrap();
+        assert_eq!(cleared.color, None);
     }
 
     #[test]

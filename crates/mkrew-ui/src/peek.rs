@@ -1,8 +1,8 @@
-//! Peek + quick reply (SPEC §20A.1): a popover next to an Inbox or sidebar session row with the
+//! Peek + quick reply (SPEC §20A.1): a popover next to a sidebar session row with the
 //! session's last screen lines (`session.read`, never attaching) and a one-line reply. Hovering
 //! a row for [`crate::theme::PEEK_HOVER_DELAY`] opens it; the Peek shortcut opens the first
-//! Inbox entry with the keyboard in it (↑ / ↓ cycle the entries, Esc closes). Pure and tested
-//! headlessly; `main.rs` renders it.
+//! session that needs you with the keyboard in it (↑ / ↓ cycle those sessions, Esc closes).
+//! Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
 use mkrew_protocol::{SessionReadParams, SessionSendParams, SessionState};
@@ -14,13 +14,6 @@ use crate::text_box::Input;
 
 /// Screen lines shown.
 pub const LINES: u16 = 8;
-
-/// Which list the peeked row is in (a session can be in both).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Place {
-    Inbox,
-    Sidebar,
-}
 
 /// The session's screen as last read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,7 +32,7 @@ pub enum Outcome {
     Close,
     /// Enter: send the draft.
     Send,
-    /// ↑ / ↓ (-1 / +1): peek the previous / next Inbox entry.
+    /// ↑ / ↓ (-1 / +1): peek the previous / next session that needs you.
     Cycle(i32),
     /// Ctrl+V: the caller inserts the clipboard text.
     Paste,
@@ -49,7 +42,6 @@ pub enum Outcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Peek {
     pub session_id: Ulid,
-    pub place: Place,
     pub screen: Screen,
     /// The reply being typed.
     pub text: Input,
@@ -65,10 +57,9 @@ pub struct Peek {
 }
 
 impl Peek {
-    pub fn new(session_id: Ulid, place: Place, focused: bool) -> Self {
+    pub fn new(session_id: Ulid, focused: bool) -> Self {
         Self {
             session_id,
-            place,
             screen: Screen::Reading,
             text: Input::default(),
             busy: false,
@@ -186,32 +177,32 @@ impl Peek {
 /// The row under the mouse, and the serial of its pending hover delay.
 #[derive(Debug, Default)]
 pub struct Hover {
-    row: Option<(Place, Ulid)>,
+    row: Option<Ulid>,
     serial: u64,
 }
 
 impl Hover {
     /// The mouse entered a row: returns the serial to pass to [`Hover::fire`] after the delay.
-    pub fn enter(&mut self, place: Place, session_id: Ulid) -> u64 {
+    pub fn enter(&mut self, session_id: Ulid) -> u64 {
         self.serial += 1;
-        self.row = Some((place, session_id));
+        self.row = Some(session_id);
         self.serial
     }
 
     /// The mouse left a row (ignored if it is already over another one).
-    pub fn leave(&mut self, place: Place, session_id: Ulid) {
-        if self.row == Some((place, session_id)) {
+    pub fn leave(&mut self, session_id: Ulid) {
+        if self.row == Some(session_id) {
             self.row = None;
         }
     }
 
     /// The delay of hover `serial` ran out: the row to peek, if the mouse stayed on it.
-    pub fn fire(&self, serial: u64) -> Option<(Place, Ulid)> {
+    pub fn fire(&self, serial: u64) -> Option<Ulid> {
         self.row.filter(|_| serial == self.serial)
     }
 
-    pub fn is_over(&self, place: Place, session_id: Ulid) -> bool {
-        self.row == Some((place, session_id))
+    pub fn is_over(&self, session_id: Ulid) -> bool {
+        self.row == Some(session_id)
     }
 }
 
@@ -263,7 +254,7 @@ mod tests {
     #[test]
     fn reads_the_last_lines_and_keeps_only_the_newest_answer() {
         let session = Ulid::new();
-        let mut peek = Peek::new(session, Place::Inbox, true);
+        let mut peek = Peek::new(session, true);
         assert_eq!(peek.screen, Screen::Reading);
         let (first, params) = peek.read_params();
         assert_eq!(
@@ -286,7 +277,7 @@ mod tests {
     #[test]
     fn keys_edit_the_reply_send_cycle_and_close() {
         let session = Ulid::new();
-        let mut peek = Peek::new(session, Place::Inbox, true);
+        let mut peek = Peek::new(session, true);
         assert_eq!(peek.send_params(), None, "nothing typed");
         typed(&mut peek, " go on!");
         assert_eq!(peek.key(&keystroke("backspace")), Outcome::Edited);
@@ -323,7 +314,7 @@ mod tests {
 
     #[test]
     fn the_reply_takes_select_all_and_ctrl_backspace() {
-        let mut peek = Peek::new(Ulid::new(), Place::Inbox, true);
+        let mut peek = Peek::new(Ulid::new(), true);
         peek.insert("go on now");
         assert_eq!(peek.key(&keystroke("ctrl-backspace")), Outcome::Edited);
         assert_eq!(peek.text, "go on ");
@@ -335,7 +326,7 @@ mod tests {
     #[test]
     fn y_and_n_answer_only_a_session_that_needs_input() {
         let session = Ulid::new();
-        let mut peek = Peek::new(session, Place::Sidebar, false);
+        let mut peek = Peek::new(session, false);
         assert_eq!(
             peek.answer('y', SessionState::NeedsInput),
             Some(SessionSendParams {
@@ -354,7 +345,7 @@ mod tests {
 
     #[test]
     fn a_hover_peek_closes_unless_it_is_in_use() {
-        let mut peek = Peek::new(Ulid::new(), Place::Inbox, false);
+        let mut peek = Peek::new(Ulid::new(), false);
         assert!(peek.stays(true), "still over its row");
         assert!(!peek.stays(false));
         peek.hovered = true;
@@ -379,20 +370,20 @@ mod tests {
     fn hover_fires_only_while_the_mouse_stays_on_the_row() {
         let (a, b) = (Ulid::new(), Ulid::new());
         let mut hover = Hover::default();
-        let first = hover.enter(Place::Inbox, a);
-        assert_eq!(hover.fire(first), Some((Place::Inbox, a)));
-        assert!(hover.is_over(Place::Inbox, a));
-        assert!(!hover.is_over(Place::Sidebar, a));
+        let first = hover.enter(a);
+        assert_eq!(hover.fire(first), Some(a));
+        assert!(hover.is_over(a));
+        assert!(!hover.is_over(b));
 
         // Moving to another row: the old delay is void; a late leave of the old row is ignored.
-        let second = hover.enter(Place::Sidebar, b);
-        hover.leave(Place::Inbox, a);
+        let second = hover.enter(b);
+        hover.leave(a);
         assert_eq!(hover.fire(first), None);
-        assert_eq!(hover.fire(second), Some((Place::Sidebar, b)));
+        assert_eq!(hover.fire(second), Some(b));
 
-        hover.leave(Place::Sidebar, b);
+        hover.leave(b);
         assert_eq!(hover.fire(second), None);
-        assert!(!hover.is_over(Place::Sidebar, b));
+        assert!(!hover.is_over(b));
     }
 
     #[test]

@@ -19,11 +19,12 @@ use crate::session::Hub;
 pub const EVENT_KIND: &str = "usage";
 
 /// The folder the agent keeps its transcripts under: `CLAUDE_CONFIG_DIR` or `~/.claude`,
-/// `CODEX_HOME` or `~/.codex`.
+/// `CODEX_HOME` or `~/.codex`, `PI_CODING_AGENT_DIR` or `~/.omp/agent` (omp).
 fn root(format: &UsageFormat) -> Option<PathBuf> {
     let (var, dir) = match format {
         UsageFormat::ClaudeJsonl => ("CLAUDE_CONFIG_DIR", ".claude"),
         UsageFormat::CodexJsonl => ("CODEX_HOME", ".codex"),
+        UsageFormat::OmpJsonl => ("PI_CODING_AGENT_DIR", ".omp/agent"),
         UsageFormat::Unknown(_) => return None,
     };
     match std::env::var_os(var).filter(|v| !v.is_empty()) {
@@ -33,7 +34,7 @@ fn root(format: &UsageFormat) -> Option<PathBuf> {
 }
 
 /// The transcript of agent session `id` under `root`: `projects/*/<id>.jsonl` (Claude) or
-/// `sessions/**/*<id>*.jsonl` (Codex). An id that could leave the folder finds nothing.
+/// `sessions/**/*<id>*.jsonl` (Codex, omp). An id that could leave the folder finds nothing.
 fn locate(format: &UsageFormat, root: &Path, id: &str) -> Option<PathBuf> {
     let safe = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
     if id.is_empty() || !id.chars().all(safe) {
@@ -51,7 +52,7 @@ fn locate(format: &UsageFormat, root: &Path, id: &str) -> Option<PathBuf> {
                 .map(|dir| dir.join(&name))
                 .find(|path| path.is_file())
         }
-        UsageFormat::CodexJsonl => {
+        UsageFormat::CodexJsonl | UsageFormat::OmpJsonl => {
             let mut found = Vec::new();
             let mut stack = vec![root.join("sessions")];
             while let Some(dir) = stack.pop() {
@@ -147,6 +148,11 @@ impl Tracker {
         }
     }
 
+    /// The transcript located for the current native session, if any.
+    fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     fn restart(&mut self) {
         self.path = None;
         // The format was accepted in `new`.
@@ -183,7 +189,8 @@ async fn run(
     mut tracker: Tracker,
     mut ends: mpsc::UnboundedReceiver<String>,
 ) {
-    let mut last = None;
+    let mut last: Option<Usage> = None;
+    let mut last_path: Option<String> = None;
     while let Some(native) = ends.recv().await {
         let read = tokio::task::spawn_blocking(move || {
             let usage = tracker.read(&native);
@@ -195,19 +202,26 @@ async fn run(
             return;
         };
         tracker = back;
+        // A located (or moved) transcript is news even when the totals did not change.
+        let path = tracker.path().map(|p| p.to_string_lossy().into_owned());
         if let Some(warning) = warning {
             tracing::warn!(id = %session, "token usage: {warning}");
         }
-        let Some(usage) = usage.filter(|u| last != Some(*u)) else {
+        let Some(usage) = usage.filter(|u| last.as_ref() != Some(u) || last_path != path) else {
             continue;
         };
-        last = Some(usage);
+        last = Some(usage.clone());
+        last_path = path.clone();
         let event = SessionUsageEvent {
             session_id: session,
             input: usage.input,
             output: usage.output,
+            cache_read: usage.cache_read,
+            cache_write: usage.cache_write,
             context: usage.context,
             context_window,
+            model: usage.model,
+            transcript: path,
         };
         let payload = serde_json::to_value(&event).unwrap_or_default();
         let at = crate::server::now_ms();
@@ -252,6 +266,23 @@ mod tests {
         assert_eq!(locate(&UsageFormat::CodexJsonl, root.path(), "nope"), None);
     }
 
+    /// omp keeps `sessions/<cwd-slug>/<ts>_<id>.jsonl`; the slug is not derived, the id is
+    /// searched. The sub-agent folder `<ts>_<id>/` (its files do not carry the id) is never it.
+    #[test]
+    fn omp_transcripts_are_found_in_slug_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("sessions/-Workspace-proj");
+        let name = "2026-10-09T15-34-31-887Z_01a1214d-3acf.jsonl";
+        let sub_agents = dir.join("2026-10-09T15-34-31-887Z_01a1214d-3acf");
+        std::fs::create_dir_all(&sub_agents).unwrap();
+        std::fs::write(dir.join(name), "").unwrap();
+        std::fs::write(sub_agents.join("ScoutX.jsonl"), "").unwrap();
+        std::fs::write(dir.join("2026-10-09T16-00-00-000Z_other.jsonl"), "").unwrap();
+        let found = locate(&UsageFormat::OmpJsonl, root.path(), "01a1214d-3acf");
+        assert_eq!(found, Some(dir.join(name)));
+        assert_eq!(locate(&UsageFormat::OmpJsonl, root.path(), "nope"), None);
+    }
+
     #[test]
     fn ids_that_could_leave_the_folder_find_nothing() {
         let root = tempfile::tempdir().unwrap();
@@ -284,7 +315,7 @@ mod tests {
         let all = tracker.read("s1").unwrap();
         assert!(early.output < all.output, "{early:?} {all:?}");
         let mut whole = UsageReader::new(&UsageFormat::ClaudeJsonl).unwrap();
-        assert_eq!(Some(all), whole.feed(CLAUDE));
+        assert_eq!(Some(all.clone()), whole.feed(CLAUDE));
         assert_eq!(tracker.reader.offset(), CLAUDE.len() as u64);
         // Nothing new: same totals.
         assert_eq!(tracker.read("s1"), Some(all));
@@ -295,5 +326,21 @@ mod tests {
 
         // Another native session (e.g. after `/clear`) has its own transcript.
         assert_eq!(tracker.read("s2"), None);
+    }
+
+    #[test]
+    fn the_tracker_reports_the_transcript_it_located() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("projects/p");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut tracker =
+            Tracker::new(UsageFormat::ClaudeJsonl, Some(root.path().to_owned())).unwrap();
+        assert_eq!(tracker.path(), None, "nothing located yet");
+        std::fs::write(dir.join("s1.jsonl"), CLAUDE).unwrap();
+        tracker.read("s1").unwrap();
+        assert_eq!(tracker.path(), Some(dir.join("s1.jsonl").as_path()));
+        // Another native session (e.g. after `/clear`) starts without a path.
+        tracker.read("s2");
+        assert_eq!(tracker.path(), None);
     }
 }

@@ -7,11 +7,13 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::Keystroke;
 use mkrew_protocol::{Event, FsContent, FsEntry, FsWritten};
 use ulid::Ulid;
 
+use crate::docs::{self, Mode};
 use crate::editor::{Editor, Pos};
 use crate::highlight::Code;
 use crate::text_box::Input;
@@ -92,6 +94,21 @@ pub struct Requests {
     pub read: Option<String>,
 }
 
+/// Numbers every text the view shows (across views), so that a page built for one text is
+/// never taken for another's.
+static NEXT_TEXT: AtomicU64 = AtomicU64::new(1);
+
+/// What a preview was built from: the number of the text in the editor and the editor's
+/// version of it. Later texts and later edits have larger stamps.
+pub type Stamp = (u64, u64);
+
+/// The rendered page of a `.md` file (ADR 0021) and what it was built from.
+#[derive(Debug)]
+struct MdPreview {
+    stamp: Stamp,
+    shown: Rc<docs::Shown>,
+}
+
 /// One workspace's Files view.
 #[derive(Debug)]
 pub struct FilesView {
@@ -126,6 +143,16 @@ pub struct FilesView {
     /// so a burst of changes reads and highlights the file once more, not once per change).
     reading: bool,
     read_again: bool,
+    /// A line (1-based) that a link asked for, put under the caret once the file is shown.
+    pending_line: Option<u32>,
+    /// `.md` files: the rendered preview or the editor (SPEC §12A). Another file starts in
+    /// Preview.
+    pub mode: Mode,
+    /// Number of the text in the editor: new for every file and every re-read that replaced it.
+    text_id: u64,
+    /// The last page built, and the stamp last asked for (one build per text).
+    preview: Option<MdPreview>,
+    preview_asked: Option<Stamp>,
     /// An `fs.write` is in flight.
     saving: bool,
 }
@@ -151,6 +178,11 @@ impl FilesView {
             sent_in: HashMap::new(),
             reading: false,
             read_again: false,
+            pending_line: None,
+            mode: Mode::Preview,
+            text_id: 0,
+            preview: None,
+            preview_asked: None,
         }
     }
 
@@ -315,12 +347,17 @@ impl FilesView {
         }
         self.file = Some(path.to_owned());
         self.content = Content::Loading;
+        self.pending_line = None;
+        self.mode = Mode::Preview;
+        self.preview = None;
+        self.preview_asked = None;
         Some(path.to_owned())
     }
 
-    /// Opens file `path` from outside the tree (quick open): its folders open (listed as
-    /// needed), the cursor moves to it and it shows in the viewer.
-    pub fn reveal(&mut self, path: &str) -> Requests {
+    /// Opens file `path` from outside the tree (quick open, a terminal link): its folders open
+    /// (listed as needed), the cursor moves to it and it shows in the viewer; with `line`, the
+    /// caret goes there once the file is shown ([`Self::apply_pending_line`]).
+    pub fn reveal(&mut self, path: &str, line: Option<u32>) -> Requests {
         let mut list = Vec::new();
         let mut dir = String::new();
         let mut parts: Vec<&str> = path.split('/').collect();
@@ -333,10 +370,28 @@ impl FilesView {
             list.extend(self.expand(&dir).list);
         }
         self.cursor = Some(path.to_owned());
-        Requests {
-            list,
-            read: self.open(path),
+        let read = self.open(path);
+        self.pending_line = line;
+        // The caret of a link's line shows in the editor, not in the preview.
+        if line.is_some() {
+            self.mode = Mode::Source;
         }
+        Requests { list, read }
+    }
+
+    /// Puts the caret on the line [`Self::reveal`] was given, once the file is shown (call it
+    /// after every read and after `reveal`). Returns the 0-based line to scroll to, clamped to
+    /// the text; `None` while nothing is shown or nothing is pending.
+    pub fn apply_pending_line(&mut self) -> Option<usize> {
+        let Content::Shown(shown) = &mut self.content else {
+            return None;
+        };
+        let line = usize::try_from(self.pending_line.take()?)
+            .ok()?
+            .saturating_sub(1)
+            .min(shown.editor.lines().len().saturating_sub(1));
+        shown.editor.set_cursor(Pos::new(line, 0), false);
+        Some(line)
     }
 
     /// An `fs.read` of the opened file is about to be sent; `false` = one is in flight already
@@ -384,6 +439,7 @@ impl FilesView {
             // The same version again (our own save, a change elsewhere): caret and undo stay.
             Ok((content, _)) if hash.is_some() && content.hash == hash => return,
             Ok((content, code)) => {
+                self.text_id = NEXT_TEXT.fetch_add(1, Ordering::Relaxed);
                 let mut editor = Editor::new(content.content.as_deref().unwrap_or(""));
                 if let Some(cursor) = cursor {
                     editor.set_cursor(cursor, false);
@@ -412,12 +468,14 @@ impl FilesView {
     /// on one line becomes the query, and the current match is the first one at the selection
     /// or caret. Returns `false` when no file is open.
     pub fn open_find(&mut self, replace: bool) -> bool {
+        if !matches!(self.content, Content::Shown(_)) || self.file.is_none() {
+            return false;
+        }
+        // Matches and the replace row act on the editor's text.
+        self.mode = Mode::Source;
         let Content::Shown(shown) = &self.content else {
             return false;
         };
-        if self.file.is_none() {
-            return false;
-        }
         let editor = &shown.editor;
         let seed = (editor.selected_text()).filter(|text| !text.contains('\n'));
         let from = editor
@@ -495,6 +553,69 @@ impl FilesView {
             Content::Shown(shown) => Some(shown),
             _ => None,
         }
+    }
+
+    /// Whether the opened file is Markdown (`.md`).
+    pub fn is_markdown(&self) -> bool {
+        (self.file.as_deref())
+            .and_then(|file| file.rsplit_once('.'))
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"))
+    }
+
+    /// The `.md` file is shown as its rendered page, not as the editor.
+    pub fn previewing(&self) -> bool {
+        self.mode == Mode::Preview && self.is_markdown() && self.stamp().is_some()
+    }
+
+    pub fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            Mode::Preview => Mode::Source,
+            Mode::Source => Mode::Preview,
+        };
+    }
+
+    /// What a page of the editor's text now would be built from (`None`: nothing editable
+    /// shown).
+    fn stamp(&self) -> Option<Stamp> {
+        let shown = (self.shown()).filter(|shown| !shown.code.binary && !shown.code.too_large)?;
+        Some((self.text_id, shown.editor.version()))
+    }
+
+    /// The last page of this text; while an edited text is parsed again it is the page of the
+    /// text before the edit. `None` after another text replaced it.
+    pub fn preview(&self) -> Option<&Rc<docs::Shown>> {
+        (self.preview.as_ref())
+            .filter(|preview| preview.stamp.0 == self.text_id)
+            .map(|preview| &preview.shown)
+    }
+
+    /// The text to parse for the preview, once per text: `None` when no preview is shown, the
+    /// page is current, or one is being built for this text. The shell parses it off the UI
+    /// thread and answers with [`Self::preview_ready`].
+    pub fn preview_request(&mut self) -> Option<(Stamp, String)> {
+        if !self.previewing() {
+            return None;
+        }
+        let stamp = self.stamp()?;
+        let current = (self.preview.as_ref()).is_some_and(|preview| preview.stamp == stamp);
+        if current || self.preview_asked == Some(stamp) {
+            return None;
+        }
+        self.preview_asked = Some(stamp);
+        Some((stamp, self.shown()?.editor.text()))
+    }
+
+    /// The page built for `stamp`. Dropped when another text replaced the one it was built
+    /// from, or when a newer page is already here (builds can finish out of order).
+    pub fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) {
+        let newer = (self.preview.as_ref()).is_some_and(|preview| preview.stamp >= stamp);
+        if stamp.0 != self.text_id || newer {
+            return;
+        }
+        self.preview = Some(MdPreview {
+            stamp,
+            shown: Rc::new(shown),
+        });
     }
 
     /// The editor of an editable file (not binary or too large).
@@ -887,7 +1008,7 @@ mod tests {
     #[test]
     fn revealing_a_file_opens_its_folders_and_shows_it() {
         let mut view = listed();
-        let revealed = view.reveal("src/app/main.rs");
+        let revealed = view.reveal("src/app/main.rs", None);
         assert_eq!(revealed.list, ["src", "src/app"]);
         assert_eq!(revealed.read.as_deref(), Some("src/app/main.rs"));
         assert_eq!(view.cursor.as_deref(), Some("src/app/main.rs"));
@@ -901,11 +1022,168 @@ mod tests {
             ["src/", "  src/app/", "    src/app/main.rs", "README.md"]
         );
         // Again: everything is open and listed, the file is already shown.
-        assert_eq!(view.reveal("src/app/main.rs"), Requests::default());
+        assert_eq!(view.reveal("src/app/main.rs", None), Requests::default());
         // A file at the root opens no folder.
-        let root = view.reveal("README.md");
+        let root = view.reveal("README.md", None);
         assert!(root.list.is_empty());
         assert_eq!(root.read.as_deref(), Some("README.md"));
+    }
+
+    /// Ctrl+Click on `README.md:3`: the caret goes to the line once the read answers.
+    #[test]
+    fn a_link_line_waits_for_the_read_and_puts_the_caret_there() {
+        let mut view = listed();
+        let requests = view.reveal("README.md", Some(3));
+        assert_eq!(requests.read.as_deref(), Some("README.md"));
+        assert_eq!(view.apply_pending_line(), None, "still loading");
+        view.begin_read();
+        view.read("README.md", file_text("a\nb\nc\nd\n"));
+        assert_eq!(view.apply_pending_line(), Some(2));
+        assert_eq!(view.line(), Some(3));
+        assert_eq!(view.apply_pending_line(), None, "applied once");
+    }
+
+    #[test]
+    fn a_line_past_the_end_lands_on_the_last_line() {
+        let mut view = opened("a\nb");
+        view.reveal("README.md", Some(99));
+        assert_eq!(view.apply_pending_line(), Some(1));
+        assert_eq!(view.line(), Some(2));
+    }
+
+    /// The file is already shown: nothing is read, the line applies at once, and unsaved text
+    /// stays.
+    #[test]
+    fn a_line_in_the_shown_file_applies_at_once_and_keeps_unsaved_text() {
+        let mut view = opened("a\nb\nc");
+        view.editor_mut().unwrap().insert("x");
+        assert_eq!(view.reveal("README.md", Some(2)), Requests::default());
+        assert_eq!(view.apply_pending_line(), Some(1));
+        assert_eq!(view.line(), Some(2));
+        assert_eq!(text(&view), "xa\nb\nc");
+        assert!(view.unsaved().is_some());
+    }
+
+    #[test]
+    fn a_failed_read_drops_the_line() {
+        let mut view = listed();
+        view.reveal("README.md", Some(5));
+        view.begin_read();
+        view.read("README.md", Err("gone".into()));
+        assert_eq!(view.apply_pending_line(), None);
+        // Retry shows the file from the top.
+        assert_eq!(view.open("README.md").as_deref(), Some("README.md"));
+        view.begin_read();
+        view.read("README.md", file_text("a\nb\n"));
+        assert_eq!(view.apply_pending_line(), None);
+        assert_eq!(view.line(), Some(1));
+    }
+
+    /// A page for tests: what the background build would return.
+    fn page(text: &str) -> docs::Shown {
+        docs::Shown::from_text(text)
+    }
+
+    #[test]
+    fn markdown_opens_as_a_preview_that_is_parsed_once_per_text() {
+        let mut view = opened("# T\n");
+        assert!(view.is_markdown());
+        assert_eq!(view.mode, Mode::Preview);
+        assert!(view.previewing());
+        let (stamp, text) = view.preview_request().expect("a new text is parsed");
+        assert_eq!(text, "# T\n");
+        // Asked once while it is being built.
+        assert_eq!(view.preview_request(), None);
+        view.preview_ready(stamp, page(&text));
+        assert_eq!(
+            view.preview().map(|shown| shown.lines.clone()),
+            Some(vec!["# T".to_owned()])
+        );
+        assert_eq!(view.preview_request(), None, "the text did not change");
+    }
+
+    #[test]
+    fn a_late_preview_never_replaces_a_newer_one() {
+        let mut view = opened("a\n");
+        let (old, _) = view.preview_request().unwrap();
+        view.toggle_mode();
+        view.editor_mut().unwrap().insert("b");
+        view.toggle_mode();
+        let (new, _) = view.preview_request().unwrap();
+        view.preview_ready(new, page("ba\n"));
+        view.preview_ready(old, page("a\n"));
+        assert_eq!(
+            view.preview().map(|shown| shown.lines.clone()),
+            Some(vec!["ba".to_owned()])
+        );
+        assert_eq!(view.preview_request(), None);
+    }
+
+    #[test]
+    fn another_file_starts_in_preview_without_the_old_page() {
+        let mut view = opened("a\n");
+        let (stamp, _) = view.preview_request().unwrap();
+        view.preview_ready(stamp, page("a\n"));
+        view.toggle_mode();
+        view.open("src/main.rs");
+        assert_eq!(view.mode, Mode::Preview);
+        assert!(view.preview().is_none());
+    }
+
+    #[test]
+    fn a_reread_that_changes_the_text_builds_a_new_page() {
+        let mut view = opened("a\n");
+        let (stamp, _) = view.preview_request().unwrap();
+        view.preview_ready(stamp, page("a\n"));
+        view.begin_read();
+        view.read("README.md", file_text("b\n"));
+        assert!(view.preview().is_none(), "no page of the old text");
+        assert_eq!(
+            view.preview_request().map(|(_, text)| text).as_deref(),
+            Some("b\n")
+        );
+    }
+
+    #[test]
+    fn only_markdown_has_a_preview() {
+        let mut view = listed();
+        view.open("src/main.rs");
+        view.begin_read();
+        view.read("src/main.rs", file_text_at("src/main.rs", "fn a() {}"));
+        assert!(!view.is_markdown());
+        assert!(!view.previewing());
+        assert_eq!(view.preview_request(), None);
+    }
+
+    /// Find and a link's line need the editor on screen.
+    #[test]
+    fn find_and_a_link_line_switch_to_source() {
+        let mut view = opened("a\nb\n");
+        assert!(view.open_find(false));
+        assert_eq!(view.mode, Mode::Source);
+        let mut view = opened("a\nb\n");
+        view.reveal("README.md", Some(2));
+        assert_eq!(view.mode, Mode::Source);
+        // A plain reveal (quick open) of the same file keeps the mode.
+        let mut view = opened("a\n");
+        view.reveal("README.md", None);
+        assert_eq!(view.mode, Mode::Preview);
+    }
+
+    #[test]
+    fn unsaved_edits_survive_the_toggle_and_the_preview_shows_them() {
+        let mut view = opened("a\n");
+        let (stamp, _) = view.preview_request().unwrap();
+        view.preview_ready(stamp, page("a\n"));
+        view.toggle_mode();
+        assert_eq!(view.mode, Mode::Source);
+        assert_eq!(view.preview_request(), None, "nothing to build in Source");
+        view.editor_mut().unwrap().insert("x");
+        view.toggle_mode();
+        let (_, typed) = view.preview_request().expect("the edited text is parsed");
+        assert_eq!(typed, "xa\n");
+        assert_eq!(text(&view), "xa\n");
+        assert!(view.unsaved().is_some());
     }
 
     #[test]

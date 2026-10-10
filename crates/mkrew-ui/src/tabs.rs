@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 
 use mkrew_protocol::{
-    Event, Session, SessionState, TabRenameParams, TabSetLayoutParams, TerminalTab,
+    Event, Session, SessionKind, SessionState, TabRenameParams, TabSetLayoutParams, TerminalTab,
 };
 use ulid::Ulid;
 
@@ -16,6 +16,8 @@ pub struct Tab {
     pub id: Ulid,
     pub title: String,
     pub position: f64,
+    /// Pinned tabs lead the strip (SPEC §10).
+    pub pinned: bool,
     /// `None` = a tab without panes. Private so every change goes through `write()`.
     layout: Option<Node>,
     /// Local only (not persisted): the pane keyboard input goes to.
@@ -38,6 +40,7 @@ impl Tab {
             id: tab.id,
             title: tab.title,
             position: tab.position,
+            pinned: tab.pinned,
             layout,
             focused: None,
             zoomed: None,
@@ -119,7 +122,7 @@ impl Tab {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tabs {
     project_id: Ulid,
-    /// Ordered by position.
+    /// Pinned first, then ordered by position.
     tabs: Vec<Tab>,
     active: Option<Ulid>,
 }
@@ -172,6 +175,7 @@ impl Tabs {
                 let before = tab.clone();
                 tab.title = incoming.title;
                 tab.position = incoming.position;
+                tab.pinned = incoming.pinned;
                 if let Some(echo) = tab.pending.iter().position(|sent| *sent == wire.layout) {
                     // Writes are applied in order, so earlier ones were superseded.
                     tab.pending.drain(..=echo);
@@ -400,10 +404,13 @@ impl Tabs {
         writes
     }
 
+    /// Pinned tabs first, then by position (pinning leaves `position` alone, so unpinning
+    /// puts a tab back).
     fn sort(&mut self) {
         self.tabs.sort_by(|a, b| {
-            a.position
-                .total_cmp(&b.position)
+            b.pinned
+                .cmp(&a.pinned)
+                .then_with(|| a.position.total_cmp(&b.position))
                 .then_with(|| a.id.cmp(&b.id))
         });
     }
@@ -450,6 +457,30 @@ pub fn rename_params(tab: &Tab, draft: &str) -> Option<TabRenameParams> {
     })
 }
 
+/// What a tab's icon shows (SPEC §10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabKind {
+    /// An agent pane; the profile id (its badge is looked up by the caller).
+    Agent(String),
+    Shell,
+    Empty,
+}
+
+/// The kind of the tab's focused pane (`fix_focus` keeps one focused whenever the tab has
+/// panes). `Empty` without panes or when no session is known for the focused one.
+pub fn tab_kind(tab: &Tab, sessions: &[Session]) -> TabKind {
+    let focused = tab
+        .focused()
+        .and_then(|id| sessions.iter().find(|s| s.id == id));
+    match focused {
+        Some(session) if session.kind == SessionKind::Agent => {
+            TabKind::Agent(session.agent_profile.clone())
+        }
+        Some(_) => TabKind::Shell,
+        None => TabKind::Empty,
+    }
+}
+
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible
 /// panes change from `before` to `after`.
 pub fn attach_diff(before: &[Ulid], after: &[Ulid]) -> (Vec<Ulid>, Vec<Ulid>) {
@@ -484,6 +515,7 @@ mod tests {
             title: title.to_owned(),
             position,
             layout,
+            pinned: false,
         }
     }
 
@@ -624,6 +656,7 @@ mod tests {
             title: "main".into(),
             position: 1.0,
             layout: write.layout.clone(),
+            pinned: false,
         };
         tabs.apply(&Event::TabUpdated(echo));
         let layout = tabs.active().and_then(Tab::layout);
@@ -807,6 +840,54 @@ mod tests {
         ))));
     }
 
+    /// Pinned tabs sit left of every unpinned one, each group in position order. Pinning
+    /// never changes `position`, so unpinning puts the tab back at its own place. The active
+    /// tab follows its id when the order changes.
+    #[test]
+    fn pinned_tabs_lead_and_unpinning_returns_to_position() {
+        let project = Ulid::new();
+        let [one, two, three] = [
+            wire(project, "one", 1.0, serde_json::Value::Null),
+            wire(project, "two", 2.0, serde_json::Value::Null),
+            wire(project, "three", 3.0, serde_json::Value::Null),
+        ];
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![one.clone(), two.clone(), three.clone()]);
+        let titles =
+            |tabs: &Tabs| -> Vec<String> { tabs.tabs().iter().map(|t| t.title.clone()).collect() };
+
+        assert!(tabs.apply(&Event::TabUpdated(TerminalTab {
+            pinned: true,
+            ..three.clone()
+        })));
+        assert_eq!(titles(&tabs), ["three", "one", "two"]);
+        assert!(tabs.apply(&Event::TabUpdated(TerminalTab {
+            pinned: true,
+            ..two.clone()
+        })));
+        assert_eq!(titles(&tabs), ["two", "three", "one"]);
+        assert!(tabs.tabs()[0].pinned && !tabs.tabs()[2].pinned);
+        assert_eq!(tabs.active().map(|t| t.id), Some(one.id));
+
+        assert!(tabs.apply(&Event::TabUpdated(TerminalTab {
+            pinned: false,
+            ..three.clone()
+        })));
+        assert_eq!(titles(&tabs), ["two", "one", "three"]);
+
+        // A fresh list puts pinned tabs first too.
+        let mut reloaded = Tabs::new(project);
+        reloaded.load(vec![
+            one,
+            two,
+            TerminalTab {
+                pinned: true,
+                ..three
+            },
+        ]);
+        assert_eq!(titles(&reloaded), ["three", "one", "two"]);
+    }
+
     #[test]
     fn remove_and_cycle_tabs() {
         let project = Ulid::new();
@@ -897,6 +978,7 @@ mod tests {
             kind: mkrew_protocol::SessionKind::Agent,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: mkrew_protocol::StateSource::Daemon,
@@ -906,6 +988,8 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 
@@ -945,5 +1029,31 @@ mod tests {
         let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
         assert_eq!(attach_diff(&[a, b], &[b, c]), (vec![c], vec![a]));
         assert_eq!(attach_diff(&[a], &[a]), (vec![], vec![]));
+    }
+
+    /// The icon of a tab follows its focused pane: an agent shows its profile, a shell `>_`,
+    /// a tab without panes (or with a pane no session is known for) no icon.
+    #[test]
+    fn a_tab_shows_the_kind_of_its_focused_pane() {
+        let (mut tabs, a, b) = two_panes(); // focused on b
+        let project = tabs.project_id();
+        let mut agent = session(project, SessionState::Idle, 1);
+        agent.id = a;
+        let mut shell = session(project, SessionState::Idle, 2);
+        shell.id = b;
+        shell.kind = SessionKind::Shell;
+        let sessions = [agent, shell];
+
+        assert_eq!(tab_kind(tabs.active().unwrap(), &sessions), TabKind::Shell);
+        tabs.focus(a);
+        assert_eq!(
+            tab_kind(tabs.active().unwrap(), &sessions),
+            TabKind::Agent("fake".into())
+        );
+        assert_eq!(tab_kind(tabs.active().unwrap(), &[]), TabKind::Empty);
+
+        let mut empty = Tabs::new(project);
+        empty.load(vec![wire(project, "new", 1.0, serde_json::Value::Null)]);
+        assert_eq!(tab_kind(empty.active().unwrap(), &sessions), TabKind::Empty);
     }
 }

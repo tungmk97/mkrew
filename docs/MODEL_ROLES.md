@@ -139,6 +139,11 @@ Before 2026-10-09, `modelRoles` was `{"default":"anthropic/claude-opus-5-5"}` an
 
 3. Check: dispatch `task` and `sonic`. Both must report `anthropic/claude-opus-5-5`.
 
+Snapshot: `C:\Users\NguyenTung\.omp\agent\config.yml.bak-2026-10-09` is a copy of `config.yml`
+**with** the configuration above (taken after the change, not before). Copy it back over
+`config.yml` to restore this setup if later edits break it. It is not a rollback to the
+original; use the steps above for that.
+
 Rollback only the executing-plans change: delete `plan-executor.md` from both folders.
 executing-plans then runs inline on the main session (Opus) again.
 

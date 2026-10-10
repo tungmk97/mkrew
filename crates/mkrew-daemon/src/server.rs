@@ -12,11 +12,12 @@ use mkrew_protocol::{
     AgentProfileInfo, AgentProfilesResult, CommentStatus, DaemonStatusResult, ErrorCode, Event,
     Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
     PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
-    Session, SessionHistory, SessionKillParams, SessionKind, SessionPortsEvent, SessionReadParams,
-    SessionRenameParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams, SessionWaitResult,
-    StateSource, Task, TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams,
-    TaskUpdateParams, TerminalTab, WORKSPACE_COLORS, encode,
+    Session, SessionHistory, SessionKillParams, SessionKind, SessionLinkPlanParams,
+    SessionPinParams, SessionPortsEvent, SessionReadParams, SessionRenameParams, SessionSendParams,
+    SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
+    SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
+    TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
+    TerminalTab, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -31,7 +32,7 @@ use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
-use crate::{awake, backup, session_log, undo, worktree};
+use crate::{awake, backup, plan, session_log, undo, worktree};
 
 mod ai;
 mod attachment;
@@ -278,6 +279,10 @@ impl Daemon {
                 let tab = self.store().move_tab(params.tab_id, params.position);
                 (self.tab_updated(tab), After::Continue)
             }
+            Request::TabPin(params) => {
+                let tab = self.store().set_tab_pinned(params.tab_id, params.pinned);
+                (self.tab_updated(tab), After::Continue)
+            }
             Request::TabSetLayout(params) => {
                 let tab = self.store().set_tab_layout(params.tab_id, &params.layout);
                 // SPEC §7: `ok`, the new tab goes out as `tab.updated`.
@@ -332,6 +337,10 @@ impl Daemon {
                 (self.session_remove(params.session_id), After::Continue)
             }
             Request::SessionRename(params) => (self.session_rename(params).await, After::Continue),
+            Request::SessionPin(params) => (self.session_pin(params).await, After::Continue),
+            Request::SessionSetColor(params) => {
+                (self.session_set_color(params).await, After::Continue)
+            }
             Request::SessionHistory(params) => {
                 let session = self.store().get_session(params.session_id);
                 let history = session.map(|s| SessionHistory {
@@ -424,6 +433,13 @@ impl Daemon {
             Request::SessionPorts(params) => {
                 (self.session_ports(params.project_id), After::Continue)
             }
+            Request::SessionLinkPlan(params) => {
+                (self.session_link_plan(params).await, After::Continue)
+            }
+            Request::SessionPlan(params) => (
+                ok(&self.hub.plans.for_project(params.project_id)),
+                After::Continue,
+            ),
             other => {
                 let message = format!("{} is not implemented yet", method_name(&other));
                 (
@@ -512,6 +528,8 @@ impl Daemon {
             profile,
             task_id: None,
             title: params.title,
+            color: None,
+            pinned: false,
             cols: params.cols,
             rows: params.rows,
             typed: None,
@@ -519,6 +537,7 @@ impl Daemon {
             dir: None,
             banner: None,
             env: Vec::new(),
+            plan_path: None,
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -600,6 +619,8 @@ impl Daemon {
             profile,
             task_id: Some(task.id),
             title: Some(task.title),
+            color: None,
+            pinned: false,
             cols: params.cols,
             rows: params.rows,
             typed,
@@ -607,6 +628,7 @@ impl Daemon {
             dir: Some(dir),
             banner,
             env: Vec::new(),
+            plan_path: None,
         };
         match self.start_session(start) {
             Ok(session_id) => {
@@ -809,6 +831,8 @@ impl Daemon {
             kind: session_kind(start.profile.kind),
             title: start.title,
             terminal_title: None,
+            color: start.color,
+            pinned: start.pinned,
             native_session_id: start.native_session_id,
             state: SessionState::Starting,
             state_source: StateSource::Daemon,
@@ -818,6 +842,7 @@ impl Daemon {
             rows: start.rows,
             started_at,
             ended_at: None,
+            plan_path: start.plan_path,
         };
         let session_id = session.id;
         let spec = SpawnSpec {
@@ -959,6 +984,7 @@ impl Daemon {
                 run_commands: run_commands.as_deref(),
                 run_autostart: params.run_autostart,
                 color: params.color.as_ref().map(Option::as_deref),
+                pinned: params.pinned,
             },
         );
         if let Ok(project) = &updated {
@@ -1133,36 +1159,132 @@ impl Daemon {
             let message = "a run session is named by its command";
             return Outcome::error(ErrorCode::InvalidState, message);
         }
-        if let Some(sender) = self.hub.sender(session.id) {
-            let (reply, renamed) = oneshot::channel();
-            let command = Command::Rename {
-                title: title.clone(),
+        let for_actor = title.clone();
+        self.edit_session(
+            session.id,
+            move |reply| Command::Rename {
+                title: for_actor,
                 reply,
-            };
-            if sender.send(command).await.is_ok()
-                && let Ok(renamed) = renamed.await
+            },
+            move |session| session.title = title,
+        )
+        .await
+    }
+
+    /// `session.set_color` (ADR 0037): `null` clears; any other value must be a palette
+    /// name. Run sessions may be colored.
+    async fn session_set_color(&self, params: SessionSetColorParams) -> Outcome {
+        if let Some(color) = &params.color
+            && !WORKSPACE_COLORS.contains(&color.as_str())
+        {
+            let message = format!(
+                "unknown color {color:?}; use one of {}",
+                WORKSPACE_COLORS.join(", ")
+            );
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        }
+        let for_actor = params.color.clone();
+        let color = params.color;
+        self.edit_session(
+            params.session_id,
+            move |reply| Command::SetColor {
+                color: for_actor,
+                reply,
+            },
+            move |session| session.color = color,
+        )
+        .await
+    }
+
+    /// `session.pin`: through the session's task while it lives (it owns the row, ADR 0031),
+    /// in the store once it exited. Run sessions can be pinned too.
+    async fn session_pin(&self, params: SessionPinParams) -> Outcome {
+        let pinned = params.pinned;
+        self.edit_session(
+            params.session_id,
+            move |reply| Command::Pin { pinned, reply },
+            move |session| session.pinned = pinned,
+        )
+        .await
+    }
+
+    /// `session.link_plan` (ADR 0039): a live session's task stores the link and starts or
+    /// stops the file watch; the file is checked first, so a bad path changes nothing.
+    async fn session_link_plan(&self, params: SessionLinkPlanParams) -> Outcome {
+        let Some(sender) = self.hub.sender(params.session_id) else {
+            return self.not_live(params.session_id);
+        };
+        let found = self.store().get_session(params.session_id);
+        let project_id = match found {
+            Ok(session) => session.project_id,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let found = self.store().get_project(project_id);
+        let root = match found {
+            Ok(project) => PathBuf::from(project.path),
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        let (plan_path, file) = match params.path.as_deref() {
+            None => (None, None),
+            Some(picked) => match plan::locate(&root, picked) {
+                Ok((stored, file)) => (Some(stored), Some(file)),
+                Err(message) => return Outcome::error(ErrorCode::InvalidRequest, message),
+            },
+        };
+        let (reply, linked) = oneshot::channel();
+        let command = Command::LinkPlan {
+            plan_path,
+            file,
+            reply,
+        };
+        if sender.send(command).await.is_ok()
+            && let Ok(session) = linked.await
+        {
+            return ok(&session);
+        }
+        // Exited while the request was on its way.
+        self.not_live(params.session_id)
+    }
+
+    /// Edits a session's row: a live session through its task (`command` builds the message;
+    /// the task owns the row and saves it on every state change, so a store-only edit would be
+    /// undone), an exited one in the store (`stored` applies the edit). Replies with the edited
+    /// session, announced as `session.updated`.
+    async fn edit_session(
+        &self,
+        session_id: Ulid,
+        command: impl FnOnce(oneshot::Sender<Session>) -> Command,
+        stored: impl FnOnce(&mut Session),
+    ) -> Outcome {
+        if let Some(sender) = self.hub.sender(session_id) {
+            let (reply, edited) = oneshot::channel();
+            if sender.send(command(reply)).await.is_ok()
+                && let Ok(edited) = edited.await
             {
-                return ok(&renamed);
+                return ok(&edited);
             }
         }
         // Not live (any more): re-read, its task may have saved the exit meanwhile.
-        let found = self.store().get_session(params.session_id);
+        let found = self.store().get_session(session_id);
         let mut session = match found {
             Ok(session) => session,
             Err(e) => return store_outcome::<()>(Err(e)),
         };
         if session.state != SessionState::Exited {
-            // Between leaving `live` and its final save: that save would undo this rename.
+            // Between leaving `live` and its final save: that save would undo this edit.
             let message = format!("session {} is exiting; try again", session.id);
             return Outcome::error(ErrorCode::InvalidState, message);
         }
-        session.title = title;
+        stored(&mut session);
         let saved = self.store().update_session(&session);
         if let Err(e) = saved {
             return store_outcome::<()>(Err(e));
         }
         session.terminal_title = self.hub.terminal_title(session.id);
-        let _ = self.hub.events.send(Event::SessionUpdated(session.clone()));
+        let _ = self
+            .hub
+            .events
+            .send(Event::SessionUpdated(Box::new(session.clone())));
         ok(&session)
     }
 
@@ -1465,6 +1587,10 @@ struct Start {
     profile: mkrew_core::AgentProfile,
     task_id: Option<Ulid>,
     title: Option<String>,
+    /// The pane's color, kept by a resume (ADR 0037).
+    color: Option<String>,
+    /// A resumed session keeps the pin of the one it replaces.
+    pinned: bool,
     cols: u16,
     rows: u16,
     typed: Option<String>,
@@ -1475,6 +1601,8 @@ struct Start {
     banner: Option<String>,
     /// Extra environment for the session (run commands).
     env: Vec<(String, String)>,
+    /// The plan of the session being resumed (SPEC §8); `None` for a new one.
+    plan_path: Option<String>,
 }
 
 /// The folder a task's agent works in (blocking): the project folder, or the project's folder

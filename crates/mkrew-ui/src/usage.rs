@@ -1,6 +1,6 @@
 //! Token usage (SPEC §20E.3): the newest `session.usage` of each session, loaded per workspace
 //! on connect and kept live by events; the pane header's `ctx 62%` and the total tokens of a
-//! task card and a sidebar workspace row. Pure; `main.rs` renders the text.
+//! task card. Pure; `main.rs` renders the text.
 
 use std::collections::{HashMap, HashSet};
 
@@ -65,7 +65,7 @@ impl Usages {
         self.by_session.get(&session_id)
     }
 
-    /// Input + output tokens of `session_id`.
+    /// All tokens of `session_id` (input, cache and output).
     pub fn total(&self, session_id: Ulid) -> Option<u64> {
         self.get(session_id).map(total)
     }
@@ -81,38 +81,11 @@ impl Usages {
             .max_by_key(|(session, _)| (session.started_at, session.id))
             .map(|(_, total)| total)
     }
-
-    /// Total tokens of `project_id`: per task its [`Usages::task_total`], plus every session
-    /// not started for a task. `None` while none of them reported usage.
-    pub fn workspace_total(&self, project_id: Ulid, sessions: &[Session]) -> Option<u64> {
-        // One pass (it runs per sidebar row per frame): per task its newest session with usage.
-        let mut newest: HashMap<Ulid, ((i64, Ulid), u64)> = HashMap::new();
-        let mut loose: Option<u64> = None;
-        for session in sessions.iter().filter(|s| s.project_id == project_id) {
-            let Some(total) = self.total(session.id) else {
-                continue;
-            };
-            match session.task_id {
-                Some(task_id) => {
-                    let key = (session.started_at, session.id);
-                    let slot = newest.entry(task_id).or_insert((key, total));
-                    if key > slot.0 {
-                        *slot = (key, total);
-                    }
-                }
-                None => *loose.get_or_insert(0) += total,
-            }
-        }
-        newest
-            .into_values()
-            .map(|(_, total)| total)
-            .chain(loose)
-            .reduce(|a, b| a + b)
-    }
 }
 
+/// Every token of the conversation: fresh input, cache read, cache write and output.
 fn total(usage: &SessionUsageEvent) -> u64 {
-    usage.input + usage.output
+    usage.input + usage.cache_read + usage.cache_write + usage.output
 }
 
 /// The pane header's context share: `ctx 62%`, with `warning` from [`WARNING_PERCENT`].
@@ -120,6 +93,8 @@ fn total(usage: &SessionUsageEvent) -> u64 {
 pub struct ContextShare {
     pub label: String,
     pub warning: bool,
+    /// The share capped at 100, for the status bar's meter.
+    pub fill_percent: u8,
     /// Hover text: context size of the window and the tokens used.
     pub hover: String,
 }
@@ -128,16 +103,22 @@ pub struct ContextShare {
 pub fn context_share(usage: &SessionUsageEvent) -> Option<ContextShare> {
     let window = usage.context_window?;
     let percent = Usage {
-        input: usage.input,
-        output: usage.output,
         context: usage.context,
+        ..Usage::default()
     }
     .context_percent(Some(window))?;
+    let cached = usage.cache_read + usage.cache_write;
+    let cached = if cached > 0 {
+        format!(", {} cached", format_count(cached))
+    } else {
+        String::new()
+    };
     Some(ContextShare {
         label: format!("ctx {percent}%"),
         warning: percent >= WARNING_PERCENT,
+        fill_percent: u8::try_from(percent.min(100)).unwrap_or(100),
         hover: format!(
-            "Context {} of {} tokens · {} tokens used ({} in, {} out)",
+            "Context {} of {} tokens · {} tokens used ({} in{cached}, {} out)",
             format_count(usage.context),
             format_count(window),
             format_count(total(usage)),
@@ -165,6 +146,44 @@ pub fn format_count(n: u64) -> String {
     format!("{}.{}M", tenths_m / 10, tenths_m % 10)
 }
 
+/// What the status bar shows of the focused agent's usage. A field with no data is `None`:
+/// hidden, never `0` (SPEC §10; no money estimate, no tokens per second).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UsageFields {
+    pub context: Option<ContextShare>,
+    /// `in 12.3k · out 800` (`in` excludes cache tokens); `None` until a turn reported any.
+    pub tokens: Option<String>,
+    /// `cache 1.3M read · 40.0k write`; a side without tokens is left out.
+    pub cache: Option<String>,
+    pub model: Option<String>,
+}
+
+pub fn fields(usage: &SessionUsageEvent) -> UsageFields {
+    let tokens = (usage.input.saturating_add(usage.output) > 0).then(|| {
+        format!(
+            "in {} · out {}",
+            format_count(usage.input),
+            format_count(usage.output)
+        )
+    });
+    let cache: Vec<String> = [(usage.cache_read, "read"), (usage.cache_write, "write")]
+        .into_iter()
+        .filter(|(tokens, _)| *tokens > 0)
+        .map(|(tokens, side)| format!("{} {side}", format_count(tokens)))
+        .collect();
+    UsageFields {
+        context: context_share(usage),
+        tokens,
+        cache: (!cache.is_empty()).then(|| format!("cache {}", cache.join(" · "))),
+        model: usage
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::{SessionKind, SessionState, StateSource};
@@ -176,8 +195,12 @@ mod tests {
             session_id,
             input,
             output,
+            cache_read: 0,
+            cache_write: 0,
             context: 0,
             context_window: None,
+            model: None,
+            transcript: None,
         }
     }
 
@@ -190,6 +213,7 @@ mod tests {
             kind: SessionKind::Agent,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state: SessionState::Idle,
             state_source: StateSource::Daemon,
@@ -199,6 +223,8 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 
@@ -229,6 +255,46 @@ mod tests {
         );
     }
 
+    /// The total counts the cache (so it is the number it was before the split), and the
+    /// split event of a turn replaces the unsplit one an older daemon stored for it: equal
+    /// totals are not "smaller".
+    #[test]
+    fn totals_count_cached_tokens_and_a_split_event_replaces_an_unsplit_one() {
+        let id = Ulid::new();
+        let mut usages = Usages::default();
+        // Stored before the split: `input` still had the cache in it.
+        assert!(usages.apply(&Event::SessionUsage(usage(id, 1_000, 20))));
+        let split = SessionUsageEvent {
+            cache_read: 800,
+            cache_write: 100,
+            ..usage(id, 100, 20)
+        };
+        assert!(usages.apply(&Event::SessionUsage(split.clone())));
+        assert_eq!(usages.total(id), Some(1_020));
+        assert_eq!(usages.get(id), Some(&split));
+        // A smaller (older) answer still does not undo it.
+        assert!(!usages.load(vec![usage(id, 100, 20)]));
+    }
+
+    /// The hover says how many of the input tokens came from the cache, only when there are any.
+    #[test]
+    fn the_hover_names_cached_tokens() {
+        let id = Ulid::new();
+        let split = SessionUsageEvent {
+            cache_read: 48_000,
+            cache_write: 2_000,
+            context: 51_000,
+            context_window: Some(200_000),
+            ..usage(id, 1_000, 500)
+        };
+        let share = context_share(&split).unwrap();
+        assert_eq!(share.label, "ctx 25%");
+        assert_eq!(
+            share.hover,
+            "Context 51.0k of 200.0k tokens · 51.5k tokens used (1.0k in, 50.0k cached, 500 out)"
+        );
+    }
+
     #[test]
     fn each_workspace_is_requested_once_unless_it_failed() {
         let (a, b) = (Ulid::new(), Ulid::new());
@@ -241,35 +307,18 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_counts_each_tasks_newest_session_and_sessions_without_a_task() {
-        let (project, elsewhere, task) = (Ulid::new(), Ulid::new(), Ulid::new());
+    fn a_task_shows_its_newest_session_with_usage() {
+        let (project, task) = (Ulid::new(), Ulid::new());
         let first_run = session(project, Some(task), 1);
         let resumed = session(project, Some(task), 2);
-        let loose = session(project, None, 3);
-        let shell = session(project, None, 4);
-        let other = session(elsewhere, None, 5);
-        let sessions = [
-            resumed.clone(),
-            first_run.clone(),
-            loose.clone(),
-            shell,
-            other.clone(),
-        ];
+        let sessions = [resumed.clone(), first_run.clone()];
         let mut usages = Usages::default();
-        assert_eq!(usages.workspace_total(project, &sessions), None);
-        usages.load(vec![
-            usage(first_run.id, 1_000, 100),
-            usage(loose.id, 10, 5),
-            usage(other.id, 7, 7),
-        ]);
+        usages.load(vec![usage(first_run.id, 1_000, 100)]);
         // The resumed run has no turn end yet: its task still shows the first run's.
         assert_eq!(usages.task_total(task, &sessions), Some(1_100));
-        assert_eq!(usages.workspace_total(project, &sessions), Some(1_115));
         usages.load(vec![usage(resumed.id, 3_000, 300)]);
         // The resumed run already counts the first one: 3_300, not 4_400.
         assert_eq!(usages.task_total(task, &sessions), Some(3_300));
-        assert_eq!(usages.workspace_total(project, &sessions), Some(3_315));
-        assert_eq!(usages.workspace_total(elsewhere, &sessions), Some(14));
     }
 
     #[test]
@@ -302,5 +351,79 @@ mod tests {
             });
         }
         insta::assert_snapshot!(lines.join("\n"));
+    }
+
+    /// A field with no data is `None`, never `0` or an empty string.
+    #[test]
+    fn fields_without_data_are_none() {
+        let id = Ulid::new();
+        assert_eq!(fields(&usage(id, 0, 0)), UsageFields::default());
+        // A blank model name is no model.
+        let blank = SessionUsageEvent {
+            model: Some("  ".to_owned()),
+            ..usage(id, 0, 0)
+        };
+        assert_eq!(fields(&blank).model, None);
+        // Context needs the profile's window.
+        let no_window = SessionUsageEvent {
+            context: 50_000,
+            context_window: None,
+            ..usage(id, 1, 1)
+        };
+        assert_eq!(fields(&no_window).context, None);
+    }
+
+    #[test]
+    fn fields_format_the_real_data() {
+        let id = Ulid::new();
+        let full = SessionUsageEvent {
+            cache_read: 1_250_000,
+            cache_write: 0,
+            context: 124_000,
+            context_window: Some(200_000),
+            model: Some(" claude-opus-4 ".to_owned()),
+            ..usage(id, 12_345, 800)
+        };
+        let shown = fields(&full);
+        assert_eq!(shown.tokens.as_deref(), Some("in 12.3k · out 800"));
+        // Only the side that has tokens is named.
+        assert_eq!(shown.cache.as_deref(), Some("cache 1.3M read"));
+        assert_eq!(shown.model.as_deref(), Some("claude-opus-4"));
+        let context = shown.context.expect("window known");
+        assert_eq!(
+            (context.label.as_str(), context.fill_percent),
+            ("ctx 62%", 62)
+        );
+
+        let both = SessionUsageEvent {
+            cache_read: 800,
+            cache_write: 40_000,
+            ..usage(id, 1, 1)
+        };
+        assert_eq!(
+            fields(&both).cache.as_deref(),
+            Some("cache 800 read · 40.0k write")
+        );
+        // Output only (every input token came from the cache) is still real data.
+        assert_eq!(
+            fields(&usage(id, 0, 300)).tokens.as_deref(),
+            Some("in 0 · out 300")
+        );
+    }
+
+    /// The label keeps the true share; only the meter is capped at full.
+    #[test]
+    fn the_meter_is_capped_at_full() {
+        let over = SessionUsageEvent {
+            context: 250_000,
+            context_window: Some(200_000),
+            ..usage(Ulid::new(), 1, 1)
+        };
+        let share = context_share(&over).expect("window known");
+        assert_eq!(
+            (share.label.as_str(), share.fill_percent),
+            ("ctx 125%", 100)
+        );
+        assert!(share.warning);
     }
 }

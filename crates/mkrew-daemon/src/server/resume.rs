@@ -116,6 +116,8 @@ impl Daemon {
             profile,
             task_id: task.map(|t| t.id),
             title: last.title.clone(),
+            color: last.color.clone(),
+            pinned: last.pinned,
             cols: last.cols,
             rows: last.rows,
             typed: None,
@@ -124,6 +126,7 @@ impl Daemon {
             dir,
             banner: None,
             env: Vec::new(),
+            plan_path: last.plan_path.clone(),
         };
         match self.start_session(start) {
             Ok(new_id) => {
@@ -226,6 +229,8 @@ mod tests {
             kind: SessionKind::Agent,
             title: None,
             terminal_title: None,
+            color: None,
+            pinned: false,
             native_session_id: None,
             state: SessionState::Exited,
             state_source: StateSource::Daemon,
@@ -235,6 +240,7 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
+            plan_path: None,
         }
     }
 

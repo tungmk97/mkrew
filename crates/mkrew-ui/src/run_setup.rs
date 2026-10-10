@@ -201,6 +201,7 @@ impl RunSetup {
             run_commands: Some(commands),
             run_autostart: Some(self.autostart),
             color: None,
+            pinned: None,
         })
     }
 
@@ -280,6 +281,7 @@ mod tests {
             archived: false,
             base_ref: None,
             color: None,
+            pinned: false,
         }
     }
 

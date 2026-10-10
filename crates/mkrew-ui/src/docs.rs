@@ -52,7 +52,16 @@ pub struct Shown {
 
 impl Shown {
     pub fn new(content: &DocContent) -> Shown {
-        let blocks = markdown::parse(&content.content);
+        Shown {
+            hash: content.hash.clone(),
+            ..Shown::from_text(&content.content)
+        }
+    }
+
+    /// A text parsed for the preview, with `hash` empty. The Files view parses its editor's
+    /// text, which is not a `DocContent`.
+    pub fn from_text(text: &str) -> Shown {
+        let blocks = markdown::parse(text);
         let mut code = HashMap::new();
         let mut diagrams = HashMap::new();
         markdown::walk(&blocks, &mut |block| {
@@ -67,8 +76,8 @@ impl Shown {
             }
         });
         Shown {
-            hash: content.hash.clone(),
-            lines: source_lines(&content.content),
+            hash: String::new(),
+            lines: source_lines(text),
             blocks,
             code,
             diagrams,

@@ -330,6 +330,7 @@ mod tests {
             kind,
             title: None,
             terminal_title: None,
+            color: None,
             native_session_id: None,
             state,
             state_source: StateSource::Screen,
@@ -339,6 +340,8 @@ mod tests {
             rows: 24,
             started_at,
             ended_at: None,
+            pinned: false,
+            plan_path: None,
         }
     }
 

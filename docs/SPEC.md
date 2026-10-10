@@ -238,6 +238,7 @@ CREATE TABLE session (
   agent_profile     TEXT NOT NULL,
   kind              TEXT NOT NULL DEFAULT 'agent', -- agent|shell
   title             TEXT,                -- user's pane name (session.rename); the agent's terminal title is memory-only (ADR 0031)
+  color             TEXT,                -- user's pane color: a workspace color name (session.set_color, ADR 0037)
   native_session_id TEXT,
   state             TEXT NOT NULL,       -- starting|working|needs_input|idle|done|exited|unknown
   exit_code         INTEGER,
@@ -318,6 +319,9 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 `session.hidden INTEGER NOT NULL DEFAULT 0` (ADR 0019). `0013_project_color.sql` adds
 `project.color TEXT` (ADR 0020). `0014_project_default_shell.sql` adds
 `project.default_shell TEXT` (shell profile for new shell panes, NULL = not picked; ADR 0032).
+`0015_session_color.sql` adds `session.color TEXT` (ADR 0037). `0016_pinned.sql` adds `pinned INTEGER NOT NULL DEFAULT 0` to `project`, `session` and
+`terminal_tab` (pinned workspaces, sessions and tabs lead their lists, §10).
+`0017_session_plan.sql` adds `session.plan_path TEXT` (the linked plan `.md`: relative to the project folder with `/` when inside, else absolute; NULL = none; ADR 0039).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -498,9 +502,9 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Method | Main params | Returns |
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
-| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color` (update only), `review_globs`, `default_agent?`, `default_shell?` | Project (`update`: absent field = unchanged, `null` = cleared; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `default_shell` must be a shell profile (same absent / `null` rules); `color` must be one of red, orange, yellow, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
+| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color`, `pinned` (update only), `review_globs`, `default_agent?`, `default_shell?` | Project (`update`: absent field = unchanged, `null` = cleared; `pinned` is a bool; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `default_shell` must be a shell profile (same absent / `null` rules); `color` must be one of red, orange, yellow, lime, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
 | `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>` (always the `shell` profile, not `default_shell`; ADR 0032): without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file, then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
-| `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab |
+| `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab and keeps its color and pin |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs. Each one leaves the `run` tab when it exits (§10) |
 | `session.ports` | `project_id` | `[{session_id, ports}]` of the project's live sessions with ports (kept in daemon memory only) |
 | `task.list/create/update/move/delete` | `project_id`, `status`, `position` | Task (`list`: Task[], filters `project_id?`/`status?`; `create` = Todo card, `title`, `prompt`, `agent_profile?` (none = project `default_agent` at run time, stored as `''`), `position?` (after the last Todo card); `update`: `title`/`prompt`/`agent_profile`, absent = unchanged, `null` agent = default; `move`: `status` + `position`; `delete` returns ok, `invalid_state` while a session of the task is not exited, its exited sessions stay as history with `task_id` = NULL — ADR 0004) |
@@ -518,8 +522,13 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.kill` | `session_id`, `force` | ok |
 | `session.remove` | `session_id` | ok — leaves the session out of `session.list` for good (row, log, turns kept); a live one is asked to stop first (ADR 0019) |
 | `session.rename` | `session_id`, `title?` (trimmed; `null`/blank clears) | the Session, also broadcast as `session.updated` — `invalid_state` for a run session (named by its command) or one caught exiting, `invalid_request` for a title starting with `run:` (ADR 0031) |
+| `session.pin` | `session_id`, `pinned` | the Session, also broadcast as `session.updated`; a live session through its task, an exited one in the store (`invalid_state` for one caught exiting); a resumed session keeps the pin (ADR 0017) |
+| `session.set_color` | `session_id`, `color?` (a workspace color name; `null` clears) | the Session, also broadcast as `session.updated` — `invalid_request` for a name outside the palette, `invalid_state` for one caught exiting (ADR 0037) |
 | `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
+| `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
+| `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab, its sessions keep running, no event) |
+| `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
@@ -555,9 +564,11 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.state` | session state changed (`state`, `source` = hook/screen/daemon, `changed_at`) |
 | `session.exited` | process exited, with `exit_code` |
 | `session.ports` | a run session's port list grew (`session_id`, `ports`): ports are scanned from its screen text (`http(s)://<host>:<port>`, `port(s)[:=] <n>`), first 4 distinct, never removed while it lives |
+| `session.usage` | an agent session's token usage changed at a turn end (§20E.3): `session_id`, `input` (fresh, cache excluded), `output`, `cache_read`, `cache_write`, `context`, `context_window?`, `model?`, `transcript?` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
-| `session.updated` | a session's title changed (`session.rename`): the whole Session |
+| `session.updated` | a session's title, color, pin or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.link_plan`): the whole Session |
 | `session.terminal_title` | an agent session's terminal title (OSC 0/2) changed: `session_id`, `title?` — leading glyphs stripped, paths ignored, ≤ 60 chars, once per change; memory only (ADR 0031) |
+| `session.plan` | the checklist of a linked plan changed (`session_id`, `name` = file name without `.md`, `done`, `total`, `items[]` = first 200 task items `{done, text}` (text cut at 120 chars with `…`), `error?` = why the file cannot be read, counts then 0): sent at once on link and ≤ 1 s after each change of the file (debounced), never twice with the same content; `-`, `*` or `+` items (`[ ]`/`[x]`/`[X]`) outside code fences (ADR 0039) |
 | `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
 | `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |
 | `doc.changed` | a watched md file changed (`project_id`, `file_path`, new `hash`, `null` = deleted); its comments are re-anchored right after (`comment.updated`) |
@@ -623,7 +634,8 @@ v2 adds requests and events in §20; each milestone that changes the protocol bu
   `interrupted` (it exited during the daemon stop, or was still live at startup after a
   crash/reboot) that has no task, is an agent, and is still a leaf of a tab layout: spawn the
   resume command in the same pane. One that cannot resume stays exited. The mark is cleared at
-  startup, so each session is resumed at most once. A session that exits while the daemon runs
+  startup, so each session is resumed at most once. A resumed session keeps its linked plan
+  (`plan_path`). A session that exits while the daemon runs
   (a shell or agent that quits, a killed one, a run command) leaves its tab layout; one cut off by
   the daemon stop keeps its pane (ADR 0017, ADR 0033).
 - **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
@@ -672,41 +684,93 @@ records the agent as author). `mk attach` makes Mkrew usable without the UI, inc
 
 ## §10 UI: layout, workspaces & terminals
 
-One window, two columns; the main area has a toolbar on top:
+One window. A title bar on top spans both columns (Windows and macOS draw it; Linux keeps the OS
+title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
-┌──────────────┬───────────────────────────────────────────────────────┐
-│ Workspaces + │ [Board│Terminals│Docs│Files│Git]   ◐ History +Agent +Shell [▶ Run│▾] │
-│ ▾ A api  (•••2)├───────────────────────────────────────────────────────┤
-│ │ ••• ✻ claude │ tab strip (Terminals only): [● tab ✕] [tab ✕] +        │
-│ │ ?   ⌬ codex  │                                                       │
-│ ▸ W web     ? │  Todo │ Running │ Needs input │ …                       │
-│ ▸ I infra     │  …or the terminal tabs/panes                          │
-│ ┌ Inbox ────┐ │  …or the Markdown review view                         │
-│ │! 2 waiting│ │                                                       │
-└──────────────┴───────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│ ◈ A api ▾ ⎇ master [Board│Terminals│Docs│Files│Git 3] ◐ +Agent +Shell [▶ Run│▾] ─ □ ✕ │
+├──────────────┬────────────────────────────────────────────────────────────────────────┤
+│ Workspaces + │ tab strip (Terminals only): [▣ ● tab ✕] [>_ tab ✕]   + ◫ ⋯               │
+│ [Filter…]    │                                                                       │
+│ All Work Need│                                                                       │
+│ ▾ A api  (•••2)│  Todo │ Running │ Needs input │ …                                     │
+│ │ ••• ✻ claude │  …or the terminal tabs/panes                                         │
+│ │ ?   ⌬ codex  │  …or the Markdown review view                                         │
+│ ▸ W web     ? │                                                                       │
+│ ▸ I infra     │                                                                       │
+├──────────────┴────────────────────────────────────────────────────────────────────────┤
+│ ◧ Inbox clear · 1a2b3c4                         ctx ▮▮▯ 62% · in 12.3k · out 800 · 2m │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
+The session panel (below) is a third column right of Terminals while open.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
-  exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it). Below:
-  **Inbox** — every session in needs_input or freshly done, newest first; click jumps to that pane.
+  exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
+  A **filter box** (`Filter sessions…`) matches workspace name, agent and session title as you
+  type (every word must match; client-side, not remembered); under it three **chips** `All N`,
+  `Working N` and `Needs you N` narrow the list (the numbers count the sessions matching the
+  filter text). *Needs you* is what the Inbox listed before: needs_input, plus done and not yet
+  viewed (ADR 0036). While a filter or chip is on, only workspaces with a match show, open.
+  The header has `+` (add workspace) and a button that collapses or expands every workspace.
+  There is no Inbox card: the chips, the status bar and Ctrl+Shift+I replace it; hovering a
+  session row still peeks it (§20A). Toggle sidebar (Ctrl+Shift+B, status bar, palette) hides it; not remembered across restarts.
+- **Plan progress:** the selected session row of a session with a linked plan shows a thin
+  progress bar (done / total of its checklist) under its second line (ADR 0039).
 - **Remove:** the workspace menu's "Remove workspace…" archives it after a confirmation
   (`project.archive`, ADR 0019); a session row's ✕ (on hover) removes a live session from the
   sidebar (`session.remove`; it asks first and the session is stopped). A session that exits needs
   no removing (ADR 0033).
-- **Color:** the workspace menu's swatches give a workspace one of 8 colors, shown as a letter
+- **Color:** the workspace menu's swatches give a workspace one of 9 colors, shown as a letter
   avatar tinted with the color before its name (decoration only, ADR 0020, ADR 0027).
+  A pane has its own color too: right-click its header → Change color (same palette; ADR 0037).
+- **Pin:** the workspace menu, the pane menu (right-click a sidebar session row or a pane header)
+  and the tab menu have Pin / Unpin (`project.update` `pinned`, `session.pin`, `tab.pin`, §7). A
+  pinned workspace leads the sidebar, a pinned session leads its workspace's list and a pinned tab
+  sits at the left of the tab strip; each group keeps its usual order (workspaces by age,
+  sessions newest first, tabs by position), and unpinning puts the item back in it. A pinned item
+  shows 📌 next to its name (after it in the sidebar, before it on a tab). Pins are stored (§5), so they survive a restart; a resumed session
+  keeps its pin (ADR 0017).
 - **Views per workspace:** Board, Terminals, Docs, Files, Git.
-- **Toolbar** (44 px, ADR 0027): segmented views Board / Terminals / Docs / Files / Git on the
-  left (tooltips show their shortcuts, §13); the theme toggle, History, + Agent, + Shell and the
-  split Run button on the right, in every view (+ Agent / + Shell switch to Terminals first; their
-  tooltips show Alt+Shift+A / Alt+Shift+S, §13).
+- **Title bar** (44 px, ADR 0027, ADR 0034), left to right: the Mkrew logo; the workspace name
+  ▾ (a dropdown of the workspaces, click switches, plus "Add workspace…"); the git chip
+  `⎇ master` (one repository) or `⎇ N repos` (several; the tooltip lists each repository's
+  branch and HEAD; a workspace folder without `.git` but with child repositories shows the
+  children, ADR 0029; hidden when there is no repository), a click shows the Git view; the
+  views Board / Terminals / Docs / Files / Git as a segmented control (tooltips show their
+  shortcuts, §13), the Git one with a `Git N` badge (N = changed files summed over every
+  repository, hidden at 0); then, right-aligned, the theme toggle, History, + Agent, + Shell and
+  the split Run button, in every view (+ Agent / + Shell switch to Terminals first; their
+  tooltips show Alt+Shift+A / Alt+Shift+S, §13). The git chip and badge come from `git.repos`
+  and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
+  and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
+  the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
+  □ shows the Windows 11 Snap Layouts flyout), all edges resize; the controls are hidden in full
+  screen. **macOS:** native traffic lights at the left, drag and double-click as the OS does.
+  **Linux:** the OS title bar stays. Minimum window size 1100 × 560. Without a workspace only
+  the logo, the drag area and the window controls show.
+- **Status bar** (24 px, bottom of the window, every view): on the left the sidebar toggle
+  (`◧`), the Inbox state and the git HEAD; on the right the focused agent pane's usage. Inbox:
+  `Inbox clear`, or `N need you` (needs_input plus done-not-yet-viewed, as the Inbox lists);
+  click = Jump to next (the same as Ctrl+Shift+I). Git: one repo → its short HEAD hash; several
+  repos → `N repos`; the hover lists `branch · hash` per repo; a root without `.git` still shows
+  its child repos (ADR 0029); nothing before the first commit. Agent fields (agent panes only,
+  Terminals view): context meter + `ctx 62%` (amber from 80 %), `in` / `out` tokens (`in`
+  excludes cache), cache read / write, model, and the time in the state (the pane header's). Only
+  real data is shown: a field without data is hidden, never `0`; no money, no tokens per second.
+  It redraws on `session.usage`, focus change, an Inbox change and `git.changed`, plus the
+  status tick for the time; it has no timer of its own. The right end is the session-panel
+  toggle (◨, ADR 0038).
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
   New task: the empty board's button, or `New task` in the Todo column header.
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
-  Each tab has a ✕ (always on the active tab, on hover for the others); closing never activates
-  the tab first.
+  Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
+  for a tab without panes), the status mark of its most urgent pane (§11), its title and a ✕
+  (always on the active tab, on hover for the others); closing never activates the tab first.
+  At the right end of the strip: `+` (new tab), a split button (Split right) and `⋯`. `⋯`, and a
+  right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
+  activated first, so the menu acts on the tab it was opened on.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
   shell, picked in the workspace menu under "Default shell for new panes" like the default agent;
   a new shell pane without one asks the user to pick; ADR 0032).
@@ -714,6 +778,27 @@ One window, two columns; the main area has a toolbar on top:
   session, or just hide it (still reachable from the sidebar). A pane whose session exits closes
   itself. Layout persists (`terminal_tab`).
   No hard limit on terminals; warn above 12 running sessions per workspace.
+- **Session panel** (ADR 0038): a column right of the Terminals view, closed at every start,
+  toggled by the status bar's right-end button and `Ctrl+Shift+Y` (from another view the key shows
+  Terminals first). Drag its left edge to resize (240–560 px, saved as `[ui] inspector_width` when
+  the button is released); the terminals lose that width, so an agent redraws once. It shows the
+  focused pane's session. **Session card:** agent, title, state + time, the usage of §20E.3 (context
+  share, tokens, cache, model; rows without data are left out), **Open transcript** (the agent's
+  `.jsonl` in Zed; disabled until the daemon located it) and **Stop** (`session.kill`; a running
+  agent asks first, a shell does not; the pane closes when the session exits, ADR 0033).
+  **Changes card:** one line per repository with changes, `M 23 ?3` (modified paths, untracked
+  files) with **Review diff**, which opens the Git view on that repository (§12B); a workspace
+  folder without `.git` still lists its child repositories (ADR 0029). Clean repositories have no
+  line (`Working tree clean` when none changed); no repository, no card. The counts are the
+  shown workspace's git summary, refreshed on `git.changed`.
+  **Plan card** (agent sessions, after Changes): `Plan <name> 6/20`, a progress bar and the
+  checklist of the linked file's `- [ ]` / `- [x]` lines: the first unchecked item highlighted
+  (two rows of context above it), at most 8 rows, `N more` for the rest. **Link plan…** (a file
+  picker) links a `.md` file; **Change…** and **Unlink** replace or remove it. The link is per
+  session and survives restarts (the resumed pane keeps it). The counts follow the file within
+  about a second (the daemon watches only that file); a file that cannot be read shows the
+  reason instead of the bar. There is no "Setup / Tasks / Finish" phase bar: progress comes
+  from the file only, for any agent (ADR 0039).
 - **Terminal rendering:** cell grid from `alacritty_terminal`; 256-color/truecolor, cursor,
   selection & copy, paste (bracketed), scrollback (UI-side, 10,000 lines, only for attached panes),
   search, resize → `session.resize`. Performance rules (mandatory — this is the hottest path):
@@ -725,15 +810,33 @@ One window, two columns; the main area has a toolbar on top:
       no parsing, no layout, no rendering. Re-attach uses the daemon snapshot, so the pane's
       scrollback restarts from the daemon's ≤ 200 history lines (ADR 0030).
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
-- **Open in Zed:** on task cards, workspace menu and Docs; runs `zed <path>[:line]`; clear error
-  with install hint if `zed` is missing.
-- **Run button** (ADR 0018) at the right end of the toolbar (ADR 0027), a split accent button:
-  `[▶ Run │▾]` with
+- **Open in Zed:** on task cards, the workspace menu, the Files tree menu and Docs; runs
+  `zed <path>[:line]`; clear error with install hint if `zed` is missing.
+- **Open in File Explorer:** in the workspace menu and in the Files tree's right-click menu
+  (§12A). It opens the OS file manager (Explorer, Finder, the Linux file manager): a folder is
+  opened, a file is shown selected in its folder.
+- **Terminal links:** while Ctrl (Cmd on macOS) is held over a terminal pane (agents and
+  shells) the link under the pointer is underlined and the pointer is a hand; Ctrl+Click
+  (Cmd+Click) opens it. Links are `http://` / `https://` URLs (opened in the browser) and file
+  paths, relative (`./src/a.rs`, `crates/x/main.rs`) or absolute (`/home/u/a.rs`,
+  `C:\x\a.rs`), with an optional `:line` or `:line:col`. A path is a link only if it names an
+  existing file inside the pane's folder (the project folder, or the worktree of the pane's
+  task); it opens in the Files view (§12A) with the caret on that line. Trailing `.,;:!?`,
+  unbalanced closing brackets and quotes are not part of a link. `file(12)` (the path before
+  the bracket is the link, without the line), `~/…` paths and links wrapped over two rows are
+  not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
+  the key is held and the pointer moves to another cell; nothing runs while output is parsed
+  or painted.
+- **Run button** (ADR 0018) at the right end of the title bar (ADR 0034), a split button, **green**
+  while idle (`status-done` fill, `on-accent` text): `[▶ Run │▾]` with
   no command or all stopped (▶ with no command opens Run setup, and saving there runs);
   `[● Running 2/2 · :8080 :5180 │↻│■│▾]` while running; `[✕ Running 1/2 · …]` in the warning
   color when some exited. Ports: every distinct port of the live run sessions, config order, up
   to 4 then `+N`; tooltip `name — :port …` per command. Menu ▾ (mouse-driven): one row per
-  command (name, state, ports, ↻ ■ or ▶), then `Show Run tab`, `Run setup…`. Run from
+  command (name, state, ports, ↻ ■ or ▶), then `Show Run tab`, `Run setup…`.
+  Colors (same in the title bar and in the menu, glyph and hover alike): Run / Start green
+  (`status-done`, hover `success-bg`), Restart ↻ amber (`status-needs-input`, hover
+  `warning-bg`), Stop ■ red (`status-exited`, hover `danger-bg`). Run from
   all-stopped switches to Terminals and the `run` tab; Restart and per-command Run keep the
   view. A stopped command, and one that ends by itself, leaves the `run` tab at once (the tab
   stays, empty after the last one). Restart puts the new session where the old pane was, so the
@@ -758,23 +861,36 @@ color alone.
 | --- | --- | --- |
 | starting | ◌ | |
 | working | ••• three dots taking turns, one step per status tick (500 ms) | elapsed time |
-| needs_input | ? | highlighted pane border, listed in Inbox |
+| needs_input | ? | highlighted pane border, counted in "Needs you" |
 | idle | ○ | idle time |
-| done | ✓ | listed in Inbox until viewed |
+| done | ✓ | counted in "Needs you" until viewed |
 | exited | ✕ | exit code (History); its sidebar row and pane close (ADR 0033) |
 | unknown | · | |
 
-- Pane header: status icon, agent badge (§6 `icon`), agent name, session/task title (F2 or a
-  double-click renames it inline: Enter saves, Esc cancels, blank clears; run panes keep their
-  command name — ADR 0031; without a title an agent pane shows the title its agent gave the
-  terminal, e.g. Claude's conversation summary; everywhere a session is named the order is:
-  user title > terminal title > agent name), time. The
+- Pane header, left to right: the agent badge (§6 `icon`, a bordered square chip), the breadcrumb
+  `<workspace> › <folder> › <agent>` (the folder only for a task that runs in a worktree, shown
+  as its branch without `mkrew/`; a plain pane runs in the workspace folder, so none), **one
+  status pill** (the status mark and `Working · 1h 25m`; a done pane adds the last turn,
+  `Done · 3 files · 4m`; hovering it shows the source and last change) and the session/task title
+  (F2 or a double-click renames it inline: Enter saves, Esc cancels, blank clears; run panes keep
+  their command name — ADR 0031; without a title an agent pane shows the title its agent gave the
+  terminal, e.g. Claude's conversation summary; everywhere a session is named the order is: user
+  title > terminal title > agent name). The right end keeps `⧗ N queued`, the context share,
+  and an agent's "Follow in Zed" and "Turns…"; the status is not repeated there. The
   sidebar session row also puts the badge before the agent name. The badge is a bordered square
-  chip; it also shows in the Inbox row, on board cards and in agent menus.
+  chip; it also shows on board cards and in agent menus.
+- Pane menu (right-click on the header): **Rename** (inline like F2; greyed for a run pane) and
+  **Change color** (the workspace palette; none clears). A colored pane tints its agent chip and
+  draws a thin line under its header; the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
-- Workspace row: number of working sessions (the working dots in an accent pill) and `?` if any
-  needs_input. Sidebar session rows hang under a faint guide line: status mark, agent chip,
-  name, status text. The Inbox is a card at the bottom of the sidebar.
+- Workspace row: a summary of its sessions (`1 working`, `2 idle`, `1 working · 1 needs you ·
+  2 idle`) and `?` if any needs_input; no token total (the status bar shows usage of the focused
+  agent). Sidebar session rows hang under a faint guide line: status mark, agent chip, name and,
+  on the right, only the time of a working or idle session (`17m`; the status icon already says
+  the state, its hover says it in words). The selected row has a second line with the
+  session/task title (the other rows show `agent · title` on one line).
+- Pinned workspaces, sessions and tabs lead their lists and show 📌 next to the name (§10 Pin);
+  the order does not change a pane's status.
 - Hovering a status shows its source (hook/screen) and when it last changed.
 
 ---
@@ -841,11 +957,24 @@ Only edit this file. When done, for EACH comment run:
   "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Opening another file,
   switching to another worktree or closing the window with unsaved changes asks "Save / Don't
   save / Cancel". Switching workspace or view keeps them.
-- `.md` files offer "Review in Docs".
+- **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
+  §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````
+  blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Source`
+  toggle; Source is the editor above, and editing only happens there. The preview is built from
+  the editor's text, so unsaved changes show in it and toggling never loses them; it is parsed
+  when the file is read and when switching to Preview after an edit, never per keystroke. Find
+  and "Open at a line" switch to Source. Another file starts in Preview. Links in the preview
+  are not clickable (ADR 0021). `.md` files also offer "Review in Docs".
 - **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
   fuzzy-finds files of the current workspace, in the folder the Files view shows (project or
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - "Open in Zed" opens the file at the caret's line.
+- **Right-click menu** on tree rows (files and folders) and on the blank part of the tree (the
+  folder the view shows: the project, or the task worktree): "Open in File Explorer" and
+  "Open in Zed" (§10). A click outside closes it.
+- **Open at a line:** Ctrl+Click on a file path in a terminal (§10) shows that file with the
+  caret on the line, scrolled into view. A path in another task's worktree switches the view to
+  that worktree (asking about unsaved text first).
 - **Find & replace** (VS Code style): `Ctrl+F` (also `Ctrl+Shift+F` or "Find" in the header)
   opens the bar, `Ctrl+H` opens it with the replace row. A selection on one line becomes the
   query. Case-insensitive; matches highlighted, Enter / Shift+Enter move between them and select
@@ -882,8 +1011,18 @@ Windows (tens of ms, worse with antivirus), so:
       working tree — like a pull request diff.
 - **Changed-file list** (right of the diff, with the header and commit box) with +/− counts;
   selecting one shows its diff.
-- **Diff viewer:** unified (side-by-side is backlog), hunk navigation, collapsed unchanged regions, syntax
+- **Diff viewer:** unified or split (side-by-side), hunk navigation, collapsed unchanged regions, syntax
   highlighting. Diffs > 1 MB show a summary and "Open in Zed".
+- **Diff modes:** a Unified | Split toggle in the diff header (key `d`, §13) switches between one
+  column (removed lines, then added lines) and two columns (old on the left, new on the right). Split
+  is one virtualized list of paired rows, so one scroll handle moves both sides. In a hunk the i-th
+  removed line is paired with the i-th added line and the shorter side is padded with an empty cell;
+  unchanged lines show on both sides; gap and hunk-header rows span both columns. Paired rows (a line
+  changed in place) use the *modified* colors, an unpaired removed / added line the delete / add
+  colors; Unified shows the same pairs in the modified colors, keeping `−` then `+` signs. Hunk navigation (`n` / `p`) and
+  diff comments work in both modes (comments pick new-side lines: the right column in Split). The
+  mode is global (every file, every repo of the workspace, History too) and is remembered as
+  `[ui] diff_mode` (§20.0).
 - **Stage / unstage** per file or per hunk (daemon builds the patch, runs `git apply --cached`).
 - **Discard** per file: always confirms and shows what will be lost.
 - **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
@@ -905,7 +1044,8 @@ Windows (tens of ms, worse with antivirus), so:
   `code "<quote>"` instead of `passage "<quote>"`. Comments on non-Markdown files are not
   re-anchored when the code changes (backlog); `doc.list` ignores diff comments.
 - **Extra tokens:** `diff-add-bg`, `diff-add-text`, `diff-del-bg`, `diff-del-text`,
-  `diff-hunk-header` (dark + light) in `theme.rs`. Diff backgrounds stay very subtle.
+  `diff-mod-bg`, `diff-mod-text` (a line changed in place, Split), `diff-hunk-header` (dark + light)
+  in `theme.rs`. Diff backgrounds stay very subtle.
 
 ---
 
@@ -937,6 +1077,8 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Open keymap settings | Ctrl+, |
 | Global | Toggle theme (System → Light → Dark) | Ctrl+Shift+J |
 | Global | Toggle full screen | F11 |
+| Global | Toggle sidebar | Ctrl+Shift+B |
+| View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace | Ctrl+Shift+K |
@@ -971,10 +1113,11 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Stage / unstage selected file or hunk | s / u |
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
+| Git | Toggle Unified / Split diff | d |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
-| Agent (v2) | Peek the first Inbox entry (↑/↓ cycle, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
+| Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out | command palette only |
@@ -1000,7 +1143,8 @@ The terminal is the hero; everything else steps back.
    heavy lines. Borders, if any, are 1 px and faint.
 2. **Soft.** Moderate corner radius; very light shadows only on floating layers (popover, dialog,
    palette). No saturated colors besides the accent and status colors. Workspace colors
-   (ADR 0020) are the one exception: a small tinted letter avatar per workspace.
+   (ADR 0020) and pane colors (ADR 0037) are the exception: a small tinted letter avatar per
+   workspace, and a tinted agent chip with a thin line under the header of a colored pane.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
 4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
 5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow working dots.
@@ -1030,6 +1174,7 @@ The terminal is the hero; everything else steps back.
 | `accent-bg` | #25264A | #ECEEFF |
 | `on-accent` | #17181C | #FFFFFF |
 | `warning-bg` / `success-bg` | #3A3020 / #1D3A31 | #FDF3E1 / #E1F5EC |
+| `danger-bg` | #3A2327 | #FDECEC |
 | `status-working` | #7C8CFF | #4F5BD5 |
 | `status-needs-input` | #E3A63E | #B7791F |
 | `status-done` | #4CB782 | #2F855A |
@@ -1061,17 +1206,18 @@ The terminal is the hero; everything else steps back.
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
   Find matches (`status-needs-input` amber mixed into `bg`, text drawn in `text`):
   `terminal-match-bg` #3F3524 / #F6EBCF; `terminal-match-current-bg` #7A5A1F / #E9C46A.
-- Workspace colors (red … pink): dark #E5676B #F0955A #E3C14E #4CB782 #5EC4D6 #7C8CFF #C28CF0
-  #F08CC0 / light #C53030 #C05621 #975A16 #2F855A #1F8A9E #4F5BD5 #8A3FB8 #B83280 (≥ 3:1 on
-  every surface).
+- Workspace colors (red, orange, yellow, lime, green, teal, blue, purple, pink): dark #F87171
+  #FB923C #FACC15 #A3E635 #4ADE80 #2DD4BF #60A5FA #C084FC #F472B6 / light #DC2626 #D9560B
+  #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
+  hues ≥ 12° apart).
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
-- Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the toolbar toggle
+- Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the title bar toggle
   (ADR 0027).
 
 **Design check (every milestone with UI):** capture screenshots of new views in light and dark
 into `docs/screenshots/` (if automatic capture is not possible, list them in `docs/HUMAN_CHECKS.md`)
 and self-review: no hard-coded colors/spacing; hover/focus/disabled states exist; empty states
-exist; body text contrast ≥ 4.5:1; status never conveyed by color alone.
+exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run action glyphs ≥ 3:1.
 
 ---
 
@@ -1257,17 +1403,17 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 
 - [ ] `settings.toml` (§20.0): defaults when missing, parse errors reported in `daemon.status`
       with the last good settings kept, re-read after the file changes; unit tests.
-- [ ] `session.read` returns the last screen lines; the peek popover shows them for an Inbox or
-      sidebar row, and its quick reply answers a fake agent's "(y/n)" without leaving the view (e2e
+- [ ] `session.read` returns the last screen lines; the peek popover shows them for a sidebar row,
+      and its quick reply answers a fake agent's "(y/n)" without leaving the view (e2e
       for the request + manual check for the popover).
 - [ ] Turns start and end as §20A.3 defines; a fake agent that edits 2 files in one turn produces
-      `session.turn` with both paths (+/− counts arrive in M11); Inbox row and pane header show the summary.
+      `session.turn` with both paths (+/− counts arrive in M11); the pane header shows the summary.
 - [ ] `notify.needs_input` / `notify.done` / `notify.sound` switches are respected (unit tests on
       the decision; manual check for the sound).
 - [ ] Keep awake: inhibitor held while an agent works and released ≤ 5 s after the last one
       stops (fake inhibitor test); real backends per OS; manual check (`powercfg /requests`).
 - [ ] Broadcast sends one text to every checked session; each result is shown.
-- [ ] Inbox rows show the last non-blank screen line (§20A.4).
+- [ ] ~~Inbox rows show the last non-blank screen line~~ removed with the Inbox card (ADR 0036).
 
 ### M10 — Instructing (§20B)
 
@@ -1325,7 +1471,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] License if the repo goes public.
 
 **Backlog after v2:** tray icon / taskbar badge; "mark unread" in the Inbox; remote workspaces
-over SSH; side-by-side diff; compact density; `gix` git backend; pull/rebase/branch switching and
+over SSH; compact density; `gix` git backend; pull/rebase/branch switching and
 conflict resolution in-app; GitHub (PR/issue → task); remote control via web/phone; money
 estimates from token usage.
 
@@ -1371,7 +1517,9 @@ follow_debounce_ms = 1500   # §20C.4
 [ui]
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32
-theme = "system"            # §14; "system" | "light" | "dark"; the toolbar toggle writes it
+theme = "system"            # §14; "system" | "light" | "dark"; the title bar toggle writes it
+diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
+inspector_width = 300       # §10; px, the session panel's width (dragging its edge writes it; kept 240–560)
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
@@ -1388,14 +1536,14 @@ continues the same turn. Turns are numbered per session from 1. Pure model in
 
 ```toml
 [usage]                        # §20E.3
-format = "claude_jsonl"        # "claude_jsonl" | "codex_jsonl"; absent = no usage
+format = "claude_jsonl"        # "claude_jsonl" | "codex_jsonl" | "omp_jsonl"; absent = no usage
 context_window = 200000        # tokens, for the % shown
 ```
 
 ### §20A Attention (M9)
 
-1. **Peek + quick reply.** Hovering an Inbox or sidebar session row for 300 ms, or `Ctrl+Shift+Space`
-   (first Inbox entry; ↑/↓ cycles entries, Esc closes), opens a popover with the last 8 non-blank
+1. **Peek + quick reply.** Hovering a sidebar session row for 300 ms, or `Ctrl+Shift+Space`
+   (first session that needs you; ↑/↓ cycles those sessions, Esc closes; the row is shown first: its workspace opens and the filter clears), opens a popover with the last 8 non-blank
    screen lines (monospace plain text, ADR 0012), the state and its age, and a one-line input. Enter sends
    the text with submit (`session.send`); for a `needs_input` session the popover also shows
    buttons `y` and `n` that send that letter with submit. Focus returns where it was. Data comes
@@ -1407,10 +1555,9 @@ context_window = 200000        # tokens, for the % shown
    `ended_at` and `files` = paths attributed to the session during the turn (the hook-reported
    edits and file-watcher batches already attributed in M5, deduplicated, relative). From M11 each
    file also carries `added`/`removed` (numstat between the turn's start and end snapshots).
-   The Inbox row of a `done` session shows `✓ done · 3 files · 4m` (no files → `✓ done · 4m`;
-   durations as everywhere else, ADR 0011); the pane header shows the same after the status. The summary text is UI-side; the event carries the data.
-4. **Last line.** The Inbox row also shows the last non-blank screen line (truncated, muted) —
-   taken from `session.read` with `lines = 1` when the entry appears.
+   The pane header of a `done` session shows `✓ Done · 3 files · 4m` (no files → `✓ Done · 4m`;
+   durations as everywhere else, ADR 0011). The summary text is UI-side; the event carries the data.
+4. **Last line.** (Removed with the Inbox card, ADR 0036: no list shows it any more; the peek popover shows the last 8 lines.)
 5. **Keep awake.** While at least one agent session (not shell) is `working` and
    `awake.keep_awake`, the daemon holds a sleep inhibitor; it releases it 5 s after the last one
    leaves `working`. Display sleep and screen lock stay allowed. Windows:
@@ -1585,12 +1732,28 @@ and milestone numbers are not reused.
    (rules above) and offers to remove the others' worktrees; the original moves to Review.
 3. **Usage.** For profiles with `[usage]`, the daemon finds the session's transcript file by
    `native_session_id` — `claude_jsonl`: `<CLAUDE_CONFIG_DIR or ~/.claude>/projects/*/<id>.jsonl`;
-   `codex_jsonl`: `<CODEX_HOME or ~/.codex>/sessions/**/*<id>*.jsonl` — and reads only appended
-   bytes on each turn end. It sums input/output tokens and takes the context size of the newest
-   message (field names checked against the CURRENT formats when implementing; fixtures recorded
-   from real files). Event `session.usage` (`input`, `output`, `context`, `context_window?`); the pane
-   header shows `ctx 62%` (warning color ≥ 80 %), task cards and sidebar workspace rows show total
-   tokens. No money estimate. Unknown/changed format → no usage, one warning in the log.
+   `codex_jsonl`: `<CODEX_HOME or ~/.codex>/sessions/**/*<id>*.jsonl`; `omp_jsonl`:
+   `<PI_CODING_AGENT_DIR or ~/.omp/agent>/sessions/**/*<id>*.jsonl` (the file, never the
+   sub-agent folder next to it: omp totals leave out sub-agent tokens) — and reads only appended
+   bytes on each turn end (no file watching, nothing while a turn runs). It sums the tokens of the
+   session and takes the context size and the model name of the newest message (field names
+   checked against the CURRENT formats when implementing; fixtures recorded from real files).
+   The counts add up (ADR 0035): `input` = fresh input, cache excluded (Claude
+   `input_tokens`; Codex `input_tokens` − `cached_input_tokens`); `cache_read` (Claude
+   `cache_read_input_tokens`; Codex `cached_input_tokens`); `cache_write` (Claude
+   `cache_creation_input_tokens`; Codex has none, 0); `output`. Total tokens = `input` +
+   `cache_read` + `cache_write` + `output`. Context = Claude: `input_tokens` + both cache counts of
+   the newest non-sidechain message; Codex: `last_token_usage.total_tokens`. `model` = Claude
+   `message.model` of the newest non-sidechain, non-`<synthetic>` assistant line; Codex `model` of
+   the newest `turn_context` line. Event `session.usage` (`input`, `output`, `cache_read`,
+   `cache_write`, `context`, `context_window?`, `model?`, `transcript?` (the located transcript file's absolute path, sent again when it changes)); the pane header shows `ctx 62%` (warning
+   color ≥ 80 %), task cards show total tokens (the workspace row shows a session summary, ADR 0036). No money estimate.
+   omp (per API call, summed): `message.usage` `input` (already fresh), `cacheRead`, `cacheWrite`,
+   `output` of `type: "message"` assistant lines; context = `input` + `cacheRead` + `cacheWrite` of the
+   newest call; `model` = `message.model` of the newest call (`model_change` lines are not
+   trusted). A call with no tokens (aborted) changes neither. omp's file does not hold the
+   context window: `context_window` in the profile is the only source.
+   Unknown/changed format → no usage, one warning in the log.
 
 **Protocol (M13):** `task.create/update` accept `worktree: bool`; Task carries `worktree`,
 `worktree_path?`, `branch?`, `fanout_of?`; new `task.merge` (`task_id`, `confirm: true`) →
@@ -1602,6 +1765,9 @@ can no longer be run); `fs.*` and `git.*` accept
 `worktree_task_id?` (not `git.set_base`: the base is per project) and `git.changed` carries it;
 event `session.usage`; request `session.usage` (`project_id`) → the newest usage of each session
 of the project (kept as `session_event` kind `usage`, so totals survive reconnects and restarts).
+Since protocol 33 `input` excludes the cache and `cache_read`, `cache_write` and `model?` are
+new; an event stored before it reads back with both cache fields 0, no model and its old `input`
+(cache included) until the session's next turn end.
 
 Migration `0009_worktrees.sql`:
 

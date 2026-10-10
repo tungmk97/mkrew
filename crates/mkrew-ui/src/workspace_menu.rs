@@ -86,6 +86,7 @@ pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
         run_commands: None,
         run_autostart: None,
         color: None,
+        pinned: None,
     }
 }
 
@@ -99,6 +100,7 @@ pub fn set_default_shell(project_id: Ulid, shell: &str) -> ProjectUpdateParams {
         run_commands: None,
         run_autostart: None,
         color: None,
+        pinned: None,
     }
 }
 
@@ -112,6 +114,21 @@ pub fn set_color(project_id: Ulid, color: Option<&str>) -> ProjectUpdateParams {
         run_commands: None,
         run_autostart: None,
         color: Some(color.map(str::to_owned)),
+        pinned: None,
+    }
+}
+
+/// `project.update` pinning or unpinning the workspace.
+pub fn set_pinned(project_id: Ulid, pinned: bool) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        project_id,
+        name: None,
+        default_agent: None,
+        default_shell: None,
+        run_commands: None,
+        run_autostart: None,
+        color: None,
+        pinned: Some(pinned),
     }
 }
 
@@ -214,5 +231,14 @@ mod tests {
         assert_eq!(params.project_id, id);
         assert_eq!(params.name, None);
         assert_eq!(params.default_agent, Some(Some("codex".to_owned())));
+    }
+
+    #[test]
+    fn pinning_sets_only_the_pin() {
+        let id = Ulid::new();
+        assert_eq!(
+            serde_json::to_value(set_pinned(id, true)).unwrap(),
+            serde_json::json!({"project_id": id, "pinned": true})
+        );
     }
 }
