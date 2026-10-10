@@ -1540,6 +1540,14 @@ inspector_width = 300       # §10; px, the session panel's width (dragging its 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
 font_size = 13              # px, 8–32; also the Files and Git code views
+
+[voice]                     # §20G, ADR 0045
+base_url = "https://api.groq.com/openai/v1"  # OpenAI-compatible; POST {base_url}/audio/transcriptions
+model = "whisper-large-v3-turbo"
+api_key_env = "GROQ_API_KEY"  # env var holding the key ("" = no key, local server); never the key itself
+language = ""               # "" = detected per recording; "vi" | "en" forces one
+prompt = "Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé."
+max_seconds = 120           # a recording stops by itself after this
 ```
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
