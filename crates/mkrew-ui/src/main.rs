@@ -268,6 +268,9 @@ struct Shell {
     reveal: Option<Ulid>,
     /// Last failure of a tab action (new tab), shown in the tab bar.
     tab_error: Option<String>,
+    /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
+    /// cold start): its buttons show a loading mark and further starts are ignored meanwhile.
+    starting_pane: Option<SessionKind>,
     /// Which session frames go to a pane, and buffering while attaches are in flight.
     router: Router,
     /// Attached panes of the sessions on screen.
@@ -569,8 +572,8 @@ impl Shell {
                         shell.view() == View::Board
                             && shell.board.redraw_due(project_id, sessions, last, now)
                     });
-                    if window.is_visible() && (board_due || status::redraw_due(sessions, last, now))
-                    {
+                    let due = board_due || shell.starting_pane.is_some();
+                    if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
                 });
@@ -708,6 +711,7 @@ impl Shell {
             early_tab_events: Vec::new(),
             reveal: None,
             tab_error: None,
+            starting_pane: None,
             router: Router::default(),
             panes: HashMap::new(),
             attach_errors: HashMap::new(),
@@ -7167,15 +7171,17 @@ impl Shell {
         else {
             return;
         };
-        if self.ask_for_default(project_id, kind, window, cx) {
+        if self.starting_pane.is_some() || self.ask_for_default(project_id, kind, window, cx) {
             return;
         }
+        self.starting_pane = Some(kind);
         cx.notify();
         let params = lifecycle::spawn_params(project_id, Some(tab_id), kind);
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
         cx.spawn_in(window, async move |this, cx| {
             let spawned = spawned.await;
             let _ = this.update_in(cx, |shell, window, cx| {
+                shell.starting_pane = None;
                 match spawned {
                     Ok(spawned) => {
                         // Next to the focused pane of the tab active now (the user may have
@@ -9869,6 +9875,7 @@ impl Shell {
     fn render_title_bar(
         &self,
         shown: View,
+        now: i64,
         theme: &Theme,
         window: &Window,
         cx: &mut Context<'_, Self>,
@@ -9966,6 +9973,8 @@ impl Shell {
                     "+ Agent",
                     SessionKind::Agent,
                     self.keymap.label(Command::SplitAgent),
+                    self.starting_pane,
+                    now,
                     theme,
                     cx,
                 ))
@@ -9974,6 +9983,8 @@ impl Shell {
                     "+ Shell",
                     SessionKind::Shell,
                     self.keymap.label(Command::SplitShell),
+                    self.starting_pane,
+                    now,
                     theme,
                     cx,
                 ))
@@ -16735,8 +16746,9 @@ impl Shell {
                 None,
             )
             .flex_1()
-            .child(
-                div()
+            .child(match self.starting_pane {
+                Some(kind) => starting_button("empty-starting", kind, now, theme, true),
+                None => div()
                     .flex()
                     .gap(px(space::S))
                     .child(
@@ -16753,8 +16765,9 @@ impl Shell {
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
                             })),
-                    ),
-            );
+                    )
+                    .into_any_element(),
+            });
         }
         let focused = tabs.active().and_then(|tab| tab.focused());
         let rects = tabs.active().map(Tab::rects).unwrap_or_default();
@@ -17315,15 +17328,25 @@ fn notice(color: u32, text: String) -> gpui::Div {
         .child(text)
 }
 
-/// A quiet button starting a new agent or shell pane; `keys` = its shortcut label.
+/// A quiet button starting a new agent or shell pane; `keys` = its shortcut label. While a
+/// pane of `starting` kind is starting, that kind's button shows the loading mark and the other
+/// fades out (one start at a time).
+#[allow(clippy::too_many_arguments)]
 fn new_pane_button(
     id: &'static str,
     label: &'static str,
     kind: SessionKind,
     keys: String,
+    starting: Option<SessionKind>,
+    now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
-) -> gpui::Stateful<gpui::Div> {
+) -> gpui::AnyElement {
+    match starting {
+        Some(started) if started == kind => return starting_button(id, kind, now, theme, false),
+        Some(_) => return disabled_button(id, label, theme, false).into_any_element(),
+        None => {}
+    }
     let tip = match kind {
         SessionKind::Agent => "New pane with the workspace's default agent",
         SessionKind::Shell => "New pane with the workspace's default shell",
@@ -17335,6 +17358,32 @@ fn new_pane_button(
             shell.show_view(View::Terminals, window, cx);
             shell.new_pane(kind, Axis::Vertical, window, cx);
         }))
+        .into_any_element()
+}
+
+/// The button of a pane being started: "Starting agent" with the `working` dots, no click.
+fn starting_button(
+    id: &'static str,
+    kind: SessionKind,
+    now: i64,
+    theme: &Theme,
+    primary: bool,
+) -> gpui::AnyElement {
+    let label = match kind {
+        SessionKind::Agent => "Starting agent",
+        SessionKind::Shell => "Starting shell",
+    };
+    let color = if primary {
+        theme.on_accent
+    } else {
+        theme.text_muted
+    };
+    disabled_button(id, label, theme, primary)
+        .opacity(opacity::FULL)
+        .gap(px(space::S))
+        .cursor(CursorStyle::OperationNotAllowed)
+        .child(working_dots(now, rgb(color)))
+        .into_any_element()
 }
 
 /// The repositories of `project_id` and each one's Working-mode status. Asking `git.repos`
@@ -20309,9 +20358,17 @@ fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement
             .child(status::icon(state))
             .into_any_element();
     }
+    mark.child(working_dots(now, color)).into_any_element()
+}
+
+/// The `working` mark's three dots taking turns, lit per [`theme::STATUS_TICK`].
+fn working_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
     let lit = status::working_dot(now);
-    mark.gap(theme::rems_px(theme::STATUS_DOT_GAP))
-        .children((0..status::WORKING_DOTS).map(|i| {
+    div()
+        .flex()
+        .items_center()
+        .gap(theme::rems_px(theme::STATUS_DOT_GAP))
+        .children((0..status::WORKING_DOTS).map(move |i| {
             div()
                 .size(theme::rems_px(theme::STATUS_DOT))
                 .rounded_full()
@@ -20322,7 +20379,6 @@ fn status_mark(state: SessionState, now: i64, theme: &Theme) -> gpui::AnyElement
                     opacity::STATUS_DOT_DIM
                 })
         }))
-        .into_any_element()
 }
 
 /// The Mkrew logo glyph for the current appearance (`icon/mkrew-1-lanes/glyph-*.svg`): the dark
@@ -20520,7 +20576,7 @@ impl Render for Shell {
                 el.key_context(FILES_CONTEXT)
             })
             .on_action(cx.listener(Self::run))
-            .child(self.render_title_bar(self.view(), &theme, window, cx))
+            .child(self.render_title_bar(self.view(), now, &theme, window, cx))
             .child(
                 div()
                     .flex_1()

@@ -15,6 +15,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-10 "Starting agent" loading mark
+
+- [ ] **Loading mark (dark and light):** + Agent (title bar), New agent (empty tab) and
+  Ctrl+Shift+A / Alt+Shift+A: until the pane shows, the clicked button reads `Starting agent`
+  with the three working dots taking turns, the other (+ Shell) is faded; clicking again or the
+  shortcut does not start a second agent. Same with + Shell (`Starting shell`). A spawn error
+  (e.g. rename the agent's exe) brings the buttons back with the error in the tab bar.
+- [ ] **Faster cold start (optional, admin):** most of the ~2 s is Windows Defender scanning the
+  225 MB `omp.exe` / 260 MB `claude.exe` on their first start (measured: 1.6 s first spawn, 11 ms
+  after). `Add-MpPreference -ExclusionProcess omp.exe,claude.exe` cuts it, at some security cost.
+
 ### To verify — 2026-10-10 file viewer scroll bar and large files (plan docs/superpowers/plans/2026-10-10-file-viewer-scroll.md)
 
 - [ ] **Editor bar (dark and light):** open a long source file in Files. A thin rounded thumb
