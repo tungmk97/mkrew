@@ -68,6 +68,9 @@ pub fn keys(marked: &Cell<usize>, text: &str, mark: bool) -> Vec<Keystroke> {
 
 /// A field's key handler, e.g. `Shell::composer_key_down`.
 pub type OnKey<V> = fn(&mut V, &KeyDownEvent, &mut Window, &mut Context<'_, V>);
+/// The field whose input handler was registered on the last paint while focused, with its key
+/// handler: voice text (SPEC §20G) is typed there the same way an IME commit is.
+pub type FocusedField<V> = Rc<RefCell<Option<(FocusHandle, OnKey<V>)>>>;
 
 /// The input handler of one focused field: feeds `view`'s `on_key`.
 pub struct Typing<V: 'static> {

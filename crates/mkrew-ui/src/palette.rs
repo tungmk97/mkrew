@@ -230,6 +230,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
         Command::ToggleInspector => "View: Toggle session panel".into(),
+        Command::VoiceInput => "Global: Voice input (start / stop)".into(),
     }
 }
 
@@ -247,7 +248,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ToggleTheme
         | Command::ToggleFullScreen
         | Command::ToggleSidebar
-        | Command::ToggleCompactSidebar => true,
+        | Command::ToggleCompactSidebar
+        | Command::VoiceInput => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -847,7 +849,8 @@ mod tests {
                 Command::ToggleTheme,
                 Command::ToggleFullScreen,
                 Command::ToggleSidebar,
-                Command::ToggleCompactSidebar
+                Command::ToggleCompactSidebar,
+                Command::VoiceInput
             ]
         );
         assert_eq!(extras(&none), []);

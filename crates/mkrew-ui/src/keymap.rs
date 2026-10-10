@@ -126,6 +126,9 @@ pub enum Command {
     /// Show or hide the session panel right of Terminals (SPEC §10); from another view it
     /// shows Terminals with the panel open.
     ToggleInspector,
+    /// Start recording the microphone, or stop and type the speech as text into the field or
+    /// terminal that has the keyboard (SPEC §20G).
+    VoiceInput,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -228,6 +231,7 @@ impl Command {
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
             Command::ToggleInspector,
+            Command::VoiceInput,
         ]);
         all
     }
@@ -301,6 +305,7 @@ impl Command {
             Command::ToggleSidebar => "toggle_sidebar".into(),
             Command::ToggleCompactSidebar => "toggle_compact_sidebar".into(),
             Command::ToggleInspector => "toggle_inspector".into(),
+            Command::VoiceInput => "voice_input".into(),
         }
     }
 
@@ -379,6 +384,7 @@ impl Command {
             Command::ToggleSidebar => "ctrl-shift-b".into(),
             Command::ToggleCompactSidebar => "ctrl-alt-b".into(),
             Command::ToggleInspector => "ctrl-shift-y".into(),
+            Command::VoiceInput => "ctrl-shift-d".into(),
         }
     }
 
@@ -776,6 +782,10 @@ mod tests {
         assert_eq!(keymap.label(Command::ToggleInspector), "Ctrl+Shift+Y");
         // Global: also while a terminal has focus (it must not reach the agent).
         assert_eq!(Command::ToggleInspector.context(), None);
+        assert_eq!(bound("ctrl-shift-d"), Some(Command::VoiceInput));
+        assert_eq!(keymap.label(Command::VoiceInput), "Ctrl+Shift+D");
+        // Global: it must reach the shell while a terminal or a text field has the keyboard.
+        assert_eq!(Command::VoiceInput.context(), None);
         assert_eq!(Command::OpenKeymapSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),

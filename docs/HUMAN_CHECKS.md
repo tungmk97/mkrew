@@ -15,6 +15,33 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-10 voice input (plan docs/superpowers/plans/2026-10-10-voice-input.md)
+
+- [ ] **Setup:** run `setx GROQ_API_KEY gsk_…` in a terminal, then quit and restart Mkrew. In
+  Windows Settings → Privacy → Microphone, "Let desktop apps access your microphone" is on.
+- [ ] **Composer:** open the composer (Ctrl+Shift+Enter) and press Ctrl+Shift+D. The status bar
+  shows `● 0:01 · Ctrl+Shift+D stops`, counting up. Say "Sửa lỗi đăng nhập rồi chạy test lại".
+  Press Ctrl+Shift+D: the status bar shows `◌ Transcribing…`. Then the Vietnamese text, with
+  diacritics, appears at the end of the draft and the status item disappears.
+- [ ] **Accented English and mixed:** repeat with "Please refactor the login handler and add a
+  test", then "Commit cái này rồi push lên branch main". English words stay English.
+- [ ] **Terminal:** focus an agent pane and dictate a sentence. It appears in the agent's input
+  as one paste and is **not** sent (no Enter).
+- [ ] **Other fields:** dictate into the task dialog prompt, the Git commit box, the sidebar
+  filter and the Files editor. The text lands in the focused one.
+- [ ] **No target:** focus the Git file list and dictate. Nothing is staged or toggled, and the
+  status bar says the text is on the clipboard. Ctrl+V pastes it into any field.
+- [ ] **Slips:** press Ctrl+Shift+D twice quickly → `✕ Voice: too short…`. Record 3 s of silence
+  → `✕ Voice: heard nothing…`. Nothing is typed in either case.
+- [ ] **Errors:** run `setx GROQ_API_KEY ""` and restart → `✕ Voice: set the GROQ_API_KEY
+  environment variable…`, and no recording starts. A wrong key gives `✕ Voice: HTTP 401: Invalid
+  API Key`. With Wi-Fi off: `✕ Voice: cannot reach …`.
+- [ ] **Auto stop:** set `[voice] max_seconds = 5` in settings.toml, start recording and keep
+  talking. After 5 s it stops and transcribes by itself.
+- [ ] **Other provider:** set `[voice] base_url = "https://api.openai.com/v1"`,
+  `model = "gpt-4o-mini-transcribe"` and `api_key_env = "OPENAI_API_KEY"` (with that variable
+  set). Voice input works the same.
+
 ### To verify — 2026-10-10 "Starting agent" loading mark
 
 - [ ] **Loading mark (dark and light):** + Agent (title bar), New agent (empty tab) and
@@ -1290,6 +1317,11 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- 2026-10-10 voice input (ADR 0045): a toggle (press, then press again) instead of
+  hold-to-talk, because the UI has no key-up handling. Shortcut Ctrl+Shift+D. The key is read
+  from an environment variable, never from settings.toml. The language is detected per
+  recording. The text goes to whatever has the keyboard when it arrives, else to the clipboard.
+  Override in keymap.toml / `[voice]`.
 - (compact sidebar) **Rail details:** key Ctrl+Alt+B (Ctrl+Shift+B stays hide/show); icon
   `⇤` / `⇥` in the status bar next to `◧`; width 56 px scaled with the font size; entering the rail
   clears the filter and chip; no hover peek on the rail (the tooltip replaces it, keyboard peek

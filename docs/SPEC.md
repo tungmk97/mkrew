@@ -67,7 +67,9 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 - Not an IDE: no LSP, completion or multi-cursor. The Files view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
 - No mobile app, cloud sync or user accounts.
 - No GitHub/Linear integration in v1.
-- Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed.
+- Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed. One exception:
+  voice input (§20G) sends a recording the user started to the speech-to-text API they configured
+  (ADR 0045).
 
 **Naming**
 
@@ -170,6 +172,8 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | File walking | `ignore` | respects .gitignore (M7) |
 | Fuzzy matching | `nucleo-matcher` | quick open files (M7) |
 | Diff | `similar` | |
+| Microphone | `cpal` | voice input (§20G); WASAPI on Windows, ALSA on Linux |
+| HTTPS client | `ureq` (rustls) | voice input speech to text (§20G) |
 | Errors | `thiserror` (libs), `anyhow` (bins) | |
 | Logging | `tracing`, `tracing-subscriber`, `tracing-appender` | |
 | Tests | `insta`, `tempfile` | |
@@ -1094,6 +1098,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
+| Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -1810,3 +1815,29 @@ ALTER TABLE task ADD COLUMN fanout_of TEXT REFERENCES task(id);
   that HEAD, branch, index and untouched files are unchanged.
 - No test calls the network or a real agent: keep-awake through the fake `Inhibitor`, usage
   through fixture transcripts.
+
+### §20G Voice input (outside the milestones, ADR 0045)
+
+Speak instead of typing, in Vietnamese or English (mixed and accented speech included).
+
+1. **Start / stop.** `Voice input` (Ctrl+Shift+D, palette "Global: Voice input (start / stop)")
+   records the default microphone, and the same key stops it. It works everywhere, also while a
+   terminal, a text field or a dialog has the keyboard. A recording stops by itself after
+   `[voice] max_seconds` (§20.0). While transcribing, the key does nothing.
+2. **Status bar.** `● m:ss · Ctrl+Shift+D stops` while recording, `◌ Transcribing…` while
+   waiting, nothing after success. Errors and notes (`✕ Voice: …`) stay until the next start.
+3. **Speech to text.** One `POST {base_url}/audio/transcriptions` (OpenAI-compatible: Groq by
+   default, OpenAI, or a local server) carries the recording as 16-bit mono WAV in multipart form
+   data, with `model`, `response_format=json`, `temperature=0`, and `language` / `prompt` when set.
+   The timeout is 60 s. The key is read from the environment variable that `api_key_env` names
+   (never from `settings.toml`) and sent as `Authorization: Bearer`; an empty `api_key_env` sends
+   no key. Recordings under 0.3 s, or with a peak under 1 % of full scale, are not sent ("too
+   short", "heard nothing"), because Whisper invents text for silence. API errors show the API's
+   `error.message`.
+4. **Where the text goes.** Whitespace collapses to single spaces, because a line break would be
+   Enter and send the text to an agent. When the text arrives, it is typed into the text field
+   that has the keyboard exactly like an IME commit (every field of §13 and the Files editor). If
+   a terminal pane has focus instead, it is pasted there like a paste (bracketed when the program
+   asked for it, never followed by Enter). If neither has focus, it goes to the clipboard and the
+   status bar says so.
+5. Nothing is recorded or sent unless the user starts a recording, and audio is never stored.

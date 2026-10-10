@@ -83,6 +83,7 @@ use mkrew_ui::scrollbar;
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::Axis;
 use mkrew_ui::status;
+use mkrew_ui::stt;
 use mkrew_ui::tabs::{Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, tab_kind};
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
@@ -94,6 +95,7 @@ use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
 use mkrew_ui::usage::{self, ContextShare, Usages};
+use mkrew_ui::voice;
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
 use mkrew_ui::worktree_target;
@@ -371,6 +373,10 @@ struct Shell {
     composer_focus: FocusHandle,
     /// Composing IME chars typed into the focused field so far (see `mkrew_ui::ime`).
     ime_marked: Rc<ime::Composing<FocusHandle>>,
+    /// The text field that had the keyboard at the last paint (voice input types there, §20G).
+    typing_target: ime::FocusedField<Shell>,
+    /// Voice input (§20G).
+    voice: voice::State,
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
@@ -572,7 +578,8 @@ impl Shell {
                         shell.view() == View::Board
                             && shell.board.redraw_due(project_id, sessions, last, now)
                     });
-                    let due = board_due || shell.starting_pane.is_some();
+                    let recording = matches!(shell.voice, voice::State::Recording { .. });
+                    let due = board_due || shell.starting_pane.is_some() || recording;
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -772,6 +779,8 @@ impl Shell {
             drop_hover: None,
             composer_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
+            typing_target: Rc::default(),
+            voice: voice::State::default(),
             composer_scroll: ScrollHandle::new(),
             views: HashMap::new(),
             docs: HashMap::new(),
@@ -4561,7 +4570,7 @@ impl Shell {
         on_key: ime::OnKey<Self>,
         cx: &Context<'_, Self>,
     ) -> impl IntoElement + use<> {
-        typing_input(focus, on_key, &self.ime_marked, cx)
+        typing_input(focus, on_key, &self.ime_marked, &self.typing_target, cx)
     }
 
     fn focus_pane(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -7231,6 +7240,12 @@ impl Shell {
 
     /// A shortcut (SPEC §13). Terminal commands (paste) are handled by the focused pane.
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // Voice input types into the field that has the keyboard, so it acts before the
+        // focused-field checks below hand the key to that field, and before anything moves
+        // the focus (§20G).
+        if *command == Command::VoiceInput {
+            return self.toggle_voice(window, cx);
+        }
         // A shortcut ends every open popover (they never own the keyboard).
         self.close_menus();
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
@@ -7480,6 +7495,8 @@ impl Shell {
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),
             Command::ToggleInspector => self.toggle_inspector(window, cx),
+            // Handled at the top of `run`.
+            Command::VoiceInput => {}
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
@@ -7562,6 +7579,128 @@ impl Shell {
             Command::FindInFile => self.open_file_find(false, window, cx),
             Command::ReplaceInFile => self.open_file_find(true, window, cx),
         }
+    }
+
+    /// Voice input (§20G): start recording, or stop it; the text arrives in `voice_text`.
+    fn toggle_voice(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        match self.voice {
+            // Leaving `Recording` drops its `Stop`: the clip comes to the task started below.
+            voice::State::Recording { .. } => {
+                self.voice = voice::State::Transcribing;
+                cx.notify();
+                return;
+            }
+            voice::State::Transcribing => return,
+            voice::State::Idle | voice::State::Message(_) => {}
+        }
+        // Read per start: a hand edit of `[voice]` applies to the next recording.
+        let settings = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .voice;
+        let key = match stt::api_key(&settings, |name| std::env::var(name).ok()) {
+            Ok(key) => key,
+            Err(error) => {
+                self.voice = voice::State::Message(format!("✕ Voice: {error:#}"));
+                cx.notify();
+                return;
+            }
+        };
+        let (stop, clip) = voice::record(Duration::from_secs(u64::from(settings.max_seconds)));
+        self.voice = voice::State::Recording {
+            since: Instant::now(),
+            stop,
+        };
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let wav = clip
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("the microphone thread stopped")))
+                .and_then(voice::Clip::into_wav);
+            let wav = match wav {
+                Ok(wav) => wav,
+                Err(error) => {
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.voice = voice::State::Message(format!("✕ Voice: {error:#}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            // Also reached when `max_seconds` ended the recording.
+            let _ = this.update(cx, |shell, cx| {
+                shell.voice = voice::State::Transcribing;
+                cx.notify();
+            });
+            let text = cx
+                .background_executor()
+                .spawn(async move { stt::transcribe(&settings, key.as_deref(), &wav) })
+                .await;
+            let _ = this.update_in(cx, |shell, window, cx| shell.voice_text(text, window, cx));
+        })
+        .detach();
+    }
+
+    /// Where a transcript goes: the field or terminal with the keyboard, else the clipboard.
+    fn voice_text(
+        &mut self,
+        text: anyhow::Result<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.voice = match text {
+            Err(error) => voice::State::Message(format!("✕ Voice: {error:#}")),
+            Ok(text) if text.is_empty() => voice::State::Message("Voice: heard nothing".into()),
+            Ok(text) => {
+                if self.type_voice_text(&text, window, cx) {
+                    voice::State::Idle
+                } else {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    voice::State::Message(
+                        "Voice: no text field has the keyboard; the text is on the clipboard"
+                            .into(),
+                    )
+                }
+            }
+        };
+        cx.notify();
+    }
+
+    /// Types `text` into the text field that has the keyboard (like an IME commit) or into the
+    /// focused terminal pane (one paste, never Enter). False when neither has focus: nothing is
+    /// typed, so bare-key shortcuts (Git list) never fire.
+    fn type_voice_text(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let field = self
+            .typing_target
+            .borrow()
+            .clone()
+            .filter(|(focus, _)| focus.is_focused(window));
+        if let Some((_, on_key)) = field {
+            for keystroke in ime::keys(&Cell::new(0), text, false) {
+                let event = KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                    prefer_character_input: false,
+                };
+                on_key(self, &event, window, cx);
+            }
+            return true;
+        }
+        let pane = self
+            .panes
+            .values()
+            .find(|pane| pane.read(cx).has_focus(window, cx))
+            .cloned();
+        if let Some(pane) = pane {
+            pane.update(cx, |pane, cx| pane.type_text(text, cx));
+            return true;
+        }
+        false
     }
 
     fn cycle_workspace(&mut self, offset: isize, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -9056,6 +9195,27 @@ impl Shell {
                     .child(label)
             });
 
+        // Voice input (§20G): recording time, transcribing, or the last outcome.
+        let voice_status = match &self.voice {
+            voice::State::Idle => None,
+            voice::State::Recording { since, .. } => {
+                let seconds = since.elapsed().as_secs();
+                Some(notice(
+                    theme.status_needs_input,
+                    format!(
+                        "● {}:{:02} · {} stops",
+                        seconds / 60,
+                        seconds % 60,
+                        self.keymap.label(Command::VoiceInput)
+                    ),
+                ))
+            }
+            voice::State::Transcribing => {
+                Some(notice(theme.text_muted, "◌ Transcribing…".to_owned()))
+            }
+            voice::State::Message(text) => Some(notice(theme.text_muted, text.clone())),
+        };
+
         let agent = self
             .focused_session()
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
@@ -9080,6 +9240,7 @@ impl Shell {
             .child(compact_toggle)
             .child(inbox)
             .children(git)
+            .children(voice_status)
             .child(
                 div()
                     .flex_1()
@@ -10762,6 +10923,7 @@ impl Shell {
             follow_up_focus: &self.follow_up_focus,
             follow_up_scroll: &self.follow_up_scroll,
             ime_marked: &self.ime_marked,
+            typing_target: &self.typing_target,
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
             conflicts: &self.conflicts,
@@ -17751,12 +17913,22 @@ fn typing_input(
     focus: &FocusHandle,
     on_key: ime::OnKey<Shell>,
     marked: &Rc<ime::Composing<FocusHandle>>,
+    typing_target: &ime::FocusedField<Shell>,
     cx: &Context<'_, Shell>,
 ) -> impl IntoElement + use<> {
-    let (focus, view, marked) = (focus.clone(), cx.entity(), marked.clone());
+    let (focus, view, marked, typing_target) = (
+        focus.clone(),
+        cx.entity(),
+        marked.clone(),
+        typing_target.clone(),
+    );
     canvas(
         |_, _, _| (),
         move |bounds, (), window, cx| {
+            // Voice input types into the field that has the keyboard (§20G).
+            if focus.is_focused(window) {
+                typing_target.replace(Some((focus.clone(), on_key)));
+            }
             let typing = ime::Typing {
                 view,
                 on_key,
@@ -19340,6 +19512,8 @@ struct CardContext<'a> {
     follow_up_scroll: &'a ScrollHandle,
     /// Composing IME chars of the follow-up field (see [`Shell::typing`]).
     ime_marked: &'a Rc<ime::Composing<FocusHandle>>,
+    /// See [`Shell::typing`].
+    typing_target: &'a ime::FocusedField<Shell>,
     /// The follow-up field has the keyboard (shows its caret).
     follow_up_focused: bool,
     /// Shortcut label of Run on the selected card.
@@ -20137,6 +20311,7 @@ fn follow_up_field(
                 cards.follow_up_focus,
                 Shell::follow_up_key_down,
                 cards.ime_marked,
+                cards.typing_target,
                 cx,
             ))
     });
