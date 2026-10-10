@@ -260,6 +260,15 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   worktree). "Open in Zed" opens Zed on the file or folder (an error shows in the sidebar if `zed`
   is missing). A click outside closes the menu; right-clicking another row moves it. Right-click
   a workspace in the sidebar → "Open in File Explorer" opens its folder.
+- [ ] **Files menu actions (dark and light):** right-click a folder → "New file…": a field
+  `New file in <folder>/` shows over the tree; type `a/b.txt`, Enter → `b.txt` exists in
+  `<folder>/a`, is open in the editor and selected in the tree. On a file row the entry goes next
+  to the file; on the blank part, in the root. "New folder…" → the folder shows open and selected.
+  Esc cancels; a blank name or clicking away with nothing typed creates nothing; an existing name
+  or `..` shows an error in the sidebar. "Copy path" → the absolute path (backslashes on Windows)
+  pastes in Zed. "Add to .gitignore" on a row → `.gitignore` gets `/path` (`/path/` for a
+  folder) once, the row disappears (or turns muted with Show ignored). Not offered on the blank
+  part. With a task worktree chosen, everything happens in the worktree.
 - [ ] **Ctrl+Click links:** in an agent pane or a shell, `echo https://example.com/a?b=1.` then
   hold Ctrl over the URL: underline + hand pointer, only on the URL (not the final `.`); Ctrl+Click
   opens the browser. `echo crates/mkrew-ui/src/main.rs:120:5` (and `.\Cargo.toml`, and an absolute

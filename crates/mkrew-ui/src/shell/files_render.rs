@@ -164,10 +164,61 @@ impl Shell {
                         self.target_chooser(project_id, view.worktree_task_id, false, theme, cx)
                             .map(|chooser| chooser.px(px(space::S)).pb(px(space::S))),
                     )
+                    .children(self.render_new_entry(project_id, view.worktree_task_id, theme, cx))
                     .child(tree),
             )
             .child(self.render_file(project_id, view, window, theme, cx))
             .into_any_element()
+    }
+
+    /// "New file…" / "New folder…": where it goes, then the name field (Enter creates, Esc
+    /// cancels). Shown over the tree of the view it was asked in.
+    pub(crate) fn render_new_entry(
+        &self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::Div> {
+        let renaming = self.renaming.as_ref()?;
+        let RenameTarget::NewEntry(entry) = &renaming.target else {
+            return None;
+        };
+        if entry.project_id != project_id || entry.target != target {
+            return None;
+        }
+        let kind = if entry.folder { "folder" } else { "file" };
+        let place = if entry.dir.is_empty() {
+            String::new()
+        } else {
+            format!(" in {}/", entry.dir)
+        };
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .px(px(space::S))
+                .pb(px(space::S))
+                // Mouse downs stay in the field: the blur would create a half-typed name.
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .child(format!(
+                            "New {kind}{place} · Enter to create, Esc to cancel"
+                        )),
+                )
+                .child(self.render_rename(&renaming.draft, theme, cx)),
+        )
     }
 
     /// The opened file: its path (with `●` while unsaved), Save, Review in Docs (Markdown) and

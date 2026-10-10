@@ -109,10 +109,10 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ends the inline edit: `commit` sends `tab.rename` / `session.rename`; the reply shows
-    /// at once, the `tab.updated` / `session.updated` event tells other clients. Unchanged
-    /// drafts and blank tab titles are dropped (a blank pane title clears it). Focus goes
-    /// back to the pane.
+    /// Ends the inline edit: `commit` sends `tab.rename` / `session.rename` (or creates the
+    /// Files tree's new entry); the reply shows at once, the `tab.updated` / `session.updated`
+    /// event tells other clients. Unchanged drafts and blank tab titles are dropped (a blank
+    /// pane title clears it). Focus goes back to the pane (the tree for a new entry).
     pub(crate) fn finish_rename(
         &mut self,
         commit: bool,
@@ -122,16 +122,22 @@ impl Shell {
         let Some(Renaming { target, draft }) = self.renaming.take() else {
             return;
         };
+        let files = matches!(target, RenameTarget::NewEntry(_));
         if commit {
             match target {
                 RenameTarget::Tab(tab_id) => self.rename_tab(tab_id, &draft, window, cx),
                 RenameTarget::Session(session_id) => {
                     self.rename_session(session_id, &draft, window, cx);
                 }
+                RenameTarget::NewEntry(entry) => self.create_entry(entry, &draft, window, cx),
             }
         }
         if self.rename_focus.is_focused(window) {
-            self.focus_pane(window, cx);
+            if files {
+                window.focus(&self.files_focus, cx);
+            } else {
+                self.focus_pane(window, cx);
+            }
         }
         cx.notify();
     }

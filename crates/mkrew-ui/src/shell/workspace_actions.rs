@@ -254,6 +254,112 @@ impl Shell {
         cx.notify();
     }
 
+    /// "New file…" / "New folder…" on a Files path: the name field opens over the tree.
+    pub(crate) fn start_new_entry(
+        &mut self,
+        entry: NewEntry,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.file_menu = None;
+        self.renaming = Some(Renaming {
+            target: RenameTarget::NewEntry(entry),
+            draft: Input::default(),
+        });
+        window.focus(&self.rename_focus, cx);
+        cx.notify();
+    }
+
+    /// The name field was committed: creates the entry, then shows it (a new file opens in
+    /// the editor). A blank name does nothing; a failure shows in the sidebar.
+    pub(crate) fn create_entry(
+        &mut self,
+        entry: NewEntry,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let NewEntry {
+            project_id,
+            target,
+            dir,
+            folder,
+        } = entry;
+        if name.trim().is_empty() {
+            return;
+        }
+        let Some(root) = self.target_file(project_id, target, "") else {
+            return;
+        };
+        let path = match file_ops::create(&root, &dir, name, folder) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!(%project_id, "new file / folder failed: {error}");
+                self.sidebar_error = Some(error);
+                return;
+            }
+        };
+        self.sidebar_error = None;
+        if self.files_at(project_id, target).is_none() {
+            return;
+        }
+        self.refresh_files(project_id, window, cx);
+        if folder {
+            if let Some(view) = self.files_at(project_id, target) {
+                let requests = view.reveal_dir(&path);
+                self.files_requests(project_id, requests, window, cx);
+            }
+        } else {
+            self.open_revealed(project_id, target, path, None, window, cx);
+        }
+    }
+
+    /// "Copy path" on a Files path: its absolute path, native separators.
+    pub(crate) fn copy_file_path(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.file_menu = None;
+        if let Some(full) = self.target_file(project_id, target, path) {
+            cx.write_to_clipboard(ClipboardItem::new_string(full.display().to_string()));
+        }
+        cx.notify();
+    }
+
+    /// "Add to .gitignore" on a Files path: appended to the `.gitignore` of the folder the
+    /// view shows; the tree lists again (the entry hides unless ignored files are shown). A
+    /// failure shows in the sidebar.
+    pub(crate) fn ignore_file_path(
+        &mut self,
+        project_id: Ulid,
+        target: Option<Ulid>,
+        path: &str,
+        is_dir: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.file_menu = None;
+        let Some(root) = self.target_file(project_id, target, "") else {
+            return;
+        };
+        match file_ops::ignore(&root, path, is_dir) {
+            Ok(()) => {
+                self.sidebar_error = None;
+                if self.files_at(project_id, target).is_some() {
+                    self.refresh_files(project_id, window, cx);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%project_id, path, "add to .gitignore failed: {error}");
+                self.sidebar_error = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
     /// Ctrl+,: writes the commented `keymap.toml` template if the file is missing and opens it
     /// in Zed; a failure shows in the sidebar. Changes apply after a restart.
     pub(crate) fn open_keymap_settings(&mut self, cx: &mut Context<'_, Self>) {

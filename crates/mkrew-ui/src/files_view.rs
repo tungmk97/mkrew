@@ -385,6 +385,17 @@ impl FilesView {
         Requests { list, read }
     }
 
+    /// Opens folder `dir` and its parent folders (listed as needed) and moves the cursor to it
+    /// (a folder made by "New folder…").
+    pub fn reveal_dir(&mut self, dir: &str) -> Requests {
+        let mut list = Vec::new();
+        for (end, _) in dir.match_indices('/').chain([(dir.len(), "")]) {
+            list.extend(self.expand(&dir[..end]).list);
+        }
+        self.cursor = Some(dir.to_owned());
+        Requests { list, read: None }
+    }
+
     /// Puts the caret on the line [`Self::reveal`] was given, once the file is shown (call it
     /// after every read and after `reveal`). Returns the 0-based line to scroll to, clamped to
     /// the text; `None` while nothing is shown or nothing is pending.

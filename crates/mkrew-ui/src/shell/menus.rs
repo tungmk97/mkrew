@@ -192,16 +192,70 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let (project_id, target, is_dir) = (menu.project_id, menu.target, menu.is_dir);
-        let (explorer_path, zed_path) = (menu.path.clone(), menu.path.clone());
+        let path = SharedString::from(menu.path.clone());
+        let root = menu.path.is_empty();
         let item = |id: &'static str, label: &'static str| {
             menu_item(id.into(), theme)
                 .child(div().flex_1().text_color(rgb(theme.text)).child(label))
         };
+        let separator = || {
+            div()
+                .h(px(theme::BORDER_WIDTH))
+                .my(px(space::XS))
+                .bg(rgb(theme.border))
+        };
+        // In the folder clicked, or next to the file clicked.
+        let dir = if is_dir {
+            menu.path.as_str()
+        } else {
+            menu.path.rsplit_once('/').map_or("", |(dir, _)| dir)
+        };
+        let new_entry = |id: &'static str, label: &'static str, folder: bool| {
+            let entry = NewEntry {
+                project_id,
+                target,
+                dir: dir.to_owned(),
+                folder,
+            };
+            item(id, label).on_click(cx.listener(move |shell, _, window, cx| {
+                shell.start_new_entry(entry.clone(), window, cx);
+            }))
+        };
+        let (copy_path, ignore_path, explorer_path, zed_path) =
+            (path.clone(), path.clone(), path.clone(), path.clone());
         let panel = menu_panel("file-menu", theme)
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.file_menu = None;
                 cx.notify();
             }))
+            .child(new_entry("file-menu-new-file", "New file…", false))
+            .child(new_entry("file-menu-new-folder", "New folder…", true))
+            .child(separator())
+            .child(
+                item("file-menu-copy-path", "Copy path").on_click(cx.listener(
+                    move |shell, _, _, cx| {
+                        shell.copy_file_path(project_id, target, &copy_path, cx);
+                    },
+                )),
+            )
+            // The folder itself cannot ignore itself.
+            .when(!root, |panel| {
+                panel.child(
+                    item("file-menu-gitignore", "Add to .gitignore").on_click(cx.listener(
+                        move |shell, _, window, cx| {
+                            shell.ignore_file_path(
+                                project_id,
+                                target,
+                                &ignore_path,
+                                is_dir,
+                                window,
+                                cx,
+                            );
+                        },
+                    )),
+                )
+            })
+            .child(separator())
             .child(
                 item("file-menu-explorer", "Open in File Explorer").on_click(cx.listener(
                     move |shell, _, _, cx| {

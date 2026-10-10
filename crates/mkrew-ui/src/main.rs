@@ -52,6 +52,7 @@ use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
+use mkrew_ui::file_ops;
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
@@ -227,11 +228,24 @@ struct Chip<P> {
 }
 
 /// What the inline title field edits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RenameTarget {
     Tab(Ulid),
     /// A pane's session (`session.rename`).
     Session(Ulid),
+    /// The name of a new file or folder in the Files tree (SPEC §12A).
+    NewEntry(NewEntry),
+}
+
+/// Where the Files tree's "New file…" / "New folder…" creates its entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NewEntry {
+    project_id: Ulid,
+    /// The worktree the Files view showed (`None` = the project folder).
+    target: Option<Ulid>,
+    /// The folder, relative to that one (`""` = the folder itself).
+    dir: String,
+    folder: bool,
 }
 
 /// The inline title field: what it renames and the draft.
@@ -241,8 +255,8 @@ struct Renaming {
     draft: Input,
 }
 
-/// The right-click menu of a Files tree row or of the tree itself (SPEC §12A): Open in File
-/// Explorer, Open in Zed.
+/// The right-click menu of a Files tree row or of the tree itself (SPEC §12A): New file,
+/// New folder, Copy path, Add to .gitignore, Open in File Explorer, Open in Zed.
 struct FileMenu {
     project_id: Ulid,
     /// The worktree the Files view showed when the menu opened (`None` = the project folder).

@@ -985,8 +985,13 @@ Only edit this file. When done, for EACH comment run:
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - "Open in Zed" opens the file at the caret's line.
 - **Right-click menu** on tree rows (files and folders) and on the blank part of the tree (the
-  folder the view shows: the project, or the task worktree): "Open in File Explorer" and
-  "Open in Zed" (§10). A click outside closes it.
+  folder the view shows: the project, or the task worktree): "New file…" and "New folder…" (a
+  name field over the tree; Enter creates it in the folder clicked, or next to the file
+  clicked; `/` in the name makes subfolders; a new file opens, a new folder opens in the tree),
+  "Copy path" (absolute), "Add to .gitignore" (rows only: appends `/path` or `/path/` to the
+  shown folder's `.gitignore`, once), "Open in File Explorer" and "Open in Zed" (§10). The app
+  does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
+  in the sidebar. A click outside closes the menu.
 - **Open at a line:** Ctrl+Click on a file path in a terminal (§10) shows that file with the
   caret on the line, scrolled into view. A path in another task's worktree switches the view to
   that worktree (asking about unsaved text first).

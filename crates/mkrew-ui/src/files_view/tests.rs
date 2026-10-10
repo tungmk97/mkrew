@@ -126,6 +126,15 @@ fn revealing_a_file_opens_its_folders_and_shows_it() {
     assert_eq!(root.read.as_deref(), Some("README.md"));
 }
 
+#[test]
+fn revealing_a_folder_opens_it_and_its_parents() {
+    let mut view = listed();
+    let revealed = view.reveal_dir("src/app");
+    assert_eq!(revealed.list, ["src", "src/app"]);
+    assert_eq!(revealed.read, None);
+    assert_eq!(view.cursor.as_deref(), Some("src/app"));
+}
+
 /// Ctrl+Click on `README.md:3`: the caret goes to the line once the read answers.
 #[test]
 fn a_link_line_waits_for_the_read_and_puts_the_caret_there() {
