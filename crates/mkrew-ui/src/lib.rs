@@ -10,7 +10,8 @@
 //! syntax highlighting and quick open, the Git view-model and its base menu, the command
 //! palette, the turn summaries, the
 //! peek popover, the broadcast dialog, the Files / Git worktree target, fan-out and token
-//! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, and
+//! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
+//! input (microphone and speech to text), and
 //! the scroll bar of the Files editor and the Markdown preview.
 
 pub mod base_dialog;
@@ -66,6 +67,7 @@ pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;
 pub mod usage;
+pub mod voice;
 pub mod workspace_menu;
 pub mod worktree_dialog;
 pub mod worktree_target;

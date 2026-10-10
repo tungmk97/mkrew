@@ -19,6 +19,8 @@ anyhow = "1"
 futures-lite = "2"
 # Incoming events/output for the GPUI side; 2.x is already in the tree via gpui.
 async-channel = "2"
+# Microphone capture for voice input (SPEC §20G, ADR 0045): WASAPI on Windows, ALSA on Linux.
+cpal = "0.18.2"
 # gpui snapshot pinned by gpui-component 0.7 (ADR 0001); the platform crate provides `application()`.
 # `x11`/`wayland`: Linux windowing backends (off by default; without one the app panics at start).
 gpui = { package = "gpui-pre", version = "=0.3.7" }
