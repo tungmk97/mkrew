@@ -23,6 +23,32 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   right-aligned column; rows without a time keep the same title width. Existing titles update
   on the next title change of the agent.
 
+### To verify — 2026-10-10 compact sidebar (plan docs/superpowers/plans/2026-10-10-compact-sidebar.md)
+
+- [ ] **Toggle:** Ctrl+Alt+B (also with a terminal focused), the status bar's `⇤` and the palette's
+  "Global: Toggle compact sidebar" switch full width ↔ the rail; the icon flips `⇤` / `⇥` and its
+  tooltip "Compact sidebar" / "Expand sidebar" shows Ctrl+Alt+B; panes re-wrap. `◧` /
+  Ctrl+Shift+B still hide and show; hidden → Ctrl+Alt+B shows the rail; rail → hide → show
+  returns the rail. After a restart the sidebar is full width.
+- [ ] **Rail content (dark and light):** each workspace shows its avatar in its color, `?` in the
+  needs-input color while a session asks, else its working count; the active workspace and the
+  focused session are highlighted; session rows show the working dots / status glyph and the agent
+  chip; the `⇤` / `⇥` glyphs render (not boxes). Nothing is clipped at `[ui] font_size = 18`.
+- [ ] **Tooltips:** hover a session with a long title → `claude · <the full title>` and
+  `working · 2m` on a second line; a session without a title → agent and status only. Hover a
+  workspace → name, summary (if any) and folder. No peek opens on hover in the rail.
+- [ ] **Clicks and menus from the rail:** click a workspace → shown; click the shown one →
+  collapses/expands its sessions; right-click → the workspace menu opens fully visible; click a
+  session → its pane; right-click a session → the pane menu; `+` adds a workspace.
+- [ ] **Filter and keyboard:** type in the filter and pick `Working`, keep the filter focused, press
+  Ctrl+Alt+B → the filter text and chip are gone, every workspace shows and the open ones list
+  all their live sessions; typing goes to the focused terminal (not to
+  an invisible filter); same when clicking `⇤` instead. Ctrl+Shift+Space in the rail → the peek
+  opens beside the row and reply / Esc work.
+- [ ] **◧ with the filter focused:** type in the filter, click `◧` with the mouse → the sidebar
+  hides and typing goes to the focused terminal, and shortcuts (Ctrl+Shift+1, Ctrl+Alt+B) work
+  (before: the keyboard stayed in the hidden filter until a pane was clicked).
+
 ### To verify — 2026-10-10 inbox: redesign (plan docs/superpowers/plans/2026-10-10-inbox-redesign.md)
 
 - [ ] **Run colors:** in light and dark, with a workspace that has two run commands:
@@ -1222,6 +1248,12 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
 
 _Decisions the agent made on its own. Override them here if you disagree._
 
+- (compact sidebar) **Rail details:** key Ctrl+Alt+B (Ctrl+Shift+B stays hide/show); icon
+  `⇤` / `⇥` in the status bar next to `◧`; width 56 px scaled with the font size; entering the rail
+  clears the filter and chip; no hover peek on the rail (the tooltip replaces it, keyboard peek
+  stays); pin marks, times, `▶` and hover actions are left out (menus still reach Pin and the
+  workspace actions; removing a session needs the full sidebar); Ctrl+Alt+B is AltGr+B; no
+  workspaces = only `+`; not remembered across restarts. ADR 0040.
 - (T13.8b) **Compare and Pick:** "Compare" is an always-visible button on a group card once every
   child is in Review (accent when selected). The modal shows one column per child: agent, branch,
   run time, files changed and +/− since the child's checkpoint (`git.status` base mode on its

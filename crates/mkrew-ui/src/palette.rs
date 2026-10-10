@@ -228,6 +228,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
         Command::ToggleFullScreen => "Global: Toggle full screen".into(),
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
+        Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
         Command::ToggleInspector => "View: Toggle session panel".into(),
     }
 }
@@ -245,7 +246,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::OpenKeymapSettings
         | Command::ToggleTheme
         | Command::ToggleFullScreen
-        | Command::ToggleSidebar => true,
+        | Command::ToggleSidebar
+        | Command::ToggleCompactSidebar => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab
@@ -844,7 +846,8 @@ mod tests {
                 Command::OpenKeymapSettings,
                 Command::ToggleTheme,
                 Command::ToggleFullScreen,
-                Command::ToggleSidebar
+                Command::ToggleSidebar,
+                Command::ToggleCompactSidebar
             ]
         );
         assert_eq!(extras(&none), []);

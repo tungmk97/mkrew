@@ -120,6 +120,9 @@ pub enum Command {
     ToggleFullScreen,
     /// Hide or show the workspace sidebar (not remembered across restarts).
     ToggleSidebar,
+    /// Narrow the workspace sidebar to the compact rail, or widen it back (a hidden sidebar
+    /// comes back as the rail). Not remembered across restarts.
+    ToggleCompactSidebar,
     /// Show or hide the session panel right of Terminals (SPEC §10); from another view it
     /// shows Terminals with the panel open.
     ToggleInspector,
@@ -223,6 +226,7 @@ impl Command {
             Command::ToggleTheme,
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
+            Command::ToggleCompactSidebar,
             Command::ToggleInspector,
         ]);
         all
@@ -295,6 +299,7 @@ impl Command {
             Command::ToggleTheme => "toggle_theme".into(),
             Command::ToggleFullScreen => "toggle_full_screen".into(),
             Command::ToggleSidebar => "toggle_sidebar".into(),
+            Command::ToggleCompactSidebar => "toggle_compact_sidebar".into(),
             Command::ToggleInspector => "toggle_inspector".into(),
         }
     }
@@ -372,6 +377,7 @@ impl Command {
             Command::ToggleTheme => "ctrl-shift-j".into(),
             Command::ToggleFullScreen => "f11".into(),
             Command::ToggleSidebar => "ctrl-shift-b".into(),
+            Command::ToggleCompactSidebar => "ctrl-alt-b".into(),
             Command::ToggleInspector => "ctrl-shift-y".into(),
         }
     }
@@ -762,6 +768,10 @@ mod tests {
         assert_eq!(keymap.label(Command::ToggleSidebar), "Ctrl+Shift+B");
         // Global: it works while a terminal has focus.
         assert_eq!(Command::ToggleSidebar.context(), None);
+        assert_eq!(bound("ctrl-alt-b"), Some(Command::ToggleCompactSidebar));
+        assert_eq!(keymap.label(Command::ToggleCompactSidebar), "Ctrl+Alt+B");
+        // Global like Toggle sidebar: it works while a terminal has focus.
+        assert_eq!(Command::ToggleCompactSidebar.context(), None);
         assert_eq!(bound("ctrl-shift-y"), Some(Command::ToggleInspector));
         assert_eq!(keymap.label(Command::ToggleInspector), "Ctrl+Shift+Y");
         // Global: also while a terminal has focus (it must not reach the agent).

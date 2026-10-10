@@ -332,8 +332,9 @@ struct Shell {
     /// Why the last link / unlink of a session failed (a file that is not a readable `.md`),
     /// shown in that session's Plan card.
     plan_error: Option<(Ulid, String)>,
-    /// The sidebar is hidden (Toggle sidebar). Not remembered across restarts.
-    sidebar_hidden: bool,
+    /// Full width, compact rail or hidden (Toggle sidebar / Toggle compact sidebar). Not
+    /// remembered across restarts.
+    sidebar_layout: sidebar::Layout,
     /// Every workspace's task cards.
     board: Board,
     /// Why the last `task.list` failed, shown on the board.
@@ -740,7 +741,7 @@ impl Shell {
             usages: Usages::default(),
             plans: Plans::default(),
             plan_error: None,
-            sidebar_hidden: false,
+            sidebar_layout: sidebar::Layout::default(),
             inspector_open: false,
             inspector_width,
             inspector_dragging: false,
@@ -4762,7 +4763,7 @@ impl Shell {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.sidebar_hidden = false;
+        self.sidebar_layout.show();
         self.file_menu = None;
         self.workspace_menu = Some(WorkspaceMenu::new(project_id));
         cx.notify();
@@ -7283,9 +7284,12 @@ impl Shell {
             window.focus(&self.focus_handle, cx);
         }
         // Same for the sidebar filter while it has the keyboard, except the shortcuts that
-        // leave it (Peek, Toggle sidebar).
+        // leave it (Peek, Toggle sidebar, Toggle compact sidebar).
         if self.filter_focus.is_focused(window) {
-            if matches!(command, Command::Peek | Command::ToggleSidebar) {
+            if matches!(
+                command,
+                Command::Peek | Command::ToggleSidebar | Command::ToggleCompactSidebar
+            ) {
                 self.focus_pane(window, cx);
             } else {
                 cx.propagate();
@@ -7458,6 +7462,7 @@ impl Shell {
             Command::ToggleTheme => self.toggle_theme(window, cx),
             Command::ToggleFullScreen => window.toggle_fullscreen(),
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
+            Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),
             Command::ToggleInspector => self.toggle_inspector(window, cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
@@ -8078,11 +8083,31 @@ impl Shell {
         )
     }
 
-    /// Hiding also closes what only the sidebar draws (the peek, the workspace menu), so the
-    /// keyboard never stays in an invisible peek.
+    /// Hiding also closes what only the sidebar draws (the peek, the workspace menu) and takes
+    /// the keyboard out of the filter box, so it never stays in something invisible (the `◧`
+    /// click does not pass `Shell::run`'s filter guard). Showing brings back the last width.
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.sidebar_hidden = !self.sidebar_hidden;
-        if self.sidebar_hidden {
+        self.sidebar_layout.toggle_hidden();
+        if self.sidebar_layout.hidden() {
+            if self.filter_focus.is_focused(window) {
+                self.focus_pane(window, cx);
+            }
+            self.close_peek(window, cx);
+            self.workspace_menu = None;
+        }
+        cx.notify();
+    }
+
+    /// Full width ↔ compact rail; a hidden sidebar comes back as the rail. The rail draws no
+    /// filter box or chips, so entering it clears them (nothing stays narrowed unseen) and the
+    /// keyboard leaves the filter box. A peek or menu hung on a full-width row closes.
+    fn toggle_compact_sidebar(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.sidebar_layout.toggle_compact();
+        if self.sidebar_layout.compact() {
+            if self.filter_focus.is_focused(window) {
+                self.focus_pane(window, cx);
+            }
+            self.sidebar.clear_filter();
             self.close_peek(window, cx);
             self.workspace_menu = None;
         }
@@ -8129,7 +8154,7 @@ impl Shell {
             self.sidebar.reveal(project_id);
         }
         let had_keyboard = self.peek.as_ref().is_some_and(|peek| peek.focused);
-        self.sidebar_hidden = false;
+        self.sidebar_layout.show();
         self.peek = Some(Peek::new(session_id, focused || had_keyboard));
         if focused && !had_keyboard {
             self.take_peek_focus(window, cx);
@@ -8726,22 +8751,12 @@ impl Shell {
                         if !sessions.is_empty() {
                             list.push(guide(std::mem::take(&mut sessions)));
                         }
-                        let active = self.workspace == Some(row.project_id);
-                        let menu = self
-                            .workspace_menu
-                            .as_ref()
-                            .filter(|menu| menu.project_id == row.project_id);
-                        let summary = self.run_summary(row.project_id);
+                        let (project_id, active) =
+                            (row.project_id, self.workspace == Some(row.project_id));
+                        let summary = self.run_summary(project_id);
                         let run_tip = summary.any_live().then(|| summary.tooltip());
                         let row = workspace_row(row, active, run_tip, theme, cx);
-                        list.push(match menu {
-                            // The menu drops down from below its row.
-                            Some(menu) => div()
-                                .child(row)
-                                .child(self.render_workspace_menu(menu, theme, cx))
-                                .into_any_element(),
-                            None => row,
-                        });
+                        list.push(self.with_workspace_menu(row, project_id, theme, cx));
                     }
                     Row::Session(row) => {
                         let (selected, session_id) =
@@ -8811,7 +8826,101 @@ impl Shell {
             )
     }
 
-    /// The status bar (SPEC §10): sidebar toggle, Inbox state, git HEAD; then the focused agent
+    /// The compact rail (Toggle compact sidebar): per workspace its avatar, per open workspace
+    /// its sessions' status marks and agent chips; each row's tooltip spells out the rest. Same
+    /// rows, clicks, right-click menus and keyboard peek as the full sidebar; no filter, chips
+    /// or hover peek (the tooltip replaces it). Without workspaces only `+` shows.
+    fn render_compact_sidebar(
+        &self,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let shown = self.focused_session();
+        let header = div()
+            .flex_none()
+            .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(self.connection.is_some(), |header| {
+                header.child(
+                    icon_button("add-workspace", "+", theme)
+                        .tooltip(tooltip(
+                            theme,
+                            "Add workspace",
+                            self.keymap.label(Command::AddWorkspace),
+                        ))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.add_workspace(window, cx);
+                        })),
+                )
+            });
+        // An error is too long for the rail: its mark, with the text on hover.
+        let mut list = Vec::new();
+        for (i, error) in [&self.sidebar_error, &self.keymap_error]
+            .into_iter()
+            .enumerate()
+        {
+            if let Some(error) = error {
+                list.push(
+                    div()
+                        .id(SharedString::from(format!("sidebar-error-{i}")))
+                        .flex()
+                        .justify_center()
+                        .py(px(space::XS))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_muted))
+                        .tooltip(tooltip(theme, error, ""))
+                        .child("✕")
+                        .into_any_element(),
+                );
+            }
+        }
+        for row in self.sidebar.view(&self.viewed).rows {
+            match row {
+                Row::Workspace(row) => {
+                    let (project_id, active) =
+                        (row.project_id, self.workspace == Some(row.project_id));
+                    let row = compact_workspace_row(row, active, theme, cx);
+                    list.push(self.with_workspace_menu(row, project_id, theme, cx));
+                }
+                Row::Session(row) => {
+                    let session_id = row.session_id;
+                    let badge = self.agent_badge(&row.agent);
+                    let row =
+                        compact_session_row(row, badge, shown == Some(session_id), now, theme, cx);
+                    list.push(self.with_peek(row, session_id, now, theme, cx));
+                }
+                // The workspace's tooltip already shows it has nothing running (no summary).
+                Row::NoSessions { .. } => {}
+            }
+        }
+        div()
+            .flex_none()
+            .w(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH))
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(theme.sidebar))
+            .border_r(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .font_family(theme.ui_font_family.clone())
+            .child(header)
+            .child(
+                div()
+                    .id("sidebar")
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .px(px(space::XS))
+                    .overflow_y_scroll()
+                    .children(list),
+            )
+    }
+
+    /// The status bar (SPEC §10): sidebar toggles (hide, compact), Inbox state, git HEAD; then the focused agent
     /// pane's usage. Everything is read from state the shell already keeps: it never asks the
     /// daemon and has no timer (its elapsed time refreshes with the `STATUS_TICK` redraw).
     /// The last child is the right-panel toggle (`inspector_toggle`).
@@ -8829,7 +8938,7 @@ impl Shell {
             .hover(move |style| style.bg(rgb(hover)))
             .tooltip(tooltip(
                 theme,
-                if self.sidebar_hidden {
+                if self.sidebar_layout.hidden() {
                     "Show sidebar"
                 } else {
                     "Hide sidebar"
@@ -8838,6 +8947,30 @@ impl Shell {
             ))
             .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
             .child("◧")
+            .when(modal, |el| el.relative().child(inert_layer()));
+        // Full width ↔ compact rail (a hidden sidebar comes back as the rail).
+        let compact = self.sidebar_layout.compact();
+        let compact_toggle = div()
+            .id("toggle-compact-sidebar")
+            .flex_none()
+            .px(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .text_color(rgb(theme.text_muted))
+            .hover(move |style| style.bg(rgb(hover)))
+            .tooltip(tooltip(
+                theme,
+                if compact {
+                    "Expand sidebar"
+                } else {
+                    "Compact sidebar"
+                },
+                self.keymap.label(Command::ToggleCompactSidebar),
+            ))
+            .on_click(cx.listener(|shell, _, window, cx| {
+                shell.toggle_compact_sidebar(window, cx);
+            }))
+            .child(if compact { "⇥" } else { "⇤" })
             .when(modal, |el| el.relative().child(inert_layer()));
 
         let waiting = self.inbox_entries().len();
@@ -8900,6 +9033,7 @@ impl Shell {
             .font_family(theme.ui_font_family.clone())
             .text_size(font_size::META)
             .child(toggle)
+            .child(compact_toggle)
             .child(inbox)
             .children(git)
             .child(
@@ -9405,6 +9539,44 @@ impl Shell {
             )
             .into_any_element(),
         )
+    }
+
+    /// `row` with the workspace menu dropping down below it while the menu is open for
+    /// `project_id` (both sidebar widths).
+    fn with_workspace_menu(
+        &self,
+        row: gpui::AnyElement,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        match self
+            .workspace_menu
+            .as_ref()
+            .filter(|menu| menu.project_id == project_id)
+        {
+            Some(menu) => div()
+                .child(row)
+                .child(self.render_workspace_menu(menu, theme, cx))
+                .into_any_element(),
+            None => row,
+        }
+    }
+
+    /// A left click on a workspace row: the first shows the workspace; clicking the shown one
+    /// expands/collapses it.
+    fn click_workspace_row(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.workspace == Some(project_id) {
+            self.sidebar.toggle(project_id);
+            cx.notify();
+        } else {
+            self.activate_workspace(project_id, window, cx);
+        }
     }
 
     /// `row` with the peek popover hung at its top right when the peek shows `session_id`.
@@ -18705,14 +18877,8 @@ fn workspace_row(
         .when(active, |el| el.bg(rgb(theme.selected)))
         .hover(move |style| style.bg(rgb(hover)))
         .tooltip(tooltip(theme, &row.path, ""))
-        // The first click shows the workspace; clicking the shown one expands/collapses it.
         .on_click(cx.listener(move |shell, _, window, cx| {
-            if shell.workspace == Some(project_id) {
-                shell.sidebar.toggle(project_id);
-                cx.notify();
-            } else {
-                shell.activate_workspace(project_id, window, cx);
-            }
+            shell.click_workspace_row(project_id, window, cx);
         }))
         .on_mouse_down(
             MouseButton::Right,
@@ -18992,6 +19158,107 @@ fn session_row(
                 shell.remove_session(session_id, window, cx);
             })),
         )
+        .into_any_element()
+}
+
+/// A workspace in the compact rail: its avatar, then `?` while a session needs input, else its
+/// working count. Clicks as [`workspace_row`]; the tooltip has the name, summary and folder.
+fn compact_workspace_row(
+    row: WorkspaceRow,
+    active: bool,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let project_id = row.project_id;
+    let hover = theme.hover;
+    let color = row
+        .color
+        .as_deref()
+        .and_then(|name| theme.workspace_color(name));
+    let mark = if row.needs_input {
+        let icon = sidebar::status_display(SessionState::NeedsInput).icon;
+        Some((icon.to_owned(), theme.status_needs_input))
+    } else {
+        (row.working > 0).then(|| (row.working.to_string(), theme.text_muted))
+    };
+    div()
+        .id(SharedString::from(format!("workspace-{project_id}")))
+        .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .cursor_pointer()
+        .when(active, |el| el.bg(rgb(theme.selected)))
+        .hover(move |style| style.bg(rgb(hover)))
+        .tooltip(tooltip(theme, &sidebar::workspace_tip(&row), ""))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.click_workspace_row(project_id, window, cx);
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |shell, _, window, cx| {
+                shell.open_workspace_menu(project_id, window, cx);
+            }),
+        )
+        .child(workspace_avatar(&row.name, color, theme))
+        // A fixed-width slot, empty without a mark, so every avatar sits in one column.
+        .child(
+            div()
+                .flex_none()
+                .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
+                .flex()
+                .justify_center()
+                .children(mark.map(|(text, color)| {
+                    div()
+                        .text_size(font_size::META)
+                        .font_weight(FontWeight(weight::SEMIBOLD))
+                        .text_color(rgb(color))
+                        .child(text)
+                })),
+        )
+        .into_any_element()
+}
+
+/// A session in the compact rail: its status mark and agent chip. Clicks as [`session_row`];
+/// the tooltip has `agent · full title` and the status in words. No hover peek (the tooltip
+/// replaces it); the keyboard peek still hangs on this row.
+fn compact_session_row(
+    row: SessionRow,
+    badge: String,
+    selected: bool,
+    now: i64,
+    theme: &Theme,
+    cx: &mut Context<'_, Shell>,
+) -> gpui::AnyElement {
+    let session_id = row.session_id;
+    let hover = theme.hover;
+    div()
+        .id(SharedString::from(format!("session-{session_id}")))
+        .h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(space::XS))
+        .rounded(px(radius::SMALL))
+        .cursor_pointer()
+        .when(selected, |el| el.bg(rgb(theme.selected)))
+        .hover(move |style| style.bg(rgb(hover)))
+        .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.open_session(session_id, window, cx);
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                // As in `session_row`: show the pane first (Rename edits its header).
+                shell.open_session(session_id, window, cx);
+                shell.open_pane_menu(session_id, event.position, window, cx);
+            }),
+        )
+        .child(status_mark(row.state, now, theme))
+        .child(agent_chip(badge, theme))
         .into_any_element()
 }
 
@@ -20270,10 +20537,15 @@ impl Render for Shell {
                     .flex()
                     .relative()
                     // Hidden: not built at all (nothing to lay out or paint).
-                    .children(
-                        (!self.sidebar_hidden)
-                            .then(|| self.render_sidebar(now, &theme, window, cx)),
-                    )
+                    .children((!self.sidebar_layout.hidden()).then(|| {
+                        if self.sidebar_layout.compact() {
+                            self.render_compact_sidebar(now, &theme, cx)
+                                .into_any_element()
+                        } else {
+                            self.render_sidebar(now, &theme, window, cx)
+                                .into_any_element()
+                        }
+                    }))
                     .child(self.render_main(now, &theme, window, cx))
                     .children(
                         self.task_dialog

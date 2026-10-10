@@ -133,6 +133,11 @@ pub const PANE_ACCENT_WIDTH: f32 = 2.0;
 /// Width of the workspace sidebar.
 pub const SIDEBAR_WIDTH: f32 = 280.0;
 
+/// Width of the compact sidebar rail (Toggle compact sidebar): a status mark, a gap and an agent
+/// chip plus the rail's padding. In px at the default font size; drawn with [`rems_px`] so it
+/// widens with `[ui] font_size` like the avatars and chips inside it.
+pub const COMPACT_SIDEBAR_WIDTH: f32 = 56.0;
+
 /// Narrowest and widest the session panel gets when dragged (SPEC §10); `[ui] inspector_width`
 /// is clamped to them.
 pub const INSPECTOR_MIN_WIDTH: f32 = 240.0;

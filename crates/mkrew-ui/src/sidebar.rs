@@ -114,6 +114,61 @@ pub fn workspace_summary(working: usize, asking: usize, idle: usize) -> Option<S
     (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
+/// Hover text of a workspace in the compact rail: the name, then its summary (if any) and its
+/// folder, one per line.
+pub fn workspace_tip(row: &WorkspaceRow) -> String {
+    let mut lines = vec![row.name.as_str()];
+    lines.extend(row.summary.as_deref());
+    lines.push(&row.path);
+    lines.join("\n")
+}
+
+/// Hover text of a session in the compact rail: `agent · full title` (or just the agent), then
+/// the status in words, `working · 2m`. Rows are live sessions only, so there is no exit code.
+pub fn session_tip(row: &SessionRow, now_ms: i64) -> String {
+    let name = match &row.title {
+        Some(title) => format!("{} · {title}", row.agent),
+        None => row.agent.clone(),
+    };
+    let state = status::text(row.state, None, row.state_changed_at, now_ms);
+    format!("{name}\n{state}")
+}
+
+/// How the sidebar shows (SPEC §10): full width, the compact rail, or hidden. Hiding keeps the
+/// width it comes back at. In memory only: not remembered across restarts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Layout {
+    hidden: bool,
+    compact: bool,
+}
+
+impl Layout {
+    pub fn hidden(self) -> bool {
+        self.hidden
+    }
+
+    /// The compact rail is on screen (false while hidden).
+    pub fn compact(self) -> bool {
+        !self.hidden && self.compact
+    }
+
+    /// Toggle sidebar: hide, or show again at the last width.
+    pub fn toggle_hidden(&mut self) {
+        self.hidden = !self.hidden;
+    }
+
+    /// Something the sidebar draws needs it (the peek, the workspace menu): shown at the last width.
+    pub fn show(&mut self) {
+        self.hidden = false;
+    }
+
+    /// Toggle compact sidebar: full width ↔ rail; a hidden sidebar comes back as the rail.
+    pub fn toggle_compact(&mut self) {
+        self.compact = self.hidden || !self.compact;
+        self.hidden = false;
+    }
+}
+
 /// One visible sidebar row, top to bottom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -307,6 +362,11 @@ impl Sidebar {
     /// (the keyboard peek hangs on a row).
     pub fn reveal(&mut self, project_id: Ulid) {
         self.expanded.insert(project_id);
+        self.clear_filter();
+    }
+
+    /// Drops the filter text and the chip (the compact rail draws neither control).
+    pub fn clear_filter(&mut self) {
         self.filter.clear();
         self.chip = Chip::All;
     }
@@ -1129,5 +1189,83 @@ mod tests {
         sidebar.reveal(web.id);
         assert!(!sidebar.filtering());
         assert_eq!(session_ids(&sidebar.rows()), vec![s.id]);
+    }
+
+    #[test]
+    fn layout_keeps_its_width_while_hidden() {
+        let mut layout = Layout::default();
+        assert!(!layout.hidden() && !layout.compact(), "starts full width");
+
+        layout.toggle_compact();
+        assert!(!layout.hidden() && layout.compact());
+        layout.toggle_hidden();
+        assert!(
+            layout.hidden() && !layout.compact(),
+            "hidden: no rail on screen"
+        );
+        layout.show();
+        assert!(layout.compact(), "shown again at the rail's width");
+
+        layout.toggle_compact();
+        assert!(!layout.compact(), "rail → full width");
+        layout.toggle_hidden();
+        layout.toggle_hidden();
+        assert!(
+            !layout.hidden() && !layout.compact(),
+            "hide/show keeps full width"
+        );
+
+        layout.toggle_hidden();
+        layout.toggle_compact();
+        assert!(
+            !layout.hidden() && layout.compact(),
+            "the compact key on a hidden full-width sidebar shows the rail"
+        );
+    }
+
+    #[test]
+    fn clear_filter_drops_the_query_and_the_chip() {
+        let api = project("api");
+        let idle = session(&api, 1, SessionState::Idle);
+        let mut sidebar = Sidebar::default();
+        sidebar.load(vec![api], vec![idle.clone()]);
+        sidebar.filter_mut().insert("zzz");
+        sidebar.set_chip(Chip::Working);
+        assert!(sidebar.rows().is_empty());
+
+        sidebar.clear_filter();
+        assert!(!sidebar.filtering());
+        assert_eq!(session_ids(&sidebar.rows()), vec![idle.id]);
+    }
+
+    #[test]
+    fn compact_tips_spell_out_what_the_rail_leaves_out() {
+        let (api, web) = (project("api"), project("web"));
+        let mut titled = session(&api, 1_000, SessionState::Working);
+        titled.title = Some("Fix the very long login redirect bug".into());
+        let untitled = session(&web, 1_000, SessionState::Done);
+        let mut sidebar = Sidebar::default();
+        sidebar.load(vec![api, web], vec![titled, untitled]);
+
+        // The first load opens both (each has a live session): api, its session, web, its session.
+        let rows = sidebar.rows();
+        let sessions: Vec<&SessionRow> = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Session(row) => Some(row),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            workspace_tip(workspace(&rows[0])),
+            "api\n1 working\nC:\\src\\api"
+        );
+        assert_eq!(
+            session_tip(sessions[0], 121_000),
+            "claude · Fix the very long login redirect bug\nworking · 2m"
+        );
+        // No summary (done is not summarised), no title: no empty lines, no dangling `·`.
+        assert_eq!(workspace_tip(workspace(&rows[2])), "web\nC:\\src\\web");
+        assert_eq!(session_tip(sessions[1], 121_000), "claude\ndone");
     }
 }

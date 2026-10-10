@@ -715,6 +715,12 @@ The session panel (below) is a third column right of Terminals while open.
   The header has `+` (add workspace) and a button that collapses or expands every workspace.
   There is no Inbox card: the chips, the status bar and Ctrl+Shift+I replace it; hovering a
   session row still peeks it (§20A). Toggle sidebar (Ctrl+Shift+B, status bar, palette) hides it; not remembered across restarts.
+  Toggle compact sidebar (Ctrl+Alt+B, the status bar's `⇤` / `⇥`, palette) narrows it to a rail:
+  workspace avatars with `?` or the working count, and per open workspace its sessions' status
+  mark + agent chip; hovering a rail row shows its full name, status and folder as a tooltip
+  (instead of the peek). Entering the rail clears the filter and chip; a hidden sidebar comes back
+  at the width it had, and Ctrl+Alt+B on a hidden sidebar shows the rail. Not remembered
+  across restarts (ADR 0040).
 - **Plan progress:** the selected session row of a session with a linked plan shows a thin
   progress bar (done / total of its checklist) under its second line (ADR 0039).
 - **Remove:** the workspace menu's "Remove workspace…" archives it after a confirmation
@@ -1080,6 +1086,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle theme (System → Light → Dark) | Ctrl+Shift+J |
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
+| Global | Toggle compact sidebar | Ctrl+Alt+B |
 | View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -1544,7 +1551,7 @@ context_window = 200000        # tokens, for the % shown
 
 ### §20A Attention (M9)
 
-1. **Peek + quick reply.** Hovering a sidebar session row for 300 ms, or `Ctrl+Shift+Space`
+1. **Peek + quick reply.** Hovering a sidebar session row for 300 ms (full-width sidebar; the compact rail shows a tooltip instead, ADR 0040), or `Ctrl+Shift+Space`
    (first session that needs you; ↑/↓ cycles those sessions, Esc closes; the row is shown first: its workspace opens and the filter clears), opens a popover with the last 8 non-blank
    screen lines (monospace plain text, ADR 0012), the state and its age, and a one-line input. Enter sends
    the text with submit (`session.send`); for a `needs_input` session the popover also shows
