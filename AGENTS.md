@@ -51,6 +51,7 @@ This repository is built **autonomously** by agents, one task per session.
 | `.omp/agents/` | omp subagents: `final-reviewer` (`@slow`) for the superpowers final review; `plan-executor` (`@task`) runs executing-plans on Sonnet |
 | `docs/MODEL_ROLES.md` | superpowers step → omp model role → model, and how to roll back |
 | `crates/` | workspace crates (SPEC §4) |
+| `crates/mkrew-ui/src/shell/` | the app window's `impl Shell`, one file per area (list in `shell.rs`); `main.rs` keeps `struct Shell` and `Render` |
 
 ## Conventions (summary of SPEC §17)
 
