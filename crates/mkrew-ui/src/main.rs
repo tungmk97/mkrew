@@ -19049,16 +19049,13 @@ fn session_row(
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
     let time = row.time_text(now);
-    // Only the selected row spells the title out on a second line under the agent (SPEC §11).
-    // The other agent rows show just the title (the agent chip already names the agent);
-    // terminal rows keep `powershell · title` (their chip does not say which shell).
-    // `progress` is the plan bar of the selected row, last in the column under the name /
-    // title lines.
-    let (name, subtitle) = match (&row.title, selected) {
-        (Some(title), true) => (row.agent.clone(), Some(title.clone())),
-        (Some(title), false) if row.shell => (format!("{} · {title}", row.agent), None),
-        (Some(title), false) => (title.clone(), None),
-        (None, _) => (row.agent.clone(), None),
+    // Agent rows show just the title (the agent chip already names the agent), selected or
+    // not; terminal rows keep `powershell · title` (their chip does not say which shell).
+    // `progress` is the plan bar of the selected row, under the name line.
+    let name = match &row.title {
+        Some(title) if row.shell => format!("{} · {title}", row.agent),
+        Some(title) => title.clone(),
+        None => row.agent.clone(),
     };
     let hover = theme.hover;
     let row_id = SharedString::from(format!("session-{session_id}"));
@@ -19070,9 +19067,7 @@ fn session_row(
         .items_center()
         .gap(px(space::S))
         .px(px(space::S))
-        .when(subtitle.is_some() || progress.is_some(), |el| {
-            el.py(px(space::XS))
-        })
+        .when(progress.is_some(), |el| el.py(px(space::XS)))
         .rounded(px(radius::SMALL))
         .when(selected, |el| el.bg(rgb(theme.selected)))
         .cursor_pointer()
@@ -19120,13 +19115,6 @@ fn session_row(
                         .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
                         .child(name),
                 )
-                .children(subtitle.map(|title| {
-                    div()
-                        .truncate()
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .child(title)
-                }))
                 .children(
                     progress
                         .map(|fraction| progress_bar(fraction, theme::PLAN_ROW_BAR_HEIGHT, theme)),

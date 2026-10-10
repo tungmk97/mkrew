@@ -49,7 +49,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 ### To verify — 2026-10-10 sidebar session rows
 
 - [ ] **Rows (dark and light):** an omp session's row shows its title without `omp · ` and
-  without the leading `π`; the selected row shows `omp` then the title (no `π ⋮`). A terminal
+  without the leading `π`; the selected row looks the same (one line, title only, no second `omp` line). A terminal
   row (PowerShell…) still shows `powershell · title`. Times (`5s`, `43m`, `1h 5m`) end in one
   right-aligned column; rows without a time keep the same title width. Existing titles update
   on the next title change of the agent.
@@ -231,7 +231,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Plan card (item 8):** open the right panel on an agent pane → "Plan" with **Link plan…** →
   pick a `.md` with `- [ ]` / `- [x]` lines → the card shows `Plan <name> a/b`, a bar, up to 8
   rows with the first unchecked one in the accent color and `N more` below; the selected sidebar
-  row shows the same bar under its second line, other rows none. Tick a box in the file with an
+  row shows the same bar under its name line, other rows none. Tick a box in the file with an
   editor (also one that saves through a temp file, e.g. Notepad or VS Code) → the counts and bar
   change within about a second, no click. A prose-only edit changes nothing on screen.
 - [ ] **Plan link life:** **Change…** with a `.txt` file → an error line in the card, the old plan

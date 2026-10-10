@@ -722,7 +722,7 @@ The session panel (below) is a third column right of Terminals while open.
   at the width it had, and Ctrl+Alt+B on a hidden sidebar shows the rail. Not remembered
   across restarts (ADR 0040).
 - **Plan progress:** the selected session row of a session with a linked plan shows a thin
-  progress bar (done / total of its checklist) under its second line (ADR 0039).
+  progress bar (done / total of its checklist) under its name line (ADR 0039).
 - **Remove:** the workspace menu's "Remove workspace…" archives it after a confirmation
   (`project.archive`, ADR 0019); a session row's ✕ (on hover) removes a live session from the
   sidebar (`session.remove`; it asks first and the session is stopped). A session that exits needs
@@ -893,9 +893,9 @@ color alone.
   2 idle`) and `?` if any needs_input; no token total (the status bar shows usage of the focused
   agent). Sidebar session rows hang under a faint guide line: status mark, agent chip, name and,
   on the right in a fixed right-aligned column, only the time of a working or idle session
-  (`17m`; the status icon already says the state, its hover says it in words). The selected row
-  has a second line with the session/task title under the agent; the other agent rows show just
-  the title (the chip names the agent), terminal rows keep `powershell · title`. Agent terminal
+  (`17m`; the status icon already says the state, its hover says it in words). Agent rows,
+  selected or not, show just the session/task title on one line (the chip names the agent);
+  terminal rows keep `powershell · title`. Agent terminal
   titles drop omp's leading `π` logo (ADR 0031).
 - Pinned workspaces, sessions and tabs lead their lists and show 📌 next to the name (§10 Pin);
   the order does not change a pane's status.
