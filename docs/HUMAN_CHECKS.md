@@ -41,6 +41,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Docs picking:** in the Docs preview, click a block: it highlights and the comment margin
   offers to comment on its lines; Shift+click extends; hover shows the hover band. Dark and
   light.
+- [ ] **Large source file:** open a 1 MB or larger source file in Files (not Markdown). Type, hold
+  an arrow key, scroll and drag the thumb: smooth, no per-frame stall. The horizontal scroll
+  width still fits the widest line (a very long line scrolls fully; after deleting it the width
+  shrinks; a line with tabs scrolls as wide as it looks).
 
 ### To verify — 2026-10-10 sidebar session rows
 

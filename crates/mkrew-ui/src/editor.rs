@@ -108,6 +108,9 @@ pub struct Editor {
     typing: bool,
     /// Bumped by every text change (re-highlighting, find).
     version: u64,
+    /// Index of the widest line in screen cells ([`Self::longest_line`]), found when the text
+    /// changes instead of on every frame.
+    longest: usize,
 }
 
 impl Editor {
@@ -129,7 +132,8 @@ impl Editor {
                 };
                 line.to_owned()
             })
-            .collect();
+            .collect::<Vec<String>>();
+        let longest = widest_line(&lines);
         Editor {
             lines,
             crlf,
@@ -143,6 +147,7 @@ impl Editor {
             saved: None,
             typing: false,
             version: 0,
+            longest,
         }
     }
 
@@ -166,6 +171,12 @@ impl Editor {
 
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Index of the widest line in screen cells (tabs and multibyte chars differ from the
+    /// byte length), for the editor's horizontal scroll width.
+    pub fn longest_line(&self) -> usize {
+        self.longest
     }
 
     /// The selected range, start first; `None` when nothing is selected.
@@ -490,6 +501,9 @@ impl Editor {
         new[last].push_str(&tail);
         self.lines.splice(start.line..=end.line, new);
         self.version += 1;
+        // ponytail: one scan per text change (it was one per frame); update from the replaced
+        // lines only if typing in a 2 MB file ever feels slow.
+        self.longest = widest_line(&self.lines);
         (removed, after)
     }
 
@@ -532,6 +546,16 @@ pub fn display_col(line: &str, byte: usize) -> usize {
         .chars()
         .map(|c| if c == '\t' { TAB.len() } else { 1 })
         .sum()
+}
+
+/// Index of the widest of `lines` in screen cells ([`display_col`] of its end); ties go to the
+/// last one, an empty slice to 0.
+fn widest_line(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, line)| display_col(line, line.len()))
+        .map_or(0, |(index, _)| index)
 }
 
 /// The byte offset in [`display_line`] of byte `byte` of `line` (find highlights).
@@ -918,5 +942,37 @@ mod tests {
         let mut altgr = Keystroke::parse("ctrl-alt-q").unwrap();
         altgr.key_char = Some("@".into());
         assert_eq!(edit_key(&altgr), Some(EditKey::Insert("@".into())));
+    }
+
+    /// The widest row in screen cells (a tab is `TAB` cells, more than its one byte) follows
+    /// every edit and undo, so the render never scans the file again.
+    #[test]
+    fn longest_line_is_the_widest_row_and_follows_edits() {
+        let widest = |editor: &Editor| {
+            let line = &editor.lines()[editor.longest_line()];
+            display_col(line, line.len())
+        };
+        let tabs = 2 * TAB.len() + 1;
+        let mut editor = Editor::new("short\n\t\tx\n12345678\n");
+        assert_eq!(
+            editor.longest_line(),
+            1,
+            "two tabs and x are wider than 8 bytes"
+        );
+        assert_eq!(widest(&editor), tabs);
+        // A longer line typed at the end of the last row wins…
+        editor.set_cursor(Pos::new(2, 8), false);
+        editor.insert("9012345678");
+        assert_eq!((editor.longest_line(), widest(&editor)), (2, 18));
+        // …and undo gives the old widest row back.
+        assert!(editor.undo());
+        assert_eq!(widest(&editor), tabs);
+        // Cutting the widest row's text leaves the next widest.
+        editor.set_cursor(Pos::new(1, 0), false);
+        editor.set_cursor(Pos::new(1, 3), true);
+        editor.cut();
+        assert_eq!((editor.longest_line(), widest(&editor)), (2, 8));
+        // An empty file still has a line 0.
+        assert_eq!(Editor::new("").longest_line(), 0);
     }
 }

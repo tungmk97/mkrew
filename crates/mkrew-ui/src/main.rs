@@ -11698,14 +11698,10 @@ impl Shell {
     ) -> gpui::AnyElement {
         let focused = self.file_editor_focus.is_focused(window);
         let cell_width = mkrew_ui::terminal::view::cell_size(window, theme).0;
-        let lines = shown.editor.lines();
-        let total = lines.len();
-        // Widest row in screen cells (tabs and multibyte chars differ from the byte length).
-        let longest = (lines.iter().enumerate())
-            .max_by_key(|(_, line)| editor::display_col(line, line.len()))
-            .map(|(index, _)| index);
+        let total = shown.editor.lines().len();
+        // Widest row in screen cells, kept by the editor per text change.
+        let longest = Some(shown.editor.longest_line());
         let text_left = Rc::clone(&self.file_text_left);
-        let row_theme = theme.clone();
         let list = uniform_list(
             "file-code",
             total,
@@ -11716,6 +11712,7 @@ impl Shell {
                 let Some(shown) = view.shown() else {
                     return Vec::new();
                 };
+                let theme = cx.theme();
                 let (editor, code) = (&shown.editor, &shown.code);
                 let hits = view.find.as_ref().map(TextFind::hits);
                 let (cursor, selection) = (editor.cursor(), editor.selection());
@@ -11754,7 +11751,7 @@ impl Shell {
                             &marks,
                             cell_width,
                             &text_left,
-                            &row_theme,
+                            theme,
                         );
                         Some(
                             row.on_mouse_down(
