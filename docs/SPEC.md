@@ -974,7 +974,10 @@ Only edit this file. When done, for EACH comment run:
   the editor's text, so unsaved changes show in it and toggling never loses them; it is parsed
   when the file is read and when switching to Preview after an edit, never per keystroke. Find
   and "Open at a line" switch to Source. Another file starts in Preview. Links in the preview
-  are not clickable (ADR 0021). `.md` files also offer "Review in Docs".
+  are not clickable (ADR 0021). `.md` files also offer "Review in Docs". The page is a virtual
+  list (only the blocks on screen are laid out; every block's height is measured once per page)
+  with the editor's scroll bar, so long files scroll smoothly; Docs shows its preview the same
+  way. A re-read or edited page keeps the scroll position; another file starts at the top.
 - **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
   fuzzy-finds files of the current workspace, in the folder the Files view shows (project or
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).

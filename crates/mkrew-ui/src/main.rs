@@ -401,6 +401,10 @@ struct Shell {
     file_text_left: Rc<Cell<Pixels>>,
     /// The Docs list filter field.
     docs_filter_focus: FocusHandle,
+    /// The rendered Markdown page of Docs and of the Files view (virtual lists, kept across
+    /// frames).
+    doc_page: preview::Page,
+    file_page: preview::Page,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
     /// The `git.repos` of each workspace whose Git view was shown (ADR 0029), for the "Repo"
@@ -774,6 +778,8 @@ impl Shell {
             file_find_focus: cx.focus_handle(),
             file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),
+            doc_page: preview::Page::default(),
+            file_page: preview::Page::default(),
             file_code_scroll: UniformListScrollHandle::new(),
             file_code_drag: scrollbar::Drag::default(),
             file_editor_focus: cx.focus_handle(),
@@ -11035,10 +11041,50 @@ impl Shell {
                     .pb(px(space::L))
                     .into_any_element()
                 }
-                Mode::Preview => preview_page(
-                    "doc-preview",
-                    preview_blocks(project_id, shown, docs.comments.selection, theme, cx),
-                ),
+                Mode::Preview => {
+                    // A click picks the block's lines to comment on (Shift extends); picked
+                    // blocks are highlighted.
+                    let this = cx.entity().downgrade();
+                    let selection = docs.comments.selection;
+                    let (picked_bg, hover_bg) = (theme.terminal_selection_bg, theme.surface_raised);
+                    let wrap: preview::Wrap = Rc::new(
+                        move |index: usize,
+                              block: &mkrew_ui::markdown::Block,
+                              element: gpui::AnyElement| {
+                            let (start, end) = (block.lines.start, block.lines.end);
+                            let picked = selection.is_some_and(|s| s.contains(start, end));
+                            let this = this.clone();
+                            div()
+                                .id(("doc-block", index))
+                                .px(px(space::XS))
+                                .rounded(px(radius::SMALL))
+                                .cursor_pointer()
+                                .when(picked, |el| el.bg(rgb(picked_bg)))
+                                .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover_bg))))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    move |event: &MouseDownEvent, _, cx| {
+                                        let extend = event.modifiers.shift;
+                                        // Fails only once the window (and Shell) is gone.
+                                        let _ = this.update(cx, |shell, cx| {
+                                            shell.pick_lines(
+                                                project_id,
+                                                CommentContext::Doc,
+                                                start,
+                                                end,
+                                                extend,
+                                                cx,
+                                            );
+                                        });
+                                    },
+                                )
+                                .child(element)
+                                .into_any_element()
+                        },
+                    );
+                    let path = docs.selected.as_deref().unwrap_or_default();
+                    preview::page(&self.doc_page, path, shown, Some(wrap), theme).into_any_element()
+                }
             },
         };
         let margin = margin_shown(&docs.doc)
@@ -13424,7 +13470,8 @@ impl Shell {
                     .into_any_element()
             }
             Some(shown) => {
-                preview_page("file-preview", preview::blocks(&shown.blocks, shown, theme))
+                let path = view.file.as_deref().unwrap_or_default();
+                preview::page(&self.file_page, path, shown, None, theme).into_any_element()
             }
         }
     }
@@ -17699,69 +17746,6 @@ fn text_field(
                     .when(focused && !selected && i == last, |row| row.child(caret()))
             }))
         })
-}
-
-/// The preview's page: a scrolling, centered column of `blocks` (ADR 0021), shared by Docs
-/// and the Files view's `.md` files.
-fn preview_page(id: &'static str, blocks: Vec<gpui::AnyElement>) -> gpui::AnyElement {
-    div()
-        .id(id)
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .px(px(space::XL))
-        .py(px(space::L))
-        .child(
-            div()
-                .w_full()
-                .max_w(px(theme::DOC_PREVIEW_MAX_WIDTH))
-                .mx_auto()
-                .flex()
-                .flex_col()
-                .gap(px(space::M))
-                .text_size(px(theme::doc::BODY))
-                .line_height(relative(theme::doc::LINE_HEIGHT))
-                .children(blocks),
-        )
-        .into_any_element()
-}
-
-/// The preview's top-level blocks, each picked by a click (Shift extends) to comment on its
-/// lines; picked ones are highlighted.
-fn preview_blocks(
-    project_id: Ulid,
-    shown: &Shown,
-    selection: Option<Selection>,
-    theme: &Theme,
-    cx: &mut Context<'_, Shell>,
-) -> Vec<gpui::AnyElement> {
-    let hover = theme.surface_raised;
-    shown
-        .blocks
-        .iter()
-        .enumerate()
-        .filter_map(|(index, block)| {
-            let element = preview::block(block, shown, theme)?;
-            let (start, end) = (block.lines.start, block.lines.end);
-            let picked = selection.is_some_and(|s| s.contains(start, end));
-            let wrapped = div()
-                .id(("doc-block", index))
-                .px(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .cursor_pointer()
-                .when(picked, |el| el.bg(rgb(theme.terminal_selection_bg)))
-                .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
-                        let extend = event.modifiers.shift;
-                        shell.pick_lines(project_id, CommentContext::Doc, start, end, extend, cx);
-                    }),
-                )
-                .child(element);
-            Some(wrapped.into_any_element())
-        })
-        .collect()
 }
 
 /// Whether the Docs comment margin shows next to `doc`: with a shown file, and while it is

@@ -1,17 +1,18 @@
 //! GPUI elements of the Docs view (SPEC §12, §14): the [`markdown`](crate::markdown) blocks as
-//! the rendered preview, and the source view with line numbers; and the Files viewer's
+//! the rendered preview (a virtual list of blocks with a scroll bar, [`page`]), and the source
+//! view with line numbers; and the Files viewer's
 //! highlighted code (SPEC §12A). Only [`inline`] and [`token_color`] are pure (and tested);
 //! the rest maps the model onto theme tokens.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla, MouseButton,
-    MouseDownEvent, Pixels, SharedString, StrikethroughStyle, StyledText, UnderlineStyle,
-    UniformList, Window, canvas, div, img, px, relative, rgb, uniform_list,
+    AnyElement, App, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla, ListAlignment,
+    ListState, MouseButton, MouseDownEvent, Pixels, SharedString, StrikethroughStyle, StyledText,
+    UnderlineStyle, UniformList, Window, canvas, div, img, list, px, relative, rgb, uniform_list,
 };
 
 use crate::comments::Selection;
@@ -19,7 +20,8 @@ use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
-use crate::theme::{self, Theme, font_size, radius, space, weight};
+use crate::scrollbar::{self, Source};
+use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space, weight};
 
 /// The text of `runs` joined, and the byte range, style and "is a link" of every run that is
 /// not plain text.
@@ -42,6 +44,101 @@ pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement>
         .iter()
         .filter_map(|block| self::block(block, shown, theme))
         .collect()
+}
+
+/// The preview's virtual list and the page it shows; one per view (Docs, Files), kept across
+/// frames.
+#[derive(Debug)]
+pub struct Page {
+    state: ListState,
+    drag: scrollbar::Drag,
+    /// The file's path and the page last shown.
+    shown: RefCell<Option<(String, Rc<Shown>)>>,
+}
+
+impl Default for Page {
+    fn default() -> Self {
+        Page {
+            // Every block measured once per page: the scroll bar is exact, and only the blocks
+            // on screen are laid out per frame.
+            state: ListState::new(0, ListAlignment::Top, Pixels::ZERO).measure_all(),
+            drag: scrollbar::Drag::default(),
+            shown: RefCell::default(),
+        }
+    }
+}
+
+impl Page {
+    /// Points the list at `shown`, the page of `path`. The same page again changes nothing.
+    /// A new page of the same file (re-read, edited) keeps the scroll position, clamped to
+    /// its blocks. Another file starts at the top. Returns whether the list was reset.
+    pub fn show(&self, path: &str, shown: &Rc<Shown>) -> bool {
+        let mut current = self.shown.borrow_mut();
+        let same_file = match current.as_ref() {
+            Some((file, page)) if file == path && Rc::ptr_eq(page, shown) => return false,
+            Some((file, _)) => file == path,
+            None => false,
+        };
+        let at = self.state.logical_scroll_top();
+        self.state.reset(shown.blocks.len());
+        if same_file {
+            self.state.scroll_to(at);
+        }
+        *current = Some((path.to_owned(), Rc::clone(shown)));
+        true
+    }
+}
+
+/// Wraps the element of top-level block `index` (the Docs view makes blocks pickable).
+pub type Wrap = Rc<dyn Fn(usize, &Block, AnyElement) -> AnyElement>;
+
+/// The preview's page (ADR 0021): `shown`'s blocks in a centered column of at most
+/// `DOC_PREVIEW_MAX_WIDTH`, in a virtual list (only the blocks on screen are laid out), with a
+/// scroll bar on the right. `path` names the file, so another file starts at the top.
+pub fn page(page: &Page, path: &str, shown: &Rc<Shown>, wrap: Option<Wrap>, theme: &Theme) -> Div {
+    page.show(path, shown);
+    let shown = Rc::clone(shown);
+    let last = shown.blocks.len().saturating_sub(1);
+    let blocks = list(page.state.clone(), move |index, _, cx| {
+        let item_theme = cx.theme();
+        let Some(block) = shown.blocks.get(index) else {
+            return div().into_any_element();
+        };
+        // `self::block`: the local `block` shadows the module's fn.
+        let Some(element) = self::block(block, &shown, item_theme) else {
+            return div().into_any_element();
+        };
+        let element = match &wrap {
+            Some(wrap) => wrap(index, block, element),
+            None => element,
+        };
+        div()
+            .w_full()
+            .px(px(space::XL))
+            .when(index == 0, |el| el.pt(px(space::L)))
+            .pb(px(if index == last { space::L } else { space::M }))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(theme::DOC_PREVIEW_MAX_WIDTH))
+                    .mx_auto()
+                    .text_size(px(theme::doc::BODY))
+                    .line_height(relative(theme::doc::LINE_HEIGHT))
+                    .child(element),
+            )
+            .into_any_element()
+    })
+    .size_full();
+    div()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .child(blocks)
+        .child(scrollbar::bar(
+            Source::List(page.state.clone()),
+            Rc::clone(&page.drag),
+            theme,
+        ))
 }
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
@@ -281,7 +378,16 @@ fn diagram_view(diagram: &Diagram, theme: &Theme) -> gpui::Div {
         .border_1()
         .border_color(rgb(theme.border))
         .bg(rgb(theme.surface))
-        .child(img(diagram.image(theme)).w(px(diagram.width)).max_w_full())
+        // The image decodes after its first layout: the known ratio gives it its height at
+        // once, so measured page heights (and the scroll bar) do not jump when it appears.
+        .child(
+            img(diagram.image(theme))
+                .w(px(diagram.width))
+                .max_w_full()
+                .when(diagram.height > 0.0, |img| {
+                    img.aspect_ratio(diagram.width / diagram.height)
+                }),
+        )
 }
 
 /// Inline runs as one text element: bold, italic, struck through, code spans on a raised
@@ -562,6 +668,11 @@ pub fn code_row(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::ListOffset;
+
+    fn page_of(text: &str) -> Rc<Shown> {
+        Rc::new(Shown::from_text(text))
+    }
 
     fn run(text: &str, style: Style, link: Option<&str>) -> Run {
         Run {
@@ -631,5 +742,41 @@ mod tests {
                 (3..8, Paint::Token(Token::String))
             ]
         );
+    }
+
+    /// Drawing the same page again (every frame) changes nothing. A new page of the same file
+    /// (re-read after an agent wrote it, or edited) keeps the reader's place, clamped when it
+    /// got shorter. Another file starts at the top.
+    #[test]
+    fn a_new_page_of_the_same_file_keeps_its_place_and_another_file_starts_at_the_top() {
+        let page = Page::default();
+        let long: String = (0..50).map(|i| format!("Paragraph {i}\n\n")).collect();
+        let first = page_of(&long);
+        assert!(page.show("a.md", &first));
+        assert_eq!(page.state.item_count(), 50);
+        page.state.scroll_to(ListOffset {
+            item_ix: 30,
+            offset_in_item: px(5.),
+        });
+        assert!(
+            !page.show("a.md", &first),
+            "the same page is not laid out again"
+        );
+        assert!(page.show("a.md", &page_of(&long)));
+        let top = page.state.logical_scroll_top();
+        assert_eq!((top.item_ix, top.offset_in_item), (30, px(5.)));
+        assert!(page.show("a.md", &page_of("# One\n\nTwo\n")));
+        assert_eq!(page.state.item_count(), 2);
+        assert_eq!(
+            page.state.logical_scroll_top().item_ix,
+            2,
+            "clamped to the end"
+        );
+        page.state.scroll_to(ListOffset {
+            item_ix: 1,
+            offset_in_item: px(0.),
+        });
+        assert!(page.show("b.md", &page_of(&long)));
+        assert_eq!(page.state.logical_scroll_top().item_ix, 0);
     }
 }

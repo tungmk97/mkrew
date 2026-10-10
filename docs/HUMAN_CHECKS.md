@@ -26,6 +26,21 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   color on release. Pressing the track above or below the thumb jumps there.
 - [ ] **Short file:** a file that fits on screen shows no bar; a click at the far right end of a
   long line still puts the caret there.
+- [ ] **Large Markdown (the reported lag):** in Files, open
+  `docs/superpowers/plans/2026-10-10-inbox-perf.md` (about 6,400 lines). The preview shows within
+  about a second. Wheel, PgDn and thumb drag scroll smoothly, side by side with Zed. The thumb
+  reaches the very end and the last block is fully visible. Same file in Source: smooth too.
+  Same in the Docs view.
+- [ ] **Keeps its place:** scroll to the middle of a `.md` preview and let an agent (or Zed) save
+  the file: the page updates and stays where it was. Open another `.md`: it starts at the top.
+- [ ] **Resize:** with that large preview open, resize the window and drag the session panel's
+  edge: it stays usable, and afterwards the column is centered and the thumb matches the
+  position.
+- [ ] **Diagrams:** a `.md` with a mermaid block lower down. Scroll to it: it appears without the
+  page jumping; the thumb keeps its size.
+- [ ] **Docs picking:** in the Docs preview, click a block: it highlights and the comment margin
+  offers to comment on its lines; Shift+click extends; hover shows the hover band. Dark and
+  light.
 
 ### To verify — 2026-10-10 sidebar session rows
 
