@@ -1,7 +1,7 @@
 //! Pane lifecycle against the real daemon (SPEC §10): new agent panes use the workspace's
 //! default agent, a hidden pane's session keeps running after the UI closes and stays in the
-//! sidebar, killing it ends it, and closing a tab leaves its sessions running. Runs the real
-//! `mkrew-daemon` and fake agent in a temp dir.
+//! sidebar, killing it ends it, and closing a tab removes its sessions from the sidebar. Runs
+//! the real `mkrew-daemon` and fake agent in a temp dir.
 //!
 //! Needs `target/<profile>/mkrew-daemon` and `mkrew-fakeagent` built (`cargo test --workspace`).
 
@@ -189,8 +189,16 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
     assert_eq!(lifecycle::close_action(Some(&exited)), CloseAction::Remove);
     assert_ne!(session(&second, a).state, SessionState::Exited);
 
-    // Close tab (Ctrl+Shift+W): the tab goes, its sessions keep running for the sidebar.
+    // Close tab (Ctrl+Shift+W): the tab goes and its sessions are removed with it, so they
+    // leave the sidebar (ADR 0041).
     block_on(second.call::<()>(Request::TabClose(TabRef { tab_id: tab.id }))).unwrap();
     assert!(list_tabs(&second, project.id).is_empty());
-    assert_ne!(session(&second, a).state, SessionState::Exited);
+    let mut sidebar = Sidebar::default();
+    let projects: Vec<Project> = block_on(second.call(Request::ProjectList)).unwrap();
+    sidebar.load(projects, sessions(&second));
+    let listed = sidebar
+        .rows()
+        .into_iter()
+        .any(|row| matches!(row, Row::Session(row) if row.session_id == a));
+    assert!(!listed, "the closed tab's session is still in the sidebar");
 }

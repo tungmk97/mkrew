@@ -527,7 +527,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
-| `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab, its sessions keep running, no event) |
+| `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
 | `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
 | `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
@@ -776,7 +776,8 @@ The session panel (below) is a third column right of Terminals while open.
   (always on the active tab, on hover for the others); closing never activates the tab first.
   At the right end of the strip: `+` (new tab), a split button (Split right) and `⋯`. `⋯`, and a
   right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
-  activated first, so the menu acts on the tab it was opened on.
+  activated first, so the menu acts on the tab it was opened on. Closing a tab stops its panes'
+  sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
   shell, picked in the workspace menu under "Default shell for new panes" like the default agent;
   a new shell pane without one asks the user to pick; ADR 0032).

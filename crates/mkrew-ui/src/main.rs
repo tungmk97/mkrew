@@ -7933,9 +7933,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕). Its
-    /// sessions keep running (reachable from the sidebar); closing the last tab leaves a fresh
-    /// empty one.
+    /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕). The
+    /// daemon removes the sessions of its panes too (ADR 0041), so a running agent among them
+    /// asks first; closing the last tab leaves a fresh empty one.
     fn close_tab(&mut self, tab_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
@@ -7943,13 +7943,41 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
+        let sessions = self
+            .tabs
+            .get(&project_id)
+            .and_then(|tabs| tabs.tab(tab_id))
+            .map(Tab::sessions)
+            .unwrap_or_default();
+        let running_agent = sessions.iter().any(|id| {
+            let known = self.sidebar.sessions().iter().find(|s| s.id == *id);
+            lifecycle::close_action(known) == CloseAction::Ask
+        });
+        let answer = running_agent.then(|| {
+            window.prompt(
+                PromptLevel::Warning,
+                "This tab has a running agent.",
+                Some("Closing the tab stops its sessions and removes them from the sidebar."),
+                &workspace_menu::REMOVE_ANSWERS,
+                cx,
+            )
+        });
         self.tab_error = None;
-        let closed = connection.call::<()>(Request::TabClose(TabRef { tab_id }));
         cx.spawn_in(window, async move |this, cx| {
-            let closed = closed.await;
+            if let Some(answer) = answer
+                && !task_dialog::confirms_delete(answer.await.ok())
+            {
+                return;
+            }
+            let closed = connection
+                .call::<()>(Request::TabClose(TabRef { tab_id }))
+                .await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 match closed {
                     Ok(()) => {
+                        for session in &sessions {
+                            shell.sidebar.remove_session(*session);
+                        }
                         let Some(tabs) = shell.tabs.get_mut(&project_id) else {
                             return;
                         };

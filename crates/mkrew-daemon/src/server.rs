@@ -292,11 +292,7 @@ impl Daemon {
                 };
                 (outcome, After::Continue)
             }
-            Request::TabClose(params) => {
-                // The tab's sessions keep running; the UI decides about them (SPEC §10).
-                let closed = self.store().close_tab(params.tab_id);
-                (store_outcome(closed), After::Continue)
-            }
+            Request::TabClose(params) => (self.tab_close(params.tab_id), After::Continue),
             Request::TaskList(params) => {
                 let tasks = self.store().list_tasks(params.project_id, params.status);
                 (store_outcome(tasks), After::Continue)
@@ -1130,6 +1126,27 @@ impl Daemon {
             self.hub.command(session_id, Command::Kill { force: false });
         }
         store_outcome(hidden)
+    }
+
+    /// `tab.close` (ADR 0041): deletes the tab and removes (`session.remove`) every session
+    /// with a pane in it, so none of them lingers in the sidebar.
+    fn tab_close(&self, tab_id: Ulid) -> Outcome {
+        let closed = {
+            let store = self.store();
+            store
+                .get_tab(tab_id)
+                .and_then(|tab| store.close_tab(tab_id).map(|()| tab))
+        };
+        let tab = match closed {
+            Ok(tab) => tab,
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        for session_id in crate::tabs::layout_sessions(&tab.layout) {
+            if let Outcome::Error(error) = self.session_remove(session_id) {
+                tracing::warn!(%session_id, "session of a closed tab not removed: {error:?}");
+            }
+        }
+        ok(&())
     }
 
     /// `session.rename` (ADR 0031): a live session through its task, an exited one in the

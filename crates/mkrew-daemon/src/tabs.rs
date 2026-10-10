@@ -50,6 +50,19 @@ fn without_session(layout: &Value, session: Ulid) -> Option<Value> {
     }
 }
 
+/// Every session with a pane in `layout` (the leaves of the split tree).
+pub fn layout_sessions(layout: &Value) -> Vec<Ulid> {
+    if let Some(session) = layout.get("session").and_then(Value::as_str) {
+        return session.parse().into_iter().collect();
+    }
+    let children = layout.get("children").and_then(Value::as_array);
+    children
+        .into_iter()
+        .flatten()
+        .flat_map(layout_sessions)
+        .collect()
+}
+
 impl Hub {
     /// Rewrites every tab layout of the project with `edit` (`None` = leave that tab alone)
     /// and announces each changed tab as `tab.updated`. One store lock, so a concurrent
@@ -90,7 +103,7 @@ mod tests {
     use serde_json::{Value, json};
     use ulid::Ulid;
 
-    use super::without_session;
+    use super::{layout_sessions, without_session};
 
     fn leaf(id: Ulid) -> Value {
         json!({"session": id.to_string()})
@@ -118,5 +131,16 @@ mod tests {
         // Not in the layout: nothing to write.
         assert_eq!(without_session(&layout, Ulid::new()), None);
         assert_eq!(without_session(&Value::Null, a), None);
+    }
+
+    #[test]
+    fn layout_sessions_lists_every_leaf() {
+        let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+        let layout = json!({"split": "vertical", "ratio": 0.5, "children": [
+            leaf(a),
+            {"split": "horizontal", "ratio": 0.6, "children": [leaf(b), leaf(c)]}
+        ]});
+        assert_eq!(layout_sessions(&layout), [a, b, c]);
+        assert!(layout_sessions(&Value::Null).is_empty());
     }
 }
