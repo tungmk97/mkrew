@@ -29,11 +29,12 @@ This repository is built **autonomously** by agents, one task per session.
 
 | Purpose | Command |
 | --- | --- |
-| Full verify (fmt check, clippy -D warnings, tests) | `bash scripts/verify.sh` · Windows: `pwsh scripts/verify.ps1` |
+| Full verify (fmt check, clippy -D warnings, tests) | `bash scripts/verify.sh` · Windows: `pwsh scripts/verify.ps1`, or in the omp shell `sh scripts/verify.sh` (`bash` there is WSL) |
 | Format | `cargo fmt --all` |
 | Fast test loop | `cargo test -p <crate> <filter>` |
 | Snapshot review | `cargo insta review` (or accept: `cargo insta accept`) |
 | Loop status | `bash scripts/status.sh` |
+| Superpowers skill scripts (sdd-workspace, task-start, task-done, task-brief, review-package) | `sh scripts/sp.sh <name> PLAN_FILE [ARGS]` |
 
 ## Map
 
