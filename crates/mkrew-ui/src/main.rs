@@ -11082,8 +11082,16 @@ impl Shell {
                                 .into_any_element()
                         },
                     );
-                    let path = docs.selected.as_deref().unwrap_or_default();
-                    preview::page(&self.doc_page, path, shown, Some(wrap), theme).into_any_element()
+                    let fonts = cx.global::<theme::Fonts>();
+                    preview::page(
+                        &self.doc_page,
+                        docs.opening,
+                        shown,
+                        Some(wrap),
+                        fonts,
+                        theme,
+                    )
+                    .into_any_element()
                 }
             },
         };
@@ -11617,7 +11625,9 @@ impl Shell {
                 .child(zed_button("file-zed-notice", true))
                 .into_any_element()
             }
-            Content::Shown(_) if view.previewing() => self.render_md_preview(view, theme),
+            Content::Shown(_) if view.previewing() => {
+                self.render_md_preview(view, cx.global::<theme::Fonts>(), theme)
+            }
             Content::Shown(shown) => self.render_editor(project_id, shown, window, theme, cx),
         };
         let disk_banner = view
@@ -13456,7 +13466,12 @@ impl Shell {
 
     /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
     /// (unsaved edits included).
-    fn render_md_preview(&self, view: &FilesView, theme: &Theme) -> gpui::AnyElement {
+    fn render_md_preview(
+        &self,
+        view: &FilesView,
+        fonts: &theme::Fonts,
+        theme: &Theme,
+    ) -> gpui::AnyElement {
         match view.preview() {
             None => message(theme, None, "Rendering the preview…".into(), None)
                 .flex_1()
@@ -13466,10 +13481,8 @@ impl Shell {
                     .flex_1()
                     .into_any_element()
             }
-            Some(shown) => {
-                let path = view.file.as_deref().unwrap_or_default();
-                preview::page(&self.file_page, path, shown, None, theme).into_any_element()
-            }
+            Some(shown) => preview::page(&self.file_page, view.opening, shown, None, fonts, theme)
+                .into_any_element(),
         }
     }
 

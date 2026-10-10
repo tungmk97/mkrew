@@ -148,6 +148,8 @@ pub struct FilesView {
     /// `.md` files: the rendered preview or the editor (SPEC §12A). Another file starts in
     /// Preview.
     pub mode: Mode,
+    /// The opened file's [`docs::new_opening`] number (0 before the first).
+    pub opening: u64,
     /// Number of the text in the editor: new for every file and every re-read that replaced it.
     text_id: u64,
     /// The last page built, and the stamp last asked for (one build per text).
@@ -180,6 +182,7 @@ impl FilesView {
             read_again: false,
             pending_line: None,
             mode: Mode::Preview,
+            opening: 0,
             text_id: 0,
             preview: None,
             preview_asked: None,
@@ -344,6 +347,9 @@ impl FilesView {
         let same = self.file.as_deref() == Some(path);
         if same && !matches!(self.content, Content::Failed(_)) {
             return None;
+        }
+        if !same {
+            self.opening = docs::new_opening();
         }
         self.file = Some(path.to_owned());
         self.content = Content::Loading;
@@ -1117,6 +1123,24 @@ mod tests {
             Some(vec!["ba".to_owned()])
         );
         assert_eq!(view.preview_request(), None);
+    }
+
+    /// Each time a file gets opened it is a new opening (its preview starts at the top);
+    /// clicking the opened file again or re-reading it is not.
+    #[test]
+    fn every_open_of_another_file_is_a_new_opening() {
+        let mut view = opened("a\n");
+        let first = view.opening;
+        assert_eq!(view.open("README.md"), None);
+        view.begin_read();
+        view.read("README.md", file_text("b\n"));
+        assert_eq!(view.opening, first, "the same file re-read");
+        view.open("src/main.rs");
+        assert_ne!(view.opening, first);
+        view.open("README.md");
+        let again = view.opening;
+        assert_ne!(again, first, "back to README.md: opened again");
+        assert_ne!(opened("a\n").opening, again, "another workspace's view");
     }
 
     #[test]

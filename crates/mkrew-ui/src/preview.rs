@@ -52,8 +52,11 @@ pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement>
 pub struct Page {
     state: ListState,
     drag: scrollbar::Drag,
-    /// The file's path and the page last shown.
-    shown: RefCell<Option<(String, Rc<Shown>)>>,
+    /// The opening (`docs::new_opening`) and the page last shown.
+    shown: RefCell<Option<(u64, Rc<Shown>)>>,
+    /// The fonts the blocks were measured with: their heights follow the rem size and the
+    /// terminal font (code blocks).
+    fonts: RefCell<Option<theme::Fonts>>,
 }
 
 impl Default for Page {
@@ -64,28 +67,45 @@ impl Default for Page {
             state: ListState::new(0, ListAlignment::Top, Pixels::ZERO).measure_all(),
             drag: scrollbar::Drag::default(),
             shown: RefCell::default(),
+            fonts: RefCell::default(),
         }
     }
 }
 
 impl Page {
-    /// Points the list at `shown`, the page of `path`. The same page again changes nothing.
-    /// A new page of the same file (re-read, edited) keeps the scroll position, clamped to
-    /// its blocks. Another file starts at the top. Returns whether the list was reset.
-    pub fn show(&self, path: &str, shown: &Rc<Shown>) -> bool {
+    /// Points the list at `shown`, the page of `opening` (one opening of a file in a view).
+    /// The same page again changes nothing. A new page of the same opening (re-read, edited)
+    /// keeps the scroll position, clamped to its blocks. Another opening starts at the top.
+    /// Returns whether the list was reset.
+    pub fn show(&self, opening: u64, shown: &Rc<Shown>) -> bool {
         let mut current = self.shown.borrow_mut();
-        let same_file = match current.as_ref() {
-            Some((file, page)) if file == path && Rc::ptr_eq(page, shown) => return false,
-            Some((file, _)) => file == path,
+        let same_opening = match current.as_ref() {
+            Some((at, page)) if *at == opening && Rc::ptr_eq(page, shown) => return false,
+            Some((at, _)) => *at == opening,
             None => false,
         };
         let at = self.state.logical_scroll_top();
         self.state.reset(shown.blocks.len());
-        if same_file {
+        if same_opening {
             self.state.scroll_to(at);
         }
-        *current = Some((path.to_owned(), Rc::clone(shown)));
+        *current = Some((opening, Rc::clone(shown)));
         true
+    }
+
+    /// Measures every block again (keeping the place) when `fonts` differ from the ones the
+    /// page was measured with: a live `[ui] font_size` or terminal font change (ADR 0024).
+    /// Returns whether it did.
+    pub fn fit(&self, fonts: &theme::Fonts) -> bool {
+        let mut last = self.fonts.borrow_mut();
+        let changed = last.as_ref().is_some_and(|last| last != fonts);
+        if last.as_ref() != Some(fonts) {
+            *last = Some(fonts.clone());
+        }
+        if changed {
+            self.state.remeasure();
+        }
+        changed
     }
 }
 
@@ -94,9 +114,18 @@ pub type Wrap = Rc<dyn Fn(usize, &Block, AnyElement) -> AnyElement>;
 
 /// The preview's page (ADR 0021): `shown`'s blocks in a centered column of at most
 /// `DOC_PREVIEW_MAX_WIDTH`, in a virtual list (only the blocks on screen are laid out), with a
-/// scroll bar on the right. `path` names the file, so another file starts at the top.
-pub fn page(page: &Page, path: &str, shown: &Rc<Shown>, wrap: Option<Wrap>, theme: &Theme) -> Div {
-    page.show(path, shown);
+/// scroll bar on the right. `opening` names this opening of the file, so another one starts at
+/// the top; `fonts` are the current ones (block heights follow them).
+pub fn page(
+    page: &Page,
+    opening: u64,
+    shown: &Rc<Shown>,
+    wrap: Option<Wrap>,
+    fonts: &theme::Fonts,
+    theme: &Theme,
+) -> Div {
+    page.show(opening, shown);
+    page.fit(fonts);
     let shown = Rc::clone(shown);
     let last = shown.blocks.len().saturating_sub(1);
     let blocks = list(page.state.clone(), move |index, _, cx| {
@@ -744,28 +773,26 @@ mod tests {
         );
     }
 
-    /// Drawing the same page again (every frame) changes nothing. A new page of the same file
-    /// (re-read after an agent wrote it, or edited) keeps the reader's place, clamped when it
-    /// got shorter. Another file starts at the top.
+    /// Drawing the same page again (every frame) changes nothing. A new page of the same
+    /// opening (re-read after an agent wrote it, or edited) keeps the reader's place, clamped
+    /// when it got shorter. Another opening (another file, the same file opened again, the same
+    /// path in another workspace) starts at the top.
     #[test]
-    fn a_new_page_of_the_same_file_keeps_its_place_and_another_file_starts_at_the_top() {
+    fn a_new_page_of_the_same_opening_keeps_its_place_and_another_opening_starts_at_the_top() {
         let page = Page::default();
         let long: String = (0..50).map(|i| format!("Paragraph {i}\n\n")).collect();
         let first = page_of(&long);
-        assert!(page.show("a.md", &first));
+        assert!(page.show(1, &first));
         assert_eq!(page.state.item_count(), 50);
         page.state.scroll_to(ListOffset {
             item_ix: 30,
             offset_in_item: px(5.),
         });
-        assert!(
-            !page.show("a.md", &first),
-            "the same page is not laid out again"
-        );
-        assert!(page.show("a.md", &page_of(&long)));
+        assert!(!page.show(1, &first), "the same page is not laid out again");
+        assert!(page.show(1, &page_of(&long)));
         let top = page.state.logical_scroll_top();
         assert_eq!((top.item_ix, top.offset_in_item), (30, px(5.)));
-        assert!(page.show("a.md", &page_of("# One\n\nTwo\n")));
+        assert!(page.show(1, &page_of("# One\n\nTwo\n")));
         assert_eq!(page.state.item_count(), 2);
         assert_eq!(
             page.state.logical_scroll_top().item_ix,
@@ -776,7 +803,45 @@ mod tests {
             item_ix: 1,
             offset_in_item: px(0.),
         });
-        assert!(page.show("b.md", &page_of(&long)));
+        // The same file opened again: a new opening, a new page.
+        assert!(page.show(2, &page_of(&long)));
         assert_eq!(page.state.logical_scroll_top().item_ix, 0);
+    }
+
+    /// A live font change (`[ui] font_size`, the terminal font of code blocks) measures every
+    /// block again and keeps the place; the same fonts again change nothing.
+    #[test]
+    fn other_fonts_measure_the_page_again_and_keep_its_place() {
+        let page = Page::default();
+        let long: String = (0..50).map(|i| format!("Paragraph {i}\n\n")).collect();
+        page.show(1, &page_of(&long));
+        let fonts = theme::Fonts {
+            ui_family: "Inter".into(),
+            ui_size: 13.0,
+            terminal_family: "JetBrains Mono".into(),
+            terminal_size: 13.0,
+        };
+        assert!(
+            !page.fit(&fonts),
+            "the first fonts are the ones it is measured with"
+        );
+        assert!(!page.fit(&fonts));
+        page.state.scroll_to(ListOffset {
+            item_ix: 20,
+            offset_in_item: px(0.),
+        });
+        let larger = theme::Fonts {
+            ui_size: 16.0,
+            ..fonts.clone()
+        };
+        assert!(page.fit(&larger));
+        assert_eq!(page.state.item_count(), 50);
+        assert_eq!(page.state.logical_scroll_top().item_ix, 20);
+        assert!(!page.fit(&larger));
+        let code = theme::Fonts {
+            terminal_size: 15.0,
+            ..larger
+        };
+        assert!(page.fit(&code));
     }
 }

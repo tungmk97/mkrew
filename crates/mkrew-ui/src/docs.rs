@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use mkrew_protocol::{CommentContext, DocContent, DocFile, Event};
 use ulid::Ulid;
@@ -15,6 +16,15 @@ use crate::highlight::{self, Code};
 use crate::markdown::{self, Block, BlockKind};
 use crate::palette;
 use crate::text_box::Input;
+
+static NEXT_OPENING: AtomicU64 = AtomicU64::new(1);
+
+/// A number for one opening of a file in a view (Docs, Files): its preview page starts at the
+/// top, while re-reads of the same opening keep the place. Unique in the process, so the same
+/// path in another workspace, or opened again, is another opening.
+pub fn new_opening() -> u64 {
+    NEXT_OPENING.fetch_add(1, Ordering::Relaxed)
+}
 
 /// The file list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +119,8 @@ pub struct Docs {
     /// Relative path of the selected file.
     pub selected: Option<String>,
     pub doc: Doc,
+    /// The selection's [`new_opening`] number (0 before the first).
+    pub opening: u64,
     pub mode: Mode,
     /// The list filter (fuzzy over the path, SPEC §12); empty = every file. Kept across
     /// relists.
@@ -131,6 +143,7 @@ impl Docs {
             files: Files::Loading,
             selected: None,
             doc: Doc::None,
+            opening: 0,
             mode: Mode::default(),
             filter: Input::default(),
             zed_error: None,
@@ -180,6 +193,9 @@ impl Docs {
         let same = self.selected.as_deref() == Some(file_path);
         if same && !matches!(self.doc, Doc::Failed(_) | Doc::Deleted) {
             return None;
+        }
+        if !same {
+            self.opening = new_opening();
         }
         self.selected = Some(file_path.to_owned());
         self.doc = Doc::Loading;
@@ -443,6 +459,26 @@ mod tests {
         docs.read("b.md", Ok(shown("b.md", "b", "hb")));
         assert_eq!(docs.select("b.md"), None);
         assert_eq!(shown_hash(&docs), Some("hb"));
+    }
+
+    /// Each time a file gets selected it is a new opening (its preview starts at the top);
+    /// selecting the shown file again is not. Another workspace's Docs never shares one.
+    #[test]
+    fn every_selection_of_another_file_is_a_new_opening() {
+        let mut docs = Docs::new(Ulid::new());
+        docs.select("a.md");
+        let a = docs.opening;
+        docs.read("a.md", Ok(shown("a.md", "a", "ha")));
+        assert_eq!(docs.select("a.md"), None);
+        assert_eq!(docs.opening, a, "the shown file again");
+        docs.select("b.md");
+        assert_ne!(docs.opening, a);
+        docs.select("a.md");
+        let again = docs.opening;
+        assert_ne!(again, a, "back to a.md: opened again");
+        let mut other = Docs::new(Ulid::new());
+        other.select("a.md");
+        assert_ne!(other.opening, again, "the same path in another workspace");
     }
 
     #[test]
