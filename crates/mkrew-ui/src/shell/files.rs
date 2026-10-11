@@ -575,6 +575,11 @@ impl Shell {
         let Some(project_id) = unsaved else {
             return true;
         };
+        // A confirmation is open (Alt+F4 reaches here): answer it first; asking now would
+        // replace it.
+        if window.has_active_prompt() {
+            return false;
+        }
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }

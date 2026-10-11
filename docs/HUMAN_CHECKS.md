@@ -23,7 +23,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   window (no Windows message box). Destructive answers (Kill session, Remove, Delete, Stop
   session) are red; Save is the accent button; Cancel is on the left.
 - [ ] **Keys:** Esc = Cancel; Tab / → / ← / Shift+Tab move the ring and wrap; Enter and Space
-  pick the ringed button. A click on the dim area does nothing.
+  pick the ringed button. A click on the dim area does nothing. Holding Enter (e.g. from the
+  palette's Remove workspace) does not answer the prompt. Alt+F4 still closes the window and
+  Alt+Space still opens the system menu; with unsaved Files changes, Alt+F4 during a prompt
+  does nothing until the prompt is answered.
 - [ ] **Keyboard stays in the prompt:** open the close-pane prompt while another agent is
   starting; Esc still closes the prompt (it never reaches a terminal). After Cancel, typing
   goes to the pane that had focus before.

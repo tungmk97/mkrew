@@ -144,7 +144,8 @@ impl Shell {
                 return;
             }
             // Drain at once when frames arrive (low key latency); after feeding output, wait
-            // until that frame is painted so a flood is fed once per frame.
+            // until that frame is painted and `OUTPUT_FRAME` has passed, so a flood is fed once
+            // per frame and at most ~60 times a second whatever the display rate.
             while let Ok(first) = incoming.recv().await {
                 // A paint from an earlier frame must not end the wait below.
                 let _ = painted_rx.try_recv();
@@ -154,6 +155,7 @@ impl Shell {
                 {
                     batch.push(next);
                 }
+                let started = Instant::now();
                 match this.update_in(cx, |shell, window, cx| shell.dispatch(batch, window, cx)) {
                     Ok(true) => {
                         let painted = async {
@@ -161,6 +163,9 @@ impl Shell {
                         };
                         let timeout = cx.background_executor().timer(PAINT_TIMEOUT);
                         futures_lite::future::or(painted, timeout).await;
+                        if let Some(rest) = OUTPUT_FRAME.checked_sub(started.elapsed()) {
+                            cx.background_executor().timer(rest).await;
+                        }
                     }
                     Ok(false) => {}
                     Err(_) => return,
@@ -208,7 +213,10 @@ impl Shell {
                 shell.files.clear();
                 shell.git.clear();
                 shell.git_summary = None;
-                window.focus(&shell.focus_handle, cx);
+                // An open confirmation keeps the keyboard; it hands focus back when answered.
+                if !window.has_active_prompt() {
+                    window.focus(&shell.focus_handle, cx);
+                }
                 cx.notify();
             });
         })

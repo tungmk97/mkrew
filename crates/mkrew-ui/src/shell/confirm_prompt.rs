@@ -58,8 +58,9 @@ impl Focusable for ConfirmPrompt {
 }
 
 impl ConfirmPrompt {
+    /// Only the keys the dialog uses are handled; the rest stay unhandled, so the OS still gets
+    /// Alt+F4 / Alt+Space. Nothing else sees them: the prompt is the whole dispatch path.
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<'_, Self>) {
-        cx.stop_propagation();
         let cancel = confirm::cancel_index(&self.buttons);
         let key = confirm::key(
             &event.keystroke,
@@ -69,8 +70,12 @@ impl ConfirmPrompt {
             cancel,
         );
         match key {
-            confirm::Key::Answer(ix) => cx.emit(PromptResponse(ix)),
+            confirm::Key::Answer(ix) => {
+                cx.stop_propagation();
+                cx.emit(PromptResponse(ix));
+            }
             confirm::Key::Select(ix) => {
+                cx.stop_propagation();
                 self.selected = ix;
                 cx.notify();
             }
@@ -99,7 +104,8 @@ impl Render for ConfirmPrompt {
                 } else if secondary {
                     secondary_button(id, label, &theme)
                 } else {
-                    button(id, label, &theme, false).tooltip(tooltip(&theme, "Cancel", "Esc"))
+                    // No tooltip: gpui draws none while a prompt is open.
+                    button(id, label, &theme, false)
                 };
                 // Every button keeps a 1 px border, so the keyboard ring never shifts the row.
                 let ring = (ix == self.selected).then_some(if ix == 0 {
