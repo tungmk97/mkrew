@@ -148,17 +148,17 @@ pub fn child_repos(root: &Path) -> Vec<String> {
     repos
 }
 
-/// The index text of the project-relative `path` under `root` (`fs.read` with `git_base`):
+/// The index text of the project-relative `path` under `root` (`fs.read` with `index_text`):
 /// from the child repository (ADR 0029) the path lies in, else from the project's own.
 /// `None` when untracked, outside a repository, or git fails.
-pub fn git_base(git: &dyn GitBackend, root: &Path, path: &str) -> Option<String> {
+pub fn index_text(git: &dyn GitBackend, root: &Path, path: &str) -> Option<String> {
     let (dir, inner) = match path.split_once('/') {
         Some((top, rest)) if child_repos(root).iter().any(|repo| repo == top) => {
             (root.join(top), rest)
         }
         _ => (root.to_path_buf(), path),
     };
-    git.index_text(&dir, inner).ok().flatten()
+    git.index_text(&dir, inner)
 }
 
 /// Names of the not-ignored entries directly in `folder`.
@@ -290,7 +290,7 @@ pub fn read(file: &Path, path: String) -> Result<FsContent, ReadError> {
         binary,
         too_large,
         hash,
-        git_base: None,
+        index_text: None,
     })
 }
 

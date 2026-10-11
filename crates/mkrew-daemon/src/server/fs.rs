@@ -100,11 +100,11 @@ impl Daemon {
             Err(outcome) => return outcome,
         };
         let shown = path.clone();
-        let (git, root, want_base) = (Arc::clone(&self.git), target.dir.clone(), params.git_base);
+        let (git, root, want_text) = (Arc::clone(&self.git), target.dir.clone(), params.index_text);
         let read = tokio::task::spawn_blocking(move || {
             files::read(&file, path).map(|mut content| {
-                if want_base && content.content.is_some() {
-                    content.git_base = files::git_base(&*git, &root, &content.path);
+                if want_text && content.content.is_some() {
+                    content.index_text = files::index_text(&*git, &root, &content.path);
                 }
                 content
             })

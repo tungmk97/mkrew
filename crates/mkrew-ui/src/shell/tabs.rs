@@ -73,6 +73,7 @@ impl Shell {
         else {
             return;
         };
+        self.tab_error = None;
         if have > preset.panes() {
             self.tab_error = Some(format!(
                 "This tab has {have} panes; the {} layout holds {}. Close panes first.",

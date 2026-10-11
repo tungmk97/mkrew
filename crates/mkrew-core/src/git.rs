@@ -223,6 +223,21 @@ pub fn parse_log(output: &[u8]) -> Vec<Commit> {
         .collect()
 }
 
+/// Reorders `commits` so each comes after all of its listed children (the History graph needs
+/// that, SPEC §12B), keeping the given order otherwise: it repeatedly takes the first commit
+/// no remaining commit lists as a parent. Parents outside the list are ignored.
+// ponytail: O(n²); the History lists at most 50 commits.
+pub fn children_first(mut commits: Vec<Commit>) -> Vec<Commit> {
+    let mut sorted = Vec::with_capacity(commits.len());
+    while !commits.is_empty() {
+        let free = |c: &Commit| !commits.iter().any(|k| k.parents.contains(&c.hash));
+        // No free commit means a parent cycle, which git cannot produce: keep the order.
+        let at = commits.iter().position(free).unwrap_or(0);
+        sorted.push(commits.remove(at));
+    }
+    sorted
+}
+
 /// Parses `git diff` output into one [`FileDiff`] per file, in output order. Lenient:
 /// unknown lines and combined (`diff --cc`, merge conflict) sections are skipped. `too_large`
 /// is never set here. A deleted file's `path` is its old path. The caller decodes the output
@@ -546,6 +561,39 @@ fn quote(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn commit_of(hash: &str, parents: &[&str]) -> Commit {
+        Commit {
+            hash: hash.into(),
+            parents: parents.iter().map(|p| (*p).into()).collect(),
+            author_name: String::new(),
+            author_email: String::new(),
+            authored_at: 0,
+            summary: String::new(),
+            body: String::new(),
+        }
+    }
+
+    #[test]
+    fn children_first_fixes_only_what_is_out_of_order() {
+        let hashes =
+            |commits: Vec<Commit>| -> Vec<String> { commits.into_iter().map(|c| c.hash).collect() };
+        // Already valid (parents outside the list are ignored): unchanged.
+        let valid = vec![
+            commit_of("m", &["a", "x"]),
+            commit_of("a", &["z"]),
+            commit_of("x", &[]),
+        ];
+        assert_eq!(hashes(children_first(valid)), ["m", "a", "x"]);
+        // Clock skew: git lists `a` before its child `x`; `x` moves up, the rest keeps its order.
+        let skewed = vec![
+            commit_of("m", &["b", "x"]),
+            commit_of("b", &["a"]),
+            commit_of("a", &[]),
+            commit_of("x", &["a"]),
+        ];
+        assert_eq!(hashes(children_first(skewed)), ["m", "b", "x", "a"]);
+    }
 
     fn entry(path: &str, kind: ChangeKind) -> ChangedFile {
         file(path, None, kind)

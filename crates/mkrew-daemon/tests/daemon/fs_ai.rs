@@ -45,7 +45,7 @@ fn fs_list_read_and_find_follow_file_changes() {
             project_id: id,
             worktree_task_id: None,
             path: path.into(),
-            git_base: false,
+            index_text: false,
         })
     };
 
@@ -144,7 +144,7 @@ fn fs_list_read_and_find_follow_file_changes() {
     );
 }
 
-/// `fs.read` with `git_base` adds the file's text in the index (SPEC §12A change gutter): of
+/// `fs.read` with `index_text` adds the file's text in the index (SPEC §12A change gutter): of
 /// the project's repository, or of the child repository holding the file (ADR 0029); none for
 /// an untracked file or when not asked.
 #[test]
@@ -172,32 +172,32 @@ fn fs_read_adds_the_index_text_when_asked() {
     std::fs::write(child.join("b.txt"), "edited\n").unwrap();
     let (_daemon, mut client) = env.start();
     let id = client.add_project(&repo).id;
-    let read = |client: &mut Client, path: &str, git_base: bool| -> FsContent {
+    let read = |client: &mut Client, path: &str, index_text: bool| -> FsContent {
         let request = Request::FsRead(FsReadParams {
             project_id: id,
             worktree_task_id: None,
             path: path.into(),
-            git_base,
+            index_text,
         });
         client.call(request).into_result().unwrap()
     };
 
     let a = read(&mut client, "a.txt", true);
     assert_eq!(a.content.as_deref(), Some("two\n"));
-    assert_eq!(a.git_base.as_deref(), Some("one\n"));
+    assert_eq!(a.index_text.as_deref(), Some("one\n"));
     assert_eq!(
-        read(&mut client, "a.txt", false).git_base,
+        read(&mut client, "a.txt", false).index_text,
         None,
         "not asked"
     );
     assert_eq!(
-        read(&mut client, "new.txt", true).git_base,
+        read(&mut client, "new.txt", true).index_text,
         None,
         "untracked"
     );
     let b = read(&mut client, "fe/b.txt", true);
     assert_eq!(
-        b.git_base.as_deref(),
+        b.index_text.as_deref(),
         Some("child\n"),
         "the child repo's index"
     );

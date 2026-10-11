@@ -61,9 +61,10 @@ pub trait GitBackend: Send + Sync {
     /// `path` is in the index.
     fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool>;
 
-    /// Text of `path` (relative to `dir`) in the index; `None` when it is not in the index
-    /// (untracked, or only conflict stages), not UTF-8, or over the viewer's 2 MB.
-    fn index_text(&self, dir: &Path, path: &str) -> io::Result<Option<String>>;
+    /// Text of `path` (relative to `dir`) in the index; `None` when git cannot give it
+    /// (untracked, unknown, conflicted, outside a repository), it is not UTF-8, or it is over
+    /// the viewer's 2 MB. One git process.
+    fn index_text(&self, dir: &Path, path: &str) -> Option<String>;
 
     /// Stages the whole `paths` (relative to `dir`): new, modified and deleted files.
     fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
@@ -441,22 +442,15 @@ impl GitBackend for GitCli {
         Ok(!run(command)?.is_empty())
     }
 
-    fn index_text(&self, dir: &Path, path: &str) -> io::Result<Option<String>> {
-        if !self.is_tracked(dir, path)? {
-            return Ok(None);
-        }
+    fn index_text(&self, dir: &Path, path: &str) -> Option<String> {
         // `:./` = stage 0 of the index, relative to `dir` (the project may be a subfolder).
         let mut command = view_git(dir);
         command.args(["cat-file", "blob", &format!(":./{path}")]);
-        let bytes = match run(command) {
-            Ok(bytes) => bytes,
-            // Conflicted: stages 1–3 only, no stage 0.
-            Err(_) => return Ok(None),
-        };
+        let bytes = run(command).ok()?;
         if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > crate::docs::MAX_BYTES {
-            return Ok(None);
+            return None;
         }
-        Ok(String::from_utf8(bytes).ok())
+        String::from_utf8(bytes).ok()
     }
 
     fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
@@ -503,17 +497,19 @@ impl GitBackend for GitCli {
 
     fn log(&self, dir: &Path, limit: u32, path: Option<&str>) -> io::Result<Vec<Commit>> {
         let mut command = log_command(dir);
-        // The History graph (SPEC §12B) needs children before parents (`--topo-order`, also
-        // under clock skew) and parents among the listed commits (`--parents` rewrites them
-        // past commits the path filter hides; the format prints them as `%P`).
+        // The History graph (SPEC §12B) needs parents among the listed commits (`--parents`
+        // rewrites them past commits the path filter hides; the format prints them as `%P`)
+        // and children before parents. `--topo-order` would give that but makes git walk the
+        // whole history when there is no commit-graph, so we fix the order up ourselves.
         command.arg(format!("--max-count={limit}")).args([
-            "--topo-order",
             "--parents",
             "HEAD",
             "--",
             path.unwrap_or("."),
         ]);
-        Ok(mkrew_core::git::parse_log(&run(command)?))
+        Ok(mkrew_core::git::children_first(mkrew_core::git::parse_log(
+            &run(command)?,
+        )))
     }
 
     fn commit_info(&self, dir: &Path, id: &str) -> io::Result<Commit> {
@@ -1142,7 +1138,7 @@ mod tests {
     }
 
     /// The index's text, not the working tree's or HEAD's, also when the project is a
-    /// subfolder of the repo; untracked and unknown files have none; outside a repo git fails.
+    /// subfolder of the repo; untracked, unknown and out-of-repo files have none.
     #[test]
     fn index_text_reads_the_staged_version() {
         let repo = tempfile::tempdir().unwrap();
@@ -1159,12 +1155,12 @@ mod tests {
         std::fs::write(dir.join("a b.txt"), "three\n").unwrap();
         std::fs::write(dir.join("new.txt"), "new\n").unwrap();
 
-        let text = GitCli.index_text(&dir, "a b.txt").unwrap();
+        let text = GitCli.index_text(&dir, "a b.txt");
         assert_eq!(text.as_deref(), Some("two\n"));
-        assert_eq!(GitCli.index_text(&dir, "new.txt").unwrap(), None);
-        assert_eq!(GitCli.index_text(&dir, "gone.txt").unwrap(), None);
+        assert_eq!(GitCli.index_text(&dir, "new.txt"), None);
+        assert_eq!(GitCli.index_text(&dir, "gone.txt"), None);
         let outside = tempfile::tempdir().unwrap();
-        assert!(GitCli.index_text(outside.path(), "x").is_err());
+        assert_eq!(GitCli.index_text(outside.path(), "x"), None);
     }
 
     /// Commit dates can be wrong (clock skew): the log still lists every commit before its

@@ -228,7 +228,7 @@ fn fs_and_git_requests_target_a_task_worktree() {
         project_id: project.id,
         worktree_task_id: wt,
         path: "made.txt".into(),
-        git_base: false,
+        index_text: false,
     });
     let content: FsContent = client.call(read).into_result().unwrap();
     assert_eq!(content.content.as_deref(), Some("run"));

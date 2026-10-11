@@ -537,7 +537,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (every comment carries `context`: `doc` (default) or `diff`, replies = their root's; `list`: `project_id` + `file_path?` + `context?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines, `context?` (`diff` = new-side lines of a diff); `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
 | `comment.send_to_agent` | `comment_ids[]`, `session_id` | the thread roots, now `sent` (`sent_to`, `sent_snapshot` = file content), request order; reply ids stand for their thread; all on one file of the live session's project and of one `context` (`diff` → the prompt asks to "Fix the code in <file>" instead of "Update <file>", without "Only edit this file"). The §12 prompt is queued like `session.send` (submit); multi-line sends are wrapped as a bracketed paste when the program enabled mode 2004 |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
-| `fs.read` | `project_id`, `path`, `git_base?` (bool) | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`), `git_base?` (asked for: the file's text in the git index, ADR 0047) |
+| `fs.read` | `project_id`, `path`, `index_text?` (bool) | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`), `index_text?` (asked for: the file's text in the git index, ADR 0047) |
 | `fs.write` | `project_id`, `path`, `content`, `expected_hash` | `saved`, `hash` — writes an existing file (≤ 2 MB text, in place) only if it still hashes to `expected_hash`; else `saved: false`, nothing written, `hash` = the disk's (ADR 0028) |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
 | `git.status` | `project_id`, `mode` (`working`/`base`), `since?` (base mode: compare from this commit instead of the merge-base, e.g. `task.checkpoint`; `merge_base` = it) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
@@ -1065,8 +1065,8 @@ Windows (tens of ms, worse with antivirus), so:
   until the user commits. No amend in v1.
 - **Fetch / Push:** fetch refreshes the base; push sends the current branch to its upstream only,
   never with force. Pull, rebase, merge and branch switching are backlog.
-- **History:** last 50 commits (`git log --topo-order --parents`: children before parents,
-  parents rewritten past commits a subfolder project hides); select one to see its files and
+- **History:** last 50 commits (`git log --parents`, which rewrites parents past commits a subfolder project hides;
+  re-sorted so children come before parents, git's order is kept when it already is); select one to see its files and
   diffs. A lane graph left of each commit draws its dot and the lines to its children and
   parents (merges fork into a lane that ends at the fork point; lanes to commits past the 50
   run off the bottom), at most 8 lanes, colored from the workspace palette (no red or yellow);

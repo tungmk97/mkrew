@@ -32,7 +32,7 @@ fn file_text_at(path: &str, text: &str) -> Result<(FsContent, Code), String> {
         too_large: false,
         language: None,
         hash: Some(format!("#{text}")),
-        git_base: None,
+        index_text: None,
     };
     Ok((content, Code::plain(text)))
 }
@@ -713,7 +713,7 @@ fn a_highlight_is_kept_only_for_the_text_it_was_made_of() {
 
 fn file_with_base(text: &str, base: &str) -> Result<(FsContent, Code), String> {
     let (mut content, _) = file_text(text)?;
-    content.git_base = Some(base.into());
+    content.index_text = Some(base.into());
     let code = Code::new(&content);
     Ok((content, code))
 }
@@ -749,7 +749,7 @@ fn a_new_index_text_moves_the_gutter_and_keeps_the_caret() {
     let version = view.shown().unwrap().editor.version();
     let request = view.highlight_request(version).unwrap();
     assert_eq!(
-        request.git_base.as_deref(),
+        request.index_text.as_deref(),
         Some("a\n"),
         "the pause diffs with it"
     );

@@ -48,9 +48,9 @@ pub struct Shown {
     /// as). `None` = cannot be saved (binary, too large, or an old daemon).
     pub hash: Option<String>,
     pub language: Option<String>,
-    /// The file's text in the git index from the last read (`fs.read` `git_base`); the text
+    /// The file's text in the git index from the last read (`fs.read` `index_text`); the text
     /// highlighted again after typing is diffed with it (SPEC §12A gutter).
-    pub base: Option<String>,
+    pub index_text: Option<String>,
     /// The file on disk changed under unsaved text: its hash ("Changed on disk — Reload ·
     /// Keep mine").
     pub disk_changed: Option<String>,
@@ -451,7 +451,7 @@ impl FilesView {
             if let (Ok((content, _)), Content::Shown(shown)) = (&read, &mut self.content) {
                 shown.disk_changed =
                     (content.hash != hash).then(|| content.hash.clone().unwrap_or_default());
-                shown.base = content.git_base.clone();
+                shown.index_text = content.index_text.clone();
             }
             return;
         }
@@ -461,8 +461,8 @@ impl FilesView {
             && hash.is_some()
             && content.hash == hash
         {
-            if shown.base != content.git_base {
-                shown.base = content.git_base.clone();
+            if shown.index_text != content.index_text {
+                shown.index_text = content.index_text.clone();
                 shown.code = Rc::new(code.clone());
             }
             return;
@@ -480,7 +480,7 @@ impl FilesView {
                     editor,
                     hash: content.hash,
                     language: content.language,
-                    base: content.git_base,
+                    index_text: content.index_text,
                     disk_changed: None,
                     save_error: None,
                 }))
@@ -772,7 +772,7 @@ impl FilesView {
             too_large: false,
             language: shown.language.clone(),
             hash: None,
-            git_base: shown.base.clone(),
+            index_text: shown.index_text.clone(),
         })
     }
 

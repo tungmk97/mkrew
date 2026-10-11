@@ -11,7 +11,7 @@ Tern) marks added, changed and removed lines. It must follow unsaved typing, so 
 
 ## Decision
 
-- `fs.read` gets an opt-in `git_base: bool`; when set, `FsContent.git_base` carries the file's
+- `fs.read` gets an opt-in `index_text: bool`; when set, `FsContent.index_text` carries the file's
   text in the **index** (`git cat-file blob :./<path>` after `git ls-files`), from the child
   repository holding the file (ADR 0029). Untracked, conflicted, not UTF-8, over 2 MB or outside
   a repository: `None`, and no gutter.
@@ -24,7 +24,7 @@ Tern) marks added, changed and removed lines. It must follow unsaved typing, so 
 ## Alternatives rejected
 
 - `git.diff` per save: no marks for unsaved text; lines shift while typing.
-- A separate `git.base` request: a second round trip and handler for every open.
+- A separate `git.index_text` request: a second round trip and handler for every open.
 - HEAD as the base: staged lines stay marked while the Git view calls them staged.
 
 ## Consequences
