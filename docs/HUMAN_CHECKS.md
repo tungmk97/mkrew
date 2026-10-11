@@ -15,6 +15,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-11 gutter, graph, layouts (plan docs/superpowers/plans/2026-10-11-gutter-graph-layouts.md)
+
+- [ ] **Files change gutter (dark + light):** open a tracked file; add, change and delete lines →
+  green / amber bars and a short red mark appear ~150 ms after typing stops; the text never
+  shifts; Save + stage the file in Git → the bars go; an untracked file has no bars; a file in a
+  child repository (ADR 0029) uses that repository. On Windows with `core.autocrlf=true` an
+  unchanged file shows no bars. Not seen on screen by the agent (headless).
+
 ### To verify — 2026-10-11 in-app confirmation dialogs (plan docs/superpowers/plans/2026-10-11-in-app-confirm-dialogs.md)
 
 - [ ] **Look (dark and light):** close the pane of a running agent, close a tab with a running

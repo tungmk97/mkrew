@@ -36,6 +36,7 @@ pub mod git_actions;
 pub mod git_history;
 pub mod git_summary;
 pub mod git_view;
+pub mod gutter;
 pub mod highlight;
 pub mod history;
 pub mod ime;

@@ -48,6 +48,9 @@ pub struct Shown {
     /// as). `None` = cannot be saved (binary, too large, or an old daemon).
     pub hash: Option<String>,
     pub language: Option<String>,
+    /// The file's text in the git index from the last read (`fs.read` `git_base`); the text
+    /// highlighted again after typing is diffed with it (SPEC §12A gutter).
+    pub base: Option<String>,
     /// The file on disk changed under unsaved text: its hash ("Changed on disk — Reload ·
     /// Keep mine").
     pub disk_changed: Option<String>,
@@ -448,13 +451,24 @@ impl FilesView {
             if let (Ok((content, _)), Content::Shown(shown)) = (&read, &mut self.content) {
                 shown.disk_changed =
                     (content.hash != hash).then(|| content.hash.clone().unwrap_or_default());
+                shown.base = content.git_base.clone();
+            }
+            return;
+        }
+        // The same version again (our own save, a change elsewhere): caret and undo stay; a
+        // staged or committed change still moves the gutter.
+        if let (Ok((content, code)), Content::Shown(shown)) = (&read, &mut self.content)
+            && hash.is_some()
+            && content.hash == hash
+        {
+            if shown.base != content.git_base {
+                shown.base = content.git_base.clone();
+                shown.code = Rc::new(code.clone());
             }
             return;
         }
         self.content = match read {
             Err(error) => Content::Failed(error),
-            // The same version again (our own save, a change elsewhere): caret and undo stay.
-            Ok((content, _)) if hash.is_some() && content.hash == hash => return,
             Ok((content, code)) => {
                 self.text_id = NEXT_TEXT.fetch_add(1, Ordering::Relaxed);
                 let mut editor = Editor::new(content.content.as_deref().unwrap_or(""));
@@ -466,6 +480,7 @@ impl FilesView {
                     editor,
                     hash: content.hash,
                     language: content.language,
+                    base: content.git_base,
                     disk_changed: None,
                     save_error: None,
                 }))
@@ -757,7 +772,7 @@ impl FilesView {
             too_large: false,
             language: shown.language.clone(),
             hash: None,
-            git_base: None,
+            git_base: shown.base.clone(),
         })
     }
 

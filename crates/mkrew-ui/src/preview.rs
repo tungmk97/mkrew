@@ -618,6 +618,8 @@ pub struct RowMarks {
     pub caret: Option<usize>,
     pub selected: Option<Range<usize>>,
     pub found: Vec<(Range<usize>, bool)>,
+    /// The line's change against the git index (SPEC §12A gutter).
+    pub change: Option<crate::gutter::Change>,
 }
 
 /// One row of the Files editor (SPEC §12A): its number, then `text` (tabs already spaces) in
@@ -652,12 +654,15 @@ pub fn code_row(
         .child(
             div()
                 .flex_none()
+                .flex()
+                .gap(px(space::XS))
                 .text_color(rgb(if current {
                     theme.accent
                 } else {
                     theme.text_muted
                 }))
-                .child(gutter(index + 1, total)),
+                .child(gutter(index + 1, total))
+                .child(change_bar(marks.change, theme)),
         )
         .child(
             div()
@@ -692,6 +697,22 @@ pub fn code_row(
                         .bg(rgb(theme.text))
                 })),
         )
+}
+
+/// The change bar right of a line number (SPEC §12A): the whole row for an added or changed
+/// line, a short mark at the top for lines removed above it. Always as wide, so the text
+/// never moves.
+fn change_bar(change: Option<crate::gutter::Change>, theme: &Theme) -> Div {
+    use crate::gutter::Change;
+    let bar = div().flex_none().w(px(theme::GIT_GUTTER_BAR_WIDTH));
+    match change {
+        None => bar,
+        Some(Change::Added) => bar.h_full().bg(rgb(theme.diff_add_text)),
+        Some(Change::Modified) => bar.h_full().bg(rgb(theme.diff_mod_text)),
+        Some(Change::Deleted) => bar
+            .h(px(theme::GIT_GUTTER_DELETED_HEIGHT))
+            .bg(rgb(theme.diff_del_text)),
+    }
 }
 
 #[cfg(test)]

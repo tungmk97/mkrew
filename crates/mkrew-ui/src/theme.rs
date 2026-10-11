@@ -162,6 +162,11 @@ pub const FIND_INPUT_WIDTH: f32 = 200.0;
 /// Width of the Files editor's caret.
 pub const CARET_WIDTH: f32 = 2.0;
 
+/// The Files editor's change bar (SPEC §12A): its width, and the height of the mark where
+/// lines were removed.
+pub const GIT_GUTTER_BAR_WIDTH: f32 = 3.0;
+pub const GIT_GUTTER_DELETED_HEIGHT: f32 = 6.0;
+
 /// The scroll bar over the right edge of the Files editor and the Markdown preview: its
 /// grab area, the thumb drawn in it (round ends of `radius::SMALL`), and the shortest thumb
 /// (a 2 MB file still gets one you can grab).
@@ -1061,6 +1066,24 @@ mod tests {
                 for bg in [theme.diff_add_bg, theme.diff_del_bg, theme.diff_mod_bg] {
                     let ratio = contrast(fg, bg);
                     assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                }
+            }
+        }
+    }
+
+    /// The Files editor's change bars stand out from the editor and its caret row
+    /// (WCAG 1.4.11: graphical objects ≥ 3:1).
+    #[test]
+    fn change_bars_stand_out_from_the_editor() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for fg in [
+                theme.diff_add_text,
+                theme.diff_mod_text,
+                theme.diff_del_text,
+            ] {
+                for bg in [theme.bg, theme.surface, theme.surface_raised] {
+                    let ratio = contrast(fg, bg);
+                    assert!(ratio >= 3.0, "{fg:06X} on {bg:06X}: {ratio:.2}");
                 }
             }
         }

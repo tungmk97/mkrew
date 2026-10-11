@@ -711,6 +711,55 @@ fn a_highlight_is_kept_only_for_the_text_it_was_made_of() {
     assert!(view.highlighted(version, Code::plain("bca\n")));
 }
 
+fn file_with_base(text: &str, base: &str) -> Result<(FsContent, Code), String> {
+    let (mut content, _) = file_text(text)?;
+    content.git_base = Some(base.into());
+    let code = Code::new(&content);
+    Ok((content, code))
+}
+
+fn marks(view: &FilesView) -> Vec<Option<crate::gutter::Change>> {
+    view.shown()
+        .map(|shown| shown.code.changes.clone())
+        .unwrap_or_default()
+}
+
+/// Staging or committing leaves the file on disk as it is (same hash) but moves the index:
+/// the gutter follows, caret and undo stay. With unsaved text the new index text waits for
+/// the next typing pause.
+#[test]
+fn a_new_index_text_moves_the_gutter_and_keeps_the_caret() {
+    use crate::gutter::Change::Added;
+    let mut view = listed();
+    view.open("README.md");
+    view.begin_read();
+    view.read("README.md", file_with_base("a\nb\n", "a\n"));
+    assert_eq!(marks(&view), [None, Some(Added)]);
+    view.editor_mut().unwrap().set_cursor(Pos::new(1, 0), false);
+
+    view.begin_read();
+    view.read("README.md", file_with_base("a\nb\n", "a\nb\n"));
+    assert_eq!(marks(&view), [None, None], "staged: no marks");
+    assert_eq!(view.line(), Some(2), "the caret stayed");
+
+    view.editor_mut().unwrap().insert("x");
+    view.begin_read();
+    view.read("README.md", file_with_base("a\nb\n", "a\n"));
+    assert_eq!(text(&view), "a\nxb\n", "unsaved text stays");
+    let version = view.shown().unwrap().editor.version();
+    let request = view.highlight_request(version).unwrap();
+    assert_eq!(
+        request.git_base.as_deref(),
+        Some("a\n"),
+        "the pause diffs with it"
+    );
+    assert_eq!(
+        Code::new(&request).changes,
+        [None, Some(Added)],
+        "xb is new against a"
+    );
+}
+
 #[test]
 fn a_change_on_disk_under_unsaved_text_offers_reload_or_keep_mine() {
     let mut view = opened("one\n");

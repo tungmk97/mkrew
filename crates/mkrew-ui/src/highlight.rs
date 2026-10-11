@@ -80,6 +80,9 @@ pub struct Code {
     pub too_large: bool,
     /// The syntax used, `None` = plain text.
     pub syntax: Option<String>,
+    /// Per line, how it differs from the file's index text (SPEC §12A gutter); empty when the
+    /// read had no `git_base` (untracked, no repository) or for Docs code blocks.
+    pub changes: Vec<Option<crate::gutter::Change>>,
 }
 
 impl Code {
@@ -93,6 +96,9 @@ impl Code {
         code.size = content.size;
         code.binary = content.binary;
         code.too_large = content.too_large;
+        if let Some(base) = &content.git_base {
+            code.changes = crate::gutter::changes(base, text);
+        }
         code
     }
 
@@ -109,6 +115,7 @@ impl Code {
             binary: false,
             too_large: false,
             syntax: None,
+            changes: Vec::new(),
         }
     }
 }
