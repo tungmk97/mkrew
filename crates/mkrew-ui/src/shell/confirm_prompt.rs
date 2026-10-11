@@ -61,7 +61,14 @@ impl ConfirmPrompt {
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<'_, Self>) {
         cx.stop_propagation();
         let cancel = confirm::cancel_index(&self.buttons);
-        match confirm::key(&event.keystroke, &self.order, self.selected, cancel) {
+        let key = confirm::key(
+            &event.keystroke,
+            event.is_held,
+            &self.order,
+            self.selected,
+            cancel,
+        );
+        match key {
             confirm::Key::Answer(ix) => cx.emit(PromptResponse(ix)),
             confirm::Key::Select(ix) => {
                 self.selected = ix;

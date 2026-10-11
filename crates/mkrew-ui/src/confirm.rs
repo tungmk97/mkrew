@@ -29,9 +29,16 @@ pub enum Key {
 }
 
 /// Esc answers Cancel; Enter / Space answer the selected button; Tab / → move right and
-/// Shift+Tab / ← move left along `order` (from [`visual_order`]), wrapping.
-pub fn key(keystroke: &Keystroke, order: &[usize], selected: usize, cancel: Option<usize>) -> Key {
-    if order.is_empty() {
+/// Shift+Tab / ← move left along `order` (from [`visual_order`]), wrapping. A `held` key
+/// (auto-repeat, e.g. of the Enter that opened the prompt) does nothing.
+pub fn key(
+    keystroke: &Keystroke,
+    held: bool,
+    order: &[usize],
+    selected: usize,
+    cancel: Option<usize>,
+) -> Key {
+    if held || order.is_empty() {
         return Key::Ignore;
     }
     let step = |right: bool| {
@@ -66,7 +73,13 @@ mod tests {
     }
 
     fn press(keys: &str, order: &[usize], selected: usize, cancel: Option<usize>) -> Key {
-        key(&Keystroke::parse(keys).unwrap(), order, selected, cancel)
+        key(
+            &Keystroke::parse(keys).unwrap(),
+            false,
+            order,
+            selected,
+            cancel,
+        )
     }
 
     #[test]
@@ -93,6 +106,16 @@ mod tests {
         assert_eq!(press("enter", &order, 1, Some(2)), Key::Answer(1));
         assert_eq!(press("space", &order, 0, Some(2)), Key::Answer(0));
         assert_eq!(press("a", &order, 0, Some(2)), Key::Ignore);
+    }
+
+    #[test]
+    fn a_held_key_repeating_into_the_dialog_answers_nothing() {
+        // The Enter that opened the prompt (palette, quick open) must not pick answer 0.
+        let order = [2, 1, 0];
+        for keys in ["enter", "space", "escape", "tab"] {
+            let held = key(&Keystroke::parse(keys).unwrap(), true, &order, 0, Some(2));
+            assert_eq!(held, Key::Ignore, "{keys}");
+        }
     }
 
     #[test]
