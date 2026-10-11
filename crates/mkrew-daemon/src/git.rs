@@ -61,6 +61,11 @@ pub trait GitBackend: Send + Sync {
     /// `path` is in the index.
     fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool>;
 
+    /// Text of `path` (relative to `dir`) in the index; `None` when git cannot give it
+    /// (untracked, unknown, conflicted, outside a repository), it is not UTF-8, or it is over
+    /// the viewer's 2 MB. One git process.
+    fn index_text(&self, dir: &Path, path: &str) -> Option<String>;
+
     /// Stages the whole `paths` (relative to `dir`): new, modified and deleted files.
     fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
 
@@ -437,6 +442,17 @@ impl GitBackend for GitCli {
         Ok(!run(command)?.is_empty())
     }
 
+    fn index_text(&self, dir: &Path, path: &str) -> Option<String> {
+        // `:./` = stage 0 of the index, relative to `dir` (the project may be a subfolder).
+        let mut command = view_git(dir);
+        command.args(["cat-file", "blob", &format!(":./{path}")]);
+        let bytes = run(command).ok()?;
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > crate::docs::MAX_BYTES {
+            return None;
+        }
+        String::from_utf8(bytes).ok()
+    }
+
     fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
         let mut command = git(dir);
         command.args(["--literal-pathspecs", "add", "-A"]);
@@ -481,10 +497,19 @@ impl GitBackend for GitCli {
 
     fn log(&self, dir: &Path, limit: u32, path: Option<&str>) -> io::Result<Vec<Commit>> {
         let mut command = log_command(dir);
-        command
-            .arg(format!("--max-count={limit}"))
-            .args(["HEAD", "--", path.unwrap_or(".")]);
-        Ok(mkrew_core::git::parse_log(&run(command)?))
+        // The History graph (SPEC §12B) needs parents among the listed commits (`--parents`
+        // rewrites them past commits the path filter hides; the format prints them as `%P`)
+        // and children before parents. `--topo-order` would give that but makes git walk the
+        // whole history when there is no commit-graph, so we fix the order up ourselves.
+        command.arg(format!("--max-count={limit}")).args([
+            "--parents",
+            "HEAD",
+            "--",
+            path.unwrap_or("."),
+        ]);
+        Ok(mkrew_core::git::children_first(mkrew_core::git::parse_log(
+            &run(command)?,
+        )))
     }
 
     fn commit_info(&self, dir: &Path, id: &str) -> io::Result<Commit> {
@@ -1110,6 +1135,107 @@ mod tests {
         // Nothing staged: git's explanation is on stdout.
         let error = GitCli.commit(&dir, "three").unwrap_err().to_string();
         assert!(error.len() > "git failed: ".len(), "{error}");
+    }
+
+    /// The index's text, not the working tree's or HEAD's, also when the project is a
+    /// subfolder of the repo; untracked, unknown and out-of-repo files have none.
+    #[test]
+    fn index_text_reads_the_staged_version() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let dir = root.join("app");
+        std::fs::create_dir(&dir).unwrap();
+        run(root, &["init", "-q"]);
+        run(root, &["config", "core.autocrlf", "false"]);
+        std::fs::write(dir.join("a b.txt"), "one\n").unwrap();
+        run(root, &["add", "."]);
+        run(root, &["commit", "-q", "-m", "one"]);
+        std::fs::write(dir.join("a b.txt"), "two\n").unwrap();
+        run(root, &["add", "."]);
+        std::fs::write(dir.join("a b.txt"), "three\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+
+        let text = GitCli.index_text(&dir, "a b.txt");
+        assert_eq!(text.as_deref(), Some("two\n"));
+        assert_eq!(GitCli.index_text(&dir, "new.txt"), None);
+        assert_eq!(GitCli.index_text(&dir, "gone.txt"), None);
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(GitCli.index_text(outside.path(), "x"), None);
+    }
+
+    /// Commit dates can be wrong (clock skew): the log still lists every commit before its
+    /// parents, which the History graph relies on.
+    #[test]
+    fn log_lists_children_before_their_parents() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        run(root, &["init", "-q", "-b", "main"]);
+        run(root, &["config", "core.autocrlf", "false"]);
+        let at = |date: &str, args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .current_dir(root)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .env("GIT_AUTHOR_DATE", date)
+                .env("GIT_COMMITTER_DATE", date)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?} failed");
+        };
+        let change = |name: &str, date: &str| {
+            std::fs::write(root.join(name), name).unwrap();
+            run(root, &["add", "."]);
+            at(date, &["commit", "-q", "-m", name]);
+        };
+        change("a", "@1000 +0000");
+        run(root, &["checkout", "-q", "-b", "side"]);
+        change("x", "@500 +0000"); // older than its parent `a`
+        run(root, &["checkout", "-q", "main"]);
+        change("b", "@2000 +0000");
+        at(
+            "@3000 +0000",
+            &["merge", "-q", "--no-ff", "--no-edit", "side"],
+        );
+
+        let commits = GitCli.log(root, 50, None).unwrap();
+        assert_eq!(commits.len(), 4);
+        let index = |hash: &str| commits.iter().position(|commit| commit.hash == hash);
+        for (at, commit) in commits.iter().enumerate() {
+            for parent in &commit.parents {
+                assert!(
+                    index(parent).is_some_and(|p| p > at),
+                    "{} before a parent",
+                    commit.summary
+                );
+            }
+        }
+    }
+
+    /// A project in a subfolder lists only the commits touching it; their parents are the
+    /// listed commits (not the hidden ones in between), so graph lanes join.
+    #[test]
+    fn log_of_a_subfolder_rewrites_parents_to_listed_commits() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let dir = root.join("app");
+        std::fs::create_dir(&dir).unwrap();
+        run(root, &["init", "-q"]);
+        run(root, &["config", "core.autocrlf", "false"]);
+        std::fs::write(dir.join("a"), "1").unwrap();
+        run(root, &["add", "."]);
+        run(root, &["commit", "-q", "-m", "one"]);
+        std::fs::write(root.join("other"), "x").unwrap();
+        run(root, &["add", "."]);
+        run(root, &["commit", "-q", "-m", "outside"]);
+        std::fs::write(dir.join("a"), "2").unwrap();
+        run(root, &["add", "."]);
+        run(root, &["commit", "-q", "-m", "two"]);
+
+        let commits = GitCli.log(&dir, 50, None).unwrap();
+        let summaries: Vec<&str> = commits.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(summaries, ["two", "one"]);
+        assert_eq!(commits[0].parents, [commits[1].hash.clone()]);
     }
 
     #[test]

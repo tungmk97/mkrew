@@ -6,10 +6,10 @@
 //! decisions, the keymap, the workspace menu, the "Open in Zed" command, the Docs view-model
 //! and its review comments (with the "Send to agent" and "View changes" dialogs), the Markdown
 //! render model of the Docs preview and its GPUI elements, and the Files view-model with its
-//! editor buffer, its
+//! editor buffer, its tree actions (new file / folder, add to `.gitignore`), its
 //! syntax highlighting and quick open, the Git view-model and its base menu, the command
-//! palette, the turn summaries, the
-//! peek popover, the broadcast dialog, the Files / Git worktree target, fan-out and token
+//! palette, the turn summaries, the peek popover, the broadcast dialog, the in-app confirmation
+//! dialog, the Files / Git worktree target, fan-out and token
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
 //! input (microphone and speech to text), and
 //! the scroll bar of the Files editor and the Markdown preview.
@@ -20,6 +20,7 @@ pub mod broadcast;
 pub mod client;
 pub mod comments;
 pub mod composer;
+pub mod confirm;
 pub mod conflicts;
 pub mod connect;
 pub mod context_menu;
@@ -28,13 +29,16 @@ pub mod doc_dialog;
 pub mod docs;
 pub mod editor;
 pub mod fanout;
+pub mod file_ops;
 pub mod files_view;
 pub mod follow;
 pub mod follow_up;
 pub mod git_actions;
+pub mod git_graph;
 pub mod git_history;
 pub mod git_summary;
 pub mod git_view;
+pub mod gutter;
 pub mod highlight;
 pub mod history;
 pub mod ime;

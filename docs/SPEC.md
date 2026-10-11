@@ -541,7 +541,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `comment.list/create/reply/resolve/reopen` | `file_path`, `start_line`, `end_line`, `quote`, `body` | DocComment (every comment carries `context`: `doc` (default) or `diff`, replies = their root's; `list`: `project_id` + `file_path?` + `context?` → DocComment[], roots and replies oldest first; `create`: `project_id`, 1-based inclusive lines, `context?` (`diff` = new-side lines of a diff); `reply`: `comment_id`, `body`, `mkrew_session_id?` (set by `mk comment reply` = agent author); `resolve`/`reopen`: `comment_id`). Ids are `c_` + ULID; the prefix is optional when parsing |
 | `comment.send_to_agent` | `comment_ids[]`, `session_id` | the thread roots, now `sent` (`sent_to`, `sent_snapshot` = file content), request order; reply ids stand for their thread; all on one file of the live session's project and of one `context` (`diff` → the prompt asks to "Fix the code in <file>" instead of "Update <file>", without "Only edit this file"). The §12 prompt is queued like `session.send` (submit); multi-line sends are wrapped as a bracketed paste when the program enabled mode 2004 |
 | `fs.list` | `project_id`, `dir`, `show_ignored` | children (lazy) with git status |
-| `fs.read` | `project_id`, `path` | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`) |
+| `fs.read` | `project_id`, `path`, `index_text?` (bool) | content (≤ 2 MB), binary flag, language, `hash?` (opaque, set with `content`), `index_text?` (asked for: the file's text in the git index, ADR 0047) |
 | `fs.write` | `project_id`, `path`, `content`, `expected_hash` | `saved`, `hash` — writes an existing file (≤ 2 MB text, in place) only if it still hashes to `expected_hash`; else `saved: false`, nothing written, `hash` = the disk's (ADR 0028) |
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
 | `git.status` | `project_id`, `mode` (`working`/`base`), `since?` (base mode: compare from this commit instead of the merge-base, e.g. `task.checkpoint`; `merge_base` = it) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
@@ -778,8 +778,14 @@ The session panel (below) is a third column right of Terminals while open.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
   for a tab without panes), the status mark of its most urgent pane (§11), its title and a ✕
   (always on the active tab, on hover for the others); closing never activates the tab first.
-  At the right end of the strip: `+` (new tab), a split button (Split right) and `⋯`. `⋯`, and a
-  right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
+  At the right end of the strip: `+` (new tab), the split button and `⋯`. The split button opens
+  the layout menu: Split right, Split down, then the layouts 2 columns, 2 rows, 3 columns, 1 + 2
+  and 2 × 2, each with a small drawing and its shortcut (§13). A layout rearranges the active tab:
+  its panes keep their tree order (left to right, top to bottom within a column) and the panes it
+  lacks start sessions of the focused pane's kind (as Split right), one after another; then the
+  layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
+  why); if a start fails, the sessions that started are placed as Split right places them.
+  `⋯`, and a right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
   activated first, so the menu acts on the tab it was opened on. Closing a tab stops its panes'
   sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
@@ -912,6 +918,7 @@ color alone.
 
 Read plans/specs written by agents, comment on passages, then send the comments back to the
 agent session that wrote them so it edits the file **in the same conversation context**.
+Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, command or "Review in Docs".
 
 - **File list:** files matching the workspace's `review_globs` (default
   `["*.md", "docs/**/*.md", ".claude/plans/**/*.md"]`) plus `.md` files recently changed by agents.
@@ -967,6 +974,13 @@ Only edit this file. When done, for EACH comment run:
   or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.
+- **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
+  from the file's text in the git index (what the Git view calls unstaged): added
+  (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
+  the line after removed lines. It follows unsaved typing (recomputed with the highlight, 150 ms
+  after typing stops; marks on lines edited since are hidden until then) and staging/committing
+  (the `git.changed` re-read). Untracked files, files outside a repository and conflicted files
+  have no bars; the bar column is always there so the text never moves.
 - Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
   Save finds another version on disk, a banner "Changed on disk — Reload · Keep mine" offers
   "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Opening another file,
@@ -989,8 +1003,13 @@ Only edit this file. When done, for EACH comment run:
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - "Open in Zed" opens the file at the caret's line.
 - **Right-click menu** on tree rows (files and folders) and on the blank part of the tree (the
-  folder the view shows: the project, or the task worktree): "Open in File Explorer" and
-  "Open in Zed" (§10). A click outside closes it.
+  folder the view shows: the project, or the task worktree): "New file…" and "New folder…" (a
+  name field over the tree; Enter creates it in the folder clicked, or next to the file
+  clicked; `/` in the name makes subfolders; a new file opens, a new folder opens in the tree),
+  "Copy path" (absolute), "Add to .gitignore" (rows only: appends `/path` or `/path/` to the
+  shown folder's `.gitignore`, once), "Open in File Explorer" and "Open in Zed" (§10). The app
+  does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
+  in the sidebar. A click outside closes the menu.
 - **Open at a line:** Ctrl+Click on a file path in a terminal (§10) shows that file with the
   caret on the line, scrolled into view. A path in another task's worktree switches the view to
   that worktree (asking about unsaved text first).
@@ -1050,7 +1069,12 @@ Windows (tens of ms, worse with antivirus), so:
   until the user commits. No amend in v1.
 - **Fetch / Push:** fetch refreshes the base; push sends the current branch to its upstream only,
   never with force. Pull, rebase, merge and branch switching are backlog.
-- **History:** last 50 commits; select one to see its files and diffs.
+- **History:** last 50 commits (`git log --parents`, which rewrites parents past commits a subfolder project hides;
+  re-sorted so children come before parents, git's order is kept when it already is); select one to see its files and
+  diffs. A lane graph left of each commit draws its dot and the lines to its children and
+  parents (merges fork into a lane that ends at the fork point; lanes to commits past the 50
+  run off the bottom), at most 8 lanes, colored from the workspace palette (no red or yellow);
+  the expanded commit's files show its lanes running straight through.
 - **Task changes:** from a Review-column task card, "View changes" opens the Git view with the diff
   from `task.checkpoint` to now (ties into M5).
 - **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in
@@ -1111,6 +1135,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Tabs | Jump to tab 1–9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab | Ctrl+Shift+R / Ctrl+Shift+W |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
+| Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | New agent pane / new shell pane (split right with the workspace default, like + Agent / + Shell) | Alt+Shift+A / Alt+Shift+S |
 | Panes | Move focus | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
@@ -1232,6 +1257,13 @@ The terminal is the hero; everything else steps back.
   #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
   hues ≥ 12° apart).
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
+- Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
+  (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
+  (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card
+  title, the detail in `text-muted`, buttons on the right with Cancel leftmost and the first
+  answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
+  Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
+  on the shade does nothing. OS file/folder pickers stay native.
 - Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the title bar toggle
   (ADR 0027).
 
@@ -1553,6 +1585,9 @@ api_key_env = "GROQ_API_KEY"  # env var holding the key ("" = no key, local serv
 language = ""               # "" = detected per recording; "vi" | "en" forces one
 prompt = "Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé."
 max_seconds = 120           # 1–600; a recording stops by itself after this
+[features]                  # ADR 0046; optional modules, off by default
+docs = false                # §12 Docs view, "Review in Docs"; applies live
+turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
 ```
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
@@ -1663,6 +1698,9 @@ context_window = 200000        # tokens, for the % shown
 Attachments of sessions that ended more than 7 days ago are deleted by the hourly backup check (§8).
 
 ### §20C Reviewing per turn (M11)
+
+Snapshots and "Turns…" need `[features] turns = true` (§20.0, ADR 0046); off, turns are recorded
+without trees, like outside git.
 
 1. **Turn snapshots.** At each turn start (§20.0) in a git repo (the project folder's repository
    only; child repositories of ADR 0029 are not snapshotted), the daemon records a tree of the

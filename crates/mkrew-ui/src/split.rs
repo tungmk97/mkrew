@@ -48,6 +48,97 @@ pub struct Rect {
     pub h: f64,
 }
 
+/// A ready-made layout for a whole tab (SPEC §10, the split button's menu).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preset {
+    /// Two panes side by side.
+    Columns2,
+    /// Two panes stacked.
+    Rows2,
+    /// Three equal panes side by side.
+    Columns3,
+    /// One pane left, two stacked right.
+    MainAndStack,
+    /// Two by two.
+    Grid,
+}
+
+impl Preset {
+    pub const ALL: [Preset; 5] = [
+        Preset::Columns2,
+        Preset::Rows2,
+        Preset::Columns3,
+        Preset::MainAndStack,
+        Preset::Grid,
+    ];
+
+    /// Shown in the menu and the command palette.
+    pub fn label(self) -> &'static str {
+        match self {
+            Preset::Columns2 => "2 columns",
+            Preset::Rows2 => "2 rows",
+            Preset::Columns3 => "3 columns",
+            Preset::MainAndStack => "1 + 2",
+            Preset::Grid => "2 × 2",
+        }
+    }
+
+    /// Its name in `keymap.toml` after `layout_`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Preset::Columns2 => "columns_2",
+            Preset::Rows2 => "rows_2",
+            Preset::Columns3 => "columns_3",
+            Preset::MainAndStack => "main_stack",
+            Preset::Grid => "grid",
+        }
+    }
+
+    pub fn panes(self) -> usize {
+        match self {
+            Preset::Columns2 | Preset::Rows2 => 2,
+            Preset::Columns3 | Preset::MainAndStack => 3,
+            Preset::Grid => 4,
+        }
+    }
+
+    /// The tree with `sessions` as its panes in tree order ([`Node::sessions`]: left to
+    /// right, top to bottom within a column); `None` unless there are exactly
+    /// [`Self::panes`] of them.
+    pub fn build(self, sessions: &[Ulid]) -> Option<Node> {
+        if sessions.len() != self.panes() {
+            return None;
+        }
+        let pane = |at: usize| Node::pane(sessions[at]);
+        let split = |split: Axis, ratio: f64, first: Node, second: Node| Node::Split {
+            split,
+            ratio,
+            children: Box::new([first, second]),
+        };
+        let (side, stack) = (Axis::Vertical, Axis::Horizontal);
+        Some(match self {
+            Preset::Columns2 => split(side, 0.5, pane(0), pane(1)),
+            Preset::Rows2 => split(stack, 0.5, pane(0), pane(1)),
+            Preset::Columns3 => split(side, 1.0 / 3.0, pane(0), split(side, 0.5, pane(1), pane(2))),
+            Preset::MainAndStack => split(side, 0.5, pane(0), split(stack, 0.5, pane(1), pane(2))),
+            Preset::Grid => split(
+                side,
+                0.5,
+                split(stack, 0.5, pane(0), pane(1)),
+                split(stack, 0.5, pane(2), pane(3)),
+            ),
+        })
+    }
+
+    /// Each pane's area (fractions of the tab), for drawing the layout in the menu.
+    pub fn rects(self) -> Vec<Rect> {
+        let ids: Vec<Ulid> = (0..self.panes() as u128).map(Ulid).collect();
+        self.build(&ids)
+            .map(|node| node.rects().into_iter().map(|(_, rect)| rect).collect())
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LayoutError {
     #[error("invalid layout JSON: {0}")]
@@ -376,6 +467,60 @@ mod tests {
 
     fn ids<const N: usize>() -> [Ulid; N] {
         std::array::from_fn(|_| Ulid::new())
+    }
+
+    #[test]
+    fn presets_build_their_trees_in_pane_order() {
+        let [a, b, c, d] = [Ulid::new(), Ulid::new(), Ulid::new(), Ulid::new()];
+        let half = |axis: &str, first: serde_json::Value, second: serde_json::Value| json!({"split": axis, "ratio": 0.5, "children": [first, second]});
+        let pane = |id: Ulid| json!({"session": id.to_string()});
+        let json =
+            |preset: Preset, sessions: &[Ulid]| Node::to_json(preset.build(sessions).as_ref());
+        assert_eq!(
+            json(Preset::Columns2, &[a, b]),
+            half("vertical", pane(a), pane(b))
+        );
+        assert_eq!(
+            json(Preset::Rows2, &[a, b]),
+            half("horizontal", pane(a), pane(b))
+        );
+        assert_eq!(
+            json(Preset::MainAndStack, &[a, b, c]),
+            half("vertical", pane(a), half("horizontal", pane(b), pane(c)))
+        );
+        assert_eq!(
+            json(Preset::Grid, &[a, b, c, d]),
+            half(
+                "vertical",
+                half("horizontal", pane(a), pane(b)),
+                half("horizontal", pane(c), pane(d))
+            )
+        );
+        // Re-applied to its own panes (in tree order), a preset keeps every pane in place.
+        let grid = Preset::Grid.build(&[a, b, c, d]).unwrap();
+        assert_eq!(Preset::Grid.build(&grid.sessions()), Some(grid));
+        // Only the preset's number of panes.
+        assert_eq!(Preset::Columns3.build(&[a, b]), None);
+        assert_eq!(Preset::Columns2.build(&[a, b, c]), None);
+    }
+
+    #[test]
+    fn three_columns_are_equal() {
+        let rects = Preset::Columns3.rects();
+        let xs: Vec<f64> = rects.iter().map(|rect| rect.x).collect();
+        for (x, want) in xs.iter().zip([0.0, 1.0 / 3.0, 2.0 / 3.0]) {
+            assert!((x - want).abs() < 1e-9, "{xs:?}");
+        }
+        assert!(
+            rects
+                .iter()
+                .all(|rect| (rect.w - 1.0 / 3.0).abs() < 1e-9 && rect.h == 1.0)
+        );
+        assert!(
+            Preset::ALL
+                .iter()
+                .all(|preset| preset.rects().len() == preset.panes())
+        );
     }
 
     #[test]

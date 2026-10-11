@@ -15,6 +15,80 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-11 gutter, graph, layouts (plan docs/superpowers/plans/2026-10-11-gutter-graph-layouts.md)
+
+- [ ] **Files change gutter (dark + light):** open a tracked file; add, change and delete lines →
+  green / amber bars and a short red mark appear ~150 ms after typing stops; the text never
+  shifts; Save + stage the file in Git → the bars go; an untracked file has no bars; a file in a
+  child repository (ADR 0029) uses that repository. On Windows with `core.autocrlf=true` an
+  unchanged file shows no bars. Not seen on screen by the agent (headless).
+- [ ] **History lane graph (dark + light):** Git → History (`h`) on a repo with merges → dots and
+  lanes join across rows with no gaps; a merge opens a second lane that ends at its fork point;
+  the expanded commit's files show the lanes running through; a linear repo shows one line; the
+  selected row's fill does not hide the lines.
+- [ ] **Layout menu (dark + light):** the split button opens Split right / Split down / Layouts
+  with five drawings (2 columns, 2 rows, 3 columns, 1 + 2, 2 × 2) and Alt+Shift+1…5; picking
+  2 × 2 on a one-pane tab starts three panes of the focused kind, the old pane stays top-left and
+  keeps the focus; on a 3-pane tab the 2-pane layouts are greyed with a tooltip; the layout
+  survives a UI restart. Note: the split button no longer splits on one click (Alt+Shift+= still
+  does). Say so if you want the one-click split back.
+
+### To verify — 2026-10-11 feature switches (ADR 0046)
+
+- [ ] **Defaults off:** without `[features]` in `settings.toml`, the view rail has no Docs tab,
+  Ctrl+Shift+3 does nothing, the palette has no `View: Docs` / `Agent: Turns…`, a `.md` file in
+  Files has no "Review in Docs", agent pane headers show "Follow in Zed" but no "Turns…".
+- [ ] **Live switch:** add `[features]` `docs = true` and save → the Docs tab appears within ~1 s;
+  set it back to `false` while on Docs → the workspace shows Terminals.
+- [ ] **Turns:** `turns = true`, start a new agent session, let it edit a file → "Turns…" lists the
+  turn with +/− counts and Restore works. With `turns = false`, no `refs/mkrew/turns/*` appear
+  (`git for-each-ref refs/mkrew`) for new sessions.
+
+### To verify — 2026-10-11 in-app confirmation dialogs (plan docs/superpowers/plans/2026-10-11-in-app-confirm-dialogs.md)
+
+- [ ] **Look (dark and light):** close the pane of a running agent, close a tab with a running
+  agent, ✕ a running session in the sidebar, Stop in the session panel, Delete in Edit task,
+  Remove workspace, and leave an edited file in Files. Each shows a Mkrew card over a dimmed
+  window (no Windows message box). Destructive answers (Kill session, Remove, Delete, Stop
+  session) are red; Save is the accent button; Cancel is on the left.
+- [ ] **Keys:** Esc = Cancel; Tab / → / ← / Shift+Tab move the ring and wrap; Enter and Space
+  pick the ringed button. A click on the dim area does nothing. Holding Enter (e.g. from the
+  palette's Remove workspace) does not answer the prompt. Alt+F4 still closes the window and
+  Alt+Space still opens the system menu; with unsaved Files changes, Alt+F4 during a prompt
+  does nothing until the prompt is answered.
+- [ ] **Keyboard stays in the prompt:** open the close-pane prompt while another agent is
+  starting; Esc still closes the prompt (it never reaches a terminal). After Cancel, typing
+  goes to the pane that had focus before.
+- [ ] **Over the task dialog:** Edit task → Delete → Cancel: the task dialog is still open and
+  its fields take typing; Esc then closes the task dialog.
+- [ ] **Unsaved on close:** edit a file in Files, close the window: the in-app "Save changes to
+  …?" shows; Cancel keeps the window; Don't save closes it.
+- [ ] **Long text:** a deep file path in the save prompt and a long workspace name in Remove
+  wrap inside the card at `[ui] font_size = 18`; the buttons stay on one row and visible.
+- [ ] **Title bar:** while a prompt is open, the ─ □ ✕ window buttons and dragging the title bar
+  behave acceptably (note what happens).
+
+### To verify — 2026-10-11 Git tab redesign (checklist docs/git-tab-redesign-checklist.md)
+
+Build, clippy and tests pass; the app starts and connects. The Git tab itself was not clicked
+through by the agent. Check in dark and light:
+
+- [ ] **Side panel:** repo strip (EA-BE / EA-FE tabs, amber dot, ▾ menu with search), branch
+  header (Fetch icon, Push N, tracking line), Working N / Vs. base / History, Filter files, By: ▾
+  menu, Staged / Changes / Untracked headers (fold, Stage all on hover), 30 px rows, commit box
+  (0 / 72 counter, Generate, readable disabled Commit), clean state card.
+- [ ] **Diff toolbar:** ‹ › with "1 / 6", status badge, `folder / name`, Unified | Split, Wrap
+  (survives a restart), Open in Zed, red Discard…, primary Stage file, ⋯ (Comment, Send to agent).
+- [ ] **Diff body:** long lines wrap (Wrap on) or scroll sideways (Wrap off); hunk headers with
+  Stage hunk; "no newline at end of file" pill; Split hatch on one-sided rows, halves stay aligned
+  when wrapped.
+- [ ] **Selection bar:** click a line (Shift+click extends) → bar under it with Comment
+  (Ctrl+Alt+M), Send to agent, Clear; Esc clears; the Discard dialog preview still renders.
+
+### To verify — 2026-10-10 large-file split (plan docs/superpowers/plans/2026-10-10-split-large-files.md)
+
+Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests and nine inline test modules split). Tests, clippy and a verbatim-move check passed. Please click through once: Board (drag a card), Docs (open, comment), Files (open, find, edit, save), Git (stage, diff split/unified, commit box), palette, quick open, peek, a run, the worktree/turns/history dialogs, theme toggle, compact sidebar. Expected: everything behaves exactly as before.
+
 ### To verify — 2026-10-10 voice input (plan docs/superpowers/plans/2026-10-10-voice-input.md)
 
 - [ ] **Setup:** run `setx GROQ_API_KEY gsk_…` in a terminal, then quit and restart Mkrew. In
@@ -292,6 +366,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   worktree). "Open in Zed" opens Zed on the file or folder (an error shows in the sidebar if `zed`
   is missing). A click outside closes the menu; right-clicking another row moves it. Right-click
   a workspace in the sidebar → "Open in File Explorer" opens its folder.
+- [ ] **Files menu actions (dark and light):** right-click a folder → "New file…": a field
+  `New file in <folder>/` shows over the tree; type `a/b.txt`, Enter → `b.txt` exists in
+  `<folder>/a`, is open in the editor and selected in the tree. On a file row the entry goes next
+  to the file; on the blank part, in the root. "New folder…" → the folder shows open and selected.
+  Esc cancels; a blank name or clicking away with nothing typed creates nothing; an existing name
+  or `..` shows an error in the sidebar. "Copy path" → the absolute path (backslashes on Windows)
+  pastes in Zed. "Add to .gitignore" on a row → `.gitignore` gets `/path` (`/path/` for a
+  folder) once, the row disappears (or turns muted with Show ignored). Not offered on the blank
+  part. With a task worktree chosen, everything happens in the worktree.
 - [ ] **Ctrl+Click links:** in an agent pane or a shell, `echo https://example.com/a?b=1.` then
   hold Ctrl over the URL: underline + hand pointer, only on the URL (not the final `.`); Ctrl+Click
   opens the browser. `echo crates/mkrew-ui/src/main.rs:120:5` (and `.\Cargo.toml`, and an absolute

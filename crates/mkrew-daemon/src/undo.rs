@@ -275,6 +275,9 @@ mod tests {
         fn is_tracked(&self, _: &Path, _: &str) -> io::Result<bool> {
             unreachable!()
         }
+        fn index_text(&self, _: &Path, _: &str) -> Option<String> {
+            unreachable!()
+        }
         fn stage(&self, _: &Path, _: &[String]) -> io::Result<()> {
             unreachable!()
         }

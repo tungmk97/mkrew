@@ -281,6 +281,8 @@ impl GitLogParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Commit {
     pub hash: String,
+    /// In `git.log` rewritten to the listed commits (a path-filtered History hides the commits
+    /// in between); in `git.show` the real parents.
     pub parents: Vec<String>,
     pub author_name: String,
     pub author_email: String,
@@ -418,6 +420,10 @@ pub struct FsReadParams {
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
     pub path: String,
+    /// Also return the file's text in the git index ([`FsContent::index_text`]): the Files
+    /// editor's change gutter (SPEC §12A, ADR 0047).
+    #[serde(default)]
+    pub index_text: bool,
 }
 
 /// `fs.read` result.
@@ -437,6 +443,11 @@ pub struct FsContent {
     /// over this version (ADR 0028).
     #[serde(default)]
     pub hash: Option<String>,
+    /// Asked for with `index_text`: the file's text in the index of the repository holding it
+    /// (a child repository's for a file inside one, ADR 0029). `None` = not asked, untracked,
+    /// not in a repository, not UTF-8 or over 2 MB (ADR 0047).
+    #[serde(default)]
+    pub index_text: Option<String>,
 }
 
 /// `fs.write` (ADR 0028): replaces the text of an existing file of the project (or task
@@ -635,6 +646,7 @@ mod tests {
                 project_id,
                 worktree_task_id: wt,
                 path: "src/a.rs".into(),
+                index_text: true,
             }),
             Request::FsWrite(FsWriteParams {
                 project_id,
@@ -792,6 +804,7 @@ mod tests {
             too_large: false,
             language: None,
             hash: None,
+            index_text: None,
         };
         let decoded: FsContent = Outcome::ok(&content).unwrap().into_result().unwrap();
         assert_eq!(decoded, content);
@@ -802,6 +815,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(old.hash, None);
+        assert_eq!(old.index_text, None);
         let written = FsWritten {
             saved: false,
             hash: "abc".into(),

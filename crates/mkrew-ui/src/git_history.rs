@@ -5,6 +5,8 @@
 
 use mkrew_protocol::{ChangedFile, Commit, CommitDetail};
 
+use crate::git_graph::{self, GraphRow};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Commits {
     Loading,
@@ -25,6 +27,8 @@ pub enum Detail {
 #[derive(Debug)]
 pub struct History {
     pub commits: Commits,
+    /// The lane graph of the listed commits, one row each ([`git_graph::layout`]).
+    pub graph: Vec<GraphRow>,
     /// The hash of the selected (expanded) commit.
     pub selected: Option<String>,
     pub detail: Detail,
@@ -34,6 +38,7 @@ impl Default for History {
     fn default() -> Self {
         History {
             commits: Commits::Loading,
+            graph: Vec::new(),
             selected: None,
             detail: Detail::None,
         }
@@ -56,6 +61,7 @@ impl History {
             }
             Err(error) => {
                 self.commits = Commits::Failed(error);
+                self.graph.clear();
                 self.selected = None;
                 self.detail = Detail::None;
                 return Logged::default();
@@ -67,6 +73,7 @@ impl History {
             .filter(|hash| commits.iter().any(|commit| commit.hash == **hash))
             .cloned();
         let next = kept.or_else(|| commits.first().map(|commit| commit.hash.clone()));
+        self.graph = git_graph::layout(&commits);
         self.commits = Commits::Loaded(commits);
         let show = match next {
             Some(hash) => self.select(hash),

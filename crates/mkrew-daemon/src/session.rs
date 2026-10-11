@@ -297,6 +297,8 @@ pub struct SpawnSpec {
     pub banner: Option<String>,
     /// Extra environment (run commands, SPEC §10); after the profile's, before mkrew's own.
     pub env: Vec<(String, String)>,
+    /// `[features] turns` when the session starts: take turn snapshots (ADR 0046).
+    pub turn_snapshots: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -362,6 +364,7 @@ impl Hub {
             typed,
             banner,
             env,
+            turn_snapshots,
         } = spec;
         let mut cmd = launch::command(&profile).map_err(SpawnError::Launch)?;
         cmd.cwd(&cwd);
@@ -510,6 +513,7 @@ impl Hub {
             session.id,
             session.project_id,
             cwd,
+            turn_snapshots,
             jobs,
         ));
         let usage = self.track_usage(&session, &profile);

@@ -9,6 +9,9 @@ use ulid::Ulid;
 use crate::task_dialog::DialogKey;
 use crate::text_box::TextBox;
 
+/// The commit box counts its summary line against this many chars (git's usual limit).
+pub const SUMMARY_LIMIT: usize = 72;
+
 /// What a key press in the commit box does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {

@@ -24,6 +24,18 @@ pub struct Settings {
     pub terminal: FontSettings,
     /// `[voice]`: speech to text for voice input (SPEC §20G, ADR 0045).
     pub voice: VoiceSettings,
+    /// `[features]`: optional modules, all off by default (ADR 0046).
+    pub features: FeatureSettings,
+}
+
+/// `[features]` (ADR 0046): modules that are off unless switched on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FeatureSettings {
+    /// The Docs view (SPEC §12) and "Review in Docs".
+    pub docs: bool,
+    /// Turn snapshots and the agent pane's "Turns…" dialog (SPEC §20C.1–§20C.2).
+    pub turns: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -214,6 +226,9 @@ pub struct UiSettings {
     pub font_size: FontSize,
     pub theme: ThemeMode,
     pub diff_mode: DiffMode,
+    /// `[ui] diff_wrap` (SPEC §12B): long diff lines wrap at the pane edge (else they are cut).
+    /// The Git diff toolbar's Wrap toggle writes it.
+    pub diff_wrap: bool,
     /// Width of the session panel right of Terminals, px (SPEC §10); dragging its edge saves it.
     pub inspector_width: u16,
 }
@@ -226,6 +241,7 @@ impl Default for UiSettings {
             font_size: font.font_size,
             theme: ThemeMode::System,
             diff_mode: DiffMode::Unified,
+            diff_wrap: true,
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
         }
     }
@@ -337,11 +353,13 @@ pub fn template() -> &'static str {
      # Theme: system (follows the OS), light or dark; the title bar toggle writes it.\n\
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
+     # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
      # theme = \"system\"\n\
      # diff_mode = \"unified\"\n\
+     # diff_wrap = true\n\
      # inspector_width = 300\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
@@ -362,7 +380,13 @@ pub fn template() -> &'static str {
      # api_key_env = \"GROQ_API_KEY\"\n\
      # language = \"\"\n\
      # prompt = \"Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé.\"\n\
-     # max_seconds = 120\n"
+     # max_seconds = 120\n\
+     \n\
+     # Optional modules, off by default. docs: the Docs view. turns: the agent's turn\n\
+     # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
+     [features]\n\
+     # docs = false\n\
+     # turns = false\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -492,6 +516,9 @@ font_size = 14
 [terminal]
 font_family = "JetBrains Mono"
 font_size = 15
+
+[features]
+docs = true
 "#;
         let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
@@ -514,6 +541,7 @@ font_size = 15
                     font_size: FontSize(14),
                     theme: ThemeMode::System,
                     diff_mode: DiffMode::Unified,
+                    diff_wrap: true,
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                 },
                 terminal: FontSettings {
@@ -521,6 +549,10 @@ font_size = 15
                     font_size: FontSize(15),
                 },
                 voice: VoiceSettings::default(),
+                features: FeatureSettings {
+                    docs: true,
+                    turns: false,
+                },
             }
         );
     }
@@ -654,6 +686,14 @@ font_size = 15
         assert!(
             parse_err("[terminal]\ndiff_mode = \"split\"").contains("unknown field `diff_mode`")
         );
+    }
+
+    #[test]
+    fn ui_diff_wrap_parses_and_defaults_to_on() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert!(ui("").diff_wrap);
+        assert!(!ui("[ui]\ndiff_wrap = false").diff_wrap);
+        assert!(parse_err("[ui]\ndiff_wrap = \"no\"").contains("invalid type"));
     }
 
     #[test]

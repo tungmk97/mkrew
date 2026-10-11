@@ -37,11 +37,13 @@ fn turn_end_ref(session: Ulid, n: u32) -> String {
 }
 
 /// Records the turns of `session` (in `project`, running in `dir`) until `jobs` closes.
+/// `snapshots` off (`[features] turns`, ADR 0046) records the rows without git snapshots.
 pub async fn record(
     hub: Arc<Hub>,
     session: Ulid,
     project: Ulid,
     dir: PathBuf,
+    snapshots: bool,
     mut jobs: mpsc::UnboundedReceiver<Job>,
 ) {
     let mut recorder = Recorder {
@@ -49,7 +51,8 @@ pub async fn record(
         session,
         project,
         dir: Arc::new(dir),
-        in_git: None,
+        // Treated like a folder outside git: no snapshot is ever taken.
+        in_git: (!snapshots).then_some(false),
         started: None,
         unfinished: None,
     };
@@ -327,12 +330,23 @@ mod tests {
     }
 
     fn run(hub: &Arc<Hub>, project: Ulid, session: Ulid, dir: &Path) -> Running {
+        run_with(hub, project, session, dir, true)
+    }
+
+    fn run_with(
+        hub: &Arc<Hub>,
+        project: Ulid,
+        session: Ulid,
+        dir: &Path,
+        snapshots: bool,
+    ) -> Running {
         let (jobs, rx) = mpsc::unbounded_channel();
         let task = tokio::spawn(record(
             Arc::clone(hub),
             session,
             project,
             dir.to_path_buf(),
+            snapshots,
             rx,
         ));
         Running { jobs, task }
@@ -451,19 +465,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn turns_outside_git_have_no_trees_or_counts() {
-        let dir = tempfile::tempdir().unwrap();
-        let (root, hub, project, session) = hub(&dir, false);
-        let recorder = run(&hub, project, session, &root);
+    async fn turns_outside_git_or_with_snapshots_off_have_no_trees_or_counts() {
+        for (in_git, snapshots) in [(false, true), (true, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let (root, hub, project, session) = hub(&dir, in_git);
+            let recorder = run_with(&hub, project, session, &root, snapshots);
 
-        recorder.start(1, 10).await;
-        std::fs::write(root.join("a.txt"), "a\n").unwrap();
-        recorder.end(ended(1, 10, 20, &["a.txt"]), true);
-        recorder.finish().await;
+            recorder.start(1, 10).await;
+            std::fs::write(root.join("a.txt"), "a\n").unwrap();
+            recorder.end(ended(1, 10, 20, &["a.txt"]), true);
+            recorder.finish().await;
 
-        let turn = hub.store().get_turn(session, 1).unwrap();
-        assert_eq!((turn.start_tree, turn.end_tree), (None, None));
-        assert_eq!(turn.files, [file("a.txt", None, None)]);
+            let turn = hub.store().get_turn(session, 1).unwrap();
+            assert_eq!((turn.start_tree, turn.end_tree), (None, None));
+            assert_eq!(turn.files, [file("a.txt", None, None)]);
+            if in_git {
+                assert_eq!(git(&root, &["for-each-ref", "refs/mkrew"]), "");
+            }
+        }
     }
 
     #[tokio::test]

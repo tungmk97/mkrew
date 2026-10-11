@@ -111,3 +111,35 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
   - Highlight added, removed, and modified lines with clear colors in both modes.
   - Remember the selected mode across files and app restarts.
   - Works for every repo of the workspace (1 or N repos, ADR 0029 repo chooser).
+
+- [~] **11. Perf: stop whole-app re-renders in the UI** [enh] (perf B1, B2, B3, B4, B8, B11, A6) → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Task 1, 2, 3, 4, 5, 6
+  - Source: `docs/PERF_REVIEW.md` (all perf IDs below point there; its `file:line` refs are from 2026-10-10, re-check them). A1 (working dots) stays as is.
+  - B1: a daemon event (`session.usage` / `turn` / `plan` / `ports`, board…) notifies the root only when the model it feeds is on screen (inspector open on that session, Board open…). Hidden models still update their data.
+  - B2: cache the sidebar view rows and the inbox count; mark dirty on `apply` / `load` / filter change. Status bar reads the cached count, not `inbox_entries().len()`. Tab bar lookup not O(panes×sessions).
+  - B3: `doc_event` while Docs is hidden only marks the doc stale; read it again when Docs is shown (same pattern as Files/Git).
+  - B4: title/status bar git summary refresh is throttled to ≥2 s (trailing, so the last change always shows).
+  - B8: drop the 500 ms `settings.toml` poll; check it when the window gets focus (`observe_window_activation`).
+  - B11: Files editor caches the longest line width per text version; no `Theme` clone per render.
+  - A6: Markdown live preview in Files is rebuilt with a 300 ms debounce, not on every key.
+  - Check: CPU of `mkrew-ui` with 2–3 agents `working`, before vs after; note the numbers in the plan.
+
+- [~] **12. Perf: daemon watcher, git.changed and SQLite** [enh] (perf B5, B6, A4, B7) → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Task 7, 8, 9
+  - B5: send `git.changed` only when a batch has real changes (no empty batches); `MAX_DELAY` ~5 s while any agent is `working`; stop a "kept" project watcher when its view closes.
+  - B6: write `files_changed` only when the batch has a `.md` file (Docs is the only reader); use the in-memory session list, not `list_sessions`.
+  - A4: stop storing raw hook payloads (`insert_session_event("hook", …)`); remove the tests that only pin it. Keep the table (no migration deletes).
+  - B7: `PRAGMA synchronous=NORMAL` (WAL); daily backup `VACUUM INTO` on its own connection, not under the store mutex; prune `session_event` rows older than 7 days.
+
+- [~] **13. Perf: turn snapshots and conflict detection become opt-in** [enh] (perf A2, A3; after item 12, both touch `daemon/session.rs`) → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Task 10, 11, 12
+  - New settings, default off, hot-reloaded by the daemon like the other keys: turn snapshots (A2) and conflict detection (A3). Suggested: `[features] turn_snapshots = false`, `conflict_detection = false`.
+  - Off = zero cost: no git snapshot at turn start/end and the start hook never waits; no `record_edits` / `list_sessions` / `conflict.detected`, and the UI does not prune conflicts on every event.
+  - Off = UI hides what depends on it: Turns dialog, Undo dialog, Git view "since turn", inspector "Changed by", conflict warnings. On = today's behavior.
+  - Changes default spec behavior → ADR + SPEC update in the same change.
+
+- [~] **14. Perf: terminal path (daemon scan, scrollback, replay)** [enh] (perf B9, B10, B12) → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Task 13, 14, 15
+  - B9: daemon screen scan builds only the last 4 lines the state machine reads, at most ~4 scans/s per session. Skip the scan for agents with hooks only if the hooks already report every state the scan detects (check first; default: keep the scan).
+  - B10: UI scrollback 10,000 → 5,000 lines per pane (the log on disk keeps everything; SPEC update if the number is there). `grid()` reuses its buffer, no `Vec<char>` per cell.
+  - B12: opening an exited session replays only the last ~1 MB of its log.
+
+- [~] **15. Remote machine: the window connects to one other computer over SSH** [feature] (Windows/Linux/macOS remote; switch back to this computer) → plan: docs/superpowers/plans/2026-10-10-remote-machine.md Task 1, 2, 3, 4, 5
+  - Remote needs Mkrew (`mk proxy`), an SSH server and the user's key; no TCP port on the daemon.
+  - Title bar machine chip: This computer / added machines / Add machine…; a switch rebuilds the window.

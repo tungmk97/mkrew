@@ -156,11 +156,20 @@ pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 /// Width of a popover menu (every `menu_panel` popover).
 pub const MENU_WIDTH: f32 = 240.0;
 
+/// The drawing of a layout in the split button's menu (SPEC §10).
+pub const LAYOUT_THUMB_WIDTH: f32 = 24.0;
+pub const LAYOUT_THUMB_HEIGHT: f32 = 16.0;
+
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
 
 /// Width of the Files editor's caret.
 pub const CARET_WIDTH: f32 = 2.0;
+
+/// The Files editor's change bar (SPEC §12A): its width, and the height of the mark where
+/// lines were removed.
+pub const GIT_GUTTER_BAR_WIDTH: f32 = 3.0;
+pub const GIT_GUTTER_DELETED_HEIGHT: f32 = 6.0;
 
 /// The scroll bar over the right edge of the Files editor and the Markdown preview: its
 /// grab area, the thumb drawn in it (round ends of `radius::SMALL`), and the shortest thumb
@@ -183,6 +192,9 @@ pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 
 /// Width of a modal dialog (the task dialog).
 pub const DIALOG_WIDTH: f32 = 520.0;
+
+/// Width of a confirmation dialog (every `window.prompt`, drawn in the window).
+pub const CONFIRM_DIALOG_WIDTH: f32 = 420.0;
 
 /// Height of the Run setup dialog's command list before it scrolls.
 pub const RUN_SETUP_MAX_HEIGHT: f32 = 420.0;
@@ -265,11 +277,41 @@ pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 /// Height of the quick open match list (it scrolls past that).
 pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 
-/// Width of the Git view's header and changed-file list (right of the diff).
-pub const GIT_FILE_LIST_WIDTH: f32 = 300.0;
+/// Width of the Git view's side panel: header, changed-file list, commit box (right of the diff).
+pub const GIT_FILE_LIST_WIDTH: f32 = 320.0;
 
 /// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
 pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
+
+/// One row of the Git changed-file list (uniform list: every row has this box).
+pub const GIT_FILE_ROW_HEIGHT: f32 = 30.0;
+
+/// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
+pub const GIT_GRAPH_LANE_WIDTH: f32 = 12.0;
+pub const GIT_GRAPH_DOT_SIZE: f32 = 8.0;
+pub const GIT_GRAPH_LINE_WIDTH: f32 = 2.0;
+
+/// The Git diff toolbar's height while it fits on one line (it wraps when narrow).
+pub const GIT_DIFF_TOOLBAR_HEIGHT: f32 = 44.0;
+
+/// The hatch of a Split cell with no line on that side: stroke width and spacing in px.
+pub const DIFF_HATCH_WIDTH: f32 = 1.0;
+pub const DIFF_HATCH_INTERVAL: f32 = 6.0;
+
+/// How far above and below the Git diff's visible rows the list lays rows out ahead, px, so
+/// scrolling a wrapped diff does not pop.
+pub const GIT_DIFF_OVERDRAW: f32 = 200.0;
+
+/// Git diff lines: monospace size and line height, px (a wrapped line is a multiple of it).
+pub const DIFF_FONT_SIZE: f32 = 12.5;
+pub const DIFF_LINE_HEIGHT: f32 = 20.0;
+
+/// Rough width of one char of a Git repository tab label, px: the repo strip shows every tab
+/// only when their labels fit.
+pub const GIT_REPO_TAB_CHAR_WIDTH: f32 = 7.0;
+
+/// Widest the Git filter row's "By: … ▾" button gets before its session name is cut.
+pub const GIT_CHANGED_BY_MAX_WIDTH: f32 = 140.0;
 
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;
@@ -455,6 +497,14 @@ pub struct Theme {
     pub diff_mod_bg: u32,
     pub diff_mod_text: u32,
     pub diff_hunk_header: u32,
+    /// The number / sign gutter of added, removed and changed-in-place diff lines: a step
+    /// stronger than the row's own fill.
+    pub diff_add_gutter: u32,
+    pub diff_del_gutter: u32,
+    pub diff_mod_gutter: u32,
+    /// Git file status letters: modified-like (M R C T) and untracked (?).
+    pub git_modified: u32,
+    pub git_untracked: u32,
     /// Files and diff viewer syntax colors (harmonized with the ANSI palette; comments use
     /// `text_muted`).
     pub syntax_keyword: u32,
@@ -569,6 +619,11 @@ impl Theme {
             diff_mod_bg: 0x3A3320,
             diff_mod_text: 0xE6C77A,
             diff_hunk_header: 0x2C2E37,
+            diff_add_gutter: 0x24503A,
+            diff_del_gutter: 0x56292F,
+            diff_mod_gutter: 0x4D4326,
+            git_modified: 0x8FB3FF,
+            git_untracked: 0xF0B866,
             syntax_keyword: 0xC28CF0,
             syntax_string: 0x7DD3A0,
             syntax_number: 0xF0C674,
@@ -627,6 +682,11 @@ impl Theme {
             diff_mod_bg: 0xFFF6DB,
             diff_mod_text: 0x7A5200,
             diff_hunk_header: 0xF6F7F9,
+            diff_add_gutter: 0xC9E8D2,
+            diff_del_gutter: 0xF7D4D4,
+            diff_mod_gutter: 0xF8E6AE,
+            git_modified: 0x1D4ED8,
+            git_untracked: 0x975A16,
             // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
             syntax_keyword: 0x8A3FB8,
             syntax_string: 0x276749,
@@ -689,6 +749,11 @@ impl Theme {
             diff_mod_bg: 0,
             diff_mod_text: 0,
             diff_hunk_header: 0,
+            diff_add_gutter: 0,
+            diff_del_gutter: 0,
+            diff_mod_gutter: 0,
+            git_modified: 0,
+            git_untracked: 0,
             syntax_keyword: 0,
             syntax_string: 0,
             syntax_number: 0,
@@ -771,6 +836,8 @@ pub fn rems_px(px: f32) -> Rems {
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
 pub const TITLE_BAR_HEIGHT: f32 = 44.0;
 pub const TAB_STRIP_HEIGHT: f32 = 38.0;
+/// The Git view's repository tabs (multi-repo workspaces): a tab strip.
+pub const GIT_REPO_STRIP_HEIGHT: f32 = TAB_STRIP_HEIGHT;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 28.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row
@@ -1013,6 +1080,24 @@ mod tests {
         }
     }
 
+    /// The Files editor's change bars stand out from the editor and its caret row
+    /// (WCAG 1.4.11: graphical objects ≥ 3:1).
+    #[test]
+    fn change_bars_stand_out_from_the_editor() {
+        for theme in [Theme::dark(), Theme::light()] {
+            for fg in [
+                theme.diff_add_text,
+                theme.diff_mod_text,
+                theme.diff_del_text,
+            ] {
+                for bg in [theme.bg, theme.surface, theme.surface_raised] {
+                    let ratio = contrast(fg, bg);
+                    assert!(ratio >= 3.0, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                }
+            }
+        }
+    }
+
     /// Added, removed and modified (a line changed in place, Split diff) lines read on
     /// their own backgrounds, in both appearances.
     #[test]
@@ -1022,6 +1107,15 @@ mod tests {
                 (theme.diff_add_text, theme.diff_add_bg),
                 (theme.diff_del_text, theme.diff_del_bg),
                 (theme.diff_mod_text, theme.diff_mod_bg),
+                // Line numbers in the gutter of a changed line.
+                (theme.text_dim, theme.diff_add_gutter),
+                (theme.text_dim, theme.diff_del_gutter),
+                (theme.text_dim, theme.diff_mod_gutter),
+                // Git status letters on the list and on its selected row.
+                (theme.git_modified, theme.bg),
+                (theme.git_untracked, theme.bg),
+                (theme.git_modified, theme.selected),
+                (theme.git_untracked, theme.selected),
             ] {
                 let ratio = contrast(fg, bg);
                 assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
