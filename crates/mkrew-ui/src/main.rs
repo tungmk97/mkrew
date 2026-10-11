@@ -116,6 +116,10 @@ use shell::widgets::*;
 /// Longest wait for the frame showing fed output before draining again anyway (e.g. the
 /// window is minimized and never paints).
 const PAINT_TIMEOUT: Duration = Duration::from_millis(50);
+/// Shortest time between two output-driven frames (~60 fps). Without it a 165 Hz display
+/// repaints the whole window 165 times a second while agents stream, saturating the UI thread
+/// so keys wait. Typed keys still repaint at once; only the echo waits for the next slot.
+const OUTPUT_FRAME: Duration = Duration::from_millis(16);
 /// Most incoming frames handled per drain, so one drain never starves painting.
 const DRAIN_BATCH: usize = 256;
 
