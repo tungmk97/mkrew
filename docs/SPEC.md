@@ -908,6 +908,7 @@ color alone.
 
 Read plans/specs written by agents, comment on passages, then send the comments back to the
 agent session that wrote them so it edits the file **in the same conversation context**.
+Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, command or "Review in Docs".
 
 - **File list:** files matching the workspace's `review_globs` (default
   `["*.md", "docs/**/*.md", ".claude/plans/**/*.md"]`) plus `.md` files recently changed by agents.
@@ -1559,6 +1560,10 @@ inspector_width = 300       # §10; px, the session panel's width (dragging its 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
 font_size = 13              # px, 8–32; also the Files and Git code views
+
+[features]                  # ADR 0046; optional modules, off by default
+docs = false                # §12 Docs view, "Review in Docs"; applies live
+turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
 ```
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
@@ -1669,6 +1674,9 @@ context_window = 200000        # tokens, for the % shown
 Attachments of sessions that ended more than 7 days ago are deleted by the hourly backup check (§8).
 
 ### §20C Reviewing per turn (M11)
+
+Snapshots and "Turns…" need `[features] turns = true` (§20.0, ADR 0046); off, turns are recorded
+without trees, like outside git.
 
 1. **Turn snapshots.** At each turn start (§20.0) in a git repo (the project folder's repository
    only; child repositories of ADR 0029 are not snapshotted), the daemon records a tree of the

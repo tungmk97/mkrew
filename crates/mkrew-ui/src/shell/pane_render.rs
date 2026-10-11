@@ -429,20 +429,22 @@ impl Shell {
                                 },
                             )),
                         )
-                        .child(
-                            quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
-                                .px(px(space::XS))
-                                .py_0()
-                                .text_size(font_size::META)
-                                .tooltip(tooltip(
-                                    theme,
-                                    "The agent's turns: restore the files to before one",
-                                    "",
-                                ))
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.open_turns(session, window, cx);
-                                })),
-                        )
+                        .when(self.features.turns, |el| {
+                            el.child(
+                                quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
+                                    .px(px(space::XS))
+                                    .py_0()
+                                    .text_size(font_size::META)
+                                    .tooltip(tooltip(
+                                        theme,
+                                        "The agent's turns: restore the files to before one",
+                                        "",
+                                    ))
+                                    .on_click(cx.listener(move |shell, _, window, cx| {
+                                        shell.open_turns(session, window, cx);
+                                    })),
+                            )
+                        })
                 });
                 let renaming = self
                     .renaming

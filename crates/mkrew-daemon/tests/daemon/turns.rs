@@ -207,6 +207,7 @@ fn session_usage_lists_events_stored_before_the_cache_split() {
 #[test]
 fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
     let env = Env::new();
+    env.enable_turns();
     let repo = env.repo();
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["config", "core.autocrlf", "false"]);
@@ -278,6 +279,7 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
 #[test]
 fn turns_are_listed_previewed_and_restored() {
     let env = Env::new();
+    env.enable_turns();
     let repo = env.repo();
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["config", "core.autocrlf", "false"]);
@@ -396,6 +398,7 @@ fn turns_are_listed_previewed_and_restored() {
 #[test]
 fn hook_edits_are_announced_attributed_and_diffed_since_a_turn() {
     let env = Env::new();
+    env.enable_turns();
     let repo = env.repo();
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["config", "core.autocrlf", "false"]);

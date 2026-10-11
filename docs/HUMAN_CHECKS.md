@@ -23,6 +23,17 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   child repository (ADR 0029) uses that repository. On Windows with `core.autocrlf=true` an
   unchanged file shows no bars. Not seen on screen by the agent (headless).
 
+### To verify — 2026-10-11 feature switches (ADR 0046)
+
+- [ ] **Defaults off:** without `[features]` in `settings.toml`, the view rail has no Docs tab,
+  Ctrl+Shift+3 does nothing, the palette has no `View: Docs` / `Agent: Turns…`, a `.md` file in
+  Files has no "Review in Docs", agent pane headers show "Follow in Zed" but no "Turns…".
+- [ ] **Live switch:** add `[features]` `docs = true` and save → the Docs tab appears within ~1 s;
+  set it back to `false` while on Docs → the workspace shows Terminals.
+- [ ] **Turns:** `turns = true`, start a new agent session, let it edit a file → "Turns…" lists the
+  turn with +/− counts and Restore works. With `turns = false`, no `refs/mkrew/turns/*` appear
+  (`git for-each-ref refs/mkrew`) for new sessions.
+
 ### To verify — 2026-10-11 in-app confirmation dialogs (plan docs/superpowers/plans/2026-10-11-in-app-confirm-dialogs.md)
 
 - [ ] **Look (dark and light):** close the pane of a running agent, close a tab with a running

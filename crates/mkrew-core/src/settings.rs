@@ -22,6 +22,18 @@ pub struct Settings {
     pub ui: UiSettings,
     /// `[terminal]`: the terminal font; also used by the Files and Git code views.
     pub terminal: FontSettings,
+    /// `[features]`: optional modules, all off by default (ADR 0046).
+    pub features: FeatureSettings,
+}
+
+/// `[features]` (ADR 0046): modules that are off unless switched on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FeatureSettings {
+    /// The Docs view (SPEC §12) and "Review in Docs".
+    pub docs: bool,
+    /// Turn snapshots and the agent pane's "Turns…" dialog (SPEC §20C.1–§20C.2).
+    pub turns: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -305,7 +317,13 @@ pub fn template() -> &'static str {
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
      [terminal]\n\
      # font_family = \"\"\n\
-     # font_size = 13\n"
+     # font_size = 13\n\
+     \n\
+     # Optional modules, off by default. docs: the Docs view. turns: the agent's turn\n\
+     # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
+     [features]\n\
+     # docs = false\n\
+     # turns = false\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -429,6 +447,9 @@ font_size = 14
 [terminal]
 font_family = "JetBrains Mono"
 font_size = 15
+
+[features]
+docs = true
 "#;
         let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
@@ -457,6 +478,10 @@ font_size = 15
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
                     font_size: FontSize(15),
+                },
+                features: FeatureSettings {
+                    docs: true,
+                    turns: false,
                 },
             }
         );

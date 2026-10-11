@@ -14,9 +14,9 @@ impl Shell {
         let keymap_file = paths.keymap_file();
         let settings_file = paths.settings_file();
         // A broken settings file keeps the defaults, like the other reads here.
-        let ui = mkrew_core::settings::load(&settings_file)
-            .unwrap_or_default()
-            .ui;
+        let settings = mkrew_core::settings::load(&settings_file).unwrap_or_default();
+        let features = settings.features;
+        let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
         let inspector_width = inspector::saved_width(ui.inspector_width);
@@ -68,13 +68,18 @@ impl Shell {
                                     cx.refresh_windows();
                                 }
                                 // `theme::reload` only returns fonts and theme; a hand edit of
-                                // `diff_mode` / `diff_wrap` applies too (the file just parsed,
-                                // so this second read only happens when it changed).
+                                // `diff_mode` / `diff_wrap` / `[features]` applies too (the file
+                                // just parsed, so this second read only happens when it changed).
                                 if let Ok(settings) =
                                     mkrew_core::settings::load(&shell.settings_file)
                                 {
                                     shell.apply_diff_mode(settings.ui.diff_mode);
                                     shell.diff_wrap = settings.ui.diff_wrap;
+                                    if shell.features != settings.features {
+                                        // `view()` may now map Docs to Terminals.
+                                        shell.features = settings.features;
+                                        shell.sync_panes(window, cx);
+                                    }
                                 }
                             }
                             // The last good settings stay; the palette lists why (§20.0).
@@ -329,6 +334,7 @@ impl Shell {
             git_diff_scroll_to: Cell::new(None),
             diff_mode,
             diff_wrap,
+            features,
             git_discard: None,
             git_base: None,
             task_dialog: None,

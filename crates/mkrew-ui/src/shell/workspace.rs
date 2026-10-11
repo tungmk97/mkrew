@@ -328,10 +328,12 @@ impl Shell {
         self.tabs.get_mut(&self.workspace?)
     }
 
-    /// The view of the active workspace.
+    /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
+    /// off (ADR 0046).
     pub(crate) fn view(&self) -> View {
         self.workspace
             .and_then(|id| self.views.get(&id).copied())
+            .filter(|&view| view != View::Docs || self.features.docs)
             .unwrap_or_default()
     }
 
@@ -347,6 +349,9 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
+        if view == View::Docs && !self.features.docs {
+            return;
+        }
         self.close_menus();
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if view != View::Terminals {

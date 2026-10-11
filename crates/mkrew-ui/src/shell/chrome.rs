@@ -231,53 +231,58 @@ impl Shell {
             .p(px(theme::SEGMENT_PADDING))
             .rounded(px(radius::MEDIUM))
             .bg(rgb(theme.surface))
-            .children(View::ALL.into_iter().map(|view| {
-                let active = view == shown;
-                div()
-                    .id(SharedString::from(format!("view-{}", view.title())))
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .px(px(space::M))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .border(px(theme::BORDER_WIDTH))
-                    .cursor_pointer()
-                    .whitespace_nowrap()
-                    .text_size(font_size::BODY)
-                    .when(active, |el| {
-                        el.bg(rgb(theme.surface_raised))
-                            .border_color(rgb(theme.border))
-                            .font_weight(FontWeight(weight::MEDIUM))
-                            .text_color(rgb(theme.text))
-                    })
-                    .when(!active, |el| {
-                        el.border_color(gpui::transparent_black())
-                            .text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                    })
-                    .tooltip(tooltip(
-                        theme,
-                        view.title(),
-                        self.keymap.label(view.command()),
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.show_view(view, window, cx);
-                    }))
-                    .child(view.title())
-                    .when(view == View::Git && changed > 0, |el| {
-                        el.child(
-                            div()
-                                .px(px(space::XS))
-                                .rounded(px(radius::SMALL))
-                                .bg(rgb(theme.accent_bg))
-                                .text_size(font_size::META)
-                                .text_color(rgb(theme.accent_text))
-                                .child(changed.to_string()),
-                        )
-                    })
-            }))
+            .children(
+                View::ALL
+                    .into_iter()
+                    .filter(|&view| view != View::Docs || self.features.docs)
+                    .map(|view| {
+                        let active = view == shown;
+                        div()
+                            .id(SharedString::from(format!("view-{}", view.title())))
+                            .flex()
+                            .items_center()
+                            .gap(px(space::XS))
+                            .px(px(space::M))
+                            .py(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .border(px(theme::BORDER_WIDTH))
+                            .cursor_pointer()
+                            .whitespace_nowrap()
+                            .text_size(font_size::BODY)
+                            .when(active, |el| {
+                                el.bg(rgb(theme.surface_raised))
+                                    .border_color(rgb(theme.border))
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                                    .text_color(rgb(theme.text))
+                            })
+                            .when(!active, |el| {
+                                el.border_color(gpui::transparent_black())
+                                    .text_color(rgb(theme.text_muted))
+                                    .hover(move |style| style.bg(rgb(hover)))
+                                    .active(|style| style.opacity(opacity::ACTIVE))
+                            })
+                            .tooltip(tooltip(
+                                theme,
+                                view.title(),
+                                self.keymap.label(view.command()),
+                            ))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                shell.show_view(view, window, cx);
+                            }))
+                            .child(view.title())
+                            .when(view == View::Git && changed > 0, |el| {
+                                el.child(
+                                    div()
+                                        .px(px(space::XS))
+                                        .rounded(px(radius::SMALL))
+                                        .bg(rgb(theme.accent_bg))
+                                        .text_size(font_size::META)
+                                        .text_color(rgb(theme.accent_text))
+                                        .child(changed.to_string()),
+                                )
+                            })
+                    }),
+            )
     }
 
     /// `⎇ master` / `⎇ 2 repos` (tooltip: one line per repository); a click shows the Git

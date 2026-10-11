@@ -105,6 +105,13 @@ impl Env {
         std::fs::write(dir.join(format!("{id}.toml")), toml).unwrap();
     }
 
+    /// `settings.toml` with `[features] turns = true`: sessions take turn snapshots (ADR 0046).
+    fn enable_turns(&self) {
+        let dir = self.dir.path().join("config");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.toml"), "[features]\nturns = true\n").unwrap();
+    }
+
     /// `<id>.toml`: an agent whose `oneshot` runs the built fake agent with `scenario`.
     fn write_oneshot_profile(&self, id: &str, scenario: &Path) {
         let fake = built_bin("mkrew-fakeagent");

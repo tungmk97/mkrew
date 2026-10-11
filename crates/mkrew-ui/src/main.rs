@@ -485,6 +485,8 @@ struct Shell {
     git_discard: Option<git_view::Discard>,
     /// The open base menu of a Git view (modal).
     git_base: Option<BaseDialog>,
+    /// `[features]` (ADR 0046): the optional modules switched on; re-read with the settings.
+    features: mkrew_core::settings::FeatureSettings,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" / "Restore before turn" confirmation (modal; never open together

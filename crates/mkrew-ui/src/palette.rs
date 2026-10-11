@@ -6,6 +6,7 @@
 
 use std::ops::Range;
 
+use mkrew_core::settings::FeatureSettings;
 use mkrew_protocol::{Project, Session, SessionState, Task};
 use ulid::Ulid;
 
@@ -43,6 +44,8 @@ pub struct Context {
     pub run_stopped: bool,
     /// A run session of the active workspace lives.
     pub run_live: bool,
+    /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
+    pub features: FeatureSettings,
 }
 
 /// A palette-only action: no key is bound to it.
@@ -115,7 +118,13 @@ impl Extra {
             Self::Broadcast => context.workspace && context.agents,
             // Into the focused agent pane's composer (opened if hidden); the focused agent
             // pane's "Turns…" and "Follow in Zed".
-            Self::InsertPrompt | Self::Turns | Self::FollowInZed => {
+            Self::Turns => {
+                context.features.turns
+                    && in_view(View::Terminals)
+                    && context.tabs > 0
+                    && context.agent_pane
+            }
+            Self::InsertPrompt | Self::FollowInZed => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
             Self::RunStart => context.workspace && context.run_stopped,
@@ -255,12 +264,12 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::OpenInZed
         | Command::ShowBoard
         | Command::ShowTerminals
-        | Command::ShowDocs
         | Command::ShowFiles
         | Command::ShowGit
         | Command::QuickOpen
         | Command::ToggleInspector
         | Command::NewTask => context.workspace,
+        Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
         Command::SplitRight | Command::SplitDown | Command::SplitAgent | Command::SplitShell => {

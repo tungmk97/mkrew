@@ -16,7 +16,24 @@ fn context(view: View) -> Context {
         agent_pane: false,
         run_stopped: false,
         run_live: false,
+        features: FeatureSettings {
+            docs: true,
+            turns: true,
+        },
     }
+}
+
+#[test]
+fn features_off_hide_docs_and_turns() {
+    let off = Context {
+        agent_pane: true,
+        features: FeatureSettings::default(),
+        ..context(View::Terminals)
+    };
+    assert!(!commands(&off).contains(&Command::ShowDocs));
+    assert!(commands(&off).contains(&Command::ShowFiles));
+    assert!(!Extra::Turns.available(&off));
+    assert!(Extra::InsertPrompt.available(&off));
 }
 
 fn commands(context: &Context) -> Vec<Command> {

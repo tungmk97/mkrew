@@ -383,6 +383,7 @@ impl Shell {
             run_stopped: workspace.is_some()
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
             run_live: run_state.any_live(),
+            features: self.features,
         };
         let mut entries = palette::settings_error(self.settings_error.as_deref());
         entries.extend(palette::keymap_errors(&self.keymap, &self.keymap_errors));

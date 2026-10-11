@@ -332,16 +332,19 @@ impl Shell {
             }))
             .children(mode_toggle)
             // The Docs view reviews the project folder's files, not a worktree's.
-            .when(markdown && view.worktree_task_id.is_none(), |el| {
-                el.child(
-                    button("file-review", "Review in Docs", theme, false)
-                        .flex_none()
-                        .tooltip(tooltip(theme, "Review and comment on this file", ""))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.review_in_docs(project_id, review_path.clone(), window, cx);
-                        })),
-                )
-            })
+            .when(
+                markdown && view.worktree_task_id.is_none() && self.features.docs,
+                |el| {
+                    el.child(
+                        button("file-review", "Review in Docs", theme, false)
+                            .flex_none()
+                            .tooltip(tooltip(theme, "Review and comment on this file", ""))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                shell.review_in_docs(project_id, review_path.clone(), window, cx);
+                            })),
+                    )
+                },
+            )
             .when(editable, |el| {
                 el.child(
                     button("file-save", "Save", theme, dirty)

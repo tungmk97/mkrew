@@ -853,6 +853,7 @@ impl Daemon {
             typed: start.typed,
             banner: start.banner,
             env: start.env,
+            turn_snapshots: self.settings.current().features.turns,
         };
         match self.hub.spawn(spec) {
             Ok(()) => Ok(session_id),
