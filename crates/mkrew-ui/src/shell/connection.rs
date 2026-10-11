@@ -18,6 +18,7 @@ impl Shell {
             .unwrap_or_default()
             .ui;
         let diff_mode = ui.diff_mode;
+        let diff_wrap = ui.diff_wrap;
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let prompts_dir = paths.prompts_dir();
         // System mode follows the OS live (ADR 0027).
@@ -67,12 +68,13 @@ impl Shell {
                                     cx.refresh_windows();
                                 }
                                 // `theme::reload` only returns fonts and theme; a hand edit of
-                                // `diff_mode` applies too (the file just parsed, so this
-                                // second read only happens when it changed).
+                                // `diff_mode` / `diff_wrap` applies too (the file just parsed,
+                                // so this second read only happens when it changed).
                                 if let Ok(settings) =
                                     mkrew_core::settings::load(&shell.settings_file)
                                 {
                                     shell.apply_diff_mode(settings.ui.diff_mode);
+                                    shell.diff_wrap = settings.ui.diff_wrap;
                                 }
                             }
                             // The last good settings stay; the palette lists why (§20.0).
@@ -308,9 +310,17 @@ impl Shell {
             git_summary_again: false,
             git_focus: cx.focus_handle(),
             git_commit_focus: cx.focus_handle(),
+            git_filter_focus: cx.focus_handle(),
+            git_menu: None,
+            git_repo_query: Input::default(),
+            git_repo_query_focus: cx.focus_handle(),
             git_files_scroll: UniformListScrollHandle::new(),
-            git_diff_scroll: UniformListScrollHandle::new(),
+            git_diff_list: ListState::new(0, ListAlignment::Top, px(theme::GIT_DIFF_OVERDRAW)),
+            git_diff_layout: Cell::new(None),
+            git_diff_looks: Cell::new(None),
+            git_diff_scroll_to: Cell::new(None),
             diff_mode,
+            diff_wrap,
             git_discard: None,
             git_base: None,
             task_dialog: None,

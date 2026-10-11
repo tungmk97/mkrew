@@ -241,7 +241,7 @@ impl Shell {
             ))
             .into_any_element(),
             (Some(shown), _) => {
-                let line_height = theme.terminal_font_size * theme.terminal_line_height;
+                let project_id = dialog.project_id;
                 let more = shown
                     .rows
                     .len()
@@ -261,12 +261,10 @@ impl Shell {
                             .rounded(px(radius::MEDIUM))
                             .bg(rgb(theme.surface))
                             .overflow_scroll()
-                            .font_family(theme.terminal_font_family.clone())
-                            .text_size(px(theme.terminal_font_size))
                             .children(
                                 (0..shown.rows.len().min(git_view::DISCARD_PREVIEW_ROWS)).map(
                                     |index| {
-                                        git_diff_row(shown, index, None, None, line_height, theme)
+                                        git_diff_preview_row(shown, index, project_id, theme, cx)
                                     },
                                 ),
                             ),

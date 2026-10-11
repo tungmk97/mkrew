@@ -7,6 +7,7 @@
 //! lists commits instead ([`crate::git_history`]); their files' diffs show here too.
 //! Pure and tested headlessly; `main.rs` does the requests and renders it.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui::Keystroke;
@@ -23,6 +24,7 @@ use crate::comments::{self, Comments, Selection};
 use crate::git_actions::{CommitBox, Remotes};
 use crate::git_history::{Detail, History};
 use crate::highlight::{self, Spans};
+use crate::text_box::Input;
 
 /// The group a changed file is listed in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,7 +44,7 @@ impl Group {
     pub fn title(self) -> &'static str {
         match self {
             Group::Staged => "Staged",
-            Group::Unstaged => "Unstaged",
+            Group::Unstaged => "Changes",
             Group::Untracked => "Untracked",
             Group::Base | Group::Since => "Changed files",
             Group::Commit => "Files",
@@ -192,6 +194,8 @@ pub enum ListRow {
     },
     /// Why the expanded commit lists no files (loading, failed, none changed).
     Note(String),
+    /// A muted line under an empty Staged header (Working mode).
+    Hint(&'static str),
 }
 
 /// One row of the diff viewer.
@@ -582,6 +586,11 @@ pub struct GitView {
     pub changed_by: ChangedBy,
     /// The diff comments of the selected file (anchored to new-side lines).
     pub comments: Comments,
+    /// The side panel's "Filter files" text: keeps the files whose path matches it (fuzzy).
+    pub filter: Input,
+    /// Working groups folded in the list: their header stays (with its count), their files
+    /// are not listed and ↑ ↓ skip them.
+    pub collapsed: HashSet<Group>,
     /// The diff `comments.selection` was picked on.
     commented: Option<Target>,
     /// A stage / unstage is in flight (another is not sent meanwhile).
@@ -621,6 +630,8 @@ impl GitView {
             since: None,
             changed_by: ChangedBy::default(),
             comments: Comments::new(CommentContext::Diff),
+            filter: Input::default(),
+            collapsed: HashSet::new(),
             commented: None,
             staging: false,
             started: false,
@@ -925,12 +936,14 @@ impl GitView {
     }
 
     /// The changed files of the shown section with their diff targets, in list order (Staged,
-    /// Unstaged, Untracked; in the History, the selected commit's), kept by "Changed by".
+    /// Unstaged, Untracked; in the History, the selected commit's), kept by "Changed by" and
+    /// by the "Filter files" text.
     pub fn files(&self) -> Vec<(Target, ChangedFile)> {
         if let Some(history) = &self.history {
             return history
                 .files()
                 .iter()
+                .filter(|file| self.matches(&file.path))
                 .map(|file| {
                     let target = Target {
                         group: Group::Commit,
@@ -950,6 +963,7 @@ impl GitView {
             files
                 .iter()
                 .filter(|file| kept.is_none_or(|kept| kept.contains(&file.path)))
+                .filter(|file| self.matches(&file.path))
                 .map(|file| {
                     let target = Target {
                         group,
@@ -980,6 +994,11 @@ impl GitView {
                 .get(&id)
                 .map_or(&[][..], Vec::as_slice)
         })
+    }
+
+    /// Whether `path` passes the "Filter files" text (an empty filter keeps every path).
+    fn matches(&self, path: &str) -> bool {
+        self.filter.is_empty() || crate::palette::fuzzy(&self.filter, path).is_some()
     }
 
     /// Whether the commit box is on screen: Working changes of a loaded status, with changes
@@ -1039,21 +1058,34 @@ impl GitView {
                 .map(|(target, file)| ListRow::File(target, file))
                 .collect();
         }
-        // `files` lists the groups one after another (Staged, Unstaged, Untracked).
-        let counts: Vec<(Group, usize)> = files
+        if files.is_empty() {
+            return Vec::new();
+        }
+        // `files` lists the groups one after another (Staged, Unstaged, Untracked). Staged is
+        // always listed, so where staged changes go stays visible.
+        let mut counts: Vec<(Group, usize)> = files
             .chunk_by(|(a, _), (b, _)| a.group == b.group)
             .map(|members| (members[0].0.group, members.len()))
             .collect();
-        let mut rows = Vec::with_capacity(files.len() + counts.len());
+        if counts
+            .first()
+            .is_none_or(|(group, _)| *group != Group::Staged)
+        {
+            counts.insert(0, (Group::Staged, 0));
+        }
+        let mut rows = Vec::with_capacity(files.len() + counts.len() + 1);
         let mut files = files.into_iter();
         for (group, count) in counts {
             rows.push(ListRow::Header(group, count));
-            rows.extend(
-                files
-                    .by_ref()
-                    .take(count)
-                    .map(|(target, file)| ListRow::File(target, file)),
-            );
+            let listed = files.by_ref().take(count);
+            if self.collapsed.contains(&group) {
+                listed.for_each(drop);
+                continue;
+            }
+            if count == 0 {
+                rows.push(ListRow::Hint("Nothing staged. Stage a file or a hunk."));
+            }
+            rows.extend(listed.map(|(target, file)| ListRow::File(target, file)));
         }
         rows
     }
@@ -1217,10 +1249,59 @@ impl GitView {
         }
     }
 
+    /// The files ↑ ↓ move between: the listed ones outside folded groups.
+    fn steppable(&self) -> Vec<(Target, ChangedFile)> {
+        let mut files = self.files();
+        files.retain(|(target, _)| !self.collapsed.contains(&target.group));
+        files
+    }
+
+    /// The selected file's place among the files ↑ ↓ move between (1-based), their count and
+    /// the file's change: the diff toolbar's status badge and "1 / 6".
+    pub fn file_position(&self) -> Option<(usize, usize, ChangeKind)> {
+        let selected = self.selected.as_ref()?;
+        let files = self.steppable();
+        let at = files.iter().position(|(target, _)| target == selected)?;
+        Some((at + 1, files.len(), files[at].1.kind))
+    }
+
+    /// Folds or unfolds a Working group of the list.
+    pub fn toggle_collapsed(&mut self, group: Group) {
+        if !self.collapsed.remove(&group) {
+            self.collapsed.insert(group);
+        }
+    }
+
+    /// "Stage all" / "Unstage all" on a group header: one `git.stage` / `git.unstage` of every
+    /// listed file of `group` (a rename also takes its old path, like [`Self::file_change`]).
+    pub fn group_change(&self, group: Group) -> Option<StageRequest> {
+        let stage = Stage::of(group)?;
+        let paths: Vec<String> = self
+            .files()
+            .into_iter()
+            .filter(|(target, _)| target.group == group)
+            .flat_map(|(_, file)| [Some(file.path), file.old_path])
+            .flatten()
+            .collect();
+        if paths.is_empty() {
+            return None;
+        }
+        Some(StageRequest {
+            stage,
+            params: GitStageParams {
+                project_id: self.project_id,
+                worktree_task_id: self.worktree_task_id,
+                repo: self.repo.clone(),
+                paths,
+                hunk: None,
+            },
+        })
+    }
+
     /// The next / previous file; in the History, past the expanded commit's first / last file
     /// the previous / next commit (its first file once listed).
     fn step_file(&mut self, by: isize) -> Requests {
-        let files = self.files();
+        let files = self.steppable();
         let at = self
             .selected
             .as_ref()
@@ -1490,17 +1571,15 @@ impl GitView {
     }
 
     /// The comment margin shows beside the diff of a selected file while it has something to
-    /// show: picked lines, a draft, threads, or why they cannot be listed (a diff keeps its
-    /// full width otherwise).
+    /// show: a draft, threads, or why they cannot be listed (a diff keeps its full width
+    /// otherwise; picked lines get the inline selection bar).
     pub fn comments_shown(&self) -> bool {
         let listed = match &self.comments.list {
             comments::List::Loaded(list) => !list.is_empty(),
             comments::List::Failed(_) => true,
             comments::List::Loading => false,
         };
-        self.selected.is_some()
-            && self.can_comment()
-            && (listed || self.comments.selection.is_some() || self.comments.draft.is_some())
+        self.selected.is_some() && self.can_comment() && (listed || self.comments.draft.is_some())
     }
 
     /// The session "Send to agent" offers first: in a turn's changes, its session; in a task's,
@@ -1554,16 +1633,20 @@ pub fn counts(file: &ChangedFile) -> Option<(u32, u32)> {
     Some((file.added?, file.removed?))
 }
 
-/// "↑2 ↓1" for a branch ahead / behind its upstream; `None` when in sync.
-pub fn ahead_behind(status: &GitStatus) -> Option<String> {
-    let mut parts = Vec::new();
-    if status.ahead > 0 {
-        parts.push(format!("↑{}", status.ahead));
-    }
-    if status.behind > 0 {
-        parts.push(format!("↓{}", status.behind));
-    }
-    (!parts.is_empty()).then(|| parts.join(" "))
+/// The branch header's upstream line: "Tracking origin/main · 2 commits ahead", "… · up to
+/// date", "… · 2 ahead, 1 behind", or "No upstream".
+pub fn tracking(status: &GitStatus) -> String {
+    let Some(upstream) = &status.upstream else {
+        return "No upstream".to_owned();
+    };
+    let commits = |n: u32| if n == 1 { "commit" } else { "commits" };
+    let state = match (status.ahead, status.behind) {
+        (0, 0) => "up to date".to_owned(),
+        (ahead, 0) => format!("{ahead} {} ahead", commits(ahead)),
+        (0, behind) => format!("{behind} {} behind", commits(behind)),
+        (ahead, behind) => format!("{ahead} ahead, {behind} behind"),
+    };
+    format!("Tracking {upstream} · {state}")
 }
 
 /// The file-moving key `keystroke` stands for (unmodified arrows, j / k). The other Git keys

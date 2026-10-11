@@ -165,6 +165,9 @@ pub struct UiSettings {
     pub font_size: FontSize,
     pub theme: ThemeMode,
     pub diff_mode: DiffMode,
+    /// `[ui] diff_wrap` (SPEC §12B): long diff lines wrap at the pane edge (else they are cut).
+    /// The Git diff toolbar's Wrap toggle writes it.
+    pub diff_wrap: bool,
     /// Width of the session panel right of Terminals, px (SPEC §10); dragging its edge saves it.
     pub inspector_width: u16,
 }
@@ -177,6 +180,7 @@ impl Default for UiSettings {
             font_size: font.font_size,
             theme: ThemeMode::System,
             diff_mode: DiffMode::Unified,
+            diff_wrap: true,
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
         }
     }
@@ -288,11 +292,13 @@ pub fn template() -> &'static str {
      # Theme: system (follows the OS), light or dark; the title bar toggle writes it.\n\
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
+     # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
      # theme = \"system\"\n\
      # diff_mode = \"unified\"\n\
+     # diff_wrap = true\n\
      # inspector_width = 300\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
@@ -445,6 +451,7 @@ font_size = 15
                     font_size: FontSize(14),
                     theme: ThemeMode::System,
                     diff_mode: DiffMode::Unified,
+                    diff_wrap: true,
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                 },
                 terminal: FontSettings {
@@ -549,6 +556,14 @@ font_size = 15
         assert!(
             parse_err("[terminal]\ndiff_mode = \"split\"").contains("unknown field `diff_mode`")
         );
+    }
+
+    #[test]
+    fn ui_diff_wrap_parses_and_defaults_to_on() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert!(ui("").diff_wrap);
+        assert!(!ui("[ui]\ndiff_wrap = false").diff_wrap);
+        assert!(parse_err("[ui]\ndiff_wrap = \"no\"").contains("invalid type"));
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub(crate) mod files_render;
 pub(crate) mod git;
 mod git_dialogs;
 pub(crate) mod git_diff;
+pub(crate) mod git_menus;
 mod git_render;
 pub(crate) mod git_rows;
 mod send_dialog;

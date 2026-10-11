@@ -1,10 +1,11 @@
-//! Git view rendering: header, choosers, remote actions, commit box.
+//! Git view rendering: the side panel (header, tabs, list, commit box) and its empty states.
 
 use crate::*;
 
 impl Shell {
-    /// The workspace's changes (SPEC §12B): the selected file's unified diff, and on its right
-    /// the branch header and mode toggle over the changed-file list and the commit box.
+    /// The workspace's changes (SPEC §12B): the selected file's diff, and on its right the
+    /// side panel: repository tabs, branch header, Working / Vs. base / History, the file
+    /// filter, the changed-file list and the commit box.
     pub(crate) fn render_git(
         &self,
         project_id: Ulid,
@@ -22,20 +23,20 @@ impl Shell {
             git_view::Status::Loaded(status) => Some(&**status),
             git_view::Status::Loading | git_view::Status::Failed(_) => None,
         };
-        let column = div()
-            .id("git-files")
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .gap(px(space::S))
-            .pb(px(space::S))
-            .track_focus(&self.git_focus)
-            .key_context(GIT_CONTEXT)
-            .on_key_down(cx.listener(Self::git_key_down))
-            .child(self.git_header(project_id, view, status, theme, cx));
         let rows = view.list_rows();
-        let any_files = !rows.is_empty();
+        // Something is listed: a file, a commit, or a group header that counts files.
+        let any_files = rows.iter().any(|row| match row {
+            git_view::ListRow::File(..) | git_view::ListRow::Commit { .. } => true,
+            git_view::ListRow::Header(_, count) => *count > 0,
+            git_view::ListRow::Note(_) | git_view::ListRow::Hint(_) => false,
+        });
+        // No uncommitted changes at all (nothing filtered away): the clean state hides the
+        // filter row and the commit box.
+        let clean = status.is_some()
+            && !any_files
+            && view.section() == git_view::Section::Working
+            && view.changed_by.session.is_none()
+            && view.filter.is_empty();
         let commits = view.history.as_ref().map(|history| &history.commits);
         let list = match (commits, &view.status) {
             (Some(Commits::Loading), _) => {
@@ -102,6 +103,19 @@ impl Shell {
                     )
                     .into_any_element()
             }
+            (None, git_view::Status::Loaded(_)) if !any_files && !view.filter.is_empty() => {
+                empty(format!("No files match “{}”.", &*view.filter), None)
+                    .child(
+                        button("git-filter-clear", "Clear filter", theme, true).on_click(
+                            cx.listener(move |shell, _, window, cx| {
+                                shell.git_view(project_id).filter.clear();
+                                window.focus(&shell.git_focus, cx);
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .into_any_element()
+            }
             (None, git_view::Status::Loaded(_))
                 if !any_files && view.changed_by.session.is_some() =>
             {
@@ -119,92 +133,51 @@ impl Shell {
                     )
                     .into_any_element()
             }
+            (None, git_view::Status::Loaded(status)) if clean => {
+                self.git_clean_state(project_id, view, status, theme, cx)
+            }
             (None, git_view::Status::Loaded(status)) if !any_files => {
-                // No merge-base with a commit checked out: the base names nothing usable.
-                let unusable = status.head.is_some() && status.merge_base.is_none();
-                let no_base = view.since.is_none()
-                    && view.mode == GitMode::Base
-                    && (status.base_ref.is_none() || unusable);
-                let since = view.since.as_ref().map(|since| match since.origin {
-                    git_view::Origin::Turn { n, .. } => (
-                        format!("No changes since turn {n} started."),
-                        Some("Its changes may have been restored or undone.".to_owned()),
-                    ),
-                    git_view::Origin::Task(_) => (
-                        "No changes since the task's run started.".to_owned(),
-                        Some("Its changes may have been undone or committed elsewhere.".to_owned()),
-                    ),
-                });
-                let (sentence, detail) = match (since, view.mode, &status.base_ref) {
-                    (Some(since), _, _) => since,
-                    (None, GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
-                    (None, GitMode::Base, None) => (
-                        "No base branch found.".to_owned(),
-                        Some("None of origin/HEAD, main or master exists here.".to_owned()),
-                    ),
-                    (None, GitMode::Base, Some(base)) if unusable => (
-                        format!("Cannot compare with {base}."),
-                        Some("It names no commit here, or shares no history with HEAD.".to_owned()),
-                    ),
-                    (None, GitMode::Base, Some(base)) => {
-                        (format!("No changes against {base}."), None)
-                    }
-                };
-                let (label, tip) = match view.mode {
-                    GitMode::Working => ("Against base", "Show everything on this branch"),
-                    GitMode::Base => ("Working changes", "Show uncommitted changes"),
-                };
-                // Without a base, picking one is the primary action.
-                let buttons = div()
-                    .flex()
-                    .gap(px(space::S))
-                    .when(no_base, |el| {
-                        el.child(
-                            button("git-empty-base", "Set base…", theme, true)
-                                .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.open_git_base(project_id, window, cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        button("git-empty-mode", label, theme, !no_base)
-                            .tooltip(tooltip(
-                                theme,
-                                tip,
-                                self.keymap.label(Command::GitToggleMode),
-                            ))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                window.focus(&shell.git_focus, cx);
-                                let requests = shell.git_view(project_id).toggle_mode();
-                                shell.git_requests(project_id, requests, window, cx);
-                            })),
-                    );
-                empty(sentence, detail).child(buttons).into_any_element()
+                self.git_no_changes(project_id, view, status, theme, cx)
             }
             (None, git_view::Status::Loaded(_)) => {
                 self.git_list(project_id, view, rows, theme, window, cx)
             }
         };
+        let column = div()
+            .id("git-files")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .pb(px(space::S))
+            .track_focus(&self.git_focus)
+            .key_context(GIT_CONTEXT)
+            .on_key_down(cx.listener(Self::git_key_down))
+            .child(list);
         div()
             .flex_1()
             .min_h_0()
             .flex()
-            // The list column stays at the right edge even when no diff is shown.
+            // The side panel stays at the right edge even when no diff is shown.
             .justify_end()
             .font_family(theme.ui_font_family.clone())
             .when(any_files, |el| {
                 el.child(self.render_git_diff(project_id, view, theme, window, cx))
             })
             .child(
-                // The commit box sits outside the `GIT_CONTEXT` column: typing never stages.
+                // The header, filter and commit box sit outside the `GIT_CONTEXT` column:
+                // typing in their fields never stages.
                 div()
                     .flex_none()
                     .w(px(theme::GIT_FILE_LIST_WIDTH))
                     .h_full()
                     .flex()
                     .flex_col()
-                    .child(column.child(list))
+                    .child(self.git_header(project_id, view, status, theme, window, cx))
+                    .when(!clean, |el| {
+                        el.child(self.git_filter_row(project_id, view, theme, window, cx))
+                    })
+                    .child(column)
                     .when_some(status.filter(|_| view.commit_box_shown()), |el, status| {
                         el.child(self.git_commit_box(project_id, view, status, theme, window, cx))
                     }),
@@ -212,9 +185,63 @@ impl Shell {
             .into_any_element()
     }
 
-    /// Branch, upstream and ahead/behind, then the Working changes / Against base / History
-    /// switch and the base it compares to.
+    /// The workspace's name (the root repository's tab label).
+    pub(crate) fn workspace_name(&self, project_id: Ulid) -> &str {
+        self.sidebar
+            .projects()
+            .iter()
+            .find(|p| p.id == project_id)
+            .map_or("Workspace", |p| p.name.as_str())
+    }
+
+    /// The task worktree chooser, the repository tabs, the branch header, then the Working /
+    /// Vs. base / History switch and (on Vs. base) the base it compares to.
     pub(crate) fn git_header(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let chooser = self
+            .target_chooser(project_id, view.worktree_task_id, true, theme, cx)
+            .map(|chooser| chooser.px(px(space::M)).pt(px(space::S)));
+        // Wrapped, not cut: git's push / fetch errors say what to do.
+        let error = |text: String| {
+            div()
+                .px(px(space::M))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text))
+                .child(text)
+        };
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(space::S))
+            .pb(px(space::S))
+            .children(chooser)
+            .children(self.git_repo_strip(project_id, view, theme, window, cx))
+            .child(self.git_branch_header(project_id, view, status, theme, cx))
+            .children(
+                view.remotes
+                    .error
+                    .clone()
+                    .map(|text| error(format!("✕ {text}"))),
+            )
+            .child(self.git_tabs(project_id, view, status, theme, cx))
+            .children(self.git_base_line(project_id, view, status, theme, cx))
+            .children(
+                view.refresh_error
+                    .clone()
+                    .map(|text| error(format!("✕ Refresh failed: {text}"))),
+            )
+    }
+
+    /// The branch name with Fetch and Push, and under it the upstream it tracks.
+    fn git_branch_header(
         &self,
         project_id: Ulid,
         view: &GitView,
@@ -229,202 +256,257 @@ impl Shell {
                 .unwrap_or_else(|| "Detached HEAD".to_owned()),
             None => "Git".to_owned(),
         };
-        let tracking = status.map(|status| {
-            let upstream = match &status.upstream {
-                Some(upstream) => format!("→ {upstream}"),
-                None => "No upstream".to_owned(),
-            };
-            match git_view::ahead_behind(status) {
-                Some(counts) => format!("{upstream}  {counts}"),
-                None => upstream,
-            }
-        });
-        let base = status.map(|status| match (&status.base_ref, status.base_auto) {
-            (Some(base), true) => format!("Base: {base} (auto-detected)"),
-            (Some(base), false) => format!("Base: {base}"),
-            (None, _) => "No base branch".to_owned(),
-        });
-        // A task's or turn's changes: what is compared replaces the base line.
-        let since = view
-            .since
-            .as_ref()
-            .filter(|_| view.section() == git_view::Section::Since);
-        let base = match since {
-            Some(since) => Some(since.label.clone()),
-            None => base,
-        };
-        let shows_since = since.is_some();
-        // The upstream line ends with Fetch and Push.
-        let tracking = tracking.map(|tracking| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(space::XS))
-                .child(
-                    meta_line(theme, tracking.into())
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .whitespace_nowrap(),
-                )
-                .children([Remote::Fetch, Remote::Push].map(|remote| {
-                    self.git_remote_action(project_id, view, status, remote, theme, cx)
-                }))
-        });
-        let chooser = self.target_chooser(project_id, view.worktree_task_id, true, theme, cx);
-        let repos = self.repo_chooser(project_id, view, theme, cx);
-        let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
-        let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
-        // Lighter than the active segment's fill, so hovering never looks selected.
-        let hover = theme.surface;
-        let shown = view.section();
-        let segment = |section: git_view::Section,
-                       id: &'static str,
-                       label: &'static str,
-                       tip: &'static str| {
-            let active = shown == section;
-            let keys = if section == git_view::Section::History {
-                history_keys.clone()
-            } else {
-                toggle_keys.clone()
-            };
-            // Sized from the label: three equal segments would cut "Against base".
-            div()
-                .id(id)
-                .flex_auto()
-                .whitespace_nowrap()
-                .flex()
-                .justify_center()
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .text_size(font_size::BODY)
-                .when(active, |el| {
-                    el.bg(rgb(theme.surface_raised))
-                        .font_weight(FontWeight(weight::MEDIUM))
-                        .text_color(rgb(theme.text))
-                })
-                .when(!active, |el| {
-                    el.cursor_pointer()
-                        .text_color(rgb(theme.text_muted))
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.show_git_section(project_id, section, window, cx);
-                        }))
-                })
-                .tooltip(tooltip(theme, tip, keys))
-                .child(label)
-        };
         div()
-            .flex_none()
             .flex()
             .flex_col()
             .gap(px(space::XS))
             .px(px(space::M))
-            .pt(px(space::XS))
-            .children(chooser)
-            .children(repos)
+            .pt(px(space::S))
             .child(
-                div()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child(branch),
-            )
-            .children(tracking)
-            // Wrapped, not cut: git's push / fetch errors say what to do.
-            .children(view.remotes.error.clone().map(|error| {
-                div()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text))
-                    .child(format!("✕ {error}"))
-            }))
-            .child(
-                div()
-                    .mt(px(space::XS))
-                    .flex()
-                    .gap(px(space::XS))
-                    .child(segment(
-                        git_view::Section::Working,
-                        "git-mode-working",
-                        "Working",
-                        "Uncommitted changes: staged, unstaged, untracked",
-                    ))
-                    .child(segment(
-                        git_view::Section::Base,
-                        "git-mode-base",
-                        "Against base",
-                        "Everything on this branch since it left the base",
-                    ))
-                    .child(segment(
-                        git_view::Section::History,
-                        "git-mode-history",
-                        "History",
-                        "The last 50 commits and their changes",
-                    )),
-            )
-            .children(base.map(|base| {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(space::S))
+                    .gap(px(space::XS))
                     .child(
-                        meta_line(theme, base.into())
+                        div()
                             .flex_1()
                             .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap(),
+                            .truncate()
+                            .text_size(font_size::CARD_TITLE)
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .text_color(rgb(theme.text))
+                            .child(branch),
                     )
-                    .when(shows_since, |el| {
-                        el.child(
-                            row_action("git-task-close".into(), "Close", theme)
-                                .tooltip(tooltip(
-                                    theme,
-                                    "Back to the working changes",
-                                    toggle_keys.clone(),
-                                ))
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.show_git_section(
-                                        project_id,
-                                        git_view::Section::Working,
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                        )
-                    })
-                    .when(!shows_since, |el| {
-                        el.child(
-                            row_action(
-                                "git-base-change".into(),
-                                if status.is_some_and(|status| status.base_ref.is_some()) {
-                                    "Change…"
-                                } else {
-                                    "Set base…"
-                                },
-                                theme,
-                            )
-                            .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
-                            .on_click(cx.listener(
-                                move |shell, _, window, cx| {
-                                    shell.open_git_base(project_id, window, cx);
-                                },
-                            )),
-                        )
-                    })
-            }))
-            .children(self.git_changed_by(project_id, view, theme, cx))
-            .children(
-                view.refresh_error
-                    .clone()
-                    .map(|error| notice(theme.text, format!("✕ Refresh failed: {error}"))),
+                    .child(self.git_fetch_button(project_id, view, theme, cx))
+                    .child(self.git_push_button(project_id, view, status, theme, cx)),
             )
+            .children(
+                status.map(|status| meta_line(theme, git_view::tracking(status).into()).truncate()),
+            )
+    }
+
+    /// Fetch as an icon: "⋯" while it runs, faded while Push runs.
+    fn git_fetch_button(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let running = view.remotes.running;
+        let tip = "Fetch from the remotes (refreshes the base)";
+        match running {
+            Some(Remote::Fetch) => icon_button("git-fetch", "⋯", theme)
+                .tooltip(tooltip(theme, Remote::Fetch.running_label(), ""))
+                .into_any_element(),
+            Some(Remote::Push) => icon_button("git-fetch", "↓", theme)
+                .opacity(opacity::DISABLED)
+                .tooltip(tooltip(theme, tip, ""))
+                .into_any_element(),
+            None => icon_button("git-fetch", "↓", theme)
+                .tooltip(tooltip(theme, tip, ""))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    shell.run_git_remote(project_id, Remote::Fetch, window, cx);
+                }))
+                .into_any_element(),
+        }
+    }
+
+    /// "Push N" (N commits ahead): muted with nothing to push but still clickable; faded
+    /// without a branch and upstream or while Fetch runs; "Pushing…" while it runs.
+    fn git_push_button(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let running = view.remotes.running;
+        let no_upstream = status.is_none_or(|s| s.branch.is_none() || s.upstream.is_none());
+        let ahead = status.map_or(0, |status| status.ahead);
+        let label = match running {
+            Some(Remote::Push) => Remote::Push.running_label().to_owned(),
+            _ if ahead > 0 => format!("Push {ahead}"),
+            _ => "Push".to_owned(),
+        };
+        let tip = if no_upstream {
+            "This branch has no upstream to push to"
+        } else {
+            "Push this branch to its upstream (never forced)"
+        };
+        if running.is_some() || no_upstream {
+            return button_frame("git-push", label)
+                .flex_none()
+                .cursor_default()
+                .opacity(opacity::DISABLED)
+                .text_color(rgb(theme.text_muted))
+                .tooltip(tooltip(theme, tip, ""))
+                .into_any_element();
+        }
+        let push = if ahead > 0 {
+            secondary_button("git-push", label, theme)
+        } else {
+            quiet_button("git-push", label, theme, theme.hover)
+        };
+        push.flex_none()
+            .tooltip(tooltip(theme, tip, ""))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.run_git_remote(project_id, Remote::Push, window, cx);
+            }))
+            .into_any_element()
+    }
+
+    /// Working N / Vs. base / History: three equal segments (N = changed files).
+    fn git_tabs(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
+        let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
+        let hover = theme.hover;
+        let shown = view.section();
+        let working = match self.git_working_count(view, status) {
+            Some(count) => format!("Working {count}"),
+            None => "Working".to_owned(),
+        };
+        let segment =
+            |section: git_view::Section, id: &'static str, label: String, tip: &'static str| {
+                let active = shown == section;
+                let keys = if section == git_view::Section::History {
+                    history_keys.clone()
+                } else {
+                    toggle_keys.clone()
+                };
+                div()
+                    .id(id)
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .flex()
+                    .justify_center()
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(font_size::BODY)
+                    .when(active, |el| {
+                        el.bg(rgb(theme.surface_raised))
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.text))
+                    })
+                    .when(!active, |el| {
+                        el.cursor_pointer()
+                            .text_color(rgb(theme.text_muted))
+                            .hover(move |style| style.bg(rgb(hover)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                shell.show_git_section(project_id, section, window, cx);
+                            }))
+                    })
+                    .tooltip(tooltip(theme, tip, keys))
+                    .child(label)
+            };
+        div()
+            .mx(px(space::M))
+            .flex()
+            .p(px(theme::SEGMENT_PADDING))
+            .gap(px(theme::SEGMENT_PADDING))
+            .rounded(px(radius::MEDIUM))
+            .bg(rgb(theme.surface))
+            .child(segment(
+                git_view::Section::Working,
+                "git-mode-working",
+                working,
+                "Uncommitted changes: staged, unstaged, untracked",
+            ))
+            .child(segment(
+                git_view::Section::Base,
+                "git-mode-base",
+                "Vs. base".to_owned(),
+                "Everything on this branch since it left the base",
+            ))
+            .child(segment(
+                git_view::Section::History,
+                "git-mode-history",
+                "History".to_owned(),
+                "The last 50 commits and their changes",
+            ))
+    }
+
+    /// The changed files of the working tree for the Working tab: from the shown status in
+    /// Working changes, else from the title bar summary of the shown repository.
+    fn git_working_count(&self, view: &GitView, status: Option<&GitStatus>) -> Option<usize> {
+        if view.section() == git_view::Section::Working {
+            return status.map(|status| RepoSummary::of("", status).changed());
+        }
+        if view.worktree_task_id.is_some() {
+            return None;
+        }
+        let repo = view.repo.as_deref().unwrap_or("");
+        self.git_summary()?
+            .repos
+            .iter()
+            .find(|summary| summary.repo == repo)
+            .map(RepoSummary::changed)
+    }
+
+    /// "Base: X (auto-detected) · Change…" on the Vs. base tab; a task's or turn's changes
+    /// say what they compare instead, with Close back to the working changes.
+    fn git_base_line(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: Option<&GitStatus>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::Div> {
+        let section = view.section();
+        let label = match (section, &view.since) {
+            (git_view::Section::Since, Some(since)) => since.label.clone(),
+            (git_view::Section::Base, _) => {
+                status.map(|status| match (&status.base_ref, status.base_auto) {
+                    (Some(base), true) => format!("Base: {base} (auto-detected)"),
+                    (Some(base), false) => format!("Base: {base}"),
+                    (None, _) => "No base branch".to_owned(),
+                })?
+            }
+            _ => return None,
+        };
+        let action = if section == git_view::Section::Since {
+            row_action("git-task-close".into(), "Close", theme)
+                .tooltip(tooltip(
+                    theme,
+                    "Back to the working changes",
+                    self.keymap.label(Command::GitToggleMode),
+                ))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    let working = git_view::Section::Working;
+                    shell.show_git_section(project_id, working, window, cx);
+                }))
+        } else {
+            let label = if status.is_some_and(|status| status.base_ref.is_some()) {
+                "Change…"
+            } else {
+                "Set base…"
+            };
+            row_action("git-base-change".into(), label, theme)
+                .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    shell.open_git_base(project_id, window, cx);
+                }))
+        };
+        Some(
+            div()
+                .px(px(space::M))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .child(meta_line(theme, label.into()).flex_1().min_w_0().truncate())
+                .child(action),
+        )
     }
 
     /// "Project | <task worktree>…" (SPEC §20E.1): what the Files (`git: false`) or Git view
@@ -473,54 +555,6 @@ impl Shell {
                     window.focus(&shell.files_focus, cx);
                     shell.set_files_target(project_id, target, window, cx);
                 }
-            },
-            cx,
-        ))
-    }
-
-    /// "Repo: <workspace> | fe | be" (ADR 0029): which repository of the workspace the Git view
-    /// shows; hidden with fewer than two and while a task worktree is shown (one repository).
-    pub(crate) fn repo_chooser(
-        &self,
-        project_id: Ulid,
-        view: &GitView,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::Div> {
-        if view.worktree_task_id.is_some() {
-            return None;
-        }
-        let repos = self.git_repos.get(&project_id)?;
-        let workspace = self
-            .sidebar
-            .projects()
-            .iter()
-            .find(|p| p.id == project_id)
-            .map_or("Workspace", |p| p.name.as_str());
-        let chips: Vec<_> = git_view::repo_choices(repos, workspace)
-            .into_iter()
-            .enumerate()
-            .map(|(at, (repo, label))| Chip {
-                id: SharedString::from(format!("git-repo-{at}")),
-                label: SharedString::from(label.to_owned()),
-                tip: match &repo {
-                    Some(repo) => format!("The git repository in {repo}/"),
-                    None => "The workspace folder's git repository".to_owned(),
-                },
-                active: view.repo == repo,
-                pick: repo,
-            })
-            .collect();
-        if chips.is_empty() {
-            return None;
-        }
-        Some(Self::chip_row(
-            "Repo",
-            chips,
-            theme,
-            move |shell, repo, window, cx| {
-                window.focus(&shell.git_focus, cx);
-                shell.set_git_repo(project_id, repo, window, cx);
             },
             cx,
         ))
@@ -581,114 +615,193 @@ impl Shell {
             .children(chips)
     }
 
-    /// "Changed by: All | claude #1 | …" (SPEC §20C.4): keeps only the files a session changed
-    /// in the last 24 h; hidden while no session changed any (and in the History).
-    pub(crate) fn git_changed_by(
+    /// No uncommitted changes in Working: "Working tree clean", Review against the base and
+    /// Open history; in a multi-repo workspace, a card for another repository with changes.
+    fn git_clean_state(
         &self,
         project_id: Ulid,
         view: &GitView,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::Div> {
-        let changers = view.changers(self.sidebar.sessions());
-        if changers.is_empty() {
-            return None;
-        }
-        let filtered = view.changed_by.session;
-        let hover = theme.surface;
-        let chip = |id: SharedString, label: String, session: Option<Ulid>| {
-            let active = filtered == session;
-            let tip = match session {
-                None => "Every changed file".to_owned(),
-                Some(_) => format!("Only the files {label} changed in the last 24 h"),
-            };
-            div()
-                .id(id)
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .tooltip(tooltip(theme, &tip, ""))
-                .whitespace_nowrap()
-                .when(active, |el| {
-                    el.bg(rgb(theme.surface_raised))
-                        .font_weight(FontWeight(weight::MEDIUM))
-                        .text_color(rgb(theme.text))
-                })
-                .when(!active, |el| {
-                    el.cursor_pointer()
-                        .text_color(rgb(theme.text_muted))
-                        .hover(move |style| style.bg(rgb(hover)))
-                        .active(|style| style.opacity(opacity::ACTIVE))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            window.focus(&shell.git_focus, cx);
-                            shell.filter_git_changed_by(project_id, session, window, cx);
-                        }))
-                })
-                .child(label)
-        };
-        Some(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(space::XS))
-                .text_size(font_size::META)
-                .child(div().text_color(rgb(theme.text_muted)).child("Changed by"))
-                .child(chip("git-changed-by-all".into(), "All".into(), None))
-                .children(changers.into_iter().map(|changer| {
-                    let id = SharedString::from(format!("git-changed-by-{}", changer.session_id));
-                    chip(id, changer.label, Some(changer.session_id))
-                })),
-        )
-    }
-
-    /// "Fetch" / "Push" on the header's upstream line: shows "Fetching…" while it runs, and is
-    /// faded while another runs (or, for Push, without a branch and upstream).
-    pub(crate) fn git_remote_action(
-        &self,
-        project_id: Ulid,
-        view: &GitView,
-        status: Option<&GitStatus>,
-        remote: Remote,
+        status: &GitStatus,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let id = SharedString::from(format!("git-{}", remote.label().to_lowercase()));
-        let running = view.remotes.running;
-        let no_upstream = status.is_none_or(|s| s.branch.is_none() || s.upstream.is_none());
-        let tip = match remote {
-            Remote::Fetch => "Fetch from the remotes (refreshes the base)",
-            Remote::Push if no_upstream => "This branch has no upstream to push to",
-            Remote::Push => "Push this branch to its upstream (never forced)",
+        let workspace = self.workspace_name(project_id);
+        let repo = view.repo.as_deref().unwrap_or(workspace);
+        let review = match &status.base_ref {
+            Some(base) => format!("Review against {base}"),
+            None => "Review against base".to_owned(),
         };
-        let idle = |label: &'static str, opacity: f32| {
+        // Another repository of the workspace (never while a task worktree is shown).
+        let dirty = self
+            .git_summary()
+            .filter(|_| view.worktree_task_id.is_none())
+            .and_then(|summary| {
+                let shown = view.repo.as_deref().unwrap_or("");
+                summary
+                    .repos
+                    .iter()
+                    .find(|other| other.repo != shown && other.changed() > 0)
+            })
+            .map(|other| other.repo.clone());
+        let card = dirty.map(|other| {
+            let label = if other.is_empty() {
+                workspace.to_owned()
+            } else {
+                other.clone()
+            };
             div()
-                .id(id.clone())
-                .flex_none()
-                .px(px(space::XS))
+                .mt(px(space::S))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::M))
+                .py(px(space::S))
+                .rounded(px(radius::MEDIUM))
+                .bg(rgb(theme.surface))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border))
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .opacity(opacity)
-                .child(label)
+                .child(changes_dot(theme))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(rgb(theme.text_dim))
+                        .child(format!("{label} has uncommitted changes")),
+                )
+                .child(
+                    row_action("git-clean-switch".into(), "Switch", theme)
+                        .text_color(rgb(theme.accent_text))
+                        .tooltip(tooltip(theme, "Show this repository's changes", ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.git_focus, cx);
+                            let repo = (!other.is_empty()).then(|| other.clone());
+                            shell.set_git_repo(project_id, repo, window, cx);
+                        })),
+                )
+        });
+        empty_state(
+            theme,
+            Some("✓"),
+            Some("Working tree clean"),
+            format!("No uncommitted changes in {repo}.").into(),
+            None,
+        )
+        .flex_1()
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .justify_center()
+                .gap(px(space::S))
+                .child(
+                    button("git-empty-mode", review, theme, true)
+                        .tooltip(tooltip(
+                            theme,
+                            "Show everything on this branch",
+                            self.keymap.label(Command::GitToggleMode),
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.git_focus, cx);
+                            let requests = shell.git_view(project_id).toggle_mode();
+                            shell.git_requests(project_id, requests, window, cx);
+                        })),
+                )
+                .child(
+                    secondary_button("git-empty-history", "Open history", theme)
+                        .tooltip(tooltip(
+                            theme,
+                            "The last 50 commits and their changes",
+                            self.keymap.label(Command::GitToggleHistory),
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.git_focus, cx);
+                            let requests = shell.git_view(project_id).toggle_history();
+                            shell.git_requests(project_id, requests, window, cx);
+                        })),
+                ),
+        )
+        .children(card)
+        .into_any_element()
+    }
+
+    /// Nothing listed on the Vs. base tab or in a task's / turn's changes: why, with the
+    /// way back (or, without a usable base, Set base… first).
+    fn git_no_changes(
+        &self,
+        project_id: Ulid,
+        view: &GitView,
+        status: &GitStatus,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        // No merge-base with a commit checked out: the base names nothing usable.
+        let unusable = status.head.is_some() && status.merge_base.is_none();
+        let no_base = view.since.is_none()
+            && view.mode == GitMode::Base
+            && (status.base_ref.is_none() || unusable);
+        let since = view.since.as_ref().map(|since| match since.origin {
+            git_view::Origin::Turn { n, .. } => (
+                format!("No changes since turn {n} started."),
+                Some("Its changes may have been restored or undone.".to_owned()),
+            ),
+            git_view::Origin::Task(_) => (
+                "No changes since the task's run started.".to_owned(),
+                Some("Its changes may have been undone or committed elsewhere.".to_owned()),
+            ),
+        });
+        let (sentence, detail) = match (since, view.mode, &status.base_ref) {
+            (Some(since), _, _) => since,
+            (None, GitMode::Working, _) => ("No uncommitted changes.".to_owned(), None),
+            (None, GitMode::Base, None) => (
+                "No base branch found.".to_owned(),
+                Some("None of origin/HEAD, main or master exists here.".to_owned()),
+            ),
+            (None, GitMode::Base, Some(base)) if unusable => (
+                format!("Cannot compare with {base}."),
+                Some("It names no commit here, or shares no history with HEAD.".to_owned()),
+            ),
+            (None, GitMode::Base, Some(base)) => (format!("No changes against {base}."), None),
         };
-        if running == Some(remote) {
-            return idle(remote.running_label(), 1.0).into_any_element();
-        }
-        if running.is_some() || (remote == Remote::Push && no_upstream) {
-            return idle(remote.label(), opacity::DISABLED)
-                .tooltip(tooltip(theme, tip, ""))
-                .into_any_element();
-        }
-        row_action(id, remote.label(), theme)
-            .tooltip(tooltip(theme, tip, ""))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.run_git_remote(project_id, remote, window, cx);
-            }))
+        let (label, tip) = match view.mode {
+            GitMode::Working => ("Against base", "Show everything on this branch"),
+            GitMode::Base => ("Working changes", "Show uncommitted changes"),
+        };
+        // Without a base, picking one is the primary action.
+        let buttons = div()
+            .flex()
+            .gap(px(space::S))
+            .when(no_base, |el| {
+                el.child(
+                    button("git-empty-base", "Set base…", theme, true)
+                        .tooltip(tooltip(theme, "Choose the branch to compare with", ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.open_git_base(project_id, window, cx);
+                        })),
+                )
+            })
+            .child(
+                button("git-empty-mode", label, theme, !no_base)
+                    .tooltip(tooltip(
+                        theme,
+                        tip,
+                        self.keymap.label(Command::GitToggleMode),
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        window.focus(&shell.git_focus, cx);
+                        let requests = shell.git_view(project_id).toggle_mode();
+                        shell.git_requests(project_id, requests, window, cx);
+                    })),
+            );
+        message(theme, None, sentence.into(), detail.map(Into::into))
+            .flex_1()
+            .child(buttons)
             .into_any_element()
     }
 
-    /// The commit message box under the changed-file list (Working changes): Enter breaks a
-    /// line, Ctrl+Enter or the button commits the staged changes.
+    /// The commit box pinned under the list (Working changes): the message (Enter breaks a
+    /// line, Ctrl+Enter or Commit commits the staged changes), its summary line's length, then
+    /// what is staged, ✦ Generate and Commit.
     pub(crate) fn git_commit_box(
         &self,
         project_id: Ulid,
@@ -704,36 +817,47 @@ impl Shell {
         let staged = status.staged.len();
         let summary = match staged {
             0 => "Nothing staged".to_owned(),
-            1 => "1 staged file".to_owned(),
-            n => format!("{n} staged files"),
+            n => format!("{n} staged"),
         };
         let label = if draft.busy {
             "Committing…"
         } else {
             "Commit"
         };
-        let commit = if draft.busy || generating || staged == 0 {
-            disabled_button("git-commit", label, theme, true)
-        } else {
-            button("git-commit", label, theme, true).on_click(
-                cx.listener(move |shell, _, window, cx| shell.commit_git(project_id, window, cx)),
-            )
-        };
         let tip = if staged == 0 {
             "Stage changes to commit them"
         } else {
             "Commit the staged changes"
         };
+        let commit = if draft.busy || generating || staged == 0 {
+            // Readable while it cannot be used: a faint accent fill, muted text.
+            button_frame("git-commit", label)
+                .cursor_default()
+                .bg(rgb(theme.accent_bg))
+                .text_color(rgb(theme.text_muted))
+                .font_weight(FontWeight(weight::MEDIUM))
+        } else {
+            button("git-commit", label, theme, true).on_click(
+                cx.listener(move |shell, _, window, cx| shell.commit_git(project_id, window, cx)),
+            )
+        };
         let write = if draft.busy || generating {
-            let label = if generating { "✦ Writing…" } else { "✦" };
+            let label = if generating {
+                "✦ Writing…"
+            } else {
+                "✦ Generate"
+            };
             disabled_button("git-commit-generate", label, theme, false)
         } else {
-            quiet_button("git-commit-generate", "✦", theme, theme.surface_raised).on_click(
+            quiet_button("git-commit-generate", "✦ Generate", theme, theme.hover).on_click(
                 cx.listener(move |shell, _, window, cx| {
                     shell.generate_commit_message(project_id, window, cx)
                 }),
             )
         };
+        let text = draft.text.text();
+        let summary_len = text.lines().next().unwrap_or("").chars().count();
+        let too_long = summary_len > git_actions::SUMMARY_LIMIT;
         div()
             .flex_none()
             .flex()
@@ -745,8 +869,8 @@ impl Shell {
             .child(
                 text_field(
                     "git-commit-message",
-                    draft.text.text(),
-                    "Commit message",
+                    text,
+                    "Summary, then a blank line and details",
                     focused,
                     draft.text.all_selected(),
                     theme,
@@ -780,13 +904,30 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::S))
-                    .child(meta_line(theme, summary.into()).flex_1().min_w_0())
+                    .child(meta_line(theme, summary.into()).flex_1().min_w_0().truncate())
+                    .child(
+                        div()
+                            .id("git-commit-length")
+                            .flex_none()
+                            .text_size(font_size::META)
+                            .text_color(rgb(if too_long {
+                                theme.diff_del_text
+                            } else {
+                                theme.text_muted
+                            }))
+                            .tooltip(tooltip(
+                                theme,
+                                "Length of the summary line (keep it under 72)",
+                                "",
+                            ))
+                            .child(format!("{summary_len} / {}", git_actions::SUMMARY_LIMIT)),
+                    )
                     .child(write.flex_none().tooltip(tooltip(
                         theme,
                         "Write the message with the workspace's default agent (Conventional Commits)",
                         "",
                     )))
-                    .child(commit.tooltip(tooltip(theme, tip, "Ctrl+Enter"))),
+                    .child(commit.flex_none().tooltip(tooltip(theme, tip, "Ctrl+Enter"))),
             )
     }
 }

@@ -421,8 +421,7 @@ impl Shell {
                 (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
                 _ => None,
             });
-        self.git_diff_scroll
-            .scroll_to_item(hunk_row.unwrap_or(0), ScrollStrategy::Top);
+        self.scroll_diff_to(hunk_row.unwrap_or(0));
         true
     }
 
@@ -436,6 +435,22 @@ impl Shell {
             &self.settings_file,
             "diff_mode",
             &format!("\"{}\"", mode.name()),
+        ) {
+            self.settings_error = Some(error.to_string());
+        }
+        cx.notify();
+    }
+
+    /// Wraps long diff lines (or cuts them at the pane edge) and saves `[ui] diff_wrap`.
+    pub(crate) fn set_diff_wrap(&mut self, wrap: bool, cx: &mut Context<'_, Self>) {
+        if self.diff_wrap == wrap {
+            return;
+        }
+        self.diff_wrap = wrap;
+        if let Err(error) = mkrew_core::settings::write_ui_value(
+            &self.settings_file,
+            "diff_wrap",
+            &wrap.to_string(),
         ) {
             self.settings_error = Some(error.to_string());
         }

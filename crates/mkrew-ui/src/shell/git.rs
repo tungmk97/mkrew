@@ -84,7 +84,7 @@ impl Shell {
         view.commit.text = draft;
         self.git.insert(project_id, view);
         self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
-        self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.scroll_diff_to(0);
         true
     }
 
@@ -297,7 +297,7 @@ impl Shell {
     ) {
         window.focus(&self.git_focus, cx);
         let show = self.git_view(project_id).select_commit(hash);
-        self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.scroll_diff_to(0);
         let requests = git_view::Requests {
             show,
             ..git_view::Requests::default()
@@ -476,7 +476,7 @@ impl Shell {
     ) {
         window.focus(&self.git_focus, cx);
         let diff = self.git_view(project_id).select(target);
-        self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+        self.scroll_diff_to(0);
         let requests = git_view::Requests {
             diff,
             ..git_view::Requests::default()
@@ -484,13 +484,29 @@ impl Shell {
         self.git_requests(project_id, requests, window, cx);
     }
 
-    /// ↑ ↓ / j k move between files; the other Git keys are keymap commands ([`Self::git_key`]).
+    /// ↑ ↓ / j k move between files; Esc closes an open Git menu, else unselects the picked
+    /// diff lines; the other Git keys are keymap commands ([`Self::git_key`]).
     pub(crate) fn git_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
+            if self.git_menu.is_some() {
+                cx.stop_propagation();
+                return self.close_git_menu(window, cx);
+            }
+            if let Some(project_id) = self.workspace
+                && self
+                    .git
+                    .get(&project_id)
+                    .is_some_and(|view| view.comments.selection.is_some())
+            {
+                cx.stop_propagation();
+                return self.clear_diff_pick(project_id, cx);
+            }
+        }
         let Some(key) = git_view::key(&event.keystroke) else {
             return;
         };
@@ -523,7 +539,9 @@ impl Shell {
         let file_row = view.list_rows().iter().position(|row| match row {
             git_view::ListRow::File(target, _) => selected.as_ref() == Some(target),
             git_view::ListRow::Commit { expanded, .. } => selected.is_none() && *expanded,
-            git_view::ListRow::Header(..) | git_view::ListRow::Note(_) => false,
+            git_view::ListRow::Header(..)
+            | git_view::ListRow::Note(_)
+            | git_view::ListRow::Hint(_) => false,
         });
         let hunk_row = match (&view.diff, view.hunk) {
             (git_view::Diff::Shown(shown), Some(hunk)) => shown.hunk_row(hunk, mode),
@@ -536,17 +554,23 @@ impl Shell {
         match key {
             git_view::Key::NextHunk | git_view::Key::PreviousHunk => {
                 if let Some(at) = hunk_row {
-                    self.git_diff_scroll.scroll_to_item(at, ScrollStrategy::Top);
+                    self.scroll_diff_to(at);
                 }
             }
             git_view::Key::Up | git_view::Key::Down
                 if requests.diff.is_some() || requests.show.is_some() =>
             {
-                self.git_diff_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                self.scroll_diff_to(0);
             }
             _ => {}
         }
         self.git_requests(project_id, requests, window, cx);
+    }
+
+    /// Scrolls the diff to `row` once its list is laid out for the shown diff (the render
+    /// resets the list for another diff or mode, which would drop a scroll done now).
+    pub(crate) fn scroll_diff_to(&self, row: usize) {
+        self.git_diff_scroll_to.set(Some(row));
     }
 
     /// Opens the selected changed file of the Git view in Zed; a failure shows in the diff

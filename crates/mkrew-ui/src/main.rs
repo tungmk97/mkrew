@@ -16,11 +16,11 @@ use gpui::prelude::*;
 use gpui::{
     AnyView, App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, DragMoveEvent,
     EmptyView, Entity, ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent,
-    ListHorizontalSizingBehavior, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PathPromptOptions, Pixels, Point, PromptLevel, ScrollHandle, ScrollStrategy, SharedString,
-    StyledText, Subscription, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowControlArea, WindowOptions, anchored, canvas, deferred, div, point, px, relative, rgb,
-    size, uniform_list,
+    ListAlignment, ListHorizontalSizingBehavior, ListOffset, ListState, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, PromptLevel,
+    ScrollHandle, ScrollStrategy, SharedString, StyledText, Subscription, TitlebarOptions,
+    UniformListScrollHandle, Window, WindowBounds, WindowControlArea, WindowOptions, anchored,
+    canvas, deferred, div, list, pattern_slash, point, px, relative, rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
@@ -106,6 +106,7 @@ mod shell;
 use shell::cards::*;
 use shell::files_render::*;
 use shell::git_diff::*;
+use shell::git_menus::*;
 use shell::git_rows::*;
 use shell::menus::*;
 use shell::pane_render::*;
@@ -266,6 +267,17 @@ struct FileMenu {
     is_dir: bool,
     /// Window position of the click.
     position: gpui::Point<gpui::Pixels>,
+}
+
+/// The open popover of the Git view's side panel or diff toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitMenu {
+    /// The repo strip's chevron: search, then one row per repository.
+    Repos,
+    /// "By: All ▾": the "Changed by" filter.
+    ChangedBy,
+    /// The diff toolbar's "⋯": Send to agent and the actions that do not fit.
+    More,
 }
 
 struct Shell {
@@ -447,11 +459,26 @@ struct Shell {
     git_focus: FocusHandle,
     /// The commit box of the shown Git view (outside `GIT_CONTEXT`, so typing never stages).
     git_commit_focus: FocusHandle,
-    /// Keep the selected changed file and the current hunk in view.
+    /// The side panel's "Filter files" field (outside `GIT_CONTEXT`, so typing never stages).
+    git_filter_focus: FocusHandle,
+    /// The open Git popover (one at a time), and the search typed in the Repositories menu.
+    git_menu: Option<GitMenu>,
+    git_repo_query: Input,
+    git_repo_query_focus: FocusHandle,
+    /// Keep the selected changed file in view.
     git_files_scroll: UniformListScrollHandle,
-    git_diff_scroll: UniformListScrollHandle,
+    /// The diff rows (a variable-height list: wrapped lines are taller). `git_diff_layout` is
+    /// what it was last laid out for (the diff, mode, row count; another resets it) and
+    /// `git_diff_looks` what changes row heights in place (wrap, picked lines: remeasured).
+    /// `git_diff_scroll_to` is a row to scroll to once the list is laid out for the shown diff.
+    git_diff_list: ListState,
+    git_diff_layout: Cell<Option<(usize, DiffMode, usize)>>,
+    git_diff_looks: Cell<Option<(bool, Option<Selection>)>>,
+    git_diff_scroll_to: Cell<Option<usize>>,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
+    /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
+    diff_wrap: bool,
     /// The open "Discard changes" confirmation of a Git view file (modal).
     git_discard: Option<git_view::Discard>,
     /// The open base menu of a Git view (modal).

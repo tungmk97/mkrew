@@ -107,6 +107,7 @@ fn files_are_grouped_and_the_first_is_selected() {
         .map(|row| match row {
             ListRow::Header(group, count) => format!("{} {count}", group.title()),
             ListRow::File(_, file) => file.path.clone(),
+            ListRow::Hint(hint) => (*hint).to_owned(),
             ListRow::Commit { .. } | ListRow::Note(_) => unreachable!("not in History"),
         })
         .collect();
@@ -115,7 +116,7 @@ fn files_are_grouped_and_the_first_is_selected() {
         [
             "Staged 1",
             "a.rs",
-            "Unstaged 2",
+            "Changes 2",
             "a.rs",
             "b.rs",
             "Untracked 1",
@@ -880,10 +881,18 @@ fn only_unstaged_and_untracked_files_can_be_discarded() {
 #[test]
 fn labels() {
     let mut status = GitStatus::default();
-    assert_eq!(ahead_behind(&status), None);
-    status.ahead = 2;
-    status.behind = 1;
-    assert_eq!(ahead_behind(&status).as_deref(), Some("↑2 ↓1"));
+    assert_eq!(tracking(&status), "No upstream");
+    status.upstream = Some("origin/main".into());
+    assert_eq!(tracking(&status), "Tracking origin/main · up to date");
+    status.ahead = 1;
+    assert_eq!(tracking(&status), "Tracking origin/main · 1 commit ahead");
+    status.behind = 2;
+    assert_eq!(
+        tracking(&status),
+        "Tracking origin/main · 1 ahead, 2 behind"
+    );
+    status.ahead = 0;
+    assert_eq!(tracking(&status), "Tracking origin/main · 2 commits behind");
     let mut binary = file("x", ChangeKind::Modified);
     assert_eq!(counts(&binary), Some((1, 0)));
     binary.added = None;
@@ -945,6 +954,7 @@ fn history_labels(view: &GitView) -> Vec<String> {
             ListRow::File(target, _) => format!("  {}", target.path),
             ListRow::Note(note) => format!("  {note}"),
             ListRow::Header(group, _) => group.title().to_owned(),
+            ListRow::Hint(hint) => (*hint).to_owned(),
         })
         .collect()
 }
@@ -1099,7 +1109,10 @@ fn diff_comments_quote_the_picked_new_side_lines() {
         "nothing to show: the diff keeps its width"
     );
     view.comments.pick(2, 2, false);
-    assert!(view.comments_shown());
+    assert!(
+        !view.comments_shown(),
+        "picked lines get the inline selection bar, not the margin"
+    );
     assert!(!view.start_comment(), "diff still loading");
     assert!(view.begin_diff());
     view.diff_loaded(&target(Group::Staged, "a.rs"), Ok(shown));

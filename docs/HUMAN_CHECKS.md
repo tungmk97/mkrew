@@ -15,6 +15,23 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-11 Git tab redesign (checklist docs/git-tab-redesign-checklist.md)
+
+Build, clippy and tests pass; the app starts and connects. The Git tab itself was not clicked
+through by the agent. Check in dark and light:
+
+- [ ] **Side panel:** repo strip (EA-BE / EA-FE tabs, amber dot, ▾ menu with search), branch
+  header (Fetch icon, Push N, tracking line), Working N / Vs. base / History, Filter files, By: ▾
+  menu, Staged / Changes / Untracked headers (fold, Stage all on hover), 30 px rows, commit box
+  (0 / 72 counter, Generate, readable disabled Commit), clean state card.
+- [ ] **Diff toolbar:** ‹ › with "1 / 6", status badge, `folder / name`, Unified | Split, Wrap
+  (survives a restart), Open in Zed, red Discard…, primary Stage file, ⋯ (Comment, Send to agent).
+- [ ] **Diff body:** long lines wrap (Wrap on) or scroll sideways (Wrap off); hunk headers with
+  Stage hunk; "no newline at end of file" pill; Split hatch on one-sided rows, halves stay aligned
+  when wrapped.
+- [ ] **Selection bar:** click a line (Shift+click extends) → bar under it with Comment
+  (Ctrl+Alt+M), Send to agent, Clear; Esc clears; the Discard dialog preview still renders.
+
 ### To verify — 2026-10-10 large-file split (plan docs/superpowers/plans/2026-10-10-split-large-files.md)
 
 Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests and nine inline test modules split). Tests, clippy and a verbatim-move check passed. Please click through once: Board (drag a card), Docs (open, comment), Files (open, find, edit, save), Git (stage, diff split/unified, commit box), palette, quick open, peek, a run, the worktree/turns/history dialogs, theme toggle, compact sidebar. Expected: everything behaves exactly as before.
