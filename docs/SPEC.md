@@ -963,7 +963,6 @@ Only edit this file. When done, for EACH comment run:
   or binary: a read-only notice and "Open in Zed". A scroll bar on the right shows where the
   view is (only when the file is taller than the view): drag its thumb, or press the track to
   jump there.
-- Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
   from the file's text in the git index (what the Git view calls unstaged): added
   (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
@@ -971,6 +970,7 @@ Only edit this file. When done, for EACH comment run:
   after typing stops; marks on lines edited since are hidden until then) and staging/committing
   (the `git.changed` re-read). Untracked files, files outside a repository and conflicted files
   have no bars; the bar column is always there so the text never moves.
+- Unsaved text is never replaced (§2.5). If the file changes on disk meanwhile (an agent), or
   Save finds another version on disk, a banner "Changed on disk — Reload · Keep mine" offers
   "Reload" (drop your changes) or "Keep mine" (Save overwrites it). Opening another file,
   switching to another worktree or closing the window with unsaved changes asks "Save / Don't

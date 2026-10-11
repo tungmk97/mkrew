@@ -684,11 +684,11 @@ impl Shell {
                                 editor::selected_cells(line, index, selection)
                             }),
                             found,
+                            // Marks of an older text could sit on moved lines: only when it matches.
+                            change: code.changes.get(index).copied().flatten().filter(|_| fresh),
                         };
                         let row = preview::code_row(
                             index,
-                            // Marks of an older text could sit on moved lines: only when it matches.
-                            change: code.changes.get(index).copied().flatten().filter(|_| fresh),
                             total,
                             text.into_owned(),
                             spans,
