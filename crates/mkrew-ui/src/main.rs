@@ -84,7 +84,7 @@ use mkrew_ui::run::{self, Ports, RowState, RunAction, Summary};
 use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
-use mkrew_ui::split::Axis;
+use mkrew_ui::split::{Axis, Preset};
 use mkrew_ui::status;
 use mkrew_ui::tabs::{Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, tab_kind};
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};

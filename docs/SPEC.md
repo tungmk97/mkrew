@@ -1124,6 +1124,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Tabs | Jump to tab 1–9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab | Ctrl+Shift+R / Ctrl+Shift+W |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
+| Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | New agent pane / new shell pane (split right with the workspace default, like + Agent / + Shell) | Alt+Shift+A / Alt+Shift+S |
 | Panes | Move focus | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |

@@ -120,6 +120,14 @@ pub fn split_kind(focused: Option<&Session>) -> SessionKind {
     focused.map_or(SessionKind::Shell, |session| session.kind)
 }
 
+/// "an agent" / "a shell", for messages about starting one.
+pub fn kind_noun(kind: SessionKind) -> &'static str {
+    match kind {
+        SessionKind::Agent => "an agent",
+        SessionKind::Shell => "a shell",
+    }
+}
+
 /// What closing the pane of a session does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseAction {

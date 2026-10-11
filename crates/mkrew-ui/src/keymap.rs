@@ -13,7 +13,7 @@ use std::path::Path;
 
 use gpui::Keystroke;
 
-use crate::split::Direction;
+use crate::split::{Direction, Preset};
 
 /// Something a shortcut does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +38,8 @@ pub enum Command {
     SplitAgent,
     /// Split the focused pane to the right with the workspace's default shell (+ Shell).
     SplitShell,
+    /// Lay the active tab out as a preset (SPEC §10), starting the panes it lacks.
+    Layout(Preset),
     Focus(Direction),
     /// Move the divider next to the focused pane.
     Resize(Direction),
@@ -177,6 +179,11 @@ impl Command {
             Command::SplitDown,
             Command::SplitAgent,
             Command::SplitShell,
+            Command::Layout(Preset::Columns2),
+            Command::Layout(Preset::Rows2),
+            Command::Layout(Preset::Columns3),
+            Command::Layout(Preset::MainAndStack),
+            Command::Layout(Preset::Grid),
             Command::Focus(Direction::Left),
             Command::Focus(Direction::Right),
             Command::Focus(Direction::Up),
@@ -250,6 +257,7 @@ impl Command {
             Command::SplitDown => "split_down".into(),
             Command::SplitAgent => "split_agent".into(),
             Command::SplitShell => "split_shell".into(),
+            Command::Layout(preset) => format!("layout_{}", preset.name()),
             Command::Focus(Direction::Left) => "focus_left".into(),
             Command::Focus(Direction::Right) => "focus_right".into(),
             Command::Focus(Direction::Up) => "focus_up".into(),
@@ -328,6 +336,14 @@ impl Command {
             Command::SplitDown => "alt-shift--".into(),
             Command::SplitAgent => "alt-shift-a".into(),
             Command::SplitShell => "alt-shift-s".into(),
+            Command::Layout(preset) => match preset {
+                Preset::Columns2 => "alt-shift-1",
+                Preset::Rows2 => "alt-shift-2",
+                Preset::Columns3 => "alt-shift-3",
+                Preset::MainAndStack => "alt-shift-4",
+                Preset::Grid => "alt-shift-5",
+            }
+            .into(),
             Command::Focus(Direction::Left) => "alt-left".into(),
             Command::Focus(Direction::Right) => "alt-right".into(),
             Command::Focus(Direction::Up) => "alt-up".into(),
@@ -718,6 +734,7 @@ mod tests {
         assert_eq!(bound("alt-shift-a"), Some(Command::SplitAgent));
         assert_eq!(bound("alt-shift-s"), Some(Command::SplitShell));
         assert_eq!(keymap.label(Command::SplitShell), "Alt+Shift+S");
+        assert_eq!(keymap.label(Command::Layout(Preset::Grid)), "Alt+Shift+5");
         // Global like the split keys: a focused terminal no longer gets ESC A / ESC S.
         assert_eq!(Command::SplitAgent.context(), None);
         assert_eq!(bound("ctrl-shift-x"), Some(Command::ClosePane));

@@ -134,6 +134,74 @@ fn two_panes() -> (Tabs, Ulid, Ulid) {
 }
 
 #[test]
+fn arrange_keeps_the_panes_in_order_and_adds_the_new_ones() {
+    let project = Ulid::new();
+    let [a, b, c, d] = [Ulid::new(), Ulid::new(), Ulid::new(), Ulid::new()];
+    let stacked = json!({"split":"horizontal","ratio":0.7,"children":[pane(a), pane(b)]});
+    let tab = wire(project, "main", 1.0, stacked);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![tab.clone()]);
+    assert!(tabs.focus(b));
+    assert!(tabs.toggle_zoom());
+
+    let write = tabs.arrange(tab.id, Preset::Grid, &[c, d]).unwrap();
+    assert_eq!(
+        write.layout,
+        json!({"split":"vertical","ratio":0.5,"children":[
+            {"split":"horizontal","ratio":0.5,"children":[pane(a), pane(b)]},
+            {"split":"horizontal","ratio":0.5,"children":[pane(c), pane(d)]}
+        ]})
+    );
+    let active = tabs.active().unwrap();
+    assert_eq!(active.focused(), Some(b), "the focus stays");
+    assert_eq!(active.zoomed(), None, "the zoom ends");
+    let again = tabs.arrange(tab.id, Preset::Grid, &[]).unwrap();
+    assert_eq!(again.layout, write.layout, "every pane stays where it is");
+}
+
+/// The tab may change while the new sessions start (Review Focus 5): nothing is lost or
+/// doubled, and the tab need not be the active one.
+#[test]
+fn arrange_refuses_other_sizes_and_works_on_any_tab() {
+    let project = Ulid::new();
+    let [a, b, c, e] = [Ulid::new(), Ulid::new(), Ulid::new(), Ulid::new()];
+    let split = json!({"split":"vertical","ratio":0.5,"children":[pane(a), pane(b)]});
+    let one = wire(project, "one", 1.0, split);
+    // Tab two: the daemon placed `c`, the first session started for it, already.
+    let two = wire(project, "two", 2.0, pane(c));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+
+    assert_eq!(
+        tabs.arrange(one.id, Preset::Columns3, &[]),
+        None,
+        "a pane short"
+    );
+    assert_eq!(
+        tabs.arrange(one.id, Preset::Columns2, &[e]),
+        None,
+        "a pane too many"
+    );
+    assert_eq!(
+        tabs.arrange(one.id, Preset::Columns3, &[c]),
+        None,
+        "c is in tab two"
+    );
+    assert_eq!(tabs.tab(one.id).unwrap().sessions(), [a, b], "unchanged");
+
+    let write = tabs.arrange(two.id, Preset::Columns2, &[c, e]).unwrap();
+    assert_eq!(
+        write.layout,
+        json!({"split":"vertical","ratio":0.5,"children":[pane(c), pane(e)]})
+    );
+    assert_eq!(
+        tabs.active().map(|tab| tab.id),
+        Some(one.id),
+        "still on tab one"
+    );
+}
+
+#[test]
 fn resize_writes_the_moved_divider() {
     let (mut tabs, a, b) = two_panes();
     let write = tabs.resize_focused(Direction::Left).unwrap();

@@ -46,10 +46,7 @@ impl Shell {
                     }
                     Err(error) => {
                         tracing::warn!(%project_id, "session.spawn failed: {error:#}");
-                        let what = match kind {
-                            SessionKind::Agent => "an agent",
-                            SessionKind::Shell => "a shell",
-                        };
+                        let what = lifecycle::kind_noun(kind);
                         shell.tab_error = Some(format!("Cannot start {what}: {error:#}"));
                     }
                 }
@@ -199,7 +196,8 @@ impl Shell {
                 | Command::SplitRight
                 | Command::SplitDown
                 | Command::SplitAgent
-                | Command::SplitShell => self.show_view(View::Terminals, window, cx),
+                | Command::SplitShell
+                | Command::Layout(_) => self.show_view(View::Terminals, window, cx),
                 // The rest act on panes that are not on screen.
                 Command::RenameTab
                 | Command::RenamePane
@@ -253,6 +251,7 @@ impl Shell {
             // Exactly the + Agent / + Shell buttons.
             Command::SplitAgent => self.new_pane(SessionKind::Agent, Axis::Vertical, window, cx),
             Command::SplitShell => self.new_pane(SessionKind::Shell, Axis::Vertical, window, cx),
+            Command::Layout(preset) => self.apply_layout(preset, window, cx),
             Command::Focus(direction) => {
                 if self
                     .active_tabs_mut()

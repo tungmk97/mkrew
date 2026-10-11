@@ -51,6 +51,99 @@ impl Shell {
         self.new_pane(kind, axis, window, cx);
     }
 
+    /// Lays the active tab out as `preset` (SPEC §10): its panes stay, the missing ones start
+    /// sessions of the focused pane's kind (as Split right) one after another, then the
+    /// layout is written once. If a start fails, or the tab changed meanwhile, the sessions
+    /// that did start are placed like Split right.
+    pub(crate) fn apply_layout(
+        &mut self,
+        preset: Preset,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let Some((tab_id, have)) = (self.tabs.get(&project_id))
+            .and_then(|tabs| tabs.active())
+            .map(|tab| (tab.id, tab.sessions().len()))
+        else {
+            return;
+        };
+        if have > preset.panes() {
+            self.tab_error = Some(format!(
+                "This tab has {have} panes; the {} layout holds {}. Close panes first.",
+                preset.label(),
+                preset.panes()
+            ));
+            cx.notify();
+            return;
+        }
+        let missing = preset.panes() - have;
+        if missing == 0 {
+            let write =
+                (self.tabs.get_mut(&project_id)).and_then(|tabs| tabs.arrange(tab_id, preset, &[]));
+            if let Some(write) = write {
+                self.save_layout(project_id, write, window, cx);
+                self.sync_panes(window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        let focused = (self.focused_session())
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        let kind = lifecycle::split_kind(focused);
+        if self.starting_pane.is_some() || self.ask_for_default(project_id, kind, window, cx) {
+            return;
+        }
+        self.starting_pane = Some(kind);
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut started = Vec::new();
+            let mut failed = None;
+            for _ in 0..missing {
+                let params = lifecycle::spawn_params(project_id, Some(tab_id), kind);
+                match connection
+                    .call::<SessionSpawnResult>(Request::SessionSpawn(params))
+                    .await
+                {
+                    Ok(spawned) => started.push(spawned.session_id),
+                    Err(error) => {
+                        failed = Some(format!("{error:#}"));
+                        break;
+                    }
+                }
+            }
+            let _ = this.update_in(cx, |shell, window, cx| {
+                shell.starting_pane = None;
+                let write = (shell.tabs.get_mut(&project_id))
+                    .and_then(|tabs| tabs.arrange(tab_id, preset, &started));
+                match write {
+                    Some(write) => shell.save_layout(project_id, write, window, cx),
+                    None => {
+                        // `place_session` focuses a session a tab shows already (the one the
+                        // daemon placed in an empty tab, or one a snapshot brought in), so
+                        // none is placed twice.
+                        for session in started {
+                            shell.place_session(project_id, session, Axis::Vertical, window, cx);
+                        }
+                    }
+                }
+                if let Some(error) = failed {
+                    tracing::warn!(%project_id, "session.spawn failed: {error}");
+                    let what = lifecycle::kind_noun(kind);
+                    shell.tab_error = Some(format!("Cannot start {what}: {error}"));
+                }
+                shell.sync_panes(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Starts editing the active tab's title inline, starting from the current one.
     pub(crate) fn start_rename(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(tab) = self

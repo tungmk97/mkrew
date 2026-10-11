@@ -194,6 +194,7 @@ pub fn title(command: Command) -> String {
         Command::SplitDown => "Panes: Split down".into(),
         Command::SplitAgent => "Panes: New agent pane".into(),
         Command::SplitShell => "Panes: New shell pane".into(),
+        Command::Layout(preset) => format!("Panes: Layout {}", preset.label()),
         Command::Focus(d) => format!("Panes: Move focus {}", direction(d)),
         Command::Resize(d) => format!("Panes: Resize {}", direction(d)),
         Command::ZoomPane => "Panes: Zoom / unzoom pane".into(),
@@ -272,9 +273,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
-        Command::SplitRight | Command::SplitDown | Command::SplitAgent | Command::SplitShell => {
-            context.workspace && context.tabs > 0
-        }
+        Command::SplitRight
+        | Command::SplitDown
+        | Command::SplitAgent
+        | Command::SplitShell
+        | Command::Layout(_) => context.workspace && context.tabs > 0,
         Command::RenameTab
         | Command::CloseTab
         | Command::Focus(_)

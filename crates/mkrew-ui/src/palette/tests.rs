@@ -1,6 +1,7 @@
 use mkrew_protocol::{SessionKind, StateSource, TaskStatus};
 
 use super::*;
+use crate::split::Preset;
 
 fn context(view: View) -> Context {
     Context {
@@ -234,7 +235,11 @@ fn availability_follows_the_view() {
         "shows the terminals"
     );
     // Like the buttons: from any view (they show Terminals first), once a tab exists.
-    for command in [Command::SplitAgent, Command::SplitShell] {
+    for command in [
+        Command::SplitAgent,
+        Command::SplitShell,
+        Command::Layout(Preset::Columns2),
+    ] {
         assert!(terminals.contains(&command), "{command:?}");
         assert!(git.contains(&command), "{command:?}");
     }
@@ -243,6 +248,7 @@ fn availability_follows_the_view() {
         ..context(View::Terminals)
     });
     assert!(!no_tabs.contains(&Command::SplitAgent));
+    assert!(!no_tabs.contains(&Command::Layout(Preset::Columns2)));
     assert!(commands(&context(View::Board)).contains(&Command::RunTask));
     let docs = commands(&context(View::Docs));
     assert!(docs.contains(&Command::ToggleDocSource));

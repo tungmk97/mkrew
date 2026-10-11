@@ -9,7 +9,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
-use crate::split::{Axis, Direction, Node, RESIZE_STEP, Rect};
+use crate::split::{Axis, Direction, Node, Preset, RESIZE_STEP, Rect};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tab {
@@ -365,6 +365,35 @@ impl Tabs {
             (Some(_), None) => return None,
         }
         tab.focused = Some(new);
+        tab.fix_focus();
+        Some(tab.write())
+    }
+
+    /// Lays tab `tab_id` out as `preset` (SPEC §10 layouts): its panes keep their tree
+    /// order, then come the `new` sessions it does not show yet. `None` (nothing changes)
+    /// unless that makes exactly the preset's panes, or when a new session is shown in
+    /// another tab. A zoom ends; the focus stays.
+    pub fn arrange(
+        &mut self,
+        tab_id: Ulid,
+        preset: Preset,
+        new: &[Ulid],
+    ) -> Option<TabSetLayoutParams> {
+        if new
+            .iter()
+            .any(|id| self.tab_of(*id).is_some_and(|tab| tab.id != tab_id))
+        {
+            return None;
+        }
+        let tab = self.tab_mut(tab_id)?;
+        let mut sessions = tab.sessions();
+        for id in new {
+            if !sessions.contains(id) {
+                sessions.push(*id);
+            }
+        }
+        tab.layout = Some(preset.build(&sessions)?);
+        tab.zoomed = None;
         tab.fix_focus();
         Some(tab.write())
     }
