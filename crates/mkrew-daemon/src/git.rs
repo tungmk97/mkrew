@@ -61,6 +61,10 @@ pub trait GitBackend: Send + Sync {
     /// `path` is in the index.
     fn is_tracked(&self, dir: &Path, path: &str) -> io::Result<bool>;
 
+    /// Text of `path` (relative to `dir`) in the index; `None` when it is not in the index
+    /// (untracked, or only conflict stages), not UTF-8, or over the viewer's 2 MB.
+    fn index_text(&self, dir: &Path, path: &str) -> io::Result<Option<String>>;
+
     /// Stages the whole `paths` (relative to `dir`): new, modified and deleted files.
     fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()>;
 
@@ -435,6 +439,24 @@ impl GitBackend for GitCli {
         let mut command = view_git(dir);
         command.args(["--literal-pathspecs", "ls-files", "-z", "--", path]);
         Ok(!run(command)?.is_empty())
+    }
+
+    fn index_text(&self, dir: &Path, path: &str) -> io::Result<Option<String>> {
+        if !self.is_tracked(dir, path)? {
+            return Ok(None);
+        }
+        // `:./` = stage 0 of the index, relative to `dir` (the project may be a subfolder).
+        let mut command = view_git(dir);
+        command.args(["cat-file", "blob", &format!(":./{path}")]);
+        let bytes = match run(command) {
+            Ok(bytes) => bytes,
+            // Conflicted: stages 1–3 only, no stage 0.
+            Err(_) => return Ok(None),
+        };
+        if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > crate::docs::MAX_BYTES {
+            return Ok(None);
+        }
+        Ok(String::from_utf8(bytes).ok())
     }
 
     fn stage(&self, dir: &Path, paths: &[String]) -> io::Result<()> {
@@ -1110,6 +1132,32 @@ mod tests {
         // Nothing staged: git's explanation is on stdout.
         let error = GitCli.commit(&dir, "three").unwrap_err().to_string();
         assert!(error.len() > "git failed: ".len(), "{error}");
+    }
+
+    /// The index's text, not the working tree's or HEAD's, also when the project is a
+    /// subfolder of the repo; untracked and unknown files have none; outside a repo git fails.
+    #[test]
+    fn index_text_reads_the_staged_version() {
+        let repo = tempfile::tempdir().unwrap();
+        let root = repo.path();
+        let dir = root.join("app");
+        std::fs::create_dir(&dir).unwrap();
+        run(root, &["init", "-q"]);
+        run(root, &["config", "core.autocrlf", "false"]);
+        std::fs::write(dir.join("a b.txt"), "one\n").unwrap();
+        run(root, &["add", "."]);
+        run(root, &["commit", "-q", "-m", "one"]);
+        std::fs::write(dir.join("a b.txt"), "two\n").unwrap();
+        run(root, &["add", "."]);
+        std::fs::write(dir.join("a b.txt"), "three\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+
+        let text = GitCli.index_text(&dir, "a b.txt").unwrap();
+        assert_eq!(text.as_deref(), Some("two\n"));
+        assert_eq!(GitCli.index_text(&dir, "new.txt").unwrap(), None);
+        assert_eq!(GitCli.index_text(&dir, "gone.txt").unwrap(), None);
+        let outside = tempfile::tempdir().unwrap();
+        assert!(GitCli.index_text(outside.path(), "x").is_err());
     }
 
     #[test]

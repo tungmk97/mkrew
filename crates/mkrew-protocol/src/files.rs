@@ -418,6 +418,10 @@ pub struct FsReadParams {
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
     pub path: String,
+    /// Also return the file's text in the git index ([`FsContent::git_base`]): the Files
+    /// editor's change gutter (SPEC §12A, ADR 0047).
+    #[serde(default)]
+    pub git_base: bool,
 }
 
 /// `fs.read` result.
@@ -437,6 +441,11 @@ pub struct FsContent {
     /// over this version (ADR 0028).
     #[serde(default)]
     pub hash: Option<String>,
+    /// Asked for with `git_base`: the file's text in the index of the repository holding it
+    /// (a child repository's for a file inside one, ADR 0029). `None` = not asked, untracked,
+    /// not in a repository, not UTF-8 or over 2 MB (ADR 0047).
+    #[serde(default)]
+    pub git_base: Option<String>,
 }
 
 /// `fs.write` (ADR 0028): replaces the text of an existing file of the project (or task
@@ -635,6 +644,7 @@ mod tests {
                 project_id,
                 worktree_task_id: wt,
                 path: "src/a.rs".into(),
+                git_base: true,
             }),
             Request::FsWrite(FsWriteParams {
                 project_id,
@@ -792,6 +802,7 @@ mod tests {
             too_large: false,
             language: None,
             hash: None,
+            git_base: None,
         };
         let decoded: FsContent = Outcome::ok(&content).unwrap().into_result().unwrap();
         assert_eq!(decoded, content);
@@ -802,6 +813,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(old.hash, None);
+        assert_eq!(old.git_base, None);
         let written = FsWritten {
             saved: false,
             hash: "abc".into(),

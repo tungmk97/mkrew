@@ -32,6 +32,7 @@ fn file_text_at(path: &str, text: &str) -> Result<(FsContent, Code), String> {
         too_large: false,
         language: None,
         hash: Some(format!("#{text}")),
+        git_base: None,
     };
     Ok((content, Code::plain(text)))
 }

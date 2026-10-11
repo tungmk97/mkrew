@@ -100,7 +100,16 @@ impl Daemon {
             Err(outcome) => return outcome,
         };
         let shown = path.clone();
-        let read = tokio::task::spawn_blocking(move || files::read(&file, path)).await;
+        let (git, root, want_base) = (Arc::clone(&self.git), target.dir.clone(), params.git_base);
+        let read = tokio::task::spawn_blocking(move || {
+            files::read(&file, path).map(|mut content| {
+                if want_base && content.content.is_some() {
+                    content.git_base = files::git_base(&*git, &root, &content.path);
+                }
+                content
+            })
+        })
+        .await;
         match read {
             Ok(Ok(content)) => ok(&content),
             Ok(Err(e)) => read_error(target.project.id, &shown, e),

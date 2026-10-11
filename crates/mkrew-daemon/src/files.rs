@@ -14,6 +14,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ulid::Ulid;
 
 use crate::docs::{self, MAX_BYTES, ReadError};
+use crate::git::GitBackend;
 use crate::watch::ALWAYS_IGNORED;
 
 /// A file with a NUL byte in its first this many bytes is binary (like git).
@@ -147,6 +148,19 @@ pub fn child_repos(root: &Path) -> Vec<String> {
     repos
 }
 
+/// The index text of the project-relative `path` under `root` (`fs.read` with `git_base`):
+/// from the child repository (ADR 0029) the path lies in, else from the project's own.
+/// `None` when untracked, outside a repository, or git fails.
+pub fn git_base(git: &dyn GitBackend, root: &Path, path: &str) -> Option<String> {
+    let (dir, inner) = match path.split_once('/') {
+        Some((top, rest)) if child_repos(root).iter().any(|repo| repo == top) => {
+            (root.join(top), rest)
+        }
+        _ => (root.to_path_buf(), path),
+    };
+    git.index_text(&dir, inner).ok().flatten()
+}
+
 /// Names of the not-ignored entries directly in `folder`.
 fn visible(folder: &Path) -> HashSet<String> {
     walker(folder)
@@ -276,6 +290,7 @@ pub fn read(file: &Path, path: String) -> Result<FsContent, ReadError> {
         binary,
         too_large,
         hash,
+        git_base: None,
     })
 }
 

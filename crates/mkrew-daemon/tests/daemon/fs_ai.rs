@@ -45,6 +45,7 @@ fn fs_list_read_and_find_follow_file_changes() {
             project_id: id,
             worktree_task_id: None,
             path: path.into(),
+            git_base: false,
         })
     };
 
@@ -140,6 +141,65 @@ fn fs_list_read_and_find_follow_file_changes() {
     assert_eq!(
         find(&mut client, "main"),
         ["src/main.rs", "src/maintenance.rs"]
+    );
+}
+
+/// `fs.read` with `git_base` adds the file's text in the index (SPEC §12A change gutter): of
+/// the project's repository, or of the child repository holding the file (ADR 0029); none for
+/// an untracked file or when not asked.
+#[test]
+fn fs_read_adds_the_index_text_when_asked() {
+    let env = Env::new();
+    let repo = env.repo();
+    let init = |dir: &std::path::Path| {
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "core.autocrlf", "false"]);
+        git(dir, &["config", "user.name", "t"]);
+        git(dir, &["config", "user.email", "t@t"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+    };
+    init(&repo);
+    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
+    std::fs::write(repo.join("new.txt"), "new\n").unwrap();
+    let child = repo.join("fe");
+    std::fs::create_dir(&child).unwrap();
+    init(&child);
+    std::fs::write(child.join("b.txt"), "child\n").unwrap();
+    git(&child, &["add", "."]);
+    std::fs::write(child.join("b.txt"), "edited\n").unwrap();
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let read = |client: &mut Client, path: &str, git_base: bool| -> FsContent {
+        let request = Request::FsRead(FsReadParams {
+            project_id: id,
+            worktree_task_id: None,
+            path: path.into(),
+            git_base,
+        });
+        client.call(request).into_result().unwrap()
+    };
+
+    let a = read(&mut client, "a.txt", true);
+    assert_eq!(a.content.as_deref(), Some("two\n"));
+    assert_eq!(a.git_base.as_deref(), Some("one\n"));
+    assert_eq!(
+        read(&mut client, "a.txt", false).git_base,
+        None,
+        "not asked"
+    );
+    assert_eq!(
+        read(&mut client, "new.txt", true).git_base,
+        None,
+        "untracked"
+    );
+    let b = read(&mut client, "fe/b.txt", true);
+    assert_eq!(
+        b.git_base.as_deref(),
+        Some("child\n"),
+        "the child repo's index"
     );
 }
 

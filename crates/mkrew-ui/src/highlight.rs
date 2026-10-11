@@ -308,6 +308,7 @@ mod tests {
             too_large: false,
             language: language.map(Into::into),
             hash: None,
+            git_base: None,
         }
     }
 
@@ -384,6 +385,7 @@ mod tests {
             too_large: true,
             language: None,
             hash: None,
+            git_base: None,
         };
         let code = Code::new(&content);
         assert!(code.binary && code.too_large);

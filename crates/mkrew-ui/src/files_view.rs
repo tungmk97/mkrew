@@ -757,6 +757,7 @@ impl FilesView {
             too_large: false,
             language: shown.language.clone(),
             hash: None,
+            git_base: None,
         })
     }
 

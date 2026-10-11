@@ -144,6 +144,7 @@ impl Shell {
             project_id,
             worktree_task_id: target,
             path: path.clone(),
+            git_base: true,
         }));
         let background = cx.background_executor().clone();
         cx.spawn_in(window, async move |this, cx| {
