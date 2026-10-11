@@ -473,7 +473,7 @@ impl Shell {
             inspector::StopAction::Kill => self.kill(session, window, cx),
             inspector::StopAction::Ask => {
                 let answer = window.prompt(
-                    PromptLevel::Warning,
+                    PromptLevel::Critical,
                     "This session is still running.",
                     Some("Stops the agent. Its pane closes when it exits."),
                     &inspector::STOP_ANSWERS,

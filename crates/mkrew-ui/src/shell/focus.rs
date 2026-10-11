@@ -88,6 +88,10 @@ impl Shell {
     }
 
     pub(crate) fn focus_pane(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // An open confirmation keeps the keyboard; it hands focus back when answered.
+        if window.has_active_prompt() {
+            return;
+        }
         // A modal dialog keeps the keyboard until it closes; the history's replay pane takes it
         // (copy, find, scrollback), its unbound keys bubble to the dialog.
         if self.history.is_some()

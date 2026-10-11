@@ -1232,6 +1232,13 @@ The terminal is the hero; everything else steps back.
   #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
   hues ≥ 12° apart).
 - In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
+- Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
+  (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
+  (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card
+  title, the detail in `text-muted`, buttons on the right with Cancel leftmost and the first
+  answer rightmost (accent; the danger button for `PromptLevel::Critical`). Esc = Cancel,
+  Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
+  on the shade does nothing. OS file/folder pickers stay native.
 - Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the title bar toggle
   (ADR 0027).
 

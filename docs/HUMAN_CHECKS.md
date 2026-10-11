@@ -15,6 +15,27 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-11 in-app confirmation dialogs (plan docs/superpowers/plans/2026-10-11-in-app-confirm-dialogs.md)
+
+- [ ] **Look (dark and light):** close the pane of a running agent, close a tab with a running
+  agent, ✕ a running session in the sidebar, Stop in the session panel, Delete in Edit task,
+  Remove workspace, and leave an edited file in Files. Each shows a Mkrew card over a dimmed
+  window (no Windows message box). Destructive answers (Kill session, Remove, Delete, Stop
+  session) are red; Save is the accent button; Cancel is on the left.
+- [ ] **Keys:** Esc = Cancel; Tab / → / ← / Shift+Tab move the ring and wrap; Enter and Space
+  pick the ringed button. A click on the dim area does nothing.
+- [ ] **Keyboard stays in the prompt:** open the close-pane prompt while another agent is
+  starting; Esc still closes the prompt (it never reaches a terminal). After Cancel, typing
+  goes to the pane that had focus before.
+- [ ] **Over the task dialog:** Edit task → Delete → Cancel: the task dialog is still open and
+  its fields take typing; Esc then closes the task dialog.
+- [ ] **Unsaved on close:** edit a file in Files, close the window: the in-app "Save changes to
+  …?" shows; Cancel keeps the window; Don't save closes it.
+- [ ] **Long text:** a deep file path in the save prompt and a long workspace name in Remove
+  wrap inside the card at `[ui] font_size = 18`; the buttons stay on one row and visible.
+- [ ] **Title bar:** while a prompt is open, the ─ □ ✕ window buttons and dragging the title bar
+  behave acceptably (note what happens).
+
 ### To verify — 2026-10-11 Git tab redesign (checklist docs/git-tab-redesign-checklist.md)
 
 Build, clippy and tests pass; the app starts and connects. The Git tab itself was not clicked

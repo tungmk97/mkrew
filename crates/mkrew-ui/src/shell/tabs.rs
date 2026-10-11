@@ -420,7 +420,7 @@ impl Shell {
         });
         let answer = running_agent.then(|| {
             window.prompt(
-                PromptLevel::Warning,
+                PromptLevel::Critical,
                 "This tab has a running agent.",
                 Some("Closing the tab stops its sessions and removes them from the sidebar."),
                 &workspace_menu::REMOVE_ANSWERS,
@@ -486,7 +486,7 @@ impl Shell {
             }
             CloseAction::Ask => {
                 let answer = window.prompt(
-                    PromptLevel::Warning,
+                    PromptLevel::Critical,
                     "This session is still running.",
                     Some("Kill it, or hide the pane and keep it running in the sidebar."),
                     &CloseChoice::ANSWERS,
@@ -568,7 +568,7 @@ impl Shell {
         };
         let answer = (!self.is_exited(session_id)).then(|| {
             window.prompt(
-                PromptLevel::Warning,
+                PromptLevel::Critical,
                 "This session is still running.",
                 Some("Removing it from the sidebar stops it."),
                 &workspace_menu::REMOVE_ANSWERS,

@@ -505,7 +505,7 @@ impl Shell {
             "{stops}The folder, its tasks and history stay. Add the folder again to bring it back."
         );
         let answer = window.prompt(
-            PromptLevel::Warning,
+            PromptLevel::Critical,
             &format!("Remove “{name}” from Mkrew?"),
             Some(detail.as_str()),
             &workspace_menu::REMOVE_ANSWERS,

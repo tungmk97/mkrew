@@ -149,7 +149,7 @@ impl Shell {
         };
         let serial = self.dialog_serial;
         let answer = window.prompt(
-            PromptLevel::Warning,
+            PromptLevel::Critical,
             "Delete this task?",
             Some("The card and its prompt are removed. Its past sessions stay in the sidebar."),
             &task_dialog::DELETE_ANSWERS,
