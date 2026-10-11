@@ -179,13 +179,9 @@ impl Shell {
             )
             .child(
                 button("tab-split", "◫", theme, false)
-                    .tooltip(tooltip(
-                        theme,
-                        "Split right",
-                        self.keymap.label(Command::SplitRight),
-                    ))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.run(&Run(Command::SplitRight), window, cx);
+                    .tooltip(tooltip(theme, "Split or pick a layout", ""))
+                    .on_click(cx.listener(|shell, event: &gpui::ClickEvent, _, cx| {
+                        shell.open_layout_menu(event.position(), cx);
                     })),
             )
             .when_some(active, |bar, tab_id| {

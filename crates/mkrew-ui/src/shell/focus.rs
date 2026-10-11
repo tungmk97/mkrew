@@ -24,6 +24,7 @@ impl Shell {
     /// Closes every transient popover menu. Called by every bound command.
     pub(crate) fn close_menus(&mut self) {
         self.tab_menu = None;
+        self.layout_menu = None;
         self.pane_menu = None;
         self.workspace_menu = None;
         self.file_menu = None;

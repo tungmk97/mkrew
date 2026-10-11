@@ -774,8 +774,14 @@ The session panel (below) is a third column right of Terminals while open.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
   for a tab without panes), the status mark of its most urgent pane (§11), its title and a ✕
   (always on the active tab, on hover for the others); closing never activates the tab first.
-  At the right end of the strip: `+` (new tab), a split button (Split right) and `⋯`. `⋯`, and a
-  right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
+  At the right end of the strip: `+` (new tab), the split button and `⋯`. The split button opens
+  the layout menu: Split right, Split down, then the layouts 2 columns, 2 rows, 3 columns, 1 + 2
+  and 2 × 2, each with a small drawing and its shortcut (§13). A layout rearranges the active tab:
+  its panes keep their tree order (left to right, top to bottom within a column) and the panes it
+  lacks start sessions of the focused pane's kind (as Split right), one after another; then the
+  layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
+  why); if a start fails, the sessions that started are placed as Split right places them.
+  `⋯`, and a right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
   activated first, so the menu acts on the tab it was opened on. Closing a tab stops its panes'
   sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default

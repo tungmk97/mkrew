@@ -26,6 +26,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   lanes join across rows with no gaps; a merge opens a second lane that ends at its fork point;
   the expanded commit's files show the lanes running through; a linear repo shows one line; the
   selected row's fill does not hide the lines.
+- [ ] **Layout menu (dark + light):** the split button opens Split right / Split down / Layouts
+  with five drawings (2 columns, 2 rows, 3 columns, 1 + 2, 2 × 2) and Alt+Shift+1…5; picking
+  2 × 2 on a one-pane tab starts three panes of the focused kind, the old pane stays top-left and
+  keeps the focus; on a 3-pane tab the 2-pane layouts are greyed with a tooltip; the layout
+  survives a UI restart. Note: the split button no longer splits on one click (Alt+Shift+= still
+  does). Say so if you want the one-click split back.
 
 ### To verify — 2026-10-11 feature switches (ADR 0046)
 

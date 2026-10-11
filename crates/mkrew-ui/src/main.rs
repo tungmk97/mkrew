@@ -48,7 +48,7 @@ use mkrew_ui::client::{Connection, Incoming};
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
-use mkrew_ui::context_menu::{PaneMenu, TabMenu};
+use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
@@ -353,6 +353,8 @@ struct Shell {
     file_menu: Option<FileMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
+    /// The open menu of the tab strip's split button (Split right / down, layouts).
+    layout_menu: Option<LayoutMenu>,
     /// The open pane menu (Pin, Rename, Change color).
     pane_menu: Option<PaneMenu>,
     /// The open "Run setup" of a workspace (modal).
@@ -680,6 +682,12 @@ impl Render for Shell {
                             .as_ref()
                             .filter(|_| self.view() == View::Terminals && !self.modal_open())
                             .map(|menu| self.render_tab_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        self.layout_menu
+                            .as_ref()
+                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .map(|menu| self.render_layout_menu(menu, &theme, cx)),
                     )
                     .children(
                         self.pane_menu

@@ -156,6 +156,10 @@ pub const BOARD_COLUMN_HEADER_HEIGHT: f32 = 28.0;
 /// Width of a popover menu (every `menu_panel` popover).
 pub const MENU_WIDTH: f32 = 240.0;
 
+/// The drawing of a layout in the split button's menu (SPEC §10).
+pub const LAYOUT_THUMB_WIDTH: f32 = 24.0;
+pub const LAYOUT_THUMB_HEIGHT: f32 = 16.0;
+
 /// Width of the query field in a terminal's find bar.
 pub const FIND_INPUT_WIDTH: f32 = 200.0;
 

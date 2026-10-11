@@ -172,11 +172,26 @@ impl Shell {
     ) {
         self.workspace_menu = None;
         self.pane_menu = None;
+        self.layout_menu = None;
         if let Some(tabs) = self.active_tabs_mut() {
             tabs.activate(tab_id);
         }
         self.tab_menu = Some(TabMenu { tab_id, position });
         self.sync_panes(window, cx);
+        cx.notify();
+    }
+
+    /// Opens the split button's menu for the active tab at `position` (SPEC §10).
+    pub(crate) fn open_layout_menu(&mut self, position: Point<Pixels>, cx: &mut Context<'_, Self>) {
+        let Some(tab_id) = (self.workspace)
+            .and_then(|id| self.tabs.get(&id))
+            .and_then(|tabs| tabs.active())
+            .map(|tab| tab.id)
+        else {
+            return;
+        };
+        self.close_menus();
+        self.layout_menu = Some(LayoutMenu { tab_id, position });
         cx.notify();
     }
 

@@ -362,6 +362,104 @@ impl Shell {
         .into_any_element()
     }
 
+    /// The split button's menu (SPEC §10): Split right, Split down, then the layouts, each
+    /// drawn small with its shortcut. A layout holding fewer panes than the tab has is greyed.
+    /// Floats at the click; a click outside closes it.
+    pub(crate) fn render_layout_menu(
+        &self,
+        menu: &LayoutMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let panes = (self.tabs.values())
+            .find_map(|tabs| tabs.tab(menu.tab_id))
+            .map_or(0, |tab| tab.sessions().len());
+        let shortcut = |command: Command| {
+            div()
+                .text_size(font_size::META)
+                .child(self.keymap.label(command))
+        };
+        let pick = |command: Command| {
+            cx.listener(move |shell: &mut Self, _: &gpui::ClickEvent, window, cx| {
+                shell.layout_menu = None;
+                shell.run(&Run(command), window, cx);
+            })
+        };
+        let split = |id: &'static str, label: &'static str, command: Command| {
+            menu_item(id.into(), theme)
+                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
+                .child(shortcut(command))
+                .on_click(pick(command))
+        };
+        let mut panel = menu_panel("layout-menu", theme)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.layout_menu = None;
+                cx.notify();
+            }))
+            .child(split(
+                "layout-menu-split-right",
+                "Split right",
+                Command::SplitRight,
+            ))
+            .child(split(
+                "layout-menu-split-down",
+                "Split down",
+                Command::SplitDown,
+            ))
+            .child(
+                div()
+                    .h(px(theme::BORDER_WIDTH))
+                    .my(px(space::XS))
+                    .bg(rgb(theme.border)),
+            )
+            .child(
+                div()
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .child("Layouts"),
+            );
+        for preset in Preset::ALL {
+            let command = Command::Layout(preset);
+            let id = SharedString::from(format!("layout-menu-{}", preset.name()));
+            let row = if panes <= preset.panes() {
+                menu_item(id, theme).on_click(pick(command))
+            } else {
+                // The same box as a menu item, without its hover: it cannot be picked.
+                let why = format!("This tab has {panes} panes; close some first");
+                div()
+                    .id(id)
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .text_size(font_size::BODY)
+                    .opacity(opacity::DISABLED)
+                    .tooltip(tooltip(theme, &why, ""))
+            };
+            panel = panel.child(
+                row.child(layout_thumb(preset, theme))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child(preset.label()),
+                    )
+                    .child(shortcut(command)),
+            );
+        }
+        deferred(
+            anchored()
+                .position(menu.position)
+                .snap_to_window_with_margin(px(space::S))
+                .child(panel),
+        )
+        .into_any_element()
+    }
+
     /// The pane menu: Pin, Rename (inline, like F2; greyed for a run pane, which is named by its
     /// command) and the color swatches of the workspace palette. Floats at the click.
     pub(crate) fn render_pane_menu(
@@ -589,4 +687,28 @@ pub(crate) fn agent_rows(
             }
         }
     }
+}
+
+/// A small drawing of `preset`'s panes for the layout menu.
+fn layout_thumb(preset: Preset, theme: &Theme) -> gpui::Div {
+    div()
+        .relative()
+        .flex_none()
+        .w(px(theme::LAYOUT_THUMB_WIDTH))
+        .h(px(theme::LAYOUT_THUMB_HEIGHT))
+        .children(preset.rects().into_iter().map(|rect| {
+            div()
+                .absolute()
+                .left(relative(rect.x as f32))
+                .top(relative(rect.y as f32))
+                .w(relative(rect.w as f32))
+                .h(relative(rect.h as f32))
+                .p(px(theme::BORDER_WIDTH))
+                .child(
+                    div()
+                        .size_full()
+                        .rounded(px(radius::SMALL))
+                        .bg(rgb(theme.subtle)),
+                )
+        }))
 }
