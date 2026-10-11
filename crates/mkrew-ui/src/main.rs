@@ -17,10 +17,11 @@ use gpui::{
     AnyView, App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, DragMoveEvent,
     EmptyView, Entity, ExternalPaths, FocusHandle, FontWeight, HighlightStyle, Hsla, KeyDownEvent,
     ListAlignment, ListHorizontalSizingBehavior, ListOffset, ListState, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathPromptOptions, Pixels, Point, PromptLevel,
-    ScrollHandle, ScrollStrategy, SharedString, StyledText, Subscription, TitlebarOptions,
-    UniformListScrollHandle, Window, WindowBounds, WindowControlArea, WindowOptions, anchored,
-    canvas, deferred, div, list, pattern_slash, point, px, relative, rgb, size, uniform_list,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PathPromptOptions, Pixels, Point,
+    PromptLevel, ScrollHandle, ScrollStrategy, SharedString, StyledText, Subscription,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowBounds, WindowControlArea,
+    WindowOptions, anchored, canvas, deferred, div, fill, list, pattern_slash, point, px, relative,
+    rgb, size, uniform_list,
 };
 use mkrew_core::Paths;
 use mkrew_core::prompt::PromptVars;
@@ -57,6 +58,7 @@ use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
+use mkrew_ui::git_graph::GraphCell;
 use mkrew_ui::git_history::{self, Commits};
 use mkrew_ui::git_summary::{GitSummary, RepoSummary};
 use mkrew_ui::git_view::{self, GitView, Since};

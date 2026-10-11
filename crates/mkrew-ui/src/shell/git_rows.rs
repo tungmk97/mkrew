@@ -19,23 +19,29 @@ impl Shell {
         let focused = self.git_focus.is_focused(window);
         let row_theme = theme.clone();
         let now = status::now_ms();
+        let lanes = view.graph_lanes();
         uniform_list(
             "git-file-list",
             rows.len(),
             cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
                 range
-                    .filter_map(|index| rows.get(index))
-                    .map(|row| {
+                    .filter_map(|index| rows.get(index).map(|row| (index, row)))
+                    .map(|(index, row)| {
                         let folded = match row {
                             git_view::ListRow::Header(group, _) => collapsed.contains(group),
                             _ => false,
                         };
+                        let graph = (lanes > 0)
+                            .then(|| git_view::graph_cell(&rows, index))
+                            .flatten()
+                            .map(|cell| (cell, lanes));
                         git_file_row(
                             project_id,
                             row,
                             selected.as_ref(),
                             folded,
                             focused,
+                            graph,
                             now,
                             &row_theme,
                             cx,
@@ -105,7 +111,8 @@ fn list_row(id: SharedString) -> gpui::Stateful<gpui::Div> {
 /// click; "Stage all" / "Unstage all" on hover), the empty Staged hint, a file (change
 /// letter, name, folder muted, +/− counts; indented under its History commit), a History
 /// commit ([`git_commit_row`], ages at `now`) or a note under it. The selected file has the
-/// selection fill and an accent ring (stronger while the list has the keyboard).
+/// selection fill and an accent ring (stronger while the list has the keyboard); in the
+/// History, `graph` is the row's column of the lane graph.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn git_file_row(
     project_id: Ulid,
@@ -113,6 +120,7 @@ pub(crate) fn git_file_row(
     selected: Option<&git_view::Target>,
     folded: bool,
     focused: bool,
+    graph: Option<(GraphCell, usize)>,
     now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -132,7 +140,11 @@ pub(crate) fn git_file_row(
         git_view::ListRow::Note(note) => {
             // Indented under its commit, like the commit's files.
             return list_row(SharedString::from(format!("git-note-{note}")))
-                .pl(px(space::S + space::M))
+                .when(graph.is_none(), |el| el.pl(px(space::S + space::M)))
+                .when_some(graph, |el, (cell, lanes)| {
+                    el.child(graph_column(cell, lanes, theme))
+                        .child(under_commit())
+                })
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text_muted))
                 .child(div().min_w_0().truncate().child(note.clone()))
@@ -145,7 +157,7 @@ pub(crate) fn git_file_row(
             // Raised while none of its files is selected (they are listing).
             let picked = *expanded && selected.is_none();
             return git_commit_row(
-                project_id, commit, *expanded, picked, focused, now, theme, cx,
+                project_id, commit, *expanded, picked, focused, graph, now, theme, cx,
             );
         }
     };
@@ -161,8 +173,12 @@ pub(crate) fn git_file_row(
     list_row(id.clone())
         .group(id.clone())
         // Indented under its commit inside the full-width row (a margin would overflow it).
-        .when(group == git_view::Group::Commit, |el| {
+        .when(group == git_view::Group::Commit && graph.is_none(), |el| {
             el.pl(px(space::S + space::M))
+        })
+        .when_some(graph, |el, (cell, lanes)| {
+            el.child(graph_column(cell, lanes, theme))
+                .child(under_commit())
         })
         .cursor_pointer()
         .text_size(font_size::BODY)
@@ -318,9 +334,9 @@ fn group_header(
         .into_any_element()
 }
 
-/// One History commit row: a chevron (open on the expanded commit), the summary, then its
-/// short hash and age muted; the full message and author in the tooltip. Selected (with the
-/// accent ring while the list has the keyboard) while it is `picked`.
+/// One History commit row: its lane graph column, a chevron (open on the expanded commit), the
+/// summary, then its short hash and age muted; the full message and author in the tooltip.
+/// Selected (with the accent ring while the list has the keyboard) while it is `picked`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn git_commit_row(
     project_id: Ulid,
@@ -328,6 +344,7 @@ pub(crate) fn git_commit_row(
     expanded: bool,
     picked: bool,
     focused: bool,
+    graph: Option<(GraphCell, usize)>,
     now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -358,6 +375,9 @@ pub(crate) fn git_commit_row(
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
         .active(|style| style.opacity(opacity::ACTIVE))
         .tooltip(tooltip(theme, &tip, ""))
+        .when_some(graph, |el, (cell, lanes)| {
+            el.child(graph_column(cell, lanes, theme))
+        })
         .child(
             div()
                 .flex_none()
@@ -409,4 +429,77 @@ pub(crate) fn row_action(
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
         .child(label)
+}
+
+/// Lane colors of the History graph, from the workspace palette (≥ 3:1 on every surface, ADR
+/// 0020); red and yellow are left to deletions and warnings.
+const LANE_COLORS: [&str; 6] = ["blue", "purple", "teal", "orange", "pink", "green"];
+
+/// The graph column of a History row (SPEC §12B), `lanes` wide: a commit's lines and dot, or
+/// the lanes running straight through a row listed under a commit.
+fn graph_column(cell: GraphCell, lanes: usize, theme: &Theme) -> gpui::Div {
+    let colors = LANE_COLORS.map(|name| theme.workspace_color(name).unwrap_or(theme.accent));
+    let color = move |lane: usize| rgb(colors[lane % colors.len()]);
+    div()
+        .flex_none()
+        .h_full()
+        .w(px(lanes as f32 * theme::GIT_GRAPH_LANE_WIDTH))
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    let x = |lane: usize| {
+                        bounds.left() + px(theme::GIT_GRAPH_LANE_WIDTH) * (lane as f32 + 0.5)
+                    };
+                    // Rows meet at their 1 px borders: draw over them so lines join.
+                    let top = bounds.top() - px(theme::BORDER_WIDTH);
+                    let bottom = bounds.bottom() + px(theme::BORDER_WIDTH);
+                    let mid = bounds.center().y;
+                    let shown = |lane: usize| lane < lanes;
+                    let line = |window: &mut Window,
+                                from: Point<Pixels>,
+                                to: Point<Pixels>,
+                                lane: usize| {
+                        let mut path = PathBuilder::stroke(px(theme::GIT_GRAPH_LINE_WIDTH));
+                        path.move_to(from);
+                        path.line_to(to);
+                        if let Ok(path) = path.build() {
+                            window.paint_path(path, color(lane));
+                        }
+                    };
+                    match &cell {
+                        GraphCell::Through(through) => {
+                            for &lane in through.iter().filter(|&&lane| shown(lane)) {
+                                line(window, point(x(lane), top), point(x(lane), bottom), lane);
+                            }
+                        }
+                        GraphCell::Commit(row) => {
+                            for &(from, to) in &row.up {
+                                if shown(from) && shown(to) {
+                                    line(window, point(x(from), top), point(x(to), mid), from);
+                                }
+                            }
+                            for &(from, to) in &row.down {
+                                if shown(from) && shown(to) {
+                                    line(window, point(x(from), mid), point(x(to), bottom), to);
+                                }
+                            }
+                            let lane = row.lane.min(lanes.saturating_sub(1));
+                            let dot = px(theme::GIT_GRAPH_DOT_SIZE);
+                            let at = point(x(lane) - dot / 2.0, mid - dot / 2.0);
+                            window.paint_quad(
+                                fill(Bounds::new(at, size(dot, dot)), color(lane))
+                                    .corner_radii(dot / 2.0),
+                            );
+                        }
+                    }
+                },
+            )
+            .size_full(),
+        )
+}
+
+/// Indent of a row listed under a History commit, past the commit's chevron.
+fn under_commit() -> gpui::Div {
+    div().flex_none().w(px(space::M))
 }

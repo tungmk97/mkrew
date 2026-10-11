@@ -282,6 +282,11 @@ pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 /// One row of the Git changed-file list (uniform list: every row has this box).
 pub const GIT_FILE_ROW_HEIGHT: f32 = 30.0;
 
+/// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
+pub const GIT_GRAPH_LANE_WIDTH: f32 = 12.0;
+pub const GIT_GRAPH_DOT_SIZE: f32 = 8.0;
+pub const GIT_GRAPH_LINE_WIDTH: f32 = 2.0;
+
 /// The Git diff toolbar's height while it fits on one line (it wraps when narrow).
 pub const GIT_DIFF_TOOLBAR_HEIGHT: f32 = 44.0;
 

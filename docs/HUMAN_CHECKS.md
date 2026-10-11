@@ -22,6 +22,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   shifts; Save + stage the file in Git → the bars go; an untracked file has no bars; a file in a
   child repository (ADR 0029) uses that repository. On Windows with `core.autocrlf=true` an
   unchanged file shows no bars. Not seen on screen by the agent (headless).
+- [ ] **History lane graph (dark + light):** Git → History (`h`) on a repo with merges → dots and
+  lanes join across rows with no gaps; a merge opens a second lane that ends at its fork point;
+  the expanded commit's files show the lanes running through; a linear repo shows one line; the
+  selected row's fill does not hide the lines.
 
 ### To verify — 2026-10-11 feature switches (ADR 0046)
 

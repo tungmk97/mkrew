@@ -1059,7 +1059,12 @@ Windows (tens of ms, worse with antivirus), so:
   until the user commits. No amend in v1.
 - **Fetch / Push:** fetch refreshes the base; push sends the current branch to its upstream only,
   never with force. Pull, rebase, merge and branch switching are backlog.
-- **History:** last 50 commits; select one to see its files and diffs.
+- **History:** last 50 commits (`git log --topo-order --parents`: children before parents,
+  parents rewritten past commits a subfolder project hides); select one to see its files and
+  diffs. A lane graph left of each commit draws its dot and the lines to its children and
+  parents (merges fork into a lane that ends at the fork point; lanes to commits past the 50
+  run off the bottom), at most 8 lanes, colored from the workspace palette (no red or yellow);
+  the expanded commit's files show its lanes running straight through.
 - **Task changes:** from a Review-column task card, "View changes" opens the Git view with the diff
   from `task.checkpoint` to now (ties into M5).
 - **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in
