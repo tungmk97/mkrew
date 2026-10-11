@@ -3728,7 +3728,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3749,7 +3749,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "directories",
  "globset",
@@ -3766,7 +3766,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -3796,7 +3796,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-fakeagent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anstyle-query",
  "anyhow",
@@ -3810,7 +3810,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "serde",
@@ -3821,7 +3821,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dunce",
  "mkrew-protocol",
@@ -3834,7 +3834,7 @@ dependencies = [
 
 [[package]]
 name = "mkrew-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -5888,7 +5888,7 @@ dependencies = [
 
 [[package]]
 name = "spike-term"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
