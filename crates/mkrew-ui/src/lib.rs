@@ -8,8 +8,8 @@
 //! render model of the Docs preview and its GPUI elements, and the Files view-model with its
 //! editor buffer, its tree actions (new file / folder, add to `.gitignore`), its
 //! syntax highlighting and quick open, the Git view-model and its base menu, the command
-//! palette, the turn summaries, the
-//! peek popover, the broadcast dialog, the Files / Git worktree target, fan-out and token
+//! palette, the turn summaries, the peek popover, the broadcast dialog, the in-app confirmation
+//! dialog, the Files / Git worktree target, fan-out and token
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, and
 //! the scroll bar of the Files editor and the Markdown preview.
 
@@ -19,6 +19,7 @@ pub mod broadcast;
 pub mod client;
 pub mod comments;
 pub mod composer;
+pub mod confirm;
 pub mod conflicts;
 pub mod connect;
 pub mod context_menu;
