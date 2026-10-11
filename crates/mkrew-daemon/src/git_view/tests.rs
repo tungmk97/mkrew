@@ -455,7 +455,8 @@ fn log_and_show_cover_the_folder_only() {
         (commits[0].summary.as_str(), commits[0].body.as_str()),
         ("two", "the body")
     );
-    assert_eq!(commits[0].parents, std::slice::from_ref(&outside));
+    // `--parents`: the parent is the listed commit, not the hidden `outside only`.
+    assert_eq!(commits[0].parents, std::slice::from_ref(&first));
     assert_eq!(
         (
             commits[0].author_name.as_str(),
@@ -470,7 +471,11 @@ fn log_and_show_cover_the_folder_only() {
     assert_eq!(log(&GitCli, &cache, &dir, 1, None).unwrap().len(), 1);
 
     let shown = show(&GitCli, &cache, &dir, "HEAD").unwrap();
-    assert_eq!(shown.commit, commits[0]);
+    // `show` is not path-filtered: it names the real parent.
+    assert_eq!(shown.commit.parents, std::slice::from_ref(&outside));
+    let mut listed = shown.commit.clone();
+    listed.parents.clone_from(&commits[0].parents);
+    assert_eq!(listed, commits[0]);
     assert_eq!(
         summary(&shown.files),
         ["Modified a.txt +0 -1", "Added c.txt +1 -0"]

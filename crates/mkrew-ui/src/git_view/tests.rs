@@ -950,7 +950,9 @@ fn history_labels(view: &GitView) -> Vec<String> {
     view.list_rows()
         .iter()
         .map(|row| match row {
-            ListRow::Commit { commit, expanded } => format!("{} {expanded}", commit.hash),
+            ListRow::Commit {
+                commit, expanded, ..
+            } => format!("{} {expanded}", commit.hash),
             ListRow::File(target, _) => format!("  {}", target.path),
             ListRow::Note(note) => format!("  {note}"),
             ListRow::Header(group, _) => group.title().to_owned(),
@@ -983,6 +985,31 @@ fn the_history_lists_commits_with_the_selected_ones_files() {
     assert_eq!(
         history_labels(&view),
         ["b false", "a true", "  No files changed."]
+    );
+}
+
+/// The files listed under a commit carry its lanes on; the working changes have no graph.
+#[test]
+fn rows_under_a_commit_carry_its_lanes_on() {
+    let mut view = history();
+    // `history()` lists b (expanded, files x and y) then a. Give b a second parent.
+    let mut b = commit("b");
+    b.parents = vec!["a".into(), "side".into()];
+    view.logged(Ok(vec![b, commit("a")]));
+    assert_eq!(view.graph_lanes(), 2);
+    let rows = view.list_rows();
+    let commit_at = rows
+        .iter()
+        .position(|row| matches!(row, ListRow::Commit { commit, .. } if commit.hash == "b"))
+        .unwrap();
+    assert!(matches!(graph_cell(&rows, commit_at), Some(GraphCell::Commit(row)) if row.lane == 0));
+    assert_eq!(
+        graph_cell(&rows, commit_at + 1),
+        Some(GraphCell::Through(vec![0, 1]))
+    );
+    assert!(
+        (0..commit_at).all(|index| graph_cell(&rows, index).is_none()),
+        "rows above the History have no graph"
     );
 }
 

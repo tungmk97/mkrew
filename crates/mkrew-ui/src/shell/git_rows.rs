@@ -139,7 +139,9 @@ pub(crate) fn git_file_row(
                 .into_any_element();
         }
         git_view::ListRow::File(target, file) => (target.clone(), file),
-        git_view::ListRow::Commit { commit, expanded } => {
+        git_view::ListRow::Commit {
+            commit, expanded, ..
+        } => {
             // Raised while none of its files is selected (they are listing).
             let picked = *expanded && selected.is_none();
             return git_commit_row(

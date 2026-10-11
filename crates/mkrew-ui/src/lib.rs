@@ -33,6 +33,7 @@ pub mod files_view;
 pub mod follow;
 pub mod follow_up;
 pub mod git_actions;
+pub mod git_graph;
 pub mod git_history;
 pub mod git_summary;
 pub mod git_view;

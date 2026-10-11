@@ -22,6 +22,7 @@ use ulid::Ulid;
 
 use crate::comments::{self, Comments, Selection};
 use crate::git_actions::{CommitBox, Remotes};
+use crate::git_graph::{self, GraphCell, GraphRow};
 use crate::git_history::{Detail, History};
 use crate::highlight::{self, Spans};
 use crate::text_box::Input;
@@ -191,6 +192,8 @@ pub enum ListRow {
     Commit {
         commit: Commit,
         expanded: bool,
+        /// Its row of the lane graph (SPEC §12B).
+        graph: GraphRow,
     },
     /// Why the expanded commit lists no files (loading, failed, none changed).
     Note(String),
@@ -1024,11 +1027,12 @@ impl GitView {
         let mut files = self.files();
         if let Some(history) = &self.history {
             let mut rows = Vec::new();
-            for commit in history.commits() {
+            for (commit, graph) in history.commits().iter().zip(&history.graph) {
                 let expanded = history.selected.as_ref() == Some(&commit.hash);
                 rows.push(ListRow::Commit {
                     commit: commit.clone(),
                     expanded,
+                    graph: graph.clone(),
                 });
                 if !expanded {
                     continue;
@@ -1088,6 +1092,13 @@ impl GitView {
             rows.extend(listed.map(|(target, file)| ListRow::File(target, file)));
         }
         rows
+    }
+
+    /// Width of the History's graph column in lanes (0 outside the History).
+    pub fn graph_lanes(&self) -> usize {
+        self.history
+            .as_ref()
+            .map_or(0, |history| git_graph::lanes(&history.graph))
     }
 
     /// Expands History commit `hash`; returns it when its files have to be read.
@@ -1599,6 +1610,23 @@ impl GitView {
             .max_by_key(|session| (session.state != SessionState::Exited, session.started_at))
             .map(|session| session.id)
     }
+}
+
+/// The graph column of row `index` of [`GitView::list_rows`]: a commit's own row; for the
+/// files or the note listed under a commit, its lanes running on. `None` outside the History.
+pub fn graph_cell(rows: &[ListRow], index: usize) -> Option<GraphCell> {
+    match rows.get(index)? {
+        ListRow::Commit { graph, .. } => Some(GraphCell::Commit(graph.clone())),
+        ListRow::File(..) | ListRow::Note(_) => {
+            rows[..index].iter().rev().find_map(|row| match row {
+                ListRow::Commit { graph, .. } => Some(GraphCell::Through(graph.below())),
+                ListRow::Header(..) => Some(GraphCell::Through(Vec::new())),
+                _ => None,
+            })
+        }
+        ListRow::Header(..) | ListRow::Hint(_) => None,
+    }
+    .filter(|cell| !matches!(cell, GraphCell::Through(lanes) if lanes.is_empty()))
 }
 
 /// The diff viewer rows of `diff`: each hunk's header then its lines, with a gap row for the
