@@ -73,6 +73,9 @@ pub const STATUS_DOT_GAP: f32 = 2.0;
 /// Width of every status mark, so glyph and dot rows line up (3 × 4 + 2 × 2 = 16). These three
 /// are px at the default 13 px body and scale with `[ui] font_size` ([`rems_px`]).
 pub const STATUS_MARK_WIDTH: f32 = space::L;
+/// The sidebar's narrower mark slot: one blinking dot while working, else the glyph.
+pub const SIDEBAR_MARK_WIDTH: f32 = space::S;
+
 /// Narrowest the time column on the right of a session row gets (fits `1h 5m`), so times and
 /// titles line up.
 pub const SESSION_TIME_WIDTH: f32 = space::XXL;

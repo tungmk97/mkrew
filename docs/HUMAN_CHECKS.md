@@ -15,6 +15,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-12 sidebar marks, remove idle agents
+
+- [ ] **Sidebar marks (dark + light):** idle agent rows show no `○`; a working agent shows one
+  blinking dot in a narrow slot; chips of idle / working / `?` rows stay in one column. A shell
+  you type in shows no mark, no time, and is not counted as working (summary, Working chip).
+- [ ] **Remove idle agents:** with an idle agent, `⌫` appears left of `▾` in the sidebar header;
+  click → "Remove N idle agents?" → Remove: they vanish from the sidebar and their panes close.
+
 ### To verify — 2026-10-12 equalize panes, drag pane dividers, sidebar width
 
 - [ ] **Equalize (dark + light):** Split right twice → 50/25/25. The split button `◫` menu shows

@@ -48,12 +48,26 @@ impl Shell {
                     })),
             )
         });
+        let idle_agents = self.idle_agents().len();
         let header = header.when(connected && !self.sidebar.is_empty(), |header| {
             header.child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
+                    .when(idle_agents > 0, |el| {
+                        el.child(
+                            icon_button("remove-idle-agents", "⌫", theme)
+                                .tooltip(tooltip(
+                                    theme,
+                                    &format!("Remove idle agents ({idle_agents})"),
+                                    "",
+                                ))
+                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    shell.remove_idle_agents(window, cx);
+                                })),
+                        )
+                    })
                     .child(
                         icon_button(
                             "collapse-workspaces",
@@ -751,7 +765,7 @@ pub(crate) fn session_row(
                     row.state_source,
                     row.state_changed_at,
                 ))
-                .child(status_mark(row.state, now, theme)),
+                .child(mark_slot(row.mark(), now, theme)),
         )
         .child(agent_chip(badge, theme))
         .child(
@@ -901,7 +915,42 @@ pub(crate) fn compact_session_row(
                 shell.open_pane_menu(session_id, event.position, window, cx);
             }),
         )
-        .child(status_mark(row.state, now, theme))
+        .child(mark_slot(row.mark(), now, theme))
         .child(agent_chip(badge, theme))
         .into_any_element()
+}
+
+/// A sidebar row's state mark in a narrow fixed slot (empty without a mark), so agent chips
+/// stay in one column without pushing the rows in: one dot that blinks on the status tick
+/// while working, else the state glyph.
+fn mark_slot(mark: Option<SessionState>, now: i64, theme: &Theme) -> gpui::AnyElement {
+    let slot = div()
+        .flex_none()
+        .w(theme::rems_px(theme::SIDEBAR_MARK_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center();
+    let Some(state) = mark else {
+        return slot.into_any_element();
+    };
+    let color = rgb(sidebar::status_color(theme, state));
+    if state != SessionState::Working {
+        return slot
+            .text_size(font_size::META)
+            .text_color(color)
+            .child(status::icon(state))
+            .into_any_element();
+    }
+    slot.child(
+        div()
+            .size(theme::rems_px(theme::STATUS_DOT))
+            .rounded_full()
+            .bg(color)
+            .opacity(if status::working_dot(now) == 0 {
+                opacity::STATUS_DOT_DIM
+            } else {
+                opacity::FULL
+            }),
+    )
+    .into_any_element()
 }

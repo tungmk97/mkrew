@@ -720,4 +720,55 @@ impl Shell {
         })
         .detach();
     }
+
+    /// Idle agent sessions in every workspace (what the sidebar's ⌫ removes).
+    pub(crate) fn idle_agents(&self) -> Vec<Ulid> {
+        self.sidebar
+            .sessions()
+            .iter()
+            .filter(|s| s.kind == SessionKind::Agent && s.state == SessionState::Idle)
+            .map(|s| s.id)
+            .collect()
+    }
+
+    /// ⌫ in the sidebar header: after one confirmation, `session.remove` each idle agent
+    /// (which stops it) and close its pane, like [`Shell::remove_session`].
+    pub(crate) fn remove_idle_agents(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let ids = self.idle_agents();
+        if ids.is_empty() {
+            return;
+        }
+        let answer = window.prompt(
+            PromptLevel::Critical,
+            &format!("Remove {} idle agents?", ids.len()),
+            Some("They are stopped and their panes close."),
+            &workspace_menu::REMOVE_ANSWERS,
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if !task_dialog::confirms_delete(answer.await.ok()) {
+                return;
+            }
+            for session_id in ids {
+                let removed = connection
+                    .call::<()>(Request::SessionRemove(SessionRef { session_id }))
+                    .await;
+                let _ = this.update_in(cx, |shell, window, cx| match removed {
+                    Ok(()) => {
+                        shell.sidebar.remove_session(session_id);
+                        shell.remove_pane(session_id, window, cx);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%session_id, "session.remove failed: {error:#}");
+                        shell.sidebar_error = Some(format!("Cannot remove the session: {error:#}"));
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
 }

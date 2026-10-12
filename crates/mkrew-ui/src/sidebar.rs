@@ -85,10 +85,16 @@ impl Chip {
     fn admits(self, session: &Session, viewed: &Viewed) -> bool {
         match self {
             Chip::All => true,
-            Chip::Working => session.state == SessionState::Working,
+            Chip::Working => agent_in(session, SessionState::Working),
             Chip::NeedsYou => inbox::needs_you(session, viewed),
         }
     }
+}
+
+/// An agent session in `state`. A shell's working/idle flips with every keystroke, so the
+/// sidebar never counts or marks it as working or idle.
+fn agent_in(session: &Session, state: SessionState) -> bool {
+    session.kind == SessionKind::Agent && session.state == state
 }
 
 /// The chip numbers: live sessions matching the filter text (the chip itself does not shrink them).
@@ -231,10 +237,22 @@ pub struct SessionRow {
 }
 
 impl SessionRow {
-    /// The only text on the row's right: the elapsed time of a working session or the idle
-    /// time of an idle one (`17m`). The status icon already says the state; the hover says it
-    /// in words.
+    /// The state mark before the chip: none while idle (the time says how long) and none for a
+    /// shell's working (it is just typing). The caller keeps the slot, so chips stay aligned.
+    pub fn mark(&self) -> Option<SessionState> {
+        match self.state {
+            SessionState::Idle => None,
+            SessionState::Working if self.shell => None,
+            state => Some(state),
+        }
+    }
+
+    /// The only text on the row's right: the elapsed time of a working agent or the idle
+    /// time of an idle one (`17m`); none for a shell. The hover says the state in words.
     pub fn time_text(&self, now_ms: i64) -> Option<String> {
+        if self.shell {
+            return None;
+        }
         status::time(self.state, self.state_changed_at, now_ms)
     }
 }
@@ -470,7 +488,7 @@ impl Sidebar {
         for (project, sessions) in self.grouped() {
             for session in &sessions {
                 counts.all += 1;
-                counts.working += usize::from(session.state == SessionState::Working);
+                counts.working += usize::from(agent_in(session, SessionState::Working));
                 counts.needs_you += usize::from(inbox::needs_you(session, viewed));
             }
             let shown: Vec<&Session> = sessions
@@ -482,7 +500,7 @@ impl Sidebar {
                 continue;
             }
             let expanded = filtering || self.expanded.contains(&project.id);
-            let count = |state| sessions.iter().filter(|s| s.state == state).count();
+            let count = |state| sessions.iter().filter(|s| agent_in(s, state)).count();
             let (working, asking, idle) = (
                 count(SessionState::Working),
                 count(SessionState::NeedsInput),

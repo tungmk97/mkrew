@@ -593,6 +593,42 @@ fn a_workspace_row_carries_its_summary_and_a_session_row_only_a_time() {
 }
 
 #[test]
+fn a_typing_shell_is_not_working_and_idle_rows_have_no_mark() {
+    let api = project("api");
+    let shell = Session {
+        kind: SessionKind::Shell,
+        agent_profile: "powershell".into(),
+        ..session(&api, 1, SessionState::Working)
+    };
+    let agent = session(&api, 2, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone()], vec![shell.clone(), agent.clone()]);
+    let view = sidebar.view(&Viewed::default());
+    assert_eq!(view.counts.working, 0);
+    assert_eq!(workspace(&view.rows[0]).working, 0);
+    assert_eq!(workspace(&view.rows[0]).summary.as_deref(), Some("1 idle"));
+    let rows: Vec<&SessionRow> = view
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Session(row) => Some(row),
+            _ => None,
+        })
+        .collect();
+    // Newest first: the idle agent, then the shell.
+    assert_eq!(rows[0].mark(), None);
+    assert_eq!(rows[1].mark(), None);
+    assert_eq!(rows[1].time_text(120_000), None);
+    let asking = SessionRow {
+        state: SessionState::NeedsInput,
+        ..rows[0].clone()
+    };
+    assert_eq!(asking.mark(), Some(SessionState::NeedsInput));
+    sidebar.set_chip(Chip::Working);
+    assert!(session_ids(&sidebar.rows()).is_empty());
+}
+
+#[test]
 fn toggle_all_closes_when_any_is_open_and_reveal_clears_what_hides_a_session() {
     let (api, web) = (project("api"), project("web"));
     let s = session(&web, 1, SessionState::Idle);
