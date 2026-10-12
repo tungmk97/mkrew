@@ -188,7 +188,8 @@ internet.
    action `mk.exe web`. It starts the daemon if none runs.
 
 The phone never changes a session's size; the terminal font shrinks to fit (pinch to zoom).
-Lost the phone or shared the link by mistake? Run `mk web --new-token`: old links stop working.
+Lost the phone or shared the link by mistake? Stop the running `mk web`, run `mk web --new-token`
+and keep that one running: old links stop working.
 
 ## Uninstall
 

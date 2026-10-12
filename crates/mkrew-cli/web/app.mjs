@@ -137,12 +137,13 @@ function stopRetry() {
 }
 
 async function onConnected() {
-  state.attempt = 0;
-  state.everConnected = true;
-  setConnected(true);
   try {
     await load();
-    if (state.open) await attach(state.open);
+    // Only a connection that answers counts: backoff and the banner keep going otherwise.
+    state.attempt = 0;
+    state.everConnected = true;
+    setConnected(true);
+    if (state.open && state.sessions.get(state.open)?.state !== 'exited') await attach(state.open);
   } catch (err) {
     toast(err.message);
   }
@@ -197,8 +198,8 @@ async function load() {
   state.projects = projects;
   state.profiles = profiles.profiles;
   // Keep sessions this page already knew even when the fresh list no longer has them
-  // (they exited while disconnected): they stay listed (✕) until the next full load that
-  // no longer has them, and the open one shows why it ended instead of freezing.
+  // (they exited while disconnected): they stay listed (✕) until the page reloads,
+  // and the open one shows why it ended instead of freezing.
   const next = new Map(sessions.filter((s) => s.state !== 'exited' || state.sessions.has(s.id)).map((s) => [s.id, s]));
   for (const [id, s] of state.sessions) if (s.state === 'exited' && !next.has(id)) next.set(id, s);
   state.sessions = next;
@@ -373,6 +374,8 @@ async function openSession(id) {
   $('reply').value = '';
   grow($('reply'));
   render();
+  // An ended session has nothing to attach to: the screen only shows why it ended.
+  if (state.sessions.get(id)?.state === 'exited') return;
   try {
     await attach(id);
   } catch (err) {
@@ -508,6 +511,8 @@ function keepKeyboard(el) {
 function fitViewport() {
   const vv = window.visualViewport;
   const apply = () => {
+    // Pinch-zoom also resizes the visual viewport; only the keyboard (scale 1) is handled.
+    if (vv && vv.scale > 1.01) return;
     if (vv) {
       $('app').style.height = `${vv.height}px`;
       window.scrollTo(0, 0);

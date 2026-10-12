@@ -183,6 +183,15 @@ fn respond(status: &str, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
     out
 }
 
+/// The upgrade cannot be served: the browser gets the reason instead of a WebSocket.
+pub fn unavailable(reason: &str) -> Vec<u8> {
+    respond(
+        "503 Service Unavailable",
+        &[],
+        format!("{reason}\n").as_bytes(),
+    )
+}
+
 pub fn switching_protocols(key: &str) -> Vec<u8> {
     let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
     format!(
@@ -291,6 +300,17 @@ mod tests {
             "{text}"
         );
         assert!(text.ends_with("\r\n\r\nwrong or missing token\n"), "{text}");
+    }
+
+    #[test]
+    fn unavailable_says_why() {
+        let text = String::from_utf8(unavailable("daemon is down")).unwrap();
+        assert!(
+            text.starts_with("HTTP/1.1 503 Service Unavailable\r\n"),
+            "{text}"
+        );
+        assert!(text.contains("Content-Length: 15\r\n"), "{text}");
+        assert!(text.ends_with("\r\n\r\ndaemon is down\n"), "{text}");
     }
 
     #[test]

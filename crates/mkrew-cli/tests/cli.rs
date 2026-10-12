@@ -1183,14 +1183,17 @@ fn web_serves_the_page_and_relays_a_session() {
 }
 
 #[test]
-fn web_says_why_when_the_daemon_is_gone() {
+fn web_answers_503_with_the_reason_when_the_daemon_is_gone() {
     let env = Env::new();
     let web = env.web();
     env.ok(&["daemon", "stop"]);
-    let mut ws = web.socket(&web.token).unwrap();
-    match ws.read() {
-        Ok(tungstenite::Message::Close(Some(frame))) => {
-            assert!(frame.reason.as_str().contains("not running"), "{frame:?}")
+    // No WebSocket opens, so the page keeps its "Can't reach Mkrew" banner and backs off.
+    match web.socket(&web.token).map(drop).map_err(|e| *e) {
+        Err(tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status(), 503);
+            let body = String::from_utf8_lossy(response.body().as_deref().unwrap_or_default())
+                .into_owned();
+            assert!(body.contains("not running"), "{body}");
         }
         other => panic!("{other:?}"),
     }

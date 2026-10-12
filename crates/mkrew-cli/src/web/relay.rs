@@ -33,15 +33,17 @@ const HELLO_ID: u64 = 0;
 
 type Ws = WebSocketStream<TcpStream>;
 
-pub async fn relay(ws: Ws, socket: &str) {
+/// A greeted daemon connection.
+pub struct Daemon {
+    rx: RecvHalf,
+    tx: SendHalf,
+    decoder: FrameDecoder,
+}
+
+/// Why the relay ended, for `mk web`'s stderr; `Ok` when the browser left.
+pub async fn relay(ws: Ws, daemon: Daemon) -> anyhow::Result<()> {
+    let Daemon { rx, tx, decoder } = daemon;
     let (mut sink, stream) = ws.split();
-    let (rx, tx, decoder) = match open_daemon(socket).await {
-        Ok(daemon) => daemon,
-        Err(e) => {
-            let _ = sink.send(close(&format!("{e:#}"))).await;
-            return;
-        }
-    };
     let (out, mut outbox) = mpsc::channel::<WsMessage>(OUTBOX);
     let replies = out.clone();
     // Each loop runs until its side closes; none is cancelled and resumed (racing single pipe
@@ -51,11 +53,12 @@ pub async fn relay(ws: Ws, socket: &str) {
         r = daemon_to_browser(rx, decoder, out) => r,
         r = browser_to_daemon(stream, tx, replies) => r,
     };
-    let last = match ended {
+    let last = match &ended {
         Ok(()) => WsMessage::Close(None),
         Err(e) => close(&format!("{e:#}")),
     };
     let _ = sink.send(last).await;
+    ended
 }
 
 async fn write_browser(
@@ -92,7 +95,9 @@ async fn browser_to_daemon(
     replies: mpsc::Sender<WsMessage>,
 ) -> anyhow::Result<()> {
     while let Some(message) = stream.next().await {
-        match message? {
+        // A phone that sleeps or loses signal drops the TCP link: that is it leaving, not a fault.
+        let Ok(message) = message else { break };
+        match message {
             WsMessage::Text(text) => match daemon_request(&text) {
                 FromBrowser::Forward(bytes) => tx.write_all(&bytes).await?,
                 FromBrowser::Reply(reply) => replies.send(WsMessage::text(reply)).await?,
@@ -107,7 +112,7 @@ async fn browser_to_daemon(
 }
 
 /// Connects and greets like the UI does (`mkrew-ui` `client.rs`).
-async fn open_daemon(socket: &str) -> anyhow::Result<(RecvHalf, SendHalf, FrameDecoder)> {
+pub async fn open_daemon(socket: &str) -> anyhow::Result<Daemon> {
     let stream = match Stream::connect(mkrew_daemon::ipc::name(socket)?).await {
         Ok(stream) => stream,
         Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::ConnectionRefused) => {
@@ -139,7 +144,7 @@ async fn open_daemon(socket: &str) -> anyhow::Result<(RecvHalf, SendHalf, FrameD
                         }
                         other => anyhow!("invalid hello reply: {other}"),
                     })?;
-                    Ok((rx, tx, decoder))
+                    Ok(Daemon { rx, tx, decoder })
                 }
                 other => Err(anyhow!("the daemon sent {other:?} before greeting")),
             };

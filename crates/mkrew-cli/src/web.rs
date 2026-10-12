@@ -8,6 +8,7 @@ mod tailscale;
 mod token;
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,7 +30,6 @@ const HEAD_LIMIT: usize = 8 * 1024;
 const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn run(paths: &Paths, args: Args) -> anyhow::Result<ExitCode> {
-    let token = token::load_or_create(&paths.config_dir.join("web_token"), args.new_token)?;
     // After a reboot the phone may be the only way in: make sure there is a daemon.
     if crate::daemon::try_connect(paths)?.is_none() {
         crate::daemon::start(paths)?;
@@ -39,18 +39,27 @@ pub fn run(paths: &Paths, args: Args) -> anyhow::Result<ExitCode> {
         .enable_all()
         .build()
         .context("start the async runtime")?;
-    runtime.block_on(serve(args.listen, host, paths.socket.clone(), token))
+    runtime.block_on(serve(
+        args.listen,
+        host,
+        paths.socket.clone(),
+        paths.config_dir.join("web_token"),
+        args.new_token,
+    ))
 }
 
 async fn serve(
     listen: SocketAddr,
     host: Option<String>,
     socket: String,
-    token: token::Token,
+    token_file: PathBuf,
+    new_token: bool,
 ) -> anyhow::Result<ExitCode> {
     let listener = TcpListener::bind(listen)
         .await
         .with_context(|| format!("listen on {listen}"))?;
+    // After the bind: a second `mk web --new-token` must not replace the token of the running one.
+    let token = token::load_or_create(&token_file, new_token)?;
     let addr = listener.local_addr()?;
     println!("Mkrew web is listening on http://{addr}");
     match &host {
@@ -75,14 +84,17 @@ async fn serve(
             Ok((stream, _)) => stream,
             Err(e) => {
                 eprintln!("mk web: accept: {e}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
         };
         let shared = Arc::clone(&shared);
         tokio::spawn(async move {
             let (socket, token) = &*shared;
-            // A client that leaves mid-request needs no report.
-            let _ = handle(stream, socket, token).await;
+            // A client that leaves mid-request needs no report; a relay that ends says why.
+            if let Err(e) = handle(stream, socket, token).await {
+                eprintln!("mk web: {e:#}");
+            }
         });
     }
 }
@@ -94,10 +106,20 @@ async fn handle(mut stream: TcpStream, socket: &str, token: &token::Token) -> an
     let route =
         http::parse_head(&head).map_or(http::Route::BadRequest, |head| http::route(&head, token));
     if let http::Route::Upgrade { key } = &route {
+        // Connect first: a browser must never see an open WebSocket that dies at once.
+        let daemon = match relay::open_daemon(socket).await {
+            Ok(daemon) => daemon,
+            Err(e) => {
+                stream
+                    .write_all(&http::unavailable(&format!("{e:#}")))
+                    .await?;
+                stream.shutdown().await?;
+                return Err(e);
+            }
+        };
         stream.write_all(&http::switching_protocols(key)).await?;
         let ws = WebSocketStream::from_partially_read(stream, rest, Role::Server, None).await;
-        relay::relay(ws, socket).await;
-        return Ok(());
+        return relay::relay(ws, daemon).await;
     }
     stream.write_all(&route.response()).await?;
     stream.shutdown().await?;
