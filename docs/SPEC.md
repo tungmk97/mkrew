@@ -65,7 +65,7 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 **Non-goals**
 
 - Not an IDE: no LSP, completion or multi-cursor. The Files view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
-- No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0051).
+- No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052).
 - No GitHub/Linear integration in v1.
 - Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed. One exception:
   voice input (§20G) sends a recording the user started to the speech-to-text API they configured
@@ -672,7 +672,7 @@ mk session list [--project P]
 mk session history <session-id>        # prints the session's raw output log (also exited ones)
 mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
-mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0051)
+mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052)
 mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
 mk integration install|uninstall|status <claude|codex|omp|copilot>
@@ -1310,7 +1310,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 | Input latency | key press → glyph on screen < 16 ms (local) |
 | Idle CPU | UI + daemon < 1% of the machine with no output (GPUI's Windows vsync floor alone is 1–2% of one core) |
 | Memory | UI < 150 MB, daemon < 50 MB with 6 sessions (agents excluded) |
-| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web`, started by the user, listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0051); `hook.report` rejected unless the session id belongs to a live session |
+| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web`, started by the user, listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); `hook.report` rejected unless the session id belongs to a live session |
 | Data | SQLite WAL; daily DB backup, keep 7 |
 | Errors | panics logged with backtrace; UI shows an error instead of dying silently |
 | History | per-session output log, rotated at 5 MB |
@@ -1564,7 +1564,7 @@ Goal: make the daily loop with agents fast — notice who needs you, answer with
 views, instruct precisely, review and undo per turn, and isolate parallel work when asked.
 Inspired by herdr (peek), Zed's agent panel (queue, follow, per-turn checkpoints, keep awake) and
 Orca (worktrees, fan-out, usage). §1 non-goals still hold: no editor, no LLM API calls, no cloud,
-no native mobile app (a browser client exists, ADR 0051).
+no native mobile app (a browser client exists, ADR 0052).
 
 Every v2 feature keeps §2: agent differences live in TOML profiles; the daemon owns state; it
 works on native Windows; nothing touches the user's branch, index or files without a confirmed

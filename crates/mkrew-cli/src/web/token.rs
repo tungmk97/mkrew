@@ -1,4 +1,4 @@
-//! The `mk web` access token (ADR 0051): 32 random bytes as 64 lowercase hex characters in
+//! The `mk web` access token (ADR 0052): 32 random bytes as 64 lowercase hex characters in
 //! `<config>/web_token`, required by `/check` and `/ws`.
 
 use std::fmt::Write as _;

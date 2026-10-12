@@ -1,4 +1,4 @@
-// Mkrew web (ADR 0051): the phone/browser client. Talks SPEC §7 JSON to the daemon through
+// Mkrew web (ADR 0052): the phone/browser client. Talks SPEC §7 JSON to the daemon through
 // `mk web`; never resizes a session (the desktop pane keeps its size, the font shrinks here).
 import { Terminal } from './vendor/xterm.mjs';
 import {

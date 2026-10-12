@@ -1,4 +1,4 @@
-//! `mk web` (ADR 0051): serves the phone page and relays its WebSocket to the daemon. Listens
+//! `mk web` (ADR 0052): serves the phone page and relays its WebSocket to the daemon. Listens
 //! on 127.0.0.1 by default; `tailscale serve` publishes it with HTTPS inside the user's
 //! tailnet. The daemon itself never listens on the network (SPEC §15).
 

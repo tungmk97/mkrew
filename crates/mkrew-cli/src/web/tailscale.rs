@@ -1,4 +1,4 @@
-//! Tailscale's MagicDNS name of this PC, for the link `mk web` prints (ADR 0051).
+//! Tailscale's MagicDNS name of this PC, for the link `mk web` prints (ADR 0052).
 
 use std::process::Command;
 

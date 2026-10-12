@@ -1,4 +1,4 @@
-//! The few HTTP requests `mk web` answers (ADR 0051): the page, a token check and the
+//! The few HTTP requests `mk web` answers (ADR 0052): the page, a token check and the
 //! WebSocket upgrade. GET only; every answer closes the connection.
 
 use super::token::Token;

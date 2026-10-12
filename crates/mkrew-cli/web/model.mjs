@@ -1,4 +1,4 @@
-// Pure helpers of the Mkrew web client (ADR 0051). No DOM; tested with `node --test`.
+// Pure helpers of the Mkrew web client (ADR 0052). No DOM; tested with `node --test`.
 
 const STATES = {
   starting: { mark: '◌', cls: 'st-idle', label: 'Starting', pill: 'idle' },

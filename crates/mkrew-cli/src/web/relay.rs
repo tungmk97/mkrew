@@ -1,4 +1,4 @@
-//! One browser WebSocket ↔ one daemon connection (ADR 0051). The browser speaks SPEC §7 JSON
+//! One browser WebSocket ↔ one daemon connection (ADR 0052). The browser speaks SPEC §7 JSON
 //! in text messages. The relay greets the daemon itself, refuses `hello` and `session.resize`
 //! (a phone width would reflow the agent), adds `ansi` (the `mk attach` painter) next to every
 //! screen snapshot, and sends terminal output as binary messages: the 26-character session id,
