@@ -360,40 +360,57 @@ impl Shell {
                 markdown && view.worktree_task_id.is_none() && self.features.docs,
                 |el| {
                     el.child(
-                        button("file-review", "Review in Docs", theme, false)
-                            .flex_none()
-                            .tooltip(tooltip(theme, "Review and comment on this file", ""))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
+                        button(
+                            "file-review",
+                            icon_text(Icon::FileText, "Review in Docs", button_fg(theme, false)),
+                            theme,
+                            false,
+                        )
+                        .flex_none()
+                        .tooltip(tooltip(theme, "Review and comment on this file", ""))
+                        .on_click(cx.listener(
+                            move |shell, _, window, cx| {
                                 shell.review_in_docs(project_id, review_path.clone(), window, cx);
-                            })),
+                            },
+                        )),
                     )
                 },
             )
             .when(editable, |el| {
                 el.child(
-                    button("file-save", "Save", theme, dirty)
-                        .flex_none()
-                        .tooltip(tooltip(
-                            theme,
-                            "Save this file",
-                            self.keymap.label(Command::SaveFile),
-                        ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.save_file(project_id, None, window, cx);
-                        })),
-                )
-            })
-            .child(
-                button("file-find", "Find", theme, false)
+                    button(
+                        "file-save",
+                        icon_text(Icon::Save, "Save", button_fg(theme, dirty)),
+                        theme,
+                        dirty,
+                    )
                     .flex_none()
                     .tooltip(tooltip(
                         theme,
-                        "Find in this file",
-                        self.keymap.label(Command::Find),
+                        "Save this file",
+                        self.keymap.label(Command::SaveFile),
                     ))
-                    .on_click(
-                        cx.listener(|shell, _, window, cx| shell.open_file_find(false, window, cx)),
-                    ),
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.save_file(project_id, None, window, cx);
+                    })),
+                )
+            })
+            .child(
+                button(
+                    "file-find",
+                    icon_text(Icon::Search, "Find", button_fg(theme, false)),
+                    theme,
+                    false,
+                )
+                .flex_none()
+                .tooltip(tooltip(
+                    theme,
+                    "Find in this file",
+                    self.keymap.label(Command::Find),
+                ))
+                .on_click(
+                    cx.listener(|shell, _, window, cx| shell.open_file_find(false, window, cx)),
+                ),
             )
             .child(zed_button("file-zed", false));
         let find_bar = view

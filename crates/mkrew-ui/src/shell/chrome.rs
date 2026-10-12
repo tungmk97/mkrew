@@ -356,13 +356,11 @@ impl Shell {
                     .whitespace_nowrap()
                     .child(name.to_owned()),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child("▾"),
-            );
+            .child(icon_svg(
+                Icon::ChevronDown,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ));
         let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
             let rows = projects.iter().map(|project| {
                 let id = project.id;
@@ -437,14 +435,24 @@ impl Shell {
         if let Some(kind) = self.starting_pane {
             return starting_button("new-pane", kind, now, theme, false);
         }
-        let button = button("new-pane", "+ New ▾", theme, false)
-            .flex_none()
-            .tooltip(tooltip(theme, "New agent or shell pane", ""))
-            // An open menu already closed on this mouse down (outside it): the click reopens it.
-            .on_click(cx.listener(|shell, _, _, cx| {
-                shell.new_menu = true;
-                cx.notify();
-            }));
+        let fg = button_fg(theme, false);
+        let button = button(
+            "new-pane",
+            icon_text(Icon::Plus, "New", fg).child(icon_svg(
+                Icon::ChevronDown,
+                theme::ICON_SIZE_SMALL,
+                fg,
+            )),
+            theme,
+            false,
+        )
+        .flex_none()
+        .tooltip(tooltip(theme, "New agent or shell pane", ""))
+        // An open menu already closed on this mouse down (outside it): the click reopens it.
+        .on_click(cx.listener(|shell, _, _, cx| {
+            shell.new_menu = true;
+            cx.notify();
+        }));
         let menu = (self.new_menu && !self.modal_open()).then(|| {
             let rows = [
                 (

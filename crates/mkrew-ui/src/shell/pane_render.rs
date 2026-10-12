@@ -141,15 +141,26 @@ impl Shell {
                 |bar| {
                     bar.child(notice(theme.text_muted, "⤢ Pane zoomed".to_owned()))
                         .child(
-                            button("unzoom", "Show all panes", theme, false)
-                                .tooltip(tooltip(
-                                    theme,
+                            button(
+                                "unzoom",
+                                icon_text(
+                                    Icon::Minimize2,
                                     "Show all panes",
-                                    self.keymap.label(Command::ZoomPane),
-                                ))
-                                .on_click(cx.listener(|shell, _, window, cx| {
+                                    button_fg(theme, false),
+                                ),
+                                theme,
+                                false,
+                            )
+                            .tooltip(tooltip(
+                                theme,
+                                "Show all panes",
+                                self.keymap.label(Command::ZoomPane),
+                            ))
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| {
                                     shell.run(&Run(Command::ZoomPane), window, cx);
-                                })),
+                                },
+                            )),
                         )
                 },
             )
@@ -159,7 +170,7 @@ impl Shell {
             )
             .when(self.focused_session().is_some(), |bar| {
                 bar.child(
-                    button("close-pane", "Close pane", theme, false)
+                    icon_button("close-pane", Icon::SquareX, theme)
                         .tooltip(tooltip(
                             theme,
                             "Close the focused pane",
@@ -267,19 +278,28 @@ impl Shell {
                     .flex()
                     .gap(px(space::S))
                     .child(
-                        button("empty-new-agent", "New agent", theme, true)
-                            .child(kbd(self.keymap.label(Command::SplitAgent), theme, true))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
-                            })),
+                        button(
+                            "empty-new-agent",
+                            icon_text(Icon::Bot, "New agent", button_fg(theme, true)),
+                            theme,
+                            true,
+                        )
+                        .child(kbd(self.keymap.label(Command::SplitAgent), theme, true))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
+                        })),
                     )
                     .child(
-                        secondary_button("empty-new-shell", "New shell", theme)
-                            .child(kbd(self.keymap.label(Command::SplitShell), theme, false))
-                            .tooltip(tooltip(theme, "New shell pane in the workspace folder", ""))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
-                            })),
+                        secondary_button(
+                            "empty-new-shell",
+                            icon_text(Icon::SquareTerminal, "New shell", theme.text),
+                            theme,
+                        )
+                        .child(kbd(self.keymap.label(Command::SplitShell), theme, false))
+                        .tooltip(tooltip(theme, "New shell pane in the workspace folder", ""))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
+                        })),
                     )
                     .into_any_element(),
             });
@@ -422,55 +442,73 @@ impl Shell {
                         .items_center()
                         .gap(px(space::S))
                         .child(
-                            button_frame("pane-share", "Share")
-                                .px(px(space::XS))
-                                .py_0()
-                                .text_size(font_size::META)
-                                .active(|style| style.opacity(opacity::ACTIVE))
-                                .when(following, |el| {
-                                    el.bg(rgb(theme.surface_raised))
-                                        .font_weight(FontWeight(weight::MEDIUM))
-                                        .text_color(rgb(theme.text))
-                                })
-                                .when(!following, |el| {
-                                    let hover = theme.surface_raised;
-                                    el.text_color(rgb(theme.text_muted))
-                                        .hover(move |style| style.bg(rgb(hover)))
-                                })
-                                .tooltip(tooltip(
-                                    theme,
+                            button_frame(
+                                "pane-share",
+                                icon_text(
+                                    Icon::Share2,
+                                    "Share",
                                     if following {
-                                        "Share: following this agent's edits in Zed"
+                                        theme.text
                                     } else {
-                                        "Share this agent's work"
+                                        theme.text_muted
                                     },
-                                    "",
-                                ))
-                                .on_click(cx.listener(
-                                    move |shell, event: &gpui::ClickEvent, _, cx| {
-                                        shell.close_menus();
-                                        shell.share_menu = Some(PaneMenu {
-                                            session_id: session,
-                                            position: event.position(),
-                                        });
-                                        cx.notify();
-                                    },
-                                )),
+                                ),
+                            )
+                            .px(px(space::XS))
+                            .py_0()
+                            .text_size(font_size::META)
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .when(following, |el| {
+                                el.bg(rgb(theme.surface_raised))
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                                    .text_color(rgb(theme.text))
+                            })
+                            .when(!following, |el| {
+                                let hover = theme.surface_raised;
+                                el.text_color(rgb(theme.text_muted))
+                                    .hover(move |style| style.bg(rgb(hover)))
+                            })
+                            .tooltip(tooltip(
+                                theme,
+                                if following {
+                                    "Share: following this agent's edits in Zed"
+                                } else {
+                                    "Share this agent's work"
+                                },
+                                "",
+                            ))
+                            .on_click(cx.listener(
+                                move |shell, event: &gpui::ClickEvent, _, cx| {
+                                    shell.close_menus();
+                                    shell.share_menu = Some(PaneMenu {
+                                        session_id: session,
+                                        position: event.position(),
+                                    });
+                                    cx.notify();
+                                },
+                            )),
                         )
                         .when(self.features.turns, |el| {
                             el.child(
-                                quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
-                                    .px(px(space::XS))
-                                    .py_0()
-                                    .text_size(font_size::META)
-                                    .tooltip(tooltip(
-                                        theme,
-                                        "The agent's turns: restore the files to before one",
-                                        "",
-                                    ))
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
+                                quiet_button(
+                                    "pane-turns",
+                                    icon_text(Icon::History, "Turns…", theme.text_muted),
+                                    theme,
+                                    theme.surface_raised,
+                                )
+                                .px(px(space::XS))
+                                .py_0()
+                                .text_size(font_size::META)
+                                .tooltip(tooltip(
+                                    theme,
+                                    "The agent's turns: restore the files to before one",
+                                    "",
+                                ))
+                                .on_click(cx.listener(
+                                    move |shell, _, window, cx| {
                                         shell.open_turns(session, window, cx);
-                                    })),
+                                    },
+                                )),
                             )
                         })
                 });

@@ -510,11 +510,22 @@ impl Shell {
                             "No prompts yet: add Markdown files to the prompts folder.".to_owned(),
                         )))
                         .child(
-                            button("prompt-open-dir", "Open prompts folder", theme, true)
-                                .flex_none()
-                                .on_click(cx.listener(|shell, _, window, cx| {
+                            button(
+                                "prompt-open-dir",
+                                icon_text(
+                                    Icon::FolderOpen,
+                                    "Open prompts folder",
+                                    button_fg(theme, true),
+                                ),
+                                theme,
+                                true,
+                            )
+                            .flex_none()
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| {
                                     shell.open_prompts_dir(window, cx);
-                                })),
+                                },
+                            )),
                         ),
                 )
             })
@@ -749,7 +760,7 @@ impl Shell {
                         el.child(
                             quiet_button(
                                 "composer-prompts",
-                                "Prompts…",
+                                icon_text(Icon::Library, "Prompts…", theme.text_muted),
                                 theme,
                                 theme.surface_raised,
                             )

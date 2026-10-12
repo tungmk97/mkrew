@@ -432,7 +432,17 @@ impl Shell {
                 .child(
                     quiet_button(
                         "git-changed-by",
-                        format!("By: {shown} ▾"),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(space::XS))
+                            .min_w_0()
+                            .child(div().min_w_0().truncate().child(format!("By: {shown}")))
+                            .child(icon_svg(
+                                Icon::ChevronDown,
+                                theme::ICON_SIZE_SMALL,
+                                theme.text_muted,
+                            )),
                         theme,
                         theme.hover,
                     )

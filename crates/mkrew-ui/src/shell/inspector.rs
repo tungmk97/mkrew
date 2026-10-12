@@ -314,17 +314,25 @@ impl Shell {
                     ),
                 )
                 .child(
-                    quiet_button("plan-unlink", "Unlink", theme, theme.hover).on_click(
-                        cx.listener(move |shell, _, window, cx| {
-                            shell.link_plan(id, None, window, cx);
-                        }),
-                    ),
+                    quiet_button(
+                        "plan-unlink",
+                        icon_text(Icon::Unlink, "Unlink", theme.text_muted),
+                        theme,
+                        theme.hover,
+                    )
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.link_plan(id, None, window, cx);
+                    })),
                 )
         } else {
             div().flex().child(
-                button("plan-link", "Link plan…", theme, true).on_click(
-                    cx.listener(move |shell, _, window, cx| shell.pick_plan(id, window, cx)),
-                ),
+                button(
+                    "plan-link",
+                    icon_text(Icon::Link, "Link plan…", button_fg(theme, true)),
+                    theme,
+                    true,
+                )
+                .on_click(cx.listener(move |shell, _, window, cx| shell.pick_plan(id, window, cx))),
             )
         };
         inspector_card(theme, "Plan")
@@ -356,17 +364,27 @@ impl Shell {
         let card = inspector::session_card(session, self.usages.get(session.id), now);
         let id = session.id;
         let open = match &card.transcript {
-            Some(_) => button("inspector-transcript", "Open transcript", theme, false)
-                .tooltip(tooltip(
-                    theme,
-                    "Open the agent's transcript file in Zed",
-                    "",
-                ))
-                .on_click(cx.listener(move |shell, _, _, cx| shell.open_transcript(id, cx)))
-                .into_any_element(),
-            None => disabled_button("inspector-transcript", "Open transcript", theme, false)
-                .tooltip(tooltip(theme, "No transcript yet", ""))
-                .into_any_element(),
+            Some(_) => button(
+                "inspector-transcript",
+                icon_text(Icon::FileText, "Open transcript", button_fg(theme, false)),
+                theme,
+                false,
+            )
+            .tooltip(tooltip(
+                theme,
+                "Open the agent's transcript file in Zed",
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, _, cx| shell.open_transcript(id, cx)))
+            .into_any_element(),
+            None => disabled_button(
+                "inspector-transcript",
+                icon_text(Icon::FileText, "Open transcript", theme.text_muted),
+                theme,
+                false,
+            )
+            .tooltip(tooltip(theme, "No transcript yet", ""))
+            .into_any_element(),
         };
         let stop = match inspector::stop_action(Some(session)) {
             inspector::StopAction::Nothing => None,

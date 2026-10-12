@@ -204,11 +204,16 @@ impl Shell {
             // Empty state: one sentence plus the primary action with its shortcut.
             empty_state(theme, None, None, "No workspaces yet.".into(), None)
                 .child(
-                    button("add-first-workspace", "Add workspace", theme, true)
-                        .child(kbd(add_workspace_keys, theme, true))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.add_workspace(window, cx);
-                        })),
+                    button(
+                        "add-first-workspace",
+                        icon_text(Icon::FolderPlus, "Add workspace", button_fg(theme, true)),
+                        theme,
+                        true,
+                    )
+                    .child(kbd(add_workspace_keys, theme, true))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.add_workspace(window, cx);
+                    })),
                 )
                 .into_any_element()
         } else {

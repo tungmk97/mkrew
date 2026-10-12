@@ -106,13 +106,33 @@ pub(crate) fn button(
     if primary {
         button_frame(id, label)
             .bg(rgb(theme.accent))
-            .text_color(rgb(theme.on_accent))
+            .text_color(rgb(button_fg(theme, true)))
             .font_weight(FontWeight(weight::MEDIUM))
             .hover(|style| style.opacity(opacity::HOVER))
             .active(|style| style.opacity(opacity::ACTIVE))
     } else {
         quiet_button(id, label, theme, theme.hover)
     }
+}
+
+/// The label color of [`button`]: `on_accent` on the primary fill, else `text_muted`. An
+/// [`icon_text`] inside a button takes the same color (an svg does not inherit it).
+pub(crate) fn button_fg(theme: &Theme, primary: bool) -> u32 {
+    if primary {
+        theme.on_accent
+    } else {
+        theme.text_muted
+    }
+}
+
+/// A button label with a leading icon: `glyph`, then `text`, on one line, both in `color`.
+pub(crate) fn icon_text(glyph: Icon, text: impl IntoElement, color: u32) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
+        .child(text)
 }
 
 /// A ghost icon button of a live Run: the icon in the action's color, its tint on hover.
