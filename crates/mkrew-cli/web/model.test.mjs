@@ -145,6 +145,7 @@ test('stored replies: missing or broken data gives the defaults; junk entries ar
   assert.deepEqual(loadReplies('{oops'), DEFAULT_REPLIES);
   assert.deepEqual(loadReplies('{"a":1}'), DEFAULT_REPLIES);
   assert.deepEqual(loadReplies('["ok", 3, "  "]'), ['ok']);
+  assert.deepEqual(loadReplies('[3, "  "]'), DEFAULT_REPLIES);
 });
 
 test('reconnect waits 1, 2, 4, 8, then 10 seconds', () => {

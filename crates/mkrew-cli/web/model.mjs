@@ -164,11 +164,12 @@ export function rememberReply(replies, text) {
   return [reply, ...replies.filter((r) => r !== reply)].slice(0, MAX_REPLIES);
 }
 
-/** The chips stored in `localStorage` (JSON array of strings); anything else gives the defaults. */
+/** The chips stored in `localStorage` (JSON array of strings); nothing usable gives the defaults. */
 export function loadReplies(raw) {
   try {
     const list = JSON.parse(raw);
-    if (Array.isArray(list)) return list.filter((r) => typeof r === 'string' && r.trim()).slice(0, MAX_REPLIES);
+    const kept = Array.isArray(list) ? list.filter((r) => typeof r === 'string' && r.trim()).slice(0, MAX_REPLIES) : [];
+    if (kept.length) return kept;
   } catch {
     // Not JSON: fall through to the defaults.
   }

@@ -39,6 +39,8 @@ const state = {
   sessions: new Map(),
   open: null,
   reloadTimer: 0,
+  /** The ended session whose `session.history` reply is still awaited. */
+  replaying: null,
   replies: loadReplies(localStorage.getItem(REPLIES_KEY)),
 };
 const machine = machineName(location.hostname);
@@ -407,10 +409,17 @@ async function attach(id) {
 
 /** The newest output of an ended session: `mk web` sends it as output just before this reply. */
 async function replay(id) {
+  // A replay of this session is still on its way: its output will land in the fresh terminal.
+  if (state.replaying === id) return;
   const s = state.sessions.get(id);
   term.resize(s.cols, s.rows);
   fitTerminal();
-  await call('session.history', { session_id: id });
+  state.replaying = id;
+  try {
+    await call('session.history', { session_id: id });
+  } finally {
+    if (state.replaying === id) state.replaying = null;
+  }
 }
 
 function detach(id) {
@@ -438,7 +447,11 @@ function renderReplies() {
 async function sendReply(text) {
   await call('session.send', { session_id: state.open, text, submit: true });
   state.replies = rememberReply(state.replies, text);
-  localStorage.setItem(REPLIES_KEY, JSON.stringify(state.replies));
+  try {
+    localStorage.setItem(REPLIES_KEY, JSON.stringify(state.replies));
+  } catch {
+    // Storage full or off: the text was sent; the chips just are not kept.
+  }
   renderReplies();
 }
 
