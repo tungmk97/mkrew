@@ -60,10 +60,23 @@ export function chipFor(session, profiles) {
 
 const NEEDS = new Set(['needs_input', 'done']);
 
+/** How long an ended session stays listed on the phone. */
+export const ENDED_SHOWN_MS = 24 * 3_600_000;
+
+/** Unix ms the session ended; its last state change when no end time was recorded. */
+export function endedAt(session) {
+  return session.ended_at ?? session.state_changed_at;
+}
+
+/** Live sessions, ones this page already shows, and ones that ended in the last 24 h. */
+export function keepSession(session, known, now) {
+  return session.state !== 'exited' || known || endedAt(session) >= now - ENDED_SHOWN_MS;
+}
+
 /**
  * "Needs you" (needs input or done, newest change first) and one group per live workspace
- * (pinned first, then by name) holding its other sessions (pinned first, then oldest first).
- * Sessions of archived or unknown workspaces are left out.
+ * (pinned first, then by name) holding its other sessions (pinned first, then oldest first;
+ * ended ones last). Sessions of archived or unknown workspaces are left out.
  */
 export function buildList(projects, sessions) {
   const live = new Map(projects.filter((p) => !p.archived).map((p) => [p.id, p]));
@@ -87,7 +100,11 @@ export function buildList(projects, sessions) {
 }
 
 function bySession(a, b) {
-  return Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || a.started_at - b.started_at;
+  return (
+    Number(a.state === 'exited') - Number(b.state === 'exited') ||
+    Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
+    a.started_at - b.started_at
+  );
 }
 
 /** "now", "17m", "3h", "2d" since `ms` (unix ms). */
@@ -102,18 +119,25 @@ export function ago(ms, now) {
 }
 
 function timed(session) {
-  return session.state === 'working' || session.state === 'idle';
+  return session.state === 'working' || session.state === 'idle' || session.state === 'exited';
 }
 
-/** Right column of a row: the time for working/idle, else the state in words. */
+function since(session) {
+  return session.state === 'exited' ? endedAt(session) : session.state_changed_at;
+}
+
+/**
+ * Right column of a row: the time for working/idle (since the change) and exited (since the
+ * end), else the state in words.
+ */
 export function metaText(session, now) {
-  return timed(session) ? ago(session.state_changed_at, now) : statusLabel(session.state).label;
+  return timed(session) ? ago(since(session), now) : statusLabel(session.state).label;
 }
 
-/** The session screen's pill: "Working · 12m", "Needs input", … */
+/** The session screen's pill: "Working · 12m", "Needs input", "Exited · 3h", … */
 export function pillText(session, now) {
   const { label } = statusLabel(session.state);
-  return timed(session) ? `${label} · ${ago(session.state_changed_at, now)}` : label;
+  return timed(session) ? `${label} · ${ago(since(session), now)}` : label;
 }
 
 const KEYS = { enter: '\r', esc: '\x1b', tab: '\t', y: 'y', n: 'n', ctrl_c: '\x03' };

@@ -2,9 +2,9 @@
 // `mk web`; never resizes a session (the desktop pane keeps its size, the font shrinks here).
 import { Terminal } from './vendor/xterm.mjs';
 import {
-  backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, loadReplies, machineName,
-  metaText, newAgentPlan, pillText, rememberReply, statusLabel, toBase64, tokenFromHash,
-  tokenFromText, wsClass,
+  backoff, buildList, chipFor, displayName, esc, fitFontSize, keepSession, keyBytes, loadReplies,
+  machineName, metaText, newAgentPlan, pillText, rememberReply, statusLabel, toBase64,
+  tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -200,10 +200,10 @@ async function load() {
   ]);
   state.projects = projects;
   state.profiles = profiles.profiles;
-  // Keep sessions this page already knew even when the fresh list no longer has them
-  // (they exited while disconnected): they stay listed (✕) until the page reloads,
-  // and the open one shows why it ended instead of freezing.
-  const next = new Map(sessions.filter((s) => s.state !== 'exited' || state.sessions.has(s.id)).map((s) => [s.id, s]));
+  // Ended sessions: the ones of the last 24 h, plus any this page already knew (they ended
+  // while it was disconnected), so the open one shows why it ended instead of freezing.
+  const now = Date.now();
+  const next = new Map(sessions.filter((s) => keepSession(s, state.sessions.has(s.id), now)).map((s) => [s.id, s]));
   for (const [id, s] of state.sessions) if (s.state === 'exited' && !next.has(id)) next.set(id, s);
   state.sessions = next;
   state.loaded = true;
@@ -227,6 +227,7 @@ function onEvent(name, data) {
       if (!s) return;
       s.state = 'exited';
       s.exit_code = data.exit_code;
+      s.ended_at = Date.now();
       break;
     case 'session.updated': {
       const old = state.sessions.get(data.id);
@@ -378,10 +379,10 @@ async function openSession(id) {
   $('reply').value = '';
   grow($('reply'));
   render();
-  // An ended session has nothing to attach to: the screen only shows why it ended.
-  if (state.sessions.get(id)?.state === 'exited') return;
+  // An ended session cannot be attached: `mk web` replays the end of its log instead.
   try {
-    await attach(id);
+    if (state.sessions.get(id)?.state === 'exited') await replay(id);
+    else await attach(id);
   } catch (err) {
     toast(err.message);
   }
@@ -402,6 +403,14 @@ async function attach(id) {
     s.state = result.state;
     render();
   }
+}
+
+/** The newest output of an ended session: `mk web` sends it as output just before this reply. */
+async function replay(id) {
+  const s = state.sessions.get(id);
+  term.resize(s.cols, s.rows);
+  fitTerminal();
+  await call('session.history', { session_id: id });
 }
 
 function detach(id) {
