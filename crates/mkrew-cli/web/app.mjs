@@ -62,8 +62,21 @@ function showToken(error) {
   failPending();
   setConnected(false);
   show('token');
-  $('token-error').textContent = error;
+  setTokenError(error);
   $('token-input').value = '';
+}
+
+const TOKEN_ERROR = "That token didn't work. Check it and try again.";
+
+function setTokenError(text) {
+  const el = $('token-error');
+  el.textContent = '';
+  if (!text) return;
+  const icon = document.createElement('span');
+  icon.className = 'x';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = '✕';
+  el.append(icon, text);
 }
 
 function toast(text) {
@@ -86,7 +99,7 @@ async function connect() {
     return;
   }
   if (res.status === 401) {
-    showToken("That token doesn't work. Run mk web on your PC to see the link again.");
+    showToken(TOKEN_ERROR);
     return;
   }
   if (!res.ok) {
@@ -183,9 +196,10 @@ async function load() {
   ]);
   state.projects = projects;
   state.profiles = profiles.profiles;
-  const next = new Map(sessions.filter((s) => s.state !== 'exited').map((s) => [s.id, s]));
-  // Sessions that exited while this page was open stay listed (✕) until the next full load
-  // that no longer has them; the open one stays so its screen can say why it ended.
+  // Keep sessions this page already knew even when the fresh list no longer has them
+  // (they exited while disconnected): they stay listed (✕) until the next full load that
+  // no longer has them, and the open one shows why it ended instead of freezing.
+  const next = new Map(sessions.filter((s) => s.state !== 'exited' || state.sessions.has(s.id)).map((s) => [s.id, s]));
   for (const [id, s] of state.sessions) if (s.state === 'exited' && !next.has(id)) next.set(id, s);
   state.sessions = next;
   state.loaded = true;
@@ -509,7 +523,7 @@ function wire() {
     e.preventDefault();
     const token = tokenFromText($('token-input').value);
     if (!token) {
-      $('token-error').textContent = 'A token is 64 characters: 0–9 and a–f.';
+      setTokenError(TOKEN_ERROR);
       return;
     }
     state.token = token;
