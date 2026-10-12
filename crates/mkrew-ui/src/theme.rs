@@ -88,8 +88,13 @@ pub const VOICE_METER_TICK: Duration = Duration::from_millis(60);
 /// titles line up.
 pub const SESSION_TIME_WIDTH: f32 = space::XXL;
 
-/// A square glyph button (theme toggle, sidebar +).
+/// A square icon-only button (theme toggle, sidebar +).
 pub const ICON_BUTTON_SIZE: f32 = 26.0;
+/// A Lucide icon in an icon-only button ([`ICON_BUTTON_SIZE`] square).
+pub const ICON_SIZE: f32 = 16.0;
+/// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
+/// controls, the status bar.
+pub const ICON_SIZE_SMALL: f32 = 14.0;
 /// Inset of the title bar's segmented control around its segments.
 pub const SEGMENT_PADDING: f32 = 2.0;
 

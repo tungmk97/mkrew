@@ -1261,6 +1261,18 @@ The terminal is the hero; everything else steps back.
   Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
   family (`theme::TERMINAL_GLYPH_FALLBACKS`), then the system fallback. ANSI palette
   harmonized with the theme.
+- Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
+  draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color,
+  16 px in icon buttons and 14 px among text (`ICON_SIZE`, `ICON_SIZE_SMALL`). The glyphs this
+  spec names for those buttons map to Lucide: `+` plus, `▾ ▸ ‹ ›` chevrons, `⋯` ellipsis, `◷`
+  history, `⌫` delete, `◐ ☀ ☾` sun-moon / sun / moon, `─ □ ❐ ✕` minus / square / copy / x, `⌕`
+  search, `◫` columns-2, `◧ ◨` panel-left / panel-right, `⇤ ⇥` panel-left-close / -open,
+  `↻ ■ ▶` rotate-cw / circle-stop / play, `✦` sparkles, Fetch `↓` arrow-down-to-line. Close
+  pane is an icon-only `square-x` in the tab strip. Frequent toolbar, header, card and
+  empty-state actions carry a 14 px icon before their text (Share, `+ New`, idle Run, Save, Find,
+  Comment, Send to agent, Open in Zed, Push, …; the list is in ADR 0051); a `▾` after a label
+  is a chevron-down icon. Dialog footers, Retry, thread actions, row actions and danger buttons
+  stay text. Status icons (§11), marks in messages and the live Run label stay text.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;

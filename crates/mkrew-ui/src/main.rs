@@ -64,6 +64,7 @@ use mkrew_ui::git_summary::{GitSummary, RepoSummary};
 use mkrew_ui::git_view::{self, GitView, Since};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
+use mkrew_ui::icons;
 use mkrew_ui::ime;
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::inspector;
@@ -153,67 +154,69 @@ fn main() {
     for error in &keymap_errors {
         tracing::warn!("{error}; using the default for it");
     }
-    gpui_platform::application().run(move |cx: &mut App| {
-        let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
-        cx.bind_keys(bindings);
-        // Which char a shifted digit reports depends on the layout: bind again after a switch
-        // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
-        let rebind = keymap.clone();
-        cx.on_keyboard_layout_change(move |cx| {
-            let bindings = rebind.key_bindings(cx.keyboard_mapper().as_ref());
-            cx.clear_key_bindings();
+    gpui_platform::application()
+        .with_assets(icons::Assets)
+        .run(move |cx: &mut App| {
+            let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
             cx.bind_keys(bindings);
-        })
-        .detach();
-        // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
-        let settings = mkrew_core::settings::load(&paths.settings_file()).unwrap_or_default();
-        cx.set_global(theme::Fonts::from_settings(
-            &settings,
-            &cx.text_system().all_font_names(),
-        ));
-        // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
-        cx.set_prompt_builder(shell::confirm_prompt::build);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(theme::WINDOW_WIDTH), px(theme::WINDOW_HEIGHT)),
-                cx,
-            ))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Mkrew".into()),
-                appears_transparent: CUSTOM_TITLE_BAR,
-                traffic_light_position: cfg!(target_os = "macos").then(|| {
-                    let (x, y) = theme::MAC_TRAFFIC_LIGHT_POS;
-                    point(px(x), px(y))
+            // Which char a shifted digit reports depends on the layout: bind again after a switch
+            // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
+            let rebind = keymap.clone();
+            cx.on_keyboard_layout_change(move |cx| {
+                let bindings = rebind.key_bindings(cx.keyboard_mapper().as_ref());
+                cx.clear_key_bindings();
+                cx.bind_keys(bindings);
+            })
+            .detach();
+            // A broken file: the defaults until it is fixed (the daemon reports it, §20.0).
+            let settings = mkrew_core::settings::load(&paths.settings_file()).unwrap_or_default();
+            cx.set_global(theme::Fonts::from_settings(
+                &settings,
+                &cx.text_system().all_font_names(),
+            ));
+            // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
+            cx.set_prompt_builder(shell::confirm_prompt::build);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(theme::WINDOW_WIDTH), px(theme::WINDOW_HEIGHT)),
+                    cx,
+                ))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Mkrew".into()),
+                    appears_transparent: CUSTOM_TITLE_BAR,
+                    traffic_light_position: cfg!(target_os = "macos").then(|| {
+                        let (x, y) = theme::MAC_TRAFFIC_LIGHT_POS;
+                        point(px(x), px(y))
+                    }),
                 }),
-            }),
-            window_min_size: Some(size(
-                px(theme::WINDOW_MIN_WIDTH),
-                px(theme::WINDOW_MIN_HEIGHT),
-            )),
-            // macOS: we move the window from our own bar, so AppKit must not delay the click.
-            app_owns_titlebar_drag: cfg!(target_os = "macos"),
-            ..Default::default()
-        };
-        let mode = settings.ui.theme;
-        let opened = cx.open_window(options, |window, cx| {
-            theme::refresh(mode, window, cx);
-            cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, window, cx))
-        });
-        if let Err(error) = opened {
-            eprintln!("mkrew: cannot open window: {error:#}");
-            cx.quit();
-            return;
-        }
-        // Sessions live in the daemon, so closing the window simply ends the app.
-        cx.on_window_closed(|cx, _| {
-            if cx.windows().is_empty() {
+                window_min_size: Some(size(
+                    px(theme::WINDOW_MIN_WIDTH),
+                    px(theme::WINDOW_MIN_HEIGHT),
+                )),
+                // macOS: we move the window from our own bar, so AppKit must not delay the click.
+                app_owns_titlebar_drag: cfg!(target_os = "macos"),
+                ..Default::default()
+            };
+            let mode = settings.ui.theme;
+            let opened = cx.open_window(options, |window, cx| {
+                theme::refresh(mode, window, cx);
+                cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, window, cx))
+            });
+            if let Err(error) = opened {
+                eprintln!("mkrew: cannot open window: {error:#}");
                 cx.quit();
+                return;
             }
-        })
-        .detach();
-        cx.activate(true);
-    });
+            // Sessions live in the daemon, so closing the window simply ends the app.
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            cx.activate(true);
+        });
 }
 
 enum Status {
