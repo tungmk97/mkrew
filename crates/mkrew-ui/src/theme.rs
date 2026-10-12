@@ -494,6 +494,11 @@ pub struct Theme {
     pub tint_alpha: u8,
     /// The shade behind a modal dialog, RGBA.
     pub scrim: u32,
+    /// The QR code of Phone access (SPEC §14): dark modules on a light panel in both
+    /// appearances, because phone cameras read dark-on-light only; so both are set in
+    /// `shared()`, not in `dark()` / `light()`.
+    pub qr_dark: u32,
+    pub qr_light: u32,
     /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
     pub pane_focus_border: u32,
     /// Background of selected terminal cells (accent mixed into `bg`, text stays readable).
@@ -752,6 +757,9 @@ impl Theme {
             tint_alpha: 0,
             // Black at ~35 %, in both appearances.
             scrim: 0x0000_0059,
+            // The QR code of Phone access: near-black modules on white, in both appearances.
+            qr_dark: 0x101114,
+            qr_light: 0xFFFFFF,
             pane_focus_border: 0,
             terminal_selection_bg: 0,
             terminal_match_bg: 0,
@@ -892,6 +900,11 @@ pub fn contrast(a: u32, b: u32) -> f32 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// `0xRRGGBB` as the CSS / SVG color `#RRGGBB` (diagram and QR code SVGs).
+pub fn hex(color: u32) -> String {
+    format!("#{color:06X}")
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_core::settings::{FontSize, Settings};
@@ -1004,6 +1017,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn hex_is_a_padded_css_color() {
+        assert_eq!(hex(0x17181C), "#17181C");
+        assert_eq!(hex(0x00000A), "#00000A", "leading zeros stay");
+        assert_eq!(hex(0xFFFFFF), "#FFFFFF");
+    }
+
+    #[test]
+    fn the_qr_code_is_dark_on_light_in_both_appearances() {
+        let (dark, light) = (Theme::dark(), Theme::light());
+        assert_eq!(
+            (dark.qr_dark, dark.qr_light),
+            (light.qr_dark, light.qr_light),
+            "phone cameras read dark modules on a light panel in either theme"
+        );
+        assert!(
+            contrast(light.qr_dark, light.qr_light) >= 7.0,
+            "modules stand out from the panel"
+        );
+        assert!(
+            contrast(light.qr_light, 0xFFFFFF) < contrast(light.qr_dark, 0xFFFFFF),
+            "the panel is the light one, the modules the dark one (not inverted)"
+        );
     }
 
     #[test]

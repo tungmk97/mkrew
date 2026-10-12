@@ -11,7 +11,7 @@
 //! palette, the turn summaries, the peek popover, the broadcast dialog, the in-app confirmation
 //! dialog, the Files / Git worktree target, fan-out and token
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
-//! input (microphone and speech to text), and
+//! input (microphone and speech to text), the phone-access link, token and QR code, and
 //! the scroll bar of the Files editor and the Markdown preview.
 
 pub mod base_dialog;
@@ -51,6 +51,7 @@ pub mod markdown;
 pub mod palette;
 pub mod pane_text;
 pub mod peek;
+pub mod phone;
 pub mod plan;
 pub mod preview;
 pub mod prompt_picker;

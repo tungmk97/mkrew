@@ -36,6 +36,9 @@ mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
 # Docs preview render model (SPEC §12); no html renderer / CLI needed.
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# QR code of the phone link (spec 2026-10-12-phone-access-ui-design.md): pure Rust, no
+# dependencies; `phone.rs` draws the matrix as an SVG.
+qrcodegen = "1.8.0"
 serde = { version = "1", features = ["derive"] }
 # Tab layouts are opaque JSON on the wire (`TerminalTab.layout`).
 serde_json = "1"

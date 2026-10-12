@@ -12,7 +12,7 @@ use mermaid_rs_renderer::{
     LayoutConfig, compute_layout, measure_svg_dimensions, parse_mermaid_strict, render_svg,
 };
 
-use crate::theme::{self, Theme};
+use crate::theme::{self, Theme, hex};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagram {
@@ -66,7 +66,6 @@ fn draw(source: &str) -> Result<Diagram, String> {
 
 /// The renderer's theme in Mkrew's tokens (SPEC §14) for a `kind` diagram.
 fn colors(theme: &Theme, kind: DiagramKind) -> mermaid_rs_renderer::Theme {
-    let hex = |color: u32| format!("#{color:06X}");
     mermaid_rs_renderer::Theme {
         font_family: theme::DIAGRAM_FONT.to_owned(),
         font_size: theme::doc::BODY,
