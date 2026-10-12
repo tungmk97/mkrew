@@ -2,6 +2,7 @@
 //! and whether `tailscale serve` already publishes `mk web`. The JSON readers are pure; the
 //! runners start `tailscale` without a console window (the daemon and the UI have none).
 
+use std::io::Read;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,10 @@ pub const WEB_PORT: u16 = 8787;
 /// `tailscale serve --bg` can wait for the user (e.g. "Serve is not enabled on your tailnet"
 /// with a link to approve it); [`serve_setup`] gives up after this.
 const SETUP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// `tailscale status` / `serve status` answer at once; [`run`] gives up after this so a stuck
+/// service cannot freeze the UI poll or `mk web` (which asks for the name before it binds).
+const QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Whether `tailscale serve` publishes `mk web` on this PC.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,16 +148,55 @@ fn tailscale(args: &[&str]) -> Command {
     command
 }
 
-/// Stdout of a successful `tailscale <args>`; else what it said.
+/// Stdout of a successful `tailscale <args>`; else what it said, or why it did not finish.
 fn run(args: &[&str]) -> Result<String, String> {
-    let output = tailscale(args)
-        .output()
+    let mut child = tailscale(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("cannot run tailscale: {e}"))?;
+    // Read both pipes while waiting: a full pipe must not look like a hang.
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + QUERY_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                // The child may have exited since `try_wait`; there is nothing to do then.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "tailscale did not answer in {} s",
+                    QUERY_TIMEOUT.as_secs()
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(format!("cannot wait for tailscale: {e}")),
+        }
+    };
+    let output = Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    };
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         Err(failure(&output))
     }
+}
+
+/// Reads `pipe` to its end on a thread.
+fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = pipe {
+            // A read error ends the text early; what was read so far is still what it said.
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 fn failure(output: &Output) -> String {
