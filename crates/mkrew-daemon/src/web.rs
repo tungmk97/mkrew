@@ -7,7 +7,7 @@
 //! child dies with the daemon (`kill_on_drop`, and the task is dropped when the daemon ends).
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -60,7 +60,7 @@ impl Web {
 /// Supervises `mk web` per `settings.current().web.enabled` until aborted; aborting (or
 /// dropping the runtime) kills the child.
 pub fn start(web: Arc<Web>, settings: Arc<SettingsHolder>) -> JoinHandle<()> {
-    tokio::spawn(supervise(web, settings))
+    tokio::spawn(supervise(web, settings, mk_exe))
 }
 
 /// How a child run ended.
@@ -73,7 +73,8 @@ enum Ended {
     Exited { ran: Duration, error: String },
 }
 
-async fn supervise(web: Arc<Web>, settings: Arc<SettingsHolder>) {
+/// `exe` finds the program each time a child is started (a missing one may appear later).
+async fn supervise(web: Arc<Web>, settings: Arc<SettingsHolder>, exe: impl Fn() -> PathBuf) {
     let mut failures = 0u32;
     loop {
         if !settings.current().web.enabled {
@@ -82,7 +83,7 @@ async fn supervise(web: Arc<Web>, settings: Arc<SettingsHolder>) {
             settings.changed().await;
             continue;
         }
-        match run_child(&web, &settings).await {
+        match run_child(&web, &settings, &exe()).await {
             // The next turn of the loop publishes "off".
             Ended::Disabled => {}
             Ended::NotFound => {
@@ -103,8 +104,8 @@ async fn supervise(web: Arc<Web>, settings: Arc<SettingsHolder>) {
 }
 
 /// Starts `mk web` and returns when it is over. Publishes "running" once it started.
-async fn run_child(web: &Web, settings: &SettingsHolder) -> Ended {
-    let mut child = match spawn_mk() {
+async fn run_child(web: &Web, settings: &SettingsHolder, exe: &Path) -> Ended {
+    let mut child = match spawn_mk(exe) {
         Ok(child) => child,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ended::NotFound,
         Err(e) => {
@@ -168,8 +169,8 @@ async fn sleep_while_enabled(settings: &SettingsHolder, wait: Duration) {
 }
 
 /// `mk web`: no console window (the daemon has none), no input, output ignored, stderr piped.
-fn spawn_mk() -> io::Result<Child> {
-    let mut command = Command::new(mk_exe());
+fn spawn_mk(exe: &Path) -> io::Result<Child> {
+    let mut command = Command::new(exe);
     command
         .arg("web")
         .stdin(Stdio::null())
@@ -250,6 +251,7 @@ fn exit_error(last_line: Option<String>, how: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn backoff_doubles_to_a_minute_and_stays() {
@@ -315,15 +317,28 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn a_missing_mk_is_looked_up_again_once_a_minute() {
-        assert_eq!(LOOK_AGAIN, Duration::from_secs(60), "not a spin");
         let dir = tempfile::tempdir().unwrap();
-        let holder = holder(&dir, true);
-        let wait = sleep_while_enabled(&holder, LOOK_AGAIN);
-        tokio::pin!(wait);
-        let early = tokio::time::timeout(LOOK_AGAIN - Duration::from_secs(1), &mut wait).await;
-        assert!(early.is_err(), "no look before the minute is over");
-        let late = tokio::time::timeout(Duration::from_secs(2), &mut wait).await;
-        assert!(late.is_ok(), "the minute ends the wait");
+        let holder = Arc::new(holder(&dir, true));
+        let missing = dir.path().join("no-such-mk");
+        let lookups = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&lookups);
+        let task = tokio::spawn(supervise(Arc::default(), holder, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            missing.clone()
+        }));
+        tokio::time::sleep(Duration::from_secs(59)).await;
+        assert_eq!(
+            lookups.load(Ordering::SeqCst),
+            1,
+            "no spin: one look so far"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(
+            lookups.load(Ordering::SeqCst),
+            2,
+            "looked again after a minute"
+        );
+        task.abort();
     }
 
     #[tokio::test(start_paused = true)]
