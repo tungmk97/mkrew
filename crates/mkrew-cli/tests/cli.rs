@@ -6,7 +6,8 @@
 // Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
 #![allow(clippy::unwrap_used)]
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -953,4 +954,244 @@ fn project_run_restart_and_stop_reach_the_daemon() {
     let stopped = env.ok(&["project", "stop", "demo"]);
     assert_eq!(stopped.trim(), "stopped the run commands of demo");
     env.ok(&["daemon", "stop"]);
+}
+
+/// `mk web` on a free port, with its address and token read from stdout; killed on drop.
+struct Web {
+    child: Child,
+    port: u16,
+    token: String,
+}
+
+impl Env {
+    /// Starts `mk web` (which starts the daemon when none runs). `--host` keeps `tailscale` out.
+    fn web(&self) -> Web {
+        let mut child = self
+            .command(&["web", "--listen", "127.0.0.1:0", "--host", "test.invalid"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+        let (mut port, mut token) = (None, None);
+        while port.is_none() || token.is_none() {
+            let line = lines
+                .next()
+                .unwrap_or_else(|| panic!("mk web ended before printing its address"))
+                .unwrap();
+            if let Some(addr) = line.strip_prefix("Mkrew web is listening on http://") {
+                port = Some(addr.rsplit(':').next().unwrap().parse().unwrap());
+            }
+            if let Some((_, t)) = line.split_once("#t=") {
+                token = Some(t.trim().to_owned());
+            }
+        }
+        // Keep reading so a later line never blocks `mk web` on a full pipe.
+        std::thread::spawn(move || lines.for_each(drop));
+        Web {
+            child,
+            port: port.unwrap(),
+            token: token.unwrap(),
+        }
+    }
+}
+
+impl Drop for Web {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+type WebSocket = tungstenite::WebSocket<TcpStream>;
+
+impl Web {
+    /// `GET target` → (status, body).
+    fn get(&self, target: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        write!(stream, "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        let text = String::from_utf8_lossy(&response).into_owned();
+        let status = text[9..12].parse().unwrap();
+        let body = text
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_owned())
+            .unwrap_or_default();
+        (status, body)
+    }
+
+    /// The error is boxed: `tungstenite::Error` is large (clippy `result_large_err`).
+    fn socket(&self, token: &str) -> Result<WebSocket, Box<tungstenite::Error>> {
+        let stream = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        let url = format!("ws://127.0.0.1:{}/ws?t={token}", self.port);
+        match tungstenite::client(url, stream) {
+            Ok((ws, _)) => Ok(ws),
+            Err(tungstenite::HandshakeError::Failure(e)) => Err(Box::new(e)),
+            Err(tungstenite::HandshakeError::Interrupted(_)) => unreachable!("blocking stream"),
+        }
+    }
+}
+
+/// Reads text messages until one matches.
+fn ws_until(
+    ws: &mut WebSocket,
+    mut wanted: impl FnMut(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    loop {
+        if let tungstenite::Message::Text(text) = ws.read().unwrap() {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if wanted(&value) {
+                return value;
+            }
+        }
+    }
+}
+
+fn ws_request(ws: &mut WebSocket, id: u64, request: mkrew_protocol::Request) -> serde_json::Value {
+    let text = serde_json::to_string(&mkrew_protocol::Message::Request { id, request }).unwrap();
+    ws.send(tungstenite::Message::text(text)).unwrap();
+    ws_until(ws, |v| v["type"] == "response" && v["id"] == id)
+}
+
+#[test]
+fn web_serves_the_page_and_relays_a_session() {
+    use mkrew_protocol::{
+        Request, SessionInputParams, SessionListParams, SessionRef, SessionResizeParams,
+    };
+    let env = Env::new();
+    env.write_fake_profile();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    // No `mk daemon start`: `mk web` starts the daemon itself.
+    let web = env.web();
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let id = env
+        .ok(&["session", "spawn", "demo", "--agent", "fake"])
+        .trim()
+        .to_owned();
+    let session_id: Ulid = id.parse().unwrap();
+
+    let (status, page) = web.get("/");
+    assert_eq!(status, 200);
+    assert!(page.contains("<title>Mkrew</title>"), "{page}");
+    for asset in [
+        "/app.mjs",
+        "/model.mjs",
+        "/app.css",
+        "/vendor/xterm.mjs",
+        "/vendor/xterm.css",
+    ] {
+        assert_eq!(web.get(asset).0, 200, "{asset}");
+    }
+    assert_eq!(web.get("/nope").0, 404);
+    // Without the token nothing reaches the daemon.
+    let wrong = "0".repeat(64);
+    assert_eq!(web.get("/check").0, 401);
+    assert_eq!(web.get(&format!("/check?t={wrong}")).0, 401);
+    assert_eq!(web.get(&format!("/check?t={}", web.token)).0, 204);
+    match web.socket(&wrong).map(drop).map_err(|e| *e) {
+        Err(tungstenite::Error::Http(response)) => assert_eq!(response.status(), 401),
+        other => panic!("{other:?}"),
+    }
+
+    let mut ws = web.socket(&web.token).unwrap();
+    // A request without params and one with params.
+    let projects = ws_request(&mut ws, 1, Request::ProjectList);
+    assert_eq!(projects["result"][0]["name"], "demo", "{projects}");
+    let sessions = ws_request(
+        &mut ws,
+        2,
+        Request::SessionList(SessionListParams::default()),
+    );
+    assert!(
+        sessions["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == id.as_str()),
+        "{sessions}"
+    );
+    // The phone never resizes a session.
+    let resize = ws_request(
+        &mut ws,
+        3,
+        Request::SessionResize(SessionResizeParams {
+            session_id,
+            cols: 40,
+            rows: 20,
+        }),
+    );
+    assert_eq!(resize["error"]["code"], "invalid_request", "{resize}");
+    // A bad message gets an answer and the connection keeps working.
+    ws.send(tungstenite::Message::text(
+        r#"{"type":"request","id":4,"method":"no.such"}"#,
+    ))
+    .unwrap();
+    let broken = ws_until(&mut ws, |v| v["id"] == 4);
+    assert_eq!(broken["error"]["code"], "invalid_request", "{broken}");
+
+    // Attach: the reply carries the painted screen; output comes behind the session id.
+    let attach = mkrew_protocol::Message::Request {
+        id: 5,
+        request: Request::SessionAttach(SessionRef { session_id }),
+    };
+    ws.send(tungstenite::Message::text(
+        serde_json::to_string(&attach).unwrap(),
+    ))
+    .unwrap();
+    let mut screen = String::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !screen.contains("(y/n)") {
+        assert!(Instant::now() < deadline, "no question on screen: {screen}");
+        match ws.read().unwrap() {
+            tungstenite::Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["id"] == 5 {
+                    let ansi = value["result"]["ansi"]
+                        .as_str()
+                        .unwrap_or_else(|| panic!("attach reply has no ansi: {value}"));
+                    screen.push_str(ansi);
+                }
+            }
+            tungstenite::Message::Binary(bytes) => {
+                assert_eq!(&bytes[..26], id.as_bytes(), "output of another session");
+                screen.push_str(&String::from_utf8_lossy(&bytes[26..]));
+            }
+            _ => {}
+        }
+    }
+    // Answer as the `y` and Enter quick keys do; the exit reaches the page.
+    let input = ws_request(
+        &mut ws,
+        6,
+        Request::SessionInput(SessionInputParams {
+            session_id,
+            data: b"y\r".to_vec(),
+        }),
+    );
+    assert!(input.get("error").is_none(), "{input}");
+    let exited = ws_until(&mut ws, |v| {
+        v["event"] == "session.exited" && v["data"]["session_id"] == id.as_str()
+    });
+    assert_eq!(exited["data"]["exit_code"], 0, "{exited}");
+}
+
+#[test]
+fn web_says_why_when_the_daemon_is_gone() {
+    let env = Env::new();
+    let web = env.web();
+    env.ok(&["daemon", "stop"]);
+    let mut ws = web.socket(&web.token).unwrap();
+    match ws.read() {
+        Ok(tungstenite::Message::Close(Some(frame))) => {
+            assert!(frame.reason.as_str().contains("not running"), "{frame:?}")
+        }
+        other => panic!("{other:?}"),
+    }
 }

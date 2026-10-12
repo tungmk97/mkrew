@@ -20,7 +20,12 @@ crossterm = "0.29.0"
 directories = "6"
 # `mk comment`: compares the current directory with the (dunce-canonical) project paths.
 dunce = "1.0.5"
-interprocess = "2.4.4"
+# `mk web`: split the WebSocket into a sink and a stream (ADR 0051).
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# `mk web`: the access token (ADR 0051); 0.3 is already in the tree.
+getrandom = "0.3"
+# `tokio`: `mk web` relays each browser to its own async daemon connection (ADR 0051).
+interprocess = { version = "2.4.4", features = ["tokio"] }
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
@@ -28,6 +33,10 @@ serde = "1"
 # `preserve_order`: `mk integration` rewrites `settings.json` without reordering its keys
 # (already on workspace-wide through gpui's tree, so no other crate changes behaviour).
 serde_json = { version = "1", features = ["preserve_order"] }
+# `mk web`: HTTP listener and relay runtime (ADR 0051); tokio is already in the tree.
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
+# `mk web`: WebSocket framing only; the HTTP head is parsed by hand (ADR 0051).
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 # Edits `~/.codex/config.toml` keeping comments and layout; 0.25 is already in the tree.
 toml_edit = "0.25"
 ulid = "1"
@@ -38,3 +47,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [dev-dependencies]
 tempfile = "3.27.0"
+# `mk web` tests: a blocking WebSocket client (same version tokio-tungstenite uses).
+tungstenite = "0.30"

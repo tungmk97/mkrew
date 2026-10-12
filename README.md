@@ -172,6 +172,24 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 
   All commands: `mk --help` and [SPEC §9](docs/SPEC.md#9-cli-mk).
 
+## Use Mkrew from your phone
+
+`mk web` serves a small page for your phone (or any browser) to see which sessions need you,
+answer them and start new agents, while the agents keep running on this PC. It uses
+[Tailscale](https://tailscale.com) (the free Personal plan is enough) so nothing is open to the
+internet.
+
+1. Install Tailscale on this PC and on the phone, signed in to the same account. In the
+   Tailscale admin console, under DNS, turn on MagicDNS and HTTPS Certificates.
+2. On this PC run `tailscale serve --bg 8787` once (it is remembered across reboots).
+3. Run `mk web`. It prints a link like `https://my-pc.tail1234.ts.net/#t=…`. Open it on the
+   phone (send it to yourself, e.g. in Notes). On iPhone: Share → Add to Home Screen.
+4. Keep `mk web` running: e.g. Windows Task Scheduler → Create Task → trigger "At log on",
+   action `mk.exe web`. It starts the daemon if none runs.
+
+The phone never changes a session's size; the terminal font shrinks to fit (pinch to zoom).
+Lost the phone or shared the link by mistake? Run `mk web --new-token`: old links stop working.
+
 ## Uninstall
 
 1. Remove the agent hooks (only Mkrew's entries are removed and a `.bak` copy is kept; the omp and

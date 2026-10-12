@@ -15,6 +15,25 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-12 Mkrew web on a phone (plan docs/superpowers/plans/2026-10-10-mobile-web.md)
+
+- [ ] **Link:** `tailscale serve --bg 8787`, then `mk web` prints `https://<pc>.<tailnet>.ts.net/#t=…`.
+  Opening it on the iPhone (Safari) shows Sessions with "Needs you" on top, the PC name next to
+  a green dot. Add to Home Screen, then open the icon: it connects without asking for the token.
+- [ ] **Answer:** a Claude/Codex session asks a question on the PC → it shows under "Needs you"
+  within a few seconds. Tap it: the terminal shows the question at the session's own width
+  (small font, pinch-zoom works); the desktop pane keeps its size. Tap `y` / Enter or type a
+  reply and Send: the agent continues; the keyboard stays open between quick keys.
+- [ ] **New agent:** + New agent → pick a workspace and Claude, type a prompt, Start → the
+  session opens on the phone and a task card shows on the desktop board; an uninstalled agent
+  is greyed "not installed".
+- [ ] **Disconnect:** stop `mk web` → within seconds the banner "Can't reach Mkrew on <pc>.
+  Retrying…" shows; start it again → the banner goes and an open session repaints.
+- [ ] **Token:** `mk web --new-token` → the old Home Screen icon shows the token screen with
+  "That token didn't work. Check it and try again."; pasting the new link (or token) connects.
+- [ ] **Light and dark:** switch iOS appearance; colors follow it, the terminal stays dark.
+- [ ] **Chrome on another computer in the tailnet:** the same link works; Ctrl+Enter sends.
+
 ### To verify — 2026-10-12 sidebar marks, remove idle agents
 
 - [ ] **Sidebar marks (dark + light):** idle agent rows show no `○`; a working agent shows one

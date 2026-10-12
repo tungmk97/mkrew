@@ -9,6 +9,7 @@ mod integration;
 mod project;
 mod session;
 mod task;
+mod web;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -84,6 +85,18 @@ enum Command {
         /// The event name (`codex`: the notify JSON instead).
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Serve the phone page and relay it to the daemon; publish it with `tailscale serve`.
+    Web {
+        /// Address to listen on; keep 127.0.0.1 and let `tailscale serve` publish it.
+        #[arg(long, default_value = "127.0.0.1:8787")]
+        listen: std::net::SocketAddr,
+        /// Host name in the printed link (default: this PC's Tailscale name).
+        #[arg(long)]
+        host: Option<String>,
+        /// Replace the access token; every link printed before stops working.
+        #[arg(long)]
+        new_token: bool,
     },
 }
 
@@ -344,6 +357,18 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
             }
             .map(|()| ExitCode::SUCCESS)
         }
+        Command::Web {
+            listen,
+            host,
+            new_token,
+        } => web::run(
+            &paths,
+            web::Args {
+                listen,
+                host,
+                new_token,
+            },
+        ),
         Command::Hook { .. } | Command::Integration { .. } => unreachable!("handled above"),
     }
 }
