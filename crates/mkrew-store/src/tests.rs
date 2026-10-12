@@ -546,6 +546,60 @@ fn the_dev_command_becomes_a_run_command_named_dev() {
 }
 
 #[test]
+fn env_files_move_from_the_folder_to_the_workspace_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("mkrew.db");
+    let project = Ulid::new();
+    {
+        let conn = Connection::open(&path).unwrap();
+        for sql in &MIGRATIONS[..17] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 17).unwrap();
+        conn.execute(
+            "INSERT INTO project (id, name, path, created_at) VALUES (?1, 'ea', '/ea', 0)",
+            [project.to_string()],
+        )
+        .unwrap();
+        let rows = [
+            ("root", ".", Some(".env")),
+            ("be", "./EA-BE", Some(".env")),
+            ("win", r".\EA-FE\", Some(r"config\.env")),
+            ("none", "web", None),
+            ("api", "api", Some(".env")),
+            ("dot", "./", Some(".env")),
+        ];
+        for (position, (name, folder, env_file)) in rows.into_iter().enumerate() {
+            conn.execute(
+                "INSERT INTO run_command (project_id, position, name, dir, command, env_file)
+                 VALUES (?1, ?2, ?3, ?4, 'x', ?5)",
+                params![project.to_string(), position as i64, name, folder, env_file],
+            )
+            .unwrap();
+        }
+    }
+    let store = Store::open(&path).unwrap();
+    let files: Vec<Option<String>> = store
+        .get_project(project)
+        .unwrap()
+        .run_commands
+        .into_iter()
+        .map(|c| c.env_file)
+        .collect();
+    assert_eq!(
+        files,
+        [
+            Some(".env".to_owned()),
+            Some("./EA-BE/.env".to_owned()),
+            Some(r".\EA-FE/config\.env".to_owned()),
+            None,
+            Some("api/.env".to_owned()),
+            Some(".env".to_owned()),
+        ]
+    );
+}
+
+#[test]
 fn project_base_is_set_kept_and_cleared_to_auto() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

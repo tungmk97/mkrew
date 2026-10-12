@@ -484,14 +484,15 @@ pub struct Project {
 }
 
 /// One command of a project's Run button (SPEC §10, ADR 0018): typed into its own shell in
-/// `dir`, with `env_file` then `env` added to the environment.
+/// `dir`, with `env_file` (relative to the project folder, not `dir`) then `env` added to the
+/// environment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunCommand {
     pub name: String,
     /// Relative to the project folder; `.` = the folder itself.
     pub dir: String,
     pub command: String,
-    /// Relative to `dir`, e.g. `.env`.
+    /// Relative to the project folder (not `dir`), e.g. `EA-BE/.env`.
     #[serde(default)]
     pub env_file: Option<String>,
     /// Applied after `env_file`.

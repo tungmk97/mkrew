@@ -415,11 +415,6 @@ impl Shell {
                 // Keyed by session: several panes share the nearest keyed parent.
                 let following = self.follow.is_on(session);
                 let turns = (info.kind == SessionKind::Agent).then(|| {
-                    let follow_tip = if following {
-                        "Following this agent's edits in Zed: click to stop"
-                    } else {
-                        "Open each file this agent edits in Zed"
-                    };
                     div()
                         .id(SharedString::from(format!("pane-turns-{session}")))
                         .flex_none()
@@ -427,34 +422,40 @@ impl Shell {
                         .items_center()
                         .gap(px(space::S))
                         .child(
-                            button_frame(
-                                "pane-follow",
-                                if following {
-                                    "Following in Zed"
-                                } else {
-                                    "Follow in Zed"
-                                },
-                            )
-                            .px(px(space::XS))
-                            .py_0()
-                            .text_size(font_size::META)
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .when(following, |el| {
-                                el.bg(rgb(theme.surface_raised))
-                                    .font_weight(FontWeight(weight::MEDIUM))
-                                    .text_color(rgb(theme.text))
-                            })
-                            .when(!following, |el| {
-                                let hover = theme.surface_raised;
-                                el.text_color(rgb(theme.text_muted))
-                                    .hover(move |style| style.bg(rgb(hover)))
-                            })
-                            .tooltip(tooltip(theme, follow_tip, ""))
-                            .on_click(cx.listener(
-                                move |shell, _, _, cx| {
-                                    shell.toggle_follow(session, cx);
-                                },
-                            )),
+                            button_frame("pane-share", "Share")
+                                .px(px(space::XS))
+                                .py_0()
+                                .text_size(font_size::META)
+                                .active(|style| style.opacity(opacity::ACTIVE))
+                                .when(following, |el| {
+                                    el.bg(rgb(theme.surface_raised))
+                                        .font_weight(FontWeight(weight::MEDIUM))
+                                        .text_color(rgb(theme.text))
+                                })
+                                .when(!following, |el| {
+                                    let hover = theme.surface_raised;
+                                    el.text_color(rgb(theme.text_muted))
+                                        .hover(move |style| style.bg(rgb(hover)))
+                                })
+                                .tooltip(tooltip(
+                                    theme,
+                                    if following {
+                                        "Share: following this agent's edits in Zed"
+                                    } else {
+                                        "Share this agent's work"
+                                    },
+                                    "",
+                                ))
+                                .on_click(cx.listener(
+                                    move |shell, event: &gpui::ClickEvent, _, cx| {
+                                        shell.close_menus();
+                                        shell.share_menu = Some(PaneMenu {
+                                            session_id: session,
+                                            position: event.position(),
+                                        });
+                                        cx.notify();
+                                    },
+                                )),
                         )
                         .when(self.features.turns, |el| {
                             el.child(
@@ -713,8 +714,8 @@ pub(crate) fn context_meter(share: &ContextShare, theme: &Theme) -> gpui::Statef
 /// when done; hovering it shows the status source and last change), the title (renamed inline
 /// with F2 or a double-click, ADR 0031), an optional conflict warning, the number of queued
 /// sends (§20B.2), the context share (`⚠` and amber from 80 %, §20E.3), and on the right an
-/// agent's "Follow in Zed" and "Turns…" (§20C.5, §20C.2). A colored pane (ADR 0037) tints its
-/// chip and draws an accent line under the header.
+/// agent's `Share` menu (Follow in Zed) and "Turns…" (§20C.5, §20C.2). A colored pane (ADR 0037)
+/// tints its chip and draws an accent line under the header.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pane_header(
     session: &Session,

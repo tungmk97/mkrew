@@ -26,6 +26,7 @@ impl Shell {
         self.tab_menu = None;
         self.layout_menu = None;
         self.pane_menu = None;
+        self.share_menu = None;
         self.workspace_menu = None;
         self.file_menu = None;
         self.run_menu = None;

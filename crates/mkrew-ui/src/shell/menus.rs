@@ -565,6 +565,49 @@ impl Shell {
         )
     }
 
+    /// The Share menu of an agent pane: "Follow in Zed" (✓ while on). Floats at the click.
+    pub(crate) fn render_share_menu(
+        &self,
+        menu: &PaneMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let session_id = menu.session_id;
+        let following = self.follow.is_on(session_id);
+        let panel = menu_panel("share-menu", theme)
+            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                shell.share_menu = None;
+                cx.notify();
+            }))
+            .child(
+                menu_item("share-follow-zed".into(), theme)
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(space::M))
+                            .text_color(rgb(theme.accent_text))
+                            .child(if following { "✓" } else { "" }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Follow in Zed"),
+                    )
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        shell.share_menu = None;
+                        shell.toggle_follow(session_id, cx);
+                    })),
+            );
+        deferred(
+            anchored()
+                .position(menu.position)
+                .snap_to_window_with_margin(px(space::S))
+                .child(panel),
+        )
+        .into_any_element()
+    }
+
     /// `row` with the workspace menu dropping down below it while the menu is open for
     /// `project_id` (both sidebar widths).
     pub(crate) fn with_workspace_menu(

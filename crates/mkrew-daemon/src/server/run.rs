@@ -291,7 +291,7 @@ fn targets<'a>(project: &'a Project, name: Option<&str>) -> Result<Vec<&'a RunCo
     }
 }
 
-/// The folder and extra environment of `command`, or why it cannot start.
+/// The folder and extra environment of `command` (the env file is relative to the project folder, ADR 0049), or why it cannot start.
 fn prepare(
     project_dir: &Path,
     command: &RunCommand,
@@ -306,7 +306,7 @@ fn prepare(
     }
     let mut env = Vec::new();
     if let Some(file) = &command.env_file {
-        let path = dir.join(file);
+        let path = project_dir.join(file);
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("{}: cannot read {}: {e}", command.name, path.display()))?;
         env = run::parse_env(&text)

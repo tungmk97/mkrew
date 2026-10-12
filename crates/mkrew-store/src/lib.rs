@@ -32,6 +32,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0015_session_color.sql"),
     include_str!("../migrations/0016_pinned.sql"),
     include_str!("../migrations/0017_session_plan.sql"),
+    include_str!("../migrations/0018_run_env_file_from_workspace.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.

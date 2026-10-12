@@ -70,7 +70,7 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
     let (_daemon, mut client) = env.start();
     let project = client.add_project(&repo);
     let be = RunCommand {
-        env_file: Some(".env".into()),
+        env_file: Some("api/.env".into()),
         env: vec![("BOTH".into(), "override".into())],
         ..run_command(
             "BE",
@@ -81,11 +81,17 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
             ),
         )
     };
-    let fe = run_command(
-        "FE",
-        "web",
-        &long("echo web> web.txt", "echo web > web.txt"),
-    );
+    let fe = RunCommand {
+        env_file: Some("api/.env".into()),
+        ..run_command(
+            "FE",
+            "web",
+            &long(
+                "echo web %FROM_FILE%> web.txt",
+                "echo web $FROM_FILE > web.txt",
+            ),
+        )
+    };
     client
         .call(set_runs(&project, vec![be, fe], None))
         .into_result::<Project>()
@@ -109,7 +115,7 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
     );
     // Env file first, then the overrides; each command in its own folder.
     assert_eq!(wait_text(&repo.join("api/env.txt")), "file override");
-    assert_eq!(wait_text(&repo.join("web/web.txt")), "web");
+    assert_eq!(wait_text(&repo.join("web/web.txt")), "web file");
     let tabs = list_tabs(&mut client, &project);
     assert_eq!(tabs.len(), 1);
     assert_eq!(
@@ -241,7 +247,7 @@ fn run_restarts_that_cannot_start_keep_the_running_command() {
     let (_daemon, mut client) = env.start();
     let project = client.add_project(&repo);
     let api = RunCommand {
-        env_file: Some(".env".into()),
+        env_file: Some("api/.env".into()),
         ..run_command("api", "api", &long("echo up> up.txt", "echo up > up.txt"))
     };
     client

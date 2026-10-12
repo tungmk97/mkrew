@@ -560,14 +560,14 @@ impl Shell {
                 "Choose a folder in the workspace",
             );
             let command = field(cx, i, Field::Command, "run-command", "e.g. npm run dev");
-            let env_file = field(cx, i, Field::EnvFile, "run-env-file", "e.g. .env");
+            let env_file = field(cx, i, Field::EnvFile, "run-env-file", "e.g. EA-BE/.env");
             let env_file = browse(
                 cx,
                 env_file,
                 i,
                 Field::EnvFile,
                 "run-env-file-browse",
-                "Choose a file in the command's folder",
+                "Choose a file in the workspace",
             );
             let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev");
             cards = cards.child(
@@ -590,20 +590,41 @@ impl Shell {
                     )
                     .child(label("Command"))
                     .child(command)
-                    .child(label("Env file (optional, relative to the folder)"))
+                    .child(label("Env file (optional, relative to the workspace)"))
                     .child(env_file)
                     .child(label("Env (KEY=VALUE per line, wins over the env file)"))
                     .child(env)
-                    .child(div().flex().justify_end().child(
-                        quiet_button("run-remove", "Remove", theme, theme.surface_raised).on_click(
-                            cx.listener(move |shell, _, _, cx| {
-                                if let Some(setup) = shell.run_setup.as_mut() {
-                                    setup.remove_card(i);
-                                }
-                                cx.notify();
-                            }),
-                        ),
-                    )),
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(space::XS))
+                            .child(
+                                quiet_button(
+                                    "run-duplicate",
+                                    "Duplicate",
+                                    theme,
+                                    theme.surface_raised,
+                                )
+                                .on_click(cx.listener(
+                                    move |shell, _, _, cx| {
+                                        if let Some(setup) = shell.run_setup.as_mut() {
+                                            setup.duplicate_card(i);
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                quiet_button("run-remove", "Remove", theme, theme.surface_raised)
+                                    .on_click(cx.listener(move |shell, _, _, cx| {
+                                        if let Some(setup) = shell.run_setup.as_mut() {
+                                            setup.remove_card(i);
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
             );
         }
         let error_row = |error: String| {

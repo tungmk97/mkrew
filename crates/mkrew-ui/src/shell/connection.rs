@@ -272,6 +272,7 @@ impl Shell {
             tab_menu: None,
             layout_menu: None,
             pane_menu: None,
+            share_menu: None,
             run_setup: None,
             run_menu: None,
             workspace_switcher: false,

@@ -3,7 +3,7 @@
 //! The fields take caret keys and selection; the folder and env file can also be picked from
 //! the workspace ([`Picker`], fed by `fs.list`). Pure; `main.rs` renders it.
 
-use mkrew_core::run::{normalize, parse_env};
+use mkrew_core::run::{MAX_COMMANDS, MAX_NAME_CHARS, RunError, normalize, parse_env};
 use mkrew_protocol::{FsEntry, Project, ProjectUpdateParams, RunCommand};
 use ulid::Ulid;
 
@@ -58,10 +58,7 @@ impl Card {
 pub struct Picker {
     pub card: usize,
     pub field: Field,
-    /// Where ↑ Up stops, relative to the workspace (`""` = its root): the root for a folder,
-    /// the card's folder for an env file (which is relative to it).
-    pub root: String,
-    /// The listed folder, relative to the workspace.
+    /// The listed folder, relative to the workspace (`""` = its root, where ↑ Up stops).
     pub dir: String,
     /// What `fs.list` answered (only folders when picking a folder); `None` while it runs.
     pub entries: Option<Result<Vec<FsEntry>, String>>,
@@ -69,7 +66,7 @@ pub struct Picker {
 
 impl Picker {
     pub fn at_root(&self) -> bool {
-        self.dir == self.root
+        self.dir.is_empty()
     }
 }
 
@@ -174,28 +171,22 @@ impl RunSetup {
     }
 
     /// Opens the picker for `field` (`Dir` or `EnvFile`) of card `card`; returns the folder to
-    /// `fs.list`. An env file needs a folder inside the workspace first (`error` says so).
+    /// `fs.list`. Both browse the whole workspace; the env file picker starts in the card's
+    /// folder (the root when that folder is not one of the workspace).
     pub fn open_picker(&mut self, card: usize, field: Field) -> Option<String> {
-        let root = match field {
+        let dir = match field {
             Field::Dir => String::new(),
-            Field::EnvFile => match workspace_dir(self.cards.get(card)?.dir.as_str()) {
-                Some(dir) => dir,
-                None => {
-                    self.error = Some("Pick a folder inside the workspace first".into());
-                    return None;
-                }
-            },
+            Field::EnvFile => workspace_dir(self.cards.get(card)?.dir.as_str()).unwrap_or_default(),
             _ => return None,
         };
         self.focus = Focus::Field(card, field);
         self.picker = Some(Picker {
             card,
             field,
-            dir: root.clone(),
-            root,
+            dir: dir.clone(),
             entries: None,
         });
-        self.picker.as_ref().map(|p| p.dir.clone())
+        Some(dir)
     }
 
     /// Shows folder `dir` (relative to the workspace) in the picker; returns it to `fs.list`.
@@ -206,7 +197,7 @@ impl RunSetup {
         Some(dir)
     }
 
-    /// ↑ Up: the parent of the listed folder, never above the picker's root.
+    /// ↑ Up: the parent of the listed folder, never above the workspace root.
     pub fn browse_up(&mut self) -> Option<String> {
         let picker = self.picker.as_ref()?;
         if picker.at_root() {
@@ -240,17 +231,7 @@ impl RunSetup {
         match (picker.field, path) {
             (Field::Dir, None) if picker.dir.is_empty() => card.dir = ".".into(),
             (Field::Dir, None) => card.dir = picker.dir.into(),
-            (Field::EnvFile, Some(path)) => {
-                let relative = match picker.root.as_str() {
-                    "" => Some(path),
-                    root => path
-                        .strip_prefix(root)
-                        .and_then(|rest| rest.strip_prefix('/')),
-                };
-                if let Some(relative) = relative {
-                    card.env_file = relative.into();
-                }
-            }
+            (Field::EnvFile, Some(path)) => card.env_file = path.into(),
             _ => {}
         }
         self.focus = Focus::Field(picker.card, picker.field);
@@ -286,6 +267,47 @@ impl RunSetup {
             0 => Focus::Autostart,
             len => Focus::Field(index.min(len - 1), Field::Name),
         };
+    }
+
+    /// Inserts a copy of card `index` right below it, named `<name> copy` (then `copy 2`, …,
+    /// the name cut so it fits) and focuses its name. Refused at [`MAX_COMMANDS`].
+    pub fn duplicate_card(&mut self, index: usize) {
+        let Some(original) = self.cards.get(index) else {
+            return;
+        };
+        if self.cards.len() >= MAX_COMMANDS {
+            self.error = Some(RunError::TooMany.to_string());
+            return;
+        }
+        let mut copy = original.clone();
+        copy.name = self.free_copy_name(original.name.as_str().trim()).into();
+        self.cards.insert(index + 1, copy);
+        self.focus = Focus::Field(index + 1, Field::Name);
+    }
+
+    /// `<base> copy`, `<base> copy 2`, …: the first name no card has, `base` cut so the whole
+    /// name fits in [`MAX_NAME_CHARS`].
+    fn free_copy_name(&self, base: &str) -> String {
+        (1..)
+            .map(|n| {
+                let suffix = if n == 1 {
+                    " copy".to_owned()
+                } else {
+                    format!(" copy {n}")
+                };
+                let room = MAX_NAME_CHARS.saturating_sub(suffix.chars().count());
+                let base: String = base.chars().take(room).collect();
+                format!("{}{suffix}", base.trim_end())
+                    .trim_start()
+                    .to_owned()
+            })
+            .find(|name| {
+                self.cards
+                    .iter()
+                    .all(|c| c.name.as_str().trim() != name.as_str())
+            })
+            // An endless range: `find` always returns; ≤ MAX_COMMANDS cards take ≤ 8 names.
+            .unwrap_or_default()
     }
 
     /// The `project.update` to send, or `None` (in flight, or invalid: `error` says why).
@@ -440,6 +462,59 @@ mod tests {
                 ("PYTHONPATH".into(), ".".into()),
             ],
         }
+    }
+
+    #[test]
+    fn duplicating_a_card_copies_it_below_under_a_free_name() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.duplicate_card(0);
+        assert_eq!(setup.cards.len(), 2);
+        assert_eq!(setup.cards[1].name, "BE copy");
+        assert_eq!(setup.cards[1].dir, setup.cards[0].dir);
+        assert_eq!(setup.cards[1].command, setup.cards[0].command);
+        assert_eq!(setup.cards[1].env_file, setup.cards[0].env_file);
+        assert_eq!(setup.cards[1].env.text(), setup.cards[0].env.text());
+        assert_eq!(setup.focus, Focus::Field(1, Field::Name));
+
+        setup.duplicate_card(0);
+        let names: Vec<&str> = setup.cards.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["BE", "BE copy 2", "BE copy"]);
+        assert!(setup.begin().is_some(), "the copies save");
+    }
+
+    #[test]
+    fn duplicating_an_unnamed_card_twice_gives_copy_and_copy_2() {
+        let mut unnamed = be();
+        unnamed.name = String::new();
+        let mut setup = RunSetup::new(&project(vec![unnamed]), false);
+        setup.duplicate_card(0);
+        setup.duplicate_card(0);
+        let names: Vec<&str> = setup.cards.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["", "copy 2", "copy"]);
+    }
+
+    #[test]
+    fn a_long_name_is_cut_to_fit_and_a_full_list_refuses() {
+        let mut long = be();
+        long.name = "abcdefghijklmnopqrst".into(); // 20 chars, the most
+        let mut setup = RunSetup::new(&project(vec![long]), false);
+        setup.duplicate_card(0);
+        assert_eq!(setup.cards[1].name, "abcdefghijklmno copy");
+
+        while setup.cards.len() < MAX_COMMANDS {
+            setup.duplicate_card(0);
+        }
+        assert!(
+            setup.begin().is_some(),
+            "every generated name is valid and unique"
+        );
+        setup.busy = false;
+        setup.duplicate_card(0);
+        assert_eq!(setup.cards.len(), MAX_COMMANDS);
+        assert_eq!(
+            setup.error.as_deref(),
+            Some(format!("at most {MAX_COMMANDS} run commands").as_str())
+        );
     }
 
     #[test]
@@ -684,27 +759,31 @@ mod tests {
     }
 
     #[test]
-    fn the_env_file_picker_starts_in_the_cards_folder_and_stays_inside_it() {
+    fn the_env_file_picker_starts_in_the_cards_folder_and_can_leave_it() {
         let mut setup = RunSetup::new(&project(vec![be()]), false);
-        setup.cards[0].dir = r".\EA-BE\".into();
+        setup.cards[0].dir = r".worktrees\fix\EA-BE\".into();
         assert_eq!(
             setup.open_picker(0, Field::EnvFile).as_deref(),
-            Some("EA-BE")
+            Some(".worktrees/fix/EA-BE")
         );
-        assert_eq!(setup.browse_up(), None);
-        setup.browse("EA-BE/config".into());
+        assert_eq!(setup.browse_up().as_deref(), Some(".worktrees/fix"));
+        assert_eq!(setup.browse_up().as_deref(), Some(".worktrees"));
+        assert_eq!(setup.browse_up().as_deref(), Some(""));
+        assert_eq!(setup.browse_up(), None, "never above the workspace");
+        setup.browse("EA-BE".into());
         setup.key(DialogKey::Enter);
         assert!(setup.picker.is_some(), "Enter picks only folders");
-        setup.pick(Some("EA-BE/config/.env.dev"));
-        assert_eq!(setup.cards[0].env_file, "config/.env.dev");
+        setup.pick(Some("EA-BE/.env"));
+        assert_eq!(setup.cards[0].env_file, "EA-BE/.env");
+        assert_eq!(
+            setup.cards[0].dir, r".worktrees\fix\EA-BE\",
+            "the folder stays"
+        );
         assert_eq!(setup.focus, Focus::Field(0, Field::EnvFile));
 
+        // A folder outside the workspace: the picker starts at the root.
         setup.cards[0].dir = "../other".into();
-        assert_eq!(setup.open_picker(0, Field::EnvFile), None);
-        assert!(setup.picker.is_none());
-        assert_eq!(
-            setup.error.as_deref(),
-            Some("Pick a folder inside the workspace first")
-        );
+        assert_eq!(setup.open_picker(0, Field::EnvFile).as_deref(), Some(""));
+        assert_eq!(setup.error, None);
     }
 }

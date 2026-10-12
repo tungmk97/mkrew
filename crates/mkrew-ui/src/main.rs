@@ -359,6 +359,8 @@ struct Shell {
     layout_menu: Option<LayoutMenu>,
     /// The open pane menu (Pin, Rename, Change color).
     pane_menu: Option<PaneMenu>,
+    /// The open Share menu of an agent pane (Follow in Zed), at the click.
+    share_menu: Option<PaneMenu>,
     /// The open "Run setup" of a workspace (modal).
     run_setup: Option<RunSetup>,
     /// The workspace whose Run menu (▾) is open.
@@ -722,6 +724,12 @@ impl Render for Shell {
                             .as_ref()
                             .filter(|_| self.view() == View::Terminals && !self.modal_open())
                             .and_then(|menu| self.render_pane_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        self.share_menu
+                            .as_ref()
+                            .filter(|_| self.view() == View::Terminals && !self.modal_open())
+                            .map(|menu| self.render_share_menu(menu, &theme, cx)),
                     )
                     .children(
                         (self.file_menu.as_ref())

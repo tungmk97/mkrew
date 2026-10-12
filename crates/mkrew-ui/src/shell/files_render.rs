@@ -25,50 +25,70 @@ impl Shell {
             return empty("Loading files…", None).into_any_element();
         };
         let ignored_keys = self.keymap.label(Command::ToggleIgnored);
-        let (ignored_label, ignored_tip) = if view.show_ignored {
-            ("Hide ignored", "Hide git-ignored files")
+        let showing_ignored = view.show_ignored;
+        let ignored_tip = if showing_ignored {
+            "Showing git-ignored files: click to hide them"
         } else {
-            ("Show ignored", "Show git-ignored files")
+            "Show git-ignored files"
         };
+        let search_hover = theme.surface_raised;
+        let search_keys = self.keymap.label(Command::QuickOpen);
+        let search = div()
+            .id("files-search")
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::MEDIUM))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .cursor_pointer()
+            .text_size(font_size::BODY)
+            .text_color(rgb(theme.text_muted))
+            .hover(move |style| style.bg(rgb(search_hover)))
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .child(div().flex_none().child("⌕"))
+            .child(div().flex_1().min_w_0().truncate().child("Search files…"))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(font_size::META)
+                    .child(search_keys.clone()),
+            )
+            .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
+            .on_click(cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)));
+        let ignored = button_frame("files-ignored", "Ignored")
+            .flex_none()
+            .text_size(font_size::META)
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .when(showing_ignored, |el| {
+                el.bg(rgb(theme.surface_raised))
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .text_color(rgb(theme.text))
+            })
+            .when(!showing_ignored, |el| {
+                let hover = theme.surface_raised;
+                el.text_color(rgb(theme.text_muted))
+                    .hover(move |style| style.bg(rgb(hover)))
+            })
+            .tooltip(tooltip(theme, ignored_tip, ignored_keys.clone()))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                let requests = shell.files_view(project_id).toggle_ignored();
+                shell.files_requests(project_id, requests, window, cx);
+            }));
         let header = div()
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(space::S))
+            .gap(px(space::XS))
             .px(px(space::S))
-            .pb(px(space::XS))
-            .child(
-                div()
-                    .id("files-search")
-                    .flex_1()
-                    .min_w_0()
-                    .cursor_pointer()
-                    .child(text_field(
-                        "files-search-field",
-                        "",
-                        "Search files…",
-                        false,
-                        false,
-                        theme,
-                    ))
-                    .tooltip(tooltip(
-                        theme,
-                        "Find a file of this workspace",
-                        self.keymap.label(Command::QuickOpen),
-                    ))
-                    .on_click(
-                        cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)),
-                    ),
-            )
-            .child(
-                button("files-ignored", ignored_label, theme, false)
-                    .flex_none()
-                    .tooltip(tooltip(theme, ignored_tip, ignored_keys.clone()))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        let requests = shell.files_view(project_id).toggle_ignored();
-                        shell.files_requests(project_id, requests, window, cx);
-                    })),
-            );
+            .pb(px(space::S))
+            .child(search)
+            .child(ignored);
         let tree = match view.root() {
             files_view::Listing::Loading => empty("Loading files…", None).into_any_element(),
             files_view::Listing::Failed(error) => {
@@ -134,6 +154,7 @@ impl Shell {
             .min_h_0()
             .flex()
             .font_family(theme.ui_font_family.clone())
+            .child(self.render_file(project_id, view, window, theme, cx))
             .child(
                 div()
                     .id("files-tree")
@@ -167,7 +188,6 @@ impl Shell {
                     .children(self.render_new_entry(project_id, view.worktree_task_id, theme, cx))
                     .child(tree),
             )
-            .child(self.render_file(project_id, view, window, theme, cx))
             .into_any_element()
     }
 
@@ -237,7 +257,7 @@ impl Shell {
             .h_full()
             .flex()
             .flex_col()
-            .mr(px(space::S))
+            .ml(px(space::S))
             .mb(px(space::S))
             .rounded(px(radius::MEDIUM))
             .overflow_hidden()

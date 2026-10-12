@@ -117,7 +117,7 @@ impl Extra {
             Self::FanOut => in_view(View::Board) && context.fan_out,
             Self::Broadcast => context.workspace && context.agents,
             // Into the focused agent pane's composer (opened if hidden); the focused agent
-            // pane's "Turns…" and "Follow in Zed".
+            // pane's "Turns…" and Share → "Follow in Zed".
             Self::Turns => {
                 context.features.turns
                     && in_view(View::Terminals)

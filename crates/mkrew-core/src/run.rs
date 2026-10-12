@@ -41,7 +41,8 @@ pub enum RunError {
 
 /// The commands to save: fields trimmed (blank `dir` = `.`, blank `env_file` = none) and
 /// checked (SPEC §10). The name is checked before the command. Folders and files are checked
-/// when a command starts, not here.
+/// when a command starts, not here. `env_file` is relative to the project folder, not to `dir`
+/// (ADR 0049).
 pub fn normalize(commands: Vec<RunCommand>) -> Result<Vec<RunCommand>, RunError> {
     if commands.len() > MAX_COMMANDS {
         return Err(RunError::TooMany);

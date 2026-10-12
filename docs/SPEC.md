@@ -308,7 +308,7 @@ CREATE TABLE run_command (
   name       TEXT NOT NULL,              -- unique per project, e.g. "BE"
   dir        TEXT NOT NULL DEFAULT '.',  -- relative to the project folder
   command    TEXT NOT NULL,              -- typed into the shell, e.g. "npm run dev"
-  env_file   TEXT,                       -- relative to dir, e.g. ".env"
+  env_file   TEXT,                       -- relative to the project folder (ADR 0049), e.g. "EA-BE/.env"
   env        TEXT NOT NULL DEFAULT '[]', -- JSON [[key, value], …], applied after env_file
   PRIMARY KEY (project_id, name)
 );
@@ -507,7 +507,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
 | `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color`, `pinned` (update only), `review_globs`, `default_agent?`, `default_shell?` | Project (`update`: absent field = unchanged, `null` = cleared; `pinned` is a bool; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `default_shell` must be a shell profile (same absent / `null` rules); `color` must be one of red, orange, yellow, lime, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
-| `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>` (always the `shell` profile, not `default_shell`; ADR 0032): without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file, then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
+| `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>` (always the `shell` profile, not `default_shell`; ADR 0032): without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file (relative to the project folder), then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
 | `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab and keeps its color and pin |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs. Each one leaves the `run` tab when it exits (§10) |
 | `session.ports` | `project_id` | `[{session_id, ports}]` of the project's live sessions with ports (kept in daemon memory only) |
@@ -866,13 +866,14 @@ The session panel (below) is a third column right of Terminals while open.
   `<name> · :8080`; the sidebar workspace row shows `▶` while any
   run session lives (tooltip = ports). Ports load with `session.ports` per workspace on refresh
   and stay live through the `session.ports` event. **Run setup dialog:** command cards (Name,
-  Folder, Command, Env file, Env as multi-line `KEY=VALUE`), `+ Add command`, `Remove`, a
+  Folder, Command, Env file, Env as multi-line `KEY=VALUE`), `+ Add command`, `Duplicate` (a
+  copy right below, named `<name> copy`, refused at 8), `Remove`, a
   `Start with the daemon` checkbox; Ctrl+Enter (or Enter outside Env) saves; errors show in
   the dialog. Folder and Env file have `Browse…`: a picker over the workspace (`fs.list`,
   ignored files shown) that opens folders on click and goes `↑ Up`; for Folder it starts at the
   workspace root and `Use this folder` (Enter) takes the shown one (`.` at the root); for Env
-  file it starts in (and never leaves) the card's folder and a click on a file takes it,
-  relative to that folder. Esc closes only the picker. Palette: `Run: Start all`,
+  file it starts in the card's folder (the root when that is not a folder of the workspace), can go up to
+  the workspace root, and a click on a file takes it relative to the workspace (ADR 0049). Esc closes only the picker. Palette: `Run: Start all`,
   `Run: Restart all`, `Run: Stop all`, `Run: Setup…`, `Run: Show Run tab`.
 - **Empty states** everywhere (see §14).
 
@@ -902,7 +903,8 @@ color alone.
   their command name — ADR 0031; without a title an agent pane shows the title its agent gave the
   terminal, e.g. Claude's conversation summary; everywhere a session is named the order is: user
   title > terminal title > agent name). The right end keeps `⧗ N queued`, the context share,
-  and an agent's "Follow in Zed" and "Turns…"; the status is not repeated there. The
+  and an agent's `Share` menu (for now one item, "Follow in Zed", ✓ while on; the button is
+  highlighted while following) and "Turns…"; the status is not repeated there. The
   sidebar session row also puts the badge before the agent name. The badge is a bordered square
   chip; it also shows on board cards and in agent menus.
 - Pane menu (right-click on the header): **Rename** (inline like F2; greyed for a run pane) and
@@ -969,12 +971,13 @@ Only edit this file. When done, for EACH comment run:
 
 ## §12A UI: Files view
 
-- **Tree** (left): lazily loaded per folder, respects `.gitignore` (toggle to show ignored),
+- **Tree** (right of the file; ADR 0050): lazily loaded per folder, respects `.gitignore` (an
+  `Ignored` toggle beside the search shows ignored files),
   git status markers next to names (M modified, A added, D deleted, ? untracked), a small dot on
   folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
-- **Editor** (right; ADR 0028): the opened file with line numbers and syntax highlighting via
+- **Editor** (left of the tree; ADR 0028): the opened file with line numbers and syntax highlighting via
   `syntect` (lazy-loaded syntax set; re-highlighted 150 ms after typing stops). A plain editor:
   click places the caret, Shift+click / drag select; arrows (Ctrl = by word), Home/End
   (Ctrl = file), PgUp/PgDn, Backspace/Delete (Ctrl = word), Enter keeps the indent, Tab, Ctrl+A,
@@ -1740,7 +1743,7 @@ without trees, like outside git.
 4. **Changed by.** The Git view's file list gains a filter "Changed by: All | <session>…" listing
    sessions that have `files_changed`/hook edits in this project in the last 24 h; it keeps only
    files attributed to that session (data: `session.files`, below).
-5. **Follow in Zed.** Pane header toggle "Follow in Zed" (also a palette command). While on, each
+5. **Follow in Zed.** Pane header `Share` menu → "Follow in Zed" (also a palette command). While on, each
    hook-reported edit by that session runs `zed <path>:<line?>` (line from the hook payload when
    present), debounced by `zed.follow_debounce_ms` (the last path wins). Off by default; resets on
    UI restart. UI-side; it reacts to the `session.edited` event.

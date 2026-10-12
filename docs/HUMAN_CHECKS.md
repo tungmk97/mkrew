@@ -23,6 +23,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Remove idle agents:** with an idle agent, `⌫` appears left of `▾` in the sidebar header;
   click → "Remove N idle agents?" → Remove: they vanish from the sidebar and their panes close.
 
+### To verify — 2026-10-12 Files tree on the right (ADR 0050)
+
+- [ ] **Files layout (dark + light):** Restart the daemon first (protocol v39). Tree on the right of the file; the search row shows `⌕ Search
+  files…` with the Quick open shortcut and opens Quick open on click; `Ignored` toggles ignored
+  files, looks pressed while on, its width never changes; ←/→/↑/↓, right-click, New file… still work.
+
 ### To verify — 2026-10-12 equalize panes, drag pane dividers, sidebar width
 
 - [ ] **Equalize (dark + light):** Split right twice → 50/25/25. The split button `◫` menu shows
@@ -59,7 +65,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Browse… (dark + light):** Folder's `Browse…` lists the workspace's folders; clicking one
   opens it, `↑ Up` goes back, `Use this folder` (or Enter) fills Folder (`.` at the root). Env
   file's `Browse…` starts in the card's folder and shows `.env` (git-ignored, muted); clicking it
-  fills `.env` (or `config/.env`). Esc closes only the picker.
+  fills the workspace-relative path, e.g. `EA-BE/.env` (ADR 0049). Esc closes only the picker.
+- [ ] **Env file picker (EA, dark + light):** Env file `Browse…` starts in the card's folder and
+  `↑ Up` reaches the workspace root; a card with folder `.worktrees/fix-alembic-heads/EA-BE` and
+  env file `EA-BE/.env` starts there with the main `.env`.
+- [ ] **Duplicate (dark + light):** in Run setup, Duplicate on BE adds `BE copy` below with the
+  same fields and focuses its name; at 8 commands it shows the limit.
 
 ### To verify — 2026-10-11 title bar / sidebar / status bar polish
 
@@ -96,7 +107,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] **Defaults off:** without `[features]` in `settings.toml`, the view rail has no Docs tab,
   Ctrl+Shift+3 does nothing, the palette has no `View: Docs` / `Agent: Turns…`, a `.md` file in
-  Files has no "Review in Docs", agent pane headers show "Follow in Zed" but no "Turns…".
+  Files has no "Review in Docs", agent pane headers show `Share` but no "Turns…".
 - [ ] **Live switch:** add `[features]` `docs = true` and save → the Docs tab appears within ~1 s;
   set it back to `false` while on Docs → the workspace shows Terminals.
 - [ ] **Turns:** `turns = true`, start a new agent session, let it edit a file → "Turns…" lists the
@@ -372,7 +383,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 - [ ] **Pane header (item 5):** `<workspace> › <agent>` after the agent chip (an agent started on a
   worktree task shows `<workspace> › <branch> › <agent>`); one pill `Working · 1m` with the three
   dots, then the pane title; no status/time text at the right, only `⧗ queued`, the context share,
-  Follow in Zed and Turns…; the pill turns `Needs input` / `Idle · 3m` / `Done · 2 files · 1m` with the
+  Share and Turns…; the pill turns `Needs input` / `Idle · 3m` / `Done · 2 files · 1m` with the
   state; hovering it shows `working · from hook · 12s ago`. Narrow a pane (2×2 split): the
   breadcrumb is clipped with `…`, the pill and the buttons stay whole.
 - [ ] **Pane menu (item 5):** right-click a pane header → Rename / Change color; Rename edits the title
@@ -381,6 +392,9 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   unchanged; the first swatch (empty ring) clears it. Colors look distinct in light and dark.
   Restart the daemon (`mk daemon stop`, reopen): the color and name come back on the resumed pane.
   Open the same pane from the sidebar and from a second UI window: the color shows in both.
+- [ ] **Share menu:** agent pane header: `Share` opens a menu at the click with "Follow in Zed";
+  clicking it turns following on (✓ next time, button highlighted), again turns it off; a click
+  outside closes the menu (dark and light).
 - [ ] **Pin workspace:** right-click a workspace row → Pin: it jumps to the top of the sidebar with
   📌 after its name; Unpin puts it back among the others by age. Restart the app and the daemon:
   the pin is still there. The next / previous workspace shortcuts follow the new order.
@@ -1415,7 +1429,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   - **Since turn / Changed by** (criterion 4): "Diff since" on a Turns row → Git view header
     `Since turn n of claude #k` with only the files changed since then (incl. untracked);
     with two agents editing different files → "Changed by" chips filter the list per session.
-  - **Follow in Zed** (criterion 5, the unticked one): "Follow in Zed" in a Claude pane header
+  - **Follow in Zed** (criterion 5, the unticked one): `Share` → "Follow in Zed" in a Claude pane header
     (and the palette command) → while Claude edits several files, Zed opens the last edited file
     ~1.5 s after the edits stop (`zed.follow_debounce_ms`), at the edited line (checks the
     undocumented `structuredPatch` line, T11.5); off again → no more opens. Without `zed` on PATH
@@ -1425,7 +1439,7 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
     your machine (and with a large real repo: a turn start should not feel slower).
   - **§14 design check**: dark + light screenshots of the Turns dialog (a working session with
     restore disabled, and an idle one), the restore-before-turn preview, the Git view in Since
-    turn mode with the Changed by chips, and the pane header with "Following in Zed".
+    turn mode with the Changed by chips, and the pane header with `Share` highlighted (following).
 - [ ] (T13.11) **M13 wrap-up — the M13 views with real agents.** The first four M13 criteria are
   ticked: their backend is covered by automated tests (daemon real-git tests in the worktree,
   merge and remove modules, e2e with the fake agent for worktree run/resume, `fs.*`/`git.*` on a
