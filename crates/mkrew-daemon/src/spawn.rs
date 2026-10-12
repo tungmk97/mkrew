@@ -8,7 +8,13 @@ use anyhow::Context;
 /// `mkrew-daemon` installed next to the running executable (the release layout and
 /// `target/<profile>/`), else whatever `PATH` finds.
 pub fn daemon_exe() -> anyhow::Result<PathBuf> {
-    let name = format!("mkrew-daemon{}", std::env::consts::EXE_SUFFIX);
+    sibling_exe("mkrew-daemon")
+}
+
+/// `base` plus the platform's executable suffix, next to the running executable when it is a
+/// file there, else the bare name for `PATH` to find. The daemon also finds `mk` this way.
+pub fn sibling_exe(base: &str) -> anyhow::Result<PathBuf> {
+    let name = format!("{base}{}", std::env::consts::EXE_SUFFIX);
     let exe = std::env::current_exe().context("locate the running executable")?;
     let sibling = exe.with_file_name(&name);
     Ok(if sibling.is_file() {
@@ -60,5 +66,23 @@ fn disinherit_stdio() {
         // the call rejects harmlessly); only the inherit flag changes. Failure leaves the old
         // behavior.
         unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sibling_exe_prefers_the_file_next_to_the_running_executable() {
+        let exe = std::env::current_exe().unwrap();
+        let stem = exe.file_stem().unwrap().to_str().unwrap();
+        assert_eq!(sibling_exe(stem).unwrap(), exe);
+
+        let missing = format!("no-such-program{}", std::env::consts::EXE_SUFFIX);
+        assert_eq!(
+            sibling_exe("no-such-program").unwrap(),
+            PathBuf::from(missing)
+        );
     }
 }

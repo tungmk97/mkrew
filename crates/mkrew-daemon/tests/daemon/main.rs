@@ -51,6 +51,7 @@ mod states;
 mod tabs_tasks;
 mod task_runs;
 mod turns;
+mod web;
 mod workspaces;
 mod worktrees;
 
@@ -162,6 +163,11 @@ impl Env {
     }
 
     fn spawn(&self) -> Daemon {
+        self.spawn_with(&[])
+    }
+
+    /// Like [`Env::spawn`], with extra environment variables for the daemon.
+    fn spawn_with(&self, vars: &[(&str, &Path)]) -> Daemon {
         let child = Command::new(env!("CARGO_BIN_EXE_mkrew-daemon"))
             .env("MKREW_DATA_DIR", self.data_dir())
             .env("MKREW_CONFIG_DIR", self.dir.path().join("config"))
@@ -171,6 +177,7 @@ impl Env {
             // Transcripts for token usage (SPEC §20E.3): never the user's real ones.
             .env("CLAUDE_CONFIG_DIR", self.dir.path().join("claude"))
             .env("CODEX_HOME", self.dir.path().join("codex"))
+            .envs(vars.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -181,7 +188,12 @@ impl Env {
 
     /// Spawns a daemon and waits until it answers `hello`.
     fn start(&self) -> (Daemon, Client) {
-        let mut daemon = self.spawn();
+        self.start_with(&[])
+    }
+
+    /// Like [`Env::start`], with extra environment variables for the daemon.
+    fn start_with(&self, vars: &[(&str, &Path)]) -> (Daemon, Client) {
+        let mut daemon = self.spawn_with(vars);
         let deadline = Instant::now() + TIMEOUT;
         loop {
             if let Ok(mut client) = Client::connect(&self.socket) {

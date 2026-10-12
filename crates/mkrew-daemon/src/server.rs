@@ -17,7 +17,7 @@ use mkrew_protocol::{
     SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
     TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, WORKSPACE_COLORS, WebStatus, encode,
+    TerminalTab, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -32,7 +32,7 @@ use crate::launch::LaunchError;
 use crate::notify::{self, Notifier};
 use crate::session::{Command, Hub, INPUT_CHUNK_BYTES, SpawnError, SpawnSpec};
 use crate::settings::{self, SettingsHolder};
-use crate::{awake, backup, plan, session_log, undo, worktree};
+use crate::{awake, backup, plan, session_log, undo, web, worktree};
 
 mod ai;
 mod attachment;
@@ -54,6 +54,8 @@ pub struct Daemon {
     hub: Arc<Hub>,
     paths: Paths,
     settings: Arc<SettingsHolder>,
+    /// What `mk web` is doing (phone access), kept by the task `serve` starts.
+    web: Arc<web::Web>,
     git: Arc<dyn GitBackend>,
     git_cache: Arc<GitCache>,
     started_at: i64,
@@ -89,6 +91,7 @@ impl Daemon {
             git: Arc::clone(&hub.git),
             hub,
             settings: Arc::new(SettingsHolder::load(paths.settings_file())),
+            web: Arc::default(),
             paths,
             git_cache: Arc::default(),
             started_at: now_ms(),
@@ -97,10 +100,10 @@ impl Daemon {
         })
     }
 
-    /// Watches `settings.toml`, starts keep awake and daily DB backups, deletes expired turn
-    /// refs (in the background), resumes interrupted tasks and agent panes, auto-starts run
-    /// commands, then serves `listener` until `daemon.stop` or Ctrl+C, then stops every
-    /// session (SPEC §8).
+    /// Watches `settings.toml`, starts keep awake, `mk web` (phone access, while `[web] enabled`)
+    /// and daily DB backups, deletes expired turn refs (in the background), resumes interrupted
+    /// tasks and agent panes, auto-starts run commands, then serves `listener` until
+    /// `daemon.stop` or Ctrl+C, then stops every session (SPEC §8).
     /// `notifier` = `None` turns OS notifications off.
     pub async fn serve(self: Arc<Self>, listener: Listener, notifier: Option<Arc<dyn Notifier>>) {
         let _settings_watch = settings::watch(Arc::clone(&self.settings))
@@ -113,6 +116,7 @@ impl Daemon {
             Arc::clone(&self.settings),
             awake::os::inhibitor(),
         );
+        let web_task = web::start(Arc::clone(&self.web), Arc::clone(&self.settings));
         let backups = backup::start(
             Arc::clone(&self.hub),
             self.paths.backups_dir(),
@@ -125,6 +129,10 @@ impl Daemon {
         Arc::clone(&self).accept(listener).await;
         backups.abort();
         keep_awake.abort();
+        // Awaited: dropping the task kills `mk web`, and that must have happened before the
+        // daemon returns.
+        web_task.abort();
+        let _ = web_task.await;
         if let Some(task) = notifications {
             task.abort();
         }
@@ -474,7 +482,7 @@ impl Daemon {
             started_at: self.started_at,
             sessions: u32::try_from(self.hub.live_count()).unwrap_or(u32::MAX),
             settings_error: self.settings.error(),
-            web: WebStatus::default(),
+            web: self.web.status(),
         })
     }
 

@@ -28,6 +28,7 @@ mod turns;
 mod undo;
 mod usage;
 mod watch;
+mod web;
 mod worktree;
 
 use anyhow::Context;
@@ -36,6 +37,7 @@ use mkrew_store::Store;
 
 pub use lock::{InstanceLock, LockError};
 pub use notify::ENV_NOTIFY;
+pub use web::ENV_MK_EXE;
 
 /// Process exit code when another daemon already owns the data dir.
 pub const EXIT_ALREADY_RUNNING: u8 = 2;

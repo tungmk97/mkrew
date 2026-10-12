@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use ::notify::{RecommendedWatcher, RecursiveMode, Watcher as _};
 use mkrew_core::settings::{self, Settings, SettingsError};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 /// The file is re-read once no change arrived for this long.
 pub const QUIET: Duration = Duration::from_millis(300);
@@ -18,6 +18,8 @@ pub const QUIET: Duration = Duration::from_millis(300);
 pub struct SettingsHolder {
     path: PathBuf,
     state: Mutex<State>,
+    /// Woken by a reload that changed the settings; keeps one wake-up for a late waiter.
+    changed: Notify,
 }
 
 struct State {
@@ -34,6 +36,7 @@ impl SettingsHolder {
                 settings: Settings::default(),
                 error: None,
             }),
+            changed: Notify::new(),
         };
         holder.reload();
         holder
@@ -45,11 +48,15 @@ impl SettingsHolder {
         let mut state = self.lock();
         match loaded {
             Ok(settings) => {
-                if state.error.is_some() || state.settings != settings {
+                let differs = state.settings != settings;
+                if state.error.is_some() || differs {
                     tracing::info!(file = %self.path.display(), "settings loaded");
                 }
                 state.settings = settings;
                 state.error = None;
+                if differs {
+                    self.changed.notify_one();
+                }
             }
             Err(e) => {
                 tracing::warn!("settings not loaded, keeping the last good ones: {e}");
@@ -61,6 +68,13 @@ impl SettingsHolder {
     /// The last good settings (defaults until a load succeeds).
     pub fn current(&self) -> Settings {
         self.lock().settings.clone()
+    }
+
+    /// Completes after a reload that changed the settings; a change that happened before the
+    /// call completes it at once (one is remembered, also the one the first load made).
+    /// One waiter only: the `mk web` supervisor ([`crate::web`]).
+    pub async fn changed(&self) {
+        self.changed.notified().await;
     }
 
     /// The error of the last load (`file:line:col: message`), `None` when it succeeded.
@@ -165,6 +179,37 @@ mod tests {
         let holder = SettingsHolder::load(path);
         assert_eq!(holder.current(), Settings::default());
         assert!(holder.error().unwrap().contains("nope"));
+    }
+
+    /// Whether `changed()` completes within a second of (paused) time.
+    async fn fires(holder: &SettingsHolder) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), holder.changed())
+            .await
+            .is_ok()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn changed_fires_once_per_real_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let holder = SettingsHolder::load(path.clone());
+        assert!(!fires(&holder).await, "nothing changed yet");
+
+        std::fs::write(&path, "[web]\nenabled = true\n").unwrap();
+        holder.reload();
+        assert!(fires(&holder).await);
+        assert!(!fires(&holder).await, "one wake-up per change");
+
+        holder.reload();
+        assert!(!fires(&holder).await, "same settings again: no wake-up");
+
+        std::fs::write(&path, "[web]\nenabled = \"yes\"\n").unwrap();
+        holder.reload();
+        assert!(!fires(&holder).await, "a broken file keeps the settings");
+
+        std::fs::write(&path, "[web]\nenabled = false\n").unwrap();
+        holder.reload();
+        assert!(fires(&holder).await);
     }
 
     #[tokio::test(start_paused = true)]
