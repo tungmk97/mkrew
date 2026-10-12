@@ -711,7 +711,7 @@ The session panel (below) is a third column right of Terminals while open.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
-  A **filter box** (`Filter sessions…`) matches workspace name, agent and session title as you
+  A **filter box** (`⌕ Filter sessions…`) matches workspace name, agent and session title as you
   type (every word must match; client-side, not remembered); under it three **chips** `All N`,
   `Working N` and `Needs you N` narrow the list (the numbers count the sessions matching the
   filter text). *Needs you* is what the Inbox listed before: needs_input, plus done and not yet
@@ -750,9 +750,9 @@ The session panel (below) is a third column right of Terminals while open.
   children, ADR 0029; hidden when there is no repository), a click shows the Git view; the
   views Board / Terminals / Docs / Files / Git as a segmented control (tooltips show their
   shortcuts, §13), the Git one with a `Git N` badge (N = changed files summed over every
-  repository, hidden at 0); then, right-aligned, the theme toggle, History, + Agent, + Shell and
-  the split Run button, in every view (+ Agent / + Shell switch to Terminals first; their
-  tooltips show Alt+Shift+A / Alt+Shift+S, §13). The git chip and badge come from `git.repos`
+  repository, hidden at 0); then, right-aligned, the theme toggle, History (`◷` icon), `+ New ▾`
+  (a dropdown of Agent / Shell) and the split Run button, in every view (New's entries switch to
+  Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). The git chip and badge come from `git.repos`
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
   and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
   the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
@@ -767,10 +767,10 @@ The session panel (below) is a third column right of Terminals while open.
   repos → `N repos`; the hover lists `branch · hash` per repo; a root without `.git` still shows
   its child repos (ADR 0029); nothing before the first commit. Agent fields (agent panes only,
   Terminals view): context meter + `ctx 62%` (amber from 80 %), `in` / `out` tokens (`in`
-  excludes cache), cache read / write, model, and the time in the state (the pane header's). Only
+  excludes cache), cache read / write, model (no elapsed time: the pane header shows it). Only
   real data is shown: a field without data is hidden, never `0`; no money, no tokens per second.
-  It redraws on `session.usage`, focus change, an Inbox change and `git.changed`, plus the
-  status tick for the time; it has no timer of its own. The right end is the session-panel
+  It redraws on `session.usage`, focus change, an Inbox change and `git.changed`; it has no
+  timer of its own. The right end is the session-panel
   toggle (◨, ADR 0038).
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
@@ -849,14 +849,14 @@ The session panel (below) is a third column right of Terminals while open.
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
-- **Run button** (ADR 0018) at the right end of the title bar (ADR 0034), a split button, **green**
-  while idle (`status-done` fill, `on-accent` text): `[▶ Run │▾]` with
+- **Run button** (ADR 0018) at the right end of the title bar (ADR 0034), a split button, in the
+  **accent** (the logo's blue) while idle (primary button: `accent` fill, `on-accent` text): `[▶ Run │▾]` with
   no command or all stopped (▶ with no command opens Run setup, and saving there runs);
   `[● Running 2/2 · :8080 :5180 │↻│■│▾]` while running; `[✕ Running 1/2 · …]` in the warning
   color when some exited. Ports: every distinct port of the live run sessions, config order, up
   to 4 then `+N`; tooltip `name — :port …` per command. Menu ▾ (mouse-driven): one row per
   command (name, state, ports, ↻ ■ or ▶), then `Show Run tab`, `Run setup…`.
-  Colors (same in the title bar and in the menu, glyph and hover alike): Run / Start green
+  Glyph colors (live title bar and menu, glyph and hover alike): Run / Start ▶ green
   (`status-done`, hover `success-bg`), Restart ↻ amber (`status-needs-input`, hover
   `warning-bg`), Stop ■ red (`status-exited`, hover `danger-bg`). Run from
   all-stopped switches to Terminals and the `run` tab; Restart and per-command Run keep the
@@ -1142,13 +1142,13 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Inbox | Jump to next item needing attention | Ctrl+Shift+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
-| Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
 | Tabs | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Tabs | Jump to tab 1–9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab | Ctrl+Shift+R / Ctrl+Shift+W |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
-| Panes | New agent pane / new shell pane (split right with the workspace default, like + Agent / + Shell) | Alt+Shift+A / Alt+Shift+S |
+| Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
+| Panes | New agent pane / new shell pane (split right with the workspace default, like + New ▾ → Agent / Shell) | Alt+Shift+A / Alt+Shift+S |
 | Panes | Move focus | Alt+←↑→↓ |
 | Panes | Resize | Alt+Shift+←↑→↓ |
 | Panes | Zoom / unzoom pane | Ctrl+Shift+M |
@@ -1875,8 +1875,10 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    records the default microphone, and the same key stops it. It works everywhere, also while a
    terminal, a text field or a dialog has the keyboard. A recording stops by itself after
    `[voice] max_seconds` (§20.0). While transcribing, the key does nothing.
-2. **Status bar.** `● m:ss · Ctrl+Shift+D stops` while recording, `◌ Transcribing…` while
-   waiting, nothing after success. Errors and notes (`✕ Voice: …`) stay until the next start.
+2. **Status bar.** A five-bar level meter that follows the microphone loudness (redrawn every
+   `theme::VOICE_METER_TICK`) and `m:ss · Ctrl+Shift+D stops` while recording; the `working`
+   dots and `Transcribing` while waiting; nothing after success. Errors and notes
+   (`✕ Voice: …`) stay until the next start.
 3. **Speech to text.** One `POST {base_url}/audio/transcriptions` (OpenAI-compatible: Groq by
    default, OpenAI, or a local server) carries the recording as 16-bit mono WAV in multipart form
    data, with `model`, `response_format=json`, `temperature=0`, and `language` / `prompt` when set.

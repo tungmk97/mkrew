@@ -118,21 +118,6 @@ pub(crate) fn button(
     }
 }
 
-/// The idle Run button: a green fill (`Start`'s color) with `on_accent` text, like a primary
-/// [`button`] in green.
-pub(crate) fn run_fill_button(
-    id: &'static str,
-    label: impl Into<SharedString>,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    button_frame(id, label)
-        .bg(rgb(run::action_colors(RunAction::Start, theme).fg))
-        .text_color(rgb(theme.on_accent))
-        .font_weight(FontWeight(weight::MEDIUM))
-        .hover(|style| style.opacity(opacity::HOVER))
-        .active(|style| style.opacity(opacity::ACTIVE))
-}
-
 /// A ghost glyph button of a live Run: the glyph in the action's color, its tint on hover.
 pub(crate) fn run_icon_button(
     id: &'static str,
@@ -368,21 +353,6 @@ pub(crate) fn typing_input(
             };
             window.handle_input(&focus, typing, cx);
         },
-) -> gpui::Stateful<gpui::Div> {
-    let selection = (selected && !text.is_empty()).then_some(0..text.len());
-    caret_field(id, text, text.len(), selection, placeholder, focused, theme)
-}
-
-/// A [`text_field`] whose caret sits at byte `cursor`, with the bytes of `selection`
-/// highlighted (no caret then).
-pub(crate) fn caret_field(
-    id: &'static str,
-    text: &str,
-    cursor: usize,
-    selection: Option<std::ops::Range<usize>>,
-    placeholder: &'static str,
-    focused: bool,
-    theme: &Theme,
     )
     .absolute()
     .size_full()
@@ -397,6 +367,21 @@ pub(crate) fn text_field(
     placeholder: &'static str,
     focused: bool,
     selected: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let selection = (selected && !text.is_empty()).then_some(0..text.len());
+    caret_field(id, text, text.len(), selection, placeholder, focused, theme)
+}
+
+/// A [`text_field`] whose caret sits at byte `cursor`, with the bytes of `selection`
+/// highlighted (no caret then).
+pub(crate) fn caret_field(
+    id: &'static str,
+    text: &str,
+    cursor: usize,
+    selection: Option<std::ops::Range<usize>>,
+    placeholder: &'static str,
+    focused: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let caret = || {
@@ -714,6 +699,25 @@ pub(crate) fn working_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
                 } else {
                     opacity::STATUS_DOT_DIM
                 })
+        }))
+}
+
+/// The voice level meter (§20G): five bars, tallest in the middle, that rise with `level`
+/// (0..=1, [`crate::voice::Level::meter`]).
+pub(crate) fn voice_meter(level: f32, color: gpui::Rgba) -> gpui::Div {
+    const SHAPE: [f32; 5] = [0.55, 0.8, 1.0, 0.8, 0.55];
+    div()
+        .flex()
+        .items_center()
+        .h(theme::rems_px(theme::VOICE_BAR_MAX))
+        .gap(theme::rems_px(theme::VOICE_BAR_GAP))
+        .children(SHAPE.map(|weight| {
+            let tall = theme::VOICE_BAR_MAX - theme::VOICE_BAR_MIN;
+            div()
+                .w(theme::rems_px(theme::VOICE_BAR_WIDTH))
+                .h(theme::rems_px(theme::VOICE_BAR_MIN + tall * level * weight))
+                .rounded_full()
+                .bg(color)
         }))
 }
 

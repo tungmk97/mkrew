@@ -93,8 +93,9 @@ impl Shell {
                         shell.view() == View::Board
                             && shell.board.redraw_due(project_id, sessions, last, now)
                     });
-                    let recording = matches!(shell.voice, voice::State::Recording { .. });
-                    let due = board_due || shell.starting_pane.is_some() || recording;
+                    // The recording meter has its own faster redraw (`toggle_voice`).
+                    let transcribing = matches!(shell.voice, voice::State::Transcribing);
+                    let due = board_due || shell.starting_pane.is_some() || transcribing;
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -274,6 +275,7 @@ impl Shell {
             run_setup: None,
             run_menu: None,
             workspace_switcher: false,
+            new_menu: false,
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),
@@ -287,11 +289,11 @@ impl Shell {
             inspector_open: false,
             inspector_width,
             inspector_dragging: false,
-            board: Board::default(),
-            board_error: None,
             sidebar_width,
             sidebar_dragging: false,
             pane_dragging: false,
+            board: Board::default(),
+            board_error: None,
             conflicts: Conflicts::default(),
             card_error: None,
             selected_card: None,

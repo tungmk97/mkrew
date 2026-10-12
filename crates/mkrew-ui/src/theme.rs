@@ -76,6 +76,14 @@ pub const STATUS_MARK_WIDTH: f32 = space::L;
 /// The sidebar's narrower mark slot: one blinking dot while working, else the glyph.
 pub const SIDEBAR_MARK_WIDTH: f32 = space::S;
 
+/// Voice input level meter (§20G): bars this wide and this far apart, from `MIN` to `MAX` tall
+/// (px at the default 13 px body, [`rems_px`]), redrawn this often while recording.
+pub const VOICE_BAR_WIDTH: f32 = 2.0;
+pub const VOICE_BAR_GAP: f32 = 2.0;
+pub const VOICE_BAR_MIN: f32 = 2.0;
+pub const VOICE_BAR_MAX: f32 = 12.0;
+pub const VOICE_METER_TICK: Duration = Duration::from_millis(60);
+
 /// Narrowest the time column on the right of a session row gets (fits `1h 5m`), so times and
 /// titles line up.
 pub const SESSION_TIME_WIDTH: f32 = space::XXL;

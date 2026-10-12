@@ -296,20 +296,17 @@ impl Shell {
         } else {
             summary.tooltip()
         };
-        let main = if live {
-            button("run-main", summary.label(), theme, false)
-        } else {
-            run_fill_button("run-main", summary.label(), theme)
-        }
-        .flex_none()
-        .when(!live, |el| el.rounded_r_none())
-        .when(summary.warning(), |el| {
-            el.text_color(rgb(theme.status_needs_input))
-        })
-        .tooltip(tooltip(theme, &tip, ""))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.run_main_click(project_id, window, cx);
-        }));
+        // Idle: the accent (the logo's blue) fill; live: quiet, ↻ ■ carry the colors.
+        let main = button("run-main", summary.label(), theme, !live)
+            .flex_none()
+            .when(!live, |el| el.rounded_r_none())
+            .when(summary.warning(), |el| {
+                el.text_color(rgb(theme.status_needs_input))
+            })
+            .tooltip(tooltip(theme, &tip, ""))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.run_main_click(project_id, window, cx);
+            }));
         let open = self.run_menu == Some(project_id) && !self.modal_open();
         let mut bar = div()
             .flex_none()
@@ -338,12 +335,7 @@ impl Shell {
             }
         }
         // The ▾ half of the split button: same fill, a faint divider on its left.
-        let menu = if live {
-            button("run-menu", "▾", theme, false)
-        } else {
-            run_fill_button("run-menu", "▾", theme)
-        }
-        .when(!live, |el| {
+        let menu = button("run-menu", "▾", theme, !live).when(!live, |el| {
             el.rounded_l_none()
                 .border_l(px(theme::BORDER_WIDTH))
                 .border_color(gpui::rgba(theme.on_accent_divider))
@@ -485,9 +477,6 @@ impl Shell {
     }
 
     /// "Run setup": one card per command, "+ Add command", "Start with the daemon", errors,
-        if let Some(picker) = &setup.picker {
-            return self.render_run_picker(picker, theme, cx);
-        }
     /// Cancel and Save (Ctrl+Enter).
     pub(crate) fn render_run_setup(
         &self,
@@ -496,6 +485,9 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         use run_setup::{Field, Focus};
+        if let Some(picker) = &setup.picker {
+            return self.render_run_picker(picker, theme, cx);
+        }
         let label = |text: &'static str| {
             div()
                 .text_size(font_size::META)
@@ -517,6 +509,14 @@ impl Shell {
                 placeholder,
                 setup.focus == Focus::Field(i, which),
                 theme,
+            )
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                if let Some(setup) = shell.run_setup.as_mut() {
+                    setup.focus = Focus::Field(i, which);
+                }
+                cx.notify();
+            }))
+        };
         // A field with "Browse…" beside it, which picks its value from the workspace.
         let browse = |cx: &mut Context<'_, Self>,
                       field: gpui::Stateful<gpui::Div>,
@@ -541,19 +541,10 @@ impl Shell {
                         })),
                 )
         };
-            )
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                if let Some(setup) = shell.run_setup.as_mut() {
-                    setup.focus = Focus::Field(i, which);
-                }
-                cx.notify();
-            }))
-        };
         let mut cards = div()
             .id("run-cards")
             .flex()
             .flex_col()
-                dir,
             .gap(px(space::S))
             .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
             .overflow_y_scroll();
@@ -562,22 +553,23 @@ impl Shell {
             let dir = field(cx, i, Field::Dir, "run-dir", ". or EA-BE");
             let dir = browse(
                 cx,
+                dir,
                 i,
-                env_file,
                 Field::Dir,
                 "run-dir-browse",
                 "Choose a folder in the workspace",
             );
             let command = field(cx, i, Field::Command, "run-command", "e.g. npm run dev");
-            let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev");
             let env_file = field(cx, i, Field::EnvFile, "run-env-file", "e.g. .env");
             let env_file = browse(
                 cx,
+                env_file,
                 i,
                 Field::EnvFile,
                 "run-env-file-browse",
                 "Choose a file in the command's folder",
             );
+            let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev");
             cards = cards.child(
                 // The id scopes the card's field and button ids (the same in every card).
                 div()
@@ -740,6 +732,14 @@ impl Shell {
                         disabled_button("run-save", "Saving…", theme, true)
                     } else {
                         button("run-save", "Save", theme, true)
+                            .tooltip(tooltip(theme, "Save the run commands", "Ctrl+Enter"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.save_run_setup(window, cx);
+                            }))
+                    }),
+            );
+        Self::modal_shade("run-setup-shade", panel, cx)
+    }
 
     /// The Run setup's folder / env file picker: the listed folder's entries (a folder opens,
     /// a file is picked), ↑ Up, Cancel (Esc) and, for a folder, "Use this folder" (Enter).
@@ -913,14 +913,6 @@ impl Shell {
                                     cx.notify();
                                 })),
                         )
-                    }),
-            );
-        Self::modal_shade("run-setup-shade", panel, cx)
-    }
-                            .tooltip(tooltip(theme, "Save the run commands", "Ctrl+Enter"))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.save_run_setup(window, cx);
-                            }))
                     }),
             );
         Self::modal_shade("run-setup-shade", panel, cx)

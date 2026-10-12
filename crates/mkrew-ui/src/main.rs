@@ -365,6 +365,8 @@ struct Shell {
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.
     workspace_switcher: bool,
+    /// The title bar's "+ New" dropdown is open.
+    new_menu: bool,
     /// The run tab to show once its `tab.updated` arrives (it may trail `project.run_start`).
     run_reveal: Option<Ulid>,
     /// Ports of live run sessions (SPEC §10).
@@ -432,8 +434,6 @@ struct Shell {
     inspector_width: f32,
     /// The edge was dragged since the last mouse-up: the width is saved when it ends.
     inspector_dragging: bool,
-    /// The Docs view of every workspace it was shown for.
-    docs: HashMap<Ulid, Docs>,
     /// The workspace sidebar's width in px, from `[ui] sidebar_width` and the drag.
     sidebar_width: f32,
     /// Its edge was dragged since the last mouse-up: the width is saved when it ends.
@@ -441,6 +441,8 @@ struct Shell {
     /// A divider between panes was dragged since the last mouse-up: the active tab's layout is
     /// saved when it ends.
     pane_dragging: bool,
+    /// The Docs view of every workspace it was shown for.
+    docs: HashMap<Ulid, Docs>,
     /// Focused while a Docs comment or reply draft takes keys (the draft stays on blur).
     comment_focus: FocusHandle,
     /// The Files view of every workspace it was shown for.
@@ -502,12 +504,12 @@ struct Shell {
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
     diff_wrap: bool,
+    /// `[features]` (ADR 0046): the optional modules switched on; re-read with the settings.
+    features: mkrew_core::settings::FeatureSettings,
     /// The open "Discard changes" confirmation of a Git view file (modal).
     git_discard: Option<git_view::Discard>,
     /// The open base menu of a Git view (modal).
     git_base: Option<BaseDialog>,
-    /// `[features]` (ADR 0046): the optional modules switched on; re-read with the settings.
-    features: mkrew_core::settings::FeatureSettings,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" / "Restore before turn" confirmation (modal; never open together
@@ -731,6 +733,6 @@ impl Render for Shell {
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
                     ),
             )
-            .child(self.render_status_bar(now, &theme, cx))
+            .child(self.render_status_bar(&theme, cx))
     }
 }

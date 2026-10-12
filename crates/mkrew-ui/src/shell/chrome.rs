@@ -59,9 +59,9 @@ impl Shell {
     }
 
     /// The title bar above everything (SPEC §10, ADR 0034): logo, workspace switcher,
-    /// branch chip and views on the left; a drag area; the theme toggle, History, "+ Agent",
-    /// "+ Shell" and Run; on Windows ─ □ ✕. Without a workspace only the logo, the drag area and
-    /// the controls show, so the window can always be moved and closed.
+    /// branch chip and views on the left; a drag area; the theme toggle, History (◷), "+ New"
+    /// (Agent / Shell) and Run; on Windows ─ □ ✕. Without a workspace only the logo, the drag
+    /// area and the controls show, so the window can always be moved and closed.
     pub(crate) fn render_title_bar(
         &self,
         shown: View,
@@ -147,37 +147,17 @@ impl Shell {
         if let Some(project_id) = workspace {
             right = right
                 .child(
-                    button("history", "History", theme, false)
-                        .flex_none()
+                    icon_button("history", "◷", theme)
                         .tooltip(tooltip(
                             theme,
-                            "Logs of the workspace's finished sessions",
+                            "History: logs of the workspace's finished sessions",
                             "",
                         ))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             shell.show_history(project_id, window, cx);
                         })),
                 )
-                .child(new_pane_button(
-                    "new-agent-pane",
-                    "+ Agent",
-                    SessionKind::Agent,
-                    self.keymap.label(Command::SplitAgent),
-                    self.starting_pane,
-                    now,
-                    theme,
-                    cx,
-                ))
-                .child(new_pane_button(
-                    "new-shell-pane",
-                    "+ Shell",
-                    SessionKind::Shell,
-                    self.keymap.label(Command::SplitShell),
-                    self.starting_pane,
-                    now,
-                    theme,
-                    cx,
-                ))
+                .child(self.render_new_button(now, theme, cx))
                 .child(self.render_run_button(project_id, theme, cx));
         }
         bar = bar.child(right.when(modal, |el| el.relative().child(inert_layer())));
@@ -431,6 +411,68 @@ impl Shell {
                             shell.add_workspace(window, cx);
                         })),
                 );
+            deferred(
+                anchored()
+                    .snap_to_window_with_margin(px(space::S))
+                    .child(div().pt(px(space::XS)).child(panel)),
+            )
+        });
+        div().child(button).children(menu).into_any_element()
+    }
+
+    /// "+ New ▾": a dropdown of "Agent" and "Shell" (each with its shortcut) starting a new pane
+    /// with the workspace's default agent or shell. While a pane starts it shows the loading
+    /// mark instead (one start at a time).
+    pub(crate) fn render_new_button(
+        &self,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        if let Some(kind) = self.starting_pane {
+            return starting_button("new-pane", kind, now, theme, false);
+        }
+        let button = button("new-pane", "+ New ▾", theme, false)
+            .flex_none()
+            .tooltip(tooltip(theme, "New agent or shell pane", ""))
+            // An open menu already closed on this mouse down (outside it): the click reopens it.
+            .on_click(cx.listener(|shell, _, _, cx| {
+                shell.new_menu = true;
+                cx.notify();
+            }));
+        let menu = (self.new_menu && !self.modal_open()).then(|| {
+            let rows = [
+                (
+                    "new-agent-pane",
+                    "Agent",
+                    SessionKind::Agent,
+                    Command::SplitAgent,
+                ),
+                (
+                    "new-shell-pane",
+                    "Shell",
+                    SessionKind::Shell,
+                    Command::SplitShell,
+                ),
+            ]
+            .map(|(id, label, kind, command)| {
+                menu_item(id.into(), theme)
+                    .child(div().flex_1().text_color(rgb(theme.text)).child(label))
+                    .child(kbd(self.keymap.label(command), theme, false))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.new_menu = false;
+                        // The title bar shows it in every view; the new pane is seen in Terminals.
+                        shell.show_view(View::Terminals, window, cx);
+                        shell.new_pane(kind, Axis::Vertical, window, cx);
+                    }))
+            });
+            let panel = menu_panel("new-pane-panel", theme)
+                .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
+                    shell.new_menu = false;
+                    cx.notify();
+                }))
+                .children(rows);
             deferred(
                 anchored()
                     .snap_to_window_with_margin(px(space::S))

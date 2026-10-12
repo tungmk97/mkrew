@@ -61,6 +61,19 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   file's `Browse…` starts in the card's folder and shows `.env` (git-ignored, muted); clicking it
   fills `.env` (or `config/.env`). Esc closes only the picker.
 
+### To verify — 2026-10-11 title bar / sidebar / status bar polish
+
+- [ ] **Title bar (dark + light):** History is a `◷` icon button (tooltip "History: …", opens the
+  dialog; glyph renders, not a box). "+ Agent" / "+ Shell" are one `+ New ▾` button: its dropdown
+  lists Agent and Shell with their shortcuts; each starts its pane (switching to Terminals); a click
+  outside, Esc-less shortcuts (Ctrl+Shift+P) and switching workspace close it. While a pane starts
+  the button reads `Starting agent` / `Starting shell` with the dots.
+- [ ] **Run color:** idle `▶ Run` and `▾` use the accent blue (the logo's), text readable in both
+  themes; the warning text color still shows on an exited command.
+- [ ] **Sidebar filter:** a muted `⌕` sits before `Filter sessions…` and before typed text; the
+  caret and Ctrl+A highlight are not under it.
+- [ ] **Status bar:** no elapsed time on the right for a focused agent; usage fields remain.
+
 ### To verify — 2026-10-11 gutter, graph, layouts (plan docs/superpowers/plans/2026-10-11-gutter-graph-layouts.md)
 
 - [ ] **Files change gutter (dark + light):** open a tracked file; add, change and delete lines →
@@ -140,9 +153,13 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 - [ ] **Setup:** run `setx GROQ_API_KEY gsk_…` in a terminal, then quit and restart Mkrew. In
   Windows Settings → Privacy → Microphone, "Let desktop apps access your microphone" is on.
 - [ ] **Composer:** open the composer (Ctrl+Shift+Enter) and press Ctrl+Shift+D. The status bar
-  shows `● 0:01 · Ctrl+Shift+D stops`, counting up. Say "Sửa lỗi đăng nhập rồi chạy test lại".
-  Press Ctrl+Shift+D: the status bar shows `◌ Transcribing…`. Then the Vietnamese text, with
-  diacritics, appears at the end of the draft and the status item disappears.
+  shows five bars and `0:01 · Ctrl+Shift+D stops`, counting up. Say "Sửa lỗi đăng nhập rồi chạy
+  test lại": the bars rise while you talk and sink to a flat line when you pause.
+  Press Ctrl+Shift+D: the status bar shows the three moving dots and `Transcribing`. Then the
+  Vietnamese text, with diacritics, appears at the end of the draft and the status item
+  disappears.
+- [ ] **Meter look:** the bars and dots read clearly in both dark and light themes, line up
+  with the status bar text, and the bar does not jump in height while recording.
 - [ ] **Accented English and mixed:** repeat with "Please refactor the login handler and add a
   test", then "Commit cái này rồi push lên branch main". English words stay English.
 - [ ] **Terminal:** focus an agent pane and dictate a sentence. It appears in the agent's input
@@ -162,7 +179,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   `model = "gpt-4o-mini-transcribe"` and `api_key_env = "OPENAI_API_KEY"` (with that variable
   set). Voice input works the same.
 - [ ] **Focus moved:** start dictating in the composer, stop, then click the Git file list while
-  `◌ Transcribing…` shows. Nothing is staged or toggled; the text is on the clipboard and the
+  `Transcribing` shows. Nothing is staged or toggled; the text is on the clipboard and the
   status bar says so.
 - [ ] **Broken settings:** put an invalid line in settings.toml, then press Ctrl+Shift+D. The
   status bar shows `✕ Voice: …` naming the file and line, and no recording starts.
@@ -250,7 +267,7 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 ### To verify — 2026-10-10 inbox: redesign (plan docs/superpowers/plans/2026-10-10-inbox-redesign.md)
 
 - [ ] **Run colors:** in light and dark, with a workspace that has two run commands:
-  - Idle: `▶ Run` and `▾` are green (text readable). Hover dims them slightly.
+  - Idle: `▶ Run` and `▾` are accent blue (text readable). Hover dims them slightly.
   - Running: `↻` is amber and `■` red; hovering each shows a faint amber / red fill and keeps the glyph color.
   - Open `▾`: the row `↻` is amber, `■` red, `▶` green; hovering shows the same tints (visible on the panel in both themes).
 
@@ -300,8 +317,8 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   hash; a new repo with no commit shows nothing; after `git commit` the hash changes without
   reopening the Git view.
 - [ ] **Status bar agent fields:** focus a claude / codex / omp pane: after a turn the bar shows
-  the context meter and `ctx N%`, `in … · out …`, cache and the model; the time counts up
-  (`working · 12s` in the pane header and `12s` in the bar agree, also at 1m and 1h 5m). A fresh
+  the context meter and `ctx N%`, `in … · out …`, cache and the model (no elapsed time; the pane
+  header's `working · 12s` still counts up). A fresh
   agent with no turn yet shows no usage fields at all (no `0`). A shell pane, and the Board / Docs
   / Files / Git views, show none. An agent whose profile has no `[usage]` shows no usage fields.
 - [ ] **Status bar redraw:** with Task Manager open and every pane idle, the app's CPU stays at

@@ -75,13 +75,11 @@ impl Shell {
             .when(self.modal_open(), |el| el.relative().child(inert_layer()))
     }
 
-    /// The focused agent's fields, in order: context meter, tokens, cache, model, elapsed.
-    /// Each is left out without data (never `0`): no usage entry yet, no window, no cache,
-    /// no model, a state without a time (`needs input`, `done`, `exited`).
+    /// The focused agent's fields, in order: context meter, tokens, cache, model. Each is left
+    /// out without data (never `0`): no usage entry yet, no window, no cache, no model.
     pub(crate) fn status_agent_fields(
         &self,
         session: &Session,
-        now: i64,
         theme: &Theme,
     ) -> Vec<gpui::AnyElement> {
         let text = |text: String| {
@@ -101,27 +99,6 @@ impl Shell {
             fields.extend(shown.tokens.map(text));
             fields.extend(shown.cache.map(text));
             fields.extend(shown.model.map(text));
-        }
-        // The pane header's time (`status::time`), so the two never disagree.
-        if let Some(time) = status::time(session.state, session.state_changed_at, now) {
-            fields.push(
-                div()
-                    .id("status-elapsed")
-                    .flex_none()
-                    .text_color(rgb(theme.text_muted))
-                    .tooltip(tooltip(
-                        theme,
-                        &status::hover(
-                            session.state,
-                            session.state_source,
-                            session.state_changed_at,
-                            now,
-                        ),
-                        "",
-                    ))
-                    .child(time)
-                    .into_any_element(),
-            );
         }
         fields
     }

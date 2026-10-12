@@ -142,14 +142,24 @@ impl Shell {
                         filter.all_selected(),
                         theme,
                     )
+                    // The search mark sits in the padding before the text.
+                    .relative()
+                    .pl(px(space::XL))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .left(px(space::S))
+                            .flex()
+                            .items_center()
+                            .text_color(rgb(theme.text_muted))
+                            .child("⌕"),
+                    )
                     .track_focus(&self.filter_focus)
                     .on_key_down(cx.listener(Self::filter_key_down))
                     .when(filter_focused, |el| {
-                        el.relative().child(self.typing(
-                            &self.filter_focus,
-                            Self::filter_key_down,
-                            cx,
-                        ))
+                        el.child(self.typing(&self.filter_focus, Self::filter_key_down, cx))
                     }),
                 )
                 .child(
@@ -263,17 +273,6 @@ impl Shell {
                 .children(list)
                 .into_any_element()
         };
-        // The header and the filter stay in view; the workspace list scrolls below them.
-        div()
-            .flex_none()
-            .w(px(self.sidebar_width))
-            .relative()
-            .h_full()
-            .flex()
-            .flex_col()
-            .bg(rgb(theme.sidebar))
-            .border_r(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
         let divider = theme.divider;
         let grip = div()
             .id("sidebar-grip")
@@ -304,6 +303,17 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(|shell, _, _, _| shell.end_sidebar_drag()),
             );
+        // The header and the filter stay in view; the workspace list scrolls below them.
+        div()
+            .flex_none()
+            .w(px(self.sidebar_width))
+            .relative()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(theme.sidebar))
+            .border_r(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .child(header)
             .children(controls)
@@ -318,6 +328,7 @@ impl Shell {
                     .children(errors.into_iter().flatten())
                     .child(body),
             )
+            .child(grip)
     }
 
     /// The compact rail (Toggle compact sidebar): per workspace its avatar, per open workspace
@@ -328,7 +339,6 @@ impl Shell {
         &self,
         now: i64,
         theme: &Theme,
-            .child(grip)
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         let shown = self.focused_session();
@@ -417,14 +427,9 @@ impl Shell {
 
     /// The status bar (SPEC §10): sidebar toggles (hide, compact), Inbox state, git HEAD; then the focused agent
     /// pane's usage. Everything is read from state the shell already keeps: it never asks the
-    /// daemon and has no timer (its elapsed time refreshes with the `STATUS_TICK` redraw).
+    /// daemon and has no timer.
     /// The last child is the right-panel toggle (`inspector_toggle`).
-    pub(crate) fn render_status_bar(
-        &self,
-        now: i64,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::Div {
+    pub(crate) fn render_status_bar(&self, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
         let hover = theme.hover;
         // Behind a dialog the buttons do nothing, like the keys (`Shell::run`).
         let modal = self.modal_open();
@@ -512,24 +517,37 @@ impl Shell {
                     .child(label)
             });
 
-        // Voice input (§20G): recording time, transcribing, or the last outcome.
+        // Voice input (§20G): level meter and recording time, transcribing, or the last outcome.
         let voice_status = match &self.voice {
             voice::State::Idle => None,
-            voice::State::Recording { since, .. } => {
+            voice::State::Recording { since, level, .. } => {
                 let seconds = since.elapsed().as_secs();
-                Some(notice(
-                    theme.status_needs_input,
-                    format!(
-                        "● {}:{:02} · {} stops",
-                        seconds / 60,
-                        seconds % 60,
-                        self.keymap.label(Command::VoiceInput)
-                    ),
-                ))
+                let color = theme.status_needs_input;
+                Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::XS))
+                        .child(voice_meter(level.meter(), rgb(color)))
+                        .child(notice(
+                            color,
+                            format!(
+                                "{}:{:02} · {} stops",
+                                seconds / 60,
+                                seconds % 60,
+                                self.keymap.label(Command::VoiceInput)
+                            ),
+                        )),
+                )
             }
-            voice::State::Transcribing => {
-                Some(notice(theme.text_muted, "◌ Transcribing…".to_owned()))
-            }
+            voice::State::Transcribing => Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .child(working_dots(status::now_ms(), rgb(theme.text_muted)))
+                    .child(notice(theme.text_muted, "Transcribing".to_owned())),
+            ),
             voice::State::Message(text) => Some(notice(theme.text_muted, text.clone())),
         };
 
@@ -537,7 +555,7 @@ impl Shell {
             .focused_session()
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
             .filter(|session| session.kind == SessionKind::Agent)
-            .map(|session| self.status_agent_fields(session, now, theme))
+            .map(|session| self.status_agent_fields(session, theme))
             .unwrap_or_default();
 
         div()

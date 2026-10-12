@@ -33,12 +33,33 @@ impl Shell {
                 return;
             }
         };
-        let (stop, clip) = voice::record(Duration::from_secs(u64::from(settings.max_seconds)));
-        self.voice = voice::State::Recording {
-            since: Instant::now(),
-            stop,
-        };
+        let (stop, level, clip) =
+            voice::record(Duration::from_secs(u64::from(settings.max_seconds)));
+        let since = Instant::now();
+        self.voice = voice::State::Recording { since, stop, level };
         cx.notify();
+        // The level meter moves with the voice: redraw often, only while this recording lasts.
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(theme::VOICE_METER_TICK)
+                    .await;
+                let recording = this.update_in(cx, |shell, window, cx| {
+                    let on = matches!(
+                        &shell.voice,
+                        voice::State::Recording { since: started, .. } if *started == since
+                    );
+                    if on && window.is_visible() {
+                        cx.notify();
+                    }
+                    on
+                });
+                if !matches!(recording, Ok(true)) {
+                    return;
+                }
+            }
+        })
+        .detach();
         cx.spawn_in(window, async move |this, cx| {
             let wav = clip
                 .recv()

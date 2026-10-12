@@ -1,6 +1,7 @@
 //! Voice input capture (SPEC §20G): the default microphone on its own thread, mixed to mono,
 //! and the 16-bit WAV sent for speech to text.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -17,6 +18,10 @@ pub const MIN_LEVEL: f32 = 0.01;
 /// A clip with less sound than this (in frames at or above `MIN_LEVEL`) is not sent: one key
 /// click (the shortcut press itself) must not pass for speech.
 pub const MIN_VOICED_SECONDS: f32 = 0.15;
+/// The level meter is empty at this loudness (dBFS) and full at `METER_FULL_DB`: the range of
+/// normal speech into a laptop or headset microphone.
+const METER_FLOOR_DB: f32 = -45.0;
+const METER_FULL_DB: f32 = -15.0;
 
 /// The shell's voice input.
 #[derive(Default)]
@@ -27,6 +32,7 @@ pub enum State {
     Recording {
         since: Instant,
         stop: Stop,
+        level: Level,
     },
     Transcribing,
     /// The last outcome worth showing (an error, or where the text went); the next start
@@ -37,6 +43,35 @@ pub enum State {
 /// Ends the recording when dropped (the capture thread waits on the other end).
 pub struct Stop {
     _alive: mpsc::Sender<()>,
+}
+
+/// The microphone's loudness right now (RMS of the last block it delivered), for the meter.
+#[derive(Clone, Default)]
+pub struct Level(Arc<AtomicU32>);
+
+impl Level {
+    fn set(&self, rms: f32) {
+        self.0.store(rms.to_bits(), Ordering::Relaxed);
+    }
+
+    /// How full the meter is, 0..=1.
+    pub fn meter(&self) -> f32 {
+        meter(f32::from_bits(self.0.load(Ordering::Relaxed)))
+    }
+}
+
+/// Maps an RMS level to 0..=1 on a dB scale (loudness is heard logarithmically).
+pub fn meter(rms: f32) -> f32 {
+    let db = 20.0 * rms.max(f32::MIN_POSITIVE).log10();
+    ((db - METER_FLOOR_DB) / (METER_FULL_DB - METER_FLOOR_DB)).clamp(0.0, 1.0)
+}
+
+/// Root mean square of `samples` (0 for none).
+fn rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
 }
 
 /// A finished recording: mono samples in -1..=1 at the microphone's rate.
@@ -56,10 +91,7 @@ impl Clip {
         let voiced: usize = self
             .samples
             .chunks(frame)
-            .filter(|frame| {
-                let energy = frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32;
-                energy.sqrt() >= MIN_LEVEL
-            })
+            .filter(|frame| rms(frame) >= MIN_LEVEL)
             .map(<[f32]>::len)
             .sum();
         if (voiced as f32 / self.rate.max(1) as f32) < MIN_VOICED_SECONDS {
@@ -69,26 +101,29 @@ impl Clip {
     }
 }
 
-/// Starts recording the default microphone until `Stop` is dropped or `max` passes. The clip
-/// (or why there is none) arrives once on the returned channel.
-pub fn record(max: Duration) -> (Stop, async_channel::Receiver<Result<Clip>>) {
+/// Starts recording the default microphone until `Stop` is dropped or `max` passes. `Level`
+/// follows the loudness while it records; the clip (or why there is none) arrives once on the
+/// returned channel.
+pub fn record(max: Duration) -> (Stop, Level, async_channel::Receiver<Result<Clip>>) {
+    let level = Level::default();
+    let meter = level.clone();
     let (alive, stopped) = mpsc::channel::<()>();
     let (done, clip) = async_channel::bounded(1);
     let failed = done.clone();
     let spawned = std::thread::Builder::new()
         .name("mkrew-voice".into())
         .spawn(move || {
-            let _ = done.send_blocking(capture(&stopped, max));
+            let _ = done.send_blocking(capture(&stopped, max, &meter));
         });
     if let Err(error) = spawned {
         let _ = failed.try_send(Err(
             anyhow!(error).context("cannot start the microphone thread")
         ));
     }
-    (Stop { _alive: alive }, clip)
+    (Stop { _alive: alive }, level, clip)
 }
 
-fn capture(stopped: &mpsc::Receiver<()>, max: Duration) -> Result<Clip> {
+fn capture(stopped: &mpsc::Receiver<()>, max: Duration, level: &Level) -> Result<Clip> {
     let device = cpal::default_host()
         .default_input_device()
         .context("no microphone found")?;
@@ -100,8 +135,8 @@ fn capture(stopped: &mpsc::Receiver<()>, max: Duration) -> Result<Clip> {
     let config = supported.config();
     let samples = Arc::new(Mutex::new(Vec::with_capacity(rate as usize * 30)));
     let stream = match supported.sample_format() {
-        cpal::SampleFormat::F32 => input::<f32>(&device, config, channels, samples.clone()),
-        cpal::SampleFormat::I16 => input::<i16>(&device, config, channels, samples.clone()),
+        cpal::SampleFormat::F32 => input::<f32>(&device, config, channels, &samples, level),
+        cpal::SampleFormat::I16 => input::<i16>(&device, config, channels, &samples, level),
         other => bail!("unsupported microphone format {other:?}"),
     }
     .context("cannot open the microphone")?;
@@ -121,17 +156,21 @@ fn input<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     channels: usize,
-    sink: Arc<Mutex<Vec<f32>>>,
+    sink: &Arc<Mutex<Vec<f32>>>,
+    level: &Level,
 ) -> Result<cpal::Stream, cpal::Error>
 where
     T: cpal::SizedSample,
     f32: FromSample<T>,
 {
+    let (sink, level) = (sink.clone(), level.clone());
     device.build_input_stream(
         config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
             if let Ok(mut out) = sink.lock() {
+                let start = out.len();
                 push_mono(data, channels, &mut out);
+                level.set(rms(&out[start..]));
             }
         },
         |error| tracing::warn!("microphone: {error}"),
@@ -213,6 +252,18 @@ mod tests {
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
             .collect();
         assert_eq!(pcm, [0, i16::MAX, -i16::MAX]);
+    }
+
+    #[test]
+    fn meter_spans_speech_on_a_db_scale() {
+        assert_eq!(meter(0.0), 0.0, "silence is empty");
+        assert_eq!(meter(1.0), 1.0, "full scale is full");
+        // -45 dBFS empty, -15 dBFS full, -30 dBFS half way.
+        assert!(meter(10f32.powf(-45.0 / 20.0)) < 1e-4);
+        assert!((meter(10f32.powf(-15.0 / 20.0)) - 1.0).abs() < 1e-4);
+        assert!((meter(10f32.powf(-30.0 / 20.0)) - 0.5).abs() < 1e-4);
+        // The silence gate (MIN_LEVEL, -40 dBFS) shows as a sliver, not as speech.
+        assert!(meter(MIN_LEVEL) < 0.2);
     }
 
     #[test]

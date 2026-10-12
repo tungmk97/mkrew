@@ -600,39 +600,6 @@ impl Shell {
     }
 }
 
-/// A quiet button starting a new agent or shell pane; `keys` = its shortcut label. While a
-/// pane of `starting` kind is starting, that kind's button shows the loading mark and the other
-/// fades out (one start at a time).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn new_pane_button(
-    id: &'static str,
-    label: &'static str,
-    kind: SessionKind,
-    keys: String,
-    starting: Option<SessionKind>,
-    now: i64,
-    theme: &Theme,
-    cx: &mut Context<'_, Shell>,
-) -> gpui::AnyElement {
-    match starting {
-        Some(started) if started == kind => return starting_button(id, kind, now, theme, false),
-        Some(_) => return disabled_button(id, label, theme, false).into_any_element(),
-        None => {}
-    }
-    let tip = match kind {
-        SessionKind::Agent => "New pane with the workspace's default agent",
-        SessionKind::Shell => "New pane with the workspace's default shell",
-    };
-    button(id, label, theme, false)
-        .tooltip(tooltip(theme, tip, keys))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            // The title bar shows it in every view; the new pane is seen in Terminals.
-            shell.show_view(View::Terminals, window, cx);
-            shell.new_pane(kind, Axis::Vertical, window, cx);
-        }))
-        .into_any_element()
-}
-
 /// The button of a pane being started: "Starting agent" with the `working` dots, no click.
 pub(crate) fn starting_button(
     id: &'static str,
@@ -811,6 +778,39 @@ pub(crate) fn pane_header(
                 ))
                 .child(status_mark(state, now, theme))
                 .child(pill),
+        )
+        .child(title)
+        .children(conflict.map(|badge| {
+            badge
+                .flex_none()
+                .max_w(relative(theme::PANE_CONFLICT_MAX_FRACTION))
+        }))
+        .when(queued > 0, |el| {
+            el.child(
+                div()
+                    .flex_none()
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("⧗ {queued} queued")),
+            )
+        })
+        .children(context.map(|share| {
+            div()
+                .id(SharedString::from(format!("pane-context-{}", session.id)))
+                .flex_none()
+                .text_color(rgb(if share.warning {
+                    theme.status_needs_input
+                } else {
+                    theme.text_muted
+                }))
+                .tooltip(tooltip(theme, &share.hover, ""))
+                .child(if share.warning {
+                    format!("⚠ {}", share.label)
+                } else {
+                    share.label
+                })
+        }))
+        .children(turns)
+}
 
 fn divider_cursor(axis: Axis) -> CursorStyle {
     match axis {
@@ -862,37 +862,4 @@ fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) ->
                 ),
         )
         .into_any_element()
-}
-        )
-        .child(title)
-        .children(conflict.map(|badge| {
-            badge
-                .flex_none()
-                .max_w(relative(theme::PANE_CONFLICT_MAX_FRACTION))
-        }))
-        .when(queued > 0, |el| {
-            el.child(
-                div()
-                    .flex_none()
-                    .text_color(rgb(theme.text_muted))
-                    .child(format!("⧗ {queued} queued")),
-            )
-        })
-        .children(context.map(|share| {
-            div()
-                .id(SharedString::from(format!("pane-context-{}", session.id)))
-                .flex_none()
-                .text_color(rgb(if share.warning {
-                    theme.status_needs_input
-                } else {
-                    theme.text_muted
-                }))
-                .tooltip(tooltip(theme, &share.hover, ""))
-                .child(if share.warning {
-                    format!("⚠ {}", share.label)
-                } else {
-                    share.label
-                })
-        }))
-        .children(turns)
 }

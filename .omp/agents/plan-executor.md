@@ -14,3 +14,4 @@ The task message gives the plan path and any extra constraints.
 - You cannot ask the human. When one of the skill's four stop conditions hits, stop and report
   the blocker, the ledger path, and the last finished task; the parent session asks the human.
 - Report at the end: tasks done, commits, verification run, final-review result.
+- Every turn ends with a tool call. Finish by calling `yield` with that report in `data`. A text-only last turn counts as idle and costs an extra turn; a thinking-only one is an empty result.
