@@ -1,19 +1,24 @@
 //! One browser WebSocket ↔ one daemon connection (ADR 0052). The browser speaks SPEC §7 JSON
 //! in text messages. The relay greets the daemon itself, refuses `hello` and `session.resize`
 //! (a phone width would reflow the agent), adds `ansi` (the `mk attach` painter) next to every
-//! screen snapshot, and sends terminal output as binary messages: the 26-character session id,
-//! then the raw PTY bytes.
+//! screen snapshot, sends terminal output as binary messages (the 26-character session id, then
+//! the raw PTY bytes), and sends the newest log bytes of a session as output just before the
+//! reply to a `session.history` request (the page replays ended sessions).
 
+use std::collections::HashMap;
 use std::io::ErrorKind;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{anyhow, bail};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use interprocess::local_socket::tokio::{RecvHalf, SendHalf, Stream, prelude::*};
+use mkrew_core::log_tail::read_tail;
 use mkrew_protocol::paint::paint;
 use mkrew_protocol::{
     ClientKind, ErrorCode, Event, Frame, FrameDecoder, HelloParams, HelloResult, Message, Outcome,
-    PROTOCOL_VERSION, Request, ResponseError, ScreenSnapshot, encode,
+    PROTOCOL_VERSION, Request, ResponseError, ScreenSnapshot, SessionHistory, encode,
 };
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -23,6 +28,7 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use ulid::Ulid;
 
 const READ_BUFFER: usize = 64 * 1024;
 /// Messages waiting for a slow browser. When full the relay stops reading the daemon, so the
@@ -30,6 +36,12 @@ const READ_BUFFER: usize = 64 * 1024;
 const OUTBOX: usize = 64;
 /// Browser ids start at 1.
 const HELLO_ID: u64 = 0;
+/// Newest log bytes the page replays for an ended session (the desktop History dialog shows 2 MiB).
+const TAIL_BYTES: u64 = 512 * 1024;
+
+/// Browser `session.history` requests waiting for their reply: id → session. The relay sends the
+/// log's tail as output just before that reply, so the page can replay an ended session.
+type Tails = Arc<Mutex<HashMap<u64, Ulid>>>;
 
 type Ws = WebSocketStream<TcpStream>;
 
@@ -46,12 +58,13 @@ pub async fn relay(ws: Ws, daemon: Daemon) -> anyhow::Result<()> {
     let (mut sink, stream) = ws.split();
     let (out, mut outbox) = mpsc::channel::<WsMessage>(OUTBOX);
     let replies = out.clone();
+    let tails = Tails::default();
     // Each loop runs until its side closes; none is cancelled and resumed (racing single pipe
     // reads in `select!` loses data on Windows, see mkrew-ui `client.rs`).
     let ended = tokio::select! {
         r = write_browser(&mut sink, &mut outbox) => r,
-        r = daemon_to_browser(rx, decoder, out) => r,
-        r = browser_to_daemon(stream, tx, replies) => r,
+        r = daemon_to_browser(rx, decoder, out, Arc::clone(&tails)) => r,
+        r = browser_to_daemon(stream, tx, replies, tails) => r,
     };
     let last = match &ended {
         Ok(()) => WsMessage::Close(None),
@@ -75,10 +88,31 @@ async fn daemon_to_browser(
     mut rx: RecvHalf,
     mut decoder: FrameDecoder,
     out: mpsc::Sender<WsMessage>,
+    tails: Tails,
 ) -> anyhow::Result<()> {
     let mut buf = vec![0u8; READ_BUFFER];
     loop {
-        while let Some(frame) = decoder.next_frame()? {
+        while let Some(mut frame) = decoder.next_frame()? {
+            if let Some((id, session_id, files)) = wanted_tail(&frame, &tails) {
+                match tokio::task::spawn_blocking(move || read_tail(&files, TAIL_BYTES)).await? {
+                    Ok(tail) => {
+                        let output = Frame::Output {
+                            session_id,
+                            data: tail.bytes,
+                        };
+                        out.send(browser_message(output)?).await?;
+                    }
+                    Err(e) => {
+                        frame = Frame::Message(Message::Response {
+                            id,
+                            outcome: Outcome::error(
+                                ErrorCode::Internal,
+                                format!("Cannot read the session log: {e}"),
+                            ),
+                        });
+                    }
+                }
+            }
             out.send(browser_message(frame)?).await?;
         }
         let n = rx.read(&mut buf).await?;
@@ -93,13 +127,23 @@ async fn browser_to_daemon(
     mut stream: SplitStream<Ws>,
     mut tx: SendHalf,
     replies: mpsc::Sender<WsMessage>,
+    tails: Tails,
 ) -> anyhow::Result<()> {
     while let Some(message) = stream.next().await {
         // A phone that sleeps or loses signal drops the TCP link: that is it leaving, not a fault.
         let Ok(message) = message else { break };
         match message {
             WsMessage::Text(text) => match daemon_request(&text) {
-                FromBrowser::Forward(bytes) => tx.write_all(&bytes).await?,
+                FromBrowser::Forward { frame, tail } => {
+                    // Recorded before the request goes out: its reply cannot overtake it.
+                    if let Some((id, session_id)) = tail {
+                        tails
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(id, session_id);
+                    }
+                    tx.write_all(&frame).await?;
+                }
                 FromBrowser::Reply(reply) => replies.send(WsMessage::text(reply)).await?,
                 FromBrowser::Ignore => {}
             },
@@ -160,8 +204,12 @@ pub async fn open_daemon(socket: &str) -> anyhow::Result<Daemon> {
 /// What a browser text message becomes.
 #[derive(Debug, PartialEq, Eq)]
 pub enum FromBrowser {
-    /// An encoded §7 frame for the daemon.
-    Forward(Vec<u8>),
+    /// An encoded §7 frame for the daemon; `tail` = (id, session) of a `session.history`
+    /// request, whose reply gets the log's tail in front.
+    Forward {
+        frame: Vec<u8>,
+        tail: Option<(u64, Ulid)>,
+    },
     /// An error response for the browser (same id).
     Reply(String),
     /// Not JSON, or no id to answer.
@@ -190,8 +238,19 @@ pub fn daemon_request(text: &str) -> FromBrowser {
             request: Request::SessionResize(_),
             ..
         }) => refuse("the web client never resizes a session".into()),
-        Ok(message @ Message::Request { .. }) => encode(&Frame::Message(message))
-            .map_or_else(|e| refuse(e.to_string()), FromBrowser::Forward),
+        Ok(message @ Message::Request { .. }) => {
+            let tail = match &message {
+                Message::Request {
+                    id,
+                    request: Request::SessionHistory(params),
+                } => Some((*id, params.session_id)),
+                _ => None,
+            };
+            encode(&Frame::Message(message)).map_or_else(
+                |e| refuse(e.to_string()),
+                |frame| FromBrowser::Forward { frame, tail },
+            )
+        }
         Ok(_) => refuse("only requests are accepted".into()),
         Err(e) => refuse(format!("invalid request: {e}")),
     }
@@ -206,6 +265,23 @@ pub fn browser_message(frame: Frame) -> serde_json::Result<WsMessage> {
         }
         Frame::Message(message) => WsMessage::text(json_with_ansi(&message)?),
     })
+}
+
+/// The (id, session, log files) of a reply to a browser `session.history` request. Any reply
+/// with a waiting id clears it; only a successful one asks for the tail.
+fn wanted_tail(frame: &Frame, tails: &Tails) -> Option<(u64, Ulid, Vec<PathBuf>)> {
+    let Frame::Message(Message::Response { id, outcome }) = frame else {
+        return None;
+    };
+    let session_id = tails
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(id)?;
+    let Outcome::Result(result) = outcome else {
+        return None;
+    };
+    let history = SessionHistory::deserialize(result).ok()?;
+    Some((*id, session_id, history.files))
 }
 
 /// The message as JSON; a response holding a `snapshot` (e.g. `session.attach`) and a
@@ -291,7 +367,11 @@ mod tests {
     #[test]
     fn forwards_requests_as_frames() {
         let text = r#"{"type":"request","id":3,"method":"session.list","params":{}}"#;
-        let FromBrowser::Forward(bytes) = daemon_request(text) else {
+        let FromBrowser::Forward {
+            frame: bytes,
+            tail: None,
+        } = daemon_request(text)
+        else {
             panic!("not forwarded");
         };
         let mut decoder = FrameDecoder::new();
@@ -303,6 +383,45 @@ mod tests {
                 request: Request::SessionList(SessionListParams::default()),
             }))
         );
+    }
+
+    #[test]
+    fn history_requests_ask_for_the_log_tail() {
+        let session_id = Ulid::new();
+        let text = format!(
+            r#"{{"type":"request","id":9,"method":"session.history","params":{{"session_id":"{session_id}"}}}}"#
+        );
+        let FromBrowser::Forward { tail, .. } = daemon_request(&text) else {
+            panic!("not forwarded");
+        };
+        assert_eq!(tail, Some((9, session_id)));
+        let list = r#"{"type":"request","id":3,"method":"session.list","params":{}}"#;
+        assert!(matches!(
+            daemon_request(list),
+            FromBrowser::Forward { tail: None, .. }
+        ));
+    }
+
+    #[test]
+    fn a_history_reply_names_the_files_once() {
+        let session_id = Ulid::new();
+        let tails = Tails::default();
+        tails
+            .lock()
+            .unwrap()
+            .extend([(9, session_id), (10, session_id)]);
+        let reply = |id, outcome| Frame::Message(Message::Response { id, outcome });
+        let files = serde_json::json!({ "files": ["/x/s.log"] });
+        assert_eq!(
+            wanted_tail(&reply(9, Outcome::Result(files.clone())), &tails),
+            Some((9, session_id, vec![PathBuf::from("/x/s.log")]))
+        );
+        // Answered: a later reply with that id is passed through as is.
+        assert_eq!(wanted_tail(&reply(9, Outcome::Result(files)), &tails), None);
+        // An error reply is passed through, and its id forgotten.
+        let gone = Outcome::error(ErrorCode::NotFound, "gone");
+        assert_eq!(wanted_tail(&reply(10, gone), &tails), None);
+        assert!(tails.lock().unwrap().is_empty());
     }
 
     #[test]
