@@ -41,7 +41,7 @@ impl Shell {
             );
         let header = header.when(connected && self.sidebar.is_empty(), |header| {
             header.child(
-                icon_button("add-workspace", "+", theme)
+                icon_button("add-workspace", Icon::Plus, theme)
                     .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.add_workspace(window, cx);
@@ -57,7 +57,7 @@ impl Shell {
                     .gap(px(space::XS))
                     .when(idle_agents > 0, |el| {
                         el.child(
-                            icon_button("remove-idle-agents", "⌫", theme)
+                            icon_button("remove-idle-agents", Icon::Delete, theme)
                                 .tooltip(tooltip(
                                     theme,
                                     &format!("Remove idle agents ({idle_agents})"),
@@ -71,7 +71,11 @@ impl Shell {
                     .child(
                         icon_button(
                             "collapse-workspaces",
-                            if any_open { "▾" } else { "▸" },
+                            if any_open {
+                                Icon::ChevronDown
+                            } else {
+                                Icon::ChevronRight
+                            },
                             theme,
                         )
                         .tooltip(tooltip(
@@ -89,7 +93,7 @@ impl Shell {
                         })),
                     )
                     .child(
-                        icon_button("add-workspace", "+", theme)
+                        icon_button("add-workspace", Icon::Plus, theme)
                             .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.add_workspace(window, cx);
@@ -350,7 +354,7 @@ impl Shell {
             .justify_center()
             .when(self.connection.is_some(), |header| {
                 header.child(
-                    icon_button("add-workspace", "+", theme)
+                    icon_button("add-workspace", Icon::Plus, theme)
                         .tooltip(tooltip(
                             theme,
                             "Add workspace",

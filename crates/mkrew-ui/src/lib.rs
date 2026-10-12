@@ -41,6 +41,7 @@ pub mod git_view;
 pub mod gutter;
 pub mod highlight;
 pub mod history;
+pub mod icons;
 pub mod ime;
 pub mod inbox;
 pub mod inspector;

@@ -117,7 +117,7 @@ impl Shell {
                     div()
                         .flex_none()
                         .child(
-                            icon_button("git-repos-menu", "▾", theme)
+                            icon_button("git-repos-menu", Icon::ChevronDown, theme)
                                 .tooltip(tooltip(theme, "Repositories", ""))
                                 // An open menu already closed on this mouse down (outside it):
                                 // the click reopens it.
