@@ -995,3 +995,46 @@ fn task_params_default_and_tell_missing_from_null() {
     let merge: TaskConfirmParams = serde_json::from_value(json!({"task_id": id})).unwrap();
     assert!(!merge.confirm);
 }
+
+#[test]
+fn daemon_status_carries_the_phone_access_state() {
+    let status = DaemonStatusResult {
+        daemon_version: "0.1.4".into(),
+        protocol_version: crate::PROTOCOL_VERSION,
+        pid: 7,
+        started_at: 1,
+        sessions: 0,
+        settings_error: None,
+        web: WebStatus {
+            enabled: true,
+            running: false,
+            error: Some("Only one usage of each socket address is normally permitted".into()),
+        },
+    };
+    let value = serde_json::to_value(&status).unwrap();
+    assert_eq!(
+        value["web"],
+        json!({
+            "enabled": true,
+            "running": false,
+            "error": "Only one usage of each socket address is normally permitted"
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<DaemonStatusResult>(value).unwrap(),
+        status
+    );
+
+    // No error: the key is absent, like `settings_error`.
+    assert_eq!(
+        serde_json::to_value(WebStatus::default()).unwrap(),
+        json!({ "enabled": false, "running": false })
+    );
+
+    // A reply without `web` (a daemon that predates it) still decodes, as "off".
+    let old = json!({
+        "daemon_version": "0.1.3", "protocol_version": 39, "pid": 7, "started_at": 1, "sessions": 0
+    });
+    let decoded: DaemonStatusResult = serde_json::from_value(old).unwrap();
+    assert_eq!(decoded.web, WebStatus::default());
+}

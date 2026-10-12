@@ -26,6 +26,8 @@ pub struct Settings {
     pub voice: VoiceSettings,
     /// `[features]`: optional modules, all off by default (ADR 0046).
     pub features: FeatureSettings,
+    /// `[web]`: phone access (ADR 0053).
+    pub web: WebSettings,
 }
 
 /// `[features]` (ADR 0046): modules that are off unless switched on.
@@ -36,6 +38,14 @@ pub struct FeatureSettings {
     pub docs: bool,
     /// Turn snapshots and the agent pane's "Turns…" dialog (SPEC §20C.1–§20C.2).
     pub turns: bool,
+}
+
+/// `[web]` (ADR 0053): the daemon runs `mk web` while `enabled` is true. The Phone access
+/// dialog writes it; the port is fixed (`mkrew_core::tailscale::WEB_PORT`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebSettings {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -253,21 +263,22 @@ impl Default for UiSettings {
     }
 }
 
-/// `src` with `[ui] <key> = <value>` (`value` is a TOML literal such as `"dark"` or `320`):
-/// replaces an uncommented `<key> =` line inside `[ui]`, else inserts one right after the `[ui]`
-/// header, else appends a `[ui]` section. Everything else (comments, order, other keys, CRLF
-/// line ends) is kept byte for byte. Forms this does not recognise (`ui.theme = …`, an inline
-/// `ui = {…}`) can yield invalid TOML: callers parse the result before writing it.
-pub fn set_ui_value(src: &str, key: &str, value: &str) -> String {
+/// `src` with `[<section>] <key> = <value>` (`value` is a TOML literal such as `"dark"`, `320`
+/// or `true`): replaces an uncommented `<key> =` line inside the section, else inserts one right
+/// after the section header, else appends the section. Everything else (comments, order, other
+/// keys, CRLF line ends) is kept byte for byte. Forms this does not recognise (`ui.theme = …`,
+/// an inline `ui = {…}`) can yield invalid TOML: callers parse the result before writing it.
+fn set_value(src: &str, section: &str, key: &str, value: &str) -> String {
     let eol = if src.contains("\r\n") { "\r\n" } else { "\n" };
     let line = format!("{key} = {value}");
+    let header_text = format!("[{section}]");
     // `[ui]`, `[ ui ]` and `[ui] # note` are the same table header.
-    let is_ui_header = |l: &&str| {
+    let is_header = |l: &&str| {
         let code = l.split('#').next().unwrap_or_default();
-        code.split_whitespace().collect::<String>() == "[ui]"
+        code.split_whitespace().collect::<String>() == header_text
     };
     let mut lines: Vec<&str> = src.lines().collect();
-    let Some(header) = lines.iter().position(is_ui_header) else {
+    let Some(header) = lines.iter().position(is_header) else {
         let sep = if src.is_empty() || src.ends_with(&format!("{eol}{eol}")) {
             ""
         } else if src.ends_with('\n') {
@@ -275,7 +286,7 @@ pub fn set_ui_value(src: &str, key: &str, value: &str) -> String {
         } else {
             "\n\n"
         };
-        return format!("{src}{sep}[ui]{eol}{line}{eol}");
+        return format!("{src}{sep}{header_text}{eol}{line}{eol}");
     };
     let end = lines[header + 1..]
         .iter()
@@ -298,10 +309,10 @@ pub fn set_ui_value(src: &str, key: &str, value: &str) -> String {
     out
 }
 
-/// Saves `[ui] <key> = <value>` in `path` (the template when it is missing) with
-/// [`set_ui_value`]. Writes nothing when the file does not parse or the edit would not parse
-/// (an unusual `ui` form, a value of the wrong type), so a good file never turns bad.
-pub fn write_ui_value(path: &Path, key: &str, value: &str) -> Result<(), SettingsError> {
+/// Saves `[<section>] <key> = <value>` in `path` (the template when it is missing) with
+/// [`set_value`]. Writes nothing when the file does not parse or the edit would not parse
+/// (an unusual section form, a value of the wrong type), so a good file never turns bad.
+fn write_value(path: &Path, section: &str, key: &str, value: &str) -> Result<(), SettingsError> {
     let io_error = |e: io::Error| SettingsError {
         file: path.to_path_buf(),
         line_col: None,
@@ -313,9 +324,21 @@ pub fn write_ui_value(path: &Path, key: &str, value: &str) -> Result<(), Setting
         Err(e) => return Err(io_error(e)),
     };
     parse(path, &src)?;
-    let out = set_ui_value(&src, key, value);
+    let out = set_value(&src, section, key, value);
     parse(path, &out)?;
     std::fs::write(path, out).map_err(io_error)
+}
+
+/// Saves `[ui] <key> = <value>` (`value` is a TOML literal: `"split"` with quotes, or `320`);
+/// see [`write_value`].
+pub fn write_ui_value(path: &Path, key: &str, value: &str) -> Result<(), SettingsError> {
+    write_value(path, "ui", key, value)
+}
+
+/// Saves `[web] enabled` (the Phone access dialog's Start / Stop); see [`write_value`]. The
+/// daemon applies it through its settings watcher.
+pub fn write_web_enabled(path: &Path, enabled: bool) -> Result<(), SettingsError> {
+    write_value(path, "web", "enabled", &enabled.to_string())
 }
 
 /// A font size in px, 8–32 (checked when parsed).
@@ -393,7 +416,12 @@ pub fn template() -> &'static str {
      # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
      [features]\n\
      # docs = false\n\
-     # turns = false\n"
+     # turns = false\n\
+     \n\
+     # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
+     # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
+     [web]\n\
+     # enabled = false\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -444,6 +472,10 @@ mod tests {
         write_ui_value(path, "theme", &format!("\"{}\"", mode.name()))
     }
 
+    fn set_ui_value(src: &str, key: &str, value: &str) -> String {
+        set_value(src, "ui", key, value)
+    }
+
     fn parse_err(src: &str) -> String {
         parse(Path::new("settings.toml"), src)
             .unwrap_err()
@@ -457,6 +489,10 @@ mod tests {
         assert_eq!(settings, Settings::default());
         assert!(settings.notify.needs_input && settings.notify.done && settings.notify.sound);
         assert!(settings.awake.keep_awake);
+        assert!(
+            !settings.web.enabled,
+            "phone access is off until the user turns it on"
+        );
         assert_eq!(settings.composer.file_ref, "@{path}");
         assert_eq!(settings.zed.follow_debounce_ms, 1500);
         assert_eq!(settings.voice.base_url, "https://api.groq.com/openai/v1");
@@ -526,6 +562,9 @@ font_size = 15
 
 [features]
 docs = true
+
+[web]
+enabled = true
 "#;
         let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
@@ -561,6 +600,7 @@ docs = true
                     docs: true,
                     turns: false,
                 },
+                web: WebSettings { enabled: true },
             }
         );
     }
@@ -870,6 +910,86 @@ docs = true
         write_ui_value(&path, "inspector_width", "350").unwrap();
         let ui = load(&path).unwrap().ui;
         assert_eq!((ui.inspector_width, ui.theme), (350, ThemeMode::Dark));
+    }
+
+    #[test]
+    fn web_section_defaults_off_and_rejects_other_keys() {
+        let web = |src: &str| parse(Path::new("s.toml"), src).unwrap().web;
+        assert!(!web("").enabled);
+        assert!(!web("[web]").enabled);
+        assert!(web("[web]\nenabled = true").enabled);
+        assert!(parse_err("[web]\nenabled = \"yes\"").contains("invalid type"));
+        // The port is fixed at 8787 (ADR 0053), so it is not a setting.
+        assert!(parse_err("[web]\nport = 8787").contains("unknown field `port`"));
+    }
+
+    #[test]
+    fn set_value_stays_inside_its_own_section() {
+        let src = "[ui]\nfont_size = 15\n\n[web]\nenabled = false\n";
+        // Replaces the key in [web]; [ui] is untouched.
+        assert_eq!(
+            set_value(src, "web", "enabled", "true"),
+            "[ui]\nfont_size = 15\n\n[web]\nenabled = true\n"
+        );
+        // A key of the same name in another section is not replaced: it is added to the
+        // section asked for.
+        assert_eq!(
+            set_value(src, "ui", "enabled", "true"),
+            "[ui]\nenabled = true\nfont_size = 15\n\n[web]\nenabled = false\n"
+        );
+        // No such section: appended, never put into the last one.
+        assert_eq!(
+            set_value("[ui]\nfont_size = 15\n", "web", "enabled", "true"),
+            "[ui]\nfont_size = 15\n\n[web]\nenabled = true\n"
+        );
+    }
+
+    #[test]
+    fn write_web_enabled_keeps_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        let read = || std::fs::read_to_string(&path).unwrap();
+
+        // No file: the commented template plus the switch; the second write flips it in place.
+        write_web_enabled(&path, true).unwrap();
+        assert!(load(&path).unwrap().web.enabled);
+        write_web_enabled(&path, false).unwrap();
+        assert!(!load(&path).unwrap().web.enabled);
+        let text = read();
+        assert_eq!(
+            text.matches("\nenabled = ").count(),
+            1,
+            "one key, not two: {text}"
+        );
+        assert!(
+            text.contains("# docs = false"),
+            "the template stays: {text}"
+        );
+
+        // The user's file without [web]: everything stays, [web] is appended.
+        let mine = "# mine\n[ui]\ntheme = \"dark\"\n\n[features]\ndocs = true\n";
+        std::fs::write(&path, mine).unwrap();
+        write_web_enabled(&path, true).unwrap();
+        assert_eq!(read(), format!("{mine}\n[web]\nenabled = true\n"));
+
+        // An existing [web] in the middle: only its line changes.
+        let middle = "[web]\nenabled = false\n\n[features]\ndocs = true\n";
+        std::fs::write(&path, middle).unwrap();
+        write_web_enabled(&path, true).unwrap();
+        assert_eq!(read(), "[web]\nenabled = true\n\n[features]\ndocs = true\n");
+    }
+
+    #[test]
+    fn write_web_enabled_never_turns_a_good_file_bad() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        // Broken TOML; an unknown [web] key; a dotted `web.enabled` (appending `[web]` would
+        // declare the table twice): each is refused and the file is left alone.
+        for bad in ["[web\n", "[web]\nport = 1\n", "web.enabled = false\n"] {
+            std::fs::write(&path, bad).unwrap();
+            assert!(write_web_enabled(&path, true).is_err(), "{bad:?}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bad);
+        }
     }
 
     #[test]

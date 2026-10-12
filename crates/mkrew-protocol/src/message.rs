@@ -1294,6 +1294,19 @@ pub struct HelloResult {
     pub protocol_version: u32,
 }
 
+/// Phone access (ADR 0053): `[web] enabled` and whether the daemon's `mk web` child runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebStatus {
+    /// `[web] enabled` in `settings.toml`.
+    pub enabled: bool,
+    /// The `mk web` child is alive.
+    pub running: bool,
+    /// Why it is not running while enabled (the last line `mk web` printed to stderr, or that
+    /// `mk` was not found); cleared while it runs and when disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonStatusResult {
     pub daemon_version: String,
@@ -1306,6 +1319,9 @@ pub struct DaemonStatusResult {
     /// its last good settings meanwhile (SPEC §20.0).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings_error: Option<String>,
+    /// Phone access state (ADR 0053); absent from a daemon that predates it.
+    #[serde(default)]
+    pub web: WebStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -4,7 +4,6 @@
 
 mod http;
 mod relay;
-mod tailscale;
 mod token;
 
 use std::net::SocketAddr;
@@ -34,7 +33,7 @@ pub fn run(paths: &Paths, args: Args) -> anyhow::Result<ExitCode> {
     if crate::daemon::try_connect(paths)?.is_none() {
         crate::daemon::start(paths)?;
     }
-    let host = args.host.or_else(tailscale::dns_name);
+    let host = args.host.or_else(mkrew_core::tailscale::dns_name);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

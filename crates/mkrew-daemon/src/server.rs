@@ -17,7 +17,7 @@ use mkrew_protocol::{
     SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
     SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
     TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, WORKSPACE_COLORS, encode,
+    TerminalTab, WORKSPACE_COLORS, WebStatus, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -474,6 +474,7 @@ impl Daemon {
             started_at: self.started_at,
             sessions: u32::try_from(self.hub.live_count()).unwrap_or(u32::MAX),
             settings_error: self.settings.error(),
+            web: WebStatus::default(),
         })
     }
 
