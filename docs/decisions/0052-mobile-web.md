@@ -25,7 +25,9 @@
 
 - `mk web [--listen 127.0.0.1:8787] [--host NAME] [--new-token]` (§9) starts the daemon if none
   runs, prints `https://<MagicDNS name>/#t=<token>` and serves `index.html`, `app.css`,
-  `app.mjs`, `model.mjs` and xterm.js 6 (vendored, MIT) from the binary.
+  `app.mjs`, `model.mjs`, `apple-touch-icon.png` (the Home Screen icon, 180 px, from
+  `icon/mkrew-1-lanes/tile-dark.svg` drawn full-bleed) and xterm.js 6 (vendored, MIT) from the
+  binary.
 - Token: 32 random bytes as lowercase hex in `<config>/web_token` (owner-only on Unix), required
   by `/check` and `/ws`; `--new-token` replaces it. It travels in the URL fragment of the printed
   link, so it is not in any request line except the page's own `/check` and `/ws` calls.

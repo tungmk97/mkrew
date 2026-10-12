@@ -1086,6 +1086,7 @@ fn web_serves_the_page_and_relays_a_session() {
         "/app.css",
         "/vendor/xterm.mjs",
         "/vendor/xterm.css",
+        "/apple-touch-icon.png",
     ] {
         assert_eq!(web.get(asset).0, 200, "{asset}");
     }
