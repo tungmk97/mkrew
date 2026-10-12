@@ -372,6 +372,7 @@ impl Shell {
             dialog_serial: 0,
             launched: Some(launched),
             first_frame_logged: false,
+            sidebar_view: None,
         }
     }
 

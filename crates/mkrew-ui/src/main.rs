@@ -563,6 +563,9 @@ struct Shell {
     /// (`scripts/measure.*`, SPEC §15 UI startup).
     launched: Option<Instant>,
     first_frame_logged: bool,
+    /// The sidebar as its own view (see [`shell::sidebar_view::SidebarView`]); made on first
+    /// render.
+    sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
 }
 
 impl Render for Shell {
@@ -613,15 +616,22 @@ impl Render for Shell {
                     .min_h_0()
                     .flex()
                     .relative()
-                    // Hidden: not built at all (nothing to lay out or paint).
+                    // Hidden: not built at all (nothing to lay out or paint). Its own cached
+                    // view: a pane printing does not lay it out again (`SidebarView`).
                     .children((!self.sidebar_layout.hidden()).then(|| {
-                        if self.sidebar_layout.compact() {
-                            self.render_compact_sidebar(now, &theme, cx)
-                                .into_any_element()
+                        let style = gpui::StyleRefinement::default().flex_none().h_full();
+                        let style = if self.sidebar_layout.compact() {
+                            style.w(theme::rems_px(theme::COMPACT_SIDEBAR_WIDTH))
                         } else {
-                            self.render_sidebar(now, &theme, window, cx)
-                                .into_any_element()
-                        }
+                            style.w(px(self.sidebar_width))
+                        };
+                        let shell = cx.entity().downgrade();
+                        self.sidebar_view
+                            .get_or_insert_with(|| {
+                                cx.new(|cx| shell::sidebar_view::SidebarView::new(shell, cx))
+                            })
+                            .clone()
+                            .cached(style)
                     }))
                     .child(self.render_main(now, &theme, window, cx))
                     .children(
