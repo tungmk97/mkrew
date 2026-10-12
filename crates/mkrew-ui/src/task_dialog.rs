@@ -7,6 +7,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::editor::Motion;
 use crate::text_box::{Input, TextBox};
 use crate::workspace_menu::{AgentChoice, Agents, agent_choices};
 
@@ -36,8 +37,21 @@ pub enum DialogKey {
     /// Tab / Shift+Tab.
     SwitchField,
     Backspace,
-    /// Ctrl+Backspace (Cmd+Backspace on macOS): delete the word before the end.
+    /// Ctrl+Backspace (Cmd+Backspace on macOS): delete the word before the caret.
     DeleteWord,
+    /// Delete; with Ctrl (Cmd), the word after the caret.
+    Delete {
+        word: bool,
+    },
+    /// Arrows, Home/End (Ctrl: by word, to the text's start/end); Shift extends the selection.
+    /// Only fields that draw their caret ([`crate::text_box::Input::edit`]) use it.
+    Move {
+        motion: Motion,
+        extend: bool,
+    },
+    /// Ctrl+C / Ctrl+X (Cmd): the caller puts the selection on the clipboard.
+    Copy,
+    Cut,
     /// Ctrl+V (Cmd+V): the caller inserts the clipboard text.
     Paste,
     /// Ctrl+A (Cmd+A): the next edit replaces the whole text.
@@ -49,6 +63,13 @@ pub enum DialogKey {
 pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
     let m = keystroke.modifiers;
     let command = m.platform || m.control;
+    let plain_command = command && !m.alt && !m.shift;
+    let caret = |plain, word| {
+        (!m.alt).then_some(DialogKey::Move {
+            motion: if command { word } else { plain },
+            extend: m.shift,
+        })
+    };
     match keystroke.key.as_str() {
         "escape" => return Some(DialogKey::Cancel),
         "enter" if command => return Some(DialogKey::Save),
@@ -56,8 +77,17 @@ pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
         "tab" => return Some(DialogKey::SwitchField),
         "backspace" if command && !m.alt => return Some(DialogKey::DeleteWord),
         "backspace" => return Some(DialogKey::Backspace),
-        "v" if command && !m.alt && !m.shift => return Some(DialogKey::Paste),
-        "a" if command && !m.alt && !m.shift => return Some(DialogKey::SelectAll),
+        "delete" if !m.alt => return Some(DialogKey::Delete { word: command }),
+        "left" => return caret(Motion::Left, Motion::WordLeft),
+        "right" => return caret(Motion::Right, Motion::WordRight),
+        "up" if !command => return caret(Motion::Up, Motion::Up),
+        "down" if !command => return caret(Motion::Down, Motion::Down),
+        "home" => return caret(Motion::Home, Motion::DocStart),
+        "end" => return caret(Motion::End, Motion::DocEnd),
+        "c" if plain_command => return Some(DialogKey::Copy),
+        "x" if plain_command => return Some(DialogKey::Cut),
+        "v" if plain_command => return Some(DialogKey::Paste),
+        "a" if plain_command => return Some(DialogKey::SelectAll),
         _ => {}
     }
     // AltGr arrives as Ctrl+Alt with the composed char; plain Ctrl+key types nothing.
@@ -177,7 +207,11 @@ impl TaskDialog {
                 }
             }
             DialogKey::Insert(text) => self.insert(&text),
-            DialogKey::Paste => {}
+            DialogKey::Paste
+            | DialogKey::Delete { .. }
+            | DialogKey::Move { .. }
+            | DialogKey::Copy
+            | DialogKey::Cut => {}
         }
         Outcome::Edited
     }
@@ -359,6 +393,16 @@ mod tests {
             "Alt+Backspace is not a Windows field key"
         );
         assert_eq!(key("ctrl-b"), None, "other Ctrl+letters still type nothing");
+        let moved = |motion, extend| Some(DialogKey::Move { motion, extend });
+        assert_eq!(key("left"), moved(Motion::Left, false));
+        assert_eq!(key("ctrl-shift-right"), moved(Motion::WordRight, true));
+        assert_eq!(key("shift-home"), moved(Motion::Home, true));
+        assert_eq!(key("ctrl-end"), moved(Motion::DocEnd, false));
+        assert_eq!(key("ctrl-up"), None);
+        assert_eq!(key("delete"), Some(DialogKey::Delete { word: false }));
+        assert_eq!(key("ctrl-delete"), Some(DialogKey::Delete { word: true }));
+        assert_eq!(key("ctrl-c"), Some(DialogKey::Copy));
+        assert_eq!(key("ctrl-x"), Some(DialogKey::Cut));
     }
 
     #[test]

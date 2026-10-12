@@ -48,7 +48,11 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         DialogKey::SelectAll => Some(Key::SelectAll),
         DialogKey::Paste => Some(Key::Paste),
         DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField => None,
+        DialogKey::SwitchField
+        | DialogKey::Delete { .. }
+        | DialogKey::Move { .. }
+        | DialogKey::Copy
+        | DialogKey::Cut => None,
     }
 }
 

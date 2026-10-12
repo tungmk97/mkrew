@@ -165,7 +165,12 @@ impl Draft {
             DialogKey::Cancel => return Outcome::Cancel,
             DialogKey::Enter | DialogKey::Save => return Outcome::Submit,
             // The caller inserts the clipboard text.
-            DialogKey::SwitchField | DialogKey::Paste => {}
+            DialogKey::SwitchField
+            | DialogKey::Paste
+            | DialogKey::Delete { .. }
+            | DialogKey::Move { .. }
+            | DialogKey::Copy
+            | DialogKey::Cut => {}
             key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
                 if !self.busy {
                     self.text.edit(&key);

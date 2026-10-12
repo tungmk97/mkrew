@@ -152,7 +152,13 @@ impl Broadcast {
                 self.insert(&text);
                 Outcome::Edited
             }
-            None => Outcome::Edited,
+            Some(
+                DialogKey::Delete { .. }
+                | DialogKey::Move { .. }
+                | DialogKey::Copy
+                | DialogKey::Cut,
+            )
+            | None => Outcome::Edited,
         }
     }
 

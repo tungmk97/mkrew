@@ -368,6 +368,21 @@ pub(crate) fn typing_input(
             };
             window.handle_input(&focus, typing, cx);
         },
+) -> gpui::Stateful<gpui::Div> {
+    let selection = (selected && !text.is_empty()).then_some(0..text.len());
+    caret_field(id, text, text.len(), selection, placeholder, focused, theme)
+}
+
+/// A [`text_field`] whose caret sits at byte `cursor`, with the bytes of `selection`
+/// highlighted (no caret then).
+pub(crate) fn caret_field(
+    id: &'static str,
+    text: &str,
+    cursor: usize,
+    selection: Option<std::ops::Range<usize>>,
+    placeholder: &'static str,
+    focused: bool,
+    theme: &Theme,
     )
     .absolute()
     .size_full()
@@ -391,8 +406,48 @@ pub(crate) fn text_field(
             .h(font_size::BODY)
             .bg(rgb(theme.text))
     };
-    let lines: Vec<&str> = text.split('\n').collect();
-    let last = lines.len() - 1;
+    let piece = |text: &str, lit: bool| {
+        div()
+            .min_w_0()
+            .when(lit, |el| el.bg(rgb(theme.terminal_selection_bg)))
+            .child(text.to_owned())
+    };
+    let show_caret = focused && selection.is_none();
+    let mut start = 0;
+    let mut rows = Vec::new();
+    for line in text.split('\n') {
+        let range = start..start + line.len();
+        start = range.end + 1;
+        let mut row = div().flex().items_center();
+        let caret_here = show_caret && (range.start..=range.end).contains(&cursor);
+        if line.is_empty() {
+            // An empty line still takes a line's height; it is lit inside the selection.
+            let lit =
+                (selection.as_ref()).is_some_and(|s| s.start <= range.start && range.end <= s.end);
+            row = row
+                .when(caret_here, |row| row.child(caret()))
+                .child(piece(" ", lit));
+        } else {
+            let clamp = |at: usize| at.clamp(range.start, range.end);
+            let (lit_start, lit_end) = (selection.as_ref())
+                .map_or((clamp(cursor), clamp(cursor)), |s| {
+                    (clamp(s.start), clamp(s.end))
+                });
+            if range.start < lit_start {
+                row = row.child(piece(&text[range.start..lit_start], false));
+            }
+            if caret_here {
+                row = row.child(caret());
+            }
+            if lit_start < lit_end {
+                row = row.child(piece(&text[lit_start..lit_end], true));
+            }
+            if lit_end < range.end {
+                row = row.child(piece(&text[lit_end..range.end], false));
+            }
+        }
+        rows.push(row);
+    }
     div()
         .id(id)
         .flex()
@@ -419,22 +474,7 @@ pub(crate) fn text_field(
                     .child(div().text_color(rgb(theme.text_muted)).child(placeholder)),
             )
         })
-        .when(!text.is_empty(), |el| {
-            el.children(lines.into_iter().enumerate().map(|(i, line)| {
-                // An empty line still takes a line's height.
-                let line = if line.is_empty() { " " } else { line };
-                div()
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .when(selected, |el| el.bg(rgb(theme.terminal_selection_bg)))
-                            .child(line.to_owned()),
-                    )
-                    .when(focused && !selected && i == last, |row| row.child(caret()))
-            }))
-        })
+        .when(!text.is_empty(), |el| el.children(rows))
 }
 
 /// One row of a unified diff (undo preview, Docs "View changes").

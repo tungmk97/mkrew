@@ -15,6 +15,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-12 Run setup caret and Browse… (ADR 0048)
+
+- [ ] **Caret (dark + light):** in Run setup, type a command, press ← / Ctrl+← / Home: the caret
+  moves and typing, Backspace and Delete act there; Shift+arrows highlight part of the text,
+  typing replaces it; Ctrl+C / Ctrl+X / Ctrl+V work. Spaces before the caret keep their width.
+  Env: ↑ / ↓ move between lines. Other dialogs (task, composer, commit box) behave as before.
+- [ ] **Browse… (dark + light):** Folder's `Browse…` lists the workspace's folders; clicking one
+  opens it, `↑ Up` goes back, `Use this folder` (or Enter) fills Folder (`.` at the root). Env
+  file's `Browse…` starts in the card's folder and shows `.env` (git-ignored, muted); clicking it
+  fills `.env` (or `config/.env`). Esc closes only the picker.
+
 ### To verify — 2026-10-11 gutter, graph, layouts (plan docs/superpowers/plans/2026-10-11-gutter-graph-layouts.md)
 
 - [ ] **Files change gutter (dark + light):** open a tracked file; add, change and delete lines →

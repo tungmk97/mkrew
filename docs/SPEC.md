@@ -863,8 +863,12 @@ The session panel (below) is a third column right of Terminals while open.
   and stay live through the `session.ports` event. **Run setup dialog:** command cards (Name,
   Folder, Command, Env file, Env as multi-line `KEY=VALUE`), `+ Add command`, `Remove`, a
   `Start with the daemon` checkbox; Ctrl+Enter (or Enter outside Env) saves; errors show in
-  the dialog. Palette: `Run: Start all`, `Run: Restart all`, `Run: Stop all`, `Run: Setup…`,
-  `Run: Show Run tab`.
+  the dialog. Folder and Env file have `Browse…`: a picker over the workspace (`fs.list`,
+  ignored files shown) that opens folders on click and goes `↑ Up`; for Folder it starts at the
+  workspace root and `Use this folder` (Enter) takes the shown one (`.` at the root); for Env
+  file it starts in (and never leaves) the card's folder and a click on a file takes it,
+  relative to that folder. Esc closes only the picker. Palette: `Run: Start all`,
+  `Run: Restart all`, `Run: Stop all`, `Run: Setup…`, `Run: Show Run tab`.
 - **Empty states** everywhere (see §14).
 
 ---
@@ -1105,10 +1109,12 @@ Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the cli
 text, image or files (ADR 0026).
 Every text field of the app (task title and prompt, composer, commit box, run setup, comments,
 broadcast, peek reply, quick open, command palette, Docs filter, the find bars and the inline
-rename) edits at the end of its text and takes Ctrl+A (select all: the next key replaces it),
-Ctrl+Backspace (delete the word before the end: blanks, then a run of letters / digits / `_` or of
-punctuation, like the Files editor) and Ctrl+V. Arrows, Home / End, Shift selection and Ctrl+Z / C /
-X work only in the Files editor (§12A).
+rename) takes Ctrl+A (select all: the next key replaces it), Ctrl+Backspace (delete the word
+before the caret: blanks, then a run of letters / digits / `_` or of punctuation, like the Files
+editor) and Ctrl+V. The run setup fields also move the caret (←/→, Ctrl+←/→ by word, Home / End,
+Ctrl+Home / End, ↑/↓ in Env), select with Shift, and take Delete, Ctrl+Delete, Ctrl+C and
+Ctrl+X (ADR 0048); the other fields edit at the end of their text. Ctrl+Z works only in the Files
+editor (§12A).
 Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line; Mkrew has no
 kitty / win32-input keyboard mode, so this is the one form every agent gets through ConPTY.
 On macOS, `Ctrl` becomes `Cmd` for global and tab commands.

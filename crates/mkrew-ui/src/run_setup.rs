@@ -1,9 +1,10 @@
 //! The "Run setup" dialog (SPEC §10, ADR 0018): one card per run command (name, folder,
 //! command, env file, env lines) and "Start with the daemon"; saving sends `project.update`.
-//! Pure; `main.rs` renders it.
+//! The fields take caret keys and selection; the folder and env file can also be picked from
+//! the workspace ([`Picker`], fed by `fs.list`). Pure; `main.rs` renders it.
 
 use mkrew_core::run::{normalize, parse_env};
-use mkrew_protocol::{Project, ProjectUpdateParams, RunCommand};
+use mkrew_protocol::{FsEntry, Project, ProjectUpdateParams, RunCommand};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
@@ -39,15 +40,36 @@ impl Field {
 }
 
 impl Card {
-    /// Whether Ctrl+A selected the whole text of `field` (drawn highlighted).
-    pub fn all_selected(&self, field: Field) -> bool {
+    /// The text, caret and selection of `field`.
+    pub fn input(&self, field: Field) -> &Input {
         match field {
-            Field::Name => self.name.all_selected(),
-            Field::Dir => self.dir.all_selected(),
-            Field::Command => self.command.all_selected(),
-            Field::EnvFile => self.env_file.all_selected(),
-            Field::Env => self.env.all_selected(),
+            Field::Name => &self.name,
+            Field::Dir => &self.dir,
+            Field::Command => &self.command,
+            Field::EnvFile => &self.env_file,
+            Field::Env => self.env.input(),
         }
+    }
+}
+
+/// Choosing a card's folder ([`Field::Dir`]) or env file ([`Field::EnvFile`]) among the
+/// workspace's, one folder listed at a time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picker {
+    pub card: usize,
+    pub field: Field,
+    /// Where ↑ Up stops, relative to the workspace (`""` = its root): the root for a folder,
+    /// the card's folder for an env file (which is relative to it).
+    pub root: String,
+    /// The listed folder, relative to the workspace.
+    pub dir: String,
+    /// What `fs.list` answered (only folders when picking a folder); `None` while it runs.
+    pub entries: Option<Result<Vec<FsEntry>, String>>,
+}
+
+impl Picker {
+    pub fn at_root(&self) -> bool {
+        self.dir == self.root
     }
 }
 
@@ -75,6 +97,8 @@ pub struct RunSetup {
     pub error: Option<String>,
     /// Opened from ▶ Run with no command: run everything after a successful save.
     pub run_after: bool,
+    /// The open folder / env file picker; it covers the cards.
+    pub picker: Option<Picker>,
 }
 
 impl RunSetup {
@@ -91,10 +115,21 @@ impl RunSetup {
             busy: false,
             error: None,
             run_after,
+            picker: None,
         }
     }
 
     pub fn key(&mut self, key: DialogKey) -> Outcome {
+        if let Some(picker) = &self.picker {
+            match key {
+                DialogKey::Cancel => self.picker = None,
+                DialogKey::Enter | DialogKey::Save if picker.field == Field::Dir => {
+                    self.pick(None);
+                }
+                _ => {}
+            }
+            return Outcome::Edited;
+        }
         match key {
             DialogKey::Cancel => Outcome::Cancel,
             DialogKey::Save => Outcome::Save,
@@ -109,10 +144,16 @@ impl RunSetup {
                 self.focus = self.next_focus();
                 Outcome::Edited
             }
-            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
+            // The caller reads the clipboard and calls `insert`, or copies the selection.
+            DialogKey::Paste | DialogKey::Copy => Outcome::Edited,
+            DialogKey::Insert(text) => {
+                self.insert(&text);
+                Outcome::Edited
+            }
+            key => {
                 match self.focus {
                     Focus::Field(i, Field::Env) => {
-                        self.cards[i].env.key(key);
+                        self.cards[i].env.edit(&key);
                     }
                     Focus::Field(i, field) => {
                         line(&mut self.cards[i], field).edit(&key);
@@ -121,13 +162,98 @@ impl RunSetup {
                 }
                 Outcome::Edited
             }
-            // The caller reads the clipboard and calls `insert`.
-            DialogKey::Paste => Outcome::Edited,
-            DialogKey::Insert(text) => {
-                self.insert(&text);
-                Outcome::Edited
-            }
         }
+    }
+
+    /// The selected text of the focused field (Ctrl+C / Ctrl+X copy it).
+    pub fn selected_text(&self) -> Option<&str> {
+        match self.focus {
+            Focus::Field(i, field) => self.cards.get(i)?.input(field).selected_text(),
+            Focus::Autostart => None,
+        }
+    }
+
+    /// Opens the picker for `field` (`Dir` or `EnvFile`) of card `card`; returns the folder to
+    /// `fs.list`. An env file needs a folder inside the workspace first (`error` says so).
+    pub fn open_picker(&mut self, card: usize, field: Field) -> Option<String> {
+        let root = match field {
+            Field::Dir => String::new(),
+            Field::EnvFile => match workspace_dir(self.cards.get(card)?.dir.as_str()) {
+                Some(dir) => dir,
+                None => {
+                    self.error = Some("Pick a folder inside the workspace first".into());
+                    return None;
+                }
+            },
+            _ => return None,
+        };
+        self.focus = Focus::Field(card, field);
+        self.picker = Some(Picker {
+            card,
+            field,
+            dir: root.clone(),
+            root,
+            entries: None,
+        });
+        self.picker.as_ref().map(|p| p.dir.clone())
+    }
+
+    /// Shows folder `dir` (relative to the workspace) in the picker; returns it to `fs.list`.
+    pub fn browse(&mut self, dir: String) -> Option<String> {
+        let picker = self.picker.as_mut()?;
+        picker.dir = dir.clone();
+        picker.entries = None;
+        Some(dir)
+    }
+
+    /// ↑ Up: the parent of the listed folder, never above the picker's root.
+    pub fn browse_up(&mut self) -> Option<String> {
+        let picker = self.picker.as_ref()?;
+        if picker.at_root() {
+            return None;
+        }
+        let parent = picker.dir.rsplit_once('/').map_or("", |(parent, _)| parent);
+        self.browse(parent.to_owned())
+    }
+
+    /// The `fs.list` answer for `dir`; ignored once the picker shows another folder.
+    pub fn listed(&mut self, dir: &str, entries: Result<Vec<FsEntry>, String>) {
+        let Some(picker) = self.picker.as_mut().filter(|p| p.dir == dir) else {
+            return;
+        };
+        let folders_only = picker.field == Field::Dir;
+        picker.entries = Some(entries.map(|mut entries| {
+            entries.retain(|e| e.is_dir || !folders_only);
+            entries
+        }));
+    }
+
+    /// Takes the listed folder (`None`) or the file `path` (relative to the workspace) as the
+    /// card's folder / env file and closes the picker.
+    pub fn pick(&mut self, path: Option<&str>) {
+        let Some(picker) = self.picker.take() else {
+            return;
+        };
+        let Some(card) = self.cards.get_mut(picker.card) else {
+            return;
+        };
+        match (picker.field, path) {
+            (Field::Dir, None) if picker.dir.is_empty() => card.dir = ".".into(),
+            (Field::Dir, None) => card.dir = picker.dir.into(),
+            (Field::EnvFile, Some(path)) => {
+                let relative = match picker.root.as_str() {
+                    "" => Some(path),
+                    root => path
+                        .strip_prefix(root)
+                        .and_then(|rest| rest.strip_prefix('/')),
+                };
+                if let Some(relative) = relative {
+                    card.env_file = relative.into();
+                }
+            }
+            _ => {}
+        }
+        self.focus = Focus::Field(picker.card, picker.field);
     }
 
     /// Typed or pasted text into the focused field; Space flips "Start with the daemon".
@@ -261,11 +387,29 @@ fn line(card: &mut Card, field: Field) -> &mut Input {
     }
 }
 
+/// A card's folder as `fs.list` takes it (`"."` → `""`, `\` → `/`); `None` when it leaves the
+/// workspace (absolute, `..`).
+fn workspace_dir(dir: &str) -> Option<String> {
+    let dir = dir.trim().replace('\\', "/");
+    if dir.starts_with('/') || dir.contains(':') {
+        return None;
+    }
+    let parts: Vec<&str> = dir
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect();
+    if parts.contains(&"..") {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::{Project, RunCommand};
 
     use super::*;
+    use crate::editor::Motion;
 
     fn project(commands: Vec<RunCommand>) -> Project {
         Project {
@@ -419,8 +563,11 @@ mod tests {
         setup.key(DialogKey::DeleteWord);
         assert_eq!(setup.cards[0].command, "npm run ");
         setup.key(DialogKey::SelectAll);
-        assert!(setup.cards[0].all_selected(Field::Command));
-        assert!(!setup.cards[0].all_selected(Field::Name), "per field");
+        assert!(setup.cards[0].input(Field::Command).all_selected());
+        assert!(
+            !setup.cards[0].input(Field::Name).all_selected(),
+            "per field"
+        );
         setup.insert("make");
         assert_eq!(setup.cards[0].command, "make");
         assert_eq!(setup.cards[0].name, "BE", "other fields untouched");
@@ -431,6 +578,133 @@ mod tests {
         setup.key(DialogKey::DeleteWord);
         assert_eq!(setup.cards[0].env.text(), "A=1\nB=");
         setup.key(DialogKey::SelectAll);
-        assert!(setup.cards[0].all_selected(Field::Env));
+        assert!(setup.cards[0].input(Field::Env).all_selected());
+    }
+
+    fn moved(motion: Motion, extend: bool) -> DialogKey {
+        DialogKey::Move { motion, extend }
+    }
+
+    #[test]
+    fn fields_edit_at_the_caret_and_replace_a_shift_selection() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.cards[0].command = "npm run dev".into();
+        setup.focus = Focus::Field(0, Field::Command);
+        setup.key(moved(Motion::WordLeft, false));
+        setup.key(moved(Motion::End, true));
+        assert_eq!(setup.selected_text(), Some("dev"));
+        setup.insert("build");
+        assert_eq!(setup.cards[0].command, "npm run build");
+        setup.key(moved(Motion::Home, false));
+        setup.key(DialogKey::Delete { word: false });
+        setup.key(moved(Motion::Right, false));
+        setup.insert("n");
+        assert_eq!(setup.cards[0].command, "pnm run build");
+        setup.key(moved(Motion::WordRight, false));
+        setup.key(DialogKey::Backspace);
+        assert_eq!(
+            setup.cards[0].command, "pn run build",
+            "Backspace at the caret"
+        );
+        setup.key(DialogKey::Delete { word: true });
+        assert_eq!(setup.cards[0].command, "pn build");
+        setup.key(moved(Motion::Left, true));
+        setup.key(DialogKey::Cut);
+        assert_eq!(
+            setup.cards[0].command, "p build",
+            "the caller copied it first"
+        );
+
+        // The env box: ↑ keeps the column, clamped to the shorter line above.
+        setup.focus = Focus::Field(0, Field::Env);
+        setup.key(DialogKey::SelectAll);
+        setup.insert("A=1\nBB=2");
+        setup.key(moved(Motion::Up, false));
+        setup.insert("0");
+        setup.key(moved(Motion::Down, false));
+        setup.insert("!");
+        assert_eq!(setup.cards[0].env.text(), "A=10\nBB=2!");
+    }
+
+    fn entry(path: &str, is_dir: bool) -> FsEntry {
+        FsEntry {
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            path: path.into(),
+            is_dir,
+            ignored: false,
+            marker: None,
+            has_changes: false,
+        }
+    }
+
+    #[test]
+    fn the_folder_picker_lists_folders_and_takes_the_shown_one() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        assert_eq!(setup.open_picker(0, Field::Dir).as_deref(), Some(""));
+        assert_eq!(setup.key(DialogKey::Insert("x".into())), Outcome::Edited);
+        assert_eq!(setup.cards[0].name, "BE", "the cards wait under the picker");
+        setup.listed(
+            "",
+            Ok(vec![entry("EA-BE", true), entry("README.md", false)]),
+        );
+        let picker = setup.picker.as_ref().unwrap();
+        assert_eq!(picker.entries, Some(Ok(vec![entry("EA-BE", true)])));
+        assert_eq!(
+            setup.browse("EA-BE/api".into()).as_deref(),
+            Some("EA-BE/api")
+        );
+        setup.listed("", Ok(Vec::new()));
+        assert_eq!(
+            setup.picker.as_ref().unwrap().entries,
+            None,
+            "a late answer"
+        );
+        assert_eq!(setup.browse_up().as_deref(), Some("EA-BE"));
+        assert_eq!(setup.browse_up().as_deref(), Some(""));
+        assert_eq!(setup.browse_up(), None, "never above the workspace");
+        setup.browse("EA-BE".into());
+        assert_eq!(setup.key(DialogKey::Enter), Outcome::Edited);
+        assert_eq!(
+            (setup.cards[0].dir.as_str(), setup.picker.is_none()),
+            ("EA-BE", true)
+        );
+        assert_eq!(setup.focus, Focus::Field(0, Field::Dir));
+
+        setup.open_picker(0, Field::Dir);
+        setup.browse_up();
+        setup.key(DialogKey::Save);
+        assert_eq!(setup.cards[0].dir, ".", "the root is \".\"");
+        setup.open_picker(0, Field::Dir);
+        assert_eq!(
+            setup.key(DialogKey::Cancel),
+            Outcome::Edited,
+            "Esc only closes the picker"
+        );
+        assert!(setup.picker.is_none());
+    }
+
+    #[test]
+    fn the_env_file_picker_starts_in_the_cards_folder_and_stays_inside_it() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.cards[0].dir = r".\EA-BE\".into();
+        assert_eq!(
+            setup.open_picker(0, Field::EnvFile).as_deref(),
+            Some("EA-BE")
+        );
+        assert_eq!(setup.browse_up(), None);
+        setup.browse("EA-BE/config".into());
+        setup.key(DialogKey::Enter);
+        assert!(setup.picker.is_some(), "Enter picks only folders");
+        setup.pick(Some("EA-BE/config/.env.dev"));
+        assert_eq!(setup.cards[0].env_file, "config/.env.dev");
+        assert_eq!(setup.focus, Focus::Field(0, Field::EnvFile));
+
+        setup.cards[0].dir = "../other".into();
+        assert_eq!(setup.open_picker(0, Field::EnvFile), None);
+        assert!(setup.picker.is_none());
+        assert_eq!(
+            setup.error.as_deref(),
+            Some("Pick a folder inside the workspace first")
+        );
     }
 }

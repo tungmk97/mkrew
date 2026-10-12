@@ -180,7 +180,15 @@ impl Shell {
         let Some(setup) = self.run_setup.as_mut() else {
             return;
         };
-        if let Some(text) = paste {
+        if matches!(key, DialogKey::Copy | DialogKey::Cut)
+            && setup.picker.is_none()
+            && let Some(text) = setup.selected_text()
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_owned()));
+        }
+        if let Some(text) = paste
+            && setup.picker.is_none()
+        {
             setup.insert(&text);
         }
         match setup.key(key) {
@@ -189,6 +197,42 @@ impl Shell {
             run_setup::Outcome::Edited => {}
         }
         cx.notify();
+    }
+
+    /// `fs.list` of folder `dir` for the Run setup's picker (ignored files too: `.env` usually
+    /// is).
+    pub(crate) fn list_run_picker(
+        &mut self,
+        dir: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.notify();
+        let (Some(dir), Some(connection), Some(setup)) =
+            (dir, self.connection.clone(), self.run_setup.as_ref())
+        else {
+            return;
+        };
+        let listed = connection.call::<Vec<FsEntry>>(Request::FsList(FsListParams {
+            project_id: setup.project_id,
+            worktree_task_id: None,
+            dir: dir.clone(),
+            show_ignored: true,
+        }));
+        let serial = self.dialog_serial;
+        cx.spawn_in(window, async move |this, cx| {
+            let listed = listed.await.map_err(|error| format!("{error:#}"));
+            let _ = this.update(cx, |shell, cx| {
+                if shell.dialog_serial != serial {
+                    return;
+                }
+                if let Some(setup) = shell.run_setup.as_mut() {
+                    setup.listed(&dir, listed);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// `project.update` with the dialog's commands; on success it closes and, when opened from
@@ -441,6 +485,9 @@ impl Shell {
     }
 
     /// "Run setup": one card per command, "+ Add command", "Start with the daemon", errors,
+        if let Some(picker) = &setup.picker {
+            return self.render_run_picker(picker, theme, cx);
+        }
     /// Cancel and Save (Ctrl+Enter).
     pub(crate) fn render_run_setup(
         &self,
@@ -460,15 +507,40 @@ impl Shell {
                      i: usize,
                      which: Field,
                      id: &'static str,
-                     text: &str,
                      placeholder: &'static str| {
-            text_field(
+            let input = setup.cards[i].input(which);
+            caret_field(
                 id,
-                text,
+                input.as_str(),
+                input.cursor(),
+                input.selection(),
                 placeholder,
                 setup.focus == Focus::Field(i, which),
-                setup.cards[i].all_selected(which),
                 theme,
+        // A field with "Browse…" beside it, which picks its value from the workspace.
+        let browse = |cx: &mut Context<'_, Self>,
+                      field: gpui::Stateful<gpui::Div>,
+                      i: usize,
+                      which: Field,
+                      id: &'static str,
+                      hint: &'static str| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .child(div().flex_1().min_w_0().child(field))
+                .child(
+                    quiet_button(id, "Browse…", theme, theme.surface_raised)
+                        .tooltip(tooltip(theme, hint, ""))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            let dir = shell
+                                .run_setup
+                                .as_mut()
+                                .and_then(|setup| setup.open_picker(i, which));
+                            shell.list_run_picker(dir, window, cx);
+                        })),
+                )
+        };
             )
             .on_click(cx.listener(move |shell, _, _, cx| {
                 if let Some(setup) = shell.run_setup.as_mut() {
@@ -481,35 +553,30 @@ impl Shell {
             .id("run-cards")
             .flex()
             .flex_col()
+                dir,
             .gap(px(space::S))
             .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
             .overflow_y_scroll();
-        for (i, card) in setup.cards.iter().enumerate() {
-            let name = field(cx, i, Field::Name, "run-name", &card.name, "e.g. BE");
-            let dir = field(cx, i, Field::Dir, "run-dir", &card.dir, ". or EA-BE");
-            let command = field(
+        for i in 0..setup.cards.len() {
+            let name = field(cx, i, Field::Name, "run-name", "e.g. BE");
+            let dir = field(cx, i, Field::Dir, "run-dir", ". or EA-BE");
+            let dir = browse(
                 cx,
                 i,
-                Field::Command,
-                "run-command",
-                &card.command,
-                "e.g. npm run dev",
+                env_file,
+                Field::Dir,
+                "run-dir-browse",
+                "Choose a folder in the workspace",
             );
-            let env_file = field(
+            let command = field(cx, i, Field::Command, "run-command", "e.g. npm run dev");
+            let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev");
+            let env_file = field(cx, i, Field::EnvFile, "run-env-file", "e.g. .env");
+            let env_file = browse(
                 cx,
                 i,
                 Field::EnvFile,
-                "run-env-file",
-                &card.env_file,
-                "e.g. .env",
-            );
-            let env = field(
-                cx,
-                i,
-                Field::Env,
-                "run-env",
-                card.env.text(),
-                "e.g. ENVIRONMENT=dev",
+                "run-env-file-browse",
+                "Choose a file in the command's folder",
             );
             cards = cards.child(
                 // The id scopes the card's field and button ids (the same in every card).
@@ -673,6 +740,183 @@ impl Shell {
                         disabled_button("run-save", "Saving…", theme, true)
                     } else {
                         button("run-save", "Save", theme, true)
+
+    /// The Run setup's folder / env file picker: the listed folder's entries (a folder opens,
+    /// a file is picked), ↑ Up, Cancel (Esc) and, for a folder, "Use this folder" (Enter).
+    pub(crate) fn render_run_picker(
+        &self,
+        picker: &run_setup::Picker,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let folder = picker.field == run_setup::Field::Dir;
+        let note = |text: String| {
+            div()
+                .px(px(space::S))
+                .py(px(space::XS))
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text_muted))
+                .child(text)
+        };
+        let hover = theme.surface_raised;
+        let mut list = div()
+            .id("run-picker-list")
+            .flex()
+            .flex_col()
+            .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
+            .overflow_y_scroll();
+        list = match &picker.entries {
+            None => list.child(note("Loading…".into())),
+            Some(Err(error)) => list.child(note(format!("✕ Cannot list the folder: {error}"))),
+            Some(Ok(entries)) if entries.is_empty() => list.child(note(
+                if folder {
+                    "No folders here."
+                } else {
+                    "Nothing here."
+                }
+                .into(),
+            )),
+            Some(Ok(entries)) => list.children(entries.iter().enumerate().map(|(index, entry)| {
+                let (path, is_dir) = (entry.path.clone(), entry.is_dir);
+                div()
+                    .id(("run-picker-entry", index))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .px(px(space::S))
+                    .py(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .cursor_pointer()
+                    .text_size(font_size::BODY)
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(space::M))
+                            .text_color(rgb(theme.text_muted))
+                            .child(if is_dir { "▸" } else { "" }),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_color(rgb(if entry.ignored {
+                                theme.text_muted
+                            } else {
+                                theme.text
+                            }))
+                            .child(entry.name.clone()),
+                    )
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        let Some(setup) = shell.run_setup.as_mut() else {
+                            return;
+                        };
+                        if is_dir {
+                            let dir = setup.browse(path.clone());
+                            shell.list_run_picker(dir, window, cx);
+                        } else {
+                            setup.pick(Some(&path));
+                            cx.notify();
+                        }
+                    }))
+            })),
+        };
+        let up = if picker.at_root() {
+            disabled_button("run-picker-up", "↑ Up", theme, false)
+        } else {
+            quiet_button("run-picker-up", "↑ Up", theme, theme.surface_raised)
+                .tooltip(tooltip(theme, "The folder above", ""))
+                .on_click(cx.listener(|shell, _, window, cx| {
+                    let dir = shell.run_setup.as_mut().and_then(RunSetup::browse_up);
+                    shell.list_run_picker(dir, window, cx);
+                }))
+        };
+        let location = if picker.dir.is_empty() {
+            "Workspace root".to_owned()
+        } else {
+            picker.dir.clone()
+        };
+        let panel = div()
+            .id("run-picker")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme.ui_font_family.clone())
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::run_setup_key_down))
+            .child(
+                div()
+                    .text_size(font_size::CARD_TITLE)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
+                    .text_color(rgb(theme.text))
+                    .child(if folder {
+                        "Choose the folder"
+                    } else {
+                        "Choose the env file"
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_size(font_size::BODY)
+                            .text_color(rgb(theme.text_muted))
+                            .child(location),
+                    )
+                    .child(up),
+            )
+            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        button("run-picker-cancel", "Cancel", theme, false)
+                            .tooltip(tooltip(theme, "Back to Run setup", "Esc"))
+                            .on_click(cx.listener(|shell, _, _, cx| {
+                                if let Some(setup) = shell.run_setup.as_mut() {
+                                    setup.picker = None;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .when(folder, |row| {
+                        row.child(
+                            button("run-picker-use", "Use this folder", theme, true)
+                                .tooltip(tooltip(theme, "Run the command in this folder", "Enter"))
+                                .on_click(cx.listener(|shell, _, _, cx| {
+                                    if let Some(setup) = shell.run_setup.as_mut() {
+                                        setup.pick(None);
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            );
+        Self::modal_shade("run-setup-shade", panel, cx)
+    }
                             .tooltip(tooltip(theme, "Save the run commands", "Ctrl+Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.save_run_setup(window, cx);
