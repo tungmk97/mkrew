@@ -81,11 +81,8 @@ pub(crate) fn notice(color: u32, text: String) -> gpui::Div {
 }
 
 /// The shared frame of [`button`], [`quiet_button`] and [`danger_button`]: no colors, no hover
-/// (gpui allows one `hover` per element).
-pub(crate) fn button_frame(
-    id: &'static str,
-    label: impl Into<SharedString>,
-) -> gpui::Stateful<gpui::Div> {
+/// (gpui allows one `hover` per element). `label` is text or an [`icon_svg`].
+pub(crate) fn button_frame(id: &'static str, label: impl IntoElement) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
@@ -96,13 +93,13 @@ pub(crate) fn button_frame(
         .rounded(px(radius::SMALL))
         .cursor_pointer()
         .text_size(font_size::BODY)
-        .child(label.into())
+        .child(label)
 }
 
 /// A small text button: primary (accent, `on_accent` text) or ghost (muted, hover bg).
 pub(crate) fn button(
     id: &'static str,
-    label: impl Into<SharedString>,
+    label: impl IntoElement,
     theme: &Theme,
     primary: bool,
 ) -> gpui::Stateful<gpui::Div> {
@@ -118,16 +115,15 @@ pub(crate) fn button(
     }
 }
 
-/// A ghost glyph button of a live Run: the glyph in the action's color, its tint on hover.
+/// A ghost icon button of a live Run: the icon in the action's color, its tint on hover.
 pub(crate) fn run_icon_button(
     id: &'static str,
-    label: &'static str,
+    glyph: Icon,
     action: RunAction,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let colors = run::action_colors(action, theme);
-    button_frame(id, label)
-        .text_color(rgb(colors.fg))
+    button_frame(id, icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
         .hover(move |style| style.bg(rgb(colors.tint)))
         .active(|style| style.opacity(opacity::ACTIVE))
 }
@@ -135,7 +131,7 @@ pub(crate) fn run_icon_button(
 /// A secondary button: surface background with a faint border (the empty state's New shell).
 pub(crate) fn secondary_button(
     id: &'static str,
-    label: impl Into<SharedString>,
+    label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let hover = theme.hover;
@@ -151,7 +147,7 @@ pub(crate) fn secondary_button(
 /// A quiet [`button`] whose hover shows `hover` (e.g. one step above a raised card).
 pub(crate) fn quiet_button(
     id: &'static str,
-    label: impl Into<SharedString>,
+    label: impl IntoElement,
     theme: &Theme,
     hover: u32,
 ) -> gpui::Stateful<gpui::Div> {
@@ -164,7 +160,7 @@ pub(crate) fn quiet_button(
 /// A [`button`] that cannot be used right now: faded, no hover, no click.
 pub(crate) fn disabled_button(
     id: &'static str,
-    label: &'static str,
+    label: impl IntoElement,
     theme: &Theme,
     primary: bool,
 ) -> gpui::Stateful<gpui::Div> {
@@ -189,7 +185,7 @@ pub(crate) fn disabled_button(
 /// it never reads as the accent's safe default.
 pub(crate) fn danger_button(
     id: &'static str,
-    label: impl Into<SharedString>,
+    label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let text = theme.text;
@@ -229,11 +225,13 @@ pub(crate) fn inert_layer() -> gpui::Div {
     div().absolute().inset_0().occlude()
 }
 
-/// One ─ □ ✕ button of the Windows title bar. `area` makes Windows treat it as the system
-/// caption button (hover shows here; the click and the Snap Layouts flyout are the system's).
+/// One minimize / maximize / close button of the Windows title bar. `area` makes Windows treat
+/// it as the system caption button (hover shows here; the click and the Snap Layouts flyout are
+/// the system's). The close icon turns `on_accent` on the red hover through the `id` group: an
+/// svg does not inherit its parent's hover color.
 pub(crate) fn window_control(
     id: &'static str,
-    glyph: &'static str,
+    glyph: Icon,
     area: WindowControlArea,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
@@ -242,6 +240,7 @@ pub(crate) fn window_control(
     let red = theme.status_exited;
     div()
         .id(id)
+        .group(id)
         .window_control_area(area)
         .flex_none()
         .w(theme::rems_px(theme::WINDOW_CONTROL_WIDTH))
@@ -249,22 +248,18 @@ pub(crate) fn window_control(
         .flex()
         .items_center()
         .justify_center()
-        .text_size(font_size::BODY)
-        .text_color(rgb(theme.text_muted))
-        .hover(move |style| {
-            if close {
-                style.bg(rgb(red)).text_color(rgb(on_hover))
-            } else {
-                style.bg(rgb(hover))
-            }
-        })
-        .child(glyph)
+        .hover(move |style| style.bg(rgb(if close { red } else { hover })))
+        .child(
+            icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted).when(close, |icon| {
+                icon.group_hover(id, move |style| style.text_color(rgb(on_hover)))
+            }),
+        )
 }
 
-/// A square ghost button holding one glyph (theme toggle, sidebar +).
+/// A square ghost button holding one icon (theme toggle, sidebar +).
 pub(crate) fn icon_button(
     id: impl Into<gpui::ElementId>,
-    glyph: &'static str,
+    glyph: Icon,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let hover = theme.hover;
@@ -277,10 +272,9 @@ pub(crate) fn icon_button(
         .justify_center()
         .rounded(px(radius::SMALL))
         .cursor_pointer()
-        .text_color(rgb(theme.text_muted))
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
-        .child(glyph)
+        .child(icon_svg(glyph, theme::ICON_SIZE, theme.text_muted))
 }
 
 /// What a key does to a one-line field of the Files find bar.

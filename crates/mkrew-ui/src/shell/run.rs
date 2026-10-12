@@ -315,17 +315,22 @@ impl Shell {
             .when(live, |el| el.gap(px(space::XS)))
             .child(main);
         if live {
-            for (id, label, tip, action) in [
+            for (id, glyph, tip, action) in [
                 (
                     "run-restart",
-                    "↻",
+                    Icon::RotateCw,
                     "Restart all run commands",
                     RunAction::Restart,
                 ),
-                ("run-stop", "■", "Stop all run commands", RunAction::Stop),
+                (
+                    "run-stop",
+                    Icon::CircleStop,
+                    "Stop all run commands",
+                    RunAction::Stop,
+                ),
             ] {
                 bar = bar.child(
-                    run_icon_button(id, label, action, theme)
+                    run_icon_button(id, glyph, action, theme)
                         .flex_none()
                         .tooltip(tooltip(theme, tip, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {

@@ -296,14 +296,14 @@ impl Shell {
         let running = view.remotes.running;
         let tip = "Fetch from the remotes (refreshes the base)";
         match running {
-            Some(Remote::Fetch) => icon_button("git-fetch", "⋯", theme)
+            Some(Remote::Fetch) => icon_button("git-fetch", Icon::Ellipsis, theme)
                 .tooltip(tooltip(theme, Remote::Fetch.running_label(), ""))
                 .into_any_element(),
-            Some(Remote::Push) => icon_button("git-fetch", "↓", theme)
+            Some(Remote::Push) => icon_button("git-fetch", Icon::ArrowDownToLine, theme)
                 .opacity(opacity::DISABLED)
                 .tooltip(tooltip(theme, tip, ""))
                 .into_any_element(),
-            None => icon_button("git-fetch", "↓", theme)
+            None => icon_button("git-fetch", Icon::ArrowDownToLine, theme)
                 .tooltip(tooltip(theme, tip, ""))
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     shell.run_git_remote(project_id, Remote::Fetch, window, cx);

@@ -183,7 +183,7 @@ impl Shell {
             _ => None,
         };
         let position = view.file_position();
-        let nav = |id: &'static str, glyph: &'static str, tip: &'static str, keys, key| {
+        let nav = |id: &'static str, glyph: Icon, tip: &'static str, keys, key| {
             icon_button(id, glyph, theme)
                 .tooltip(tooltip(theme, tip, keys))
                 .on_click(cx.listener(move |shell, _, window, cx| {
@@ -197,14 +197,14 @@ impl Shell {
             .items_center()
             .child(nav(
                 "git-file-previous",
-                "‹",
+                Icon::ChevronLeft,
                 "Previous file",
                 "↑ / k",
                 git_view::Key::Up,
             ))
             .child(nav(
                 "git-file-next",
-                "›",
+                Icon::ChevronRight,
                 "Next file",
                 "↓ / j",
                 git_view::Key::Down,
@@ -424,7 +424,7 @@ impl Shell {
         div()
             .flex_none()
             .child(
-                icon_button("git-diff-more", "⋯", theme)
+                icon_button("git-diff-more", Icon::Ellipsis, theme)
                     .tooltip(tooltip(theme, "More actions", ""))
                     // An open menu already closed on this mouse down (outside it): the click
                     // reopens it.

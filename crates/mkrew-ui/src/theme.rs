@@ -831,12 +831,13 @@ pub fn next_mode(mode: ThemeMode) -> ThemeMode {
     }
 }
 
-/// The toggle's glyph: half-filled circle (follows the OS) / sun / moon.
-pub fn mode_glyph(mode: ThemeMode) -> &'static str {
+/// The toggle's icon: sun and moon (follows the OS) / sun / moon.
+pub fn mode_icon(mode: ThemeMode) -> crate::icons::Icon {
+    use crate::icons::Icon;
     match mode {
-        ThemeMode::System => "◐",
-        ThemeMode::Light => "☀",
-        ThemeMode::Dark => "☾",
+        ThemeMode::System => Icon::SunMoon,
+        ThemeMode::Light => Icon::Sun,
+        ThemeMode::Dark => Icon::Moon,
     }
 }
 

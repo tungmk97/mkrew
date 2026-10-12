@@ -60,8 +60,9 @@ impl Shell {
 
     /// The title bar above everything (SPEC §10, ADR 0034): logo, workspace switcher,
     /// branch chip and views on the left; a drag area; the theme toggle, History (◷), "+ New"
-    /// (Agent / Shell) and Run; on Windows ─ □ ✕. Without a workspace only the logo, the drag
-    /// area and the controls show, so the window can always be moved and closed.
+    /// (Agent / Shell) and Run; on Windows minimize, maximize, close. Without a workspace only
+    /// the logo, the drag area and the controls show, so the window can always be moved and
+    /// closed.
     pub(crate) fn render_title_bar(
         &self,
         shown: View,
@@ -134,7 +135,7 @@ impl Shell {
             .gap(px(space::S))
             .when(!controls, |el| el.pr(px(space::M)))
             .child(
-                icon_button("toggle-theme", theme::mode_glyph(theme.mode), theme)
+                icon_button("toggle-theme", theme::mode_icon(theme.mode), theme)
                     .tooltip(tooltip(
                         theme,
                         mode,
@@ -147,7 +148,7 @@ impl Shell {
         if let Some(project_id) = workspace {
             right = right
                 .child(
-                    icon_button("history", "◷", theme)
+                    icon_button("history", Icon::History, theme)
                         .tooltip(tooltip(
                             theme,
                             "History: logs of the workspace's finished sessions",
@@ -165,7 +166,11 @@ impl Shell {
             // No click handlers: Windows hit-tests these areas (`HTMINBUTTON` / `HTMAXBUTTON` /
             // `HTCLOSE`) and runs the action itself; `HTMAXBUTTON` also brings the Snap
             // Layouts flyout.
-            let max_glyph = if window.is_maximized() { "❐" } else { "□" };
+            let max_icon = if window.is_maximized() {
+                Icon::Copy
+            } else {
+                Icon::Square
+            };
             bar = bar.child(
                 div()
                     .flex_none()
@@ -173,19 +178,19 @@ impl Shell {
                     .flex()
                     .child(window_control(
                         "win-min",
-                        "─",
+                        Icon::Minus,
                         WindowControlArea::Min,
                         theme,
                     ))
                     .child(window_control(
                         "win-max",
-                        max_glyph,
+                        max_icon,
                         WindowControlArea::Max,
                         theme,
                     ))
                     .child(window_control(
                         "win-close",
-                        "✕",
+                        Icon::X,
                         WindowControlArea::Close,
                         theme,
                     )),

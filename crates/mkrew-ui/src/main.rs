@@ -64,7 +64,7 @@ use mkrew_ui::git_summary::{GitSummary, RepoSummary};
 use mkrew_ui::git_view::{self, GitView, Since};
 use mkrew_ui::highlight::{self, Code};
 use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
-use mkrew_ui::icons;
+use mkrew_ui::icons::{self, Icon, icon_svg};
 use mkrew_ui::ime;
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::inspector;

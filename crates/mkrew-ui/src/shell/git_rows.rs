@@ -408,11 +408,11 @@ pub(crate) fn git_commit_row(
         .into_any_element()
 }
 
-/// A small text action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk
-/// header): no vertical padding, so the row keeps its height.
+/// A small action inside a list row ("Stage" on a file row, "Stage hunk" on a hunk header, or
+/// an [`icon_svg`]): no vertical padding, so the row keeps its height.
 pub(crate) fn row_action(
     id: SharedString,
-    label: &'static str,
+    label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     // One step above the rows' own `hover` / `selected` fill.
