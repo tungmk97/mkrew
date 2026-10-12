@@ -40,6 +40,8 @@ pub enum Command {
     SplitShell,
     /// Lay the active tab out as a preset (SPEC §10), starting the panes it lacks.
     Layout(Preset),
+    /// Give every pane of the active tab an equal share.
+    EqualizePanes,
     Focus(Direction),
     /// Move the divider next to the focused pane.
     Resize(Direction),
@@ -187,6 +189,7 @@ impl Command {
             Command::Layout(Preset::Columns3),
             Command::Layout(Preset::MainAndStack),
             Command::Layout(Preset::Grid),
+            Command::EqualizePanes,
             Command::Focus(Direction::Left),
             Command::Focus(Direction::Right),
             Command::Focus(Direction::Up),
@@ -262,6 +265,7 @@ impl Command {
             Command::SplitAgent => "split_agent".into(),
             Command::SplitShell => "split_shell".into(),
             Command::Layout(preset) => format!("layout_{}", preset.name()),
+            Command::EqualizePanes => "equalize_panes".into(),
             Command::Focus(Direction::Left) => "focus_left".into(),
             Command::Focus(Direction::Right) => "focus_right".into(),
             Command::Focus(Direction::Up) => "focus_up".into(),
@@ -349,6 +353,7 @@ impl Command {
                 Preset::Grid => "alt-shift-5",
             }
             .into(),
+            Command::EqualizePanes => "alt-shift-0".into(),
             Command::Focus(Direction::Left) => "alt-left".into(),
             Command::Focus(Direction::Right) => "alt-right".into(),
             Command::Focus(Direction::Up) => "alt-up".into(),

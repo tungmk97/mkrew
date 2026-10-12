@@ -9,7 +9,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
-use crate::split::{Axis, Direction, Node, Preset, RESIZE_STEP, Rect};
+use crate::split::{Axis, Direction, Divider, Node, Preset, RESIZE_STEP, Rect};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tab {
@@ -88,6 +88,14 @@ impl Tab {
             )],
             (None, Some(node)) => node.rects(),
             (None, None) => Vec::new(),
+        }
+    }
+
+    /// Dividers drawn over the panes; none while a pane is zoomed.
+    pub fn dividers(&self) -> Vec<Divider> {
+        match (self.zoomed, &self.layout) {
+            (None, Some(node)) => node.dividers(),
+            _ => Vec::new(),
         }
     }
 
@@ -341,6 +349,28 @@ impl Tabs {
         }
         let focused = tab.focused?;
         if !tab.layout.as_mut()?.resize(focused, direction, RESIZE_STEP) {
+            return None;
+        }
+        Some(tab.write())
+    }
+
+    /// Moves divider `index` of the active tab while it is dragged. Not written (one write
+    /// per drag, [`Self::write_active`]); false if nothing moved.
+    pub fn drag_divider(&mut self, index: usize, ratio: f64) -> bool {
+        self.active_mut()
+            .and_then(|tab| tab.layout.as_mut())
+            .is_some_and(|node| node.set_ratio(index, ratio))
+    }
+
+    /// Persists the active tab's layout (after a divider drag).
+    pub fn write_active(&mut self) -> Option<TabSetLayoutParams> {
+        Some(self.active_mut()?.write())
+    }
+
+    /// Gives the active tab's panes equal shares ([`Node::equalize`]). `None` if nothing moved.
+    pub fn equalize_active(&mut self) -> Option<TabSetLayoutParams> {
+        let tab = self.active_mut()?;
+        if !tab.layout.as_mut()?.equalize() {
             return None;
         }
         Some(tab.write())

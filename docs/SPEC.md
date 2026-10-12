@@ -724,7 +724,8 @@ The session panel (below) is a third column right of Terminals while open.
   mark + agent chip; hovering a rail row shows its full name, status and folder as a tooltip
   (instead of the peek). Entering the rail clears the filter and chip; a hidden sidebar comes back
   at the width it had, and Ctrl+Alt+B on a hidden sidebar shows the rail. Not remembered
-  across restarts (ADR 0040).
+  across restarts (ADR 0040). Drag the full sidebar's right edge to resize it (200–480 px, at most
+  half the window; saved as `[ui] sidebar_width` when the button is released).
 - **Plan progress:** the selected session row of a session with a linked plan shows a thin
   progress bar (done / total of its checklist) under its name line (ADR 0039).
 - **Remove:** the workspace menu's "Remove workspace…" archives it after a confirmation
@@ -779,8 +780,10 @@ The session panel (below) is a third column right of Terminals while open.
   for a tab without panes), the status mark of its most urgent pane (§11), its title and a ✕
   (always on the active tab, on hover for the others); closing never activates the tab first.
   At the right end of the strip: `+` (new tab), the split button and `⋯`. The split button opens
-  the layout menu: Split right, Split down, then the layouts 2 columns, 2 rows, 3 columns, 1 + 2
-  and 2 × 2, each with a small drawing and its shortcut (§13). A layout rearranges the active tab:
+  the layout menu: Split right, Split down, Equalize panes, then the layouts 2 columns, 2 rows,
+  3 columns, 1 + 2 and 2 × 2, each with a small drawing and its shortcut (§13). Equalize panes
+  gives every pane of a run of same-direction splits the same share (split right twice: 50/25/25
+  becomes thirds; a stack inside a column counts as one column) and saves the layout. A layout rearranges the active tab:
   its panes keep their tree order (left to right, top to bottom within a column) and the panes it
   lacks start sessions of the focused pane's kind (as Split right), one after another; then the
   layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
@@ -793,7 +796,9 @@ The session panel (below) is a third column right of Terminals while open.
   a new shell pane without one asks the user to pick; ADR 0032).
   New panes open in the project folder. Closing a pane with a running agent asks: kill the
   session, or just hide it (still reachable from the sidebar). A pane whose session exits closes
-  itself. Layout persists (`terminal_tab`).
+  itself. Layout persists (`terminal_tab`). Drag the gap between two panes to resize them (each
+  side keeps at least 10 % of the split; hidden while a pane is zoomed); the layout is saved once
+  when the button is released.
   No hard limit on terminals; warn above 12 running sessions per workspace.
 - **Session panel** (ADR 0038): a column right of the Terminals view, closed at every start,
   toggled by the status bar's right-end button and `Ctrl+Shift+Y` (from another view the key shows
@@ -1137,6 +1142,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Inbox | Jump to next item needing attention | Ctrl+Shift+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
+| Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
 | Tabs | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Tabs | Jump to tab 1–9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab | Ctrl+Shift+R / Ctrl+Shift+W |
@@ -1579,6 +1585,7 @@ font_size = 13              # px, 8–32
 theme = "system"            # §14; "system" | "light" | "dark"; the title bar toggle writes it
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the session panel's width (dragging its edge writes it; kept 240–560)
+sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family

@@ -195,6 +195,7 @@ pub fn title(command: Command) -> String {
         Command::SplitAgent => "Panes: New agent pane".into(),
         Command::SplitShell => "Panes: New shell pane".into(),
         Command::Layout(preset) => format!("Panes: Layout {}", preset.label()),
+        Command::EqualizePanes => "Panes: Equalize pane sizes".into(),
         Command::Focus(d) => format!("Panes: Move focus {}", direction(d)),
         Command::Resize(d) => format!("Panes: Resize {}", direction(d)),
         Command::ZoomPane => "Panes: Zoom / unzoom pane".into(),
@@ -284,6 +285,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::CloseTab
         | Command::Focus(_)
         | Command::Resize(_)
+        | Command::EqualizePanes
         | Command::ZoomPane
         | Command::RenamePane
         | Command::ClosePane => on_panes,

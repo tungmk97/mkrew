@@ -20,6 +20,20 @@ fn project(name: &str) -> Project {
     }
 }
 
+#[test]
+fn the_sidebar_width_follows_the_pointer_within_the_limits() {
+    assert_eq!(saved_width(280), 280.0);
+    assert_eq!(saved_width(0), theme::SIDEBAR_MIN_WIDTH);
+    assert_eq!(saved_width(65_535), theme::SIDEBAR_MAX_WIDTH);
+    // Flush with the window's left edge: width = pointer.
+    assert_eq!(width_from_pointer(1200.0, 320.0), 320.0);
+    assert_eq!(width_from_pointer(1200.0, 10.0), theme::SIDEBAR_MIN_WIDTH);
+    assert_eq!(width_from_pointer(1200.0, 900.0), theme::SIDEBAR_MAX_WIDTH);
+    // Never more than half of a narrow window (but never below the minimum).
+    assert_eq!(width_from_pointer(700.0, 600.0), 350.0);
+    assert_eq!(width_from_pointer(300.0, 600.0), theme::SIDEBAR_MIN_WIDTH);
+}
+
 fn session(project: &Project, started_at: i64, state: SessionState) -> Session {
     Session {
         id: Ulid::new(),

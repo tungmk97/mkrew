@@ -2,7 +2,17 @@
 
 use crate::*;
 
+/// Payload of a drag of the sidebar's right edge (a resize, nothing is dropped).
+pub(crate) struct SidebarGrip;
+
 impl Shell {
+    /// The sidebar's edge was released: saves the dragged width as `[ui] sidebar_width`.
+    pub(crate) fn end_sidebar_drag(&mut self) {
+        if std::mem::take(&mut self.sidebar_dragging) {
+            self.save_width("sidebar_width", self.sidebar_width);
+        }
+    }
+
     pub(crate) fn render_sidebar(
         &self,
         now: i64,
@@ -242,13 +252,44 @@ impl Shell {
         // The header and the filter stay in view; the workspace list scrolls below them.
         div()
             .flex_none()
-            .w(px(theme::SIDEBAR_WIDTH))
+            .w(px(self.sidebar_width))
+            .relative()
             .h_full()
             .flex()
             .flex_col()
             .bg(rgb(theme.sidebar))
             .border_r(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
+        let divider = theme.divider;
+        let grip = div()
+            .id("sidebar-grip")
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right_0()
+            .w(px(theme::GRIP_WIDTH))
+            .cursor(CursorStyle::ResizeLeftRight)
+            .hover(move |style| style.bg(rgb(divider)))
+            .on_drag(SidebarGrip, |_, _, _, cx| cx.new(|_| EmptyView))
+            .on_drag_move(
+                cx.listener(|shell, event: &DragMoveEvent<SidebarGrip>, window, cx| {
+                    cx.set_active_drag_cursor_style(CursorStyle::ResizeLeftRight, window);
+                    shell.sidebar_width = sidebar::width_from_pointer(
+                        f32::from(window.viewport_size().width),
+                        f32::from(event.event.position.x),
+                    );
+                    shell.sidebar_dragging = true;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, _| shell.end_sidebar_drag()),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, _| shell.end_sidebar_drag()),
+            );
             .font_family(theme.ui_font_family.clone())
             .child(header)
             .children(controls)
@@ -273,6 +314,7 @@ impl Shell {
         &self,
         now: i64,
         theme: &Theme,
+            .child(grip)
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         let shown = self.focused_session();

@@ -218,7 +218,10 @@ impl DiffMode {
 /// `[ui] inspector_width` default, px (the UI clamps what it reads to its own limits).
 pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
 
-/// `[ui]`: the app font, theme, diff layout (and panel width) (SPEC §14, §12B, §20.0).
+/// `[ui] sidebar_width` default, px (the UI clamps what it reads to its own limits).
+pub const SIDEBAR_WIDTH_DEFAULT: u16 = 280;
+
+/// `[ui]`: the app font, theme, diff layout (and panel widths) (SPEC §14, §12B, §20.0).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiSettings {
@@ -231,6 +234,8 @@ pub struct UiSettings {
     pub diff_wrap: bool,
     /// Width of the session panel right of Terminals, px (SPEC §10); dragging its edge saves it.
     pub inspector_width: u16,
+    /// Width of the workspace sidebar, px (SPEC §10); dragging its edge saves it.
+    pub sidebar_width: u16,
 }
 
 impl Default for UiSettings {
@@ -243,6 +248,7 @@ impl Default for UiSettings {
             diff_mode: DiffMode::Unified,
             diff_wrap: true,
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
+            sidebar_width: SIDEBAR_WIDTH_DEFAULT,
         }
     }
 }
@@ -361,6 +367,7 @@ pub fn template() -> &'static str {
      # diff_mode = \"unified\"\n\
      # diff_wrap = true\n\
      # inspector_width = 300\n\
+     # sidebar_width = 280\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -543,6 +550,7 @@ docs = true
                     diff_mode: DiffMode::Unified,
                     diff_wrap: true,
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
+                    sidebar_width: SIDEBAR_WIDTH_DEFAULT,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
@@ -811,6 +819,8 @@ docs = true
         assert_eq!(ui("").inspector_width, INSPECTOR_WIDTH_DEFAULT);
         assert_eq!(INSPECTOR_WIDTH_DEFAULT, 300);
         assert_eq!(ui("[ui]\ninspector_width = 420").inspector_width, 420);
+        assert_eq!(ui("").sidebar_width, SIDEBAR_WIDTH_DEFAULT);
+        assert_eq!(ui("[ui]\nsidebar_width = 360").sidebar_width, 360);
         // A negative or fractional width is a typed error, not a silent default.
         assert!(parse_err("[ui]\ninspector_width = -1").contains("invalid value"));
         assert!(parse_err("[ui]\ninspector_width = \"wide\"").contains("invalid type"));

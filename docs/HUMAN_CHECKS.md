@@ -15,6 +15,28 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-12 equalize panes, drag pane dividers, sidebar width
+
+- [ ] **Equalize (dark + light):** Split right twice → 50/25/25. The split button `◫` menu shows
+  "Equalize panes  Alt+Shift+0" under Split down; click it (or press Alt+Shift+0, or the palette's
+  "Panes: Equalize pane sizes") → three equal columns. With a column split down inside, that column
+  counts as one. Restart the app: the sizes stay.
+- [ ] **Drag pane dividers:** hover the gap between two panes → resize cursor (↔ side by side,
+  ↕ stacked) and a faint strip; drag it → the panes follow the pointer, never below 10 %; release
+  → restart the app, the sizes stay. Zoomed pane (Ctrl+Shift+M): no dividers. Terminals redraw to
+  the new size; check an agent TUI does not flicker badly while dragging.
+- [ ] **Sidebar width:** drag the full sidebar's right edge → it follows the pointer between 200 and
+  480 px (at most half the window); release → `settings.toml` gets `[ui] sidebar_width = …`;
+  restart → same width. The compact rail and the session panel's edge (`inspector_width`) still
+  work as before.
+
+### To verify — 2026-10-12 task dialog caret
+
+- [ ] **Caret (dark + light):** in the task dialog (Title and Prompt), ← / → / Ctrl+← / Home /
+  End / ↑ / ↓ (Prompt) move the caret; typing, Backspace and Delete act there; Shift+arrows
+  highlight, typing replaces it; Ctrl+C / Ctrl+X / Ctrl+V work. "From prompt…" types at the caret.
+  Typing at the end of a long prompt still scrolls to the bottom.
+
 ### To verify — 2026-10-12 Run setup caret and Browse… (ADR 0048)
 
 - [ ] **Caret (dark + light):** in Run setup, type a command, press ← / Ctrl+← / Home: the caret

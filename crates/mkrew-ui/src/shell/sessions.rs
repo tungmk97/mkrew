@@ -210,6 +210,7 @@ impl Shell {
                 | Command::CloseTab
                 | Command::Focus(_)
                 | Command::Resize(_)
+                | Command::EqualizePanes
                 | Command::ZoomPane
                 | Command::ClosePane => return,
                 _ => {}
@@ -275,6 +276,16 @@ impl Shell {
                 let write = self
                     .active_tabs_mut()
                     .and_then(|tabs| tabs.resize_focused(direction));
+                if let Some(write) = write {
+                    self.save_layout(project_id, write, window, cx);
+                    cx.notify();
+                }
+            }
+            Command::EqualizePanes => {
+                let Some(project_id) = self.workspace else {
+                    return;
+                };
+                let write = self.active_tabs_mut().and_then(Tabs::equalize_active);
                 if let Some(write) = write {
                     self.save_layout(project_id, write, window, cx);
                     cx.notify();

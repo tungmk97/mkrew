@@ -84,7 +84,7 @@ use mkrew_ui::run::{self, Ports, RowState, RunAction, Summary};
 use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
-use mkrew_ui::split::{Axis, Preset};
+use mkrew_ui::split::{Axis, Divider, Preset};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, tab_kind};
@@ -434,6 +434,13 @@ struct Shell {
     inspector_dragging: bool,
     /// The Docs view of every workspace it was shown for.
     docs: HashMap<Ulid, Docs>,
+    /// The workspace sidebar's width in px, from `[ui] sidebar_width` and the drag.
+    sidebar_width: f32,
+    /// Its edge was dragged since the last mouse-up: the width is saved when it ends.
+    sidebar_dragging: bool,
+    /// A divider between panes was dragged since the last mouse-up: the active tab's layout is
+    /// saved when it ends.
+    pane_dragging: bool,
     /// Focused while a Docs comment or reply draft takes keys (the draft stays on blur).
     comment_focus: FocusHandle,
     /// The Files view of every workspace it was shown for.

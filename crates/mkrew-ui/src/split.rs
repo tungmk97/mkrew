@@ -48,6 +48,26 @@ pub struct Rect {
     pub h: f64,
 }
 
+/// A split's divider, for dragging it: `index` is the split's place in tree order
+/// ([`Node::set_ratio`]), `area` the split's whole area (fractions of the tab).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Divider {
+    pub index: usize,
+    pub axis: Axis,
+    pub area: Rect,
+    pub ratio: f64,
+}
+
+impl Divider {
+    /// The ratio that puts this divider at point (`x`, `y`), fractions of the tab.
+    pub fn ratio_at(&self, x: f64, y: f64) -> f64 {
+        match self.axis {
+            Axis::Vertical => (x - self.area.x) / self.area.w,
+            Axis::Horizontal => (y - self.area.y) / self.area.h,
+        }
+    }
+}
+
 /// A ready-made layout for a whole tab (SPEC §10, the split button's menu).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Preset {
@@ -354,18 +374,97 @@ impl Node {
         Some(changed)
     }
 
+    /// Gives every pane of a run of same-axis splits the same share (`A | (B | C)` becomes
+    /// thirds); a nested split of the other axis counts as one pane. Returns false if no
+    /// ratio changed.
+    pub fn equalize(&mut self) -> bool {
+        let Node::Split {
+            split,
+            ratio,
+            children,
+        } = self
+        else {
+            return false;
+        };
+        let [first, second] = &mut **children;
+        let (a, b) = (first.slots(*split) as f64, second.slots(*split) as f64);
+        let next = a / (a + b);
+        let changed = (next - *ratio).abs() > EPSILON;
+        *ratio = next;
+        // `|`, not `||`: both children are equalized.
+        changed | first.equalize() | second.equalize()
+    }
+
+    /// Panes side by side along `axis` within this node.
+    fn slots(&self, axis: Axis) -> usize {
+        match self {
+            Node::Split {
+                split, children, ..
+            } if *split == axis => children.iter().map(|c| c.slots(axis)).sum(),
+            _ => 1,
+        }
+    }
+
+    /// Sets the ratio of the `index`-th split in tree order (see [`Self::dividers`]), kept
+    /// within [`MIN_RATIO`]. Returns false if there is no such split or nothing changed.
+    pub fn set_ratio(&mut self, index: usize, ratio: f64) -> bool {
+        // A tab with no size yet gives NaN; a NaN ratio would break the stored layout.
+        if !ratio.is_finite() {
+            return false;
+        }
+        let next = ((ratio * 1e4).round() / 1e4).clamp(MIN_RATIO, 1.0 - MIN_RATIO);
+        self.set_ratio_inner(&mut { index }, next) == Some(true)
+    }
+
+    /// `left` counts down the splits still to skip; `None` = not in this subtree.
+    fn set_ratio_inner(&mut self, left: &mut usize, next: f64) -> Option<bool> {
+        let Node::Split {
+            ratio, children, ..
+        } = self
+        else {
+            return None;
+        };
+        if *left == 0 {
+            let changed = (next - *ratio).abs() > EPSILON;
+            *ratio = next;
+            return Some(changed);
+        }
+        *left -= 1;
+        children
+            .iter_mut()
+            .find_map(|child| child.set_ratio_inner(left, next))
+    }
+
+    /// Every split with its area, in tree order.
+    pub fn dividers(&self) -> Vec<Divider> {
+        let mut out = Vec::new();
+        self.dividers_inner(Rect::WHOLE, &mut out);
+        out
+    }
+
+    fn dividers_inner(&self, area: Rect, out: &mut Vec<Divider>) {
+        if let Node::Split {
+            split,
+            ratio,
+            children,
+        } = self
+        {
+            out.push(Divider {
+                index: out.len(),
+                axis: *split,
+                area,
+                ratio: *ratio,
+            });
+            let (a, b) = halves(*split, *ratio, area);
+            children[0].dividers_inner(a, out);
+            children[1].dividers_inner(b, out);
+        }
+    }
+
     /// Every pane with its area, in tree order.
     pub fn rects(&self) -> Vec<(Ulid, Rect)> {
         let mut out = Vec::new();
-        self.rects_inner(
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                w: 1.0,
-                h: 1.0,
-            },
-            &mut out,
-        );
+        self.rects_inner(Rect::WHOLE, &mut out);
         out
     }
 
@@ -377,30 +476,7 @@ impl Node {
                 ratio,
                 children,
             } => {
-                let (a, b) = match split {
-                    Axis::Vertical => {
-                        let w = area.w * ratio;
-                        (
-                            Rect { w, ..area },
-                            Rect {
-                                x: area.x + w,
-                                w: area.w - w,
-                                ..area
-                            },
-                        )
-                    }
-                    Axis::Horizontal => {
-                        let h = area.h * ratio;
-                        (
-                            Rect { h, ..area },
-                            Rect {
-                                y: area.y + h,
-                                h: area.h - h,
-                                ..area
-                            },
-                        )
-                    }
-                };
+                let (a, b) = halves(*split, *ratio, area);
                 children[0].rects_inner(a, out);
                 children[1].rects_inner(b, out);
             }
@@ -451,6 +527,44 @@ impl Node {
                 gap.then(b.2.total_cmp(&a.2)).then(a.3.total_cmp(&b.3))
             })
             .map(|(id, ..)| id)
+    }
+}
+
+impl Rect {
+    /// The whole tab.
+    pub const WHOLE: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 1.0,
+        h: 1.0,
+    };
+}
+
+/// The two children's areas of a split of `area`.
+fn halves(axis: Axis, ratio: f64, area: Rect) -> (Rect, Rect) {
+    match axis {
+        Axis::Vertical => {
+            let w = area.w * ratio;
+            (
+                Rect { w, ..area },
+                Rect {
+                    x: area.x + w,
+                    w: area.w - w,
+                    ..area
+                },
+            )
+        }
+        Axis::Horizontal => {
+            let h = area.h * ratio;
+            (
+                Rect { h, ..area },
+                Rect {
+                    y: area.y + h,
+                    h: area.h - h,
+                    ..area
+                },
+            )
+        }
     }
 }
 
@@ -521,6 +635,69 @@ mod tests {
                 .iter()
                 .all(|preset| preset.rects().len() == preset.panes())
         );
+    }
+
+    #[test]
+    fn equalize_shares_each_run_of_splits_evenly() {
+        let [a, b, c, d] = ids();
+        // Split right twice from the new pane: 50 / 25 / 25 becomes thirds.
+        let mut node = Node::pane(a);
+        node.split(a, Axis::Vertical, b);
+        node.split(b, Axis::Vertical, c);
+        assert!(node.equalize());
+        for (_, rect) in node.rects() {
+            assert!((rect.w - 1.0 / 3.0).abs() < 1e-9, "{:?}", node.rects());
+        }
+        assert!(!node.equalize(), "already even");
+        // Another axis counts as one pane: A | (B / (C | D)) halves at every level.
+        let mut node = Node::pane(a);
+        node.split(a, Axis::Vertical, b);
+        node.split(b, Axis::Horizontal, c);
+        node.split(c, Axis::Vertical, d);
+        node.resize(a, Direction::Right, 0.3);
+        node.equalize();
+        let rects: std::collections::HashMap<Ulid, Rect> = node.rects().into_iter().collect();
+        assert!((rects[&a].w - 0.5).abs() < 1e-9);
+        assert!((rects[&b].h - 0.5).abs() < 1e-9 && (rects[&b].w - 0.5).abs() < 1e-9);
+        assert!((rects[&c].w - 0.25).abs() < 1e-9 && (rects[&d].w - 0.25).abs() < 1e-9);
+        assert!(!Node::pane(a).equalize());
+    }
+
+    #[test]
+    fn dividers_and_set_ratio_address_splits_in_tree_order() {
+        let [a, b, c] = ids();
+        let mut node = Node::pane(a);
+        node.split(a, Axis::Vertical, b);
+        node.split(b, Axis::Horizontal, c);
+        let dividers = node.dividers();
+        assert_eq!(dividers.len(), 2);
+        assert_eq!((dividers[0].index, dividers[0].axis), (0, Axis::Vertical));
+        assert_eq!(dividers[0].area, Rect::WHOLE);
+        assert_eq!((dividers[1].index, dividers[1].axis), (1, Axis::Horizontal));
+        assert_eq!(dividers[1].area.x, 0.5);
+        assert!(node.set_ratio(1, 0.7));
+        assert_eq!(node.dividers()[1].ratio, 0.7);
+        assert_eq!(node.dividers()[0].ratio, 0.5);
+        // Kept within MIN_RATIO; unknown index or same ratio changes nothing.
+        assert!(node.set_ratio(0, 0.01));
+        assert_eq!(node.dividers()[0].ratio, MIN_RATIO);
+        assert!(!node.set_ratio(0, 0.0));
+        assert!(!node.set_ratio(2, 0.5));
+        assert!(!node.set_ratio(0, f64::NAN));
+        // The pointer's position inside the split's own area.
+        let [side, stack] = [node.dividers()[0], node.dividers()[1]];
+        assert!((side.ratio_at(0.3, 0.9) - 0.3).abs() < 1e-9);
+        assert!((stack.ratio_at(0.9, 0.25) - 0.25).abs() < 1e-9);
+        let inner = Divider {
+            area: Rect {
+                x: 0.5,
+                y: 0.0,
+                w: 0.5,
+                h: 1.0,
+            },
+            ..side
+        };
+        assert!((inner.ratio_at(0.625, 0.0) - 0.25).abs() < 1e-9);
     }
 
     #[test]

@@ -22,18 +22,19 @@ impl Shell {
         cx.notify();
     }
 
-    /// The edge was released: saves the dragged width as `[ui] inspector_width` (one write per
-    /// drag; the file is hand-edited config). A file that does not parse is not written; the
-    /// palette lists why (§20.0).
+    /// The edge was released: saves the dragged width as `[ui] inspector_width`.
     pub(crate) fn end_inspector_drag(&mut self) {
-        if !std::mem::take(&mut self.inspector_dragging) {
-            return;
+        if std::mem::take(&mut self.inspector_dragging) {
+            self.save_width("inspector_width", self.inspector_width);
         }
-        // Clamped to 240–560 by `width_from_pointer`, so it fits a u16.
-        let width = (self.inspector_width.round() as u16).to_string();
-        if let Err(error) =
-            mkrew_core::settings::write_ui_value(&self.settings_file, "inspector_width", &width)
-        {
+    }
+
+    /// Saves a dragged panel width as `[ui] <key>` (one write per drag; the file is hand-edited
+    /// config). A file that does not parse is not written; the palette lists why (§20.0).
+    pub(crate) fn save_width(&mut self, key: &str, width: f32) {
+        // Clamped to its theme limits while dragged, so it fits a u16.
+        let width = (width.round() as u16).to_string();
+        if let Err(error) = mkrew_core::settings::write_ui_value(&self.settings_file, key, &width) {
             self.settings_error = Some(error.to_string());
         }
     }
@@ -143,7 +144,7 @@ impl Shell {
             .top_0()
             .bottom_0()
             .left_0()
-            .w(px(theme::INSPECTOR_GRIP_WIDTH))
+            .w(px(theme::GRIP_WIDTH))
             .cursor(CursorStyle::ResizeLeftRight)
             .on_drag(InspectorGrip, |_, _, _, cx| cx.new(|_| EmptyView))
             .on_drag_move(

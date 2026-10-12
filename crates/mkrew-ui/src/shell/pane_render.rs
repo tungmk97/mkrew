@@ -286,33 +286,64 @@ impl Shell {
         }
         let focused = tabs.active().and_then(|tab| tab.focused());
         let rects = tabs.active().map(Tab::rects).unwrap_or_default();
+        let dividers = tabs.active().map(Tab::dividers).unwrap_or_default();
         let several = rects.len() > 1;
         let half_gap = px(theme::PANE_HALF_GAP);
-        div()
-            .flex_1()
-            .min_h_0()
-            .p(half_gap)
-            .child(div().size_full().relative().children(rects.into_iter().map(
-                |(session, rect)| {
-                    let is_focused = focused == Some(session);
-                    div()
-                        .absolute()
-                        .left(relative(rect.x as f32))
-                        .top(relative(rect.y as f32))
-                        .w(relative(rect.w as f32))
-                        .h(relative(rect.h as f32))
-                        .p(half_gap)
-                        .child(self.pane_frame(
-                            session,
-                            several,
-                            is_focused,
-                            is_focused && composer_focused,
-                            now,
-                            theme,
-                            cx,
-                        ))
-                },
-            )))
+        let panes: Vec<_> = rects
+            .into_iter()
+            .map(|(session, rect)| {
+                let is_focused = focused == Some(session);
+                div()
+                    .absolute()
+                    .left(relative(rect.x as f32))
+                    .top(relative(rect.y as f32))
+                    .w(relative(rect.w as f32))
+                    .h(relative(rect.h as f32))
+                    .p(half_gap)
+                    .child(self.pane_frame(
+                        session,
+                        several,
+                        is_focused,
+                        is_focused && composer_focused,
+                        now,
+                        theme,
+                        cx,
+                    ))
+            })
+            .collect();
+        let dividers: Vec<_> = dividers
+            .into_iter()
+            .map(|divider| pane_divider(divider, theme, cx))
+            .collect();
+        div().flex_1().min_h_0().p(half_gap).child(
+            div()
+                .id("tab-panes")
+                .size_full()
+                .relative()
+                .children(panes)
+                .children(dividers)
+                // Every divider drag lands here: `bounds` is this area, the panes' 0..1 space.
+                .on_drag_move(
+                    cx.listener(|shell, event: &DragMoveEvent<Divider>, window, cx| {
+                        let divider = *event.drag(cx);
+                        cx.set_active_drag_cursor_style(divider_cursor(divider.axis), window);
+                        let bounds = event.bounds;
+                        let at = event.event.position - bounds.origin;
+                        let x = f64::from(at.x / bounds.size.width);
+                        let y = f64::from(at.y / bounds.size.height);
+                        let ratio = divider.ratio_at(x, y);
+                        // ponytail: live ratio, one `session.resize` per changed column count
+                        // like the session panel's edge; throttle if a TUI flickers.
+                        if shell
+                            .active_tabs_mut()
+                            .is_some_and(|tabs| tabs.drag_divider(divider.index, ratio))
+                        {
+                            shell.pane_dragging = true;
+                            cx.notify();
+                        }
+                    }),
+                ),
+        )
     }
 
     /// One pane: the terminal (or why it is not shown), its composer, its border, and the
@@ -780,6 +811,58 @@ pub(crate) fn pane_header(
                 ))
                 .child(status_mark(state, now, theme))
                 .child(pill),
+
+fn divider_cursor(axis: Axis) -> CursorStyle {
+    match axis {
+        Axis::Vertical => CursorStyle::ResizeLeftRight,
+        Axis::Horizontal => CursorStyle::ResizeUpDown,
+    }
+}
+
+/// The grab strip over a split's divider: centred on the gap between its two children, as long
+/// as the split. Dragging it is handled by the panes area (`render_tab`), which knows the size.
+fn pane_divider(divider: Divider, theme: &Theme, cx: &mut Context<'_, Shell>) -> gpui::AnyElement {
+    let area = divider.area;
+    let at = |start: f64, len: f64| relative((start + len * divider.ratio) as f32);
+    let grip = px(theme::GRIP_WIDTH);
+    let centre = px(-theme::GRIP_WIDTH / 2.0);
+    let hover = theme.divider;
+    // A zero-thick line along the divider; the strip hangs half on each side of it.
+    let (line, strip) = match divider.axis {
+        Axis::Vertical => (
+            div()
+                .left(at(area.x, area.w))
+                .top(relative(area.y as f32))
+                .h(relative(area.h as f32)),
+            div().top_0().bottom_0().left(centre).w(grip),
+        ),
+        Axis::Horizontal => (
+            div()
+                .top(at(area.y, area.h))
+                .left(relative(area.x as f32))
+                .w(relative(area.w as f32)),
+            div().left_0().right_0().top(centre).h(grip),
+        ),
+    };
+    line.absolute()
+        .child(
+            strip
+                .id(("pane-divider", divider.index))
+                .absolute()
+                .cursor(divider_cursor(divider.axis))
+                .hover(move |style| style.bg(rgb(hover)))
+                .on_drag(divider, |_, _, _, cx| cx.new(|_| EmptyView))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|shell, _, window, cx| shell.end_pane_drag(window, cx)),
+                )
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|shell, _, window, cx| shell.end_pane_drag(window, cx)),
+                ),
+        )
+        .into_any_element()
+}
         )
         .child(title)
         .children(conflict.map(|badge| {

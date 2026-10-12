@@ -406,6 +406,11 @@ impl Shell {
                 "Split down",
                 Command::SplitDown,
             ))
+            .child(split(
+                "layout-menu-equalize",
+                "Equalize panes",
+                Command::EqualizePanes,
+            ))
             .child(
                 div()
                     .h(px(theme::BORDER_WIDTH))

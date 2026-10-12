@@ -20,6 +20,7 @@ impl Shell {
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
         let inspector_width = inspector::saved_width(ui.inspector_width);
+        let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let prompts_dir = paths.prompts_dir();
         // System mode follows the OS live (ADR 0027).
         cx.observe_window_appearance(window, |_, window, cx| {
@@ -288,6 +289,9 @@ impl Shell {
             inspector_dragging: false,
             board: Board::default(),
             board_error: None,
+            sidebar_width,
+            sidebar_dragging: false,
+            pane_dragging: false,
             conflicts: Conflicts::default(),
             card_error: None,
             selected_card: None,

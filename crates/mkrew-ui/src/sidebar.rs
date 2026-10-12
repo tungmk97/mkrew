@@ -10,7 +10,21 @@ use crate::history;
 use crate::inbox::{self, Viewed};
 use crate::status;
 use crate::text_box::Input;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
+
+/// `[ui] sidebar_width` as drawn: kept between the limits.
+pub fn saved_width(px: u16) -> f32 {
+    f32::from(px).clamp(theme::SIDEBAR_MIN_WIDTH, theme::SIDEBAR_MAX_WIDTH)
+}
+
+/// The width while the right edge is dragged to `pointer_x` (window coordinates): the sidebar
+/// is flush with the left edge. At most half of the window, so the terminals keep room.
+pub fn width_from_pointer(window_width: f32, pointer_x: f32) -> f32 {
+    let max = theme::SIDEBAR_MAX_WIDTH
+        .min(window_width / 2.0)
+        .max(theme::SIDEBAR_MIN_WIDTH);
+    pointer_x.clamp(theme::SIDEBAR_MIN_WIDTH, max)
+}
 
 /// How a session state is shown: always icon + text, never color alone (SPEC §11).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

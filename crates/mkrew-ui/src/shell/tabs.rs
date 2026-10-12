@@ -196,6 +196,19 @@ impl Shell {
         cx.notify();
     }
 
+    /// A divider between panes was released: saves the active tab's layout (one write per drag).
+    pub(crate) fn end_pane_drag(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if !std::mem::take(&mut self.pane_dragging) {
+            return;
+        }
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if let Some(write) = self.active_tabs_mut().and_then(Tabs::write_active) {
+            self.save_layout(project_id, write, window, cx);
+        }
+    }
+
     /// Starts editing `session_id`'s title inline in its pane header (F2, double-click),
     /// from the user's own title. Run sessions are named by their command: left alone.
     pub(crate) fn start_pane_rename(

@@ -130,8 +130,10 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 /// Thickness of the accent line under the header of a colored pane (ADR 0037).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
 
-/// Width of the workspace sidebar.
-pub const SIDEBAR_WIDTH: f32 = 280.0;
+/// Narrowest and widest the workspace sidebar gets when dragged; `[ui] sidebar_width` is
+/// clamped to them.
+pub const SIDEBAR_MIN_WIDTH: f32 = 200.0;
+pub const SIDEBAR_MAX_WIDTH: f32 = 480.0;
 
 /// Width of the compact sidebar rail (Toggle compact sidebar): a status mark, a gap and an agent
 /// chip plus the rail's padding. In px at the default font size; drawn with [`rems_px`] so it
@@ -143,8 +145,9 @@ pub const COMPACT_SIDEBAR_WIDTH: f32 = 56.0;
 pub const INSPECTOR_MIN_WIDTH: f32 = 240.0;
 pub const INSPECTOR_MAX_WIDTH: f32 = 560.0;
 
-/// Width of the grab area on the session panel's left edge.
-pub const INSPECTOR_GRIP_WIDTH: f32 = 6.0;
+/// Width of the grab area of a draggable edge: the sidebar's, the session panel's and the
+/// dividers between panes.
+pub const GRIP_WIDTH: f32 = 6.0;
 
 /// Width of the label column of the session card's usage rows (fits "Context" at META size).
 pub const INSPECTOR_LABEL_WIDTH: f32 = 56.0;
