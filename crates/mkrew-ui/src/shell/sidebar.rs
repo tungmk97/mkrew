@@ -158,7 +158,11 @@ impl Shell {
                             .flex()
                             .items_center()
                             .text_color(rgb(theme.text_muted))
-                            .child("⌕"),
+                            .child(icon_svg(
+                                Icon::Search,
+                                theme::ICON_SIZE_SMALL,
+                                theme.text_muted,
+                            )),
                     )
                     .track_focus(&self.filter_focus)
                     .on_key_down(cx.listener(Self::filter_key_down))
@@ -440,6 +444,8 @@ impl Shell {
         let toggle = div()
             .id("toggle-sidebar")
             .flex_none()
+            .flex()
+            .items_center()
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
             .cursor_pointer()
@@ -455,13 +461,19 @@ impl Shell {
                 self.keymap.label(Command::ToggleSidebar),
             ))
             .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
-            .child("◧")
+            .child(icon_svg(
+                Icon::PanelLeft,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
             .when(modal, |el| el.relative().child(inert_layer()));
         // Full width ↔ compact rail (a hidden sidebar comes back as the rail).
         let compact = self.sidebar_layout.compact();
         let compact_toggle = div()
             .id("toggle-compact-sidebar")
             .flex_none()
+            .flex()
+            .items_center()
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
             .cursor_pointer()
@@ -479,7 +491,15 @@ impl Shell {
             .on_click(cx.listener(|shell, _, window, cx| {
                 shell.toggle_compact_sidebar(window, cx);
             }))
-            .child(if compact { "⇥" } else { "⇤" })
+            .child(icon_svg(
+                if compact {
+                    Icon::PanelLeftOpen
+                } else {
+                    Icon::PanelLeftClose
+                },
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
             .when(modal, |el| el.relative().child(inert_layer()));
 
         let waiting = self.inbox_entries().len();
@@ -681,7 +701,7 @@ pub(crate) fn workspace_row(
         .child(
             row_action(
                 SharedString::from(format!("workspace-menu-{project_id}")),
-                "⋯",
+                icon_svg(Icon::Ellipsis, theme::ICON_SIZE_SMALL, theme.text_muted),
                 theme,
             )
             // Shown on hover, and always on the active row (SPEC §14 progressive disclosure).
@@ -825,7 +845,7 @@ pub(crate) fn session_row(
         .child(
             row_action(
                 SharedString::from(format!("session-remove-{session_id}")),
-                "✕",
+                icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
                 theme,
             )
             // Shown on hover (SPEC §14 progressive disclosure).

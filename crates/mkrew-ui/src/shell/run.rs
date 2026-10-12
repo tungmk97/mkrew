@@ -386,13 +386,13 @@ impl Shell {
                 RowState::Stopped => theme.text_muted,
             };
             let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
-            let controls: &[(&'static str, &'static str, RunAction)] = if running {
+            let controls: &[(Icon, &'static str, RunAction)] = if running {
                 &[
-                    ("↻", "Restart this command", RunAction::Restart),
-                    ("■", "Stop this command", RunAction::Stop),
+                    (Icon::RotateCw, "Restart this command", RunAction::Restart),
+                    (Icon::CircleStop, "Stop this command", RunAction::Stop),
                 ]
             } else {
-                &[("▶", "Run this command", RunAction::Start)]
+                &[(Icon::Play, "Run this command", RunAction::Start)]
             };
             let mut line = div()
                 .flex()
@@ -419,16 +419,17 @@ impl Shell {
                         .text_color(rgb(theme.text_muted))
                         .child(ports.join(" ")),
                 );
-            for &(label, tip, action) in controls {
+            for &(glyph, tip, action) in controls {
                 let name = row.name.clone();
                 let colors = run::action_colors(action, theme);
                 line = line.child(
                     div()
-                        .id(SharedString::from(format!("run-{label}-{}", row.name)))
+                        .id(SharedString::from(format!("run-{action:?}-{}", row.name)))
+                        .flex()
+                        .items_center()
                         .px(px(space::XS))
                         .rounded(px(radius::SMALL))
                         .cursor_pointer()
-                        .text_color(rgb(colors.fg))
                         .hover(move |style| style.bg(rgb(colors.tint)))
                         .tooltip(tooltip(theme, tip, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -436,7 +437,7 @@ impl Shell {
                             cx.stop_propagation();
                             shell.run_action(project_id, action, Some(name.clone()), window, cx);
                         }))
-                        .child(label),
+                        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg)),
                 );
             }
             rows.push(line.into_any_element());

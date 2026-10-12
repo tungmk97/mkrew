@@ -51,7 +51,11 @@ impl Shell {
             .text_color(rgb(theme.text_muted))
             .hover(move |style| style.bg(rgb(search_hover)))
             .active(|style| style.opacity(opacity::ACTIVE))
-            .child(div().flex_none().child("⌕"))
+            .child(icon_svg(
+                Icon::Search,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
             .child(div().flex_1().min_w_0().truncate().child("Search files…"))
             .child(
                 div()
@@ -405,11 +409,14 @@ impl Shell {
                     .px(px(space::L))
                     .pb(px(space::S))
                     .child(
-                        button(
+                        icon_button(
                             "file-find-toggle-replace",
-                            if find.replace.is_some() { "▾" } else { "▸" },
+                            if find.replace.is_some() {
+                                Icon::ChevronDown
+                            } else {
+                                Icon::ChevronRight
+                            },
                             theme,
-                            false,
                         )
                         .tooltip(tooltip(
                             theme,
@@ -458,7 +465,7 @@ impl Shell {
                             .child(find.label()),
                     )
                     .child(
-                        button("file-find-previous", "↑", theme, false)
+                        icon_button("file-find-previous", Icon::ArrowUp, theme)
                             .tooltip(tooltip(theme, "Previous match", "Shift+Enter"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 window.focus(&shell.file_find_focus, cx);
@@ -466,7 +473,7 @@ impl Shell {
                             })),
                     )
                     .child(
-                        button("file-find-next", "↓", theme, false)
+                        icon_button("file-find-next", Icon::ArrowDown, theme)
                             .tooltip(tooltip(theme, "Next match", "Enter"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 window.focus(&shell.file_find_focus, cx);
@@ -474,7 +481,7 @@ impl Shell {
                             })),
                     )
                     .child(
-                        button("file-find-close", "✕", theme, false)
+                        icon_button("file-find-close", Icon::X, theme)
                             .tooltip(tooltip(theme, "Close", "Esc"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 shell.close_file_find(project_id, window, cx);

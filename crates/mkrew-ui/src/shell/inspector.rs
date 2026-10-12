@@ -49,14 +49,11 @@ impl Shell {
         div()
             .id("toggle-inspector")
             .flex_none()
+            .flex()
+            .items_center()
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
             .cursor_pointer()
-            .text_color(rgb(if self.inspector_open {
-                theme.accent_text
-            } else {
-                theme.text_muted
-            }))
             .when(self.inspector_open, |el| el.bg(rgb(theme.accent_bg)))
             .when(!self.inspector_open, |el| {
                 el.hover(move |style| style.bg(rgb(hover)))
@@ -71,7 +68,15 @@ impl Shell {
                 self.keymap.label(Command::ToggleInspector),
             ))
             .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
-            .child("◨")
+            .child(icon_svg(
+                Icon::PanelRight,
+                theme::ICON_SIZE_SMALL,
+                if self.inspector_open {
+                    theme.accent_text
+                } else {
+                    theme.text_muted
+                },
+            ))
             .when(self.modal_open(), |el| el.relative().child(inert_layer()))
     }
 

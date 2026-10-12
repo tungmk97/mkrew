@@ -102,7 +102,7 @@ impl Shell {
                     .child(
                         row_action(
                             SharedString::from(format!("tab-close-{tab_id}")),
-                            "✕",
+                            icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
                             theme,
                         )
                         // Always on the active tab, on hover for the others.
@@ -171,14 +171,14 @@ impl Shell {
                 )
             })
             .child(
-                button("new-tab", "+", theme, false)
+                icon_button("new-tab", Icon::Plus, theme)
                     .tooltip(tooltip(theme, "New tab", ""))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.create_tab(project_id, None, window, cx);
                     })),
             )
             .child(
-                button("tab-split", "◫", theme, false)
+                icon_button("tab-split", Icon::Columns2, theme)
                     .tooltip(tooltip(theme, "Split or pick a layout", ""))
                     .on_click(cx.listener(|shell, event: &gpui::ClickEvent, _, cx| {
                         shell.open_layout_menu(event.position(), cx);
@@ -186,7 +186,7 @@ impl Shell {
             )
             .when_some(active, |bar, tab_id| {
                 bar.child(
-                    button("tab-menu-button", "⋯", theme, false)
+                    icon_button("tab-menu-button", Icon::Ellipsis, theme)
                         .tooltip(tooltip(theme, "Tab menu", ""))
                         .on_click(cx.listener(
                             move |shell, event: &gpui::ClickEvent, window, cx| {
