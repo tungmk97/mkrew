@@ -88,7 +88,7 @@ async fn supervise(web: Arc<Web>, settings: Arc<SettingsHolder>, exe: impl Fn() 
             Ended::Disabled => {}
             Ended::NotFound => {
                 web.set(true, false, Some(not_found_message()));
-                // Look again once a minute (or at once when the settings change), so installing
+                // Look again once a minute (or at once after Stop → Start), so installing
                 // `mk` later just works and the dialog's "Retrying…" stays true.
                 sleep_while_enabled(&settings, LOOK_AGAIN).await;
             }
@@ -183,7 +183,58 @@ fn spawn_mk(exe: &Path) -> io::Result<Child> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    command.spawn()
+    let child = command.spawn()?;
+    #[cfg(windows)]
+    kill_with_daemon(&child);
+    Ok(child)
+}
+
+/// A hard-killed daemon (Task Manager, crash) never runs `kill_on_drop`: put the child in a job
+/// object that Windows closes with the daemon, which kills everything in it (ADR 0053). On
+/// failure `kill_on_drop` still covers the graceful paths.
+#[allow(unsafe_code)]
+#[cfg(windows)]
+fn kill_with_daemon(child: &Child) {
+    use std::ffi::c_void;
+    use std::sync::LazyLock;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+
+    // The handle is never closed: it lives as long as the daemon. (A raw handle is not `Sync`.)
+    static JOB: LazyLock<Option<usize>> = LazyLock::new(|| {
+        // SAFETY: plain Win32 calls with valid arguments; `info` outlives the call.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return None;
+            }
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let size = std::mem::size_of_val(&info) as u32;
+            let info_ptr = std::ptr::addr_of!(info).cast::<c_void>();
+            if SetInformationJobObject(job, JobObjectExtendedLimitInformation, info_ptr, size) == 0
+            {
+                CloseHandle(job);
+                return None;
+            }
+            Some(job as usize)
+        }
+    });
+    let (Some(job), Some(process)) = (*JOB, child.raw_handle()) else {
+        tracing::warn!("mk web is not tied to the daemon's lifetime (no job object)");
+        return;
+    };
+    // SAFETY: both handles are valid; the child handle is owned by `child`.
+    if unsafe { AssignProcessToJobObject(job as HANDLE, process as HANDLE) } == 0 {
+        tracing::warn!(
+            "mk web is not tied to the daemon's lifetime: {}",
+            io::Error::last_os_error()
+        );
+    }
 }
 
 /// `MKREW_MK_EXE` when set (tests), else `mk` next to the running daemon, else `PATH`.

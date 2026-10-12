@@ -75,7 +75,7 @@ fn mk_web_runs_while_enabled_and_dies_when_disabled() {
     let env = Env::new();
     let beat = env.dir.path().join("beat.txt");
     env.set_web(true);
-    let (_daemon, mut client) = env.start_with_mk(&heartbeat(&beat));
+    let (mut daemon, mut client) = env.start_with_mk(&heartbeat(&beat));
 
     let on = wait_web(&mut client, |w| w.running);
     assert_eq!(
@@ -97,10 +97,14 @@ fn mk_web_runs_while_enabled_and_dies_when_disabled() {
         "mk web still runs after it was turned off"
     );
 
+    // The first child's last beat must not pass for the new child's.
+    std::fs::remove_file(&beat).unwrap();
     env.set_web(true);
     wait_web(&mut client, |w| w.running);
+    wait_text(&beat);
     assert!(!is_frozen(&beat), "turning it on again starts a new child");
     client.stop();
+    assert!(daemon.wait_exit().success());
 }
 
 #[test]
@@ -117,11 +121,27 @@ fn mk_web_dies_with_the_daemon() {
     assert!(is_frozen(&beat), "mk web outlived the daemon");
 }
 
+/// A killed daemon (Task Manager, crash) runs no cleanup: the job object takes `mk web` along.
+#[cfg(windows)]
+#[test]
+fn mk_web_dies_when_the_daemon_is_killed() {
+    let env = Env::new();
+    let beat = env.dir.path().join("beat.txt");
+    env.set_web(true);
+    let (mut daemon, mut client) = env.start_with_mk(&heartbeat(&beat));
+    wait_web(&mut client, |w| w.running);
+    wait_text(&beat);
+
+    daemon.0.kill().unwrap();
+    daemon.wait_exit();
+    assert!(is_frozen(&beat), "mk web outlived the killed daemon");
+}
+
 #[test]
 fn a_mk_web_that_exits_at_once_reports_its_last_stderr_line() {
     let env = Env::new();
     env.set_web(true);
-    let (_daemon, mut client) = env.start_with_mk("[[step]]\naction = \"ask\"\n");
+    let (mut daemon, mut client) = env.start_with_mk("[[step]]\naction = \"ask\"\n");
 
     let down = wait_web(&mut client, |w| !w.running && w.error.is_some());
     assert_eq!(
@@ -137,6 +157,7 @@ fn a_mk_web_that_exits_at_once_reports_its_last_stderr_line() {
     let off = wait_web(&mut client, |w| !w.enabled);
     assert_eq!(off, WebStatus::default(), "turning it off clears the error");
     client.stop();
+    assert!(daemon.wait_exit().success());
 }
 
 #[test]
@@ -144,7 +165,7 @@ fn a_missing_mk_is_reported() {
     let env = Env::new();
     env.set_web(true);
     let missing = env.dir.path().join("no-such-mk");
-    let (_daemon, mut client) = env.start_with(&[(mkrew_daemon::ENV_MK_EXE, missing.as_path())]);
+    let (mut daemon, mut client) = env.start_with(&[(mkrew_daemon::ENV_MK_EXE, missing.as_path())]);
 
     let web = wait_web(&mut client, |w| w.error.is_some());
     assert_eq!(
@@ -159,4 +180,5 @@ fn a_missing_mk_is_reported() {
         }
     );
     client.stop();
+    assert!(daemon.wait_exit().success());
 }
