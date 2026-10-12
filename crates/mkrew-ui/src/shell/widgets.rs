@@ -262,6 +262,17 @@ pub(crate) fn icon_button(
     glyph: Icon,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
+    icon_button_in(id, glyph, theme.text_muted, theme)
+}
+
+/// An [`icon_button`] whose icon is drawn in `color`: a state (the phone icon is accent while
+/// phone access is on).
+pub(crate) fn icon_button_in(
+    id: impl Into<gpui::ElementId>,
+    glyph: Icon,
+    color: u32,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
     let hover = theme.hover;
     div()
         .id(id)
@@ -274,7 +285,7 @@ pub(crate) fn icon_button(
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
-        .child(icon_svg(glyph, theme::ICON_SIZE, theme.text_muted))
+        .child(icon_svg(glyph, theme::ICON_SIZE, color))
 }
 
 /// What a key does to a one-line field of the Files find bar.

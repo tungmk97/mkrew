@@ -298,11 +298,42 @@ fn availability_follows_the_view() {
     );
 }
 
+#[test]
+fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
+    for view in [
+        View::Terminals,
+        View::Board,
+        View::Docs,
+        View::Files,
+        View::Git,
+    ] {
+        assert!(Extra::PhoneAccess.available(&context(view)), "{view:?}");
+    }
+    let none = Context {
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
+    let entry = listed
+        .iter()
+        .find(|e| e.action == Action::Extra(Extra::PhoneAccess))
+        .expect("listed without a workspace");
+    assert_eq!(entry.title, "Global: Phone access…");
+    assert_eq!(entry.shortcut, "", "palette-only: no key is bound");
+}
+
 fn extras(context: &Context) -> Vec<Extra> {
     entries(&Keymap::defaults(), context, &[], &[], &[])
         .into_iter()
         .filter_map(|entry| match entry.action {
-            Action::Extra(extra) if !matches!(extra, Extra::RunSetup | Extra::OpenSettings) => {
+            Action::Extra(extra)
+                if !matches!(
+                    extra,
+                    Extra::RunSetup | Extra::OpenSettings | Extra::PhoneAccess
+                ) =>
+            {
                 Some(extra)
             }
             _ => None,

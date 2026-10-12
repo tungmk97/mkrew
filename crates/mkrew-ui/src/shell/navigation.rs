@@ -477,6 +477,7 @@ impl Shell {
                 window.dispatch_action(Box::new(Run(command)), cx);
             }
             palette::Action::Extra(Extra::OpenSettings) => self.open_settings(cx),
+            palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(extra) => {
                 let Some(project_id) = workspace else {
                     return;
@@ -542,6 +543,7 @@ impl Shell {
                     Extra::RunShowTab => self.show_run_tab(project_id, window, cx),
                     // Handled above: it needs no workspace.
                     Extra::OpenSettings => self.open_settings(cx),
+                    Extra::PhoneAccess => self.open_phone_access(window, cx),
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {

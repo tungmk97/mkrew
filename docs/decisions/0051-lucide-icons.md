@@ -11,7 +11,7 @@ Windows. The human asked for better-looking icons from an existing set, not hand
 
 ## Decision
 
-- Lucide (`lucide-static` 1.55.0, ISC; license in `icon/lucide/LICENSE`): 48 SVGs vendored in
+- Lucide (`lucide-static` 1.55.0, ISC; license in `icon/lucide/LICENSE`): 49 SVGs vendored in
   `icon/lucide/`, embedded with `include_bytes!` by `crates/mkrew-ui/src/icons.rs` (`Icon`) and
   served to gpui by `icons::Assets` (`Application::with_assets`).
 - Drawn with `gpui::svg()` as a monochrome mask in a theme token color (`icon_svg`), so one file

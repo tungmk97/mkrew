@@ -15,6 +15,26 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-12 Phone access from the UI (plan docs/superpowers/plans/2026-10-12-phone-access-ui.md, ADR 0053)
+
+- [ ] **Dialog, dark and light:** palette → "Global: Phone access…" and the title bar phone icon both
+  open "Phone access". Check Off / On / `✕ Not running` rows, the Tailscale row, the QR panel (dark
+  modules on white in both themes), the link line and Copy link in dark and light; no clipped text at
+  the 520 px width; Esc closes.
+- [ ] **Start → icon accent:** Start → the row shows "Starting…" then `● On`, the title bar icon turns
+  accent and its tooltip reads "Phone access: on"; Stop → `○ Off`, muted icon, "Phone access: off".
+  Restart the PC with phone access on and the Mkrew window closed: after login the icon is accent
+  when the UI starts again (the daemon started `mk web`).
+- [ ] **Scan:** with Tailscale set up, scan the QR with the iPhone camera → Safari opens the Mkrew
+  page and shows Sessions (no token screen). Copy link pastes the same link.
+- [ ] **Stop while the phone page is open:** Stop → within a few seconds the phone page shows "Can't
+  reach Mkrew on <pc>. Retrying…" and does not come back until Start.
+- [ ] **Set up on a PC without serve config:** `tailscale serve reset`, open the dialog → "Tailscale
+  doesn't publish Mkrew yet" + Set up; click it → the button reads "Setting up…", then "✓ Tailscale
+  serve is set up". Sign out of Tailscale → "Install and sign in to Tailscale first", no Set up.
+- [ ] **Port in use:** run `mk web` by hand, then Start → `✕ Not running: <bind error>. Retrying…`;
+  stop the hand-started one → the row becomes `● On` within about a minute.
+
 ### To verify — 2026-10-12 Mkrew web on a phone (plan docs/superpowers/plans/2026-10-10-mobile-web.md)
 
 - [ ] **Link:** `tailscale serve --bg 8787`, then `mk web` prints `https://<pc>.<tailnet>.ts.net/#t=…`.

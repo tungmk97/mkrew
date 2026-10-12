@@ -66,10 +66,11 @@ pub enum Extra {
     RunSetup,
     RunShowTab,
     OpenSettings,
+    PhoneAccess,
 }
 
 impl Extra {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -85,6 +86,7 @@ impl Extra {
         Self::RunSetup,
         Self::RunShowTab,
         Self::OpenSettings,
+        Self::PhoneAccess,
     ];
 
     pub fn title(self) -> &'static str {
@@ -104,6 +106,7 @@ impl Extra {
             Self::RunSetup => "Run: Setup…",
             Self::RunShowTab => "Run: Show Run tab",
             Self::OpenSettings => "Global: Open settings",
+            Self::PhoneAccess => "Global: Phone access…",
         }
     }
 
@@ -132,7 +135,7 @@ impl Extra {
                 context.workspace && context.run_live
             }
             Self::RunSetup => context.workspace,
-            Self::OpenSettings => true,
+            Self::OpenSettings | Self::PhoneAccess => true,
         }
     }
 }

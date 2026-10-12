@@ -59,8 +59,9 @@ impl Shell {
     }
 
     /// The title bar above everything (SPEC §10, ADR 0034): logo, workspace switcher,
-    /// branch chip and views on the left; a drag area; the theme toggle, History (◷), "+ New"
-    /// (Agent / Shell) and Run; on Windows minimize, maximize, close. Without a workspace only
+    /// branch chip and views on the left; a drag area; the theme toggle, the phone icon (Phone
+    /// access, ADR 0053), History (◷), "+ New" (Agent / Shell) and Run; on Windows minimize,
+    /// maximize, close. Without a workspace only
     /// the logo, the drag area and the controls show, so the window can always be moved and
     /// closed.
     pub(crate) fn render_title_bar(
@@ -144,7 +145,8 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.toggle_theme(window, cx);
                     })),
-            );
+            )
+            .children(self.render_phone_button(theme, cx));
         if let Some(project_id) = workspace {
             right = right
                 .child(

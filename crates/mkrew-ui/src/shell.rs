@@ -32,6 +32,7 @@ mod focus;
 mod history;
 mod navigation;
 mod peek;
+mod phone_access;
 mod run;
 mod sessions;
 mod tabs;

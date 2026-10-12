@@ -22,6 +22,7 @@ impl Shell {
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let prompts_dir = paths.prompts_dir();
+        let config_dir = paths.config_dir.clone();
         // System mode follows the OS live (ADR 0027).
         cx.observe_window_appearance(window, |_, window, cx| {
             theme::refresh(cx.theme().mode, window, cx);
@@ -107,6 +108,22 @@ impl Shell {
             }
         })
         .detach();
+        // The title bar's phone icon follows `daemon.status.web`: read every `PHONE_POLL_IDLE`,
+        // and on every tick while the Phone access dialog is open (ADR 0053).
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(theme::PHONE_TICK).await;
+                let ticked = this.update_in(cx, |shell, window, cx| {
+                    if shell.phone.due(Instant::now(), shell.phone_open) {
+                        shell.poll_phone(window, cx);
+                    }
+                });
+                if ticked.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let rename_focus = cx.focus_handle();
@@ -147,6 +164,7 @@ impl Shell {
             let loaded = this.update_in(cx, |shell, window, cx| {
                 shell.connection = Some(connection);
                 shell.refresh(window, cx);
+                shell.poll_phone(window, cx);
             });
             if loaded.is_err() {
                 return;
@@ -207,6 +225,8 @@ impl Shell {
                 shell.turns_return = None;
                 shell.git_discard = None;
                 shell.git_base = None;
+                shell.phone_open = false;
+                shell.phone = Phone::default();
                 shell.history = None;
                 shell.history_pane = None;
                 shell.doc_dialog = None;
@@ -267,6 +287,9 @@ impl Shell {
             settings_error: None,
             settings_file,
             prompts_dir,
+            config_dir,
+            phone: Phone::default(),
+            phone_open: false,
             workspace_menu: None,
             file_menu: None,
             tab_menu: None,

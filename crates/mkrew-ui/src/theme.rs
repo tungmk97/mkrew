@@ -66,6 +66,12 @@ pub const TOAST_DURATION: Duration = Duration::from_secs(4);
 /// (SPEC §11, §14).
 pub const STATUS_TICK: Duration = Duration::from_millis(500);
 
+/// The Phone access poll clock (ADR 0053): while its dialog is open `daemon.status` and
+/// Tailscale are read on every tick; closed, `daemon.status` alone every [`PHONE_POLL_IDLE`]
+/// (it keeps the title bar icon true).
+pub const PHONE_TICK: Duration = Duration::from_secs(1);
+pub const PHONE_POLL_IDLE: Duration = Duration::from_secs(5);
+
 /// Diameter of one dot of the `working` mark (SPEC §11).
 pub const STATUS_DOT: f32 = 4.0;
 /// Gap between the dots of the `working` mark.
@@ -211,6 +217,10 @@ pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 
 /// Width of a modal dialog (the task dialog).
 pub const DIALOG_WIDTH: f32 = 520.0;
+
+/// Side of the Phone access QR code (ADR 0053): px at the default 13 px body, scaled with
+/// `[ui] font_size` ([`rems_px`]). Big enough for a camera across a desk.
+pub const PHONE_QR_SIZE: f32 = 216.0;
 
 /// Width of a confirmation dialog (every `window.prompt`, drawn in the window).
 pub const CONFIRM_DIALOG_WIDTH: f32 = 420.0;

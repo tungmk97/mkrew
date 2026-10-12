@@ -75,6 +75,7 @@ icons! {
     Search => "search",
     Send => "send",
     Share2 => "share-2",
+    Smartphone => "smartphone",
     Sparkles => "sparkles",
     Square => "square",
     SquareTerminal => "square-terminal",

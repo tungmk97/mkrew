@@ -76,6 +76,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
+use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
@@ -352,6 +353,13 @@ struct Shell {
     settings_error: Option<String>,
     /// `<config>/mkrew/prompts`, read (seeded the first time) when a prompt picker opens.
     prompts_dir: PathBuf,
+    /// `<config>/mkrew`: `mk web` keeps `web_token` there (Phone access link, ADR 0053).
+    config_dir: PathBuf,
+    /// Phone access (ADR 0053): what `daemon.status` and Tailscale last said; the title bar
+    /// icon and the dialog read it.
+    phone: Phone,
+    /// The "Phone access" dialog is open (modal).
+    phone_open: bool,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
@@ -675,6 +683,10 @@ impl Render for Shell {
                         self.git_base
                             .as_ref()
                             .map(|dialog| self.render_git_base(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.phone_open
+                            .then(|| self.render_phone_access(&theme, cx)),
                     )
                     .children(
                         self.run_setup

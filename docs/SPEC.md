@@ -189,7 +189,7 @@ mkrew/
 ├── packaging/                # mkrew.wxs (WiX 7 MSI), mkrew.iss (Inno Setup 6 setup .exe)
 ├── agents/                   # sample profiles: claude.toml codex.toml omp.toml shell.toml fake.toml
 └── crates/
-    ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files.
+    ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files, except the `tailscale` CLI runs of `mkrew_core::tailscale` (ADR 0053).
     ├── mkrew-protocol/       # Request/Response/Event types, frame codec, snapshot → ANSI
     ├── mkrew-store/          # SQLite + migrations
     ├── mkrew-daemon/         # bin: PTYs, sessions, detectors, watchers, notifications
@@ -555,7 +555,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.set_base` | `project_id`, `base_ref` (`null`/blank = auto-detect; trimmed; refused if it starts with `-` or contains whitespace or control characters) | ok — broadcasts `project.updated` (Project carries `base_ref`) |
 | `git.fetch` / `git.push` | `project_id` | ok (push = current branch to its upstream, never force) |
 | `git.repos` | `project_id` | `string[]`: `""` when the project folder is in a git repository, then each direct child folder holding `.git` (folder or file), sorted; hidden folders, `node_modules` and `target` skipped; not filtered by `.gitignore`; read on every call (ADR 0029) |
-| `daemon.status/stop` | – | info / ok |
+| `daemon.status/stop` | – | info / ok; `status` carries `web` = `{enabled, running, error?}`: the `mk web` child the daemon supervises while `[web] enabled` (§20.0, ADR 0053); `error` = the child's last stderr line |
 
 `git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
 
@@ -607,6 +607,8 @@ Rules: on
 `protocol_version` mismatch the daemon replies `version_mismatch` and the UI asks to restart the daemon.
 
 v2 adds requests and events in §20; each milestone that changes the protocol bumps `PROTOCOL_VERSION`.
+
+Protocol 40 (ADR 0053): `daemon.status` gains `web`.
 
 ---
 
@@ -751,7 +753,7 @@ The session panel (below) is a third column right of Terminals while open.
   children, ADR 0029; hidden when there is no repository), a click shows the Git view; the
   views Board / Terminals / Docs / Files / Git as a segmented control (tooltips show their
   shortcuts, §13), the Git one with a `Git N` badge (N = changed files summed over every
-  repository, hidden at 0); then, right-aligned, the theme toggle, History (`◷` icon), `+ New ▾`
+  repository, hidden at 0); then, right-aligned, the theme toggle, the phone icon (`smartphone`, §14; hidden without a daemon connection), History (`◷` icon), `+ New ▾`
   (a dropdown of Agent / Shell) and the split Run button, in every view (New's entries switch to
   Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). The git chip and badge come from `git.repos`
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
@@ -1247,6 +1249,8 @@ The terminal is the hero; everything else steps back.
 | `diff-del-bg` | #3D2226 | #FDEEEE |
 | `diff-del-text` | #F2A0A4 | #A61B1B |
 | `diff-hunk-header` | #2C2E37 | #F6F7F9 |
+| `qr-dark` | #101114 | #101114 |
+| `qr-light` | #FFFFFF | #FFFFFF |
 
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
 - Radius 4 (badges, small buttons), 8 (cards, panes, inputs), 12 (dialogs, palette).
@@ -1274,6 +1278,20 @@ The terminal is the hero; everything else steps back.
   Comment, Send to agent, Open in Zed, Push, …; the list is in ADR 0051); a `▾` after a label
   is a chevron-down icon. Dialog footers, Retry, thread actions, row actions and danger buttons
   stay text. Status icons (§11), marks in messages and the live Run label stay text.
+- Phone access (ADR 0053): a Lucide `smartphone` icon button in the title bar, right of the
+  theme toggle (accent while `mk web` runs, `text-muted` otherwise; tooltip "Phone access: on" /
+  "Phone access: off"), and the palette command "Global: Phone access…", open the "Phone
+  access" dialog (`DIALOG_WIDTH`, same frame as the other dialogs, Esc / Close). Rows, each
+  with a glyph and text (§11): **Status** `○ Off` + Start, `● On` + Stop, `✕ Not running:
+  <error>. Retrying…` + Stop; **Tailscale** `✓ Tailscale serve is set up`, `Tailscale doesn't
+  publish Mkrew yet` + Set up (its error below), `Install and sign in to Tailscale first`; **Link**
+  (only while On and the MagicDNS name is known): the QR code, the link as one line and Copy
+  link, "Scan with the iPhone camera, then Share → Add to Home Screen." (`Starting…` until
+  `mk web` has written `web_token`). The QR is always dark modules (`qr-dark`) on a light
+  panel (`qr-light`) in both themes, `PHONE_QR_SIZE` px. The dialog re-reads `daemon.status`
+  and Tailscale about once a second while open (off the UI thread); the title bar icon reads
+  `daemon.status` every 5 s. A failed Start / Stop shows in the dialog. The link carries the
+  access token: it is never logged and never in a tooltip.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
@@ -1310,7 +1328,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 | Input latency | key press → glyph on screen < 16 ms (local) |
 | Idle CPU | UI + daemon < 1% of the machine with no output (GPUI's Windows vsync floor alone is 1–2% of one core) |
 | Memory | UI < 150 MB, daemon < 50 MB with 6 sessions (agents excluded) |
-| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web`, started by the user, listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); `hook.report` rejected unless the session id belongs to a live session |
+| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); `hook.report` rejected unless the session id belongs to a live session |
 | Data | SQLite WAL; daily DB backup, keep 7 |
 | Errors | panics logged with backtrace; UI shows an error instead of dying silently |
 | History | per-session output log, rotated at 5 MB |
@@ -1617,7 +1635,15 @@ max_seconds = 120           # 1–600; a recording stops by itself after this
 [features]                  # ADR 0046; optional modules, off by default
 docs = false                # §12 Docs view, "Review in Docs"; applies live
 turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
+[web]                       # ADR 0053; phone access
+enabled = false             # the daemon runs `mk web` while true; the Phone access dialog writes it
 ```
+
+**Phone access** (ADR 0053). While `[web] enabled = true` the daemon supervises `mk web` as a
+windowless child (`mk.exe` next to `mkrew-daemon.exe`, else on PATH; stderr's last line is the
+`error`; a child that exits is started again after 1, 2, 4 … 60 s; `enabled = false` kills it).
+`daemon.status.web` reports `{enabled, running, error?}`. The Phone access dialog (§14) writes the
+key and shows the link; `mk web --new-token` still revokes old links.
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
 enters `working` from `starting`, `idle`, `done` or `needs_input` after user input; it **ends** at
