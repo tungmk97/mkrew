@@ -29,6 +29,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   composer ✦ is faded while the prompt is being improved.
 - [ ] **Chevrons:** workspace rows, Git group headers and History commits, Files tree folders, Run
   setup folders: chevrons flip on expand/collapse; names stay aligned between files and folders.
+  Git Working: the change letters sit under the group header's text, the Staged hint too; an
+  expanded History commit's files and notes start under its summary (with and without the lane
+  graph), also at `[ui] font_size = 18`.
 - [ ] **Font size:** set `[ui] font_size = 18`, restart: icons grow with the text and stay
   centered; nothing clips; the Run button's two halves keep one height.
 - [ ] **Icons beside text (dark + light):** tab strip ends with Close pane (square ✕), +, split,

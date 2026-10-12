@@ -313,12 +313,17 @@ impl Shell {
             )
         });
         let zed_button = |id: &'static str, primary: bool| {
-            button(id, "Open in Zed", theme, primary)
-                .flex_none()
-                .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    shell.open_file_in_zed(project_id, cx);
-                }))
+            button(
+                id,
+                icon_text(Icon::ExternalLink, "Open in Zed", button_fg(theme, primary)),
+                theme,
+                primary,
+            )
+            .flex_none()
+            .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                shell.open_file_in_zed(project_id, cx);
+            }))
         };
         let markdown = view.is_markdown();
         let review_path = path.clone();

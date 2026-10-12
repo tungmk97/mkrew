@@ -131,7 +131,7 @@ pub(crate) fn git_file_row(
         }
         git_view::ListRow::Hint(hint) => {
             return list_row(SharedString::from("git-staged-hint"))
-                .pl(px(space::S + space::M))
+                .child(under_commit())
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
                 .child(div().min_w_0().truncate().child(*hint))
@@ -140,7 +140,7 @@ pub(crate) fn git_file_row(
         git_view::ListRow::Note(note) => {
             // Indented under its commit, like the commit's files.
             return list_row(SharedString::from(format!("git-note-{note}")))
-                .when(graph.is_none(), |el| el.pl(px(space::S + space::M)))
+                .when(graph.is_none(), |el| el.child(under_commit()))
                 .when_some(graph, |el, (cell, lanes)| {
                     el.child(graph_column(cell, lanes, theme))
                         .child(under_commit())
@@ -174,7 +174,7 @@ pub(crate) fn git_file_row(
         .group(id.clone())
         // Indented under its commit inside the full-width row (a margin would overflow it).
         .when(group == git_view::Group::Commit && graph.is_none(), |el| {
-            el.pl(px(space::S + space::M))
+            el.child(under_commit())
         })
         .when_some(graph, |el, (cell, lanes)| {
             el.child(graph_column(cell, lanes, theme))
@@ -195,7 +195,7 @@ pub(crate) fn git_file_row(
             div()
                 .id(SharedString::from(format!("{id}-kind")))
                 .flex_none()
-                .w(px(space::M))
+                .w(theme::rems_px(theme::ICON_SIZE_SMALL))
                 .text_size(font_size::META)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
@@ -503,7 +503,8 @@ fn graph_column(cell: GraphCell, lanes: usize, theme: &Theme) -> gpui::Div {
         )
 }
 
-/// Indent of a row listed under a History commit, past the commit's chevron.
+/// The chevron's column (group header, History commit) as a spacer, so rows listed under them
+/// (the Staged hint, a commit's files and notes) start where the header's text does.
 fn under_commit() -> gpui::Div {
-    div().flex_none().w(px(space::M))
+    div().flex_none().w(theme::rems_px(theme::ICON_SIZE_SMALL))
 }
