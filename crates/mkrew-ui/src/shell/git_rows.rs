@@ -297,13 +297,15 @@ fn group_header(
             shell.git_view(project_id).toggle_collapsed(group);
             cx.notify();
         }))
-        .child(
-            div()
-                .flex_none()
-                .w(px(space::M))
-                .text_color(rgb(theme.chevron_color()))
-                .child(if folded { "▸" } else { "▾" }),
-        )
+        .child(icon_svg(
+            if folded {
+                Icon::ChevronRight
+            } else {
+                Icon::ChevronDown
+            },
+            theme::ICON_SIZE_SMALL,
+            theme.chevron_color(),
+        ))
         .child(group.title().to_uppercase())
         .child(count.to_string())
         .child(div().flex_1())
@@ -378,13 +380,15 @@ pub(crate) fn git_commit_row(
         .when_some(graph, |el, (cell, lanes)| {
             el.child(graph_column(cell, lanes, theme))
         })
-        .child(
-            div()
-                .flex_none()
-                .w(px(space::M))
-                .text_color(rgb(theme.chevron_color()))
-                .child(if expanded { "▾" } else { "▸" }),
-        )
+        .child(icon_svg(
+            if expanded {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            },
+            theme::ICON_SIZE_SMALL,
+            theme.chevron_color(),
+        ))
         .child(
             div()
                 .flex_1()

@@ -650,12 +650,15 @@ pub(crate) fn workspace_row(
                 shell.open_workspace_menu(project_id, window, cx);
             }),
         )
-        .child(
-            div()
-                .text_size(font_size::META)
-                .text_color(rgb(theme.chevron_color()))
-                .child(if row.expanded { "▾" } else { "▸" }),
-        )
+        .child(icon_svg(
+            if row.expanded {
+                Icon::ChevronDown
+            } else {
+                Icon::ChevronRight
+            },
+            theme::ICON_SIZE_SMALL,
+            theme.chevron_color(),
+        ))
         .child(workspace_avatar(&row.name, color, theme))
         .child(
             div()

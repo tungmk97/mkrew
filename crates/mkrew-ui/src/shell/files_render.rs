@@ -847,9 +847,9 @@ pub(crate) fn file_row(
         theme.bg
     };
     let chevron = match (entry.is_dir, expanded) {
-        (false, _) => "",
-        (true, false) => "▸",
-        (true, true) => "▾",
+        (false, _) => None,
+        (true, false) => Some(Icon::ChevronRight),
+        (true, true) => Some(Icon::ChevronDown),
     };
     let marker = entry.marker.map(|marker| match marker {
         GitMarker::Modified => ("M", theme.accent, "Modified"),
@@ -886,9 +886,10 @@ pub(crate) fn file_row(
         .child(
             div()
                 .flex_none()
-                .w(px(space::M))
-                .text_color(rgb(theme.text_muted))
-                .child(chevron),
+                .w(theme::rems_px(theme::ICON_SIZE_SMALL))
+                .children(
+                    chevron.map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, theme.text_muted)),
+                ),
         )
         .child(
             div()

@@ -820,9 +820,14 @@ impl Shell {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(space::M))
-                            .text_color(rgb(theme.text_muted))
-                            .child(if is_dir { "▸" } else { "" }),
+                            .w(theme::rems_px(theme::ICON_SIZE_SMALL))
+                            .when(is_dir, |el| {
+                                el.child(icon_svg(
+                                    Icon::ChevronRight,
+                                    theme::ICON_SIZE_SMALL,
+                                    theme.text_muted,
+                                ))
+                            }),
                     )
                     .child(
                         div()
