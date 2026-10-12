@@ -90,6 +90,11 @@ button:disabled{cursor:not-allowed;opacity:.5}
 .keys::-webkit-scrollbar{display:none}
 .key{flex:none;min-width:44px;min-height:44px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:500 14px/1 var(--mono)}
 .key:active{background:var(--hover)}
+.replies{display:flex;gap:6px;overflow-x:auto;margin:0 -16px;padding:0 16px;scrollbar-width:none}
+.replies::-webkit-scrollbar{display:none}
+.replies:empty{display:none}
+.reply-chip{flex:none;max-width:70vw;min-height:44px;padding:0 14px;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text);font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.reply-chip:active{background:var(--hover)}
 .reply{display:flex;align-items:flex-end;gap:8px}
 .reply-input{flex:1;max-height:132px;padding:11px 12px;line-height:1.35;resize:none}
 .send{width:44px;height:44px;flex:none;display:grid;place-items:center;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent)}

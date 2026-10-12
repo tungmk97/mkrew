@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ago, backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, machineName,
-  metaText, newAgentPlan, pillText, statusLabel, taskTitle, toBase64, tokenFromHash,
-  tokenFromText, wsClass,
+  DEFAULT_REPLIES, ago, backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes,
+  loadReplies, machineName, metaText, newAgentPlan, pillText, rememberReply, statusLabel,
+  taskTitle, toBase64, tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
 const T = 'ab'.repeat(32);
@@ -107,6 +107,21 @@ test('quick keys send the bytes a terminal would, arrows follow application curs
   assert.equal(keyBytes('up', false), '\x1b[A');
   assert.equal(keyBytes('down', true), '\x1bOB');
   assert.throws(() => keyBytes('f13', false));
+});
+
+test('recent replies: newest first, no repeats, at most 5; blank, long or multi-line text is not kept', () => {
+  assert.deepEqual(rememberReply(['a', 'b'], ' b '), ['b', 'a']);
+  assert.deepEqual(rememberReply(['1', '2', '3', '4', '5'], '6'), ['6', '1', '2', '3', '4']);
+  assert.deepEqual(rememberReply(['a'], '   '), ['a']);
+  assert.deepEqual(rememberReply(['a'], 'x'.repeat(81)), ['a']);
+  assert.deepEqual(rememberReply(['a'], 'two\nlines'), ['a']);
+});
+
+test('stored replies: missing or broken data gives the defaults; junk entries are dropped', () => {
+  assert.deepEqual(loadReplies(null), DEFAULT_REPLIES);
+  assert.deepEqual(loadReplies('{oops'), DEFAULT_REPLIES);
+  assert.deepEqual(loadReplies('{"a":1}'), DEFAULT_REPLIES);
+  assert.deepEqual(loadReplies('["ok", 3, "  "]'), ['ok']);
 });
 
 test('reconnect waits 1, 2, 4, 8, then 10 seconds', () => {

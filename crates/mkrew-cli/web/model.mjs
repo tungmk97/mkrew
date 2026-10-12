@@ -128,6 +128,29 @@ export function keyBytes(key, appCursor) {
   return bytes;
 }
 
+/** Chips before the user sent anything from the Reply box. */
+export const DEFAULT_REPLIES = ['continue', 'yes, go ahead'];
+const MAX_REPLIES = 5;
+const MAX_REPLY_LEN = 80;
+
+/** The chip list after sending `text`: newest first, no repeats; only short one-line replies. */
+export function rememberReply(replies, text) {
+  const reply = text.trim();
+  if (!reply || reply.length > MAX_REPLY_LEN || reply.includes('\n')) return replies;
+  return [reply, ...replies.filter((r) => r !== reply)].slice(0, MAX_REPLIES);
+}
+
+/** The chips stored in `localStorage` (JSON array of strings); anything else gives the defaults. */
+export function loadReplies(raw) {
+  try {
+    const list = JSON.parse(raw);
+    if (Array.isArray(list)) return list.filter((r) => typeof r === 'string' && r.trim()).slice(0, MAX_REPLIES);
+  } catch {
+    // Not JSON: fall through to the defaults.
+  }
+  return DEFAULT_REPLIES;
+}
+
 /** Seconds before reconnect attempt `attempt` (0-based). */
 export function backoff(attempt) {
   return [1, 2, 4, 8][attempt] ?? 10;

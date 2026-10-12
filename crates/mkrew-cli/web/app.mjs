@@ -2,12 +2,14 @@
 // `mk web`; never resizes a session (the desktop pane keeps its size, the font shrinks here).
 import { Terminal } from './vendor/xterm.mjs';
 import {
-  backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, machineName, metaText,
-  newAgentPlan, pillText, statusLabel, toBase64, tokenFromHash, tokenFromText, wsClass,
+  backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, loadReplies, machineName,
+  metaText, newAgentPlan, pillText, rememberReply, statusLabel, toBase64, tokenFromHash,
+  tokenFromText, wsClass,
 } from './model.mjs';
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = 'mkrew.token';
+const REPLIES_KEY = 'mkrew.replies';
 /** Size of sessions started from the web: the desktop default; the phone never resizes. */
 const NEW_SIZE = { cols: 120, rows: 30 };
 const ID_LEN = 26;
@@ -37,6 +39,7 @@ const state = {
   sessions: new Map(),
   open: null,
   reloadTimer: 0,
+  replies: loadReplies(localStorage.getItem(REPLIES_KEY)),
 };
 const machine = machineName(location.hostname);
 const idDecoder = new TextDecoder();
@@ -417,6 +420,19 @@ function grow(box) {
   box.style.height = `${Math.min(box.scrollHeight, 132)}px`;
 }
 
+function renderReplies() {
+  $('replies').innerHTML = state.replies
+    .map((text, i) => `<button class="reply-chip" type="button" data-reply="${i}">${esc(text)}</button>`)
+    .join('');
+}
+
+async function sendReply(text) {
+  await call('session.send', { session_id: state.open, text, submit: true });
+  state.replies = rememberReply(state.replies, text);
+  localStorage.setItem(REPLIES_KEY, JSON.stringify(state.replies));
+  renderReplies();
+}
+
 // ---- new agent ----
 
 function selected(name) {
@@ -562,7 +578,7 @@ function wire() {
     const text = box.value;
     if (!text.trim() || !state.open) return;
     try {
-      await call('session.send', { session_id: state.open, text, submit: true });
+      await sendReply(text);
       box.value = '';
       grow(box);
     } catch (err) {
@@ -578,6 +594,12 @@ function wire() {
   $('reply').addEventListener('input', (e) => grow(e.target));
   keepKeyboard($('keys'));
   keepKeyboard($('send'));
+  keepKeyboard($('replies'));
+  $('replies').addEventListener('click', (e) => {
+    const i = e.target.closest('[data-reply]')?.dataset.reply;
+    if (i === undefined || !state.open) return;
+    sendReply(state.replies[Number(i)]).catch((err) => toast(err.message));
+  });
   $('keys').addEventListener('click', (e) => {
     const key = e.target.closest('[data-key]')?.dataset.key;
     if (!key || !state.open) return;
@@ -626,6 +648,7 @@ function start() {
   // Keep `#t=` in the URL: "Add to Home Screen" bookmarks it, and iOS gives the Home Screen
   // app its own storage.
   if (state.token && !fromHash) history.replaceState(history.state, '', `#t=${state.token}`);
+  renderReplies();
   wire();
   fitViewport();
   if (state.token) {
