@@ -155,16 +155,21 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        button(id, "Open in Zed", theme, primary)
-            .flex_none()
-            .tooltip(tooltip(
-                theme,
-                "Open this file in Zed",
-                self.keymap.label(Command::OpenInZed),
-            ))
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                shell.open_git_file_in_zed(project_id, cx);
-            }))
+        button(
+            id,
+            icon_text(Icon::ExternalLink, "Open in Zed", button_fg(theme, primary)),
+            theme,
+            primary,
+        )
+        .flex_none()
+        .tooltip(tooltip(
+            theme,
+            "Open this file in Zed",
+            self.keymap.label(Command::OpenInZed),
+        ))
+        .on_click(cx.listener(move |shell, _, _, cx| {
+            shell.open_git_file_in_zed(project_id, cx);
+        }))
     }
 
     /// The diff toolbar (wraps when narrow): previous / next file with "1 / 6", the status
@@ -346,17 +351,22 @@ impl Shell {
         let discard = view.discard(selected).map(|_| {
             let target = selected.clone();
             let red = theme.diff_del_text;
-            quiet_button("git-discard", "Discard…", theme, theme.hover)
-                .flex_none()
-                .text_color(rgb(red))
-                .tooltip(tooltip(
-                    theme,
-                    "Discard this file's changes (asks first)",
-                    "",
-                ))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    shell.open_git_discard(project_id, target.clone(), window, cx);
-                }))
+            quiet_button(
+                "git-discard",
+                icon_text(Icon::Undo2, "Discard…", red),
+                theme,
+                theme.hover,
+            )
+            .flex_none()
+            .text_color(rgb(red))
+            .tooltip(tooltip(
+                theme,
+                "Discard this file's changes (asks first)",
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.open_git_discard(project_id, target.clone(), window, cx);
+            }))
         });
         let stage = view.file_change(selected).map(|change| {
             let (label, tip, command) = match change.stage {
@@ -663,13 +673,18 @@ impl Shell {
                 comments::lines_label(picked.start, picked.end)
             )))
             .child(
-                button("git-pick-comment", "Comment", theme, true)
-                    .flex_none()
-                    .child(kbd(keys.clone(), theme, true))
-                    .tooltip(tooltip(theme, "Comment on the selected lines", keys))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.start_comment(project_id, CommentContext::Diff, window, cx);
-                    })),
+                button(
+                    "git-pick-comment",
+                    icon_text(Icon::MessageSquarePlus, "Comment", button_fg(theme, true)),
+                    theme,
+                    true,
+                )
+                .flex_none()
+                .child(kbd(keys.clone(), theme, true))
+                .tooltip(tooltip(theme, "Comment on the selected lines", keys))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    shell.start_comment(project_id, CommentContext::Diff, window, cx);
+                })),
             )
             .child(self.send_comments_button(project_id, CommentContext::Diff, comments, theme, cx))
             .child(div().flex_1())

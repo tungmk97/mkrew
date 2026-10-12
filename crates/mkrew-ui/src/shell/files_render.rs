@@ -51,7 +51,11 @@ impl Shell {
             .text_color(rgb(theme.text_muted))
             .hover(move |style| style.bg(rgb(search_hover)))
             .active(|style| style.opacity(opacity::ACTIVE))
-            .child(div().flex_none().child("⌕"))
+            .child(icon_svg(
+                Icon::Search,
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
             .child(div().flex_1().min_w_0().truncate().child("Search files…"))
             .child(
                 div()
@@ -309,12 +313,17 @@ impl Shell {
             )
         });
         let zed_button = |id: &'static str, primary: bool| {
-            button(id, "Open in Zed", theme, primary)
-                .flex_none()
-                .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
-                .on_click(cx.listener(move |shell, _, _, cx| {
-                    shell.open_file_in_zed(project_id, cx);
-                }))
+            button(
+                id,
+                icon_text(Icon::ExternalLink, "Open in Zed", button_fg(theme, primary)),
+                theme,
+                primary,
+            )
+            .flex_none()
+            .tooltip(tooltip(theme, &zed_tip, zed_keys.clone()))
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                shell.open_file_in_zed(project_id, cx);
+            }))
         };
         let markdown = view.is_markdown();
         let review_path = path.clone();
@@ -356,40 +365,57 @@ impl Shell {
                 markdown && view.worktree_task_id.is_none() && self.features.docs,
                 |el| {
                     el.child(
-                        button("file-review", "Review in Docs", theme, false)
-                            .flex_none()
-                            .tooltip(tooltip(theme, "Review and comment on this file", ""))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
+                        button(
+                            "file-review",
+                            icon_text(Icon::FileText, "Review in Docs", button_fg(theme, false)),
+                            theme,
+                            false,
+                        )
+                        .flex_none()
+                        .tooltip(tooltip(theme, "Review and comment on this file", ""))
+                        .on_click(cx.listener(
+                            move |shell, _, window, cx| {
                                 shell.review_in_docs(project_id, review_path.clone(), window, cx);
-                            })),
+                            },
+                        )),
                     )
                 },
             )
             .when(editable, |el| {
                 el.child(
-                    button("file-save", "Save", theme, dirty)
-                        .flex_none()
-                        .tooltip(tooltip(
-                            theme,
-                            "Save this file",
-                            self.keymap.label(Command::SaveFile),
-                        ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.save_file(project_id, None, window, cx);
-                        })),
-                )
-            })
-            .child(
-                button("file-find", "Find", theme, false)
+                    button(
+                        "file-save",
+                        icon_text(Icon::Save, "Save", button_fg(theme, dirty)),
+                        theme,
+                        dirty,
+                    )
                     .flex_none()
                     .tooltip(tooltip(
                         theme,
-                        "Find in this file",
-                        self.keymap.label(Command::Find),
+                        "Save this file",
+                        self.keymap.label(Command::SaveFile),
                     ))
-                    .on_click(
-                        cx.listener(|shell, _, window, cx| shell.open_file_find(false, window, cx)),
-                    ),
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.save_file(project_id, None, window, cx);
+                    })),
+                )
+            })
+            .child(
+                button(
+                    "file-find",
+                    icon_text(Icon::Search, "Find", button_fg(theme, false)),
+                    theme,
+                    false,
+                )
+                .flex_none()
+                .tooltip(tooltip(
+                    theme,
+                    "Find in this file",
+                    self.keymap.label(Command::Find),
+                ))
+                .on_click(
+                    cx.listener(|shell, _, window, cx| shell.open_file_find(false, window, cx)),
+                ),
             )
             .child(zed_button("file-zed", false));
         let find_bar = view
@@ -405,11 +431,14 @@ impl Shell {
                     .px(px(space::L))
                     .pb(px(space::S))
                     .child(
-                        button(
+                        icon_button(
                             "file-find-toggle-replace",
-                            if find.replace.is_some() { "▾" } else { "▸" },
+                            if find.replace.is_some() {
+                                Icon::ChevronDown
+                            } else {
+                                Icon::ChevronRight
+                            },
                             theme,
-                            false,
                         )
                         .tooltip(tooltip(
                             theme,
@@ -458,7 +487,7 @@ impl Shell {
                             .child(find.label()),
                     )
                     .child(
-                        button("file-find-previous", "↑", theme, false)
+                        icon_button("file-find-previous", Icon::ArrowUp, theme)
                             .tooltip(tooltip(theme, "Previous match", "Shift+Enter"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 window.focus(&shell.file_find_focus, cx);
@@ -466,7 +495,7 @@ impl Shell {
                             })),
                     )
                     .child(
-                        button("file-find-next", "↓", theme, false)
+                        icon_button("file-find-next", Icon::ArrowDown, theme)
                             .tooltip(tooltip(theme, "Next match", "Enter"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 window.focus(&shell.file_find_focus, cx);
@@ -474,7 +503,7 @@ impl Shell {
                             })),
                     )
                     .child(
-                        button("file-find-close", "✕", theme, false)
+                        icon_button("file-find-close", Icon::X, theme)
                             .tooltip(tooltip(theme, "Close", "Esc"))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 shell.close_file_find(project_id, window, cx);
@@ -840,9 +869,9 @@ pub(crate) fn file_row(
         theme.bg
     };
     let chevron = match (entry.is_dir, expanded) {
-        (false, _) => "",
-        (true, false) => "▸",
-        (true, true) => "▾",
+        (false, _) => None,
+        (true, false) => Some(Icon::ChevronRight),
+        (true, true) => Some(Icon::ChevronDown),
     };
     let marker = entry.marker.map(|marker| match marker {
         GitMarker::Modified => ("M", theme.accent, "Modified"),
@@ -879,9 +908,10 @@ pub(crate) fn file_row(
         .child(
             div()
                 .flex_none()
-                .w(px(space::M))
-                .text_color(rgb(theme.text_muted))
-                .child(chevron),
+                .w(theme::rems_px(theme::ICON_SIZE_SMALL))
+                .children(
+                    chevron.map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, theme.text_muted)),
+                ),
         )
         .child(
             div()

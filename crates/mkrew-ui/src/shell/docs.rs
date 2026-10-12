@@ -401,12 +401,17 @@ impl Shell {
                 cx,
             ))
             .child(
-                button("doc-zed", "Open in Zed", theme, false)
-                    .flex_none()
-                    .tooltip(tooltip(theme, "Open this file in Zed", zed_keys))
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.open_doc_in_zed(project_id, cx);
-                    })),
+                button(
+                    "doc-zed",
+                    icon_text(Icon::ExternalLink, "Open in Zed", button_fg(theme, false)),
+                    theme,
+                    false,
+                )
+                .flex_none()
+                .tooltip(tooltip(theme, "Open this file in Zed", zed_keys))
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    shell.open_doc_in_zed(project_id, cx);
+                })),
             );
         let body = match &docs.doc {
             Doc::None | Doc::Loading => message(theme, None, "Loading…".into(), None)

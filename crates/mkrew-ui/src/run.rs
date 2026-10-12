@@ -149,7 +149,7 @@ impl Summary {
     /// The button: `▶ Run`, else `● Running 2/2 · :8080 :5180` (`✕` when one is down).
     pub fn label(&self) -> String {
         if !self.any_live() {
-            return "▶ Run".to_owned();
+            return "Run".to_owned();
         }
         let icon = if self.warning() { "✕" } else { "●" };
         let mut label = format!("{icon} Running {}/{}", self.live(), self.rows.len());
@@ -341,12 +341,12 @@ mod tests {
     fn nothing_running_offers_run() {
         let p = project(&["BE", "FE"]);
         let s = summary(&p, &[], &Ports::default());
-        assert_eq!(s.label(), "▶ Run");
+        assert_eq!(s.label(), "Run");
         assert!(!s.any_live() && !s.warning());
         assert_eq!(state_text(&s.rows[0].state), "○ stopped");
         assert_eq!(
             summary(&project(&[]), &[], &Ports::default()).label(),
-            "▶ Run"
+            "Run"
         );
     }
 

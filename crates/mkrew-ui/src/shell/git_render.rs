@@ -336,18 +336,30 @@ impl Shell {
             "Push this branch to its upstream (never forced)"
         };
         if running.is_some() || no_upstream {
-            return button_frame("git-push", label)
-                .flex_none()
-                .cursor_default()
-                .opacity(opacity::DISABLED)
-                .text_color(rgb(theme.text_muted))
-                .tooltip(tooltip(theme, tip, ""))
-                .into_any_element();
+            return button_frame(
+                "git-push",
+                icon_text(Icon::ArrowUpFromLine, label, theme.text_muted),
+            )
+            .flex_none()
+            .cursor_default()
+            .opacity(opacity::DISABLED)
+            .text_color(rgb(theme.text_muted))
+            .tooltip(tooltip(theme, tip, ""))
+            .into_any_element();
         }
         let push = if ahead > 0 {
-            secondary_button("git-push", label, theme)
+            secondary_button(
+                "git-push",
+                icon_text(Icon::ArrowUpFromLine, label, theme.text),
+                theme,
+            )
         } else {
-            quiet_button("git-push", label, theme, theme.hover)
+            quiet_button(
+                "git-push",
+                icon_text(Icon::ArrowUpFromLine, label, theme.text_muted),
+                theme,
+                theme.hover,
+            )
         };
         push.flex_none()
             .tooltip(tooltip(theme, tip, ""))
@@ -842,18 +854,23 @@ impl Shell {
             )
         };
         let write = if draft.busy || generating {
-            let label = if generating {
-                "✦ Writing…"
-            } else {
-                "✦ Generate"
-            };
-            disabled_button("git-commit-generate", label, theme, false)
-        } else {
-            quiet_button("git-commit-generate", "✦ Generate", theme, theme.hover).on_click(
-                cx.listener(move |shell, _, window, cx| {
-                    shell.generate_commit_message(project_id, window, cx)
-                }),
+            let label = if generating { "Writing…" } else { "Generate" };
+            disabled_button(
+                "git-commit-generate",
+                icon_text(Icon::Sparkles, label, theme.text_muted),
+                theme,
+                false,
             )
+        } else {
+            quiet_button(
+                "git-commit-generate",
+                icon_text(Icon::Sparkles, "Generate", theme.text_muted),
+                theme,
+                theme.hover,
+            )
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.generate_commit_message(project_id, window, cx)
+            }))
         };
         let text = draft.text.text();
         let summary_len = text.lines().next().unwrap_or("").chars().count();

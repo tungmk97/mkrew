@@ -302,16 +302,26 @@ impl Shell {
     ) -> gpui::Stateful<gpui::Div> {
         let keys = self.keymap.label(Command::AddComment);
         if !ready {
-            return disabled_button("doc-comment", "Comment", theme, false)
-                .flex_none()
-                .tooltip(tooltip(theme, "Select lines first, then comment", keys));
-        }
-        button("doc-comment", "Comment", theme, false)
+            return disabled_button(
+                "doc-comment",
+                icon_text(Icon::MessageSquarePlus, "Comment", theme.text_muted),
+                theme,
+                false,
+            )
             .flex_none()
-            .tooltip(tooltip(theme, "Comment on the selected lines", keys))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.start_comment(project_id, context, window, cx);
-            }))
+            .tooltip(tooltip(theme, "Select lines first, then comment", keys));
+        }
+        button(
+            "doc-comment",
+            icon_text(Icon::MessageSquarePlus, "Comment", button_fg(theme, false)),
+            theme,
+            false,
+        )
+        .flex_none()
+        .tooltip(tooltip(theme, "Comment on the selected lines", keys))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.start_comment(project_id, context, window, cx);
+        }))
     }
 
     /// "Send to agent" (Ctrl+Shift+S): enabled while the file has open comments; names how
@@ -332,21 +342,31 @@ impl Shell {
             _ => 0,
         };
         if count == 0 {
-            return disabled_button("doc-send", "Send to agent", theme, false)
-                .flex_none()
-                .tooltip(tooltip(theme, "No open comments to send", keys));
+            return disabled_button(
+                "doc-send",
+                icon_text(Icon::Send, "Send to agent", theme.text_muted),
+                theme,
+                false,
+            )
+            .flex_none()
+            .tooltip(tooltip(theme, "No open comments to send", keys));
         }
         let what = if count == 1 {
             "Send 1 open comment to an agent".to_owned()
         } else {
             format!("Send {count} open comments to an agent")
         };
-        button("doc-send", "Send to agent", theme, false)
-            .flex_none()
-            .tooltip(tooltip(theme, &what, keys))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.open_send_dialog(project_id, context, window, cx);
-            }))
+        button(
+            "doc-send",
+            icon_text(Icon::Send, "Send to agent", button_fg(theme, false)),
+            theme,
+            false,
+        )
+        .flex_none()
+        .tooltip(tooltip(theme, &what, keys))
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.open_send_dialog(project_id, context, window, cx);
+        }))
     }
 
     /// The right margin (SPEC §12, §12B): the new-comment draft, then every thread of the file

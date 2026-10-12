@@ -210,18 +210,23 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let keys = self.keymap.label(Command::NewTask);
-        button("new-task", "New task", theme, primary)
-            .flex_none()
-            .tooltip(tooltip(theme, "New task", keys.clone()))
-            .child(
-                div()
-                    .text_size(font_size::META)
-                    .opacity(opacity::SECONDARY)
-                    .child(keys),
-            )
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.open_task_dialog(TaskDialog::new(project_id), window, cx);
-            }))
+        button(
+            "new-task",
+            icon_text(Icon::Plus, "New task", button_fg(theme, primary)),
+            theme,
+            primary,
+        )
+        .flex_none()
+        .tooltip(tooltip(theme, "New task", keys.clone()))
+        .child(
+            div()
+                .text_size(font_size::META)
+                .opacity(opacity::SECONDARY)
+                .child(keys),
+        )
+        .on_click(cx.listener(move |shell, _, window, cx| {
+            shell.open_task_dialog(TaskDialog::new(project_id), window, cx);
+        }))
     }
 
     /// The modal new / edit task dialog (a stray click on its shade never throws a draft

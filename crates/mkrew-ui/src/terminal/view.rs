@@ -27,6 +27,7 @@ use ulid::Ulid;
 
 use crate::client::Connection;
 use crate::composer::{attachment, typed_paths};
+use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
@@ -608,6 +609,8 @@ impl TerminalPane {
         let hover = theme.border;
         let close = div()
             .id("find-close")
+            .flex()
+            .items_center()
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
             .cursor_pointer()
@@ -616,7 +619,7 @@ impl TerminalPane {
             .hover(move |style| style.bg(rgb(hover)))
             .active(|style| style.opacity(theme::opacity::ACTIVE))
             .on_click(cx.listener(|pane, _, window, cx| pane.close_find(window, cx)))
-            .child("✕");
+            .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted));
         Some(
             div()
                 .absolute()

@@ -370,34 +370,44 @@ pub(crate) fn task_card(
             |el| {
                 // Secondary: shown on hover, left of the column's action (SPEC §14).
                 let undo = can_undo.then(|| {
-                    quiet_button("card-undo", "Undo", theme, edit_hover)
-                        .opacity(opacity::HIDDEN)
-                        .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
-                        .tooltip(tooltip(
-                            theme,
-                            "Undo task: review and discard its changes",
-                            "",
-                        ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            cx.stop_propagation();
-                            shell.selected_card = Some(task_id);
-                            shell.open_undo_dialog(task_id, window, cx);
-                        }))
+                    quiet_button(
+                        "card-undo",
+                        icon_text(Icon::Undo2, "Undo", theme.text_muted),
+                        theme,
+                        edit_hover,
+                    )
+                    .opacity(opacity::HIDDEN)
+                    .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                    .tooltip(tooltip(
+                        theme,
+                        "Undo task: review and discard its changes",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.selected_card = Some(task_id);
+                        shell.open_undo_dialog(task_id, window, cx);
+                    }))
                 });
                 let changes = can_view_changes.then(|| {
-                    quiet_button("card-changes", "Changes", theme, edit_hover)
-                        .opacity(opacity::HIDDEN)
-                        .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
-                        .tooltip(tooltip(
-                            theme,
-                            "View changes: the task's diff since its run started",
-                            "",
-                        ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            cx.stop_propagation();
-                            shell.selected_card = Some(task_id);
-                            shell.view_task_changes(task_id, window, cx);
-                        }))
+                    quiet_button(
+                        "card-changes",
+                        icon_text(Icon::FileDiff, "Changes", theme.text_muted),
+                        theme,
+                        edit_hover,
+                    )
+                    .opacity(opacity::HIDDEN)
+                    .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                    .tooltip(tooltip(
+                        theme,
+                        "View changes: the task's diff since its run started",
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.selected_card = Some(task_id);
+                        shell.view_task_changes(task_id, window, cx);
+                    }))
                 });
                 // The worktree's two actions (SPEC §20E.1), hover-shown like Undo.
                 let worktree_actions = manages_worktree.then(|| {
@@ -443,9 +453,19 @@ pub(crate) fn task_card(
                 let compare = can_compare.then(|| {
                     // Accent only on the selected card, like Run.
                     let compare = if selected {
-                        button("card-compare", "Compare", theme, true)
+                        button(
+                            "card-compare",
+                            icon_text(Icon::GitCompare, "Compare", button_fg(theme, true)),
+                            theme,
+                            true,
+                        )
                     } else {
-                        quiet_button("card-compare", "Compare", theme, edit_hover)
+                        quiet_button(
+                            "card-compare",
+                            icon_text(Icon::GitCompare, "Compare", theme.text_muted),
+                            theme,
+                            edit_hover,
+                        )
                     };
                     compare
                         .tooltip(tooltip(
@@ -493,21 +513,26 @@ pub(crate) fn run_with_button(
 ) -> gpui::Div {
     let menu = cards.run_with.filter(|menu| menu.task_id == task_id);
     // One step above the card's own `surface_raised`, like its other quiet buttons.
-    let button = quiet_button("card-run-with", "Run with…", theme, theme.border)
-        .when(menu.is_none(), |el| {
-            el.opacity(opacity::HIDDEN)
-                .group_hover(group, |style| style.opacity(opacity::FULL))
-        })
-        .tooltip(tooltip(
-            theme,
-            "Run with another agent: changes the task's agent, then runs it",
-            "",
-        ))
-        // An open picker already closed on this mouse down (outside it): the click reopens it.
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            cx.stop_propagation();
-            shell.open_run_with(task_id, window, cx);
-        }));
+    let button = quiet_button(
+        "card-run-with",
+        icon_text(Icon::Play, "Run with…", theme.text_muted),
+        theme,
+        theme.border,
+    )
+    .when(menu.is_none(), |el| {
+        el.opacity(opacity::HIDDEN)
+            .group_hover(group, |style| style.opacity(opacity::FULL))
+    })
+    .tooltip(tooltip(
+        theme,
+        "Run with another agent: changes the task's agent, then runs it",
+        "",
+    ))
+    // An open picker already closed on this mouse down (outside it): the click reopens it.
+    .on_click(cx.listener(move |shell, _, window, cx| {
+        cx.stop_propagation();
+        shell.open_run_with(task_id, window, cx);
+    }));
     let Some(menu) = menu else {
         return div().child(button);
     };
@@ -556,20 +581,25 @@ pub(crate) fn fan_out_button(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Div {
     let menu = cards.fan_out.filter(|menu| menu.task_id == task_id);
-    let button = quiet_button("card-fan-out", "Several agents…", theme, theme.border)
-        .when(menu.is_none(), |el| {
-            el.opacity(opacity::HIDDEN)
-                .group_hover(group, |style| style.opacity(opacity::FULL))
-        })
-        .tooltip(tooltip(
-            theme,
-            "Run with several agents: each in its own worktree, to compare (git repos only)",
-            "",
-        ))
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            cx.stop_propagation();
-            shell.open_fan_out(task_id, window, cx);
-        }));
+    let button = quiet_button(
+        "card-fan-out",
+        icon_text(Icon::Users, "Several agents…", theme.text_muted),
+        theme,
+        theme.border,
+    )
+    .when(menu.is_none(), |el| {
+        el.opacity(opacity::HIDDEN)
+            .group_hover(group, |style| style.opacity(opacity::FULL))
+    })
+    .tooltip(tooltip(
+        theme,
+        "Run with several agents: each in its own worktree, to compare (git repos only)",
+        "",
+    ))
+    .on_click(cx.listener(move |shell, _, window, cx| {
+        cx.stop_propagation();
+        shell.open_fan_out(task_id, window, cx);
+    }));
     let Some(menu) = menu else {
         return div().child(button);
     };

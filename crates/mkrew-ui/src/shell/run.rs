@@ -297,8 +297,14 @@ impl Shell {
             summary.tooltip()
         };
         // Idle: the accent (the logo's blue) fill; live: quiet, ↻ ■ carry the colors.
-        let main = button("run-main", summary.label(), theme, !live)
+        let label = if live {
+            summary.label().into_any_element()
+        } else {
+            icon_text(Icon::Play, summary.label(), button_fg(theme, true)).into_any_element()
+        };
+        let main = button("run-main", label, theme, !live)
             .flex_none()
+            .h(theme::rems_px(theme::ICON_BUTTON_SIZE))
             .when(!live, |el| el.rounded_r_none())
             .when(summary.warning(), |el| {
                 el.text_color(rgb(theme.status_needs_input))
@@ -340,7 +346,18 @@ impl Shell {
             }
         }
         // The ▾ half of the split button: same fill, a faint divider on its left.
-        let menu = button("run-menu", "▾", theme, !live).when(!live, |el| {
+        let menu = button(
+            "run-menu",
+            icon_svg(
+                Icon::ChevronDown,
+                theme::ICON_SIZE_SMALL,
+                button_fg(theme, !live),
+            ),
+            theme,
+            !live,
+        )
+        .h(theme::rems_px(theme::ICON_BUTTON_SIZE))
+        .when(!live, |el| {
             el.rounded_l_none()
                 .border_l(px(theme::BORDER_WIDTH))
                 .border_color(gpui::rgba(theme.on_accent_divider))
@@ -386,13 +403,13 @@ impl Shell {
                 RowState::Stopped => theme.text_muted,
             };
             let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
-            let controls: &[(&'static str, &'static str, RunAction)] = if running {
+            let controls: &[(Icon, &'static str, RunAction)] = if running {
                 &[
-                    ("↻", "Restart this command", RunAction::Restart),
-                    ("■", "Stop this command", RunAction::Stop),
+                    (Icon::RotateCw, "Restart this command", RunAction::Restart),
+                    (Icon::CircleStop, "Stop this command", RunAction::Stop),
                 ]
             } else {
-                &[("▶", "Run this command", RunAction::Start)]
+                &[(Icon::Play, "Run this command", RunAction::Start)]
             };
             let mut line = div()
                 .flex()
@@ -419,16 +436,17 @@ impl Shell {
                         .text_color(rgb(theme.text_muted))
                         .child(ports.join(" ")),
                 );
-            for &(label, tip, action) in controls {
+            for &(glyph, tip, action) in controls {
                 let name = row.name.clone();
                 let colors = run::action_colors(action, theme);
                 line = line.child(
                     div()
-                        .id(SharedString::from(format!("run-{label}-{}", row.name)))
+                        .id(SharedString::from(format!("run-{action:?}-{}", row.name)))
+                        .flex()
+                        .items_center()
                         .px(px(space::XS))
                         .rounded(px(radius::SMALL))
                         .cursor_pointer()
-                        .text_color(rgb(colors.fg))
                         .hover(move |style| style.bg(rgb(colors.tint)))
                         .tooltip(tooltip(theme, tip, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -436,7 +454,7 @@ impl Shell {
                             cx.stop_propagation();
                             shell.run_action(project_id, action, Some(name.clone()), window, cx);
                         }))
-                        .child(label),
+                        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg)),
                 );
             }
             rows.push(line.into_any_element());
@@ -607,7 +625,7 @@ impl Shell {
                             .child(
                                 quiet_button(
                                     "run-duplicate",
-                                    "Duplicate",
+                                    icon_text(Icon::Copy, "Duplicate", theme.text_muted),
                                     theme,
                                     theme.surface_raised,
                                 )
@@ -621,13 +639,20 @@ impl Shell {
                                 )),
                             )
                             .child(
-                                quiet_button("run-remove", "Remove", theme, theme.surface_raised)
-                                    .on_click(cx.listener(move |shell, _, _, cx| {
+                                quiet_button(
+                                    "run-remove",
+                                    icon_text(Icon::Trash2, "Remove", theme.text_muted),
+                                    theme,
+                                    theme.surface_raised,
+                                )
+                                .on_click(cx.listener(
+                                    move |shell, _, _, cx| {
                                         if let Some(setup) = shell.run_setup.as_mut() {
                                             setup.remove_card(i);
                                         }
                                         cx.notify();
-                                    })),
+                                    },
+                                )),
                             ),
                     ),
             );
@@ -725,18 +750,20 @@ impl Shell {
             )
             .child(cards)
             .child(
-                div()
-                    .flex()
-                    .child(
-                        button("run-add", "+ Add command", theme, false).on_click(cx.listener(
-                            |shell, _, _, cx| {
-                                if let Some(setup) = shell.run_setup.as_mut() {
-                                    setup.add_card();
-                                }
-                                cx.notify();
-                            },
-                        )),
-                    ),
+                div().flex().child(
+                    button(
+                        "run-add",
+                        icon_text(Icon::Plus, "Add command", button_fg(theme, false)),
+                        theme,
+                        false,
+                    )
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        if let Some(setup) = shell.run_setup.as_mut() {
+                            setup.add_card();
+                        }
+                        cx.notify();
+                    })),
+                ),
             )
             .child(autostart)
             .children(setup.error.clone().map(error_row))
@@ -819,9 +846,14 @@ impl Shell {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(space::M))
-                            .text_color(rgb(theme.text_muted))
-                            .child(if is_dir { "▸" } else { "" }),
+                            .w(theme::rems_px(theme::ICON_SIZE_SMALL))
+                            .when(is_dir, |el| {
+                                el.child(icon_svg(
+                                    Icon::ChevronRight,
+                                    theme::ICON_SIZE_SMALL,
+                                    theme.text_muted,
+                                ))
+                            }),
                     )
                     .child(
                         div()
@@ -852,14 +884,24 @@ impl Shell {
             })),
         };
         let up = if picker.at_root() {
-            disabled_button("run-picker-up", "↑ Up", theme, false)
+            disabled_button(
+                "run-picker-up",
+                icon_text(Icon::ArrowUp, "Up", theme.text_muted),
+                theme,
+                false,
+            )
         } else {
-            quiet_button("run-picker-up", "↑ Up", theme, theme.surface_raised)
-                .tooltip(tooltip(theme, "The folder above", ""))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    let dir = shell.run_setup.as_mut().and_then(RunSetup::browse_up);
-                    shell.list_run_picker(dir, window, cx);
-                }))
+            quiet_button(
+                "run-picker-up",
+                icon_text(Icon::ArrowUp, "Up", theme.text_muted),
+                theme,
+                theme.surface_raised,
+            )
+            .tooltip(tooltip(theme, "The folder above", ""))
+            .on_click(cx.listener(|shell, _, window, cx| {
+                let dir = shell.run_setup.as_mut().and_then(RunSetup::browse_up);
+                shell.list_run_picker(dir, window, cx);
+            }))
         };
         let location = if picker.dir.is_empty() {
             "Workspace root".to_owned()

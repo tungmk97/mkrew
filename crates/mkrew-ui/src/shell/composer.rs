@@ -510,11 +510,22 @@ impl Shell {
                             "No prompts yet: add Markdown files to the prompts folder.".to_owned(),
                         )))
                         .child(
-                            button("prompt-open-dir", "Open prompts folder", theme, true)
-                                .flex_none()
-                                .on_click(cx.listener(|shell, _, window, cx| {
+                            button(
+                                "prompt-open-dir",
+                                icon_text(
+                                    Icon::FolderOpen,
+                                    "Open prompts folder",
+                                    button_fg(theme, true),
+                                ),
+                                theme,
+                                true,
+                            )
+                            .flex_none()
+                            .on_click(cx.listener(
+                                |shell, _, window, cx| {
                                     shell.open_prompts_dir(window, cx);
-                                })),
+                                },
+                            )),
                         ),
                 )
             })
@@ -648,6 +659,8 @@ impl Shell {
                         div()
                             .id(SharedString::from(format!("unqueue-{send_id}")))
                             .flex_none()
+                            .flex()
+                            .items_center()
                             .px(px(space::S))
                             .rounded(px(radius::SMALL))
                             .cursor_pointer()
@@ -659,7 +672,7 @@ impl Shell {
                                 cx.stop_propagation();
                                 shell.unqueue(session, send_id, cx);
                             }))
-                            .child("✕"),
+                            .child(icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted)),
                     )
             })
             .collect::<Vec<_>>();
@@ -726,10 +739,12 @@ impl Shell {
                     )
                     // ✦ (§20B.1): the agent rewrites the draft.
                     .when(is_focused && !draft.busy && !draft.text.is_blank(), |el| {
+                        let sparkles =
+                            icon_svg(Icon::Sparkles, theme::ICON_SIZE_SMALL, theme.text_muted);
                         let improve = if draft.enhancing.is_some() {
-                            disabled_button("composer-enhance", "✦", theme, false)
+                            disabled_button("composer-enhance", sparkles, theme, false)
                         } else {
-                            quiet_button("composer-enhance", "✦", theme, theme.surface_raised)
+                            quiet_button("composer-enhance", sparkles, theme, theme.surface_raised)
                                 .on_click(cx.listener(move |shell, _, window, cx| {
                                     shell.enhance_composer(session, window, cx)
                                 }))
@@ -745,7 +760,7 @@ impl Shell {
                         el.child(
                             quiet_button(
                                 "composer-prompts",
-                                "Prompts…",
+                                icon_text(Icon::Library, "Prompts…", theme.text_muted),
                                 theme,
                                 theme.surface_raised,
                             )
