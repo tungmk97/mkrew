@@ -15,6 +15,33 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-12 Lucide icons (ADR 0051, plan docs/superpowers/plans/2026-10-12-lucide-icons.md)
+
+- [ ] **Icons (dark + light):** title bar (theme toggle cycles sun-moon → sun → moon, History
+  clock), sidebar header (+, collapse chevron, remove-idle), tab strip (+, split, ⋯, tab ✕),
+  status bar (sidebar, compact, session panel toggles), Git (repos ▾, fetch, ‹ ›, ⋯), Files
+  (search row, find bar ▸ ↑ ↓ ✕), terminal find ✕, composer ✦ and queue ✕, Run (live ↻ ■, menu
+  rows ↻ ■ ▶): every icon is drawn (no blank or box), centered, muted, same stroke weight.
+- [ ] **Window controls (Windows):** hover close → red background and a white X; minimize and
+  maximize hover show the soft background. Maximize (button, title bar double-click, Snap) →
+  the middle icon becomes the restore icon; restore → a square again.
+- [ ] **Hidden / disabled:** session ✕, workspace ⋯ and inactive-tab ✕ appear only on hover; the
+  composer ✦ is faded while the prompt is being improved.
+- [ ] **Chevrons:** workspace rows, Git group headers and History commits, Files tree folders, Run
+  setup folders: chevrons flip on expand/collapse; names stay aligned between files and folders.
+- [ ] **Font size:** set `[ui] font_size = 18`, restart: icons grow with the text and stay
+  centered; nothing clips; the Run button's two halves keep one height.
+- [ ] **Icons beside text (dark + light):** tab strip ends with Close pane (square ✕), +, split,
+  ⋯; pane header Share and Turns…; title bar `+ New ▾`, idle Run (▶ icon) and its ▾, switcher
+  ▾; empty states (New agent, New shell, Add workspace, New task, Open prompts folder); card
+  Undo / Changes / Compare / Run with… / Several agents…; Docs and Git Comment, Send to agent,
+  Open in Zed; Files Review in Docs, Save, Find; Git Discard… (red icon), Push, Generate,
+  `By: … ▾`; session panel Open transcript, Link plan…, Unlink; composer Prompts…; Run setup
+  Duplicate, Remove, Add command, Up. Icon and text share one color and sit on one line.
+- [ ] **Primary ↔ ghost:** edit a file → Save turns blue with a white icon, save → muted again.
+  Select a card for Compare → white icon on blue. Run idle (blue, white ▶ and ▾) → start → quiet
+  (muted ▾). Share while following → icon as bright as the text.
+
 ### To verify — 2026-10-12 sidebar marks, remove idle agents
 
 - [ ] **Sidebar marks (dark + light):** idle agent rows show no `○`; a working agent shows one
