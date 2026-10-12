@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — Connect with token</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--surface:#1F2127;--border:#2A2C33;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--accent:#7C8CFF;--on-accent:#17181C;--s-exited:#E5676B}
+.mk--light{--bg:#FFFFFF;--surface:#F6F7F9;--border:#E3E5EA;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--accent:#4F5BD5;--on-accent:#FFFFFF;--s-exited:#C53030}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:0 16px;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.input{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:"SF Mono",Menlo,"Cascadia Mono",Consolas,monospace;font-size:16px}
+.input::placeholder{color:var(--text-muted)}
+.btn{width:100%;min-height:44px;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent);font-family:inherit;font-size:15px;font-weight:500}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<form style="width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 16px">
+<h1 style="margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em">Mkrew</h1>
+<p style="margin: 0; color: var(--text-dim)">Paste the access token from Mkrew on your PC to connect.</p>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="tk" style="font-size: 13px; font-weight: 500; color: var(--text-dim)">Token</label>
+<input class="input" id="tk" type="password" placeholder="Paste token" autocomplete="off" aria-describedby="tk-err">
+<span id="tk-err" style="display: flex; align-items: center; gap: 6px; font-size: 13px"><span style="color: var(--s-exited); font-weight: 700" aria-hidden="true">✕</span>That token didn't work. Check it and try again.</span>
+</div>
+<button class="btn" type="submit">Connect</button>
+</form>
+</div>
+</x-dc>
+
+
+</body></html>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — No sessions</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--accent:#7C8CFF;--on-accent:#17181C;--s-done:#4CB782}
+.mk--light{--bg:#FFFFFF;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--accent:#4F5BD5;--on-accent:#FFFFFF;--s-done:#2F855A}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.header{display:flex;align-items:center;gap:12px;min-height:56px;padding:52px 16px 8px;border-bottom:1px solid var(--divider)}
+.brand{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--s-done)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 16px;border-radius:8px;background:var(--accent);color:var(--on-accent);font-size:15px;font-weight:500;text-decoration:none;white-space:nowrap}
+.btn--compact{min-height:36px;padding:0 12px;font-size:14px}
+.mark{width:48px;height:48px;display:grid;place-items:center;border-radius:12px;border:1px solid var(--border);color:var(--text-muted);font:500 16px/1 "SF Mono",Menlo,"Cascadia Mono",Consolas,monospace}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<header class="header">
+<h1 class="brand">Mkrew</h1>
+<span class="conn"><span class="conn-dot" aria-hidden="true"></span>studio-pc</span>
+<span style="flex: 1"></span>
+<a class="btn btn--compact" href="NewAgent.dc.html"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>New agent</a>
+</header>
+<main style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 200px 16px 0; text-align: center">
+<div class="mark" aria-hidden="true">&gt;_</div>
+<p style="margin: 0; color: var(--text-dim)">No sessions yet.</p>
+<a class="btn" href="NewAgent.dc.html"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>New agent</a>
+</main>
+</div>
+</x-dc>
+
+
+</body></html>

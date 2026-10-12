@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — Session ended</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--surface:#1F2127;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--danger-bg:#3A2327;--s-exited:#E5676B}
+.mk--light{--bg:#FFFFFF;--surface:#F6F7F9;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--danger-bg:#FDECEC;--s-exited:#C53030}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.topbar{display:flex;align-items:center;gap:8px;min-height:52px;padding:50px 16px 4px 4px;border-bottom:1px solid var(--divider)}
+.icon-btn{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:8px;color:var(--text-dim);text-decoration:none}
+.chip{width:24px;height:24px;flex:none;display:inline-grid;place-items:center;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-dim);font:500 13px/1 "SF Mono",Menlo,"Cascadia Mono",Consolas,monospace}
+.title{flex:1;min-width:0;margin:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 10px 0 8px;border-radius:999px;background:var(--danger-bg);font-size:12px;font-weight:500;color:var(--text);white-space:nowrap}
+.x{color:var(--s-exited);font-weight:700}
+.term{flex:1;min-height:0;overflow:hidden;background:#111216;display:flex;flex-direction:column;justify-content:flex-end}
+.screen{margin:0;padding:8px;width:100%;font-family:"SF Mono",Menlo,"Cascadia Mono",Consolas,monospace;font-size:5.16px;line-height:1.4;color:#D9DBE1;white-space:pre}
+.d{color:#8E919B}.b{font-weight:700}.g{color:#6FD3A0}.m{color:#E9B65C}
+.add{display:inline-block;width:100%;color:#6FD3A0;background:rgba(76,183,130,.14)}
+.del{display:inline-block;width:100%;color:#F09A9D;background:rgba(229,103,107,.14)}
+.ended{display:flex;align-items:center;justify-content:center;gap:8px;min-height:56px;padding:8px 16px 42px;border-top:1px solid var(--divider);background:var(--surface);color:var(--text-dim);font-size:14px}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<header class="topbar">
+<a class="icon-btn" href="Main.dc.html" aria-label="Back to sessions"><svg width="20" height="20" sc-camel-view-box="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"></path></svg></a>
+<span class="chip" aria-hidden="true">✻</span>
+<h1 class="title">Migrate session store to SQLite</h1>
+<span class="pill"><span class="x" aria-hidden="true">✕</span>Exited</span>
+</header>
+<div class="term" role="region" aria-label="Terminal output, read-only">
+<pre class="screen"><span class="m">●</span> <span class="b">Edit</span>(src/store/sessions.rs)  <span class="d">+11 −6</span>
+
+    <span class="d"> 38</span>  pub struct SessionStore {
+<span class="del">    <span class="d"> 39</span> -     root: PathBuf,</span>
+<span class="add">    <span class="d"> 39</span> +     conn: Mutex&lt;Connection&gt;,</span>
+    <span class="d"> 40</span>  }
+    <span class="d"> ..</span>
+    <span class="d"> 43</span>      pub fn open(dir: &amp;Path) -&gt; Result&lt;Self&gt; {
+<span class="del">    <span class="d"> 44</span> -         let root = dir.join("sessions");</span>
+<span class="del">    <span class="d"> 45</span> -         fs::create_dir_all(&amp;root)?;</span>
+<span class="del">    <span class="d"> 46</span> -         Ok(Self { root })</span>
+<span class="add">    <span class="d"> 44</span> +         let conn = Connection::open(dir.join("sessions.db"))?;</span>
+<span class="add">    <span class="d"> 45</span> +         conn.execute_batch(SCHEMA)?;</span>
+<span class="add">    <span class="d"> 46</span> +         Ok(Self { conn: Mutex::new(conn) })</span>
+    <span class="d"> 47</span>      }
+
+ <span class="b">Apply this change? (y/n)</span> y
+
+<span class="g">●</span> Applied edit to src/store/sessions.rs
+
+<span class="g">●</span> <span class="b">Bash</span>(cargo test -p mkrew-store)
+  <span class="d">⎿  running 14 tests</span>
+  <span class="d">   test result: </span><span class="g">ok</span><span class="d">. 14 passed; 0 failed; 0 ignored</span>
+
+<span class="g">●</span> Done. Sessions now live in ~/.mkrew/sessions.db and the public SessionStore API is unchanged.
+
+<span class="d">[process exited with code 0]</span></pre>
+</div>
+<div class="ended" role="status"><span class="x" aria-hidden="true">✕</span>Session ended (exit 0)</div>
+</div>
+</x-dc>
+
+
+</body></html>

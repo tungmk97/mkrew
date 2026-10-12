@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — Loading sessions</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--surface-raised:#2C2E37;--divider:#24262D;--text:#E6E7EB;--text-muted:#9A9CA6;--accent:#7C8CFF;--on-accent:#17181C;--s-done:#4CB782}
+.mk--light{--bg:#FFFFFF;--surface-raised:#EEF0F3;--divider:#ECEEF1;--text:#1B1D22;--text-muted:#5F6473;--accent:#4F5BD5;--on-accent:#FFFFFF;--s-done:#2F855A}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.header{display:flex;align-items:center;gap:12px;min-height:56px;padding:52px 16px 8px;border-bottom:1px solid var(--divider)}
+.brand{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--s-done)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 12px;border-radius:8px;background:var(--accent);color:var(--on-accent);font-size:14px;font-weight:500;text-decoration:none;white-space:nowrap}
+.main{flex:1;padding:8px 16px 32px}
+.skel{height:10px;border-radius:4px;background:var(--surface-raised);animation:mkbreathe 1.6s ease-in-out infinite alternate}
+.head{width:96px;margin:24px 8px 12px}
+.row{display:grid;grid-template-columns:16px 24px 1fr 32px;gap:12px;align-items:center;min-height:48px;padding:0 8px}
+.dot{width:12px;height:12px;border-radius:50%}
+.chip{width:24px;height:24px}
+@keyframes mkbreathe{from{opacity:.45}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<header class="header">
+<h1 class="brand">Mkrew</h1>
+<span class="conn"><span class="conn-dot" aria-hidden="true"></span>studio-pc</span>
+<span style="flex: 1"></span>
+<a class="btn" href="NewAgent.dc.html"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>New agent</a>
+</header>
+<main class="main" aria-busy="true" aria-label="Loading sessions">
+<div class="skel head"></div>
+<div class="row"><div class="skel dot"></div><div class="skel chip"></div><div class="skel" style="width: 72%"></div><div class="skel"></div></div>
+<div class="row"><div class="skel dot"></div><div class="skel chip"></div><div class="skel" style="width: 54%"></div><div class="skel"></div></div>
+<div class="skel head"></div>
+<div class="row"><div class="skel dot"></div><div class="skel chip"></div><div class="skel" style="width: 80%"></div><div class="skel"></div></div>
+<div class="row"><div class="skel dot"></div><div class="skel chip"></div><div class="skel" style="width: 46%"></div><div class="skel"></div></div>
+<div class="row"><div class="skel dot"></div><div class="skel chip"></div><div class="skel" style="width: 64%"></div><div class="skel"></div></div>
+<div class="skel head"></div>
+<div class="row"><div class="skel dot"></div><div class="skel chip"></div><div class="skel" style="width: 58%"></div><div class="skel"></div></div>
+</main>
+</div>
+</x-dc>
+
+
+</body></html>

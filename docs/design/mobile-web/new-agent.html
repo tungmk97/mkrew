@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — New agent</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--surface:#1F2127;--selected:#262938;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--subtle:#5D616C;--accent:#7C8CFF;--accent-text:#9A9FFF;--on-accent:#17181C;--scrim:rgba(0,0,0,.55);--ws-blue:#60A5FA;--ws-orange:#FB923C;--ws-teal:#2DD4BF;--ws-purple:#C084FC}
+.mk--light{--bg:#FFFFFF;--surface:#F6F7F9;--selected:#E9EAFF;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--subtle:#A0A4AF;--accent:#4F5BD5;--accent-text:#4A52D9;--on-accent:#FFFFFF;--scrim:rgba(17,18,22,.32);--ws-blue:#2563EB;--ws-orange:#D9560B;--ws-teal:#0F766E;--ws-purple:#9333EA}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;position:relative;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.under{padding:52px 16px 8px;display:flex;align-items:center;gap:12px;font-size:17px;font-weight:600}
+.scrim{position:absolute;inset:0;background:var(--scrim);display:flex;align-items:flex-end}
+.sheet{width:100%;height:772px;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0}
+.grab{width:36px;height:4px;margin:8px auto 0;border-radius:2px;background:var(--subtle)}
+.head{display:flex;align-items:center;gap:8px;padding:4px 4px 4px 16px}
+.h{flex:1;margin:0;font-size:17px;font-weight:600}
+.icon-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:var(--text-dim);text-decoration:none}
+.body{flex:1;overflow:hidden;padding:8px 16px 16px;display:flex;flex-direction:column;gap:24px}
+.fs{margin:0;padding:0;border:0;min-width:0}
+.legend{padding:0 0 8px;font-size:13px;font-weight:600;color:var(--text-dim)}
+.opt{position:relative;display:flex;align-items:center;gap:12px;min-height:48px;padding:0 12px;border-radius:8px;border:1px solid transparent;cursor:pointer}
+.opt input{position:absolute;opacity:0;pointer-events:none}
+.opt--on{background:var(--selected);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.grid .opt{border-color:var(--border)}
+.grid .opt--on{border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note{display:block;font-size:12px;color:var(--text-muted)}
+.off .name{color:var(--text-muted)}
+.off{cursor:not-allowed}
+.chip{width:24px;height:24px;flex:none;display:inline-grid;place-items:center;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-dim);font:500 13px/1 "SF Mono",Menlo,"Cascadia Mono",Consolas,monospace}
+.chip--shell{font-size:10px;letter-spacing:-.5px}
+.off .chip{opacity:.6}
+.ws{width:18px;height:18px;flex:none;display:inline-grid;place-items:center;border-radius:4px;font-size:11px;font-weight:600;line-height:1}
+.ws-blue{color:var(--ws-blue);background:color-mix(in srgb,var(--ws-blue) 16%,transparent)}
+.ws-orange{color:var(--ws-orange);background:color-mix(in srgb,var(--ws-orange) 16%,transparent)}
+.ws-teal{color:var(--ws-teal);background:color-mix(in srgb,var(--ws-teal) 16%,transparent)}
+.ws-purple{color:var(--ws-purple);background:color-mix(in srgb,var(--ws-purple) 16%,transparent)}
+.ta{width:100%;min-height:96px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:16px;line-height:1.4;resize:none}
+.ta::placeholder{color:var(--text-muted)}
+.foot{padding:12px 16px 42px;border-top:1px solid var(--divider)}
+.btn{width:100%;min-height:44px;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent);font-family:inherit;font-size:15px;font-weight:500}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<div class="under" aria-hidden="true">Mkrew</div>
+<div class="scrim">
+<form class="sheet" role="dialog" aria-modal="true" aria-labelledby="na-title">
+<div class="grab" aria-hidden="true"></div>
+<div class="head">
+<h2 class="h" id="na-title">New agent</h2>
+<a class="icon-btn" href="Main.dc.html" aria-label="Close"><svg width="20" height="20" sc-camel-view-box="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"></path></svg></a>
+</div>
+<div class="body">
+<fieldset class="fs">
+<legend class="legend">Workspace</legend>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<label class="opt opt--on"><input type="radio" name="ws" checked=""><span class="ws ws-blue" aria-hidden="true">M</span><span class="name">mkrew</span><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="var(--accent-text)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"></path></svg></label>
+<label class="opt"><input type="radio" name="ws"><span class="ws ws-orange" aria-hidden="true">C</span><span class="name">client-portal</span></label>
+<label class="opt"><input type="radio" name="ws"><span class="ws ws-teal" aria-hidden="true">D</span><span class="name">dotfiles</span></label>
+<label class="opt"><input type="radio" name="ws"><span class="ws ws-purple" aria-hidden="true">N</span><span class="name">notes-api</span></label>
+</div>
+</fieldset>
+<fieldset class="fs">
+<legend class="legend">Agent</legend>
+<div class="grid">
+<label class="opt opt--on"><input type="radio" name="agent" checked=""><span class="chip" aria-hidden="true">✻</span><span class="name">Claude Code</span></label>
+<label class="opt"><input type="radio" name="agent"><span class="chip" aria-hidden="true">⌬</span><span class="name">Codex</span></label>
+<label class="opt"><input type="radio" name="agent"><span class="chip" aria-hidden="true">π</span><span class="name">Oh My Pi</span></label>
+<label class="opt off"><input type="radio" name="agent" disabled=""><span class="chip" aria-hidden="true">⊙</span><span style="flex: 1; min-width: 0; line-height: 1.25"><span class="name" style="display: block">Copilot</span><span class="note">not installed</span></span></label>
+<label class="opt"><input type="radio" name="agent"><span class="chip chip--shell" aria-hidden="true">&gt;_</span><span class="name">Shell</span></label>
+</div>
+</fieldset>
+<div style="display: flex; flex-direction: column">
+<label class="legend" for="na-prompt">Prompt</label>
+<textarea class="ta" id="na-prompt" rows="4" placeholder="What should the agent do?"></textarea>
+</div>
+</div>
+<div class="foot"><button class="btn" type="submit">Start</button></div>
+</form>
+</div>
+</div>
+</x-dc>
+
+
+</body></html>

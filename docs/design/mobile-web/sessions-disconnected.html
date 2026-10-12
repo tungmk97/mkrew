@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — Disconnected</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--surface:#1F2127;--hover:#22242B;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--accent:#7C8CFF;--on-accent:#17181C;--warning-bg:#3A3020;--s-working:#7C8CFF;--s-needs:#E3A63E;--s-done:#4CB782;--s-exited:#E5676B;--s-idle:#6E7079;--ws-blue:#60A5FA;--ws-orange:#FB923C;--ws-teal:#2DD4BF}
+.mk--light{--bg:#FFFFFF;--surface:#F6F7F9;--hover:#EEF0F3;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--accent:#4F5BD5;--on-accent:#FFFFFF;--warning-bg:#FDF3E1;--s-working:#4F5BD5;--s-needs:#B7791F;--s-done:#2F855A;--s-exited:#C53030;--s-idle:#9A9CA6;--ws-blue:#2563EB;--ws-orange:#D9560B;--ws-teal:#0F766E}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.header{display:flex;align-items:center;gap:12px;min-height:56px;padding:52px 16px 8px;border-bottom:1px solid var(--divider)}
+.brand{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em}
+.conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}
+.conn-dot{width:8px;height:8px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--s-needs);animation:mkpulse 1.6s ease-in-out infinite}
+@keyframes mkpulse{0%,100%{opacity:1}50%{opacity:.35}}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 12px;border-radius:8px;border:0;background:var(--accent);color:var(--on-accent);font-family:inherit;font-size:14px;font-weight:500;text-decoration:none;white-space:nowrap}
+.banner{display:flex;align-items:center;gap:8px;margin:12px 0 0;padding:10px 12px;border-radius:8px;background:var(--warning-bg);font-size:14px;color:var(--text)}
+.spin{width:14px;height:14px;flex:none;border-radius:50%;border:1.5px solid var(--s-needs);border-right-color:transparent;animation:mkspin 1.2s linear infinite}
+@keyframes mkspin{to{transform:rotate(360deg)}}
+.main{flex:1;overflow:hidden;padding:8px 16px 32px}
+.group{margin-top:24px}
+.group--first{margin-top:16px}
+.group-head{display:flex;align-items:center;gap:8px;margin:0 0 4px;padding:0 8px;font-size:13px;font-weight:600;color:var(--text-dim)}
+.count{font-weight:400;font-size:12px;color:var(--text-muted)}
+.needs{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px}
+.list{list-style:none;margin:0;padding:0}
+.row{display:grid;grid-template-columns:16px 24px minmax(0,1fr) auto;align-items:center;gap:12px;min-height:48px;padding:0 8px;border-radius:8px;text-decoration:none;color:inherit}
+.title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);white-space:nowrap}
+.chip{width:24px;height:24px;display:inline-grid;place-items:center;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-dim);font:500 13px/1 "SF Mono",Menlo,"Cascadia Mono",Consolas,monospace}
+.chip--shell{font-size:10px;letter-spacing:-.5px}
+.ws{width:18px;height:18px;display:inline-grid;place-items:center;border-radius:4px;font-size:11px;font-weight:600;line-height:1}
+.ws--sm{width:16px;height:16px;font-size:10px}
+.ws-blue{color:var(--ws-blue);background:color-mix(in srgb,var(--ws-blue) 16%,transparent)}
+.ws-orange{color:var(--ws-orange);background:color-mix(in srgb,var(--ws-orange) 16%,transparent)}
+.st{width:16px;height:16px;display:inline-grid;place-items:center;font-size:13px;font-weight:600;line-height:1}
+.st-idle{color:var(--s-idle)}.st-working{color:var(--s-working)}.st-needs{color:var(--s-needs)}.st-done{color:var(--s-done)}
+.q{width:14px;height:14px;display:grid;place-items:center;border-radius:50%;border:1.5px solid currentColor;font-size:9.5px;font-weight:700}
+.dots{display:inline-flex;gap:2px}
+.dots i{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.6}
+@media (prefers-reduced-motion:reduce){.spin,.conn-dot{animation:none}}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<header class="header">
+<h1 class="brand">Mkrew</h1>
+<span class="conn"><span class="conn-dot" aria-hidden="true"></span>Reconnecting…</span>
+<span style="flex: 1"></span>
+<a class="btn" href="NewAgent.dc.html"><svg width="16" height="16" sc-camel-view-box="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"></path></svg>New agent</a>
+</header>
+<main class="main">
+<div class="banner" role="status"><span class="spin" aria-hidden="true"></span><span>Can't reach Mkrew on studio-pc. Retrying…</span></div>
+<section class="group group--first">
+<h2 class="group-head">Needs you <span class="count">2</span></h2>
+<ul class="list needs">
+<li><a class="row" href="Session.dc.html"><span class="st st-needs" role="img" aria-label="Needs input"><span class="q">?</span></span><span class="chip" aria-hidden="true">✻</span><span class="title">Migrate session store to SQLite</span><span class="meta"><span class="ws ws--sm ws-blue" aria-hidden="true">M</span>Needs input</span></a></li>
+<li><a class="row" href="SessionEnded.dc.html"><span class="st st-done" role="img" aria-label="Done">✓</span><span class="chip" aria-hidden="true">⌬</span><span class="title">Fix flaky reconnect test in ws_client</span><span class="meta"><span class="ws ws--sm ws-orange" aria-hidden="true">C</span>Done</span></a></li>
+</ul>
+</section>
+<section class="group">
+<h2 class="group-head"><span class="ws ws-blue" aria-hidden="true">M</span>mkrew</h2>
+<ul class="list">
+<li><a class="row" href="Session.dc.html"><span class="st st-idle" role="img" aria-label="Idle">○</span><span class="chip chip--shell" aria-hidden="true">&gt;_</span><span class="title">zsh — cargo watch</span><span class="meta">1h</span></a></li>
+<li><a class="row" href="Session.dc.html"><span class="st st-working" role="img" aria-label="Working"><span class="dots"><i></i><i></i><i></i></span></span><span class="chip" aria-hidden="true">✻</span><span class="title">Scale terminal to fit width on iOS Safari</span><span class="meta">17m</span></a></li>
+<li><a class="row" href="Session.dc.html"><span class="st st-working" role="img" aria-label="Working"><span class="dots"><i></i><i></i><i></i></span></span><span class="chip" aria-hidden="true">π</span><span class="title">Refactor PTY reader into its own task</span><span class="meta">4m</span></a></li>
+</ul>
+</section>
+<section class="group">
+<h2 class="group-head"><span class="ws ws-orange" aria-hidden="true">C</span>client-portal</h2>
+<ul class="list">
+<li><a class="row" href="Session.dc.html"><span class="st st-working" role="img" aria-label="Working"><span class="dots"><i></i><i></i><i></i></span></span><span class="chip" aria-hidden="true">⊙</span><span class="title">Add CSV export to the invoices table</span><span class="meta">9m</span></a></li>
+<li><a class="row" href="Session.dc.html"><span class="st st-idle" role="img" aria-label="Idle">○</span><span class="chip" aria-hidden="true">✻</span><span class="title">Review auth middleware and cookie flags</span><span class="meta">42m</span></a></li>
+</ul>
+</section>
+</main>
+</div>
+</x-dc>
+
+
+</body></html>

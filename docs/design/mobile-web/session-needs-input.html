@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>Mkrew — Session needs input</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:inherit}a:hover{color:inherit}
+.mk{--bg:#17181C;--surface:#1F2127;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--accent:#7C8CFF;--accent-bg:#25264A;--on-accent:#17181C;--warning-bg:#3A3020;--s-needs:#E3A63E}
+.mk--light{--bg:#FFFFFF;--surface:#F6F7F9;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--accent:#4F5BD5;--accent-bg:#ECEEFF;--on-accent:#FFFFFF;--warning-bg:#FDF3E1;--s-needs:#B7791F}
+.mk{width:390px;height:844px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:400 15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mk *{box-sizing:border-box}
+.topbar{display:flex;align-items:center;gap:8px;min-height:52px;padding:50px 16px 4px 4px;border-bottom:1px solid var(--divider)}
+.icon-btn{width:44px;height:44px;flex:none;display:grid;place-items:center;border-radius:8px;color:var(--text-dim);text-decoration:none}
+.chip{width:24px;height:24px;flex:none;display:inline-grid;place-items:center;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-dim);font:500 13px/1 "SF Mono",Menlo,"Cascadia Mono",Consolas,monospace}
+.title{flex:1;min-width:0;margin:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 10px 0 8px;border-radius:999px;background:var(--warning-bg);font-size:12px;font-weight:500;color:var(--text);white-space:nowrap}
+.q{width:14px;height:14px;display:grid;place-items:center;border-radius:50%;border:1.5px solid var(--s-needs);color:var(--s-needs);font-size:9.5px;font-weight:700;line-height:1}
+.term{flex:1;min-height:0;overflow:hidden;background:#111216;display:flex;flex-direction:column;justify-content:flex-end}
+.screen{margin:0;padding:8px;width:100%;font-family:"SF Mono",Menlo,"Cascadia Mono",Consolas,monospace;font-size:5.16px;line-height:1.4;color:#D9DBE1;white-space:pre}
+.d{color:#8E919B}.a{color:#9A9FFF}.b{font-weight:700}.g{color:#6FD3A0}.m{color:#E9B65C}
+.add{display:inline-block;width:100%;color:#6FD3A0;background:rgba(76,183,130,.14)}
+.del{display:inline-block;width:100%;color:#F09A9D;background:rgba(229,103,107,.14)}
+.cur{display:inline-block;width:1ch;background:#D9DBE1}
+.composer{display:flex;flex-direction:column;gap:8px;padding:8px 16px 42px;border-top:1px solid var(--divider);background:var(--bg)}
+.keys{display:flex;gap:6px;overflow:hidden;margin:0 -16px;padding:0 16px}
+.key{flex:none;min-width:44px;min-height:44px;padding:0 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font:500 14px/1 "SF Mono",Menlo,"Cascadia Mono",Consolas,monospace}
+.reply{display:flex;align-items:flex-end;gap:8px}
+.input{flex:1;min-height:44px;padding:11px 12px;border:1px solid var(--accent);border-radius:8px;background:var(--surface);color:var(--text);font-family:inherit;font-size:16px;line-height:1.35;resize:none;box-shadow:0 0 0 3px var(--accent-bg)}
+.input::placeholder{color:var(--text-muted)}
+.send{width:44px;height:44px;flex:none;display:grid;place-items:center;border:0;border-radius:8px;background:var(--accent);color:var(--on-accent)}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</helmet>
+<div class="mk mk--dark">
+<header class="topbar">
+<a class="icon-btn" href="Main.dc.html" aria-label="Back to sessions"><svg width="20" height="20" sc-camel-view-box="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"></path></svg></a>
+<span class="chip" aria-hidden="true">✻</span>
+<h1 class="title">Migrate session store to SQLite</h1>
+<span class="pill"><span class="q" aria-hidden="true">?</span>Needs input</span>
+</header>
+<div class="term" role="region" aria-label="Terminal output">
+<pre class="screen"><span class="a">✻</span> <span class="b">Claude Code</span>   <span class="d">~/code/mkrew · main</span>
+
+<span class="d">&gt;</span> Migrate the session store from per-session JSON files to SQLite. Keep the public SessionStore API unchanged.
+
+<span class="g">●</span> <span class="b">Read</span>(src/store/sessions.rs)
+  <span class="d">⎿  Read 214 lines</span>
+
+<span class="g">●</span> <span class="b">Read</span>(src/store/mod.rs)
+  <span class="d">⎿  Read 38 lines</span>
+
+<span class="g">●</span> <span class="b">Bash</span>(ls ~/.mkrew/sessions | wc -l)
+  <span class="d">⎿  412</span>
+
+● The store rewrites ~/.mkrew/sessions/&lt;id&gt;.json on every state change, which is slow with 400+ sessions.
+  I'll move it to a single SQLite table and keep open / get / list / upsert exactly as they are.
+
+<span class="m">●</span> <span class="b">Edit</span>(src/store/sessions.rs)  <span class="d">+11 −6</span>
+
+    <span class="d"> 12</span>  use std::path::Path;
+<span class="del">    <span class="d"> 13</span> - use std::fs;</span>
+<span class="add">    <span class="d"> 13</span> + use rusqlite::{params, Connection};</span>
+<span class="add">    <span class="d"> 14</span> + use std::sync::Mutex;</span>
+    <span class="d"> ..</span>
+    <span class="d"> 38</span>  pub struct SessionStore {
+<span class="del">    <span class="d"> 39</span> -     root: PathBuf,</span>
+<span class="add">    <span class="d"> 39</span> +     conn: Mutex&lt;Connection&gt;,</span>
+    <span class="d"> 40</span>  }
+    <span class="d"> 41</span>
+    <span class="d"> 42</span>  impl SessionStore {
+    <span class="d"> 43</span>      pub fn open(dir: &amp;Path) -&gt; Result&lt;Self&gt; {
+<span class="del">    <span class="d"> 44</span> -         let root = dir.join("sessions");</span>
+<span class="del">    <span class="d"> 45</span> -         fs::create_dir_all(&amp;root)?;</span>
+<span class="del">    <span class="d"> 46</span> -         Ok(Self { root })</span>
+<span class="add">    <span class="d"> 44</span> +         let conn = Connection::open(dir.join("sessions.db"))?;</span>
+<span class="add">    <span class="d"> 45</span> +         conn.execute_batch(SCHEMA)?;</span>
+<span class="add">    <span class="d"> 46</span> +         Ok(Self { conn: Mutex::new(conn) })</span>
+    <span class="d"> 47</span>      }
+    <span class="d"> 48</span>
+    <span class="d"> 49</span>      pub fn upsert(&amp;self, s: &amp;Session) -&gt; Result&lt;()&gt; {
+<span class="del">    <span class="d"> 50</span> -         let path = self.root.join(format!("{}.json", s.id));</span>
+<span class="del">    <span class="d"> 51</span> -         fs::write(path, serde_json::to_vec(s)?)?;</span>
+<span class="add">    <span class="d"> 50</span> +         let json = serde_json::to_string(s)?;</span>
+<span class="add">    <span class="d"> 51</span> +         self.conn.lock().unwrap().execute(</span>
+<span class="add">    <span class="d"> 52</span> +             "INSERT INTO sessions (id, data) VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET data = ?2",</span>
+<span class="add">    <span class="d"> 53</span> +             params![s.id, json],</span>
+<span class="add">    <span class="d"> 54</span> +         )?;</span>
+    <span class="d"> 55</span>          Ok(())
+    <span class="d"> 56</span>      }
+
+ <span class="b">Apply this change? (y/n)</span> <span class="cur"> </span></pre>
+</div>
+<form class="composer">
+<div class="keys" role="group" aria-label="Quick keys">
+<button class="key" type="button">Enter</button>
+<button class="key" type="button" aria-label="Escape">Esc</button>
+<button class="key" type="button" aria-label="Arrow up">↑</button>
+<button class="key" type="button" aria-label="Arrow down">↓</button>
+<button class="key" type="button">Tab</button>
+<button class="key" type="button">y</button>
+<button class="key" type="button">n</button>
+<button class="key" type="button" aria-label="Control C">Ctrl+C</button>
+</div>
+<div class="reply">
+<label class="vh" for="reply">Reply to session</label>
+<textarea class="input" id="reply" rows="1" placeholder="Reply…"></textarea>
+<button class="send" type="submit" aria-label="Send"><svg width="18" height="18" sc-camel-view-box="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14.5v-11M4.5 8 9 3.5 13.5 8"></path></svg></button>
+</div>
+</form>
+</div>
+</x-dc>
+
+
+</body></html>
