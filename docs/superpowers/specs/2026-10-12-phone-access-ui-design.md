@@ -29,7 +29,7 @@ scans the QR code with the iPhone camera, and the page opens. Later, Stop cuts t
 | Switch | `[web] enabled` (bool, default `false`), the only key. The UI writes it; the daemon reacts through its existing settings watcher | No new request to toggle; the state is persisted where the user's other settings are |
 | Status | `daemon.status` gains `web: { enabled, running, error? }`; `PROTOCOL_VERSION` 39 → 40 | The UI shows the real reason when `mk web` fails (e.g. port in use), not a guess |
 | Child process | `mk.exe web`, found next to `mkrew-daemon.exe`, else on PATH; `CREATE_NO_WINDOW`, `kill_on_drop`, stdin null, stdout ignored, stderr read; the last non-empty stderr line is kept as `error` | Same pattern as `spawn::daemon_exe` and the agent children; dies with the daemon |
-| Restart | While enabled, a child that exits is started again after 1, 2, 4, … 60 s; a child that ran for 60 s resets the wait to 1 s. `mk.exe` not found → `error`, no restart until settings change | Bounded retries; a stable run forgives earlier failures |
+| Restart | While enabled, a child that exits is started again after 1, 2, 4, … 60 s; a child that ran for 60 s resets the wait to 1 s. `mk.exe` not found → `error`, looked up again every 60 s (or at once when the settings change) | Bounded retries; a stable run forgives earlier failures; installing `mk` later needs no click |
 | Stop | `enabled = false` → the daemon kills the child; open phone sockets drop at once | "Stop" must cut access |
 | Tailscale window flash | `mk web`'s `tailscale status --json` call uses `CREATE_NO_WINDOW` | A windowless parent would otherwise open a console per call |
 | Entry points | Palette command "Global: Phone access…"; a Lucide `smartphone` icon button in the title bar (accent when running, muted otherwise; tooltip "Phone access: on" / "Phone access: off") | The palette lists every action (§14 rule 10); the icon shows the state at a glance |
@@ -65,10 +65,10 @@ The link (it carries the token) appears only in this dialog: never in logs or to
 
 | Case | Behaviour |
 | --- | --- |
-| `mk.exe` missing | `web.error = "mk.exe not found next to mkrew-daemon"`; no restart loop |
+| `mk.exe` missing | `web.error = "mk.exe not found next to mkrew-daemon"`; looked up again every 60 s |
 | `mk web` exits (port in use, …) | `error` = last stderr line; restart with backoff |
 | `settings.toml` fails to parse | The daemon keeps its last settings (existing watcher); `settings_error` already reaches the UI |
-| The UI cannot write `settings.toml` | Toast with the error; state unchanged |
+| The UI cannot write `settings.toml` | An error row in the dialog (the UI has no toasts); state unchanged |
 | `tailscale serve` fails | Its stderr under the Tailscale row; Set up can be pressed again |
 | UI/daemon protocol mismatch | Existing version-mismatch path |
 
