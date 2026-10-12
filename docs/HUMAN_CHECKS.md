@@ -23,8 +23,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   the 520 px width; Esc closes.
 - [ ] **Start → icon accent:** Start → the row shows "Starting…" then `● On`, the title bar icon turns
   accent and its tooltip reads "Phone access: on"; Stop → `○ Off`, muted icon, "Phone access: off".
-  Restart the PC with phone access on and the Mkrew window closed: after login the icon is accent
-  when the UI starts again (the daemon started `mk web`).
+  Close Mkrew and sign out and in again, then open Mkrew: the icon is accent (the daemon started
+  `mk web` again; phone access comes back whenever the daemon starts).
 - [ ] **Scan:** with Tailscale set up, scan the QR with the iPhone camera → Safari opens the Mkrew
   page and shows Sessions (no token screen). Copy link pastes the same link.
 - [ ] **Stop while the phone page is open:** Stop → within a few seconds the phone page shows "Can't
@@ -34,10 +34,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   serve is set up". Sign out of Tailscale → "Install and sign in to Tailscale first", no Set up.
 - [ ] **Port in use:** run `mk web` by hand, then Start → `✕ Not running: <bind error>. Retrying…`;
   stop the hand-started one → the row becomes `● On` within about a minute.
+- [ ] **Daemon killed:** with phone access on, End task on `mkrew-daemon` → `mk.exe` is gone too; the
+  phone shows "Can't reach Mkrew…".
 
 ### To verify — 2026-10-12 Mkrew web on a phone (plan docs/superpowers/plans/2026-10-10-mobile-web.md)
 
-- [ ] **Link:** `tailscale serve --bg 8787`, then `mk web` prints `https://<pc>.<tailnet>.ts.net/#t=…`.
+- [ ] **Link:** with Phone access off, `tailscale serve --bg 8787`, then `mk web` prints `https://<pc>.<tailnet>.ts.net/#t=…`.
   Opening it on the iPhone (Safari) shows Sessions with "Needs you" on top, the PC name next to
   a green dot. Add to Home Screen, then open the icon: it connects without asking for the token.
 - [ ] **Answer:** a Claude/Codex session asks a question on the PC → it shows under "Needs you"
@@ -48,9 +50,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **New agent:** + New agent → pick a workspace and Claude, type a prompt, Start → the
   session opens on the phone and a task card shows on the desktop board; an uninstalled agent
   is greyed "not installed".
-- [ ] **Disconnect:** stop `mk web` → within seconds the banner "Can't reach Mkrew on <pc>.
+- [ ] **Disconnect:** with Phone access off (a hand-started `mk web`), stop `mk web` → within seconds the banner "Can't reach Mkrew on <pc>.
   Retrying…" shows; start it again → the banner goes and an open session repaints.
-- [ ] **Token:** stop `mk web`, run `mk web --new-token` → the old Home Screen icon shows the token screen with
+- [ ] **Token:** with Phone access off, stop `mk web`, run `mk web --new-token` → the old Home Screen icon shows the token screen with
   "That token didn't work. Check it and try again."; pasting the new link (or token) connects.
 - [ ] **Light and dark:** switch iOS appearance; colors follow it, the terminal stays dark.
 - [ ] **Chrome on another computer in the tailnet:** the same link works; Ctrl+Enter sends.

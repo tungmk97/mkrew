@@ -1,7 +1,7 @@
 # 0052 — Mkrew web: watch and answer sessions from a phone over the tailnet
 
 - Date: 2026-10-12
-- Status: accepted
+- Status: accepted (amended by ADR 0053)
 - Milestone: none (outside the milestone loop; user request: an app on the phone to keep work
   moving while away from the PC)
 
@@ -43,5 +43,5 @@
 - SPEC §1, §9, §15, §19 and the §20 intro change. No protocol version change, no migration.
 - Whoever has the token and reaches the port controls the agents: keep `--listen` on
   127.0.0.1, publish only with `tailscale serve` (never Funnel); `--new-token` revokes links.
-- `mk web` must keep running on the PC (README: Task Scheduler at logon).
+- `mk web` must keep running on the PC (amended by ADR 0053: the daemon runs it; README: Task Scheduler runs `mk.exe daemon start` at logon).
 - Not done: push notifications, several PCs, board/files/git/docs on the phone.

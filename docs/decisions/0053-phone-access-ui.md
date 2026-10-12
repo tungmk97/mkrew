@@ -1,8 +1,8 @@
 # 0053 — Phone access from the Mkrew UI
 
 - Date: 2026-10-12
-- Status: accepted (reverses the "starting `mk web` from the daemon" non-goal and the "keep `mk web`
-  running with Task Scheduler" advice of ADR 0052)
+- Status: accepted (reverses the "keep `mk web` running with Task Scheduler" advice of ADR 0052 and
+  the "starting `mk web` from the daemon" non-goal of the Part 1 design spec, `docs/superpowers/specs/2026-10-10-mobile-web-design.md`)
 - Milestone: none (outside the milestone loop; user request: no typing `mk web` or `tailscale serve`)
 
 ## Context
@@ -25,7 +25,7 @@ iPhone without typing.
 
 - `[web] enabled` (bool, default `false`) is the only setting. The UI writes it
   (`mkrew_core::settings::write_web_enabled`, keeps the other sections and comments); the daemon
-  reacts through its settings watcher: it spawns `mk web` (windowless, `kill_on_drop`, stderr read),
+  reacts through its settings watcher: it spawns `mk web` (windowless, `kill_on_drop`, in a kill-on-close job object so a hard-killed daemon takes it along, stderr read),
   restarts a failed child after 1, 2, 4 … 60 s (a 60 s run resets the wait), kills it when disabled.
   `mk.exe` not found → `error`, looked up again every 60 s. The daemon process still has no
   network listener: the socket is in the `mk web` child (SPEC §15).
@@ -46,7 +46,9 @@ iPhone without typing.
 ## Consequences
 
 - The README setup becomes: phone icon → Start (→ Set up the first time) → scan the QR. Phone access
-  stays on across reboots and with the UI closed, because the daemon owns the child.
+  comes back whenever the daemon starts (opening Mkrew starts it) and runs with the UI closed,
+  because the daemon owns the child. Nothing starts the daemon at logon by itself: the README
+  suggests a Task Scheduler "At log on" task running `mk.exe daemon start`, not `mk.exe web`.
 - A hand-started `mk web` (or a Task Scheduler entry) still works but competes for port 8787: the
   dialog then shows `Not running: <bind error>. Retrying…`.
 - Stop kills the child: open phone sockets drop at once.

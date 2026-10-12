@@ -182,14 +182,17 @@ internet.
 1. Install Tailscale on this PC and on the phone, signed in to the same account. In the
    Tailscale admin console, under DNS, turn on MagicDNS and HTTPS Certificates.
 2. In Mkrew click the phone icon in the title bar (or open the command palette, `Ctrl+Shift+P`,
-   and pick "Phone access…"), then click **Start**. The first time, also click **Set up**: it runs
+   and pick "Global: Phone access…"), then click **Start**. The first time, also click **Set up**: it runs
    `tailscale serve --bg 8787`, which Tailscale remembers across reboots.
 3. Scan the QR code with the iPhone camera (or click **Copy link** and send the link to yourself,
    e.g. in Notes). On iPhone: Share → Add to Home Screen.
 
-Phone access stays on across reboots, also when the Mkrew window is closed. **Stop** in the same
-dialog cuts the phone off at once. The phone never changes a session's size; the terminal font
-shrinks to fit (pinch to zoom).
+Phone access comes back whenever the Mkrew daemon starts, which opening Mkrew does, and it keeps
+running when the Mkrew window is closed. To have it right after you log on, without opening
+Mkrew, add a Task Scheduler task: trigger "At log on", action `mk.exe daemon start`. Do not
+schedule `mk.exe web` itself: it fights the daemon's own `mk web` for port 8787 and **Stop** does
+not stop it. **Stop** in the same dialog cuts the phone off at once. The phone never changes a
+session's size; the terminal font shrinks to fit (pinch to zoom).
 Lost the phone or shared the link by mistake? Click **Stop**, run `mk web --new-token` and stop it
 again with `Ctrl+C`, then click **Start**: old links stop working.
 

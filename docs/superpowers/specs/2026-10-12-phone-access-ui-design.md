@@ -16,7 +16,7 @@ From the Mkrew UI they want to:
    it up with one click; if it already is, nothing to do.
 3. Get the link onto the iPhone without typing: scan a QR code, or copy the link.
 
-Phone access stays on across reboots once turned on, also when the UI is closed.
+Phone access stays on once turned on, also when the UI is closed, and comes back whenever the daemon starts (opening Mkrew starts it; a Task Scheduler "At log on" task running `mk.exe daemon start` does it without opening Mkrew).
 
 Success: the user opens Mkrew, clicks the phone icon, clicks Start (and Set up the first time),
 scans the QR code with the iPhone camera, and the page opens. Later, Stop cuts the phone off.
@@ -25,11 +25,11 @@ scans the QR code with the iPhone camera, and the page opens. Later, Stop cuts t
 
 | Topic | Decision | Why |
 | --- | --- | --- |
-| Who runs `mk web` | The daemon, as a supervised child, while `[web] enabled = true` in `settings.toml` | Survives reboots and a closed UI; the daemon already reloads settings live. The daemon itself still has no network listener: the socket lives in the `mk web` process (SPEC §15) |
+| Who runs `mk web` | The daemon, as a supervised child, while `[web] enabled = true` in `settings.toml` | Comes back whenever the daemon starts (opening Mkrew starts it) and survives a closed UI; the daemon already reloads settings live. The daemon itself still has no network listener: the socket lives in the `mk web` process (SPEC §15) |
 | Switch | `[web] enabled` (bool, default `false`), the only key. The UI writes it; the daemon reacts through its existing settings watcher | No new request to toggle; the state is persisted where the user's other settings are |
 | Status | `daemon.status` gains `web: { enabled, running, error? }`; `PROTOCOL_VERSION` 39 → 40 | The UI shows the real reason when `mk web` fails (e.g. port in use), not a guess |
-| Child process | `mk.exe web`, found next to `mkrew-daemon.exe`, else on PATH; `CREATE_NO_WINDOW`, `kill_on_drop`, stdin null, stdout ignored, stderr read; the last non-empty stderr line is kept as `error` | Same pattern as `spawn::daemon_exe` and the agent children; dies with the daemon |
-| Restart | While enabled, a child that exits is started again after 1, 2, 4, … 60 s; a child that ran for 60 s resets the wait to 1 s. `mk.exe` not found → `error`, looked up again every 60 s (or at once when the settings change) | Bounded retries; a stable run forgives earlier failures; installing `mk` later needs no click |
+| Child process | `mk.exe web`, found next to `mkrew-daemon.exe`, else on PATH; `CREATE_NO_WINDOW`, `kill_on_drop` plus a kill-on-close job object, stdin null, stdout ignored, stderr read; the last non-empty stderr line is kept as `error` | Same pattern as `spawn::daemon_exe` and the agent children; dies with the daemon, also when the daemon is killed |
+| Restart | While enabled, a child that exits is started again after 1, 2, 4, … 60 s; a child that ran for 60 s resets the wait to 1 s. `mk.exe` not found → `error`, looked up again every 60 s (or at once after Stop → Start) | Bounded retries; a stable run forgives earlier failures; installing `mk` later needs no click |
 | Stop | `enabled = false` → the daemon kills the child; open phone sockets drop at once | "Stop" must cut access |
 | Tailscale window flash | `mk web`'s `tailscale status --json` call uses `CREATE_NO_WINDOW` | A windowless parent would otherwise open a console per call |
 | Entry points | Palette command "Global: Phone access…"; a Lucide `smartphone` icon button in the title bar (accent when running, muted otherwise; tooltip "Phone access: on" / "Phone access: off") | The palette lists every action (§14 rule 10); the icon shows the state at a glance |
