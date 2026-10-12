@@ -332,6 +332,7 @@ function renderSession() {
   const ended = s.state === 'exited';
   $('composer').hidden = ended;
   $('ended').hidden = !ended;
+  $('stop').hidden = ended;
   $('ended-text').textContent = s.exit_code == null ? 'Session ended' : `Session ended (exit ${s.exit_code})`;
 }
 
@@ -582,6 +583,13 @@ function wire() {
     if (!key || !state.open) return;
     const appCursor = term?.modes.applicationCursorKeysMode ?? false;
     call('session.input', { session_id: state.open, data: toBase64(keyBytes(key, appCursor)) }).catch((err) => toast(err.message));
+  });
+
+  $('stop').addEventListener('click', () => {
+    const s = state.sessions.get(state.open);
+    if (!s) return;
+    if (!confirm(`Stop session "${displayName(s, state.profiles)}"? It ends on ${machine}.`)) return;
+    call('session.kill', { session_id: s.id, force: false }).catch((err) => toast(err.message));
   });
 
   $('sheet-close').addEventListener('click', closeSheet);
