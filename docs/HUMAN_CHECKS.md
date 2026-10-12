@@ -30,12 +30,17 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   restart → same width. The compact rail and the session panel's edge (`inspector_width`) still
   work as before.
 
-### To verify — 2026-10-12 task dialog caret
+### To verify — 2026-10-12 task dialog caret, sidebar not redrawn by pane output
 
 - [ ] **Caret (dark + light):** in the task dialog (Title and Prompt), ← / → / Ctrl+← / Home /
   End / ↑ / ↓ (Prompt) move the caret; typing, Backspace and Delete act there; Shift+arrows
   highlight, typing replaces it; Ctrl+C / Ctrl+X / Ctrl+V work. "From prompt…" types at the caret.
   Typing at the end of a long prompt still scrolls to the bottom.
+- [ ] **Sidebar stays live (cached view):** with agents working, the sidebar's dots, `5s`/`17m`
+  times, filter typing, chips, hover, right-click menus, pin, rename, color, collapse, the grip
+  drag and the compact rail (Ctrl+Alt+B) all update at once, in dark and light, after a theme or
+  font change too. While 2–3 agents print a lot, typing in the task dialog and the composer
+  feels immediate.
 
 ### To verify — 2026-10-12 Run setup caret and Browse… (ADR 0048)
 

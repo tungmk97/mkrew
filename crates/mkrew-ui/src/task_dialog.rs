@@ -196,24 +196,27 @@ impl TaskDialog {
                     Field::Prompt => Field::Title,
                 };
             }
-            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
-                match self.field {
-                    Field::Title => {
-                        self.title.edit(&key);
-                    }
-                    Field::Prompt => {
-                        self.prompt.key(key);
-                    }
-                }
-            }
             DialogKey::Insert(text) => self.insert(&text),
-            DialogKey::Paste
-            | DialogKey::Delete { .. }
-            | DialogKey::Move { .. }
-            | DialogKey::Copy
-            | DialogKey::Cut => {}
+            // The caller puts the selection on the clipboard first (see `selected_text`).
+            DialogKey::Paste | DialogKey::Copy => {}
+            key => match self.field {
+                Field::Title => {
+                    self.title.edit(&key);
+                }
+                Field::Prompt => {
+                    self.prompt.edit(&key);
+                }
+            },
         }
         Outcome::Edited
+    }
+
+    /// The selected text of the focused field (Ctrl+C / Ctrl+X copy it).
+    pub fn selected_text(&self) -> Option<&str> {
+        match self.field {
+            Field::Title => self.title.selected_text(),
+            Field::Prompt => self.prompt.input().selected_text(),
+        }
     }
 
     /// Types `text` into the focused field; the title stays on one line.
@@ -231,7 +234,7 @@ impl TaskDialog {
         }
     }
 
-    /// Types a picked library prompt (§20B.3) at the end of the prompt, which gets the keys.
+    /// Types a picked library prompt (§20B.3) at the prompt's caret; the prompt gets the keys.
     pub fn insert_prompt(&mut self, text: &str) {
         self.field = Field::Prompt;
         self.prompt.insert(text);
@@ -449,6 +452,31 @@ mod tests {
         dialog.key(DialogKey::SwitchField);
         dialog.key(DialogKey::DeleteWord);
         assert_eq!(dialog.prompt.text(), "Fix the login ");
+    }
+
+    #[test]
+    fn arrows_and_delete_edit_inside_both_fields() {
+        let moved = |motion, extend| DialogKey::Move { motion, extend };
+        let mut dialog = TaskDialog::edit(task());
+        dialog.key(moved(Motion::Home, false));
+        dialog.key(DialogKey::Delete { word: false });
+        type_text(&mut dialog, "Re-f");
+        assert_eq!(dialog.title, "Re-fix login");
+
+        dialog.key(DialogKey::SwitchField);
+        dialog.key(moved(Motion::WordLeft, false));
+        dialog.key(moved(Motion::Left, false));
+        dialog.key(DialogKey::Backspace);
+        type_text(&mut dialog, "s");
+        assert_eq!(dialog.prompt.text(), "Fix the logis bug");
+        dialog.key(moved(Motion::End, true));
+        assert_eq!(dialog.selected_text(), Some(" bug"));
+        dialog.key(DialogKey::Cut);
+        assert_eq!(
+            dialog.prompt.text(),
+            "Fix the logis",
+            "the caller copied it first"
+        );
     }
 
     #[test]

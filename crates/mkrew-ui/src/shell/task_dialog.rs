@@ -71,9 +71,17 @@ impl Shell {
         if let Some(text) = paste {
             dialog.insert(&text);
         }
+        if matches!(key, DialogKey::Copy | DialogKey::Cut)
+            && let Some(text) = dialog.selected_text()
+        {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.to_owned()));
+        }
         match dialog.key(key) {
             task_dialog::Outcome::Edited => {
-                if dialog.field == Field::Prompt {
+                // ponytail: follows the caret only at the end; a caret moved above the
+                // visible lines is not scrolled into view (needs line-height maths).
+                let prompt = dialog.prompt.input();
+                if dialog.field == Field::Prompt && prompt.cursor() == prompt.len() {
                     self.prompt_scroll.scroll_to_bottom();
                 }
                 cx.notify();
@@ -238,17 +246,18 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
-        let field = |id: &'static str, which: Field, text: &str, placeholder: &'static str| {
-            let selected = match which {
-                Field::Title => dialog.title.all_selected(),
-                Field::Prompt => dialog.prompt.all_selected(),
+        let field = |id: &'static str, which: Field, placeholder: &'static str| {
+            let input = match which {
+                Field::Title => &dialog.title,
+                Field::Prompt => dialog.prompt.input(),
             };
-            text_field(
+            caret_field(
                 id,
-                text,
+                input.as_str(),
+                input.cursor(),
+                input.selection(),
                 placeholder,
                 dialog.field == which,
-                selected,
                 theme,
             )
             .on_click(cx.listener(move |shell, _, _, cx| {
@@ -385,12 +394,7 @@ impl Shell {
                     .flex_col()
                     .gap(px(space::XS))
                     .child(label("Title"))
-                    .child(field(
-                        "task-title",
-                        Field::Title,
-                        &dialog.title,
-                        "What should be done?",
-                    )),
+                    .child(field("task-title", Field::Title, "What should be done?")),
             )
             .child(
                 div()
@@ -425,7 +429,6 @@ impl Shell {
                         field(
                             "task-prompt",
                             Field::Prompt,
-                            dialog.prompt.text(),
                             "Sent to the agent when the task runs.",
                         )
                         .h(px(theme::PROMPT_FIELD_HEIGHT))
