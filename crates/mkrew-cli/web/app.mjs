@@ -2,7 +2,7 @@
 // `mk web`; never resizes a session (the desktop pane keeps its size, the font shrinks here).
 import { Terminal } from './vendor/xterm.mjs';
 import {
-  backoff, buildList, chipFor, displayName, esc, fitFontSize, keepSession, keyBytes, loadReplies,
+  backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, loadReplies,
   machineName, metaText, newAgentPlan, pillText, readerText, rememberReply, statusLabel, toBase64,
   tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
@@ -205,11 +205,11 @@ async function load() {
   ]);
   state.projects = projects;
   state.profiles = profiles.profiles;
-  // Ended sessions: the ones of the last 24 h, plus any this page already knew (they ended
-  // while it was disconnected), so the open one shows why it ended instead of freezing.
-  const now = Date.now();
-  const next = new Map(sessions.filter((s) => keepSession(s, state.sessions.has(s.id), now)).map((s) => [s.id, s]));
-  for (const [id, s] of state.sessions) if (s.state === 'exited' && !next.has(id)) next.set(id, s);
+  // Ended sessions are not listed; the open one stays (even when it ended while this page was
+  // disconnected) so its screen shows why it ended instead of freezing.
+  const next = new Map(sessions.filter((s) => s.state !== 'exited' || s.id === state.open).map((s) => [s.id, s]));
+  const open = state.sessions.get(state.open);
+  if (open && !next.has(open.id)) next.set(open.id, open);
   state.sessions = next;
   state.loaded = true;
   render();
@@ -302,7 +302,7 @@ function row(s, now, inNeeds) {
     `<li><button class="row" type="button" data-id="${s.id}">` +
     `<span class="st ${st.cls}" role="img" aria-label="${st.label}">${markHtml(s.state)}</span>` +
     chipHtml(chipFor(s, state.profiles)) +
-    `<span class="title${s.state === 'exited' ? ' title--muted' : ''}">${esc(displayName(s, state.profiles))}</span>` +
+    `<span class="title">${esc(displayName(s, state.profiles))}</span>` +
     `<span class="meta">${meta}</span></button></li>`
   );
 }

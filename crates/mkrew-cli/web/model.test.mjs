@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_REPLIES, ago, backoff, buildList, chipFor, displayName, endedAt, esc, fitFontSize,
-  keepSession, keyBytes, loadReplies, machineName, metaText, newAgentPlan, pillText, readerText,
+  keyBytes, loadReplies, machineName, metaText, newAgentPlan, pillText, readerText,
   rememberReply, statusLabel, taskTitle, toBase64, tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
@@ -84,27 +84,18 @@ test('buildList: needs-you first (newest first), not repeated in groups; archive
   assert.deepEqual(groups[1].sessions.map((s) => s.id), ['5', '4', '3']);
 });
 
-test('ended sessions stay listed for 24 h after they end, or while the page already shows them', () => {
-  const now = 48 * 3_600_000;
-  const ended = (at, extra = {}) => session('s', 'p', { state: 'exited', ended_at: at, ...extra });
-  assert.equal(keepSession(session('s', 'p'), false, now), true);
-  assert.equal(keepSession(ended(now - 3_600_000), false, now), true);
-  assert.equal(keepSession(ended(now - 25 * 3_600_000), false, now), false);
-  assert.equal(keepSession(ended(now - 25 * 3_600_000), true, now), true);
-  // No end time recorded: the last state change counts.
-  assert.equal(endedAt(ended(null, { state_changed_at: 7 })), 7);
-});
-
-test('ended sessions sit below the live ones and show how long ago they ended', () => {
+test('ended sessions are not listed, and show how long ago they ended', () => {
   const { groups } = buildList([project('a', 'w')], [
     session('1', 'a', { state: 'exited', started_at: 0, pinned: true }),
     session('2', 'a', { started_at: 5 }),
   ]);
-  assert.deepEqual(groups[0].sessions.map((s) => s.id), ['2', '1']);
+  assert.deepEqual(groups[0].sessions.map((s) => s.id), ['2']);
   const now = 3 * 3_600_000;
   const ended = session('s', 'p', { state: 'exited', ended_at: 0, state_changed_at: now });
   assert.equal(metaText(ended, now), '3h');
   assert.equal(pillText(ended, now), 'Exited · 3h');
+  // No end time recorded: the last state change counts.
+  assert.equal(endedAt(session('s', 'p', { state: 'exited', state_changed_at: 7 })), 7);
 });
 
 test('times: now / minutes / hours / days', () => {

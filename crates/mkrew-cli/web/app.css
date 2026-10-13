@@ -36,7 +36,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
 .row{display:grid;grid-template-columns:16px 24px minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;min-height:48px;padding:0 8px;border:0;border-radius:8px;background:none;text-align:left}
 .row:hover{background:var(--hover)}
 .title{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.title--muted{color:var(--text-muted)}
 .meta{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);white-space:nowrap}
 .chip{width:24px;height:24px;flex:none;display:inline-grid;place-items:center;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text-dim);font:500 13px/1 var(--mono)}
 .chip--shell{font-size:10px;letter-spacing:-.5px}
@@ -110,7 +109,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 
 /* New agent */
 .scrim{position:absolute;inset:0;z-index:10;display:flex;align-items:flex-end;background:var(--scrim)}
-.sheet{width:100%;max-height:calc(100% - env(safe-area-inset-top) - 24px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;animation:mkrise 160ms ease-out}
+.sheet{width:100%;max-height:calc(100% - max(env(safe-area-inset-top), 48px) - 24px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;animation:mkrise 160ms ease-out}
 .grab{width:36px;height:4px;margin:8px auto 0;border-radius:2px;background:var(--subtle)}
 .sheet-head{display:flex;align-items:center;gap:8px;padding:4px 4px 4px 16px}
 .sheet-title{flex:1;margin:0;font-size:17px;font-weight:600}
