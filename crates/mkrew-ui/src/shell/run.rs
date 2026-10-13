@@ -164,6 +164,13 @@ impl Shell {
         cx.notify();
     }
 
+    /// Scrolls the Run setup's focused card into view (a new card lands below the fold).
+    pub(crate) fn reveal_run_card(&self) {
+        if let Some(i) = self.run_setup.as_ref().and_then(RunSetup::focused_card) {
+            self.run_setup_scroll.scroll_to_item(i);
+        }
+    }
+
     pub(crate) fn run_setup_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -191,10 +198,15 @@ impl Shell {
         {
             setup.insert(&text);
         }
-        match setup.key(key) {
+        let outcome = setup.key(key);
+        let card = setup.focused_card();
+        match outcome {
             run_setup::Outcome::Cancel => return self.close_run_setup(window, cx),
             run_setup::Outcome::Save => return self.save_run_setup(window, cx),
             run_setup::Outcome::Edited => {}
+        }
+        if let Some(i) = card {
+            self.run_setup_scroll.scroll_to_item(i);
         }
         cx.notify();
     }
@@ -569,8 +581,11 @@ impl Shell {
             .flex()
             .flex_col()
             .gap(px(space::S))
+            // Room for the scroll bar over the right edge.
+            .pr(px(theme::SCROLLBAR_WIDTH))
             .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.run_setup_scroll);
         for i in 0..setup.cards.len() {
             let name = field(cx, i, Field::Name, "run-name", "e.g. BE");
             let dir = field(cx, i, Field::Dir, "run-dir", ". or EA-BE");
@@ -593,10 +608,15 @@ impl Shell {
                 "Choose a file in the workspace",
             );
             let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev");
+            let title = match setup.cards[i].name.as_str().trim() {
+                "" => format!("Command {}", i + 1),
+                name => name.to_owned(),
+            };
             cards = cards.child(
                 // The id scopes the card's field and button ids (the same in every card).
                 div()
                     .id(("run-card", i))
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .gap(px(space::XS))
@@ -604,6 +624,14 @@ impl Shell {
                     .rounded(px(radius::MEDIUM))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.border))
+                    .child(
+                        div()
+                            .text_size(font_size::BODY)
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .text_color(rgb(theme.text))
+                            .truncate()
+                            .child(title),
+                    )
                     .child(
                         div()
                             .flex()
@@ -633,6 +661,7 @@ impl Shell {
                                     move |shell, _, _, cx| {
                                         if let Some(setup) = shell.run_setup.as_mut() {
                                             setup.duplicate_card(i);
+                                            shell.reveal_run_card();
                                         }
                                         cx.notify();
                                     },
@@ -748,7 +777,11 @@ impl Shell {
                          in its folder.",
                     ),
             )
-            .child(cards)
+            .child(div().relative().child(cards).child(scrollbar::bar(
+                scrollbar::Source::Handle(self.run_setup_scroll.clone()),
+                Rc::clone(&self.run_setup_drag),
+                theme,
+            )))
             .child(
                 div().flex().child(
                     button(
@@ -760,6 +793,7 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, _, cx| {
                         if let Some(setup) = shell.run_setup.as_mut() {
                             setup.add_card();
+                            shell.reveal_run_card();
                         }
                         cx.notify();
                     })),

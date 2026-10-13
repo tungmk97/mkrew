@@ -374,6 +374,9 @@ struct Shell {
     share_menu: Option<PaneMenu>,
     /// The open "Run setup" of a workspace (modal).
     run_setup: Option<RunSetup>,
+    /// Keeps the Run setup's focused card in view; its scroll bar's drag.
+    run_setup_scroll: ScrollHandle,
+    run_setup_drag: scrollbar::Drag,
     /// The workspace whose Run menu (▾) is open.
     run_menu: Option<Ulid>,
     /// The title bar's workspace dropdown is open.

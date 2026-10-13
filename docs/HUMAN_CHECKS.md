@@ -15,6 +15,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-13 Run setup: Add command scrolls, card titles, scroll bar
+
+- [ ] **Run setup (dark + light):** with 2+ commands, "Add command" scrolls the list to the new
+  empty card ("Command N" title, name focused); Duplicate and Tab into a hidden card scroll too.
+  Each card's top shows its name (or "Command N"). A thumb on the list's right edge scrolls when
+  the cards overflow and is hidden when they fit. At 8 commands, Add shows the limit.
+
 ### To verify — 2026-10-13 Mkrew web extras (plan docs/superpowers/plans/2026-10-13-mobile-web-extras.md)
 
 - [ ] **Icon:** remove the old Home Screen bookmark, open the link in Safari, Share → Add to Home

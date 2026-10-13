@@ -297,6 +297,8 @@ impl Shell {
             pane_menu: None,
             share_menu: None,
             run_setup: None,
+            run_setup_scroll: ScrollHandle::new(),
+            run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
             new_menu: false,

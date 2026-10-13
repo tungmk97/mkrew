@@ -253,9 +253,22 @@ impl RunSetup {
         }
     }
 
+    /// Appends an empty card and focuses its name. Refused at [`MAX_COMMANDS`].
     pub fn add_card(&mut self) {
+        if self.cards.len() >= MAX_COMMANDS {
+            self.error = Some(RunError::TooMany.to_string());
+            return;
+        }
         self.cards.push(empty_card());
         self.focus = Focus::Field(self.cards.len() - 1, Field::Name);
+    }
+
+    /// The card holding the keyboard, if any.
+    pub fn focused_card(&self) -> Option<usize> {
+        match self.focus {
+            Focus::Field(i, _) => Some(i),
+            _ => None,
+        }
     }
 
     pub fn remove_card(&mut self, index: usize) {
@@ -515,6 +528,10 @@ mod tests {
             setup.error.as_deref(),
             Some(format!("at most {MAX_COMMANDS} run commands").as_str())
         );
+        setup.error = None;
+        setup.add_card();
+        assert_eq!(setup.cards.len(), MAX_COMMANDS, "Add is refused too");
+        assert!(setup.error.is_some());
     }
 
     #[test]
