@@ -1,19 +1,9 @@
-//! Text of a pane header (SPEC §11): the `<workspace> › <folder> › <agent>` breadcrumb and the
-//! status pill. Pure and tested headlessly; `main.rs` draws it.
+//! Text of a pane's status (SPEC §11): the task folder and the status pill. Pure and tested
+//! headlessly; `main.rs` draws it.
 
 use mkrew_protocol::{SessionState, SessionTurnEvent, Task};
 
 use crate::turn;
-
-/// The `›`-joined path shown in a pane header; unknown or empty parts are left out.
-pub fn breadcrumb(workspace: Option<&str>, folder: Option<&str>, agent: &str) -> String {
-    [workspace, folder, Some(agent)]
-        .into_iter()
-        .flatten()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" › ")
-}
 
 /// The folder a pane works in when it is not the workspace folder: the worktree of its task
 /// (SPEC §20E.1), named by its branch without the `mkrew/` prefix. `None` for every other pane.
@@ -67,18 +57,6 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
-    }
-
-    #[test]
-    fn the_breadcrumb_skips_what_is_unknown() {
-        assert_eq!(breadcrumb(Some("kit"), None, "omp"), "kit › omp");
-        assert_eq!(
-            breadcrumb(Some("kit"), Some("fix-login-ab12cd34"), "claude"),
-            "kit › fix-login-ab12cd34 › claude"
-        );
-        // A workspace that is not loaded yet leaves the agent alone.
-        assert_eq!(breadcrumb(None, None, "claude"), "claude");
-        assert_eq!(breadcrumb(Some(""), Some(""), "claude"), "claude");
     }
 
     #[test]

@@ -99,7 +99,7 @@ use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, spac
 use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
-use mkrew_ui::usage::{self, ContextShare, Usages};
+use mkrew_ui::usage::{self, Usages};
 use mkrew_ui::voice;
 use mkrew_ui::workspace_menu::{self, Agents, WorkspaceMenu};
 use mkrew_ui::worktree_dialog::{self, WorktreeDialog};
@@ -383,6 +383,12 @@ struct Shell {
     workspace_switcher: bool,
     /// The title bar's "+ New" dropdown is open.
     new_menu: bool,
+    /// The sidebar's "N empty workspaces" line is expanded (in memory only).
+    empty_workspaces_open: bool,
+    /// Agent panes start at reading width (`[ui] reading_width`); a pane toggled since holds
+    /// its own choice here (in memory only). Shell and run panes default to full width.
+    reading_default: bool,
+    reading_width: HashMap<Ulid, bool>,
     /// The run tab to show once its `tab.updated` arrives (it may trail `project.run_start`).
     run_reveal: Option<Ulid>,
     /// Ports of live run sessions (SPEC §10).
@@ -627,6 +633,23 @@ impl Render for Shell {
                 el.key_context(FILES_CONTEXT)
             })
             .on_action(cx.listener(Self::run))
+            // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
+            // a field keeps its `/`).
+            .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                let filter_shown = !shell.sidebar_layout.hidden()
+                    && !shell.sidebar_layout.compact()
+                    && !shell.sidebar.is_empty();
+                if event.keystroke.key == "/"
+                    && !event.keystroke.modifiers.modified()
+                    && filter_shown
+                    && !shell.modal_open()
+                    && shell.focus_handle.is_focused(window)
+                {
+                    cx.stop_propagation();
+                    window.focus(&shell.filter_focus, cx);
+                    cx.notify();
+                }
+            }))
             .child(self.render_title_bar(self.view(), now, &theme, window, cx))
             .child(
                 div()
@@ -759,6 +782,5 @@ impl Render for Shell {
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
                     ),
             )
-            .child(self.render_status_bar(&theme, cx))
     }
 }

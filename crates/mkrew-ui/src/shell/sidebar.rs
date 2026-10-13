@@ -1,4 +1,4 @@
-//! Sidebar (full and compact) and the status bar.
+//! Sidebar (full and compact) and its footer.
 
 use crate::*;
 
@@ -13,6 +13,218 @@ impl Shell {
         }
     }
 
+    /// The RUN group under an open workspace: a small `RUN` label, then one row per run
+    /// command (green dot while running, hollow gray when stopped, red after an exit), its
+    /// name and its ports in green monospace; then live runs whose command left the config. A
+    /// running row opens its terminal like a session row (right-click: the pane menu; × on
+    /// hover removes it); a stopped one shows ▶ on hover. Empty without run commands.
+    pub(crate) fn render_run_group(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let summary = self.run_summary(project_id);
+        let stray = self.sidebar.sessions().iter().filter_map(|session| {
+            let name = mkrew_core::run::command_name(session)?;
+            (session.project_id == project_id
+                && session.state != SessionState::Exited
+                && !summary.rows.iter().any(|row| row.name == name))
+            .then(|| run::Row {
+                name: name.to_owned(),
+                state: RowState::Running(session.state),
+                session_id: Some(session.id),
+                ports: self.ports.get(session.id).to_vec(),
+            })
+        });
+        let rows: Vec<run::Row> = summary.rows.iter().cloned().chain(stray).collect();
+        if rows.is_empty() {
+            return Vec::new();
+        }
+        let shown = self.focused_session();
+        let hover = theme.hover;
+        let label = div()
+            .px(px(space::S))
+            .pt(px(space::XS))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text_muted))
+            .child("RUN")
+            .into_any_element();
+        let lines = rows.into_iter().map(|row| {
+            let running = matches!(row.state, RowState::Running(_));
+            let (color, hollow) = match row.state {
+                RowState::Running(_) => (theme.status_done, false),
+                RowState::Exited(_) => (theme.status_exited, false),
+                RowState::Stopped => (theme.status_idle, true),
+            };
+            let id = SharedString::from(format!("run-row-{project_id}-{}", row.name));
+            let live = row.session_id.filter(|_| running);
+            let selected = live.is_some() && live == shown;
+            let name = row.name.clone();
+            let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
+            let action = match live {
+                Some(session_id) => row_action(
+                    SharedString::from(format!("run-remove-{session_id}")),
+                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
+                )
+                .tooltip(tooltip(theme, "Remove from the sidebar", ""))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    shell.remove_session(session_id, window, cx);
+                })),
+                None => row_action(
+                    SharedString::from(format!("run-start-{project_id}-{name}")),
+                    icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
+                )
+                .tooltip(tooltip(theme, "Run this command", ""))
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    let name = Some(name.clone());
+                    shell.run_action(project_id, RunAction::Start, name, window, cx);
+                })),
+            };
+            div()
+                .id(id.clone())
+                .group(id.clone())
+                .min_h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::S))
+                .rounded(px(radius::SMALL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::transparent_black())
+                .when(selected, |el| {
+                    el.bg(rgb(theme.selected))
+                        .border_color(rgb(theme.selected_ring))
+                })
+                .tooltip(tooltip(
+                    theme,
+                    &format!("{} — {}", row.name, run::state_text(&row.state)),
+                    "",
+                ))
+                .when_some(live, |el, session_id| {
+                    el.cursor_pointer()
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.open_session(session_id, window, cx);
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                                shell.open_session(session_id, window, cx);
+                                shell.open_pane_menu(session_id, event.position, window, cx);
+                            }),
+                        )
+                })
+                .child(status_dot(id.clone(), color, hollow, false))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(font_size::BODY)
+                        .text_color(rgb(if running {
+                            theme.text
+                        } else {
+                            theme.text_muted
+                        }))
+                        .child(row.name),
+                )
+                .when(running && !ports.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex_none()
+                            .whitespace_nowrap()
+                            .text_size(font_size::META)
+                            .font_family(theme.terminal_font_family.clone())
+                            .text_color(rgb(theme.status_done))
+                            .child(ports.join(" ")),
+                    )
+                })
+                .child(
+                    action
+                        .opacity(opacity::HIDDEN)
+                        .group_hover(id, |style| style.opacity(opacity::FULL)),
+                )
+                .into_any_element()
+        });
+        std::iter::once(label).chain(lines).collect()
+    }
+
+    /// The workspaces with nothing under them, as one line at the bottom: `3 empty workspaces ▸`
+    /// with their tiny avatars; a click lists them as normal rows (click, menu, right-click).
+    pub(crate) fn render_empty_workspaces(
+        &self,
+        rows: Vec<WorkspaceRow>,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let open = self.empty_workspaces_open;
+        let hover = theme.hover;
+        let count = rows.len();
+        let line = div()
+            .id("empty-workspaces")
+            .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .text_size(font_size::META)
+            .text_color(rgb(theme.text_muted))
+            .hover(move |style| style.bg(rgb(hover)))
+            .on_click(cx.listener(|shell, _, _, cx| {
+                shell.empty_workspaces_open = !shell.empty_workspaces_open;
+                cx.notify();
+            }))
+            .child(icon_svg(
+                if open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                theme::ICON_SIZE_SMALL,
+                theme.chevron_color(),
+            ))
+            .child(div().flex_1().min_w_0().truncate().child(if count == 1 {
+                "1 empty workspace".to_owned()
+            } else {
+                format!("{count} empty workspaces")
+            }))
+            .when(!open, |el| {
+                el.child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .gap(px(space::XS))
+                        .children(rows.iter().map(|row| {
+                            let color =
+                                (row.color.as_deref()).and_then(|name| theme.workspace_color(name));
+                            workspace_avatar(&row.name, color, theme)
+                                .size(theme::rems_px(theme::WORKSPACE_AVATAR_TINY))
+                        })),
+                )
+            });
+        let listed = open.then(|| {
+            rows.into_iter().map(|row| {
+                let project_id = row.project_id;
+                let row = workspace_row(row, false, theme, cx);
+                self.with_workspace_menu(row, project_id, theme, cx)
+            })
+        });
+        div()
+            .flex()
+            .flex_col()
+            .child(line)
+            .children(listed.into_iter().flatten())
+            .into_any_element()
+    }
+
     pub(crate) fn render_sidebar(
         &self,
         now: i64,
@@ -25,105 +237,180 @@ impl Shell {
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let view = self.sidebar.view(&self.viewed);
         let any_open = self.sidebar.any_expanded();
-        let header = div()
-            .flex_none()
-            .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(space::M))
-            .child(
-                div()
-                    .text_size(font_size::META)
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Workspaces"),
-            );
-        let header = header.when(connected && self.sidebar.is_empty(), |header| {
-            header.child(
-                icon_button("add-workspace", Icon::Plus, theme)
-                    .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
-                    .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.add_workspace(window, cx);
-                    })),
-            )
-        });
         let idle_agents = self.idle_agents().len();
-        let header = header.when(connected && !self.sidebar.is_empty(), |header| {
-            header.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
-                    .when(idle_agents > 0, |el| {
-                        el.child(
-                            icon_button("remove-idle-agents", Icon::Delete, theme)
-                                .tooltip(tooltip(
-                                    theme,
-                                    &format!("Remove idle agents ({idle_agents})"),
-                                    "",
-                                ))
-                                .on_click(cx.listener(|shell, _, window, cx| {
-                                    shell.remove_idle_agents(window, cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        icon_button(
-                            "collapse-workspaces",
-                            if any_open {
-                                Icon::ChevronDown
-                            } else {
-                                Icon::ChevronRight
-                            },
-                            theme,
-                        )
-                        .tooltip(tooltip(
-                            theme,
-                            if any_open {
-                                "Collapse all workspaces"
-                            } else {
-                                "Expand all workspaces"
-                            },
-                            "",
-                        ))
-                        .on_click(cx.listener(|shell, _, _, cx| {
-                            shell.sidebar.toggle_all();
-                            cx.notify();
+        // Without workspaces: the title and `+` (the empty state below offers it too).
+        let header = (connected && self.sidebar.is_empty()).then(|| {
+            div()
+                .flex_none()
+                .h(theme::rems_px(theme::WORKSPACE_ROW_HEIGHT))
+                .flex()
+                .items_center()
+                .justify_between()
+                .px(px(space::M))
+                .child(
+                    div()
+                        .text_size(font_size::META)
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text_muted))
+                        .child("Workspaces"),
+                )
+                .child(
+                    icon_button("add-workspace", Icon::Plus, theme)
+                        .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.add_workspace(window, cx);
                         })),
-                    )
-                    .child(
-                        icon_button("add-workspace", Icon::Plus, theme)
-                            .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
-                            .on_click(cx.listener(|shell, _, window, cx| {
-                                shell.add_workspace(window, cx);
-                            })),
-                    ),
-            )
+                )
         });
         let filter_focused = self.filter_focus.is_focused(window);
         let controls = (connected && !self.sidebar.is_empty()).then(|| {
             let filter = self.sidebar.filter();
             let hover = theme.hover;
-            let chip =
+            // Inside the field's right padding: × while it holds text, else the `/` hint.
+            let trailing = if !filter.is_empty() {
+                Some(
+                    row_action(
+                        "sidebar-filter-clear".into(),
+                        icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
+                        theme,
+                    )
+                    .tooltip(tooltip(theme, "Clear filter", ""))
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        cx.stop_propagation();
+                        shell.sidebar.filter_mut().clear();
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+                )
+            } else {
+                (!filter_focused).then(|| kbd("/".to_owned(), theme, false).into_any_element())
+            };
+            let field = text_field(
+                "sidebar-filter",
+                filter.as_str(),
+                "Filter sessions…",
+                filter_focused,
+                filter.all_selected(),
+                theme,
+            )
+            .flex_1()
+            .min_w_0()
+            // The search mark sits in the padding before the text, the trailing slot after it.
+            .relative()
+            .pl(px(space::XL))
+            .pr(px(space::XL))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(space::S))
+                    .flex()
+                    .items_center()
+                    .child(icon_svg(
+                        Icon::Search,
+                        theme::ICON_SIZE_SMALL,
+                        theme.text_muted,
+                    )),
+            )
+            .children(trailing.map(|trailing| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(px(space::XS))
+                    .flex()
+                    .items_center()
+                    .child(trailing)
+            }))
+            // A tracked element takes the keyboard on a click.
+            .track_focus(&self.filter_focus)
+            .on_key_down(cx.listener(Self::filter_key_down))
+            .when(filter_focused, |el| {
+                el.child(self.typing(&self.filter_focus, Self::filter_key_down, cx))
+            });
+            let actions = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .when(idle_agents > 0, |el| {
+                    el.child(
+                        icon_button("remove-idle-agents", Icon::Delete, theme)
+                            .tooltip(tooltip(
+                                theme,
+                                &format!("Remove idle agents ({idle_agents})"),
+                                "",
+                            ))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.remove_idle_agents(window, cx);
+                            })),
+                    )
+                })
+                .child(
+                    icon_button(
+                        "collapse-workspaces",
+                        if any_open {
+                            Icon::ChevronDown
+                        } else {
+                            Icon::ChevronRight
+                        },
+                        theme,
+                    )
+                    .tooltip(tooltip(
+                        theme,
+                        if any_open {
+                            "Collapse all workspaces"
+                        } else {
+                            "Expand all workspaces"
+                        },
+                        "",
+                    ))
+                    .on_click(cx.listener(|shell, _, _, cx| {
+                        shell.sidebar.toggle_all();
+                        cx.notify();
+                    })),
+                )
+                .child(
+                    icon_button("add-workspace", Icon::Plus, theme)
+                        .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.add_workspace(window, cx);
+                        })),
+                );
+            // All / Working / Needs you as a segmented control; a waiting count is amber.
+            let segment =
                 |id: &'static str, label: &'static str, count: usize, which: sidebar::Chip| {
                     let active = self.sidebar.chip() == which;
+                    let count_color = if which == sidebar::Chip::NeedsYou && count > 0 {
+                        theme.status_needs_input
+                    } else {
+                        theme.text_muted
+                    };
                     div()
                         .id(id)
-                        .flex_none()
-                        .px(px(space::S))
-                        .rounded_full()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(space::XS))
+                        .py(px(theme::SEGMENT_PADDING))
+                        .rounded(px(radius::SMALL))
+                        .border(px(theme::BORDER_WIDTH))
                         .cursor_pointer()
+                        .whitespace_nowrap()
                         .text_size(font_size::META)
                         .when(active, |el| {
-                            el.bg(rgb(theme.accent_bg))
-                                .text_color(rgb(theme.accent_text))
+                            el.bg(rgb(theme.surface_raised))
+                                .border_color(rgb(theme.border))
+                                .text_color(rgb(theme.text))
                         })
                         .when(!active, |el| {
-                            el.text_color(rgb(theme.text_muted))
+                            el.border_color(gpui::transparent_black())
+                                .text_color(rgb(theme.text_muted))
                                 .hover(move |style| style.bg(rgb(hover)))
                         })
-                        .child(format!("{label} {count}"))
+                        .child(label)
+                        .child(div().text_color(rgb(count_color)).child(count.to_string()))
                         .on_click(cx.listener(move |shell, _, _, cx| {
                             shell.sidebar.set_chip(which);
                             cx.notify();
@@ -135,54 +422,36 @@ impl Shell {
                 .flex_col()
                 .gap(px(space::S))
                 .px(px(space::M))
+                .pt(px(space::M))
                 .pb(px(space::S))
-                .child(
-                    // A tracked element takes the keyboard on a click.
-                    text_field(
-                        "sidebar-filter",
-                        filter.as_str(),
-                        "Filter sessions…",
-                        filter_focused,
-                        filter.all_selected(),
-                        theme,
-                    )
-                    // The search mark sits in the padding before the text.
-                    .relative()
-                    .pl(px(space::XL))
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(px(space::S))
-                            .flex()
-                            .items_center()
-                            .text_color(rgb(theme.text_muted))
-                            .child(icon_svg(
-                                Icon::Search,
-                                theme::ICON_SIZE_SMALL,
-                                theme.text_muted,
-                            )),
-                    )
-                    .track_focus(&self.filter_focus)
-                    .on_key_down(cx.listener(Self::filter_key_down))
-                    .when(filter_focused, |el| {
-                        el.child(self.typing(&self.filter_focus, Self::filter_key_down, cx))
-                    }),
-                )
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap(px(space::XS))
-                        .child(chip("chip-all", "All", view.counts.all, sidebar::Chip::All))
-                        .child(chip(
+                        .child(field)
+                        .child(actions),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .p(px(theme::SEGMENT_PADDING))
+                        .rounded(px(radius::MEDIUM))
+                        .bg(rgb(theme.surface))
+                        .child(segment(
+                            "chip-all",
+                            "All",
+                            view.counts.all,
+                            sidebar::Chip::All,
+                        ))
+                        .child(segment(
                             "chip-working",
                             "Working",
                             view.counts.working,
                             sidebar::Chip::Working,
                         ))
-                        .child(chip(
+                        .child(segment(
                             "chip-needs-you",
                             "Needs you",
                             view.counts.needs_you,
@@ -217,7 +486,7 @@ impl Shell {
                 )
                 .into_any_element()
         } else {
-            // A workspace's sessions hang under a faint guide line.
+            // A workspace's sessions and RUN group hang under a faint guide line.
             let guide = |rows: Vec<gpui::AnyElement>| {
                 div()
                     .ml(px(space::L))
@@ -229,19 +498,37 @@ impl Shell {
                     .children(rows)
                     .into_any_element()
             };
+            let filtering = self.sidebar.filtering();
             let mut list = Vec::new();
             let mut sessions = Vec::new();
+            // The open workspace whose rows are being gathered: its RUN group closes them.
+            let mut open: Option<Ulid> = None;
+            let mut empty = Vec::new();
+            let close = |list: &mut Vec<gpui::AnyElement>,
+                         sessions: &mut Vec<gpui::AnyElement>,
+                         open: Option<Ulid>,
+                         cx: &mut Context<'_, Self>| {
+                if let Some(project_id) = open.filter(|_| !filtering) {
+                    sessions.extend(self.render_run_group(project_id, theme, cx));
+                }
+                if !sessions.is_empty() {
+                    list.push(guide(std::mem::take(sessions)));
+                }
+            };
             for row in view.rows {
                 match row {
                     Row::Workspace(row) => {
-                        if !sessions.is_empty() {
-                            list.push(guide(std::mem::take(&mut sessions)));
-                        }
+                        close(&mut list, &mut sessions, open.take(), cx);
                         let (project_id, active) =
                             (row.project_id, self.workspace == Some(row.project_id));
-                        let summary = self.run_summary(project_id);
-                        let run_tip = summary.any_live().then(|| summary.tooltip());
-                        let row = workspace_row(row, active, run_tip, theme, cx);
+                        // Nothing to show under it: on the "N empty workspaces" line instead
+                        // (the shown and pinned ones stay in place).
+                        if row.empty && !active && !row.pinned && !filtering {
+                            empty.push(row);
+                            continue;
+                        }
+                        open = row.expanded.then_some(project_id);
+                        let row = workspace_row(row, active, theme, cx);
                         list.push(self.with_workspace_menu(row, project_id, theme, cx));
                     }
                     Row::Session(row) => {
@@ -253,21 +540,15 @@ impl Shell {
                         let row = session_row(row, badge, selected, progress, now, theme, cx);
                         sessions.push(self.with_peek(row, session_id, now, theme, cx));
                     }
-                    Row::NoSessions { .. } => sessions.push(
-                        div()
-                            .px(px(space::S))
-                            .py(px(space::XS))
-                            .text_size(font_size::META)
-                            .text_color(rgb(theme.text_muted))
-                            .child("No sessions yet.")
-                            .into_any_element(),
-                    ),
+                    // Hide what's empty: an open workspace without sessions shows nothing.
+                    Row::NoSessions { .. } => {}
                 }
             }
-            if !sessions.is_empty() {
-                list.push(guide(sessions));
+            close(&mut list, &mut sessions, open, cx);
+            if !empty.is_empty() {
+                list.push(self.render_empty_workspaces(empty, theme, cx));
             }
-            if list.is_empty() && self.sidebar.filtering() {
+            if list.is_empty() && filtering {
                 // A query or chip that nothing matches.
                 list.push(
                     div()
@@ -328,7 +609,7 @@ impl Shell {
             .border_r(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
-            .child(header)
+            .children(header)
             .children(controls)
             .child(
                 div()
@@ -341,6 +622,7 @@ impl Shell {
                     .children(errors.into_iter().flatten())
                     .child(body),
             )
+            .child(self.render_sidebar_footer(false, theme, cx))
             .child(grip)
     }
 
@@ -436,193 +718,148 @@ impl Shell {
                     .overflow_y_scroll()
                     .children(list),
             )
+            .child(self.render_sidebar_footer(true, theme, cx))
     }
 
-    /// The status bar (SPEC §10): sidebar toggles (hide, compact), Inbox state, git HEAD; then the focused agent
-    /// pane's usage. Everything is read from state the shell already keeps: it never asks the
-    /// daemon and has no timer.
-    /// The last child is the right-panel toggle (`inspector_toggle`).
-    pub(crate) fn render_status_bar(&self, theme: &Theme, cx: &mut Context<'_, Self>) -> gpui::Div {
+    /// The sidebar's footer (was the status bar's left part): the Inbox state (`Inbox clear`,
+    /// or amber `2 need you`, a click jumps to the next), the voice input state while there is
+    /// one, and the compact toggle. The rail shows the same as icons, stacked. Read from state
+    /// the shell keeps: it never asks the daemon and has no timer.
+    pub(crate) fn render_sidebar_footer(
+        &self,
+        compact: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
         let hover = theme.hover;
-        // Behind a dialog the buttons do nothing, like the keys (`Shell::run`).
-        let modal = self.modal_open();
-        let toggle = div()
-            .id("toggle-sidebar")
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .cursor_pointer()
-            .text_color(rgb(theme.text_muted))
-            .hover(move |style| style.bg(rgb(hover)))
-            .tooltip(tooltip(
-                theme,
-                if self.sidebar_layout.hidden() {
-                    "Show sidebar"
-                } else {
-                    "Hide sidebar"
-                },
-                self.keymap.label(Command::ToggleSidebar),
-            ))
-            .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
-            .child(icon_svg(
-                Icon::PanelLeft,
-                theme::ICON_SIZE_SMALL,
-                theme.text_muted,
-            ))
-            .when(modal, |el| el.relative().child(inert_layer()));
-        // Full width ↔ compact rail (a hidden sidebar comes back as the rail).
-        let compact = self.sidebar_layout.compact();
-        let compact_toggle = div()
-            .id("toggle-compact-sidebar")
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .cursor_pointer()
-            .text_color(rgb(theme.text_muted))
-            .hover(move |style| style.bg(rgb(hover)))
-            .tooltip(tooltip(
-                theme,
-                if compact {
-                    "Expand sidebar"
-                } else {
-                    "Compact sidebar"
-                },
-                self.keymap.label(Command::ToggleCompactSidebar),
-            ))
-            .on_click(cx.listener(|shell, _, window, cx| {
-                shell.toggle_compact_sidebar(window, cx);
-            }))
-            .child(icon_svg(
-                if compact {
-                    Icon::PanelLeftOpen
-                } else {
-                    Icon::PanelLeftClose
-                },
-                theme::ICON_SIZE_SMALL,
-                theme.text_muted,
-            ))
-            .when(modal, |el| el.relative().child(inert_layer()));
-
         let waiting = self.inbox_entries().len();
+        let inbox_color = if waiting > 0 {
+            theme.status_needs_input
+        } else {
+            theme.text_muted
+        };
         let inbox = div()
-            .id("status-inbox")
-            .flex_none()
+            .id("sidebar-inbox")
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
             .px(px(space::XS))
             .rounded(px(radius::SMALL))
-            .text_color(rgb(if waiting > 0 {
-                theme.status_needs_input
-            } else {
-                theme.text_muted
-            }))
-            .child(inbox::label(waiting))
+            .text_color(rgb(inbox_color))
+            .child(icon_svg(Icon::Inbox, theme::ICON_SIZE_SMALL, inbox_color))
+            .when(!compact, |el| {
+                el.child(div().truncate().child(inbox::label(waiting)))
+            })
+            .when(compact, |el| {
+                el.tooltip(tooltip(theme, &inbox::label(waiting), ""))
+            })
             // Nothing to jump to while clear: no pointer, no hover, no click.
             .when(waiting > 0, |el| {
                 el.cursor_pointer()
                     .hover(move |style| style.bg(rgb(hover)))
-                    .tooltip(tooltip(
-                        theme,
-                        "Jump to next item needing attention",
-                        self.keymap.label(Command::NextInbox),
-                    ))
+                    .when(!compact, |el| {
+                        el.tooltip(tooltip(
+                            theme,
+                            "Jump to next item needing attention",
+                            self.keymap.label(Command::NextInbox),
+                        ))
+                    })
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.jump_next_inbox(window, cx);
                     }))
-            })
-            .when(modal, |el| el.relative().child(inert_layer()));
-
-        let git = self
-            .git_summary()
-            .and_then(|git| Some((git.head_label()?, git.branch_tooltip()?)))
-            .map(|(label, lines)| {
-                div()
-                    .id("status-git")
-                    .flex_none()
-                    .text_color(rgb(theme.text_muted))
-                    .tooltip(tooltip(theme, &lines, ""))
-                    .child(label)
             });
+        // Full width ↔ compact rail (a hidden sidebar comes back as the rail).
+        let compact_toggle = icon_button(
+            "toggle-compact-sidebar",
+            if compact {
+                Icon::PanelLeftOpen
+            } else {
+                Icon::PanelLeftClose
+            },
+            theme,
+        )
+        .tooltip(tooltip(
+            theme,
+            if compact {
+                "Expand sidebar"
+            } else {
+                "Compact sidebar"
+            },
+            self.keymap.label(Command::ToggleCompactSidebar),
+        ))
+        .on_click(cx.listener(|shell, _, window, cx| {
+            shell.toggle_compact_sidebar(window, cx);
+        }));
+        div()
+            .flex_none()
+            .flex()
+            .when(compact, |el| {
+                el.flex_col().gap(px(space::XS)).py(px(space::XS))
+            })
+            .when(!compact, |el| {
+                el.min_h(theme::rems_px(theme::SIDEBAR_FOOTER_HEIGHT))
+                    .gap(px(space::S))
+                    .px(px(space::S))
+            })
+            .items_center()
+            .overflow_hidden()
+            .border_t(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
+            .text_size(font_size::META)
+            .child(inbox)
+            .children(self.voice_status(compact, theme))
+            .when(!compact, |el| el.child(div().flex_1()))
+            .child(compact_toggle)
+            // Behind a dialog the buttons do nothing, like the keys (`Shell::run`).
+            .when(self.modal_open(), |el| el.relative().child(inert_layer()))
+    }
 
-        // Voice input (§20G): level meter and recording time, transcribing, or the last outcome.
-        let voice_status = match &self.voice {
+    /// Voice input (§20G): the level meter and recording time, Transcribing, or the last
+    /// outcome; `None` while idle. `meter_only`: just the meter / dots (the compact rail).
+    pub(crate) fn voice_status(&self, meter_only: bool, theme: &Theme) -> Option<gpui::Div> {
+        let row = || div().min_w_0().flex().items_center().gap(px(space::XS));
+        match &self.voice {
             voice::State::Idle => None,
             voice::State::Recording { since, level, .. } => {
                 let seconds = since.elapsed().as_secs();
                 let color = theme.status_needs_input;
                 Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(space::XS))
+                    row()
                         .child(voice_meter(level.meter(), rgb(color)))
-                        .child(notice(
-                            color,
-                            format!(
-                                "{}:{:02} · {} stops",
-                                seconds / 60,
-                                seconds % 60,
-                                self.keymap.label(Command::VoiceInput)
-                            ),
-                        )),
+                        .when(!meter_only, |el| {
+                            el.child(notice(
+                                color,
+                                format!(
+                                    "{}:{:02} · {} stops",
+                                    seconds / 60,
+                                    seconds % 60,
+                                    self.keymap.label(Command::VoiceInput)
+                                ),
+                            ))
+                        }),
                 )
             }
             voice::State::Transcribing => Some(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(space::XS))
+                row()
                     .child(working_dots(status::now_ms(), rgb(theme.text_muted)))
-                    .child(notice(theme.text_muted, "Transcribing".to_owned())),
+                    .when(!meter_only, |el| {
+                        el.child(notice(theme.text_muted, "Transcribing".to_owned()))
+                    }),
             ),
-            voice::State::Message(text) => Some(notice(theme.text_muted, text.clone())),
-        };
-
-        let agent = self
-            .focused_session()
-            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
-            .filter(|session| session.kind == SessionKind::Agent)
-            .map(|session| self.status_agent_fields(session, theme))
-            .unwrap_or_default();
-
-        div()
-            .flex_none()
-            .h(theme::rems_px(theme::STATUS_BAR_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(px(space::M))
-            .px(px(space::S))
-            .overflow_hidden()
-            .bg(rgb(theme.sidebar))
-            .border_t(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.divider))
-            .font_family(theme.ui_font_family.clone())
-            .text_size(font_size::META)
-            .child(toggle)
-            .child(compact_toggle)
-            .child(inbox)
-            .children(git)
-            .children(voice_status)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(space::M))
-                    .children(agent),
-            )
-            .child(self.inspector_toggle(theme, cx))
+            voice::State::Message(text) => {
+                (!meter_only).then(|| row().child(notice(theme.text_muted, text.clone())))
+            }
+        }
     }
 }
 
+/// A workspace header row: chevron, avatar, bold name, pin; on the right its status: a
+/// `● 1 working` pill (pulsing dot) while an agent works, else a muted `2 idle`, plus an amber
+/// `? 1` while one needs you; the ⋯ menu on hover. Tooltip: the folder.
 pub(crate) fn workspace_row(
     row: WorkspaceRow,
     active: bool,
-    run_tip: Option<String>,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -633,6 +870,35 @@ pub(crate) fn workspace_row(
         .color
         .as_deref()
         .and_then(|name| theme.workspace_color(name));
+    let status = if row.working > 0 {
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .px(px(space::S))
+                .rounded_full()
+                .bg(rgb(theme.accent_bg))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.accent_text))
+                .child(status_dot(
+                    SharedString::from(format!("workspace-working-{project_id}")),
+                    theme.status_working,
+                    false,
+                    true,
+                ))
+                .child(format!("{} working", row.working)),
+        )
+    } else {
+        (row.idle > 0).then(|| {
+            div()
+                .flex_none()
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .child(format!("{} idle", row.idle))
+        })
+    };
     div()
         .id(group.clone())
         .group(group.clone())
@@ -669,41 +935,26 @@ pub(crate) fn workspace_row(
             div()
                 .flex_1()
                 .min_w_0()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
+                .truncate()
                 .text_size(font_size::BODY)
-                .font_weight(FontWeight(weight::MEDIUM))
+                .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(theme.text))
                 .child(row.name),
         )
         .when(row.pinned, |el| el.child(pin_mark()))
-        .when_some(run_tip, |el, tip| {
-            el.child(
-                div()
-                    .id(SharedString::from(format!("workspace-run-{project_id}")))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .tooltip(tooltip(theme, &tip, ""))
-                    .child("▶"),
-            )
-        })
-        .when_some(row.summary.clone(), |el, summary| {
+        .children(status)
+        .when(row.asking > 0, |el| {
             el.child(
                 div()
                     .flex_none()
                     .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(summary),
-            )
-        })
-        .when(row.needs_input, |el| {
-            el.child(
-                div()
-                    .text_size(font_size::META)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.status_needs_input))
-                    .child(sidebar::status_display(SessionState::NeedsInput).icon),
+                    .child(format!(
+                        "{} {}",
+                        sidebar::status_display(SessionState::NeedsInput).icon,
+                        row.asking
+                    )),
             )
         })
         .child(
@@ -712,11 +963,9 @@ pub(crate) fn workspace_row(
                 icon_svg(Icon::Ellipsis, theme::ICON_SIZE_SMALL, theme.text_muted),
                 theme,
             )
-            // Shown on hover, and always on the active row (SPEC §14 progressive disclosure).
-            .when(!active, |el| {
-                el.opacity(opacity::HIDDEN)
-                    .group_hover(group, |style| style.opacity(opacity::FULL))
-            })
+            // Shown on hover (SPEC §14 progressive disclosure); right-click opens it too.
+            .opacity(opacity::HIDDEN)
+            .group_hover(group, |style| style.opacity(opacity::FULL))
             .tooltip(tooltip(
                 theme,
                 "Workspace menu (or right-click the row)",
@@ -755,6 +1004,9 @@ pub(crate) fn workspace_avatar(name: &str, color: Option<u32>, theme: &Theme) ->
         )
 }
 
+/// A session row: the agent glyph (in an accent chip while the agent works; its hover gives
+/// the status in words), the title (ellipsized), the state glyph of a waiting or finished
+/// agent (none while idle), the time right-aligned, and × on hover. The selected row is ringed.
 pub(crate) fn session_row(
     row: SessionRow,
     badge: String,
@@ -765,6 +1017,8 @@ pub(crate) fn session_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
+    let mark = row.mark();
+    let working = mark == Some(SessionState::Working);
     let time = row.time_text(now);
     // Agent rows show just the title (the agent chip already names the agent), selected or
     // not; terminal rows keep `powershell · title` (their chip does not say which shell).
@@ -786,7 +1040,13 @@ pub(crate) fn session_row(
         .px(px(space::S))
         .when(progress.is_some(), |el| el.py(px(space::XS)))
         .rounded(px(radius::SMALL))
-        .when(selected, |el| el.bg(rgb(theme.selected)))
+        // Same box selected or not, so the ring does not shift the row.
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(gpui::transparent_black())
+        .when(selected, |el| {
+            el.bg(rgb(theme.selected))
+                .border_color(rgb(theme.selected_ring))
+        })
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -805,7 +1065,7 @@ pub(crate) fn session_row(
             shell.hover_row(session_id, *hovered, window, cx);
         }))
         .child(
-            // The icon says the state; its hover says it in words and when it changed.
+            // The glyph says what runs; its hover says the state in words and when it changed.
             div()
                 .id(SharedString::from(format!("session-status-{session_id}")))
                 .flex_none()
@@ -815,9 +1075,12 @@ pub(crate) fn session_row(
                     row.state_source,
                     row.state_changed_at,
                 ))
-                .child(mark_slot(row.mark(), now, theme)),
+                .child(agent_chip(badge, theme).when(working, |chip| {
+                    chip.bg(rgb(theme.accent_bg))
+                        .border_color(rgb(theme.status_working))
+                        .text_color(rgb(theme.accent_text))
+                })),
         )
-        .child(agent_chip(badge, theme))
         .child(
             div()
                 .flex_1()
@@ -838,18 +1101,21 @@ pub(crate) fn session_row(
                 ),
         )
         .when(row.pinned, |el| el.child(pin_mark()))
-        // A right-aligned slot of a minimum width, kept without a time, so every row's time
-        // and title end in one column.
-        .child(
+        .children(mark.filter(|_| !working).map(|state| {
             div()
                 .flex_none()
-                .min_w(theme::rems_px(theme::SESSION_TIME_WIDTH))
-                .flex()
-                .justify_end()
+                .text_size(font_size::META)
+                .text_color(rgb(sidebar::status_color(theme, state)))
+                .child(status::icon(state))
+        }))
+        .children(time.map(|time| {
+            div()
+                .flex_none()
+                .whitespace_nowrap()
                 .text_size(font_size::META)
                 .text_color(rgb(theme.text_muted))
-                .children(time),
-        )
+                .child(time)
+        }))
         .child(
             row_action(
                 SharedString::from(format!("session-remove-{session_id}")),

@@ -277,8 +277,9 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The tab menu: Pin, Split right, Split down, Rename, Close (shortcuts on the right). Floats at
-    /// the click; a click outside closes it.
+    /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,
+    /// Close; on the active tab also the focused pane's Rename pane, Close pane and, for an
+    /// agent, Follow in Zed (✓ while on) and Turns…. Floats at the click; a click outside closes it.
     pub(crate) fn render_tab_menu(
         &self,
         menu: &TabMenu,
@@ -289,6 +290,14 @@ impl Shell {
         let pinned = (self.tabs.values())
             .find_map(|tabs| tabs.tab(tab_id))
             .is_some_and(|tab| tab.pinned);
+        let active_tab = (self.workspace)
+            .and_then(|project_id| self.tabs.get(&project_id))
+            .and_then(|tabs| tabs.active())
+            .map(|tab| tab.id);
+        let pane = self
+            .focused_session()
+            .filter(|_| active_tab == Some(tab_id))
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
@@ -352,7 +361,67 @@ impl Shell {
                         shell.close_tab(tab_id, window, cx);
                     },
                 )),
-            );
+            )
+            .when_some(pane, |panel, info| {
+                let session = info.id;
+                let agent = info.kind == SessionKind::Agent;
+                let renamable = mkrew_core::run::command_name(info).is_none();
+                let following = self.follow.is_on(session);
+                panel
+                    .child(separator())
+                    .when(renamable, |panel| {
+                        panel.child(
+                            item("tab-menu-rename-pane", "Rename pane", Command::RenamePane)
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.tab_menu = None;
+                                    shell.start_pane_rename(session, window, cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        item("tab-menu-close-pane", "Close pane", Command::ClosePane).on_click(
+                            cx.listener(|shell, _, window, cx| {
+                                shell.tab_menu = None;
+                                shell.close_focused_pane(window, cx);
+                            }),
+                        ),
+                    )
+                    .when(agent, |panel| {
+                        panel.child(
+                            menu_item("tab-menu-follow-zed".into(), theme)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_color(rgb(theme.text))
+                                        .child("Follow in Zed"),
+                                )
+                                .child(div().text_color(rgb(theme.text)).child(if following {
+                                    "✓"
+                                } else {
+                                    ""
+                                }))
+                                .on_click(cx.listener(move |shell, _, _, cx| {
+                                    shell.tab_menu = None;
+                                    shell.toggle_follow(session, cx);
+                                })),
+                        )
+                    })
+                    .when(agent && self.features.turns, |panel| {
+                        panel.child(
+                            menu_item("tab-menu-turns".into(), theme)
+                                .child(div().flex_1().text_color(rgb(theme.text)).child("Turns…"))
+                                .tooltip(tooltip(
+                                    theme,
+                                    "The agent's turns: restore the files to before one",
+                                    "",
+                                ))
+                                .on_click(cx.listener(move |shell, _, window, cx| {
+                                    shell.tab_menu = None;
+                                    shell.open_turns(session, window, cx);
+                                })),
+                        )
+                    })
+            });
         deferred(
             anchored()
                 .position(menu.position)

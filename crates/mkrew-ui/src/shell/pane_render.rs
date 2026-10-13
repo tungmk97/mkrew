@@ -3,6 +3,9 @@
 use crate::*;
 
 impl Shell {
+    /// The tab strip: the tabs (agent chip, status dot, pin, title, ×) and `+`; on the right
+    /// the notices, then for a single pane its status, Reading width and Share (a split shows
+    /// them in the pane headers), the split / layout button and the ⋯ menu.
     pub(crate) fn render_tab_bar(
         &self,
         project_id: Ulid,
@@ -11,6 +14,13 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
+        // A single pane has no header: its status sits at the right end of this bar.
+        let single = tabs
+            .active()
+            .map(Tab::rects)
+            .filter(|rects| rects.len() == 1)
+            .and_then(|rects| rects.first().map(|(session, _)| *session))
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let active = tabs.active().map(|tab| tab.id);
         let hover = theme.hover;
         div()
@@ -20,7 +30,7 @@ impl Shell {
             .items_center()
             .gap(px(space::XS))
             .px(px(space::S))
-            .bg(rgb(theme.bg))
+            .bg(rgb(theme.chrome))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
@@ -34,8 +44,9 @@ impl Shell {
                 {
                     return self.render_rename(&renaming.draft, theme, cx);
                 }
-                // The most urgent state among the tab's panes (SPEC §11).
+                // The most urgent state among the tab's panes (SPEC §11), as one dot.
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
+                let dot = self.tab_dot(tab, urgent, theme);
                 let group = SharedString::from(format!("tab-{tab_id}"));
                 let icon = match tab_kind(tab, self.sidebar.sessions()) {
                     TabKind::Agent(profile) => Some(agent_chip(self.agent_badge(&profile), theme)),
@@ -95,8 +106,15 @@ impl Shell {
                             session.state_source,
                             session.state_changed_at,
                         ))
-                        .child(status_mark(session.state, now, theme))
                     })
+                    .children(dot.map(|(color, hollow, pulse)| {
+                        status_dot(
+                            SharedString::from(format!("tab-dot-{tab_id}")),
+                            color,
+                            hollow,
+                            pulse,
+                        )
+                    }))
                     .when(tab.pinned, |el| el.child(pin_mark()))
                     .child(tab.title.clone())
                     .child(
@@ -129,7 +147,14 @@ impl Shell {
                     )
                     .into_any_element()
             }))
-            // Pushes the notices, Close pane and the + / split / ⋯ group to the right.
+            .child(
+                icon_button("new-tab", Icon::Plus, theme)
+                    .tooltip(tooltip(theme, "New tab", ""))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.create_tab(project_id, None, window, cx);
+                    })),
+            )
+            // Pushes the notices, the pane status and the split / ⋯ group to the right.
             .child(div().flex_1())
             .children(
                 self.tab_error
@@ -168,26 +193,24 @@ impl Shell {
                 lifecycle::running_warning(self.sidebar.sessions(), project_id)
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
             )
-            .when(self.focused_session().is_some(), |bar| {
-                bar.child(
-                    icon_button("close-pane", Icon::SquareX, theme)
-                        .tooltip(tooltip(
-                            theme,
-                            "Close the focused pane",
-                            self.keymap.label(Command::ClosePane),
-                        ))
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            shell.close_focused_pane(window, cx);
-                        })),
+            .when_some(single, |bar, info| {
+                // F2 on a single pane: the rename field shows here (it has no header).
+                let renaming = (self.renaming.as_ref())
+                    .is_some_and(|r| r.target == RenameTarget::Session(info.id));
+                bar.when(renaming, |bar| {
+                    bar.child(div().child(self.pane_title(info, theme, cx)))
+                })
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(space::S))
+                        .text_size(font_size::META)
+                        .children(self.pane_status(info, now, theme, cx))
+                        .children(self.pane_controls(info, theme, cx)),
                 )
             })
-            .child(
-                icon_button("new-tab", Icon::Plus, theme)
-                    .tooltip(tooltip(theme, "New tab", ""))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.create_tab(project_id, None, window, cx);
-                    })),
-            )
             .child(
                 icon_button("tab-split", Icon::Columns2, theme)
                     .tooltip(tooltip(theme, "Split or pick a layout", ""))
@@ -198,7 +221,7 @@ impl Shell {
             .when_some(active, |bar, tab_id| {
                 bar.child(
                     icon_button("tab-menu-button", Icon::Ellipsis, theme)
-                        .tooltip(tooltip(theme, "Tab menu", ""))
+                        .tooltip(tooltip(theme, "Tab and pane menu", ""))
                         .on_click(cx.listener(
                             move |shell, event: &gpui::ClickEvent, window, cx| {
                                 shell.open_tab_menu(tab_id, event.position(), window, cx);
@@ -366,8 +389,10 @@ impl Shell {
         )
     }
 
-    /// One pane: the terminal (or why it is not shown), its composer, its border, and the
-    /// unfocused dim.
+    /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
+    /// pane with it on), its composer, its border. Among several panes it gets a compact header,
+    /// the focused one a 2 px accent line on top and the others a dim; a single pane has no
+    /// header (the tab bar shows its status) and its color is a 2 px line on top.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
@@ -390,6 +415,9 @@ impl Shell {
         };
         let info = self.sidebar.sessions().iter().find(|s| s.id == session);
         let border = status::pane_border(theme, info.map(|s| s.state), several, is_focused);
+        let reading = info.is_some_and(|info| self.reading_on(info));
+        let color = (info.and_then(|info| info.color.as_deref()))
+            .and_then(|name| theme.workspace_color(name));
         div()
             .relative()
             .size_full()
@@ -420,177 +448,31 @@ impl Shell {
                 },
             ))
             .child(drop_catcher(session, cx))
-            .children(info.map(|info| {
-                let paths = self.conflicts.for_session(session);
-                let conflict = (!paths.is_empty()).then(|| {
-                    conflict_badge(
-                        format!("pane-{session}"),
-                        &paths,
-                        theme,
-                        move |shell| shell.conflicts.dismiss_session(session),
-                        cx,
-                    )
-                });
-                let queued = self.composers.queue(session).len();
-                // Keyed by session: several panes share the nearest keyed parent.
-                let following = self.follow.is_on(session);
-                let turns = (info.kind == SessionKind::Agent).then(|| {
-                    div()
-                        .id(SharedString::from(format!("pane-turns-{session}")))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(space::S))
-                        .child(
-                            button_frame(
-                                "pane-share",
-                                icon_text(
-                                    Icon::Share2,
-                                    "Share",
-                                    if following {
-                                        theme.text
-                                    } else {
-                                        theme.text_muted
-                                    },
-                                ),
-                            )
-                            .px(px(space::XS))
-                            .py_0()
-                            .text_size(font_size::META)
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .when(following, |el| {
-                                el.bg(rgb(theme.surface_raised))
-                                    .font_weight(FontWeight(weight::MEDIUM))
-                                    .text_color(rgb(theme.text))
-                            })
-                            .when(!following, |el| {
-                                let hover = theme.surface_raised;
-                                el.text_color(rgb(theme.text_muted))
-                                    .hover(move |style| style.bg(rgb(hover)))
-                            })
-                            .tooltip(tooltip(
-                                theme,
-                                if following {
-                                    "Share: following this agent's edits in Zed"
-                                } else {
-                                    "Share this agent's work"
-                                },
-                                "",
-                            ))
-                            .on_click(cx.listener(
-                                move |shell, event: &gpui::ClickEvent, _, cx| {
-                                    shell.close_menus();
-                                    shell.share_menu = Some(PaneMenu {
-                                        session_id: session,
-                                        position: event.position(),
-                                    });
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .when(self.features.turns, |el| {
-                            el.child(
-                                quiet_button(
-                                    "pane-turns",
-                                    icon_text(Icon::History, "Turns…", theme.text_muted),
-                                    theme,
-                                    theme.surface_raised,
-                                )
-                                .px(px(space::XS))
-                                .py_0()
-                                .text_size(font_size::META)
-                                .tooltip(tooltip(
-                                    theme,
-                                    "The agent's turns: restore the files to before one",
-                                    "",
-                                ))
-                                .on_click(cx.listener(
-                                    move |shell, _, window, cx| {
-                                        shell.open_turns(session, window, cx);
-                                    },
-                                )),
-                            )
-                        })
-                });
-                let renaming = self
-                    .renaming
-                    .as_ref()
-                    .filter(|r| r.target == RenameTarget::Session(session));
-                let title = match renaming {
-                    // Mouse downs stay in the field: the pane's handler would focus the
-                    // terminal, and the blur would commit half-typed text.
-                    Some(renaming) => div()
-                        .flex_1()
-                        .min_w_0()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                        )
-                        .child(self.render_rename(&renaming.draft, theme, cx))
-                        .into_any_element(),
-                    None => {
-                        let renamable = mkrew_core::run::command_name(info).is_none();
+            .when(several, |el| {
+                el.children(info.map(|info| self.pane_header(info, color, now, theme, cx)))
+            })
+            .when(!several, |el| {
+                el.when_some(color, |el, color| {
+                    el.child(
                         div()
-                            .id(SharedString::from(format!("pane-title-{session}")))
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_color(rgb(theme.text_muted))
-                            .children(run::pane_title(info, self.ports.get(info.id)))
-                            // Also the empty space after the agent name of an untitled pane.
-                            .when(renamable, |el| {
-                                el.on_click(cx.listener(
-                                    move |shell, event: &gpui::ClickEvent, window, cx| {
-                                        if event.click_count() == 2 {
-                                            shell.start_pane_rename(session, window, cx);
-                                        }
-                                    },
-                                ))
-                            })
-                            .into_any_element()
-                    }
-                };
-                let workspace = (self.sidebar.projects().iter())
-                    .find(|project| project.id == info.project_id)
-                    .map(|project| project.name.as_str());
-                let folder = pane_text::folder(info.task_id.and_then(|id| self.board.task(id)));
-                let breadcrumb =
-                    pane_text::breadcrumb(workspace, folder.as_deref(), &info.agent_profile);
-                let pill = pane_text::pill_text(
-                    info.state,
-                    info.exit_code,
-                    info.state_changed_at,
-                    now,
-                    self.turns.get(session),
-                );
-                let color = info
-                    .color
-                    .as_deref()
-                    .and_then(|name| theme.workspace_color(name));
-                pane_header(
-                    info,
-                    self.agent_badge(&info.agent_profile),
-                    breadcrumb,
-                    pill,
-                    title,
-                    self.usages.get(session).and_then(usage::context_share),
-                    conflict,
-                    turns,
-                    queued,
-                    color,
-                    now,
-                    theme,
-                )
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
-                        shell.open_pane_menu(session, event.position, window, cx);
-                    }),
-                )
-            }))
-            .child(div().flex_1().min_h_0().child(content))
+                            .flex_none()
+                            .h(px(theme::PANE_ACCENT_WIDTH))
+                            .rounded_t(px(radius::MEDIUM))
+                            .bg(rgb(color)),
+                    )
+                })
+            })
+            // Reading width: the terminal element is narrower, so the PTY gets fewer columns
+            // (the program wraps there); nothing reflows its output.
+            .child(
+                div().flex_1().min_h_0().flex().justify_center().child(
+                    div()
+                        .h_full()
+                        .w_full()
+                        .when(reading, |el| el.max_w(px(theme::READING_WIDTH)))
+                        .child(content),
+                ),
+            )
             .children(self.composers.shown(session).map(|draft| {
                 self.composer_panel(session, draft, is_focused, composer_focused, theme, cx)
             }))
@@ -612,6 +494,319 @@ impl Shell {
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(border)),
             )
+            .when(several && is_focused, |el| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(theme::PANE_ACCENT_WIDTH))
+                        .rounded_t(px(radius::MEDIUM))
+                        .bg(rgb(theme.accent)),
+                )
+            })
+    }
+
+    /// An agent pane at reading width: its own toggle, else `[ui] reading_width`. Shell and run
+    /// panes are always full width.
+    pub(crate) fn reading_on(&self, info: &Session) -> bool {
+        info.kind == SessionKind::Agent
+            && *self
+                .reading_width
+                .get(&info.id)
+                .unwrap_or(&self.reading_default)
+    }
+
+    /// The status of `info`'s pane, each part only when it has something to say: the task
+    /// folder, the status pill, the conflict warning, `⧗ N queued` sends and the context share.
+    /// The tab bar shows them for a single pane, the compact header among several.
+    pub(crate) fn pane_status(
+        &self,
+        info: &Session,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let session = info.id;
+        let mut parts = Vec::new();
+        if let Some(folder) = pane_text::folder(info.task_id.and_then(|id| self.board.task(id))) {
+            parts.push(
+                div()
+                    .flex_none()
+                    .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                    .truncate()
+                    .text_color(rgb(theme.text_muted))
+                    .child(folder)
+                    .into_any_element(),
+            );
+        }
+        let pill = pane_text::pill_text(
+            info.state,
+            info.exit_code,
+            info.state_changed_at,
+            now,
+            self.turns.get(session),
+        );
+        parts.push(status_pill(info, pill, now, theme).into_any_element());
+        let paths = self.conflicts.for_session(session);
+        if !paths.is_empty() {
+            parts.push(
+                conflict_badge(
+                    format!("pane-{session}"),
+                    &paths,
+                    theme,
+                    move |shell| shell.conflicts.dismiss_session(session),
+                    cx,
+                )
+                .flex_none()
+                .max_w(relative(theme::PANE_CONFLICT_MAX_FRACTION))
+                .into_any_element(),
+            );
+        }
+        let queued = self.composers.queue(session).len();
+        if queued > 0 {
+            parts.push(
+                div()
+                    .flex_none()
+                    .text_color(rgb(theme.text_muted))
+                    .child(format!("⧗ {queued} queued"))
+                    .into_any_element(),
+            );
+        }
+        if let Some(share) = self.usages.get(session).and_then(usage::context_share) {
+            parts.push(
+                div()
+                    .id(SharedString::from(format!("pane-context-{session}")))
+                    .flex_none()
+                    .text_color(rgb(if share.warning {
+                        theme.status_needs_input
+                    } else {
+                        theme.text_muted
+                    }))
+                    .tooltip(tooltip(theme, &share.hover, ""))
+                    .child(if share.warning {
+                        format!("⚠ {}", share.label)
+                    } else {
+                        share.label
+                    })
+                    .into_any_element(),
+            );
+        }
+        parts
+    }
+
+    /// An agent pane's controls: the Reading width toggle and `Share` (its menu: Follow in Zed).
+    /// Nothing for a shell or run pane.
+    pub(crate) fn pane_controls(
+        &self,
+        info: &Session,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Vec<gpui::AnyElement> {
+        if info.kind != SessionKind::Agent {
+            return Vec::new();
+        }
+        let session = info.id;
+        let reading = self.reading_on(info);
+        let following = self.follow.is_on(session);
+        let reading_toggle = icon_button_in(
+            SharedString::from(format!("pane-reading-{session}")),
+            Icon::BookOpen,
+            if reading {
+                theme.text
+            } else {
+                theme.text_muted
+            },
+            theme,
+        )
+        .when(reading, |el| el.bg(rgb(theme.surface_raised)))
+        .tooltip(tooltip(
+            theme,
+            if reading {
+                "Reading width: on (the agent wraps at about 130 columns). Click for full width"
+            } else {
+                "Reading width: off (full width). Click to wrap at about 130 columns"
+            },
+            "",
+        ))
+        .on_click(cx.listener(move |shell, _, _, cx| {
+            let on = shell
+                .sidebar
+                .sessions()
+                .iter()
+                .find(|s| s.id == session)
+                .is_some_and(|info| shell.reading_on(info));
+            shell.reading_width.insert(session, !on);
+            cx.notify();
+        }));
+        let share = button_frame(
+            "pane-share",
+            icon_text(
+                Icon::Share2,
+                "Share",
+                if following {
+                    theme.text
+                } else {
+                    theme.text_muted
+                },
+            ),
+        )
+        .flex_none()
+        .px(px(space::XS))
+        .py_0()
+        .text_size(font_size::META)
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .when(following, |el| {
+            el.bg(rgb(theme.surface_raised))
+                .font_weight(FontWeight(weight::MEDIUM))
+                .text_color(rgb(theme.text))
+        })
+        .when(!following, |el| {
+            let hover = theme.hover;
+            el.text_color(rgb(theme.text_muted))
+                .hover(move |style| style.bg(rgb(hover)))
+        })
+        .tooltip(tooltip(
+            theme,
+            if following {
+                "Share: following this agent's edits in Zed"
+            } else {
+                "Share this agent's work"
+            },
+            "",
+        ))
+        .on_click(cx.listener(move |shell, event: &gpui::ClickEvent, _, cx| {
+            shell.close_menus();
+            shell.share_menu = Some(PaneMenu {
+                session_id: session,
+                position: event.position(),
+            });
+            cx.notify();
+        }));
+        vec![reading_toggle.into_any_element(), share.into_any_element()]
+    }
+
+    /// The title of `info`'s pane, or the inline rename field while it is renamed (F2 or a
+    /// double-click, ADR 0031; a run pane is named by its command and is not renamed).
+    pub(crate) fn pane_title(
+        &self,
+        info: &Session,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let session = info.id;
+        let renaming = self
+            .renaming
+            .as_ref()
+            .filter(|r| r.target == RenameTarget::Session(session));
+        if let Some(renaming) = renaming {
+            // Mouse downs stay in the field: the pane's handler would focus the terminal, and
+            // the blur would commit half-typed text.
+            return div()
+                .flex_1()
+                .min_w_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                )
+                .child(self.render_rename(&renaming.draft, theme, cx))
+                .into_any_element();
+        }
+        let renamable = mkrew_core::run::command_name(info).is_none();
+        div()
+            .id(SharedString::from(format!("pane-title-{session}")))
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_color(rgb(theme.text_muted))
+            .children(run::pane_title(info, self.ports.get(info.id)))
+            // Also the empty space after the title of an untitled pane.
+            .when(renamable, |el| {
+                el.on_click(
+                    cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+                        if event.click_count() == 2 {
+                            shell.start_pane_rename(session, window, cx);
+                        }
+                    }),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// A pane's compact header among several panes (SPEC §11): the agent chip (tinted by the
+    /// pane color, which also draws a line under the header), the title, the status parts and
+    /// the agent controls. Right-click: the pane menu.
+    pub(crate) fn pane_header(
+        &self,
+        info: &Session,
+        color: Option<u32>,
+        now: i64,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let session = info.id;
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            // Transparent without a color, so the header keeps its height.
+            .border_b(px(theme::PANE_ACCENT_WIDTH))
+            .border_color(match color {
+                Some(color) => Hsla::from(rgb(color)),
+                None => gpui::transparent_black(),
+            })
+            .font_family(theme.ui_font_family.clone())
+            .text_size(font_size::META)
+            .child(
+                agent_chip(self.agent_badge(&info.agent_profile), theme)
+                    .when_some(color, |chip, color| {
+                        chip.bg(theme.tint(color)).border_color(rgb(color))
+                    }),
+            )
+            .child(self.pane_title(info, theme, cx))
+            .children(self.pane_status(info, now, theme, cx))
+            .children(self.pane_controls(info, theme, cx))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                    shell.open_pane_menu(session, event.position, window, cx);
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// A tab's status dot from its most urgent pane: amber needs input, red exited, a pulsing
+    /// accent while an agent works, green for done or a live run process, else a hollow ring
+    /// (idle, starting). `(color, hollow, pulse)`; `None` for an empty tab.
+    pub(crate) fn tab_dot(
+        &self,
+        tab: &Tab,
+        urgent: Option<&Session>,
+        theme: &Theme,
+    ) -> Option<(u32, bool, bool)> {
+        let urgent = urgent?;
+        let sessions = self.sidebar.sessions();
+        let run_live = tab.sessions().iter().any(|id| {
+            sessions.iter().any(|s| {
+                s.id == *id
+                    && s.state != SessionState::Exited
+                    && mkrew_core::run::command_name(s).is_some()
+            })
+        });
+        Some(match urgent.state {
+            SessionState::NeedsInput => (theme.status_needs_input, false, false),
+            SessionState::Exited => (theme.status_exited, false, false),
+            SessionState::Working if urgent.kind == SessionKind::Agent => {
+                (theme.status_working, false, true)
+            }
+            _ if run_live => (theme.status_done, false, false),
+            SessionState::Done => (theme.status_done, false, false),
+            _ => (theme.status_idle, true, false),
+        })
     }
 
     /// Why a pane on screen has no terminal yet.
@@ -710,145 +905,34 @@ pub(crate) fn drop_catcher(session: Ulid, cx: &Context<'_, Shell>) -> impl IntoE
     .size_full()
 }
 
-/// The status bar's context meter: a thin track filled to the share, then `ctx 62%`. From
-/// 80 % (`ContextShare::warning`) the fill and the text turn amber, as in the pane header.
-pub(crate) fn context_meter(share: &ContextShare, theme: &Theme) -> gpui::Stateful<gpui::Div> {
-    let color = if share.warning {
-        theme.status_needs_input
-    } else {
-        theme.accent
-    };
+/// A pane's status pill (SPEC §11): status mark + `Working · 1h 25m` (with the last turn's
+/// summary when done); hovering it shows the status source and last change.
+pub(crate) fn status_pill(
+    session: &Session,
+    pill: String,
+    now: i64,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let (state, changed_at) = (session.state, session.state_changed_at);
     div()
-        .id("status-context")
+        .id(SharedString::from(format!("pane-status-{}", session.id)))
         .flex_none()
         .flex()
         .items_center()
         .gap(px(space::XS))
-        .text_color(rgb(if share.warning {
-            theme.status_needs_input
-        } else {
-            theme.text_muted
-        }))
-        .tooltip(tooltip(theme, &share.hover, ""))
-        .child(
-            div()
-                .w(theme::rems_px(theme::STATUS_BAR_METER_WIDTH))
-                .h(px(theme::STATUS_BAR_METER_HEIGHT))
-                .rounded_full()
-                .bg(rgb(theme.border))
-                .child(
-                    div()
-                        .h_full()
-                        .w(relative(f32::from(share.fill_percent) / 100.0))
-                        .rounded_full()
-                        .bg(rgb(color)),
-                ),
-        )
-        .child(share.label.clone())
-}
-
-/// A pane's header (SPEC §11): the agent badge, the `<workspace> › <folder> › <agent>`
-/// breadcrumb, one status pill (status mark + `Working · 1h 25m`, with the last turn's summary
-/// when done; hovering it shows the status source and last change), the title (renamed inline
-/// with F2 or a double-click, ADR 0031), an optional conflict warning, the number of queued
-/// sends (§20B.2), the context share (`⚠` and amber from 80 %, §20E.3), and on the right an
-/// agent's `Share` menu (Follow in Zed) and "Turns…" (§20C.5, §20C.2). A colored pane (ADR 0037)
-/// tints its chip and draws an accent line under the header.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn pane_header(
-    session: &Session,
-    badge: String,
-    breadcrumb: String,
-    pill: String,
-    title: gpui::AnyElement,
-    context: Option<ContextShare>,
-    conflict: Option<gpui::Stateful<gpui::Div>>,
-    turns: Option<gpui::Stateful<gpui::Div>>,
-    queued: usize,
-    color: Option<u32>,
-    now: i64,
-    theme: &Theme,
-) -> gpui::Div {
-    let (state, changed_at) = (session.state, session.state_changed_at);
-    div()
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(space::S))
         .px(px(space::S))
-        .py(px(space::XS))
-        // Transparent without a color, so the header keeps its height.
-        .border_b(px(theme::PANE_ACCENT_WIDTH))
-        .border_color(match color {
-            Some(color) => Hsla::from(rgb(color)),
-            None => gpui::transparent_black(),
-        })
-        .font_family(theme.ui_font_family.clone())
-        .text_size(font_size::META)
-        .child(agent_chip(badge, theme).when_some(color, |chip, color| {
-            chip.bg(theme.tint(color)).border_color(rgb(color))
-        }))
-        .child(
-            div()
-                .min_w_0()
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text))
-                .child(breadcrumb),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!("pane-status-{}", session.id)))
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(space::XS))
-                .px(px(space::S))
-                .rounded_full()
-                .bg(rgb(theme.surface_raised))
-                .text_color(rgb(theme.text_muted))
-                .tooltip(status_tooltip(
-                    theme,
-                    state,
-                    session.state_source,
-                    changed_at,
-                ))
-                .child(status_mark(state, now, theme))
-                .child(pill),
-        )
-        .child(title)
-        .children(conflict.map(|badge| {
-            badge
-                .flex_none()
-                .max_w(relative(theme::PANE_CONFLICT_MAX_FRACTION))
-        }))
-        .when(queued > 0, |el| {
-            el.child(
-                div()
-                    .flex_none()
-                    .text_color(rgb(theme.text_muted))
-                    .child(format!("⧗ {queued} queued")),
-            )
-        })
-        .children(context.map(|share| {
-            div()
-                .id(SharedString::from(format!("pane-context-{}", session.id)))
-                .flex_none()
-                .text_color(rgb(if share.warning {
-                    theme.status_needs_input
-                } else {
-                    theme.text_muted
-                }))
-                .tooltip(tooltip(theme, &share.hover, ""))
-                .child(if share.warning {
-                    format!("⚠ {}", share.label)
-                } else {
-                    share.label
-                })
-        }))
-        .children(turns)
+        .rounded_full()
+        .whitespace_nowrap()
+        .bg(rgb(theme.surface_raised))
+        .text_color(rgb(theme.text_muted))
+        .tooltip(status_tooltip(
+            theme,
+            state,
+            session.state_source,
+            changed_at,
+        ))
+        .child(status_mark(state, now, theme))
+        .child(pill)
 }
 
 fn divider_cursor(axis: Axis) -> CursorStyle {

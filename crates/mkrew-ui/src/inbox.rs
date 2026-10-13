@@ -1,5 +1,5 @@
 //! The "needs you" set (SPEC §10, §11): every session that needs input, or is done and not yet
-//! viewed, newest first. It feeds the sidebar's `Needs you` chip, the status bar and "next
+//! viewed, newest first. It feeds the sidebar's `Needs you` chip, its footer and "next
 //! Inbox entry". Pure and tested headlessly.
 
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ impl Viewed {
 
 /// A session that needs the user: it asks for input, or it finished and its pane was not
 /// focused since (a later `done` shows again). The one definition behind the Inbox entries,
-/// the sidebar chip and the status bar.
+/// the sidebar chip and the sidebar footer.
 pub fn needs_you(session: &Session, viewed: &Viewed) -> bool {
     match session.state {
         SessionState::NeedsInput => true,
@@ -102,7 +102,7 @@ pub fn next(entries: &[Entry], focused: Option<&Session>) -> Option<Ulid> {
         .map(|entry| entry.session_id)
 }
 
-/// The status bar's Inbox state: `Inbox clear`, `1 needs you`, `3 need you`.
+/// The sidebar footer's Inbox state: `Inbox clear`, `1 needs you`, `3 need you`.
 pub fn label(waiting: usize) -> String {
     match waiting {
         0 => "Inbox clear".to_owned(),
@@ -317,7 +317,7 @@ mod tests {
             .map(|s| s.id)
             .collect();
         assert_eq!(flagged, vec![asking.id, done.id]);
-        // The chips and the status bar count exactly what the Inbox lists.
+        // The chips and the sidebar footer count exactly what the Inbox lists.
         let listed: Vec<Ulid> = entries(&[api], &all, &viewed)
             .iter()
             .map(|e| e.session_id)

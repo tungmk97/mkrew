@@ -39,73 +39,50 @@ impl Shell {
         }
     }
 
-    /// The right-end status-bar button: shows or hides the session panel.
+    /// The title bar's session panel toggle: a gray icon, on a raised fill while the panel is
+    /// open.
     pub(crate) fn inspector_toggle(
         &self,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let hover = theme.hover;
-        div()
-            .id("toggle-inspector")
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .cursor_pointer()
-            .when(self.inspector_open, |el| el.bg(rgb(theme.accent_bg)))
-            .when(!self.inspector_open, |el| {
-                el.hover(move |style| style.bg(rgb(hover)))
-            })
-            .tooltip(tooltip(
-                theme,
-                if self.inspector_open {
-                    "Hide session panel"
-                } else {
-                    "Show session panel"
-                },
-                self.keymap.label(Command::ToggleInspector),
-            ))
-            .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
-            .child(icon_svg(
-                Icon::PanelRight,
-                theme::ICON_SIZE_SMALL,
-                if self.inspector_open {
-                    theme.accent_text
-                } else {
-                    theme.text_muted
-                },
-            ))
-            .when(self.modal_open(), |el| el.relative().child(inert_layer()))
+        let open = self.inspector_open;
+        icon_button_in(
+            "toggle-inspector",
+            Icon::PanelRight,
+            if open { theme.text } else { theme.text_muted },
+            theme,
+        )
+        .when(open, |el| el.bg(rgb(theme.surface_raised)))
+        .tooltip(tooltip(
+            theme,
+            if open {
+                "Hide session panel"
+            } else {
+                "Show session panel"
+            },
+            self.keymap.label(Command::ToggleInspector),
+        ))
+        .on_click(cx.listener(|shell, _, window, cx| shell.toggle_inspector(window, cx)))
     }
 
-    /// The focused agent's fields, in order: context meter, tokens, cache, model. Each is left
-    /// out without data (never `0`): no usage entry yet, no window, no cache, no model.
-    pub(crate) fn status_agent_fields(
+    /// The title bar's sidebar toggle (left of the workspace switcher): hide or show the sidebar.
+    pub(crate) fn sidebar_toggle(
         &self,
-        session: &Session,
         theme: &Theme,
-    ) -> Vec<gpui::AnyElement> {
-        let text = |text: String| {
-            div()
-                .flex_none()
-                .text_color(rgb(theme.text_muted))
-                .child(text)
-                .into_any_element()
-        };
-        let mut fields = Vec::new();
-        if let Some(shown) = self.usages.get(session.id).map(usage::fields) {
-            fields.extend(
-                shown
-                    .context
-                    .map(|share| context_meter(&share, theme).into_any_element()),
-            );
-            fields.extend(shown.tokens.map(text));
-            fields.extend(shown.cache.map(text));
-            fields.extend(shown.model.map(text));
-        }
-        fields
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        icon_button("toggle-sidebar", Icon::PanelLeft, theme)
+            .tooltip(tooltip(
+                theme,
+                if self.sidebar_layout.hidden() {
+                    "Show sidebar"
+                } else {
+                    "Hide sidebar"
+                },
+                self.keymap.label(Command::ToggleSidebar),
+            ))
+            .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
     }
 
     /// The session panel (SPEC §10): the focused pane's cards, right of Terminals. Rendered

@@ -223,7 +223,6 @@ mod tests {
                 label: "ctx 62%".into(),
                 warning: false,
                 hover: String::new(),
-                fill_percent: 62,
             }),
             tokens: Some("12.3k tok".into()),
             cache: None,

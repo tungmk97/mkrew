@@ -1,6 +1,7 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
 use crate::*;
+use gpui::{Animation, AnimationExt, pulsating_between};
 
 /// A centered message: optional title, one sentence, optional smaller detail (an
 /// [`empty_state`] without a glyph).
@@ -133,19 +134,6 @@ pub(crate) fn icon_text(glyph: Icon, text: impl IntoElement, color: u32) -> gpui
         .gap(px(space::XS))
         .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
         .child(text)
-}
-
-/// A ghost icon button of a live Run: the icon in the action's color, its tint on hover.
-pub(crate) fn run_icon_button(
-    id: &'static str,
-    glyph: Icon,
-    action: RunAction,
-    theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let colors = run::action_colors(action, theme);
-    button_frame(id, icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
-        .hover(move |style| style.bg(rgb(colors.tint)))
-        .active(|style| style.opacity(opacity::ACTIVE))
 }
 
 /// A secondary button: surface background with a faint border (the empty state's New shell).
@@ -725,6 +713,36 @@ pub(crate) fn working_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
                     opacity::STATUS_DOT_DIM
                 })
         }))
+}
+
+/// A round status dot: filled in `color`, or `hollow` (a ring: idle, stopped). `pulse` breathes
+/// its opacity (working); gpui draws it still under reduce-motion. `id` keys the animation.
+pub(crate) fn status_dot(
+    id: impl Into<gpui::ElementId>,
+    color: u32,
+    hollow: bool,
+    pulse: bool,
+) -> gpui::AnyElement {
+    let dot = div()
+        .flex_none()
+        .size(theme::rems_px(theme::STATUS_DOT_LARGE))
+        .rounded_full()
+        .when(hollow, |el| {
+            el.border(px(theme::BORDER_WIDTH)).border_color(rgb(color))
+        })
+        .when(!hollow, |el| el.bg(rgb(color)));
+    if !pulse {
+        return dot.into_any_element();
+    }
+    dot.with_animation(
+        id,
+        Animation::new(theme::PULSE_PERIOD)
+            .repeat_synced()
+            .with_easing(pulsating_between(theme::PULSE_MIN_OPACITY, opacity::FULL))
+            .with_max_fps(theme::PULSE_FPS),
+        |dot, value| dot.opacity(value),
+    )
+    .into_any_element()
 }
 
 /// The voice level meter (§20G): five bars, tallest in the middle, that rise with `level`

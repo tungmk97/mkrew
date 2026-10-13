@@ -246,6 +246,9 @@ pub struct UiSettings {
     pub inspector_width: u16,
     /// Width of the workspace sidebar, px (SPEC §10); dragging its edge saves it.
     pub sidebar_width: u16,
+    /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
+    /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
+    pub reading_width: bool,
 }
 
 impl Default for UiSettings {
@@ -259,6 +262,7 @@ impl Default for UiSettings {
             diff_wrap: true,
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
             sidebar_width: SIDEBAR_WIDTH_DEFAULT,
+            reading_width: true,
         }
     }
 }
@@ -383,6 +387,7 @@ pub fn template() -> &'static str {
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
+     # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
@@ -391,6 +396,7 @@ pub fn template() -> &'static str {
      # diff_wrap = true\n\
      # inspector_width = 300\n\
      # sidebar_width = 280\n\
+     # reading_width = true\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -590,6 +596,7 @@ enabled = true
                     diff_wrap: true,
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                     sidebar_width: SIDEBAR_WIDTH_DEFAULT,
+                    reading_width: true,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),

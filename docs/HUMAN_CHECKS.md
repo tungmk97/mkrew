@@ -15,6 +15,23 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-13 Simpler Terminals screen (ADR 0054, docs/terminals-simplify-checklist.md)
+
+- [ ] **Look (dark + light):** title bar, sidebar, tab strip and panes match ADR 0054; no
+  status bar; title bar icons are gray; color only on status (run pill, dots, amber counts).
+- [ ] **Run pill:** with servers running it reads `● 2 running :port ▾`; the menu's per-command
+  ↻ / ■, Restart all, Stop all, Show Run tab and Run setup… work; all stopped → `Run ▾` with
+  Start all; a workspace without commands → Run setup… saves and runs.
+- [ ] **Sidebar:** `/` focuses the filter (not while typing in a terminal); × clears it; the RUN
+  group lists commands with ports and opens a running one's pane; "N empty workspaces" expands and
+  its rows open their workspace; footer Inbox jumps to the next entry; compact toggle works.
+- [ ] **Panes:** a single pane has no header and its pill / Share / ctx % sit in the tab strip;
+  F2 renames it there; split panes show compact headers with an accent line on the focused one.
+- [ ] **Reading width:** an agent pane wraps at about 130 columns, centered; 📖 switches it to full
+  width and back (the agent redraws); shells stay full width; `[ui] reading_width = false` makes
+  agents start full width.
+- [ ] **Voice:** with the sidebar hidden, recording still shows its meter in the title bar.
+
 ### To verify — 2026-10-13 Run setup: Add command scrolls, card titles, scroll bar
 
 - [ ] **Run setup (dark + light):** with 2+ commands, "Add command" scrolls the list to the new

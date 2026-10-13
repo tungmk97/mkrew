@@ -58,12 +58,12 @@ impl Shell {
         .into_any_element()
     }
 
-    /// The title bar above everything (SPEC §10, ADR 0034): logo, workspace switcher,
-    /// branch chip and views on the left; a drag area; the theme toggle, the phone icon (Phone
-    /// access, ADR 0053), History (◷), "+ New" (Agent / Shell) and Run; on Windows minimize,
-    /// maximize, close. Without a workspace only
-    /// the logo, the drag area and the controls show, so the window can always be moved and
-    /// closed.
+    /// The title bar above everything (SPEC §10, ADR 0034): logo, sidebar toggle, workspace
+    /// switcher (with the repository label) and views on the left; a drag area; the Run pill,
+    /// History, the theme toggle, the phone icon (Phone access, ADR 0053), the session panel
+    /// toggle and "+ New" (Agent / Shell); on Windows minimize, maximize, close. Every icon is
+    /// gray: color is for status only. Without a workspace only the logo, the sidebar toggle,
+    /// the drag area and the controls show, so the window can always be moved and closed.
     pub(crate) fn render_title_bar(
         &self,
         shown: View,
@@ -86,11 +86,11 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
-            .child(div().flex_none().child(logo(theme)));
+            .child(div().flex_none().child(logo(theme)))
+            .child(self.sidebar_toggle(theme, cx));
         if let Some(project_id) = workspace {
             left = left
                 .child(self.render_workspace_switcher(project_id, theme, cx))
-                .children(self.render_branch_chip(theme, cx))
                 .child(self.render_view_tabs(shown, theme, cx));
         }
         // A sibling of the controls, never their parent: the first area a hit test finds wins.
@@ -122,7 +122,7 @@ impl Shell {
             } else {
                 space::M
             }))
-            .bg(rgb(theme.bg))
+            .bg(rgb(theme.chrome))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
@@ -133,8 +133,33 @@ impl Shell {
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(space::S))
+            .gap(px(space::XS))
             .when(!controls, |el| el.pr(px(space::M)))
+            // The sidebar footer shows voice input; with the sidebar hidden it shows here, so a
+            // live microphone is never unmarked.
+            .when(self.sidebar_layout.hidden(), |el| {
+                el.children(self.voice_status(false, theme))
+            });
+        if let Some(project_id) = workspace {
+            right = right
+                .child(
+                    div()
+                        .pr(px(space::S))
+                        .child(self.render_run_button(project_id, theme, cx)),
+                )
+                .child(
+                    icon_button("history", Icon::History, theme)
+                        .tooltip(tooltip(
+                            theme,
+                            "History: logs of the workspace's finished sessions",
+                            "",
+                        ))
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.show_history(project_id, window, cx);
+                        })),
+                );
+        }
+        right = right
             .child(
                 icon_button("toggle-theme", theme::mode_icon(theme.mode), theme)
                     .tooltip(tooltip(
@@ -147,21 +172,12 @@ impl Shell {
                     })),
             )
             .children(self.render_phone_button(theme, cx));
-        if let Some(project_id) = workspace {
-            right = right
-                .child(
-                    icon_button("history", Icon::History, theme)
-                        .tooltip(tooltip(
-                            theme,
-                            "History: logs of the workspace's finished sessions",
-                            "",
-                        ))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.show_history(project_id, window, cx);
-                        })),
-                )
-                .child(self.render_new_button(now, theme, cx))
-                .child(self.render_run_button(project_id, theme, cx));
+        if workspace.is_some() {
+            right = right.child(self.inspector_toggle(theme, cx)).child(
+                div()
+                    .pl(px(space::S))
+                    .child(self.render_new_button(now, theme, cx)),
+            );
         }
         bar = bar.child(right.when(modal, |el| el.relative().child(inert_layer())));
         if controls {
@@ -262,9 +278,9 @@ impl Shell {
                                     div()
                                         .px(px(space::XS))
                                         .rounded(px(radius::SMALL))
-                                        .bg(rgb(theme.accent_bg))
+                                        .bg(rgb(theme.surface_raised))
                                         .text_size(font_size::META)
-                                        .text_color(rgb(theme.accent_text))
+                                        .text_color(rgb(theme.text_muted))
                                         .child(changed.to_string()),
                                 )
                             })
@@ -272,44 +288,10 @@ impl Shell {
             )
     }
 
-    /// `⎇ master` / `⎇ 2 repos` (tooltip: one line per repository); a click shows the Git
-    /// view. Nothing while the summary is not loaded or the folder holds no repository.
-    pub(crate) fn render_branch_chip(
-        &self,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::AnyElement> {
-        let summary = self.git_summary()?;
-        let label = summary.branch_label()?;
-        let tip = summary.branch_tooltip().unwrap_or_default();
-        let hover = theme.hover;
-        Some(
-            div()
-                .id("title-branch")
-                .min_w_0()
-                .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
-                .overflow_hidden()
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .px(px(space::S))
-                .py(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .cursor_pointer()
-                .text_size(font_size::BODY)
-                .text_color(rgb(theme.text_muted))
-                .hover(move |style| style.bg(rgb(hover)))
-                .active(|style| style.opacity(opacity::ACTIVE))
-                .tooltip(tooltip(theme, &tip, ""))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    shell.show_view(View::Git, window, cx);
-                }))
-                .child(label)
-                .into_any_element(),
-        )
-    }
-
     /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and
-    /// "Add workspace…".
+    /// "Add workspace…". After it, muted, the repository label `⎇ master` / `⎇ 2 repos` (its
+    /// only place; tooltip: one line per repository; a click shows the Git view), hidden while
+    /// the summary is not loaded or the folder holds no repository.
     pub(crate) fn render_workspace_switcher(
         &self,
         project_id: Ulid,
@@ -363,6 +345,30 @@ impl Shell {
                 theme::ICON_SIZE_SMALL,
                 theme.text_muted,
             ));
+        let repos = self.git_summary().and_then(|summary| {
+            let label = summary.branch_label()?;
+            let tip = summary.branch_tooltip().unwrap_or_default();
+            Some(
+                div()
+                    .id("title-branch")
+                    .min_w_0()
+                    .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .px(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .cursor_pointer()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .tooltip(tooltip(theme, &tip, ""))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.show_view(View::Git, window, cx);
+                    }))
+                    .child(label),
+            )
+        });
         let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
             let rows = projects.iter().map(|project| {
                 let id = project.id;
@@ -422,7 +428,13 @@ impl Shell {
                     .child(div().pt(px(space::XS)).child(panel)),
             )
         });
-        div().child(button).children(menu).into_any_element()
+        div()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .child(div().child(button).children(menu))
+            .children(repos)
+            .into_any_element()
     }
 
     /// "+ New ▾": a dropdown of "Agent" and "Shell" (each with its shortcut) starting a new pane
@@ -437,17 +449,16 @@ impl Shell {
         if let Some(kind) = self.starting_pane {
             return starting_button("new-pane", kind, now, theme, false);
         }
-        let fg = button_fg(theme, false);
-        let button = button(
+        let button = secondary_button(
             "new-pane",
-            icon_text(Icon::Plus, "New", fg).child(icon_svg(
+            icon_text(Icon::Plus, "New", theme.text).child(icon_svg(
                 Icon::ChevronDown,
                 theme::ICON_SIZE_SMALL,
-                fg,
+                theme.text_muted,
             )),
             theme,
-            false,
         )
+        .bg(rgb(theme.chrome))
         .flex_none()
         .tooltip(tooltip(theme, "New agent or shell pane", ""))
         // An open menu already closed on this mouse down (outside it): the click reopens it.

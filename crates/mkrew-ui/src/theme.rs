@@ -99,7 +99,7 @@ pub const ICON_BUTTON_SIZE: f32 = 26.0;
 /// A Lucide icon in an icon-only button ([`ICON_BUTTON_SIZE`] square).
 pub const ICON_SIZE: f32 = 16.0;
 /// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
-/// controls, the status bar.
+/// controls.
 pub const ICON_SIZE_SMALL: f32 = 14.0;
 /// Inset of the title bar's segmented control around its segments.
 pub const SEGMENT_PADDING: f32 = 2.0;
@@ -470,12 +470,16 @@ pub struct Theme {
     pub surface_raised: u32,
     /// The workspace sidebar, a shade off `bg`.
     pub sidebar: u32,
+    /// The title bar and the Terminals tab bar (the window chrome around the panes).
+    pub chrome: u32,
     /// Board cards and other blocks that sit on `bg`.
     pub card: u32,
     /// A hovered row or quiet button.
     pub hover: u32,
     /// The selected row (sidebar session, list item).
     pub selected: u32,
+    /// The 1 px inset ring of the selected sidebar session row.
+    pub selected_ring: u32,
     pub border: u32,
     /// Hairlines between sections, fainter than `border`.
     pub divider: u32,
@@ -500,6 +504,10 @@ pub struct Theme {
     pub success_bg: u32,
     /// Faint error fill (hover of a Stop control); the red twin of `warning_bg` / `success_bg`.
     pub danger_bg: u32,
+    /// The title bar's Run pill while something runs: fill, border and text (status green).
+    pub run_pill_bg: u32,
+    pub run_pill_border: u32,
+    pub run_pill_text: u32,
     /// Alpha of a workspace color tint (avatars, [`Theme::tint`]).
     pub tint_alpha: u8,
     /// The shade behind a modal dialog, RGBA.
@@ -614,38 +622,43 @@ impl Theme {
 
     pub fn dark() -> Self {
         Self {
-            bg: 0x17181C,
+            bg: 0x141519,
             surface: 0x1F2127,
             surface_raised: 0x2C2E37,
-            sidebar: 0x131418,
+            sidebar: 0x191A1F,
+            chrome: 0x15161A,
             card: 0x1A1B20,
             hover: 0x22242B,
-            selected: 0x262938,
+            selected: 0x262A3D,
+            selected_ring: 0x3D4380,
             border: 0x2A2C33,
             divider: 0x24262D,
-            text: 0xE6E7EB,
+            text: 0xE4E5E9,
             text_dim: 0xB4B7C0,
-            text_muted: 0x9A9CA6,
+            text_muted: 0xA0A3AD,
             subtle: 0x5D616C,
-            accent: 0x7C8CFF,
+            accent: 0x8B91FF,
             accent_text: 0x9A9FFF,
-            accent_bg: 0x25264A,
+            accent_bg: 0x252848,
             // The dark accent is light: dark text keeps ≥ 3:1 on it (white would not).
-            on_accent: 0x17181C,
+            on_accent: 0x141519,
             on_accent_divider: 0x0000_0040,
             warning_bg: 0x3A3020,
             success_bg: 0x1D3A31,
             danger_bg: 0x3A2327,
+            run_pill_bg: 0x18241D,
+            run_pill_border: 0x2A4434,
+            run_pill_text: 0xC9EED8,
             tint_alpha: 0x2E,
             pane_focus_border: 0x4A528E,
             terminal_selection_bg: 0x353B60,
             terminal_match_bg: 0x3F3524,
             terminal_match_current_bg: 0x7A5A1F,
-            status_working: 0x7C8CFF,
-            status_needs_input: 0xE3A63E,
-            status_done: 0x4CB782,
-            status_exited: 0xE5676B,
-            status_idle: 0x6E7079,
+            status_working: 0x8B91FF,
+            status_needs_input: 0xF0B866,
+            status_done: 0x5FD28F,
+            status_exited: 0xF08A80,
+            status_idle: 0x8A8D97,
             diff_add_bg: 0x1E3A2B,
             diff_add_text: 0x7DD3A0,
             diff_del_bg: 0x3D2226,
@@ -682,9 +695,11 @@ impl Theme {
             surface: 0xF6F7F9,
             surface_raised: 0xEEF0F3,
             sidebar: 0xF4F5F7,
+            chrome: 0xFFFFFF,
             card: 0xFFFFFF,
             hover: 0xEEF0F3,
             selected: 0xE9EAFF,
+            selected_ring: 0xA7ADEA,
             border: 0xE3E5EA,
             divider: 0xECEEF1,
             text: 0x1B1D22,
@@ -699,6 +714,9 @@ impl Theme {
             warning_bg: 0xFDF3E1,
             success_bg: 0xE1F5EC,
             danger_bg: 0xFDECEC,
+            run_pill_bg: 0xE1F5EC,
+            run_pill_border: 0xB4DEC8,
+            run_pill_text: 0x1E6B3A,
             tint_alpha: 0x24,
             pane_focus_border: 0xA7ADEA,
             terminal_selection_bg: 0xCACEF2,
@@ -747,9 +765,11 @@ impl Theme {
             surface: 0,
             surface_raised: 0,
             sidebar: 0,
+            chrome: 0,
             card: 0,
             hover: 0,
             selected: 0,
+            selected_ring: 0,
             border: 0,
             divider: 0,
             text: 0,
@@ -764,6 +784,9 @@ impl Theme {
             warning_bg: 0,
             success_bg: 0,
             danger_bg: 0,
+            run_pill_bg: 0,
+            run_pill_border: 0,
+            run_pill_text: 0,
             tint_alpha: 0,
             // Black at ~35 %, in both appearances.
             scrim: 0x0000_0059,
@@ -877,19 +900,27 @@ pub const TAB_STRIP_HEIGHT: f32 = 38.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
 pub const GIT_REPO_STRIP_HEIGHT: f32 = TAB_STRIP_HEIGHT;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
-pub const SESSION_ROW_HEIGHT: f32 = 28.0;
+pub const SESSION_ROW_HEIGHT: f32 = 30.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row
 /// (ADR 0039). The track is `Theme::border`, the fill `Theme::accent` (both themes).
 pub const PLAN_BAR_HEIGHT: f32 = 4.0;
 pub const PLAN_ROW_BAR_HEIGHT: f32 = 2.0;
-/// The status bar at the window bottom (SPEC §10), in px at the default font size. It draws
-/// with existing tokens (`sidebar` background, `divider` top line, `text_muted`,
-/// `status_needs_input`, `accent`, `border`), so dark and light need no new values.
-pub const STATUS_BAR_HEIGHT: f32 = 24.0;
-/// The context meter's track.
-pub const STATUS_BAR_METER_WIDTH: f32 = 48.0;
-pub const STATUS_BAR_METER_HEIGHT: f32 = 4.0;
-pub const WORKSPACE_AVATAR_SIZE: f32 = 18.0;
+/// The sidebar's footer row (Inbox, voice input, compact toggle), in px at the default font
+/// size; drawn with existing tokens.
+pub const SIDEBAR_FOOTER_HEIGHT: f32 = 32.0;
+pub const WORKSPACE_AVATAR_SIZE: f32 = 20.0;
+/// The tiny avatars on the sidebar's "N empty workspaces" line.
+pub const WORKSPACE_AVATAR_TINY: f32 = 14.0;
+/// A status dot (run pill, tab, RUN row, working pill): px at the default font size.
+pub const STATUS_DOT_LARGE: f32 = 6.0;
+/// One breath of a pulsing status dot (working, running); its lowest opacity.
+pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
+pub const PULSE_MIN_OPACITY: f32 = 0.35;
+/// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
+/// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
+pub const READING_WIDTH: f32 = 960.0;
+/// A pulse redraws at most this often (each redraw renders the window: keep it low).
+pub const PULSE_FPS: f32 = 12.0;
 pub const EMPTY_STATE_MAX_WIDTH: f32 = 320.0;
 pub const EMPTY_STATE_TILE: f32 = 44.0;
 

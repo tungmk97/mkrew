@@ -129,21 +129,33 @@ impl Shell {
         cx.notify();
     }
 
-    /// The title bar's phone icon: accent while `mk web` runs, muted otherwise. Hidden without
-    /// a daemon connection (the dialog needs it).
+    /// The title bar's phone icon (gray, like every title bar icon): a green dot on its corner
+    /// while `mk web` runs. The tooltip says what it is. Hidden without a daemon connection
+    /// (the dialog needs it).
     pub(crate) fn render_phone_button(
         &self,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::Stateful<gpui::Div>> {
         self.connection.as_ref()?;
-        let (color, text) = if self.phone.running() {
-            (theme.accent, "Phone access: on")
+        let on = self.phone.running();
+        let text = if on {
+            "Phone access: on. Open Mkrew from your phone's browser to watch and answer sessions"
         } else {
-            (theme.text_muted, "Phone access: off")
+            "Phone access: off. Use Mkrew from your phone's browser to watch and answer sessions"
         };
         Some(
-            icon_button_in("phone-access", Icon::Smartphone, color, theme)
+            icon_button("phone-access", Icon::Smartphone, theme)
+                .relative()
+                .when(on, |el| {
+                    el.child(
+                        div()
+                            .absolute()
+                            .top(px(space::XS))
+                            .right(px(space::XS))
+                            .child(status_dot("phone-on", theme.status_done, false, false)),
+                    )
+                })
                 .tooltip(tooltip(theme, text, ""))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.open_phone_access(window, cx);

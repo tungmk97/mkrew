@@ -16,8 +16,8 @@ pub enum RunAction {
     Stop,
 }
 
-/// The glyph color of a Run control and the faint fill it shows on hover: Start green,
-/// Restart amber, Stop red, in the title bar button and in the ▾ menu alike (SPEC §10).
+/// The glyph color of a Run control and the faint fill it shows on hover, in the Run pill's
+/// menu: Start and Restart gray (color is for status only), Stop red (it ends processes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionColors {
     pub fg: u32,
@@ -26,8 +26,8 @@ pub struct ActionColors {
 
 pub fn action_colors(action: RunAction, theme: &Theme) -> ActionColors {
     let (fg, tint) = match action {
-        RunAction::Start => (theme.status_done, theme.success_bg),
-        RunAction::Restart => (theme.status_needs_input, theme.warning_bg),
+        // `border`: one step above the menu panel's `surface_raised`, like a menu item hover.
+        RunAction::Start | RunAction::Restart => (theme.text_muted, theme.border),
         RunAction::Stop => (theme.status_exited, theme.danger_bg),
     };
     ActionColors { fg, tint }
@@ -146,27 +146,33 @@ impl Summary {
         ports
     }
 
-    /// The button: `▶ Run`, else `● Running 2/2 · :8080 :5180` (`✕` when one is down).
+    /// The pill's words: `Run`, else `2 running`; `1/2 running` when one is down (the dot
+    /// turns amber, the icon + text rule of SPEC §11).
     pub fn label(&self) -> String {
         if !self.any_live() {
-            return "Run".to_owned();
+            "Run".to_owned()
+        } else if self.warning() {
+            format!("{}/{} running", self.live(), self.rows.len())
+        } else {
+            format!("{} running", self.live() + self.stray)
         }
-        let icon = if self.warning() { "✕" } else { "●" };
-        let mut label = format!("{icon} Running {}/{}", self.live(), self.rows.len());
+    }
+
+    /// The pill's ports in config order, `:8080 :5180` (`+N` past [`MAX_PORTS`]); `None`
+    /// without any.
+    pub fn ports_text(&self) -> Option<String> {
         let ports = self.ports();
-        if !ports.is_empty() {
-            let shown: Vec<String> = ports
-                .iter()
-                .take(MAX_PORTS)
-                .map(|p| format!(":{p}"))
-                .collect();
-            label.push_str(" · ");
-            label.push_str(&shown.join(" "));
-            if ports.len() > MAX_PORTS {
-                label.push_str(&format!(" +{}", ports.len() - MAX_PORTS));
-            }
+        if ports.is_empty() {
+            return None;
         }
-        label
+        let mut text = (ports.iter().take(MAX_PORTS))
+            .map(|p| format!(":{p}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if ports.len() > MAX_PORTS {
+            text.push_str(&format!(" +{}", ports.len() - MAX_PORTS));
+        }
+        Some(text)
     }
 
     /// One line per command: `BE — :8080`, `FE — no port yet`, `API — stopped`.
@@ -358,7 +364,8 @@ mod tests {
         let old_be = run(&p, "BE", SessionState::Exited, 0);
         let ports = ports_of(&[(fe.id, &[5180]), (be.id, &[8080, 5180])]);
         let s = summary(&p, &[fe, old_be, be.clone()], &ports);
-        assert_eq!(s.label(), "● Running 2/2 · :8080 :5180");
+        assert_eq!(s.label(), "2 running");
+        assert_eq!(s.ports_text().as_deref(), Some(":8080 :5180"));
         assert!(!s.warning());
         assert_eq!(s.rows[0].session_id, Some(be.id));
         assert_eq!(s.tooltip(), "BE — :8080 :5180\nFE — :5180");
@@ -370,7 +377,8 @@ mod tests {
         let fe = run(&p, "FE", SessionState::Working, 2);
         let be = run(&p, "BE", SessionState::Exited, 1);
         let s = summary(&p, &[fe, be], &Ports::default());
-        assert_eq!(s.label(), "✕ Running 1/2");
+        assert_eq!(s.label(), "1/2 running");
+        assert_eq!(s.ports_text(), None);
         assert!(s.warning());
         assert_eq!(state_text(&s.rows[0].state), "✕ exited 1");
         assert_eq!(s.tooltip(), "BE — exited 1\nFE — no port yet");
@@ -383,7 +391,7 @@ mod tests {
         let ports = ports_of(&[(a.id, &[1, 2, 3, 4])]);
         let mut s = summary(&p, &[a], &ports);
         s.rows[0].ports.push(5);
-        assert_eq!(s.label(), "● Running 1/1 · :1 :2 :3 :4 +1");
+        assert_eq!(s.ports_text().as_deref(), Some(":1 :2 :3 :4 +1"));
     }
 
     #[test]
@@ -393,7 +401,7 @@ mod tests {
         let s = summary(&p, &[gone], &Ports::default());
         assert_eq!(s.stray, 1);
         assert!(s.any_live() && s.warning());
-        assert_eq!(s.label(), "✕ Running 0/1");
+        assert_eq!(s.label(), "0/1 running");
     }
 
     #[test]
@@ -436,7 +444,7 @@ mod tests {
     }
 
     /// The glyph stays visible on every surface it sits on (title bar, menu panel, its own
-    /// hover fill), and the idle green Run button keeps readable text.
+    /// hover fill).
     #[test]
     fn run_action_colors_are_visible_in_both_themes() {
         use crate::theme::contrast;
@@ -452,8 +460,6 @@ mod tests {
                     );
                 }
             }
-            let fill = action_colors(RunAction::Start, &theme).fg;
-            assert!(contrast(theme.on_accent, fill) >= 3.0);
             // A hovered tint differs from the menu panel it sits on.
             for action in [RunAction::Start, RunAction::Restart, RunAction::Stop] {
                 assert_ne!(action_colors(action, &theme).tint, theme.surface_raised);

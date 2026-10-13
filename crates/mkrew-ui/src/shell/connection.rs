@@ -19,6 +19,7 @@ impl Shell {
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
+        let reading_default = ui.reading_width;
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let prompts_dir = paths.prompts_dir();
@@ -77,6 +78,7 @@ impl Shell {
                                 {
                                     shell.apply_diff_mode(settings.ui.diff_mode);
                                     shell.diff_wrap = settings.ui.diff_wrap;
+                                    shell.reading_default = settings.ui.reading_width;
                                     if shell.features != settings.features {
                                         // `view()` may now map Docs to Terminals.
                                         shell.features = settings.features;
@@ -302,6 +304,9 @@ impl Shell {
             run_menu: None,
             workspace_switcher: false,
             new_menu: false,
+            empty_workspaces_open: false,
+            reading_default,
+            reading_width: HashMap::new(),
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),

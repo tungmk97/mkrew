@@ -696,33 +696,50 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ ◈ A api ▾ ⎇ master [Board│Terminals│Docs│Files│Git 3] ◐ +Agent +Shell [▶ Run│▾] ─ □ ✕ │
+│ ◈ ◧ A api ▾ ⎇ master [Board│Terminals│Docs│Files│Git 3]  (● 2 running :8080 ▾) ◷ ◐ ▯ ◨ [+ New ▾] ─ □ ✕ │
 ├──────────────┬────────────────────────────────────────────────────────────────────────┤
-│ Workspaces + │ tab strip (Terminals only): [▣ ● tab ✕] [>_ tab ✕]   + ◫ ⋯               │
-│ [Filter…]    │                                                                       │
-│ All Work Need│                                                                       │
-│ ▾ A api  (•••2)│  Todo │ Running │ Needs input │ …                                     │
-│ │ ••• ✻ claude │  …or the terminal tabs/panes                                         │
-│ │ ?   ⌬ codex  │  …or the Markdown review view                                         │
-│ ▸ W web     ? │                                                                       │
-│ ▸ I infra     │                                                                       │
-├──────────────┴────────────────────────────────────────────────────────────────────────┤
-│ ◧ Inbox clear · 1a2b3c4                         ctx ▮▮▯ 62% · in 12.3k · out 800 · 2m │
-└───────────────────────────────────────────────────────────────────────────────────────┘
+│ [⌕ Filter… /]⇲+│ tab strip: [▣ ● tab ✕] [>_ ○ tab ✕] +    (● Working · 4s) 📖 Share ◫ ⋯ │
+│ [All│Working│Needs you]│                                                              │
+│ ▾ A api (● 1 working)│  Todo │ Running │ Needs input │ …                              │
+│ │ ✻ fix login    2m │  …or the terminal tabs/panes                                    │
+│ │ RUN               │  …or the Markdown review view                                   │
+│ │ ● FE      :5180   │                                                                 │
+│ ▸ W web       1 idle│                                                                 │
+│ ▸ 2 empty workspaces I D │                                                            │
+│ 📥 Inbox clear     ⇤ │                                                                │
+└──────────────┴────────────────────────────────────────────────────────────────────────┘
 ```
+ADR 0054 simplified this screen: one place per piece of information, color for status only,
+empty things hidden, detail on hover / in menus. There is no status bar.
 The session panel (below) is a third column right of Terminals while open.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
-  A **filter box** (`⌕ Filter sessions…`) matches workspace name, agent and session title as you
-  type (every word must match; client-side, not remembered); under it three **chips** `All N`,
-  `Working N` and `Needs you N` narrow the list (the numbers count the sessions matching the
-  filter text). *Needs you* is what the Inbox listed before: needs_input, plus done and not yet
-  viewed (ADR 0036). While a filter or chip is on, only workspaces with a match show, open.
-  The header has `+` (add workspace) and a button that collapses or expands every workspace.
-  There is no Inbox card: the chips, the status bar and Ctrl+Shift+I replace it; hovering a
-  session row still peeks it (§20A). Toggle sidebar (Ctrl+Shift+B, status bar, palette) hides it; not remembered across restarts.
-  Toggle compact sidebar (Ctrl+Alt+B, the status bar's `⇤` / `⇥`, palette) narrows it to a rail:
+  A **filter box** (`⌕ Filter sessions…`, `/` focuses it while no terminal or field has the
+  keyboard; `×` inside it clears it while it holds text) matches workspace name, agent and
+  session title as you type (every word must match; client-side, not remembered); beside it the
+  remove-idle-agents button (only while there are some), collapse / expand all and `+` (add
+  workspace); under it a segmented control `All N`, `Working N` and `Needs you N` (N amber while
+  above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
+  you* is what the Inbox listed before: needs_input, plus done and not yet viewed (ADR 0036).
+  While a filter or chip is on, only workspaces with a match show, open.
+  A workspace row: chevron, colored letter avatar, bold name, 📌, then its status: a
+  `● 1 working` pill (pulsing dot) while an agent works, else muted `2 idle`, plus amber `? N`
+  while N need input; the ⋯ menu on hover (or right-click). Its sessions hang under a 1 px
+  guide line: agent glyph (in an accent chip while working; its hover says the state), title
+  (ellipsized), the glyph of a waiting / done agent (none while idle), the time, ✕ on hover; the
+  selected row is ringed. Run sessions are not session rows: a **RUN** group under the
+  workspace lists each run command (green dot running, hollow gray stopped, red exited), its
+  name and its ports in green monospace; a running one opens its pane on click (right-click:
+  pane menu, ✕ on hover), a stopped one has ▶ on hover. Workspaces with no session and no run
+  command (except the shown one and pinned ones) sit on one line at the bottom,
+  `N empty workspaces ▸` with their tiny avatars; a click lists them as normal rows.
+  The **footer** (inside the sidebar's width) has the Inbox state (`Inbox clear`, or amber
+  `N need you`; a click = Jump to next, as Ctrl+Shift+I), the voice input state while there is
+  one (§20G; shown in the title bar while the sidebar is hidden) and the compact toggle.
+  There is no Inbox card: the chips, the footer and Ctrl+Shift+I replace it; hovering a
+  session row still peeks it (§20A). Toggle sidebar (Ctrl+Shift+B, the title bar's `◧`, palette) hides it; not remembered across restarts.
+  Toggle compact sidebar (Ctrl+Alt+B, the footer's `⇤` / `⇥`, palette) narrows it to a rail:
   workspace avatars with `?` or the working count, and per open workspace its sessions' status
   mark + agent chip; hovering a rail row shows its full name, status and folder as a tooltip
   (instead of the peek). Entering the rail clears the filter and chip; a hidden sidebar comes back
@@ -746,43 +763,41 @@ The session panel (below) is a third column right of Terminals while open.
   shows 📌 next to its name (after it in the sidebar, before it on a tab). Pins are stored (§5), so they survive a restart; a resumed session
   keeps its pin (ADR 0017).
 - **Views per workspace:** Board, Terminals, Docs, Files, Git.
-- **Title bar** (44 px, ADR 0027, ADR 0034), left to right: the Mkrew logo; the workspace name
-  ▾ (a dropdown of the workspaces, click switches, plus "Add workspace…"); the git chip
-  `⎇ master` (one repository) or `⎇ N repos` (several; the tooltip lists each repository's
+- **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; the
+  sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
+  switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
+  `⎇ N repos` (several; the only place this shows; the tooltip lists each repository's
   branch and HEAD; a workspace folder without `.git` but with child repositories shows the
-  children, ADR 0029; hidden when there is no repository), a click shows the Git view; the
+  children, ADR 0029; hidden when there is no repository; a click shows the Git view); the
   views Board / Terminals / Docs / Files / Git as a segmented control (tooltips show their
-  shortcuts, §13), the Git one with a `Git N` badge (N = changed files summed over every
-  repository, hidden at 0); then, right-aligned, the theme toggle, the phone icon (`smartphone`, §14; hidden without a daemon connection), History (`◷` icon), `+ New ▾`
-  (a dropdown of Agent / Shell) and the split Run button, in every view (New's entries switch to
-  Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). The git chip and badge come from `git.repos`
+  shortcuts, §13), the Git one with a neutral gray `N` badge (N = changed files summed over every
+  repository, hidden at 0); then, right-aligned, the Run pill, History (`◷`), the theme toggle,
+  the phone icon (`smartphone`, §14; a green dot while Phone access is on; the tooltip explains
+  it; hidden without a daemon connection), the session-panel toggle (◨, ADR 0038) and the
+  outlined `+ New ▾` (a dropdown of Agent / Shell), in every view (New's entries switch to
+  Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). Every icon is gray (`text-muted`,
+  `text` on hover): color only for status. The git label and badge come from `git.repos`
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
   and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
   the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
   □ shows the Windows 11 Snap Layouts flyout), all edges resize; the controls are hidden in full
   screen. **macOS:** native traffic lights at the left, drag and double-click as the OS does.
   **Linux:** the OS title bar stays. Minimum window size 1100 × 560. Without a workspace only
-  the logo, the drag area and the window controls show.
-- **Status bar** (24 px, bottom of the window, every view): on the left the sidebar toggle
-  (`◧`), the Inbox state and the git HEAD; on the right the focused agent pane's usage. Inbox:
-  `Inbox clear`, or `N need you` (needs_input plus done-not-yet-viewed, as the Inbox lists);
-  click = Jump to next (the same as Ctrl+Shift+I). Git: one repo → its short HEAD hash; several
-  repos → `N repos`; the hover lists `branch · hash` per repo; a root without `.git` still shows
-  its child repos (ADR 0029); nothing before the first commit. Agent fields (agent panes only,
-  Terminals view): context meter + `ctx 62%` (amber from 80 %), `in` / `out` tokens (`in`
-  excludes cache), cache read / write, model (no elapsed time: the pane header shows it). Only
-  real data is shown: a field without data is hidden, never `0`; no money, no tokens per second.
-  It redraws on `session.usage`, focus change, an Inbox change and `git.changed`; it has no
-  timer of its own. The right end is the session-panel
-  toggle (◨, ADR 0038).
+  the logo, the sidebar toggle, the drag area and the window controls show.
+- **No status bar** (ADR 0054): its sidebar toggle is in the title bar, its Inbox state and
+  compact toggle in the sidebar footer, its git HEAD in the title bar's repository tooltip, the
+  focused agent's context share in the tab strip (single pane) or pane header (split), and the
+  other usage fields (tokens, cache, model) on the session panel's card.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
   New task: the empty board's button, or `New task` in the Todo column header.
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
-  for a tab without panes), the status mark of its most urgent pane (§11), its title and a ✕
-  (always on the active tab, on hover for the others); closing never activates the tab first.
-  At the right end of the strip: `+` (new tab), the split button and `⋯`. The split button opens
+  for a tab without panes), one status dot of its most urgent pane (§11: pulsing accent while an
+  agent works, amber needs input, green done or a live run process, red exited, a hollow ring
+  idle), its title and a ✕ (always on the active tab, on hover for the others); closing never
+  activates the tab first. `+` (new tab) follows the tabs. At the right end of the strip: for a
+  single pane its status (§11) and agent controls, then the split button and `⋯`. The split button opens
   the layout menu: Split right, Split down, Equalize panes, then the layouts 2 columns, 2 rows,
   3 columns, 1 + 2 and 2 × 2, each with a small drawing and its shortcut (§13). Equalize panes
   gives every pane of a run of same-direction splits the same share (split right twice: 50/25/25
@@ -791,7 +806,9 @@ The session panel (below) is a third column right of Terminals while open.
   lacks start sessions of the focused pane's kind (as Split right), one after another; then the
   layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
   why); if a start fails, the sessions that started are placed as Split right places them.
-  `⋯`, and a right-click on a tab, open the tab menu: Split right, Split down, Rename, Close; the tab is
+  `⋯`, and a right-click on a tab, open the tab menu: Pin, Split right, Split down, Rename, Close;
+  on the active tab also the focused pane's Rename pane, Close pane and, for an agent, Follow in
+  Zed (✓ while on) and Turns…. The tab is
   activated first, so the menu acts on the tab it was opened on. Closing a tab stops its panes'
   sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
@@ -803,8 +820,13 @@ The session panel (below) is a third column right of Terminals while open.
   side keeps at least 10 % of the split; hidden while a pane is zoomed); the layout is saved once
   when the button is released.
   No hard limit on terminals; warn above 12 running sessions per workspace.
+  **Reading width** (agent panes): the pane's 📖 toggle limits the terminal to 960 px (≈ 120–140
+  columns), centered, so the agent wraps there: the terminal element is narrower and the usual
+  resize sends `session.resize` (nothing reflows its output). Agent panes start with
+  `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
+  panes are always full width.
 - **Session panel** (ADR 0038): a column right of the Terminals view, closed at every start,
-  toggled by the status bar's right-end button and `Ctrl+Shift+Y` (from another view the key shows
+  toggled by the title bar's `◨` and `Ctrl+Shift+Y` (from another view the key shows
   Terminals first). Drag its left edge to resize (240–560 px, saved as `[ui] inspector_width` when
   the button is released); the terminals lose that width, so an agent redraws once. It shows the
   focused pane's session. **Session card:** agent, title, state + time, the usage of §20E.3 (context
@@ -852,22 +874,20 @@ The session panel (below) is a third column right of Terminals while open.
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
-- **Run button** (ADR 0018) at the right end of the title bar (ADR 0034), a split button, in the
-  **accent** (the logo's blue) while idle (primary button: `accent` fill, `on-accent` text): `[▶ Run │▾]` with
-  no command or all stopped (▶ with no command opens Run setup, and saving there runs);
-  `[● Running 2/2 · :8080 :5180 │↻│■│▾]` while running; `[✕ Running 1/2 · …]` in the warning
-  color when some exited. Ports: every distinct port of the live run sessions, config order, up
-  to 4 then `+N`; tooltip `name — :port …` per command. Menu ▾ (mouse-driven): one row per
-  command (name, state, ports, ↻ ■ or ▶), then `Show Run tab`, `Run setup…`.
-  Glyph colors (live title bar and menu, glyph and hover alike): Run / Start ▶ green
-  (`status-done`, hover `success-bg`), Restart ↻ amber (`status-needs-input`, hover
-  `warning-bg`), Stop ■ red (`status-exited`, hover `danger-bg`). Run from
+- **Run pill** (ADR 0018, ADR 0054) in the title bar: while something runs a green pill
+  `● 2 running :8080 :5180 ▾` (`run-pill-*` tokens; amber dot and `1/2 running` when some
+  exited; a steady dot: a pulse would redraw the window for as long as a server runs, §15);
+  otherwise a muted `Run ▾`. Ports: every distinct port of the live run sessions, config order,
+  up to 4 then `+N`; tooltip `name — :port …` per command. A click opens the Run menu
+  (mouse-driven): `RUNNING IN <WORKSPACE>` (`RUN IN` while idle), one row per command (state
+  dot, name, ports or state in words, ↻ and a red ■ while it runs, ▶ otherwise), then
+  `Restart all` / `Stop all` while anything runs or `Start all` while nothing does, `Show Run
+  tab`, `Run setup…` (with no command, saving there also runs). Only Stop is red. Run from
   all-stopped switches to Terminals and the `run` tab; Restart and per-command Run keep the
   view. A stopped command, and one that ends by itself, leaves the `run` tab at once (the tab
   stays, empty after the last one). Restart puts the new session where the old pane was, so the
-  tab shows one terminal per command, never an old one beside a new one. A run pane's header is
-  `<name> · :8080`; the sidebar workspace row shows `▶` while any
-  run session lives (tooltip = ports). Ports load with `session.ports` per workspace on refresh
+  tab shows one terminal per command, never an old one beside a new one. A run pane's title is
+  `<name> · :8080`; the sidebar's RUN group lists the commands. Ports load with `session.ports` per workspace on refresh
   and stay live through the `session.ports` event. **Run setup dialog:** command cards (Name,
   Folder, Command, Env file, Env as multi-line `KEY=VALUE`), `+ Add command`, `Duplicate` (a
   copy right below, named `<name> copy`, refused at 8), `Remove`, a
@@ -884,8 +904,8 @@ The session panel (below) is a third column right of Terminals while open.
 
 ## §11 UI: per-session status
 
-Status shows in three places: pane header, tab label, sidebar row. Always icon + text, never
-color alone.
+Status shows in three places: the tab strip (a single pane) or pane header (a split), the tab
+dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover gives the text).
 
 | State | Icon | Extra |
 | --- | --- | --- |
@@ -897,28 +917,32 @@ color alone.
 | exited | ✕ | exit code (History); its sidebar row and pane close (ADR 0033) |
 | unknown | · | |
 
-- Pane header, left to right: the agent badge (§6 `icon`, a bordered square chip), the breadcrumb
-  `<workspace> › <folder> › <agent>` (the folder only for a task that runs in a worktree, shown
-  as its branch without `mkrew/`; a plain pane runs in the workspace folder, so none), **one
-  status pill** (the status mark and `Working · 1h 25m`; a done pane adds the last turn,
-  `Done · 3 files · 4m`; hovering it shows the source and last change) and the session/task title
-  (F2 or a double-click renames it inline: Enter saves, Esc cancels, blank clears; run panes keep
-  their command name — ADR 0031; without a title an agent pane shows the title its agent gave the
-  terminal, e.g. Claude's conversation summary; everywhere a session is named the order is: user
-  title > terminal title > agent name). The right end keeps `⧗ N queued`, the context share,
-  and an agent's `Share` menu (for now one item, "Follow in Zed", ✓ while on; the button is
-  highlighted while following) and "Turns…"; the status is not repeated there. The
-  sidebar session row also puts the badge before the agent name. The badge is a bordered square
-  chip; it also shows on board cards and in agent menus.
-- Pane menu (right-click on the header): **Rename** (inline like F2; greyed for a run pane) and
-  **Change color** (the workspace palette; none clears). A colored pane tints its agent chip and
-  draws a thin line under its header; the border still shows state (ADR 0037).
+- Pane status (ADR 0054), shown at the right end of the tab strip for a single pane (it has no
+  header) and in the compact header of each pane of a split: the task folder (only for a task
+  that runs in a worktree, shown as its branch without `mkrew/`), **one status pill** (the
+  status mark and `Working · 1h 25m`; a done pane adds the last turn, `Done · 3 files · 4m`;
+  hovering it shows the source and last change), a conflict warning, `⧗ N queued`, the context
+  share, then an agent's Reading width toggle and `Share` menu (for now one item, "Follow in
+  Zed", ✓ while on; the button is highlighted while following). Each part shows only when it has
+  something to say. "Turns…" is in the tab strip's `⋯` menu. The split header starts with the
+  agent badge and the session/task title (F2 or a double-click renames it inline: Enter saves,
+  Esc cancels, blank clears; run panes keep their command name — ADR 0031; for a single pane F2
+  shows the rename field in the tab strip; without a title an agent pane shows the title its
+  agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the
+  order is: user title > terminal title > agent name). The focused pane of a split has a 2 px
+  accent line on top, the others are dimmed. The sidebar session row also puts the badge
+  before the title. The badge is a bordered square chip; it also shows on board cards and in
+  agent menus.
+- Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
+  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
+  colored pane tints its agent chip and draws a thin line under its header (a single pane: on
+  top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
-- Workspace row: a summary of its sessions (`1 working`, `2 idle`, `1 working · 1 needs you ·
-  2 idle`) and `?` if any needs_input; no token total (the status bar shows usage of the focused
-  agent). Sidebar session rows hang under a faint guide line: status mark, agent chip, name and,
-  on the right in a fixed right-aligned column, only the time of a working or idle session
-  (`17m`; the status icon already says the state, its hover says it in words). Agent rows,
+- Workspace row: `● N working` (a pill, pulsing dot) while an agent works, else `N idle`; amber
+  `? N` while N need input; no token total (the session panel shows usage). Sidebar session rows
+  hang under a faint guide line: agent chip (an accent chip while working; its hover gives the
+  state in words and when it changed), title, the state glyph of a waiting or done agent (none
+  while idle) and, on the right, only the time of a working or idle session (`17m`). Agent rows,
   selected or not, show just the session/task title on one line (the chip names the agent);
   terminal rows keep `powershell · title`. Agent terminal
   titles drop omp's leading `π` logo (ADR 0031).
@@ -1917,7 +1941,8 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    records the default microphone, and the same key stops it. It works everywhere, also while a
    terminal, a text field or a dialog has the keyboard. A recording stops by itself after
    `[voice] max_seconds` (§20.0). While transcribing, the key does nothing.
-2. **Status bar.** A five-bar level meter that follows the microphone loudness (redrawn every
+2. **Sidebar footer** (the title bar while the sidebar is hidden; the rail shows the meter
+   only). A five-bar level meter that follows the microphone loudness (redrawn every
    `theme::VOICE_METER_TICK`) and `m:ss · Ctrl+Shift+D stops` while recording; the `working`
    dots and `Transcribing` while waiting; nothing after success. Errors and notes
    (`✕ Voice: …`) stay until the next start.
@@ -1935,5 +1960,5 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    that has the keyboard exactly like an IME commit (every field of §13 and the Files editor). If
    a terminal pane has focus instead, it is pasted there like a paste (bracketed when the program
    asked for it, never followed by Enter). If neither has focus, it goes to the clipboard and the
-   status bar says so.
+   footer says so.
 5. Nothing is recorded or sent unless the user starts a recording, and audio is never stored.

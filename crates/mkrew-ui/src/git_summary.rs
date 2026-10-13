@@ -84,16 +84,6 @@ impl GitSummary {
         }
     }
 
-    /// The status bar's HEAD: one repo → its short hash (`None` before its first commit);
-    /// several → `3 repos`; none → `None`. The hover is [`GitSummary::branch_tooltip`].
-    pub fn head_label(&self) -> Option<String> {
-        match self.repos.as_slice() {
-            [] => None,
-            [only] => only.head.as_deref().map(|head| short_hash(head).to_owned()),
-            many => Some(format!("{} repos", many.len())),
-        }
-    }
-
     /// One line per repository; `None` when there is none.
     pub fn branch_tooltip(&self) -> Option<String> {
         if self.repos.is_empty() {
@@ -232,44 +222,5 @@ mod tests {
             (s.branch_label(), s.branch_tooltip(), s.changed()),
             (None, None, 0)
         );
-    }
-
-    fn repo(name: &str, head: Option<&str>) -> RepoSummary {
-        RepoSummary {
-            repo: name.to_owned(),
-            branch: Some("main".to_owned()),
-            head: head.map(str::to_owned),
-            modified: 0,
-            untracked: 0,
-        }
-    }
-
-    /// 1 repo → its short hash; N repos → `N repos`; a root without `.git` still shows what its
-    /// child repos hold; nothing to show → `None` (never a placeholder).
-    #[test]
-    fn the_head_label_is_a_hash_or_a_repo_count() {
-        let hash = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
-        let one = GitSummary {
-            repos: vec![repo("", Some(hash))],
-        };
-        assert_eq!(one.head_label().as_deref(), Some("1a2b3c4"));
-
-        // Root without `.git`, one child repo.
-        let child = GitSummary {
-            repos: vec![repo("fe", Some(hash))],
-        };
-        assert_eq!(child.head_label().as_deref(), Some("1a2b3c4"));
-
-        let many = GitSummary {
-            repos: vec![repo("fe", Some(hash)), repo("be", None)],
-        };
-        assert_eq!(many.head_label().as_deref(), Some("2 repos"));
-
-        // A repo before its first commit has no hash to show.
-        let fresh = GitSummary {
-            repos: vec![repo("", None)],
-        };
-        assert_eq!(fresh.head_label(), None);
-        assert_eq!(GitSummary::default().head_label(), None);
     }
 }

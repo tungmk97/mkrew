@@ -93,8 +93,6 @@ fn total(usage: &SessionUsageEvent) -> u64 {
 pub struct ContextShare {
     pub label: String,
     pub warning: bool,
-    /// The share capped at 100, for the status bar's meter.
-    pub fill_percent: u8,
     /// Hover text: context size of the window and the tokens used.
     pub hover: String,
 }
@@ -116,7 +114,6 @@ pub fn context_share(usage: &SessionUsageEvent) -> Option<ContextShare> {
     Some(ContextShare {
         label: format!("ctx {percent}%"),
         warning: percent >= WARNING_PERCENT,
-        fill_percent: u8::try_from(percent.min(100)).unwrap_or(100),
         hover: format!(
             "Context {} of {} tokens · {} tokens used ({} in{cached}, {} out)",
             format_count(usage.context),
@@ -390,10 +387,7 @@ mod tests {
         assert_eq!(shown.cache.as_deref(), Some("cache 1.3M read"));
         assert_eq!(shown.model.as_deref(), Some("claude-opus-4"));
         let context = shown.context.expect("window known");
-        assert_eq!(
-            (context.label.as_str(), context.fill_percent),
-            ("ctx 62%", 62)
-        );
+        assert_eq!(context.label, "ctx 62%");
 
         let both = SessionUsageEvent {
             cache_read: 800,
@@ -411,19 +405,16 @@ mod tests {
         );
     }
 
-    /// The label keeps the true share; only the meter is capped at full.
+    /// The label keeps the true share past the window.
     #[test]
-    fn the_meter_is_capped_at_full() {
+    fn a_share_past_the_window_warns() {
         let over = SessionUsageEvent {
             context: 250_000,
             context_window: Some(200_000),
             ..usage(Ulid::new(), 1, 1)
         };
         let share = context_share(&over).expect("window known");
-        assert_eq!(
-            (share.label.as_str(), share.fill_percent),
-            ("ctx 125%", 100)
-        );
+        assert_eq!(share.label, "ctx 125%");
         assert!(share.warning);
     }
 }

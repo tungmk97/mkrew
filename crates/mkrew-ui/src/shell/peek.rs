@@ -47,7 +47,7 @@ impl Shell {
     }
 
     /// Opens the Inbox entry after the focused pane's session (wrapping); nothing while the
-    /// Inbox is empty. The key and the status bar's Inbox state both land here.
+    /// Inbox is empty. The key and the sidebar footer's Inbox state both land here.
     pub(crate) fn jump_next_inbox(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let entries = self.inbox_entries();
         let focused = self.focused_session().and_then(|id| {

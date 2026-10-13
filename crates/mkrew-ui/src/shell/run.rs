@@ -13,24 +13,6 @@ impl Shell {
             .unwrap_or_default()
     }
 
-    /// The button's main part: Run setup when nothing is configured, the run tab while
-    /// something runs, else run everything.
-    pub(crate) fn run_main_click(
-        &mut self,
-        project_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let summary = self.run_summary(project_id);
-        if summary.rows.is_empty() {
-            self.open_run_setup(project_id, true, window, cx);
-        } else if summary.any_live() {
-            self.show_run_tab(project_id, window, cx);
-        } else {
-            self.run_action(project_id, RunAction::Start, None, window, cx);
-        }
-    }
-
     /// `project.run_start` / `run_restart` / `run_stop` (`name` = one command, `None` = all).
     /// Running from all-stopped shows the run tab; restarts keep the view (SPEC §10). A
     /// failure shows in the sidebar notice.
@@ -293,8 +275,9 @@ impl Shell {
         .detach();
     }
 
-    /// The Run button (SPEC §10): a split accent button, `▶ Run` (or the running count and
-    /// ports, with ↻ and ■ beside it while live) and `▾` for the per-command menu below it.
+    /// The Run pill (SPEC §10): while something runs, a green pill `● 2 running :8082 :5180 ▾`
+    /// (amber dot and `1/2 running` when one is down); else a muted `Run ▾`. A click opens the
+    /// Run menu below it, which holds every Run action. The hover lists each command's state.
     pub(crate) fn render_run_button(
         &self,
         project_id: Ulid,
@@ -308,91 +291,73 @@ impl Shell {
         } else {
             summary.tooltip()
         };
-        // Idle: the accent (the logo's blue) fill; live: quiet, ↻ ■ carry the colors.
-        let label = if live {
-            summary.label().into_any_element()
+        let hover = theme.hover;
+        let fg = if live {
+            theme.run_pill_text
         } else {
-            icon_text(Icon::Play, summary.label(), button_fg(theme, true)).into_any_element()
+            theme.text_muted
         };
-        let main = button("run-main", label, theme, !live)
-            .flex_none()
-            .h(theme::rems_px(theme::ICON_BUTTON_SIZE))
-            .when(!live, |el| el.rounded_r_none())
-            .when(summary.warning(), |el| {
-                el.text_color(rgb(theme.status_needs_input))
-            })
-            .tooltip(tooltip(theme, &tip, ""))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                shell.run_main_click(project_id, window, cx);
-            }));
-        let open = self.run_menu == Some(project_id) && !self.modal_open();
-        let mut bar = div()
+        let dot = if summary.warning() {
+            theme.status_needs_input
+        } else {
+            theme.status_done
+        };
+        let pill = div()
+            .id("run-pill")
             .flex_none()
             .flex()
             .items_center()
-            .when(live, |el| el.gap(px(space::XS)))
-            .child(main);
-        if live {
-            for (id, glyph, tip, action) in [
-                (
-                    "run-restart",
-                    Icon::RotateCw,
-                    "Restart all run commands",
-                    RunAction::Restart,
-                ),
-                (
-                    "run-stop",
-                    Icon::CircleStop,
-                    "Stop all run commands",
-                    RunAction::Stop,
-                ),
-            ] {
-                bar = bar.child(
-                    run_icon_button(id, glyph, action, theme)
-                        .flex_none()
-                        .tooltip(tooltip(theme, tip, ""))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.run_action(project_id, action, None, window, cx);
-                        })),
-                );
-            }
-        }
-        // The ▾ half of the split button: same fill, a faint divider on its left.
-        let menu = button(
-            "run-menu",
-            icon_svg(
-                Icon::ChevronDown,
-                theme::ICON_SIZE_SMALL,
-                button_fg(theme, !live),
-            ),
-            theme,
-            !live,
-        )
-        .h(theme::rems_px(theme::ICON_BUTTON_SIZE))
-        .when(!live, |el| {
-            el.rounded_l_none()
-                .border_l(px(theme::BORDER_WIDTH))
-                .border_color(gpui::rgba(theme.on_accent_divider))
-        });
-        bar.child(
-            div()
-                .child(
-                    menu.tooltip(tooltip(theme, "Run commands", ""))
-                        // An open menu already closed on this mouse down (outside it): the
-                        // click reopens it.
-                        .on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.run_menu = Some(project_id);
-                            cx.notify();
-                        })),
-                )
-                .when(open, |el| {
-                    el.child(self.render_run_menu(project_id, &summary, theme, cx))
-                }),
-        )
-        .into_any_element()
+            .gap(px(space::S))
+            .h(theme::rems_px(theme::ICON_BUTTON_SIZE))
+            .px(px(space::M))
+            .rounded_full()
+            .border(px(theme::BORDER_WIDTH))
+            .cursor_pointer()
+            .whitespace_nowrap()
+            .text_size(font_size::META)
+            .text_color(rgb(fg))
+            .when(live, |el| {
+                el.bg(rgb(theme.run_pill_bg))
+                    .border_color(rgb(theme.run_pill_border))
+                    .font_weight(FontWeight(weight::MEDIUM))
+                    .hover(|style| style.opacity(opacity::HOVER))
+            })
+            .when(!live, |el| {
+                el.border_color(rgb(theme.border))
+                    .hover(move |style| style.bg(rgb(hover)))
+            })
+            .active(|style| style.opacity(opacity::ACTIVE))
+            .tooltip(tooltip(theme, &tip, ""))
+            // An open menu already closed on this mouse down (outside it): the click reopens it.
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                shell.run_menu = Some(project_id);
+                cx.notify();
+            }))
+            // ponytail: a steady dot, not a pulse: a pulse re-renders the window for as long as
+            // a dev server runs (hours), against the idle CPU budget (SPEC §15).
+            .when(live, |el| {
+                el.child(status_dot("run-pill-dot", dot, false, false))
+            })
+            .child(summary.label())
+            .children(summary.ports_text().map(|ports| {
+                div()
+                    .font_family(theme.terminal_font_family.clone())
+                    .child(ports)
+            }))
+            .child(icon_svg(Icon::ChevronDown, theme::ICON_SIZE_SMALL, fg));
+        let open = self.run_menu == Some(project_id) && !self.modal_open();
+        div()
+            .child(pill)
+            .when(open, |el| {
+                el.child(self.render_run_menu(project_id, &summary, theme, cx))
+            })
+            .into_any_element()
     }
 
-    /// One row per command (state, ports, ↻ ■ or ▶), then "Show Run tab" and "Run setup…".
+    /// `RUNNING IN <WORKSPACE>`: one row per command (state dot, name, ports, then ↻ and a red
+    /// ■ while it runs, ▶ otherwise); then Restart all / Stop all while anything runs, Start all
+    /// while nothing does, Show Run tab, and Run setup… (which runs the commands after saving
+    /// when none were set up yet).
     pub(crate) fn render_run_menu(
         &self,
         project_id: Ulid,
@@ -406,15 +371,29 @@ impl Shell {
                 .my(px(space::XS))
                 .bg(rgb(theme.border))
         };
+        let live = summary.any_live();
+        let workspace = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .map_or(String::new(), |project| project.name.to_uppercase());
+        let heading = div()
+            .px(px(space::S))
+            .py(px(space::XS))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text_muted))
+            .child(if live {
+                format!("RUNNING IN {workspace}")
+            } else {
+                format!("RUN IN {workspace}")
+            });
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         for row in &summary.rows {
             let running = matches!(row.state, RowState::Running(_));
-            let color = match row.state {
-                RowState::Running(_) => theme.status_done,
-                RowState::Exited(_) => theme.status_exited,
-                RowState::Stopped => theme.text_muted,
+            let (color, hollow) = match row.state {
+                RowState::Running(_) => (theme.status_done, false),
+                RowState::Exited(_) => (theme.status_exited, false),
+                RowState::Stopped => (theme.status_idle, true),
             };
-            let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
             let controls: &[(Icon, &'static str, RunAction)] = if running {
                 &[
                     (Icon::RotateCw, "Restart this command", RunAction::Restart),
@@ -423,6 +402,7 @@ impl Shell {
             } else {
                 &[(Icon::Play, "Run this command", RunAction::Start)]
             };
+            let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
             let mut line = div()
                 .flex()
                 .items_center()
@@ -430,23 +410,37 @@ impl Shell {
                 .px(px(space::S))
                 .py(px(space::XS))
                 .text_size(font_size::BODY)
+                .child(status_dot(
+                    SharedString::from(format!("run-dot-{}", row.name)),
+                    color,
+                    hollow,
+                    false,
+                ))
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
+                        .truncate()
                         .text_color(rgb(theme.text))
                         .child(row.name.clone()),
                 )
+                // Running: its ports; otherwise its state in words (never color alone).
                 .child(
                     div()
-                        .text_size(font_size::META)
-                        .text_color(rgb(color))
-                        .child(run::state_text(&row.state)),
-                )
-                .child(
-                    div()
+                        .flex_none()
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
-                        .child(ports.join(" ")),
+                        .when(running, |el| {
+                            el.font_family(theme.terminal_font_family.clone())
+                                .child(ports.join(" "))
+                        })
+                        .when(!running, |el| {
+                            el.child(
+                                run::state_text(&row.state)
+                                    .trim_start_matches(['○', '✕', ' '])
+                                    .to_owned(),
+                            )
+                        }),
                 );
             for &(glyph, tip, action) in controls {
                 let name = row.name.clone();
@@ -454,9 +448,10 @@ impl Shell {
                 line = line.child(
                     div()
                         .id(SharedString::from(format!("run-{action:?}-{}", row.name)))
+                        .flex_none()
                         .flex()
                         .items_center()
-                        .px(px(space::XS))
+                        .p(px(space::XS))
                         .rounded(px(radius::SMALL))
                         .cursor_pointer()
                         .hover(move |style| style.bg(rgb(colors.tint)))
@@ -471,37 +466,76 @@ impl Shell {
             }
             rows.push(line.into_any_element());
         }
+        let item = |id: &'static str, glyph: Icon, label: &'static str, color: u32| {
+            menu_item(id.into(), theme)
+                .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
+                .child(div().flex_1().text_color(rgb(color)).child(label))
+        };
+        let mut actions: Vec<gpui::AnyElement> = Vec::new();
+        if live {
+            actions.push(
+                item("run-restart", Icon::RotateCw, "Restart all", theme.text)
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.run_action(project_id, RunAction::Restart, None, window, cx);
+                    }))
+                    .into_any_element(),
+            );
+            actions.push(
+                item(
+                    "run-stop",
+                    Icon::CircleStop,
+                    "Stop all",
+                    theme.status_exited,
+                )
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    shell.run_action(project_id, RunAction::Stop, None, window, cx);
+                }))
+                .into_any_element(),
+            );
+        } else if !summary.rows.is_empty() {
+            actions.push(
+                item("run-start", Icon::Play, "Start all", theme.text)
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.run_action(project_id, RunAction::Start, None, window, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        // Nothing set up yet: Save in the setup also runs them (the old Run button's click).
+        let run_after = summary.rows.is_empty();
         let panel = menu_panel("run-menu-panel", theme)
             .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                 shell.run_menu = None;
                 cx.notify();
             }))
+            .child(heading)
             .when(!rows.is_empty(), |el| el.children(rows).child(separator()))
+            .when(!actions.is_empty(), |el| {
+                el.children(actions).child(separator())
+            })
             .child(
-                menu_item("run-show-tab".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Show Run tab"),
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.show_run_tab(project_id, window, cx);
-                    })),
+                item(
+                    "run-show-tab",
+                    Icon::SquareTerminal,
+                    "Show Run tab",
+                    theme.text,
+                )
+                .on_click(cx.listener(move |shell, _, window, cx| {
+                    cx.stop_propagation();
+                    shell.show_run_tab(project_id, window, cx);
+                })),
             )
             .child(
-                menu_item("run-setup".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Run setup…"),
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
+                item("run-setup", Icon::Settings, "Run setup…", theme.text).on_click(cx.listener(
+                    move |shell, _, window, cx| {
                         cx.stop_propagation();
-                        shell.open_run_setup(project_id, false, window, cx);
-                    })),
+                        shell.run_menu = None;
+                        shell.open_run_setup(project_id, run_after, window, cx);
+                    },
+                )),
             );
         deferred(
             anchored()

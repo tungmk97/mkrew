@@ -1,5 +1,6 @@
 //! Workspace sidebar view-model (SPEC §10, §11): workspaces, and per expanded workspace its
-//! sessions with status. Pure and tested headlessly; `main.rs` renders the rows.
+//! sessions with status. Run sessions are not session rows: the sidebar's RUN group shows
+//! them (from [`crate::run::summary`]). Pure and tested headlessly; `main.rs` renders the rows.
 
 use std::collections::{HashMap, HashSet};
 
@@ -206,8 +207,10 @@ pub struct WorkspaceRow {
     pub name: String,
     pub path: String,
     pub expanded: bool,
-    /// Sessions in `working`.
+    /// Agent sessions in `working`, `needs input` and `idle`.
     pub working: usize,
+    pub asking: usize,
+    pub idle: usize,
     /// Any session needs input (shown as `?`).
     pub needs_input: bool,
     /// `1 working` / `2 idle` …, `None` without sessions in those states.
@@ -216,6 +219,8 @@ pub struct WorkspaceRow {
     pub color: Option<String>,
     /// Pinned workspaces lead the list (SPEC §10).
     pub pinned: bool,
+    /// No live session and no run command: drawn on the sidebar's "N empty workspaces" line.
+    pub empty: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -512,10 +517,13 @@ impl Sidebar {
                 path: project.path.clone(),
                 expanded,
                 working,
+                asking,
+                idle,
                 needs_input: asking > 0,
                 summary: workspace_summary(working, asking, idle),
                 color: project.color.clone(),
                 pinned: project.pinned,
+                empty: sessions.is_empty() && project.run_commands.is_empty(),
             }));
             if !expanded {
                 continue;
@@ -550,15 +558,14 @@ impl Sidebar {
 
     /// Per workspace (in list order): its live sessions matching the filter text, newest first.
     /// An exited session cannot be opened: no row (History and the Inbox read it from
-    /// `sessions()`; ADR 0033).
+    /// `sessions()`; ADR 0033). Run sessions are left out (the RUN group shows them).
     fn grouped(&self) -> Vec<(&Project, Vec<&Session>)> {
         let query = self.filter.trim().to_lowercase();
         let mut by_project: HashMap<Ulid, Vec<&Session>> = HashMap::new();
-        for session in self
-            .sessions
-            .iter()
-            .filter(|session| session.state != SessionState::Exited)
-        {
+        for session in self.sessions.iter().filter(|session| {
+            session.state != SessionState::Exited
+                && mkrew_core::run::command_name(session).is_none()
+        }) {
             by_project
                 .entry(session.project_id)
                 .or_default()

@@ -75,6 +75,40 @@ fn session_ids(rows: &[Row]) -> Vec<Ulid> {
 }
 
 #[test]
+fn run_sessions_are_not_session_rows_and_a_workspace_with_run_commands_is_not_empty() {
+    let mut api = project("api");
+    api.run_commands.push(mkrew_protocol::RunCommand {
+        name: "BE".to_owned(),
+        dir: ".".to_owned(),
+        command: "cargo run".to_owned(),
+        env_file: None,
+        env: Vec::new(),
+    });
+    let web = project("web");
+    let mut run = session(&api, 1, SessionState::Working);
+    (run.kind, run.title) = (SessionKind::Shell, Some("run:BE".to_owned()));
+    let agent = session(&web, 2, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api, web], vec![run, agent.clone()]);
+    let rows = sidebar.rows();
+    assert_eq!(session_ids(&rows), vec![agent.id], "{rows:?}");
+    let workspaces: Vec<bool> = (rows.iter())
+        .filter_map(|row| match row {
+            Row::Workspace(row) => Some(row.empty),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        workspaces,
+        [false, false],
+        "a run command or a session keeps it listed"
+    );
+    let mut docs = Sidebar::default();
+    docs.load(vec![project("docs")], Vec::new());
+    assert!(workspace(&docs.rows()[0]).empty);
+}
+
+#[test]
 fn every_state_has_an_icon_and_text() {
     let states = [
         SessionState::Starting,
@@ -401,10 +435,13 @@ fn added_and_updated_workspaces_show_up_and_archived_ones_leave() {
                 path: api.path.clone(),
                 expanded: true,
                 working: 0,
+                asking: 0,
+                idle: 0,
                 needs_input: false,
                 summary: None,
                 color: None,
                 pinned: false,
+                empty: true,
             }),
             Row::NoSessions { project_id: api.id },
         ]
