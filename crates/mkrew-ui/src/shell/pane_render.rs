@@ -56,6 +56,7 @@ impl Shell {
                 div()
                     .id(group.clone())
                     .group(group.clone())
+                    .relative()
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
@@ -74,6 +75,17 @@ impl Shell {
                             .border_color(rgb(theme.border))
                             .font_weight(FontWeight(weight::MEDIUM))
                             .text_color(rgb(theme.text))
+                            // Accent line along the bottom, inset by the corner radius.
+                            .child(
+                                div()
+                                    .absolute()
+                                    .bottom_0()
+                                    .left(px(radius::MEDIUM))
+                                    .right(px(radius::MEDIUM))
+                                    .h(px(theme::PANE_ACCENT_WIDTH))
+                                    .rounded_full()
+                                    .bg(rgb(theme.accent)),
+                            )
                     })
                     .when(!is_active, |el| {
                         el.text_color(rgb(theme.text_muted))
@@ -390,9 +402,9 @@ impl Shell {
     }
 
     /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
-    /// pane with it on), its composer, its border. Among several panes it gets a compact header,
-    /// the focused one a 2 px accent line on top and the others a dim; a single pane has no
-    /// header (the tab bar shows its status) and its color is a 2 px line on top.
+    /// pane with it on), its composer, its border. Among several panes it gets a compact header
+    /// and the unfocused ones a dim; a single pane has no header (the tab bar shows its status)
+    /// and its color is a 2 px line on top.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
@@ -494,18 +506,6 @@ impl Shell {
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(border)),
             )
-            .when(several && is_focused, |el| {
-                el.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .h(px(theme::PANE_ACCENT_WIDTH))
-                        .rounded_t(px(radius::MEDIUM))
-                        .bg(rgb(theme.accent)),
-                )
-            })
     }
 
     /// An agent pane at reading width: its own toggle, else `[ui] reading_width`. Shell and run

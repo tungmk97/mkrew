@@ -26,7 +26,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   group lists commands with ports and opens a running one's pane; "N empty workspaces" expands and
   its rows open their workspace; footer Inbox jumps to the next entry; compact toggle works.
 - [ ] **Panes:** a single pane has no header and its pill / Share / ctx % sit in the tab strip;
-  F2 renames it there; split panes show compact headers with an accent line on the focused one.
+  F2 renames it there; split panes show compact headers, no accent line on the focused pane;
+  the active tab has a 2 px accent line along its bottom, inset from its rounded corners.
 - [ ] **Reading width:** an agent pane wraps at about 130 columns, centered; 📖 switches it to full
   width and back (the agent redraws); shells stay full width; `[ui] reading_width = false` makes
   agents start full width.

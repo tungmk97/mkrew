@@ -41,8 +41,9 @@ empty, detail on demand — without losing any feature.
   compact toggle. The order stays pinned-first then age (the Workspace 1–9 keys follow it).
 - **Tab strip and panes:** one status dot per tab; a single pane has no header — its status
   (folder, pill, conflict, queued, context share) and agent controls (Reading width, Share) sit at
-  the right end of the strip, F2 shows the rename field there; a split shows compact headers, the
-  focused pane a 2 px accent line, the others dimmed. Close pane, Rename pane, Follow in Zed and
+  the right end of the strip, F2 shows the rename field there; the active tab has a 2 px accent
+  line along its bottom; a split shows compact headers, the panes keep only their thin border and
+  the unfocused ones are dimmed. Close pane, Rename pane, Follow in Zed and
   Turns… are in the `⋯` (tab) menu.
 - **Reading width:** an agent pane's terminal element is at most 960 px wide and centered, so the
   usual resize gives the PTY fewer columns; nothing reflows output. Default `[ui] reading_width`

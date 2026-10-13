@@ -93,7 +93,7 @@ Clicking through menus by hand is listed in `docs/HUMAN_CHECKS.md`.
 | P10 | Turns… (feature flag) | `open_turns` | ⋯ menu | [x] |
 | P11 | Right-click header → pane menu | `open_pane_menu` | split header; any pane via its sidebar row | [x] |
 | P12 | Pane color line under header | `PANE_ACCENT_WIDTH` | split: under the header; single: 2 px line on top of the terminal | [x] |
-| P13 | Focus border, unfocused dim | `pane_border` | border kept (amber needs input); focused split pane: 2 px accent top line; others dimmed | [x] |
+| P13 | Focus border, unfocused dim | `pane_border` | border kept (amber needs input); unfocused split panes dimmed; the active tab gets a 2 px accent bottom line | [x] |
 | P14 | Pane placeholder | `pane_placeholder` | unchanged | [x] |
 | P15 | OS file drop | `drop_catcher` | unchanged | [x] |
 | P16 | Divider drag | `pane_divider` | unchanged | [x] |

@@ -929,8 +929,9 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   Esc cancels, blank clears; run panes keep their command name — ADR 0031; for a single pane F2
   shows the rename field in the tab strip; without a title an agent pane shows the title its
   agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the
-  order is: user title > terminal title > agent name). The focused pane of a split has a 2 px
-  accent line on top, the others are dimmed. The sidebar session row also puts the badge
+  order is: user title > terminal title > agent name). The active tab has a 2 px accent line
+  along its bottom (inset by its corner radius); in a split the panes keep only their thin
+  border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip; it also shows on board cards and in
   agent menus.
 - Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
