@@ -342,7 +342,8 @@ function ensureTerminal() {
   term = new Terminal({
     disableStdin: true,
     cursorBlink: false,
-    fontFamily: '"SF Mono", Menlo, "Cascadia Mono", Consolas, monospace',
+    // First: its unicode-range limits it to icon code points, and a later font may claim those as tofu.
+    fontFamily: '"Symbols Nerd Font Mono", "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace',
     fontSize: 8,
     scrollback: 2000,
     theme: TERMINAL_THEME,

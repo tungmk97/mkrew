@@ -13,6 +13,7 @@ pub struct Asset {
 const HTML: &str = "text/html; charset=utf-8";
 const JS: &str = "text/javascript; charset=utf-8";
 const CSS: &str = "text/css; charset=utf-8";
+const WOFF2: &str = "font/woff2";
 
 /// The page (Task 2 of the mobile-web plan), embedded in `mk`.
 pub const ASSETS: &[Asset] = &[
@@ -45,6 +46,11 @@ pub const ASSETS: &[Asset] = &[
         path: "/vendor/xterm.css",
         content_type: CSS,
         body: include_bytes!("../../web/vendor/xterm.css"),
+    },
+    Asset {
+        path: "/vendor/SymbolsNerdFontMono-Regular.woff2",
+        content_type: WOFF2,
+        body: include_bytes!("../../web/vendor/SymbolsNerdFontMono-Regular.woff2"),
     },
 ];
 
@@ -245,6 +251,7 @@ mod tests {
             ("/index.html", "text/html; charset=utf-8"),
             ("/app.mjs", "text/javascript; charset=utf-8"),
             ("/vendor/xterm.css", "text/css; charset=utf-8"),
+            ("/vendor/SymbolsNerdFontMono-Regular.woff2", "font/woff2"),
         ] {
             match route(&head(&format!("GET {path} HTTP/1.1\r\n\r\n")), &token()) {
                 Route::Asset(asset) => assert_eq!(asset.content_type, kind, "{path}"),
