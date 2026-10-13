@@ -25,18 +25,25 @@
 
 - `mk web [--listen 127.0.0.1:8787] [--host NAME] [--new-token]` (§9) starts the daemon if none
   runs, prints `https://<MagicDNS name>/#t=<token>` and serves `index.html`, `app.css`,
-  `app.mjs`, `model.mjs` and xterm.js 6 (vendored, MIT) from the binary.
+  `app.mjs`, `model.mjs`, `apple-touch-icon.png` (the Home Screen icon, 180 px, from
+  `icon/mkrew-1-lanes/tile-dark.svg` drawn full-bleed) and xterm.js 6 (vendored, MIT) from the
+  binary.
 - Token: 32 random bytes as lowercase hex in `<config>/web_token` (owner-only on Unix), required
   by `/check` and `/ws`; `--new-token` replaces it. It travels in the URL fragment of the printed
   link, so it is not in any request line except the page's own `/check` and `/ws` calls.
 - Relay: one async daemon connection per WebSocket; `mk web` sends `hello` itself and refuses
   `hello` and `session.resize` from the browser; responses and `session.snapshot` events with a
   snapshot gain `ansi` (`mkrew_protocol::paint`); output frames go out as binary messages
-  (26-character session id + PTY bytes); at most 64 messages wait for a slow browser.
+  (26-character session id + PTY bytes); at most 64 messages wait for a slow browser. A reply
+  to a browser `session.history` request is preceded by one output message holding the newest
+  512 KiB of the session's log (`mkrew_core::log_tail`), or replaced by an `internal` error when
+  the log cannot be read: the page replays sessions that ended (2026-10-13).
 - The page (mockups in `docs/design/mobile-web/`): Sessions ("Needs you" + one group per
   workspace), Session (terminal scaled to fit, quick keys Enter/Esc/↑/↓/Tab/y/n/Ctrl+C, reply
   box = `session.send`), New agent (agent + prompt → task + run; shell → spawn + send), token
-  screen, reconnect banner. It never resizes a session.
+  screen, reconnect banner. It never resizes a session. Added 2026-10-13: a Stop button
+  (`session.kill`), chips of the last 5 one-line replies (`localStorage` `mkrew.replies`), and
+  sessions that ended in the last 24 h (listed below the live ones, opened as a log replay).
 
 ## Consequences
 

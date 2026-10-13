@@ -2,8 +2,9 @@
 // `mk web`; never resizes a session (the desktop pane keeps its size, the font shrinks here).
 import { Terminal } from './vendor/xterm.mjs';
 import {
-  backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, machineName, metaText,
-  newAgentPlan, pillText, readerText, statusLabel, toBase64, tokenFromHash, tokenFromText, wsClass,
+  backoff, buildList, chipFor, displayName, esc, fitFontSize, keepSession, keyBytes, loadReplies,
+  machineName, metaText, newAgentPlan, pillText, readerText, rememberReply, statusLabel, toBase64,
+  tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -11,6 +12,7 @@ const TOKEN_KEY = 'mkrew.token';
 const VIEW_KEY = 'mkrew.view';
 /** Session views, in the order the view button cycles them. */
 const VIEWS = { fit: 'Fit', zoom: 'Zoom', read: 'Read' };
+const REPLIES_KEY = 'mkrew.replies';
 /** Size of sessions started from the web: the desktop default; the phone never resizes. */
 const NEW_SIZE = { cols: 120, rows: 30 };
 const ID_LEN = 26;
@@ -40,6 +42,9 @@ const state = {
   sessions: new Map(),
   open: null,
   reloadTimer: 0,
+  /** The ended session whose `session.history` reply is still awaited. */
+  replaying: null,
+  replies: loadReplies(localStorage.getItem(REPLIES_KEY)),
 };
 const machine = machineName(location.hostname);
 const idDecoder = new TextDecoder();
@@ -200,10 +205,10 @@ async function load() {
   ]);
   state.projects = projects;
   state.profiles = profiles.profiles;
-  // Keep sessions this page already knew even when the fresh list no longer has them
-  // (they exited while disconnected): they stay listed (✕) until the page reloads,
-  // and the open one shows why it ended instead of freezing.
-  const next = new Map(sessions.filter((s) => s.state !== 'exited' || state.sessions.has(s.id)).map((s) => [s.id, s]));
+  // Ended sessions: the ones of the last 24 h, plus any this page already knew (they ended
+  // while it was disconnected), so the open one shows why it ended instead of freezing.
+  const now = Date.now();
+  const next = new Map(sessions.filter((s) => keepSession(s, state.sessions.has(s.id), now)).map((s) => [s.id, s]));
   for (const [id, s] of state.sessions) if (s.state === 'exited' && !next.has(id)) next.set(id, s);
   state.sessions = next;
   state.loaded = true;
@@ -227,6 +232,7 @@ function onEvent(name, data) {
       if (!s) return;
       s.state = 'exited';
       s.exit_code = data.exit_code;
+      s.ended_at = Date.now();
       break;
     case 'session.updated': {
       const old = state.sessions.get(data.id);
@@ -335,6 +341,7 @@ function renderSession() {
   const ended = s.state === 'exited';
   $('composer').hidden = ended;
   $('ended').hidden = !ended;
+  $('stop').hidden = ended;
   $('ended-text').textContent = s.exit_code == null ? 'Session ended' : `Session ended (exit ${s.exit_code})`;
 }
 
@@ -482,10 +489,10 @@ async function openSession(id) {
   $('reply').value = '';
   grow($('reply'));
   render();
-  // An ended session has nothing to attach to: the screen only shows why it ended.
-  if (state.sessions.get(id)?.state === 'exited') return;
+  // An ended session cannot be attached: `mk web` replays the end of its log instead.
   try {
-    await attach(id);
+    if (state.sessions.get(id)?.state === 'exited') await replay(id);
+    else await attach(id);
   } catch (err) {
     toast(err.message);
   }
@@ -508,6 +515,21 @@ async function attach(id) {
   }
 }
 
+/** The newest output of an ended session: `mk web` sends it as output just before this reply. */
+async function replay(id) {
+  // A replay of this session is still on its way: its output will land in the fresh terminal.
+  if (state.replaying === id) return;
+  const s = state.sessions.get(id);
+  term.resize(s.cols, s.rows);
+  fitTerminal();
+  state.replaying = id;
+  try {
+    await call('session.history', { session_id: id });
+  } finally {
+    if (state.replaying === id) state.replaying = null;
+  }
+}
+
 function detach(id) {
   call('session.detach', { session_id: id }).catch(() => {});
 }
@@ -522,6 +544,23 @@ function closeSession() {
 function grow(box) {
   box.style.height = 'auto';
   box.style.height = `${Math.min(box.scrollHeight, 132)}px`;
+}
+
+function renderReplies() {
+  $('replies').innerHTML = state.replies
+    .map((text, i) => `<button class="reply-chip" type="button" data-reply="${i}">${esc(text)}</button>`)
+    .join('');
+}
+
+async function sendReply(text) {
+  await call('session.send', { session_id: state.open, text, submit: true });
+  state.replies = rememberReply(state.replies, text);
+  try {
+    localStorage.setItem(REPLIES_KEY, JSON.stringify(state.replies));
+  } catch {
+    // Storage full or off: the text was sent; the chips just are not kept.
+  }
+  renderReplies();
 }
 
 // ---- new agent ----
@@ -678,7 +717,7 @@ function wire() {
     const text = box.value;
     if (!text.trim() || !state.open) return;
     try {
-      await call('session.send', { session_id: state.open, text, submit: true });
+      await sendReply(text);
       box.value = '';
       grow(box);
     } catch (err) {
@@ -695,6 +734,12 @@ function wire() {
   keepKeyboard($('keys'));
   keepKeyboard($('send'));
   touchScroll($('term'));
+  keepKeyboard($('replies'));
+  $('replies').addEventListener('click', (e) => {
+    const i = e.target.closest('[data-reply]')?.dataset.reply;
+    if (i === undefined || !state.open) return;
+    sendReply(state.replies[Number(i)]).catch((err) => toast(err.message));
+  });
   $('keys').addEventListener('click', (e) => {
     const key = e.target.closest('[data-key]')?.dataset.key;
     if (!key || !state.open) return;
@@ -706,6 +751,13 @@ function wire() {
     applyView();
   });
   applyView();
+
+  $('stop').addEventListener('click', () => {
+    const s = state.sessions.get(state.open);
+    if (!s) return;
+    if (!confirm(`Stop session "${displayName(s, state.profiles)}"? It ends on ${machine}.`)) return;
+    call('session.kill', { session_id: s.id, force: false }).catch((err) => toast(err.message));
+  });
 
   $('sheet-close').addEventListener('click', closeSheet);
   $('sheet').addEventListener('click', (e) => {
@@ -741,6 +793,7 @@ function start() {
   // Keep `#t=` in the URL: "Add to Home Screen" bookmarks it, and iOS gives the Home Screen
   // app its own storage.
   if (state.token && !fromHash) history.replaceState(history.state, '', `#t=${state.token}`);
+  renderReplies();
   wire();
   fitViewport();
   if (state.token) {

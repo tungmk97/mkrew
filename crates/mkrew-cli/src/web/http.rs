@@ -14,6 +14,7 @@ const HTML: &str = "text/html; charset=utf-8";
 const JS: &str = "text/javascript; charset=utf-8";
 const CSS: &str = "text/css; charset=utf-8";
 const WOFF2: &str = "font/woff2";
+const PNG: &str = "image/png";
 
 /// The page (Task 2 of the mobile-web plan), embedded in `mk`.
 pub const ASSETS: &[Asset] = &[
@@ -51,6 +52,11 @@ pub const ASSETS: &[Asset] = &[
         path: "/vendor/SymbolsNerdFontMono-Regular.woff2",
         content_type: WOFF2,
         body: include_bytes!("../../web/vendor/SymbolsNerdFontMono-Regular.woff2"),
+    },
+    Asset {
+        path: "/apple-touch-icon.png",
+        content_type: PNG,
+        body: include_bytes!("../../web/apple-touch-icon.png"),
     },
 ];
 
@@ -266,6 +272,18 @@ mod tests {
             route(&head("POST / HTTP/1.1\r\n\r\n"), &token()),
             Route::MethodNotAllowed
         ));
+    }
+
+    #[test]
+    fn serves_the_home_screen_icon_as_png() {
+        let Route::Asset(icon) = route(
+            &head("GET /apple-touch-icon.png HTTP/1.1\r\n\r\n"),
+            &token(),
+        ) else {
+            panic!("no icon");
+        };
+        assert_eq!(icon.content_type, "image/png");
+        assert!(icon.body.starts_with(b"\x89PNG\r\n\x1a\n"), "not a PNG");
     }
 
     #[test]

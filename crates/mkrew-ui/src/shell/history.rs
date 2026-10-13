@@ -317,7 +317,9 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let tail = match files.await {
                 Ok(history) => background
-                    .spawn(async move { history::read_tail(&history.files, history::TAIL_BYTES) })
+                    .spawn(async move {
+                        mkrew_core::log_tail::read_tail(&history.files, history::TAIL_BYTES)
+                    })
                     .await
                     .map_err(|error| format!("Cannot read the log: {error}")),
                 Err(error) => Err(format!("{error:#}")),

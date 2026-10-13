@@ -15,6 +15,19 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-13 Mkrew web extras (plan docs/superpowers/plans/2026-10-13-mobile-web-extras.md)
+
+- [ ] **Icon:** remove the old Home Screen bookmark, open the link in Safari, Share → Add to Home
+  Screen: the preview and the Home Screen show the Mkrew lanes icon (not a page screenshot).
+- [ ] **Stop:** open a running Claude session, tap the square button → "Stop session …?" → OK:
+  within a few seconds the pill shows "Exited", and the desktop pane shows the session ended.
+  Cancel leaves it running.
+- [ ] **Quick replies:** send "continue" from the Reply box, open another session: the chip
+  "continue" leads the row; tapping it sends at once and the keyboard does not jump.
+- [ ] **Ended sessions:** a session that ended in the last hours is listed (✕, muted, "2h") below
+  the live ones; opening it shows the end of its output at its own width and "Session ended".
+  A session that ended yesterday morning is gone from the list.
+
 ### To verify — 2026-10-12 Phone access from the UI (plan docs/superpowers/plans/2026-10-12-phone-access-ui.md, ADR 0053)
 
 - [ ] **Dialog, dark and light:** palette → "Global: Phone access…" and the title bar phone icon both

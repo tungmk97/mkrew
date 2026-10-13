@@ -1086,6 +1086,7 @@ fn web_serves_the_page_and_relays_a_session() {
         "/app.css",
         "/vendor/xterm.mjs",
         "/vendor/xterm.css",
+        "/apple-touch-icon.png",
     ] {
         assert_eq!(web.get(asset).0, 200, "{asset}");
     }
@@ -1180,6 +1181,38 @@ fn web_serves_the_page_and_relays_a_session() {
         v["event"] == "session.exited" && v["data"]["session_id"] == id.as_str()
     });
     assert_eq!(exited["data"]["exit_code"], 0, "{exited}");
+
+    // An ended session: its log comes back as output, before the `session.history` reply.
+    let history = mkrew_protocol::Message::Request {
+        id: 7,
+        request: Request::SessionHistory(SessionRef { session_id }),
+    };
+    ws.send(tungstenite::Message::text(
+        serde_json::to_string(&history).unwrap(),
+    ))
+    .unwrap();
+    let mut replayed = Vec::new();
+    loop {
+        match ws.read().unwrap() {
+            tungstenite::Message::Binary(bytes) => {
+                assert_eq!(&bytes[..26], id.as_bytes(), "output of another session");
+                replayed.extend_from_slice(&bytes[26..]);
+            }
+            tungstenite::Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if value["id"] == 7 {
+                    assert!(value.get("error").is_none(), "{value}");
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let replayed = String::from_utf8_lossy(&replayed);
+    assert!(
+        replayed.contains("(y/n)"),
+        "the log tail misses the question: {replayed}"
+    );
 }
 
 #[test]
