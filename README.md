@@ -192,7 +192,8 @@ running when the Mkrew window is closed. To have it right after you log on, with
 Mkrew, add a Task Scheduler task: trigger "At log on", action `mk.exe daemon start`. Do not
 schedule `mk.exe web` itself: it fights the daemon's own `mk web` for port 8787 and **Stop** does
 not stop it. **Stop** in the same dialog cuts the phone off at once. The phone never changes a
-session's size; the terminal font shrinks to fit (pinch to zoom).
+session's size. The view button on a session cycles **Fit** (the font shrinks to the width),
+**Zoom** (the rows fill the height; pan sideways) and **Read** (the text, wrapped to the phone).
 Lost the phone or shared the link by mistake? Click **Stop**, run `mk web --new-token` and stop it
 again with `Ctrl+C`, then click **Start**: old links stop working.
 

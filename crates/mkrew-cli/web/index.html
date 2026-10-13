@@ -63,18 +63,20 @@
     <span class="chip" id="s-chip" aria-hidden="true"></span>
     <h1 class="s-title" id="s-title"></h1>
     <span class="pill" id="s-pill"></span>
+    <button class="icon-btn" id="view" type="button"><span class="view-label" id="view-label" aria-hidden="true">Fit</span></button>
   </header>
   <div class="term" id="term" role="region" aria-label="Terminal output"></div>
+  <pre class="reader" id="reader" role="region" aria-label="Session text" hidden></pre>
   <form class="composer" id="composer">
     <div class="keys" id="keys" role="group" aria-label="Quick keys">
-      <button class="key" type="button" data-key="enter">Enter</button>
+      <button class="key" type="button" data-key="enter" aria-label="Enter">↵</button>
       <button class="key" type="button" data-key="esc" aria-label="Escape">Esc</button>
       <button class="key" type="button" data-key="up" aria-label="Arrow up">↑</button>
       <button class="key" type="button" data-key="down" aria-label="Arrow down">↓</button>
       <button class="key" type="button" data-key="tab">Tab</button>
       <button class="key" type="button" data-key="y">y</button>
       <button class="key" type="button" data-key="n">n</button>
-      <button class="key" type="button" data-key="ctrl_c" aria-label="Control C">Ctrl+C</button>
+      <button class="key" type="button" data-key="ctrl_c" aria-label="Control C">^C</button>
     </div>
     <div class="reply">
       <label class="vh" for="reply">Reply to session</label>

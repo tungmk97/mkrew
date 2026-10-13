@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   ago, backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, machineName,
   metaText, newAgentPlan, pillText, statusLabel, taskTitle, toBase64, tokenFromHash,
-  tokenFromText, wsClass,
+  readerText, tokenFromText, wsClass,
 } from './model.mjs';
 
 const T = 'ab'.repeat(32);
@@ -139,4 +139,20 @@ test('task titles are the first line, cut at 60 characters', () => {
 test('escaping and base64 of UTF-8', () => {
   assert.equal(esc(`<a href="x">'&'</a>`), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
   assert.equal(toBase64('é\r'), 'w6kN');
+});
+
+test('read view joins soft-wrapped rows, tames boxes and squeezes blank rows', () => {
+  const row = (text, wrapped = false) => ({ text, wrapped });
+  const rows = [
+    row(''), row('╭' + '─'.repeat(100) + '╮'),
+    row('│ a long line that the terminal wr'), row('apped                    │', true),
+    row('│   indented │ cell  │'),
+    row(''), row(''), row(''),
+    row('  indented  code'),
+    row(''), row(''),
+  ];
+  assert.equal(readerText(rows), '╭───╮\na long line that the terminal wrapped\n  indented │ cell\n\n  indented  code');
+  assert.equal(readerText([row(''), row('│   │')]), '');
+  // A continuation row with no row before it starts the text.
+  assert.equal(readerText([row('tail', true)]), 'tail');
 });

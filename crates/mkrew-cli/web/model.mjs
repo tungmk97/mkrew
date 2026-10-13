@@ -139,6 +139,28 @@ export function fitFontSize(width, cols) {
   return Math.min(14, Math.max(4, Math.floor((width / (cols * 0.6)) * 10) / 10));
 }
 
+/** Read-view text of terminal rows (`{text, wrapped}`, text right-trimmed): soft-wrapped rows
+ *  joined, box-drawing rules shortened and a box's side borders dropped (both would wrap or
+ *  clutter on a phone), blank runs kept to one, leading and trailing blanks dropped. */
+export function readerText(rows) {
+  const lines = [];
+  for (const { text, wrapped } of rows) {
+    if (wrapped && lines.length) lines[lines.length - 1] += text;
+    else lines.push(text);
+  }
+  const kept = [];
+  for (const raw of lines) {
+    const line = raw
+      .replace(/([─━═╌┄])\1{3,}/g, '$1$1$1')
+      .replace(/^(\s*)[│┃║] ?/, '$1')
+      .replace(/\s*[│┃║]$/, '')
+      .trimEnd();
+    if (line || kept.at(-1)) kept.push(line);
+  }
+  while (kept.length && !kept.at(-1)) kept.pop();
+  return kept.join('\n');
+}
+
 /** The task card title for a prompt: its first line, at most 60 characters. */
 export function taskTitle(prompt) {
   const line = prompt.trim().split('\n', 1)[0].trim();

@@ -3,11 +3,14 @@
 import { Terminal } from './vendor/xterm.mjs';
 import {
   backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, machineName, metaText,
-  newAgentPlan, pillText, statusLabel, toBase64, tokenFromHash, tokenFromText, wsClass,
+  newAgentPlan, pillText, readerText, statusLabel, toBase64, tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = 'mkrew.token';
+const VIEW_KEY = 'mkrew.view';
+/** Session views, in the order the view button cycles them. */
+const VIEWS = { fit: 'Fit', zoom: 'Zoom', read: 'Read' };
 /** Size of sessions started from the web: the desktop default; the phone never resizes. */
 const NEW_SIZE = { cols: 120, rows: 30 };
 const ID_LEN = 26;
@@ -345,24 +348,126 @@ function ensureTerminal() {
     // First: its unicode-range limits it to icon code points, and a later font may claim those as tofu.
     fontFamily: '"Symbols Nerd Font Mono", "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace',
     fontSize: 8,
-    scrollback: 2000,
+    // Like the desktop pane (SPEC §10); the attach itself brings at most the daemon's 200 lines.
+    scrollback: 10000,
     theme: TERMINAL_THEME,
   });
   term.open($('term'));
+  term.onWriteParsed(scheduleReader);
 }
 
-/** Shrinks the font until the session's columns fit (the session itself keeps its size). */
+function currentView() {
+  const view = localStorage.getItem(VIEW_KEY);
+  return view in VIEWS ? view : 'fit';
+}
+
+function nextView() {
+  const names = Object.keys(VIEWS);
+  return names[(names.indexOf(currentView()) + 1) % names.length];
+}
+
+/** Fit / Zoom show the terminal; Read shows its text wrapped to the phone width. */
+function applyView() {
+  const view = currentView();
+  $('view-label').textContent = VIEWS[view];
+  $('view').setAttribute('aria-label', `View: ${VIEWS[view]}. Switch to ${VIEWS[nextView()]}`);
+  $('term').hidden = view === 'read';
+  $('reader').hidden = view !== 'read';
+  if (view === 'read') {
+    reader.stick = true;
+    renderReader();
+  } else if (term) {
+    fitTerminal();
+    term.refresh(0, term.rows - 1);
+    term.scrollToBottom();
+  }
+}
+
+/** Read view state: a pending re-render, and whether the next one jumps to the end. */
+const reader = { timer: null, stick: true };
+
+function scheduleReader() {
+  if (reader.timer || $('reader').hidden) return;
+  // ponytail: rebuilds the whole text per update (≤ 10,000 lines, at most 5×/s); diff rows if a phone lags.
+  reader.timer = setTimeout(renderReader, 200);
+}
+
+function renderReader() {
+  clearTimeout(reader.timer);
+  reader.timer = null;
+  const box = $('reader');
+  if (!term || box.hidden) return;
+  const buffer = term.buffer.active;
+  const lines = [];
+  for (let i = 0; i < buffer.length; i++) {
+    const line = buffer.getLine(i);
+    if (line) lines.push({ text: line.translateToString(true), wrapped: line.isWrapped });
+  }
+  const atEnd = reader.stick || box.scrollTop + box.clientHeight >= box.scrollHeight - 24;
+  box.textContent = readerText(lines);
+  if (atEnd) box.scrollTop = box.scrollHeight;
+  reader.stick = false;
+}
+
+/** Scrolls `lines` (> 0 = back in time) like the desktop wheel (terminal/view.rs `scroll_wheel`):
+ *  the history, or arrow keys for a full-screen program that does not take the mouse. */
+function scrollTerminal(lines) {
+  if (term.buffer.active.type === 'alternate' && term.modes.mouseTrackingMode === 'none') {
+    if (!state.open || state.sessions.get(state.open)?.state === 'exited') return;
+    const arrow = keyBytes(lines > 0 ? 'up' : 'down', term.modes.applicationCursorKeysMode);
+    call('session.input', { session_id: state.open, data: toBase64(arrow.repeat(Math.abs(lines))) }).catch((err) => toast(err.message));
+  } else {
+    term.scrollLines(-lines);
+  }
+}
+
+/** xterm 6 has no touch scrolling (its Gesture class is never attached): a one-finger
+ *  vertical drag scrolls here; sideways panning stays native (`touch-action` in app.css). */
+function touchScroll(box) {
+  let lastY = null;
+  let rest = 0;
+  box.addEventListener('touchstart', (e) => {
+    lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
+    rest = 0;
+  }, { passive: true });
+  box.addEventListener('touchmove', (e) => {
+    const screen = box.querySelector('.xterm-screen');
+    if (lastY === null || e.touches.length !== 1 || !term || !screen) return;
+    const y = e.touches[0].clientY;
+    const lines = (y - lastY) / (screen.offsetHeight / term.rows) + rest;
+    lastY = y;
+    const whole = Math.trunc(lines);
+    rest = lines - whole;
+    if (whole) scrollTerminal(whole);
+  }, { passive: true });
+}
+
+/** Fit: shrinks the font until the session's columns fit the width (the session itself keeps
+ *  its size). Zoom: the font that fits the session's rows in the height; the box pans
+ *  sideways. */
 function fitTerminal() {
   if (!term) return;
+  const large = currentView() === 'zoom';
   const box = $('term');
   const width = box.clientWidth - 16;
-  term.options.fontSize = fitFontSize(width, term.cols);
-  requestAnimationFrame(() => {
+  const height = box.clientHeight - 16;
+  term.options.fontSize = large
+    ? Math.min(24, Math.max(6, Math.floor((height / term.rows / 1.2) * 10) / 10))
+    : fitFontSize(width, term.cols);
+  // The first size is an estimate: scale it by what the browser laid out, then step down while
+  // rounded cell sizes still overflow.
+  const correct = (pass) => requestAnimationFrame(() => {
     const screen = box.querySelector('.xterm-screen');
-    if (screen && screen.offsetWidth > width) {
-      term.options.fontSize = Math.max(4, Math.floor(((term.options.fontSize * width) / screen.offsetWidth) * 10) / 10);
-    }
+    if (!screen || !(width > 0) || !(height > 0)) return;
+    const ratio = large ? screen.offsetHeight / height : screen.offsetWidth / width;
+    if (ratio <= 1 && !(pass === 0 && large && ratio < 0.97)) return;
+    const size = term.options.fontSize;
+    const next = Math.min(24, Math.max(4, pass === 0 ? Math.floor((size / ratio) * 10) / 10 : Math.round((size - 0.2) * 10) / 10));
+    if (next === size) return;
+    term.options.fontSize = next;
+    if (pass < 6) correct(pass + 1);
   });
+  correct(0);
 }
 
 async function openSession(id) {
@@ -372,6 +477,8 @@ async function openSession(id) {
   show('session');
   ensureTerminal();
   term.reset();
+  reader.stick = true;
+  scheduleReader();
   $('reply').value = '';
   grow($('reply'));
   render();
@@ -509,13 +616,22 @@ function keepKeyboard(el) {
   el.addEventListener('pointerdown', (e) => e.preventDefault());
 }
 
+/** A Home Screen app's visual viewport on iOS 26 is short by the top safe area (WebKit bug
+ *  301108), which left a gap under the composer: without the keyboard it fills the screen. */
+function appHeight(vv) {
+  const typing = document.activeElement?.matches('input, textarea');
+  if (!navigator.standalone || typing) return vv.height;
+  const [short, long] = [screen.width, screen.height].sort((a, b) => a - b);
+  return innerWidth > innerHeight ? short : long;
+}
+
 function fitViewport() {
   const vv = window.visualViewport;
   const apply = () => {
     // Pinch-zoom also resizes the visual viewport; only the keyboard (scale 1) is handled.
     if (vv && vv.scale > 1.01) return;
     if (vv) {
-      $('app').style.height = `${vv.height}px`;
+      $('app').style.height = `${appHeight(vv)}px`;
       window.scrollTo(0, 0);
     }
     fitTerminal();
@@ -578,12 +694,18 @@ function wire() {
   $('reply').addEventListener('input', (e) => grow(e.target));
   keepKeyboard($('keys'));
   keepKeyboard($('send'));
+  touchScroll($('term'));
   $('keys').addEventListener('click', (e) => {
     const key = e.target.closest('[data-key]')?.dataset.key;
     if (!key || !state.open) return;
     const appCursor = term?.modes.applicationCursorKeysMode ?? false;
     call('session.input', { session_id: state.open, data: toBase64(keyBytes(key, appCursor)) }).catch((err) => toast(err.message));
   });
+  $('view').addEventListener('click', () => {
+    localStorage.setItem(VIEW_KEY, nextView());
+    applyView();
+  });
+  applyView();
 
   $('sheet-close').addEventListener('click', closeSheet);
   $('sheet').addEventListener('click', (e) => {
