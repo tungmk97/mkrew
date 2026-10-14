@@ -22,8 +22,9 @@ old logs; ADR 0019 kept hidden sessions' logs and events forever.
 - `files_changed` is stored once per batch, on the project's newest live session.
 - The watcher also honours nested `.gitignore` files and `.git/info/exclude`, and skips
   `.worktrees/`. Precedence is git's: `.gitignore` files apply top-down and the deepest level
-  with a match decides each path prefix; nothing inside an ignored folder is reported or read.
-  Markdown stays reported (doc review).
+  with a match decides each path prefix; nothing inside an ignored folder is reported or read,
+  except Markdown, which stays reported when gitignored (not under `.git`, `node_modules`,
+  `target`, `.worktrees`) for doc review.
 - Startup runs `VACUUM` when free pages exceed a quarter of the database.
 
 ## Alternatives
