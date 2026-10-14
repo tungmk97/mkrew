@@ -305,6 +305,26 @@ fn fake_agents_go_through_every_state_transition() {
     client.stop();
 }
 
+/// Hooks inside the pane run the daemon's own `mk` (SPEC §6, ADR 0055).
+#[test]
+fn session_env_names_the_daemons_mk() {
+    let env = Env::new();
+    let script = if cfg!(windows) {
+        "command = 'cmd.exe'\nargs = ['/c', 'echo', 'mk=[%MKREW_MK%]']"
+    } else {
+        "command = 'sh'\nargs = ['-c', 'echo \"mk=[$MKREW_MK]\"']"
+    };
+    env.write_profile("probe", &format!("name = \"Probe\"\n{script}\n"));
+    let mk = env.data_dir().join("bin").join("mk.exe");
+    let (_daemon, mut client) = env.start_with(&[(mkrew_daemon::ENV_MK_EXE, mk.as_path())]);
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "probe").into_result().unwrap();
+    client.wait_state(spawned.session_id, SessionState::Exited);
+    let log = session_log(&env, spawned.session_id);
+    assert!(log.contains(&format!("mk=[{}]", mk.display())), "{log}");
+    client.stop();
+}
+
 #[test]
 fn session_env_cwd_and_exit_code_reach_the_store() {
     let env = Env::new();

@@ -378,6 +378,7 @@ impl Hub {
         }
         cmd.env("MKREW_SESSION_ID", session.id.to_string());
         cmd.env(mkrew_core::paths::ENV_SOCKET, &socket);
+        cmd.env(mkrew_core::paths::ENV_MK, crate::spawn::mk_exe());
         cmd.env("TERM", "xterm-256color");
         // A Mkrew PTY is never omp's own shell; an inherited OMPCODE disables the omp extension.
         cmd.env_remove("OMPCODE");

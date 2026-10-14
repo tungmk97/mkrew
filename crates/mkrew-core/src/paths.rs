@@ -11,6 +11,9 @@ pub const ENV_DATA_DIR: &str = "MKREW_DATA_DIR";
 pub const ENV_CONFIG_DIR: &str = "MKREW_CONFIG_DIR";
 /// Overrides the IPC endpoint. Also set inside every session PTY (SPEC §6).
 pub const ENV_SOCKET: &str = "MKREW_SOCKET";
+/// The `mk` next to the daemon. Set inside every session PTY (SPEC §6): agent hooks run this
+/// `mk`, so they speak the daemon's protocol whatever `PATH` finds first.
+pub const ENV_MK: &str = "MKREW_MK";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {

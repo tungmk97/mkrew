@@ -461,6 +461,7 @@ impl Daemon {
                 "client speaks protocol {}, daemon speaks {PROTOCOL_VERSION}; restart the daemon",
                 params.protocol_version
             );
+            tracing::warn!(client = ?params.client, "hello refused: {message}");
             return (
                 Outcome::error(ErrorCode::VersionMismatch, message),
                 After::Close,

@@ -37,8 +37,8 @@ use mkrew_store::Store;
 
 pub use lock::{InstanceLock, LockError};
 pub use notify::ENV_NOTIFY;
+pub use spawn::ENV_MK_EXE;
 pub use usage::transcript_path;
-pub use web::ENV_MK_EXE;
 
 /// Process exit code when another daemon already owns the data dir.
 pub const EXIT_ALREADY_RUNNING: u8 = 2;
