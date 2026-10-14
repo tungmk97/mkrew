@@ -5,13 +5,18 @@
 //! - anything else (`omp`, `fake`): `<event> [json]`.
 //!
 //! Without `MKREW_SESSION_ID` the agent runs outside Mkrew: exit 0 without doing anything.
+//! Inside a pane `MKREW_MK` names the daemon's `mk`; when that is another file, it runs instead.
+//! Failures go to `<data>/logs/hook.log`.
 
+use std::ffi::OsString;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
 use mkrew_core::Paths;
+use mkrew_core::paths::ENV_MK;
 use mkrew_protocol::{HookReportParams, Request};
 use serde_json::Value;
 use ulid::Ulid;
@@ -20,6 +25,9 @@ const ENV_SESSION_ID: &str = "MKREW_SESSION_ID";
 /// How long a hook waits for the daemon before giving up (agents block on their hooks).
 const REPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// `hook.log` is rotated to `hook.log.1` above this size.
+const HOOK_LOG_CAP: u64 = 1024 * 1024;
+
 pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
     let Some(id) = std::env::var(ENV_SESSION_ID)
         .ok()
@@ -27,10 +35,84 @@ pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
     else {
         return Ok(ExitCode::SUCCESS);
     };
+    let me = std::env::current_exe().unwrap_or_default();
+    if let Some(mk) = forward_target(std::env::var_os(ENV_MK), &me) {
+        // The pane's daemon has its own `mk`; the hook config may name another one (ADR 0055).
+        match std::process::Command::new(&mk)
+            .arg("hook")
+            .arg(&agent)
+            .args(&args)
+            .status()
+        {
+            Ok(status) => {
+                let code = status
+                    .code()
+                    .and_then(|c| u8::try_from(c).ok())
+                    .unwrap_or(1);
+                return Ok(ExitCode::from(code));
+            }
+            Err(e) => log_to_data_dir(&agent, &anyhow::anyhow!("run {}: {e}", mk.display())),
+        }
+    }
+    let result = report(&id, agent.clone(), &args);
+    if let Err(e) = &result {
+        log_to_data_dir(&agent, e);
+    }
+    result.map(|()| ExitCode::SUCCESS)
+}
+
+/// `MKREW_MK` when it is an existing file other than `me` (canonical paths, so no loop).
+fn forward_target(mk: Option<OsString>, me: &Path) -> Option<PathBuf> {
+    let mk = PathBuf::from(mk?);
+    if !mk.is_absolute() {
+        return None;
+    }
+    let target = dunce::canonicalize(&mk).ok()?;
+    let me = dunce::canonicalize(me).ok();
+    (Some(&target) != me.as_ref()).then_some(target)
+}
+
+fn log_to_data_dir(agent: &str, error: &anyhow::Error) {
+    if let Ok(paths) = Paths::from_env() {
+        log_failure(&paths.logs_dir(), agent, error);
+    }
+}
+
+/// Appends one line to `<logs>/hook.log`: agents drop a hook's stderr, so this is the only
+/// trace (ADR 0055). Every I/O error is ignored: logging must never fail the hook.
+fn log_failure(logs: &Path, agent: &str, error: &anyhow::Error) {
+    use std::io::Write as _;
+    let _ = std::fs::create_dir_all(logs);
+    let file = logs.join("hook.log");
+    if std::fs::metadata(&file).is_ok_and(|m| m.len() > HOOK_LOG_CAP) {
+        let _ = std::fs::rename(&file, logs.join("hook.log.1"));
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| dunce::canonicalize(p).ok())
+        .map_or_else(|| "mk".to_owned(), |p| p.display().to_string());
+    let error = format!("{error:#}").replace('\n', " ");
+    let line = format!(
+        "{ms} {exe} mk {} hook {agent}: {error}\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+fn report(id: &str, agent: String, args: &[String]) -> anyhow::Result<()> {
     let mkrew_session_id: Ulid = id
         .parse()
         .with_context(|| format!("{ENV_SESSION_ID}={id:?} is not a session id"))?;
-    let (event, payload) = event_and_payload(&agent, &args, || {
+    let (event, payload) = event_and_payload(&agent, args, || {
         let mut text = String::new();
         std::io::stdin()
             .read_to_string(&mut text)
@@ -58,7 +140,7 @@ pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
             REPORT_TIMEOUT.as_secs()
         ),
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(())
 }
 
 /// The event name and JSON payload for `agent`; `stdin` is only read for Claude and Copilot.
@@ -107,6 +189,53 @@ mod tests {
 
     fn no_stdin() -> anyhow::Result<String> {
         panic!("stdin must not be read")
+    }
+
+    #[test]
+    fn forward_target_ignores_relative_missing_and_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let me = std::env::current_exe().unwrap();
+        assert_eq!(
+            forward_target(Some("mk".into()), &me),
+            None,
+            "bare fallback"
+        );
+        assert_eq!(
+            forward_target(Some(dir.path().join("gone.exe").into()), &me),
+            None
+        );
+        assert_eq!(forward_target(Some(me.clone().into()), &me), None, "itself");
+        assert_eq!(forward_target(None, &me), None);
+        let other = dir.path().join("mk.exe");
+        std::fs::write(&other, b"").unwrap();
+        assert_eq!(
+            forward_target(Some(other.clone().into()), &me),
+            Some(dunce::canonicalize(&other).unwrap())
+        );
+    }
+
+    #[test]
+    fn hook_log_rotates_above_the_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let logs = dir.path().join("logs");
+        log_failure(&logs, "omp", &anyhow::anyhow!("first"));
+        let log = std::fs::read_to_string(logs.join("hook.log")).unwrap();
+        assert!(log.ends_with(" hook omp: first\n"), "{log}");
+        std::fs::write(
+            logs.join("hook.log"),
+            vec![b'x'; (HOOK_LOG_CAP + 1) as usize],
+        )
+        .unwrap();
+        log_failure(&logs, "claude", &anyhow::anyhow!("second"));
+        assert_eq!(
+            std::fs::metadata(logs.join("hook.log.1")).unwrap().len(),
+            HOOK_LOG_CAP + 1
+        );
+        let log = std::fs::read_to_string(logs.join("hook.log")).unwrap();
+        assert!(
+            log.ends_with(" hook claude: second\n") && log.lines().count() == 1,
+            "{log}"
+        );
     }
 
     #[test]

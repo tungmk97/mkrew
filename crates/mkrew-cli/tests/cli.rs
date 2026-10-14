@@ -46,6 +46,7 @@ impl Env {
             .env("MKREW_DATA_DIR", self.dir.path().join("data"))
             .env("MKREW_CONFIG_DIR", self.dir.path().join("config"))
             .env("MKREW_SOCKET", &self.socket)
+            .env_remove("MKREW_MK")
             // Inherited by the daemon `mk` starts: no real toasts from tests.
             .env(mkrew_daemon::ENV_NOTIFY, "off");
         command
@@ -648,6 +649,89 @@ fn hook_outside_mkrew_exits_silently() {
             "{output:?}"
         );
     }
+}
+
+/// A daemon of another protocol version: answers the first request (`hello`) with
+/// `version_mismatch`, like `server.rs` `hello` does.
+fn daemon_of_another_protocol(socket: &str) -> std::thread::JoinHandle<()> {
+    use interprocess::local_socket::{ListenerOptions, traits::Listener as _};
+    use mkrew_protocol::{ErrorCode, Frame, FrameDecoder, Message, Outcome, encode};
+    let listener = ListenerOptions::new()
+        .name(mkrew_daemon::ipc::name(socket).unwrap())
+        .create_sync()
+        .unwrap();
+    std::thread::spawn(move || {
+        let mut conn = listener.accept().unwrap();
+        let mut decoder = FrameDecoder::default();
+        let mut buf = [0u8; 4096];
+        let id = loop {
+            let n = conn.read(&mut buf).unwrap();
+            decoder.push(&buf[..n]);
+            if let Some(Frame::Message(Message::Request { id, .. })) = decoder.next_frame().unwrap()
+            {
+                break id;
+            }
+        };
+        let message = "client speaks protocol 41, daemon speaks 40; restart the daemon";
+        let reply = Message::Response {
+            id,
+            outcome: Outcome::error(ErrorCode::VersionMismatch, message),
+        };
+        conn.write_all(&encode(&Frame::Message(reply)).unwrap())
+            .unwrap();
+    })
+}
+
+fn hook_log(env: &Env) -> String {
+    std::fs::read_to_string(env.dir.path().join("data").join("logs").join("hook.log"))
+        .unwrap_or_default()
+}
+
+/// A hook that meets a daemon of another version fails (exit 1, never blocks) and says why
+/// in `<data>/logs/hook.log`.
+#[test]
+fn hook_against_another_protocol_leaves_a_log_line() {
+    let env = Env::new();
+    let daemon = daemon_of_another_protocol(&env.socket);
+    let output = env
+        .command(&["hook", "omp", "busy", "{}"])
+        .env("MKREW_SESSION_ID", Ulid::new().to_string())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    daemon.join().unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let log = hook_log(&env);
+    assert!(
+        log.contains("hook omp: client speaks protocol 41, daemon speaks 40"),
+        "{log}"
+    );
+}
+
+/// Inside a pane, `mk hook` runs the daemon's `mk` (`MKREW_MK`) when that is another file.
+#[test]
+fn hook_forwards_to_the_daemons_mk_and_logs_failures() {
+    let env = Env::new();
+    let copy = env
+        .dir
+        .path()
+        .join("other bin")
+        .join(format!("mk{}", std::env::consts::EXE_SUFFIX));
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_mk"), &copy).unwrap();
+    // No daemon runs: the report fails, and the one line names the `mk` that tried.
+    let output = env
+        .command(&["hook", "omp", "busy", "{}"])
+        .env("MKREW_SESSION_ID", Ulid::new().to_string())
+        .env("MKREW_MK", &copy)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let log = hook_log(&env);
+    let copy = dunce::canonicalize(&copy).unwrap();
+    assert_eq!(log.lines().count(), 1, "{log}");
+    assert!(log.contains(&copy.display().to_string()), "{log}");
 }
 
 /// `mk integration` on temp agent homes: install backs the file up once, repeating is a no-op,
