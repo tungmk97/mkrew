@@ -104,8 +104,9 @@ pub fn markdown_files(root: &Path, globs: &ReviewGlobs) -> Vec<String> {
 /// The `doc.list` result: the `listed` (glob-matched) files, plus Markdown files in recent
 /// `files_changed` events (`changed`, oldest first) and files with unresolved comments, while
 /// they still `exist`. The last change of a file is the newest event naming it; events of
-/// several sessions at the same time (every live session of the project gets the batch) go to
-/// the most recently started one (the greatest ULID).
+/// several sessions at the same time go to the most recently started one (the greatest ULID):
+/// a new batch is stored once, on the newest live session (ADR 0060), and this `(at, session)`
+/// tie-break still covers rows written before.
 pub fn doc_files(
     listed: Vec<String>,
     changed: &[(Ulid, SessionEvent)],

@@ -36,4 +36,4 @@ old logs; ADR 0019 kept hidden sessions' logs and events forever.
 ## Consequences
 
 - History of a session older than 7 days is gone unless its pane is still in a tab.
-- First startup after the upgrade deletes most old logs and compacts the database (seconds).
+- Logs are deleted 7 days after their session ended, so the data dir settles at about 7 days of logs (60–140 MB/day observed). The first startup frees only what is already older than that: on a copy of real data (274 files, 617 MB) it deleted about 8 MB of logs and pruned 2,898 of 15,699 events; the database went from 23.2 to 22.5 MB (the VACUUM threshold was not reached).
