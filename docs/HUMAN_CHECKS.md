@@ -35,6 +35,55 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Uninstall of the smoke copy removed the real install's "Apps & features" entry** (shared
   AppId). Repair: rerun the real setup over `%LOCALAPPDATA%\Programs\Mkrew`.
 
+### To verify — 2026-10-14 Sidebar filter row matches the tab strip
+
+- [ ] **Visual (dark + light):** the sidebar's filter row (search field, ⌫, ⌄/›, +) is exactly as
+  tall as the tab strip to its right (`TAB_STRIP_HEIGHT`), and its bottom divider lines up with
+  the tab strip's; the All / Working / Needs you control sits below it with 8 px around.
+
+### To verify — 2026-10-14 Thread view in the session panel (ADR 0057)
+
+- [ ] **Prerequisite:** the Thread section needs a `[usage]` block in the installed agent
+  profiles. Profiles seeded before usage existed (in `%APPDATA%\mkrew\agents\`) lack it: copy
+  the `[usage]` block from the repo's `agents/claude.toml`, `codex.toml` and `omp.toml`, then
+  restart the daemon.
+- [ ] **Live (dark + light):** open the panel (`Ctrl+Shift+Y`) on a running Claude pane, then on
+  an omp pane (a profile with `[usage]` and a session id) → a "Thread" section fills the panel
+  under the cards: your prompts on card blocks, the agent's text as Markdown, `▸ +N tool calls`
+  rows. Send a prompt → the turn and its tool rows appear within about a second; "Working…"
+  ends the list and goes away when the agent stops. A shell pane, or an agent with no `[usage]`
+  / no session id yet, shows no Thread section.
+- [ ] **Tool groups:** click `▸ +N tool calls` → `▾` and one line per call (name + target,
+  cut with `…`); click again → collapsed. The open state stays while new turns arrive.
+- [ ] **Scrolling:** scroll up while the agent runs → the position stays; scroll back to the
+  bottom → the list follows new text again.
+- [ ] **No cost when hidden:** close the panel (or focus another pane) → no CPU use from
+  `mkrew-ui.exe` at idle (Task Manager); open it again → the thread is back.
+- [ ] **Long session:** open the panel on a session with a transcript over 4 MiB → it appears
+  fast, with at most 20 turns and a muted "Earlier turns: Open transcript" on top; click it →
+  the transcript opens in Zed.
+- [ ] **Text size:** the Markdown text (headings, lists, code) fits the 240–560 px panel and is
+  not larger than the cards' text. If headings look too big, say so: the fallback is plain
+  wrapped text.
+
+### To verify — 2026-10-14 Resume from History (ADR 0055)
+
+- [ ] **Restart the daemon first** (protocol 42).
+- [ ] **History (dark + light):** pick a finished Claude / Codex / omp session → a primary
+  `▶ Resume` button sits left of Close; its tooltip shows `Enter`. Click it (or press Enter) →
+  the dialog closes, Terminals shows a new pane next to the focused one (or fills an empty tab),
+  the agent reopens the old conversation, and **typing goes straight into the new pane**.
+- [ ] **Disabled:** a shell / run session, or an agent without hooks (no session id) → Resume is
+  faded; hovering it says why. Resume an agent whose conversation already runs again → an error
+  row "Cannot resume: … already running" under the title.
+
+### To verify — 2026-10-14 Toasts after the daemon crash fix (COM MTA kept alive)
+
+- [ ] **Windows toast:** after installing the new build, let an agent reach `done` (and one
+  `needs_input`) → a toast still appears, with sound when `notify.sound` is on. Click it → Mkrew
+  focuses that session. Over the next days the daemon no longer crashes (Event Viewer → Windows
+  Logs → Application: no `APPCRASH` for `mkrew-daemon.exe`).
+
 ### To verify — 2026-10-14 Workspace chevron only folds
 
 - [ ] **Sidebar:** with workspace A shown, click the `›` / `⌄` of workspace B → B expands or

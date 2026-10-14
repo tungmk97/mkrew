@@ -3,7 +3,7 @@
 //! never attached. Pure and tested headlessly; `main.rs` renders it and owns the replay pane.
 
 use gpui::Keystroke;
-use mkrew_protocol::{Session, SessionState};
+use mkrew_protocol::{Session, SessionKind, SessionState};
 use ulid::Ulid;
 
 use crate::status;
@@ -41,6 +41,10 @@ pub struct HistoryDialog {
     pub listing: Listing,
     pub selected: Option<Ulid>,
     pub log: Log,
+    /// A `session.resume` of the selected session is in flight.
+    pub resuming: bool,
+    /// Why the last resume failed; cleared when another session is picked.
+    pub resume_error: Option<String>,
 }
 
 impl HistoryDialog {
@@ -51,6 +55,8 @@ impl HistoryDialog {
             listing: Listing::Loading,
             selected: None,
             log: Log::Loading,
+            resuming: false,
+            resume_error: None,
         }
     }
 
@@ -83,6 +89,7 @@ impl HistoryDialog {
         }
         self.selected = Some(id);
         self.log = Log::Loading;
+        self.resume_error = None;
         true
     }
 
@@ -143,11 +150,24 @@ pub fn failed(session: &Session) -> bool {
     session.exit_code.is_some_and(|code| code != 0)
 }
 
-/// Esc closes the dialog; ↑ / ↓ pick the previous / next session.
+/// Why `session` cannot resume (the Resume button is disabled with this as its tooltip), or
+/// `None`. The daemon checks the rest: the profile's `resume` line, a still running copy.
+pub fn resume_blocked(session: &Session) -> Option<&'static str> {
+    if session.kind != SessionKind::Agent {
+        Some("Only an agent's conversation can resume")
+    } else if session.native_session_id.is_none() {
+        Some("The agent never reported its session id")
+    } else {
+        None
+    }
+}
+
+/// Esc closes the dialog; ↑ / ↓ pick the previous / next session; Enter resumes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Close,
     Move(isize),
+    Resume,
 }
 
 pub fn key(keystroke: &Keystroke) -> Option<Key> {
@@ -156,13 +176,14 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         "escape" => Some(Key::Close),
         "up" if !modified => Some(Key::Move(-1)),
         "down" if !modified => Some(Key::Move(1)),
+        "enter" if !modified => Some(Key::Resume),
         _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{SessionKind, StateSource};
+    use mkrew_protocol::StateSource;
 
     use super::*;
 
@@ -234,11 +255,26 @@ mod tests {
         let mut dialog = HistoryDialog::new(project, "api".into());
         dialog.load(vec![a.clone(), b.clone()]);
         dialog.log = Log::Shown { cut: false };
+        dialog.resume_error = Some("refused".into());
         assert!(!dialog.select(a.id), "already selected");
         assert!(!dialog.select(Ulid::new()), "not listed");
         assert_eq!(dialog.log, Log::Shown { cut: false });
         assert!(dialog.select(b.id));
         assert_eq!(dialog.log, Log::Loading);
+        assert_eq!(
+            dialog.resume_error, None,
+            "the error was about another session"
+        );
+    }
+
+    #[test]
+    fn only_agents_that_reported_their_id_can_resume() {
+        let mut s = session(Ulid::new(), SessionState::Exited, Some(1_000));
+        assert!(resume_blocked(&s).is_some(), "no native id");
+        s.native_session_id = Some("abc".into());
+        assert_eq!(resume_blocked(&s), None);
+        s.kind = SessionKind::Shell;
+        assert!(resume_blocked(&s).is_some(), "a shell");
     }
 
     #[test]
@@ -289,13 +325,14 @@ mod tests {
     }
 
     #[test]
-    fn keys_close_and_move() {
+    fn keys_close_move_and_resume() {
         let parse = |keys: &str| key(&Keystroke::parse(keys).unwrap());
         assert_eq!(parse("escape"), Some(Key::Close));
         assert_eq!(parse("up"), Some(Key::Move(-1)));
         assert_eq!(parse("down"), Some(Key::Move(1)));
         assert_eq!(parse("alt-down"), None);
-        assert_eq!(parse("enter"), None);
+        assert_eq!(parse("enter"), Some(Key::Resume));
+        assert_eq!(parse("ctrl-enter"), None);
     }
 
     #[test]

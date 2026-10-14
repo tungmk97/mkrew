@@ -1,7 +1,8 @@
 //! The session panel right of Terminals (SPEC §10, ADR 0038): its width, the Stop rule and
 //! the text of the Session card. Pure; `main.rs` draws it.
 
-use mkrew_protocol::{Session, SessionUsageEvent};
+use mkrew_protocol::{Session, SessionKind, SessionUsageEvent};
+use ulid::Ulid;
 
 use crate::git_summary::{GitSummary, RepoSummary};
 use crate::lifecycle::{self, CloseAction};
@@ -133,10 +134,17 @@ pub fn changes_card(summary: Option<&GitSummary>, workspace: &str) -> Option<Vec
     )
 }
 
+/// The session whose thread the panel should read (ADR 0057): an open panel and a focused
+/// agent session with a native id. `None` = no reading. An exited session stays wanted while
+/// it is shown; the poll task does one last read after the exit and stops.
+pub fn wanted_thread(open: bool, session: Option<&Session>) -> Option<(Ulid, String)> {
+    let session = session.filter(|s| open && s.kind == SessionKind::Agent)?;
+    Some((session.id, session.native_session_id.clone()?))
+}
+
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::{SessionKind, SessionState, StateSource};
-    use ulid::Ulid;
+    use mkrew_protocol::{SessionState, StateSource};
 
     use super::*;
     use crate::usage::ContextShare;
@@ -329,5 +337,25 @@ mod tests {
         // No repository at all, or nothing loaded yet: no card.
         assert_eq!(changes_card(Some(&GitSummary::default()), "api"), None);
         assert_eq!(changes_card(None, "api"), None);
+    }
+
+    #[test]
+    fn the_thread_is_read_only_for_a_shown_agent_with_a_native_id() {
+        let mut agent = session(SessionKind::Agent, SessionState::Working);
+        assert_eq!(wanted_thread(true, Some(&agent)), None, "no native id yet");
+        agent.native_session_id = Some("n1".into());
+        assert_eq!(
+            wanted_thread(true, Some(&agent)),
+            Some((agent.id, "n1".into()))
+        );
+        assert_eq!(wanted_thread(false, Some(&agent)), None, "panel closed");
+        assert_eq!(wanted_thread(true, None), None, "nothing focused");
+        let mut shell = session(SessionKind::Shell, SessionState::Working);
+        shell.native_session_id = Some("n1".into());
+        assert_eq!(
+            wanted_thread(true, Some(&shell)),
+            None,
+            "shells have no transcript"
+        );
     }
 }

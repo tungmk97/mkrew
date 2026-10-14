@@ -40,8 +40,8 @@ ulid = "1"
 widestring = "1"
 # `SetHandleInformation`: keep a detached daemon from inheriting the client's stdio pipes;
 # `SetThreadExecutionState` for keep awake (SPEC §20A.5); a kill-on-close job object ties
-# `mk web` to the daemon (ADR 0053).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Power"] }
+# `mk web` to the daemon (ADR 0053); `CoIncrementMTAUsage` keeps toasts' WinRT factories valid.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Com", "Win32_System_JobObjects", "Win32_System_Power"] }
 
 [target.'cfg(unix)'.dependencies]
 # Safe `kill(pid, SIGKILL)` for forced session kills; 1.x is already in the tree.

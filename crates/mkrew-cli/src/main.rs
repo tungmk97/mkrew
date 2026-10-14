@@ -118,6 +118,8 @@ enum SessionCommand {
     },
     /// Print a session's raw output log (also for exited sessions).
     History { session_id: Ulid },
+    /// Relaunch an exited agent session into its conversation; prints the new session id.
+    Resume { session_id: Ulid },
 }
 
 #[derive(Subcommand)]
@@ -332,6 +334,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                     session::spawn(&mut client, &project, agent)
                 }
                 SessionCommand::History { session_id } => session::history(&mut client, session_id),
+                SessionCommand::Resume { session_id } => session::resume(&mut client, session_id),
             }
             .map(|()| ExitCode::SUCCESS)
         }

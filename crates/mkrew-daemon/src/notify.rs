@@ -48,7 +48,12 @@ pub trait Notifier: Send + Sync + 'static {
 /// The notifier `MKREW_NOTIFY` asks for; `None` = notifications off.
 pub fn from_env() -> Option<Arc<dyn Notifier>> {
     match std::env::var(ENV_NOTIFY).ok().filter(|v| !v.is_empty()) {
-        None => Some(Arc::new(OsNotifier)),
+        None => {
+            // Before any WinRT call, see `keep_mta_alive`.
+            #[cfg(windows)]
+            keep_mta_alive();
+            Some(Arc::new(OsNotifier))
+        }
         Some(v) if v == "off" => None,
         Some(path) => Some(Arc::new(FileNotifier(PathBuf::from(path)))),
     }
@@ -208,6 +213,24 @@ impl Notifier for OsNotifier {
     }
 }
 
+/// windows-rs caches WinRT factories process-wide and pins the MTA only when no MTA exists yet.
+/// A toast's factory cached while another component's MTA exists is left pointing into an
+/// unloaded DLL once that component's `CoUninitialize` ends the MTA: the next toast crashes
+/// (0xc0000005 activating `XmlDocument`). Holding an MTA usage for the process lifetime is the
+/// documented fix (windows-rs #1169; Old New Thing, 2021-11-05 "cached factories").
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn keep_mta_alive() {
+    use windows_sys::Win32::System::Com::CoIncrementMTAUsage;
+    let mut cookie = std::ptr::null_mut();
+    // SAFETY: `cookie` is a valid out pointer; it is never passed to `CoDecrementMTAUsage`, so
+    // the MTA lives until the process exits.
+    let hr = unsafe { CoIncrementMTAUsage(&mut cookie) };
+    if hr < 0 {
+        tracing::warn!(hr, "keeping the COM MTA alive failed");
+    }
+}
+
 /// The OS default sound, or silence: Windows toasts are silent without a sound name.
 #[cfg(target_os = "windows")]
 fn set_sound(notification: &mut notify_rust::Notification, sound: bool) {
@@ -300,6 +323,33 @@ mod tests {
         let store = Store::open(&dir.path().join("mkrew.db")).unwrap();
         let project = store.add_project(dir.path(), Some("repo")).unwrap();
         (Arc::new(Hub::new(store)), project.id)
+    }
+
+    /// The crash of 2026-10-14: a toast's WinRT factory is cached while another component's
+    /// MTA exists; that component's `CoUninitialize` must not end the MTA (COM would unload
+    /// the factory's DLL under the cache).
+    #[cfg(windows)]
+    #[allow(unsafe_code)]
+    #[test]
+    fn mta_outlives_another_components_couninitialize() {
+        use windows_sys::Win32::System::Com::{
+            APTTYPE_MTA, COINIT_MULTITHREADED, CoGetApartmentType, CoInitializeEx, CoUninitialize,
+        };
+        keep_mta_alive();
+        std::thread::spawn(|| unsafe {
+            assert!(CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED as u32) >= 0);
+            CoUninitialize();
+        })
+        .join()
+        .unwrap();
+        let apartment = std::thread::spawn(|| {
+            let (mut kind, mut qualifier) = (0, 0);
+            let hr = unsafe { CoGetApartmentType(&mut kind, &mut qualifier) };
+            (hr, kind)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(apartment, (0, APTTYPE_MTA));
     }
 
     /// Settings read from `<dir>/settings.toml` (missing = defaults).

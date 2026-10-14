@@ -37,6 +37,7 @@ mod run;
 mod sessions;
 mod tabs;
 mod task_dialog;
+pub(crate) mod thread_panel;
 mod voice_input;
 mod workspace;
 mod workspace_actions;

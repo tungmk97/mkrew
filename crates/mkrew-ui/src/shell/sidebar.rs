@@ -540,19 +540,22 @@ impl Shell {
                             cx.notify();
                         }))
                 };
+            // The filter row lines up with the tab strip on its right: same height, same
+            // bottom divider.
             div()
                 .flex_none()
                 .flex()
                 .flex_col()
-                .gap(px(space::S))
-                .px(px(space::M))
-                .pt(px(space::M))
-                .pb(px(space::S))
                 .child(
                     div()
+                        .flex_none()
+                        .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
                         .flex()
                         .items_center()
                         .gap(px(space::XS))
+                        .px(px(space::M))
+                        .border_b(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(theme.divider))
                         .child(field)
                         .child(actions),
                 )
@@ -560,6 +563,8 @@ impl Shell {
                     div()
                         .flex()
                         .items_center()
+                        .mx(px(space::M))
+                        .my(px(space::S))
                         .p(px(theme::SEGMENT_PADDING))
                         .rounded(px(radius::MEDIUM))
                         .bg(rgb(theme.surface))

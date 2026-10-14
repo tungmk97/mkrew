@@ -634,6 +634,7 @@ impl Shell {
     }
 
     /// Takes the pane of `session` out of its tab's layout (the session itself is untouched).
+    /// A tab of the shown workspace left without panes closes too.
     pub(crate) fn remove_pane(
         &mut self,
         session: Ulid,
@@ -645,7 +646,15 @@ impl Shell {
             .values_mut()
             .find_map(|tabs| Some((tabs.project_id(), tabs.close_pane(session)?)));
         if let Some((project_id, write)) = closed {
+            let emptied = write.layout.is_null().then_some(write.tab_id);
+            // Saved first: requests go out in call order, so `tab.close` sees no panes and
+            // leaves a hidden session alive.
             self.save_layout(project_id, write, window, cx);
+            if let Some(tab_id) = emptied
+                && self.workspace == Some(project_id)
+            {
+                self.close_tab(tab_id, window, cx);
+            }
         }
         self.sync_panes(window, cx);
         cx.notify();

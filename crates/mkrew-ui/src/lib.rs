@@ -71,6 +71,7 @@ pub mod terminal;
 pub mod text_box;
 pub mod text_find;
 pub mod theme;
+pub mod thread_view;
 pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;

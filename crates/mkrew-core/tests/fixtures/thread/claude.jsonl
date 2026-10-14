@@ -13,4 +13,13 @@
 {"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"Now add a test"}]}}
 {"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"Bash","input":{"command":"cargo test\n--all"}}]}}
 {"type":"user","isSidechain":false,"message":{"role":"user","content":"<command-name>/context</command-name>"}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"<local-command-stdout>Context: 12%</local-command-stdout>"}}
+{"type":"user","isSidechain":false,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>b1</task-id>\n</task-notification>"}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"<task-notification>\n<task-id>b2</task-id>\n</task-notification>"}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}
+{"type":"user","isSidechain":false,"isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation."}}
+{"type":"user","isSidechain":false,"origin":{"kind":"peer"},"message":{"role":"user","content":"hello from a peer"}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Still the context turn."}]}}
+{"type":"user","isSidechain":false,"origin":{"kind":"human"},"message":{"role":"user","content":"<command-message>writing-plans</command-message>\n<command-name>/superpowers:writing-plans</command-name>\n<command-args>do X</command-args>"}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Planning."}]}}
 not json at all

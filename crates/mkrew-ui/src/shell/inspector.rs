@@ -127,9 +127,9 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(|shell, _, _, _| shell.end_inspector_drag()),
             );
+        let thread = session.and_then(|s| self.render_thread_section(s, theme, cx));
         let cards = div()
             .id("inspector-body")
-            .size_full()
             .overflow_y_scroll()
             .flex()
             .flex_col()
@@ -160,7 +160,17 @@ impl Shell {
             .font_family(theme.ui_font_family.clone())
             .text_size(font_size::BODY)
             .text_color(rgb(theme.text))
-            .child(cards)
+            .child(match thread {
+                // The cards keep their height (at most half); the thread fills the rest.
+                Some(thread) => div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(cards.flex_none().max_h(relative(0.5)))
+                    .child(thread)
+                    .into_any_element(),
+                None => cards.size_full().into_any_element(),
+            })
             .child(grip)
             .into_any_element()
     }
