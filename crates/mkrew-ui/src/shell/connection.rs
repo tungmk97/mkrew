@@ -91,6 +91,7 @@ impl Shell {
                         }
                         cx.notify();
                     }
+                    shell.sync_thread(cx);
                     let sessions = shell.sidebar.sessions();
                     let board_due = shell.workspace.is_some_and(|project_id| {
                         shell.view() == View::Board
@@ -319,6 +320,7 @@ impl Shell {
             plan_error: None,
             sidebar_layout: sidebar::Layout::default(),
             inspector_open: false,
+            thread: None,
             inspector_width,
             inspector_dragging: false,
             sidebar_width,

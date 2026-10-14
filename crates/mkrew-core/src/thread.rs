@@ -1,4 +1,4 @@
-//! Readable turns from agent transcripts (thread view, ADR 0055), read incrementally.
+//! Readable turns from agent transcripts (thread view, ADR 0057), read incrementally.
 //!
 //! Pure, like [`crate::usage::UsageReader`]: the caller reads the bytes appended to the
 //! transcript at [`ThreadReader::offset`] and hands them to [`ThreadReader::feed`]. A partial
