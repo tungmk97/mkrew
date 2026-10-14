@@ -471,7 +471,15 @@ fn codex_edit(text: &str, install: bool, mk: &str) -> anyhow::Result<Option<Stri
 mod tests {
     use super::*;
 
+    // `\` separates folders on Windows only, so `is_mk` needs a native path.
+    #[cfg(windows)]
     const MK: &str = r"C:\Program Files\Mkrew\bin\mk.exe";
+    #[cfg(not(windows))]
+    const MK: &str = "/opt/Mk rew/bin/mk";
+    #[cfg(windows)]
+    const OLD_MK: &str = r"D:\old\mk.exe";
+    #[cfg(not(windows))]
+    const OLD_MK: &str = "/old/mk";
 
     #[test]
     fn omp_extension_runs_the_daemons_mk() {
@@ -507,7 +515,7 @@ mod tests {
         // Uninstall drops ours in both forms and keeps the user's hook.
         let mixed = json!({"hooks": {"Stop": [
             {"hooks": [{"type": "command", "command": "mk hook claude Stop"}]},
-            {"hooks": [claude_hook(r"D:\old\mk.exe", "Stop")]},
+            {"hooks": [claude_hook(OLD_MK, "Stop")]},
             {"hooks": [{"type": "command", "command": "mk-other"}]}
         ]}});
         let left = json(&claude_edit(&mixed.to_string(), false, MK).unwrap().unwrap());
