@@ -25,7 +25,7 @@ Option 2, one color. `icon/brand/*.svg` goes through the same `Assets` source as
 (`AgentLogo` in `icons.rs`) and paints in the chip's text color, so status tints still apply.
 The logo wins over the profile's `icon`, because copied profiles still carry the old sample
 glyph. A logo chip has no border at rest; it keeps the border width, so the sidebar's working
-ring and the pane color still outline it. The logo is `ICON_SIZE_SMALL` (14 px) in the 18 px chip.
+ring and the pane color still outline it. The logo is `AGENT_LOGO_SIZE` (12 px) in the 18 px chip.
 
 Sources (marks are their owners' trademarks; used only to identify the integration):
 

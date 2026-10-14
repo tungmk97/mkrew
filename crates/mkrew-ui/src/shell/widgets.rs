@@ -801,7 +801,7 @@ pub(crate) fn agent_chip(badge: sidebar::Badge, fg: u32, theme: &Theme) -> gpui:
     match badge {
         sidebar::Badge::Logo(logo) => chip
             .border_color(gpui::transparent_black())
-            .child(icons::logo_svg(logo, theme::ICON_SIZE_SMALL, fg)),
+            .child(icons::logo_svg(logo, theme::AGENT_LOGO_SIZE, fg)),
         sidebar::Badge::Text(text) => chip
             .border_color(rgb(theme.border))
             .text_size(font_size::META)

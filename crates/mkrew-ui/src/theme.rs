@@ -298,6 +298,9 @@ pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
 /// Side of an agent badge chip (ADR 0025), like the design's workspace avatar.
 pub const AGENT_CHIP_SIZE: f32 = 18.0;
+/// Side of an agent logo inside its chip (ADR 0058): a little under [`ICON_SIZE_SMALL`], so the
+/// solid marks do not crowd the row text.
+pub const AGENT_LOGO_SIZE: f32 = 12.0;
 
 /// Side of the Mkrew logo glyph in the sidebar header.
 pub const LOGO_SIZE: f32 = 18.0;
