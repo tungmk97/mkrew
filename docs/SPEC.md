@@ -463,7 +463,7 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
 
 - The daemon sets `MKREW_SESSION_ID`, `MKREW_SOCKET` and `MKREW_MK` (the absolute path of the
   `mk` next to the daemon; a bare `mk.exe` when none sits next to it, and then `mk hook` does not
-  forward) in every PTY it creates (ADR 0055).
+  forward) in every PTY it creates (ADR 0059).
 - Hook configs never run a bare `mk`: `mk integration install` writes the canonical absolute path
   of the `mk` that runs it; `mk hook` inside a pane re-runs itself through `MKREW_MK` when that is
   another file, so the daemon's own version always reports. Reinstall after moving Mkrew.

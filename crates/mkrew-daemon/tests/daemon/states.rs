@@ -305,7 +305,7 @@ fn fake_agents_go_through_every_state_transition() {
     client.stop();
 }
 
-/// Hooks inside the pane run the daemon's own `mk` (SPEC §6, ADR 0055).
+/// Hooks inside the pane run the daemon's own `mk` (SPEC §6, ADR 0059).
 #[test]
 fn session_env_names_the_daemons_mk() {
     let env = Env::new();

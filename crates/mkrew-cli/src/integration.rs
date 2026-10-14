@@ -273,7 +273,7 @@ fn back_up(file: &Path) -> anyhow::Result<PathBuf> {
 }
 
 /// The absolute path of this `mk`: hook configs name it, never a bare `mk` that `PATH` may
-/// resolve to another version (ADR 0055).
+/// resolve to another version (ADR 0059).
 fn own_mk() -> anyhow::Result<String> {
     let exe = std::env::current_exe().context("locate mk")?;
     let exe = dunce::canonicalize(&exe).with_context(|| format!("resolve {}", exe.display()))?;
@@ -290,7 +290,7 @@ fn is_mk(program: &str) -> bool {
         .is_some_and(|s| s.eq_ignore_ascii_case("mk"))
 }
 
-/// Claude Code exec form: `command` runs directly with `args`, no shell (ADR 0055).
+/// Claude Code exec form: `command` runs directly with `args`, no shell (ADR 0059).
 fn claude_hook(mk: &str, event: &str) -> Value {
     json!({"type": "command", "command": mk, "args": ["hook", "claude", event]})
 }

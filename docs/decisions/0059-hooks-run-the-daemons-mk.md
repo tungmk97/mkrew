@@ -1,7 +1,7 @@
-# 0055 — Agent hooks run the daemon's own `mk`
+# 0059 — Agent hooks run the daemon's own `mk`
 
 - Date: 2026-10-14
-- Status: accepted (changes SPEC §6 hook commands; no protocol change, `PROTOCOL_VERSION` 41)
+- Status: accepted (changes SPEC §6 hook commands; no protocol change)
 - Milestone: none (bug fix, user report 2026-10-14)
 
 ## Context

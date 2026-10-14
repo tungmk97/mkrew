@@ -37,7 +37,7 @@ pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
     };
     let me = std::env::current_exe().unwrap_or_default();
     if let Some(mk) = forward_target(std::env::var_os(ENV_MK), &me) {
-        // The pane's daemon has its own `mk`; the hook config may name another one (ADR 0055).
+        // The pane's daemon has its own `mk`; the hook config may name another one (ADR 0059).
         match std::process::Command::new(&mk)
             .arg("hook")
             .arg(&agent)
@@ -79,7 +79,7 @@ fn log_to_data_dir(agent: &str, error: &anyhow::Error) {
 }
 
 /// Appends one line to `<logs>/hook.log`: agents drop a hook's stderr, so this is the only
-/// trace (ADR 0055). Every I/O error is ignored: logging must never fail the hook.
+/// trace (ADR 0059). Every I/O error is ignored: logging must never fail the hook.
 fn log_failure(logs: &Path, agent: &str, error: &anyhow::Error) {
     use std::io::Write as _;
     let _ = std::fs::create_dir_all(logs);
