@@ -122,6 +122,7 @@ impl Daemon {
             Arc::clone(&self.hub),
             self.paths.backups_dir(),
             self.paths.attachments_dir(),
+            self.paths.sessions_dir(),
         );
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));

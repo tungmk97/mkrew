@@ -17,8 +17,6 @@ mod launch;
 pub mod lock;
 mod notify;
 mod plan;
-// Wired into startup and the hourly tick in the next commit.
-#[cfg_attr(not(test), allow(dead_code))]
 mod retention;
 mod server;
 mod session;
@@ -68,6 +66,16 @@ fn serve(paths: &Paths) -> anyhow::Result<()> {
         .context("mark stale sessions")?;
     if stale > 0 {
         tracing::info!(stale, "marked sessions from a previous run as exited");
+    }
+    // Retention before anyone connects, then reclaim what it freed (ADR 0060).
+    match retention::run(&store, &paths.sessions_dir(), server::now_ms()) {
+        Ok(purged) => tracing::info!(?purged, "retention at startup"),
+        Err(e) => tracing::warn!("retention at startup failed: {e}"),
+    }
+    match store.vacuum_if_sparse() {
+        Ok(true) => tracing::info!("database compacted"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("database not compacted: {e}"),
     }
     seed_profiles(&paths.agents_dir())?;
 

@@ -1508,3 +1508,40 @@ fn prune_session_events_drops_only_old_rows_of_the_given_kinds() {
     assert_eq!(left.iter().map(|e| e.at).collect::<Vec<_>>(), [200]);
     assert!(store.session_events(s.id, "hook").unwrap().is_empty());
 }
+
+#[test]
+fn vacuum_if_sparse_shrinks_the_file_only_when_mostly_free() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let s = session(p.id, 1);
+    store.insert_session(&s).unwrap();
+    let big = serde_json::json!({ "paths": ["x".repeat(2000)] });
+    for at in 0..2000 {
+        store
+            .insert_session_event(s.id, "files_changed", &big, at)
+            .unwrap();
+    }
+    assert!(!store.vacuum_if_sparse().unwrap(), "nothing free yet");
+    store
+        .prune_session_events(i64::MAX, &["files_changed"])
+        .unwrap();
+    store
+        .conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .unwrap();
+    let before = std::fs::metadata(dir.path().join("mkrew.db"))
+        .unwrap()
+        .len();
+    assert!(store.vacuum_if_sparse().unwrap());
+    // WAL mode: the rewritten pages reach the main file at the checkpoint.
+    store
+        .conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .unwrap();
+    let after = std::fs::metadata(dir.path().join("mkrew.db"))
+        .unwrap()
+        .len();
+    assert!(after * 4 < before, "{before} -> {after}");
+    assert!(!store.vacuum_if_sparse().unwrap(), "compact now");
+}

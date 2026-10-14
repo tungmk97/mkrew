@@ -16,6 +16,7 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 use crate::attachment;
+use crate::retention::Purged;
 use crate::session::Hub;
 
 pub const KEEP: usize = 7;
@@ -24,24 +25,36 @@ pub const EVERY: Duration = Duration::from_secs(60 * 60);
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Checks for today's backup now and then every [`EVERY`]; each check also deletes old
-/// attachments in `attachments` ([`attachment::cleanup`], SPEC §20B.5). Runs until aborted.
-pub fn start(hub: Arc<Hub>, dir: PathBuf, attachments: PathBuf) -> JoinHandle<()> {
+/// attachments in `attachments` ([`attachment::cleanup`], SPEC §20B.5) and runs retention
+/// over the database and `sessions` (ADR 0060). Runs until aborted.
+pub fn start(
+    hub: Arc<Hub>,
+    dir: PathBuf,
+    attachments: PathBuf,
+    sessions: PathBuf,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticks = tokio::time::interval(EVERY);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
             ticks.tick().await;
-            let (hub, dir, attachments) = (Arc::clone(&hub), dir.clone(), attachments.clone());
+            let (hub, dir, attachments, sessions) = (
+                Arc::clone(&hub),
+                dir.clone(),
+                attachments.clone(),
+                sessions.clone(),
+            );
             let done = tokio::task::spawn_blocking(move || {
                 let now = crate::server::now_ms();
                 let backed_up = run(&hub.store(), &dir, now);
                 let cleaned = attachment::cleanup(&attachments, now, |id| {
                     hub.store().get_session(id).ok().and_then(|s| s.ended_at)
                 });
-                (backed_up, cleaned)
+                let retained = crate::retention::run(&hub.store(), &sessions, now);
+                (backed_up, cleaned, retained)
             })
             .await;
-            let (backed_up, cleaned) = match done {
+            let (backed_up, cleaned, retained) = match done {
                 Ok(done) => done,
                 Err(e) => {
                     tracing::warn!("database backup task failed: {e}");
@@ -60,6 +73,11 @@ pub fn start(hub: Arc<Hub>, dir: PathBuf, attachments: PathBuf) -> JoinHandle<()
                     }
                 }
                 Err(e) => tracing::warn!("attachment cleanup failed: {e}"),
+            }
+            match retained {
+                Ok(p) if p != Purged::default() => tracing::info!(?p, "retention"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("retention failed: {e}"),
             }
         }
     })

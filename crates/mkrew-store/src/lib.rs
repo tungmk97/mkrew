@@ -878,6 +878,21 @@ impl Store {
         Ok(deleted)
     }
 
+    /// Rewrites the file (`VACUUM`) when over a quarter of its pages are free (ADR 0060).
+    /// Freed pages are reused by later inserts, so only a large prune (the first retention
+    /// run) needs this; it runs at daemon startup, before any client connects.
+    pub fn vacuum_if_sparse(&self) -> Result<bool> {
+        let pages: i64 = self.conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+        let free: i64 = self
+            .conn
+            .query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+        if free * 4 <= pages {
+            return Ok(false);
+        }
+        self.conn.execute_batch("VACUUM")?;
+        Ok(true)
+    }
+
     /// Appends a `session_event` row (SPEC §5); `payload` is stored as JSON text.
     pub fn insert_session_event(
         &self,
