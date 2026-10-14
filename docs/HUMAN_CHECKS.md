@@ -15,6 +15,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Finished agents stay highlighted until viewed
+
+- [ ] **Sidebar (dark + light, full + compact):** let an agent finish while another pane is
+  focused (or the window is in the background) → its row gets a soft green tint, bold title and
+  `✓`, also when it ends as idle (no `done` hook). Click the row → back to a normal row. A shell
+  going quiet, or an agent you were watching, is never highlighted.
+
 ### To verify — 2026-10-14 Single-pane tab shows the session title
 
 - [ ] **Tab name (dark + light):** a `Terminal` / `Terminal N` tab with one pane (or a zoomed

@@ -1275,6 +1275,7 @@ pub(crate) fn session_row(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let session_id = row.session_id;
+    let unseen = row.unseen;
     let mark = row.mark();
     let working = mark == Some(SessionState::Working);
     let time = row.time_text(now);
@@ -1304,6 +1305,10 @@ pub(crate) fn session_row(
         .when(selected, |el| {
             el.bg(rgb(theme.selected))
                 .border_color(rgb(theme.selected_ring))
+        })
+        // A finish not yet viewed: tinted until the pane is focused.
+        .when(unseen && !selected, |el| {
+            el.bg(theme.tint(theme.status_done))
         })
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
@@ -1350,7 +1355,13 @@ pub(crate) fn session_row(
                         .truncate()
                         .text_size(font_size::BODY)
                         .text_color(rgb(theme.text))
-                        .when(selected, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                        .when(selected || unseen, |el| {
+                            el.font_weight(FontWeight(if unseen {
+                                weight::SEMIBOLD
+                            } else {
+                                weight::MEDIUM
+                            }))
+                        })
                         .child(name),
                 )
                 .children(
@@ -1476,6 +1487,9 @@ pub(crate) fn compact_session_row(
         .rounded(px(radius::SMALL))
         .cursor_pointer()
         .when(selected, |el| el.bg(rgb(theme.selected)))
+        .when(row.unseen && !selected, |el| {
+            el.bg(theme.tint(theme.status_done))
+        })
         .hover(move |style| style.bg(rgb(hover)))
         .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
         .on_click(cx.listener(move |shell, _, window, cx| {

@@ -654,6 +654,7 @@ fn a_workspace_row_carries_its_summary_and_a_session_row_only_a_time() {
         state_source: StateSource::Daemon,
         state_changed_at: 0,
         pinned: false,
+        unseen: false,
     };
     // The status icon says the state; the right side is only the time (working / idle).
     assert_eq!(

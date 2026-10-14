@@ -1,10 +1,11 @@
-//! The "needs you" set (SPEC §10, §11): every session that needs input, or is done and not yet
-//! viewed, newest first. It feeds the sidebar's `Needs you` chip, its footer and "next
-//! Inbox entry". Pure and tested headlessly.
+//! The "needs you" set (SPEC §10, §11): every session that needs input, or finished (done, or
+//! an agent that went quiet after working) and not yet viewed, newest first. It feeds the
+//! sidebar's `Needs you` chip, its highlighted rows, its footer and "next Inbox entry". Pure and
+//! tested headlessly.
 
 use std::collections::HashMap;
 
-use mkrew_protocol::{Project, Session, SessionState, StateSource};
+use mkrew_protocol::{Event, Project, Session, SessionKind, SessionState, StateSource};
 use ulid::Ulid;
 
 /// One Inbox line.
@@ -23,34 +24,55 @@ pub struct Entry {
     pub state_changed_at: i64,
 }
 
-/// Which `done` states the user has seen: a done session leaves the Inbox once its pane was
-/// focused in the active window; a later `done` (new `state_changed_at`) shows it again.
+/// Which finishes the user has seen: a finished session leaves the Inbox once its pane was
+/// focused in the active window; a later finish (new `state_changed_at`) shows it again.
 #[derive(Debug, Default)]
 pub struct Viewed {
-    /// Session → `state_changed_at` of its viewed `done`.
-    done: HashMap<Ulid, i64>,
+    /// Session → `state_changed_at` of the state it was last viewed in.
+    seen: HashMap<Ulid, i64>,
+    /// Agent session → `state_changed_at` of its `working → idle`: an agent without a `done`
+    /// hook (or whose `done` decayed through new output) finishes this way.
+    quiet: HashMap<Ulid, i64>,
 }
 
 impl Viewed {
     /// `session` is on screen and focused.
     pub fn view(&mut self, session: &Session) {
-        if session.state == SessionState::Done {
-            self.done.insert(session.id, session.state_changed_at);
+        self.seen.insert(session.id, session.state_changed_at);
+    }
+
+    /// Notes an agent going quiet after work. Call before the sidebar applies `event`, so
+    /// `sessions` still holds the previous state.
+    pub fn apply(&mut self, event: &Event, sessions: &[Session]) {
+        let Event::SessionState(event) = event else {
+            return;
+        };
+        let was_working = sessions.iter().any(|s| {
+            s.id == event.session_id
+                && s.kind == SessionKind::Agent
+                && s.state == SessionState::Working
+        });
+        if event.state == SessionState::Idle && was_working {
+            self.quiet.insert(event.session_id, event.changed_at);
         }
     }
 
     fn seen(&self, session: &Session) -> bool {
-        self.done.get(&session.id) == Some(&session.state_changed_at)
+        self.seen.get(&session.id) == Some(&session.state_changed_at)
     }
 }
 
-/// A session that needs the user: it asks for input, or it finished and its pane was not
-/// focused since (a later `done` shows again). The one definition behind the Inbox entries,
-/// the sidebar chip and the sidebar footer.
+/// A session that needs the user: it asks for input, or it finished (done, or idle right after
+/// working) and its pane was not focused since (a later finish shows again). The one definition
+/// behind the Inbox entries, the sidebar chip, its highlighted rows and the sidebar footer.
 pub fn needs_you(session: &Session, viewed: &Viewed) -> bool {
     match session.state {
         SessionState::NeedsInput => true,
         SessionState::Done => !viewed.seen(session),
+        SessionState::Idle => {
+            viewed.quiet.get(&session.id) == Some(&session.state_changed_at)
+                && !viewed.seen(session)
+        }
         _ => false,
     }
 }
@@ -139,8 +161,6 @@ pub fn jump(
 
 #[cfg(test)]
 mod tests {
-    use mkrew_protocol::SessionKind;
-
     use super::*;
 
     fn project(name: &str) -> Project {
@@ -243,6 +263,41 @@ mod tests {
         let mut viewed = Viewed::default();
         viewed.view(&asking);
         assert_eq!(entries(&[api], &[asking], &viewed).len(), 1);
+    }
+
+    #[test]
+    fn an_agent_quiet_after_work_stays_until_viewed_but_a_shell_or_fresh_idle_does_not() {
+        let api = project("api");
+        let mut agent = session(&api, SessionState::Working, 1);
+        let mut shell = Session {
+            kind: SessionKind::Shell,
+            ..session(&api, SessionState::Working, 1)
+        };
+        let starting = session(&api, SessionState::Starting, 1);
+        let mut viewed = Viewed::default();
+        let before = [agent.clone(), shell.clone(), starting.clone()];
+        for s in &before {
+            viewed.apply(
+                &Event::SessionState(mkrew_protocol::SessionStateEvent {
+                    session_id: s.id,
+                    state: SessionState::Idle,
+                    source: StateSource::Screen,
+                    changed_at: 7,
+                }),
+                &before,
+            );
+        }
+        let mut fresh = starting;
+        for s in [&mut agent, &mut shell, &mut fresh] {
+            s.state = SessionState::Idle;
+            s.state_changed_at = 7;
+        }
+        assert!(needs_you(&agent, &viewed));
+        assert!(!needs_you(&shell, &viewed));
+        assert!(!needs_you(&fresh, &viewed));
+
+        viewed.view(&agent);
+        assert!(!needs_you(&agent, &viewed));
     }
 
     #[test]

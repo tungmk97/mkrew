@@ -641,6 +641,8 @@ impl Shell {
                         .as_ref()
                         .is_some_and(|peek| peek.session_id == state.session_id);
                 }
+                // Before the sidebar applies it: `viewed` reads the previous state.
+                self.viewed.apply(event, self.sidebar.sessions());
                 match self.sidebar.apply(event) {
                     Change::None => {}
                     Change::Redraw => cx.notify(),

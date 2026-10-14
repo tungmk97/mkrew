@@ -239,13 +239,18 @@ pub struct SessionRow {
     pub state_changed_at: i64,
     /// Pinned sessions lead their workspace's list (SPEC §10).
     pub pinned: bool,
+    /// Finished (done, or idle right after working) and not viewed since: the row is
+    /// highlighted until its pane is focused ([`inbox::needs_you`]).
+    pub unseen: bool,
 }
 
 impl SessionRow {
-    /// The state mark before the chip: none while idle (the time says how long) and none for a
-    /// shell's working (it is just typing). The caller keeps the slot, so chips stay aligned.
+    /// The state mark before the chip: none while idle (the time says how long) unless the
+    /// agent just finished unseen (then done's), and none for a shell's working (it is just
+    /// typing). The caller keeps the slot, so chips stay aligned.
     pub fn mark(&self) -> Option<SessionState> {
         match self.state {
+            SessionState::Idle if self.unseen => Some(SessionState::Done),
             SessionState::Idle => None,
             SessionState::Working if self.shell => None,
             state => Some(state),
@@ -563,6 +568,8 @@ impl Sidebar {
                     state_source: session.state_source,
                     state_changed_at: session.state_changed_at,
                     pinned: session.pinned,
+                    unseen: session.state != SessionState::NeedsInput
+                        && inbox::needs_you(session, viewed),
                 })
             }));
         }
