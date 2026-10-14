@@ -21,6 +21,8 @@ impl Shell {
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let active = tabs.active().map(|tab| tab.id);
         let hover = theme.hover;
+        // Pinned tabs lead the strip; each kind is dragged among its own.
+        let pinned_count = tabs.tabs().iter().filter(|tab| tab.pinned).count();
         div()
             .flex_none()
             .h(theme::rems_px(theme::TAB_STRIP_HEIGHT))
@@ -32,7 +34,10 @@ impl Shell {
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
-            .children(tabs.tabs().iter().map(|tab| {
+            .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
+                shell.drop_reordered(item, window, cx);
+            }))
+            .children(tabs.tabs().iter().enumerate().map(|(place, tab)| {
                 let tab_id = tab.id;
                 let is_active = active == Some(tab_id);
                 // F2 on a single pane: its rename field takes the tab's place (no header).
@@ -44,6 +49,15 @@ impl Shell {
                 }
                 // A lone pane's title stands in for a default tab name.
                 let label = session_label(tab, self.sidebar.sessions());
+                let item = DraggedItem {
+                    list: ReorderList::Tabs(project_id, tab.pinned),
+                    index: if tab.pinned {
+                        place
+                    } else {
+                        place - pinned_count
+                    },
+                    title: label.unwrap_or(&tab.title).to_owned().into(),
+                };
                 let labeled = tab.single().filter(|_| label.is_some());
                 // The most urgent state among the tab's panes (SPEC §11), as one dot.
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
@@ -54,7 +68,7 @@ impl Shell {
                     TabKind::Shell => Some(agent_chip(">_".to_owned(), theme)),
                     TabKind::Empty => None,
                 };
-                div()
+                let element = div()
                     .id(group.clone())
                     .group(group.clone())
                     .relative()
@@ -169,7 +183,8 @@ impl Shell {
                             },
                         )),
                     )
-                    .into_any_element()
+                    .into_any_element();
+                self.reorderable(element, item, true, space::XS, theme, cx)
             }))
             .child(
                 icon_button("new-tab", Icon::Plus, theme)

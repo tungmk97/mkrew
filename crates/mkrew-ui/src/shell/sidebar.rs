@@ -23,15 +23,6 @@ impl RowGroup {
     }
 }
 
-/// A sidebar row being dragged: the `index`-th row of `project_id`'s `group`.
-#[derive(Debug, Clone)]
-pub(crate) struct DraggedRow {
-    pub(crate) project_id: Ulid,
-    pub(crate) group: RowGroup,
-    pub(crate) index: usize,
-    pub(crate) title: String,
-}
-
 impl Shell {
     /// The sidebar's edge was released: saves the dragged width as `[ui] sidebar_width`.
     pub(crate) fn end_sidebar_drag(&mut self) {
@@ -179,13 +170,12 @@ impl Shell {
                 .into_any_element();
             // Only configured commands have a place to move to (the config order).
             if index < configured {
-                let dragged = DraggedRow {
-                    project_id,
-                    group: RowGroup::Run,
+                let item = DraggedItem {
+                    list: ReorderList::Rows(project_id, RowGroup::Run),
                     index,
-                    title,
+                    title: title.into(),
                 };
-                self.draggable_row(line, dragged, theme, cx)
+                self.reorderable(line, item, false, 0.0, theme, cx)
             } else {
                 line
             }
@@ -193,58 +183,19 @@ impl Shell {
         std::iter::once(label).chain(lines).collect()
     }
 
-    /// Wraps a sidebar row so it can be dragged onto another row of its own group (it takes that
-    /// row's place); a row of the same group under the pointer is tinted as the drop target.
-    pub(crate) fn draggable_row(
-        &self,
-        row: gpui::AnyElement,
-        dragged: DraggedRow,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let (project_id, group, index) = (dragged.project_id, dragged.group, dragged.index);
-        let fits = move |other: &DraggedRow| other.project_id == project_id && other.group == group;
-        let preview_style = PopupStyle::of(theme);
-        let target = theme.selected;
-        div()
-            .id(SharedString::from(format!(
-                "row-drag-{project_id}-{group:?}-{index}"
-            )))
-            .rounded(px(radius::SMALL))
-            .on_drag(dragged, move |dragged, _, _, cx| {
-                let style = preview_style.clone();
-                let title = dragged.title.clone().into();
-                cx.new(|_| CardPreview { style, title })
-            })
-            .can_drop(move |any, _, _| any.downcast_ref::<DraggedRow>().is_some_and(fits))
-            .drag_over::<DraggedRow>(move |style, other, _, _| {
-                if fits(other) {
-                    style.bg(rgb(target))
-                } else {
-                    style
-                }
-            })
-            .on_drop(cx.listener(move |shell, other: &DraggedRow, window, cx| {
-                shell.drop_row(other, index, window, cx);
-            }))
-            .child(row)
-            .into_any_element()
-    }
-
-    /// `dragged` was dropped on the `to`-th row of its group: run commands are saved in the new
-    /// order (`project.update`), sessions get positions `1..=n` (`session.move`, shown at once).
+    /// The `from`-th row of `project_id`'s `group` was dropped at index `to`: run commands are
+    /// saved in the new order (`project.update`), sessions get positions `1..=n`
+    /// (`session.move`, shown at once).
     pub(crate) fn drop_row(
         &mut self,
-        dragged: &DraggedRow,
+        project_id: Ulid,
+        group: RowGroup,
+        from: usize,
         to: usize,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (project_id, from) = (dragged.project_id, dragged.index);
-        if from == to {
-            return;
-        }
-        if dragged.group == RowGroup::Run {
+        if group == RowGroup::Run {
             let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
                 return;
             };
@@ -257,7 +208,7 @@ impl Shell {
             self.update_project(params, "Cannot reorder the run commands", window, cx);
             return;
         }
-        let order = (self.sidebar).group_order(project_id, dragged.group == RowGroup::Terminal);
+        let order = (self.sidebar).group_order(project_id, group == RowGroup::Terminal);
         for (session_id, position) in sidebar::reordered(&order, from, to) {
             let moved = (self.sidebar.sessions().iter())
                 .any(|s| s.id == session_id && s.position != position);
@@ -699,11 +650,14 @@ impl Shell {
                         } else {
                             (RowGroup::Agents, &mut agents)
                         };
-                        let dragged = DraggedRow {
-                            project_id: row.project_id,
-                            group,
+                        let item = DraggedItem {
+                            list: ReorderList::Rows(row.project_id, group),
                             index: rows_of.len(),
-                            title: row.title.clone().unwrap_or_else(|| row.agent.clone()),
+                            title: row
+                                .title
+                                .clone()
+                                .unwrap_or_else(|| row.agent.clone())
+                                .into(),
                         };
                         // One lookup, for the selected row only.
                         let progress = selected.then(|| self.plans.fraction(session_id)).flatten();
@@ -714,7 +668,7 @@ impl Shell {
                         rows_of.push(if filtering {
                             row
                         } else {
-                            self.draggable_row(row, dragged, theme, cx)
+                            self.reorderable(row, item, false, 0.0, theme, cx)
                         });
                     }
                     // Hide what's empty: an open workspace without sessions shows nothing.
@@ -796,6 +750,9 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .overflow_y_scroll()
+                    .on_drop(cx.listener(|shell, item: &DraggedItem, window, cx| {
+                        shell.drop_reordered(item, window, cx);
+                    }))
                     .children(errors.into_iter().flatten())
                     .child(body),
             )

@@ -120,6 +120,7 @@ use shell::git_menus::*;
 use shell::git_rows::*;
 use shell::menus::*;
 use shell::pane_render::*;
+use shell::reorder::*;
 use shell::sidebar::*;
 use shell::thread_panel::*;
 use shell::widgets::*;
@@ -368,6 +369,8 @@ struct Shell {
     file_menu: Option<FileMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
+    /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
+    reorder: Option<Reorder>,
     /// The open menu of the tab strip's split button (Split right / down, layouts).
     layout_menu: Option<LayoutMenu>,
     /// The open pane menu (Pin, Rename, Change color).

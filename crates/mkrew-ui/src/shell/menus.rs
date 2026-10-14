@@ -278,8 +278,9 @@ impl Shell {
     }
 
     /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,
-    /// Close; on the active tab also the focused pane's Rename pane, Close pane and, for an
-    /// agent, Follow in Zed (✓ while on) and Turns…. Floats at the click; a click outside closes it.
+    /// Close, Close others, Close tabs to the right (pinned tabs stay); on the active tab also the
+    /// focused pane's Rename pane, Close pane and, for an agent, Follow in Zed (✓ while on) and
+    /// Turns…. Floats at the click; a click outside closes it.
     pub(crate) fn render_tab_menu(
         &self,
         menu: &TabMenu,
@@ -298,6 +299,19 @@ impl Shell {
             .focused_session()
             .filter(|_| active_tab == Some(tab_id))
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+        let tabs = (self.workspace).and_then(|project_id| self.tabs.get(&project_id));
+        let has_others = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, false).is_empty());
+        let has_right = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, true).is_empty());
+        let close_some = |id: &'static str, label: &'static str, any: bool, right_only: bool| {
+            menu_item(id.into(), theme)
+                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
+                .when(!any, |el| el.opacity(opacity::DISABLED))
+                .when(any, |el| {
+                    el.on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.close_other_tabs(tab_id, right_only, window, cx);
+                    }))
+                })
+        };
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
@@ -362,6 +376,18 @@ impl Shell {
                     },
                 )),
             )
+            .child(close_some(
+                "tab-menu-close-others",
+                "Close others",
+                has_others,
+                false,
+            ))
+            .child(close_some(
+                "tab-menu-close-right",
+                "Close tabs to the right",
+                has_right,
+                true,
+            ))
             .when_some(pane, |panel, info| {
                 let session = info.id;
                 let agent = info.kind == SessionKind::Agent;

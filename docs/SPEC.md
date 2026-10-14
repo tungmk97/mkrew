@@ -814,11 +814,16 @@ The session panel (below) is a third column right of Terminals while open.
   lacks start sessions of the focused pane's kind (as Split right), one after another; then the
   layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
   why); if a start fails, the sessions that started are placed as Split right places them.
-  `⋯`, and a right-click on a tab, open the tab menu: Pin, Split right, Split down, Rename, Close;
-  on the active tab also the focused pane's Rename pane, Close pane and, for an agent, Follow in
-  Zed (✓ while on) and Turns…. The tab is
+  `⋯`, and a right-click on a tab, open the tab menu: Pin, Split right, Split down, Rename, Close,
+  Close others, Close tabs to the right (both leave pinned tabs and make the menu's tab active;
+  greyed when nothing would close); on the active tab also the focused pane's Rename pane, Close
+  pane and, for an agent, Follow in Zed (✓ while on) and Turns…. The tab is
   activated first, so the menu acts on the tab it was opened on. Closing a tab stops its panes'
-  sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first.
+  sessions and removes them from the sidebar (ADR 0041); a running agent among them asks first
+  (once for Close others / to the right). Drag a tab along the strip to reorder it (`tab.move`),
+  among the pinned or the unpinned tabs only; tabs and sidebar rows share one drag look: a small
+  title chip follows the pointer, the item stays dim in place and an accent line marks the gap
+  it lands in.
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
   shell, picked in the workspace menu under "Default shell for new panes" like the default agent;
   a new shell pane without one asks the user to pick; ADR 0032).

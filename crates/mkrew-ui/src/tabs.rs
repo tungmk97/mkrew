@@ -5,7 +5,8 @@
 use std::collections::VecDeque;
 
 use mkrew_protocol::{
-    Event, Session, SessionKind, SessionState, TabRenameParams, TabSetLayoutParams, TerminalTab,
+    Event, Session, SessionKind, SessionState, TabMoveParams, TabRenameParams, TabSetLayoutParams,
+    TerminalTab,
 };
 use ulid::Ulid;
 
@@ -297,6 +298,42 @@ impl Tabs {
         };
         self.active = Some(tab_id);
         true
+    }
+
+    /// Moves `tab_id` to the `to`-th place among the tabs of its pin group (pinned tabs only move
+    /// among pinned ones): a position between its new neighbors, applied at once. Returns the
+    /// `tab.move` to send; `None` if nothing moves.
+    // ponytail: midpoints halve the gap per move; ~50 moves into one gap exhaust f64. Renumber
+    // the group if that ever shows.
+    pub fn move_tab(&mut self, tab_id: Ulid, to: usize) -> Option<TabMoveParams> {
+        let pinned = self.tab(tab_id)?.pinned;
+        let others: Vec<f64> = (self.tabs.iter())
+            .filter(|tab| tab.pinned == pinned && tab.id != tab_id)
+            .map(|tab| tab.position)
+            .collect();
+        let to = to.min(others.len());
+        let position = match (to.checked_sub(1).map(|i| others[i]), others.get(to)) {
+            (Some(before), Some(after)) => (before + after) / 2.0,
+            (Some(before), None) => before + 1.0,
+            (None, Some(after)) => after - 1.0,
+            (None, None) => return None,
+        };
+        let tab = self.tab_mut(tab_id)?;
+        tab.position = position;
+        self.sort();
+        Some(TabMoveParams { tab_id, position })
+    }
+
+    /// The tabs "Close others" (`right_only` false) or "Close tabs to the right" closes from
+    /// `tab_id`'s menu: the unpinned ones besides it, or only those after it.
+    pub fn close_targets(&self, tab_id: Ulid, right_only: bool) -> Vec<Ulid> {
+        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+            return Vec::new();
+        };
+        (self.tabs.iter().enumerate())
+            .filter(|&(i, tab)| !tab.pinned && i != index && (!right_only || i > index))
+            .map(|(_, tab)| tab.id)
+            .collect()
     }
 
     /// Sessions shown on screen: the panes of the active tab (only the zoomed one while a pane
