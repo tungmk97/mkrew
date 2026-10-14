@@ -329,6 +329,7 @@ mod tests {
                 started_at: 0,
                 ended_at: None,
                 pinned: false,
+                position: 0.0,
                 plan_path: None,
             })
             .unwrap();

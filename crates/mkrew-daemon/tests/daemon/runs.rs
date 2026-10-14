@@ -120,7 +120,7 @@ fn run_commands_start_in_their_folders_with_env_side_by_side_restart_and_stop() 
     assert_eq!(tabs.len(), 1);
     assert_eq!(
         (tabs[0].title.as_str(), Some(tabs[0].id)),
-        ("run", first.tab_id)
+        ("Run", first.tab_id)
     );
     assert_eq!(tabs[0].layout, pair(be_id, fe_id));
 

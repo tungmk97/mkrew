@@ -144,6 +144,10 @@ pub enum Request {
     /// Returns the [`Session`]; also broadcast as `session.updated`.
     #[serde(rename = "session.pin")]
     SessionPin(SessionPinParams),
+    /// Returns the [`Session`] with the new `position`; also broadcast as `session.updated`.
+    /// A non-finite position is `invalid_request`.
+    #[serde(rename = "session.move")]
+    SessionMove(SessionMoveParams),
     /// Returns the [`Session`] with the new color, also announced as `session.updated`; `null`
     /// clears it, a name outside [`WORKSPACE_COLORS`] is `invalid_request` (ADR 0037).
     #[serde(rename = "session.set_color")]
@@ -500,7 +504,7 @@ pub struct RunCommand {
     pub env: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Session {
     pub id: Ulid,
     pub task_id: Option<Ulid>,
@@ -531,6 +535,9 @@ pub struct Session {
     /// Pinned sessions lead their workspace's sidebar list (SPEC §10). Set with `session.pin`.
     #[serde(default)]
     pub pinned: bool,
+    /// Sidebar order inside its workspace group, ascending; 0 = never moved (newest first among equals). Set with `session.move`.
+    #[serde(default)]
+    pub position: f64,
     /// The linked plan `.md` (`session.link_plan`): relative to the project folder with `/`
     /// when it lies inside, else absolute. `None` = no plan (SPEC §5, ADR 0039).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1086,6 +1093,13 @@ pub struct SessionLinkPlanParams {
 pub struct SessionPinParams {
     pub session_id: Ulid,
     pub pinned: bool,
+}
+
+/// `session.move`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionMoveParams {
+    pub session_id: Ulid,
+    pub position: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

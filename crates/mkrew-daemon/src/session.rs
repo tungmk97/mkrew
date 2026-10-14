@@ -263,6 +263,11 @@ pub enum Command {
         pinned: bool,
         reply: oneshot::Sender<Session>,
     },
+    /// `session.move`: like `Pin`.
+    Move {
+        position: f64,
+        reply: oneshot::Sender<Session>,
+    },
     /// `session.link_plan`: the actor owns the row (its next save would undo a store-only
     /// change). `plan_path` is the stored form, `file` the resolved path to watch; both
     /// `None` unlinks. Replies with the updated session, also announced as `session.updated`.
@@ -1134,6 +1139,12 @@ impl Actor {
                     }
                     Some(Command::Pin { pinned, reply }) => {
                         self.session.pinned = pinned;
+                        self.save();
+                        let _ = self.hub.events.send(Event::SessionUpdated(Box::new(self.session.clone())));
+                        let _ = reply.send(self.session.clone());
+                    }
+                    Some(Command::Move { position, reply }) => {
+                        self.session.position = position;
                         self.save();
                         let _ = self.hub.events.send(Event::SessionUpdated(Box::new(self.session.clone())));
                         let _ = reply.send(self.session.clone());

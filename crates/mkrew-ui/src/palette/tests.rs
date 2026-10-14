@@ -85,6 +85,7 @@ fn session(project_id: Ulid, title: Option<&str>, state: SessionState) -> Sessio
         started_at: 0,
         ended_at: None,
         pinned: false,
+        position: 0.0,
         plan_path: None,
     }
 }

@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 use ulid::Ulid;
 
 /// Title of the tab holding the run sessions.
-pub const TAB_TITLE: &str = "run";
+pub const TAB_TITLE: &str = "Run";
+
 /// A run session is a shell titled `run:<name>`.
 pub const SESSION_PREFIX: &str = "run:";
 /// Ports kept per run session.
@@ -361,6 +362,7 @@ mod tests {
             started_at: 0,
             ended_at: None,
             pinned: false,
+            position: 0.0,
             plan_path: None,
         }
     }

@@ -278,6 +278,10 @@ fn every_m1_request_round_trips() {
             session_id: sid(),
             pinned: true,
         }),
+        Request::SessionMove(SessionMoveParams {
+            session_id: sid(),
+            position: 1.5,
+        }),
         Request::SessionSetColor(SessionSetColorParams {
             session_id: sid(),
             color: Some("teal".into()),
@@ -794,6 +798,7 @@ fn event_wire_shape_matches_spec() {
         started_at: 1,
         ended_at: None,
         pinned: true,
+        position: 2.5,
         plan_path: None,
     }))));
     let titled = round_trip(&Message::Event(Event::SessionTerminalTitle(
@@ -806,6 +811,7 @@ fn event_wire_shape_matches_spec() {
     assert_eq!(updated["event"], "session.updated");
     assert_eq!(updated["data"]["title"], "Fix login");
     assert_eq!(updated["data"]["pinned"], true);
+    assert_eq!(updated["data"]["position"], 2.5);
     // Absent on the wire when unset.
     assert!(updated["data"].get("terminal_title").is_none());
     assert_eq!(updated["data"]["color"], "teal");

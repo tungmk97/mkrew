@@ -1194,6 +1194,7 @@ fn session(id: u128, task: Option<u128>, started_at: i64, state: SessionState) -
         started_at,
         ended_at: None,
         pinned: false,
+        position: 0.0,
         plan_path: None,
     }
 }

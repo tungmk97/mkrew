@@ -305,6 +305,7 @@ impl Shell {
             workspace_switcher: false,
             new_menu: false,
             empty_workspaces_open: false,
+            collapsed_groups: HashSet::new(),
             reading_default,
             reading_width: HashMap::new(),
             run_reveal: None,

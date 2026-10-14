@@ -35,11 +35,11 @@ use mkrew_protocol::{
     ProjectAddParams, ProjectRef, ProjectUpdateParams, RemoveWorktreeResult, Request,
     RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
     SessionHistory, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
-    SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult, SessionRef,
-    SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState, SessionUnqueueParams,
-    SessionUsageEvent, StateSource, TabCreateParams, TabListParams, TabPinParams, TabRef,
-    TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams, TaskMoveParams, TaskRef,
-    TaskStatus, TerminalTab, Turn, UndoPreview, WORKSPACE_COLORS,
+    SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
+    SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
+    SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams, TabListParams,
+    TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams,
+    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview, WORKSPACE_COLORS,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -385,6 +385,9 @@ struct Shell {
     new_menu: bool,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
     empty_workspaces_open: bool,
+    /// Sidebar groups (a workspace's AGENTS / TERMINAL / RUN) folded to their label (in memory
+    /// only).
+    collapsed_groups: HashSet<(Ulid, RowGroup)>,
     /// Agent panes start at reading width (`[ui] reading_width`); a pane toggled since holds
     /// its own choice here (in memory only). Shell and run panes default to full width.
     reading_default: bool,

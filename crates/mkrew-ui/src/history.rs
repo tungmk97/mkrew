@@ -186,6 +186,7 @@ mod tests {
             started_at: 1_000,
             ended_at,
             pinned: false,
+            position: 0.0,
             plan_path: None,
         }
     }

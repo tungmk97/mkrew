@@ -527,6 +527,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.remove` | `session_id` | ok — leaves the session out of `session.list` for good (row, log, turns kept); a live one is asked to stop first (ADR 0019) |
 | `session.rename` | `session_id`, `title?` (trimmed; `null`/blank clears) | the Session, also broadcast as `session.updated` — `invalid_state` for a run session (named by its command) or one caught exiting, `invalid_request` for a title starting with `run:` (ADR 0031) |
 | `session.pin` | `session_id`, `pinned` | the Session, also broadcast as `session.updated`; a live session through its task, an exited one in the store (`invalid_state` for one caught exiting); a resumed session keeps the pin (ADR 0017) |
+| `session.move` | `session_id`, `position` (finite number; non-finite = `invalid_request`) | the Session, also broadcast as `session.updated`; like `session.pin` (live through its task, exited in the store); sidebar order inside the workspace group, ascending, 0 = never moved; a resumed session keeps it |
 | `session.set_color` | `session_id`, `color?` (a workspace color name; `null` clears) | the Session, also broadcast as `session.updated` — `invalid_request` for a name outside the palette, `invalid_state` for one caught exiting (ADR 0037) |
 | `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
@@ -570,7 +571,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.ports` | a run session's port list grew (`session_id`, `ports`): ports are scanned from its screen text (`http(s)://<host>:<port>`, `port(s)[:=] <n>`), first 4 distinct, never removed while it lives |
 | `session.usage` | an agent session's token usage changed at a turn end (§20E.3): `session_id`, `input` (fresh, cache excluded), `output`, `cache_read`, `cache_write`, `context`, `context_window?`, `model?`, `transcript?` |
 | `task.updated` / `project.updated` / `tab.updated` | entity changed |
-| `session.updated` | a session's title, color, pin or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.link_plan`): the whole Session |
+| `session.updated` | a session's title, color, pin, position or plan link changed (`session.rename`, `session.set_color`, `session.pin`, `session.move`, `session.link_plan`): the whole Session |
 | `session.terminal_title` | an agent session's terminal title (OSC 0/2) changed: `session_id`, `title?` — leading glyphs stripped, paths ignored, ≤ 60 chars, once per change; memory only (ADR 0031) |
 | `session.plan` | the checklist of a linked plan changed (`session_id`, `name` = file name without `.md`, `done`, `total`, `items[]` = first 200 task items `{done, text}` (text cut at 120 chars with `…`), `error?` = why the file cannot be read, counts then 0): sent at once on link and ≤ 1 s after each change of the file (debounced), never twice with the same content; `-`, `*` or `+` items (`[ ]`/`[x]`/`[X]`) outside code fences (ADR 0039) |
 | `task.deleted` | task removed (`task_id`, `project_id`; ADR 0004) |
@@ -609,6 +610,8 @@ Rules: on
 v2 adds requests and events in §20; each milestone that changes the protocol bumps `PROTOCOL_VERSION`.
 
 Protocol 40 (ADR 0053): `daemon.status` gains `web`.
+
+Protocol 41: `session.move` and `Session.position`.
 
 ---
 

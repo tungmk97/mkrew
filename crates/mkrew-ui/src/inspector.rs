@@ -152,6 +152,7 @@ mod tests {
             terminal_title: None,
             color: None,
             pinned: false,
+            position: 0.0,
             native_session_id: None,
             state,
             state_source: StateSource::Daemon,

@@ -136,6 +136,7 @@ impl Daemon {
                     title: Some(run::session_title(&command.name)),
                     color: old.and_then(|s| s.color.clone()),
                     pinned: old.is_some_and(|s| s.pinned),
+                    position: old.map_or(0.0, |s| s.position),
                     cols: params.cols,
                     rows: params.rows,
                     typed: Some(run::typed_line(&program, &command.command)),

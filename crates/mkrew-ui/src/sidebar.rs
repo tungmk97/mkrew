@@ -424,6 +424,25 @@ impl Sidebar {
         self.update_session(session_id, |session| session.color = color);
     }
 
+    /// Positions from a sidebar drag, shown before the `session.updated` echoes arrive.
+    pub fn set_position(&mut self, session_id: Ulid, position: f64) {
+        self.update_session(session_id, |session| session.position = position);
+    }
+
+    /// The live session ids of `project_id`'s AGENTS (`shell` false) or TERMINAL group, in
+    /// sidebar order (unfiltered: dragging is off while filtering).
+    pub fn group_order(&self, project_id: Ulid, shell: bool) -> Vec<Ulid> {
+        self.rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                Row::Session(row) if row.project_id == project_id && row.shell == shell => {
+                    Some(row.session_id)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Applies a daemon event.
     pub fn apply(&mut self, event: &Event) -> Change {
         if let Some(since_load) = &mut self.since_load
@@ -556,7 +575,9 @@ impl Sidebar {
         self.view(&Viewed::default()).rows
     }
 
-    /// Per workspace (in list order): its live sessions matching the filter text, newest first.
+    /// Per workspace (in list order): its live sessions matching the filter text, agents before
+    /// terminals (the sidebar's AGENTS and TERMINAL groups), each pinned first, then by dragged
+    /// `position`, then newest first (a new session has position 0: on top).
     /// An exited session cannot be opened: no row (History and the Inbox read it from
     /// `sessions()`; ADR 0033). Run sessions are left out (the RUN group shows them).
     fn grouped(&self) -> Vec<(&Project, Vec<&Session>)> {
@@ -585,12 +606,14 @@ impl Sidebar {
                         matches(&query, fields)
                     });
                 }
-                // Pinned first, then newest first.
-                sessions.sort_by_key(|session| {
-                    (
-                        !session.pinned,
-                        std::cmp::Reverse((session.started_at, session.id)),
-                    )
+                // Agents, then terminals; within each pinned first, then dragged position,
+                // then newest first.
+                sessions.sort_by(|a, b| {
+                    let key = |s: &Session| (s.kind == SessionKind::Shell, !s.pinned);
+                    key(a)
+                        .cmp(&key(b))
+                        .then(a.position.total_cmp(&b.position))
+                        .then((b.started_at, b.id).cmp(&(a.started_at, a.id)))
                 });
                 (project, sessions)
             })
@@ -625,6 +648,19 @@ impl Sidebar {
     fn sort_projects(&mut self) {
         self.projects.sort_by_key(|p| (!p.pinned, p.created_at));
     }
+}
+
+/// The item at `from` dragged onto `to` takes that slot; the new order as positions `1..=n`
+/// (so every row of the group sorts after the 0 of a session never moved).
+pub fn reordered<T: Copy>(order: &[T], from: usize, to: usize) -> Vec<(T, f64)> {
+    let mut order = order.to_vec();
+    if from < order.len() && to < order.len() {
+        let moved = order.remove(from);
+        order.insert(to, moved);
+    }
+    (order.into_iter().enumerate())
+        .map(|(i, item)| (item, (i + 1) as f64))
+        .collect()
 }
 
 #[cfg(test)]

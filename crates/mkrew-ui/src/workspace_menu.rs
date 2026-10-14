@@ -1,7 +1,7 @@
 //! The workspace menu (SPEC §10): "Open in Zed", "Run setup…", the default agent and shell, and
 //! removing the workspace. Pure and tested headlessly; `main.rs` renders it.
 
-use mkrew_protocol::{AgentProfileInfo, ProjectUpdateParams, SessionKind};
+use mkrew_protocol::{AgentProfileInfo, ProjectUpdateParams, RunCommand, SessionKind};
 use ulid::Ulid;
 
 /// The open menu of one workspace.
@@ -129,6 +129,20 @@ pub fn set_pinned(project_id: Ulid, pinned: bool) -> ProjectUpdateParams {
         run_autostart: None,
         color: None,
         pinned: Some(pinned),
+    }
+}
+
+/// `project.update` with the run commands in a new order (a drag in the sidebar's RUN group).
+pub fn set_run_commands(project_id: Ulid, commands: Vec<RunCommand>) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        project_id,
+        name: None,
+        default_agent: None,
+        default_shell: None,
+        run_commands: Some(commands),
+        run_autostart: None,
+        color: None,
+        pinned: None,
     }
 }
 

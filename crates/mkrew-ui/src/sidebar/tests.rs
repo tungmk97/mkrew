@@ -54,6 +54,7 @@ fn session(project: &Project, started_at: i64, state: SessionState) -> Session {
         started_at,
         ended_at: None,
         pinned: false,
+        position: 0.0,
         plan_path: None,
     }
 }
@@ -329,6 +330,44 @@ fn pinned_sessions_lead_their_workspace_newest_first() {
     let rows = sidebar.rows();
     assert!(matches!(&rows[1], Row::Session(row) if row.pinned));
     assert!(matches!(&rows[3], Row::Session(row) if !row.pinned));
+}
+
+/// Agents come before terminals; a drag inside a group renumbers it, and a session that was
+/// never moved (position 0) still shows on top.
+#[test]
+fn agents_lead_terminals_and_a_drag_reorders_only_its_group() {
+    let api = project("api");
+    let shell = |started_at| Session {
+        kind: SessionKind::Shell,
+        agent_profile: "shell".into(),
+        ..session(&api, started_at, SessionState::Idle)
+    };
+    let (a1, a2) = (
+        session(&api, 1, SessionState::Idle),
+        session(&api, 2, SessionState::Idle),
+    );
+    let (t1, t2) = (shell(3), shell(4));
+    let mut sidebar = Sidebar::default();
+    sidebar.load(
+        vec![api.clone()],
+        vec![a1.clone(), t1.clone(), a2.clone(), t2.clone()],
+    );
+    assert_eq!(session_ids(&sidebar.rows()), [a2.id, a1.id, t2.id, t1.id]);
+
+    let order = sidebar.group_order(api.id, true);
+    assert_eq!(order, [t2.id, t1.id]);
+    for (id, position) in reordered(&order, 0, 1) {
+        sidebar.set_position(id, position);
+    }
+    assert_eq!(session_ids(&sidebar.rows()), [a2.id, a1.id, t1.id, t2.id]);
+
+    let t3 = shell(5);
+    let mut sessions = sidebar.sessions().to_vec();
+    sessions.push(t3.clone());
+    sidebar.load(vec![api], sessions);
+    assert_eq!(session_ids(&sidebar.rows())[2..], [t3.id, t1.id, t2.id]);
+    // Out of range: nothing moves.
+    assert_eq!(reordered(&[7, 8], 0, 5), [(7, 1.0), (8, 2.0)]);
 }
 
 #[test]

@@ -355,6 +355,48 @@ fn sessions_are_pinned_live_and_exited_and_keep_the_pin_through_saves() {
     client.stop();
 }
 
+/// `session.move` (SPEC §7): a live session keeps its position through its own later saves
+/// (exit), an exited one is moved in the store; both are announced. A non-finite position
+/// cannot be sent (JSON has no NaN/inf, the frame is malformed); `session_move` refuses it anyway.
+#[test]
+fn sessions_are_moved_live_and_exited_and_the_position_persists() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "fake").into_result().unwrap();
+    let id = spawned.session_id;
+    client.wait_state(id, SessionState::NeedsInput);
+    assert_eq!(client.session(id).position, 0.0);
+
+    let moved: Session = client.call(move_to(id, 1.5)).into_result().unwrap();
+    assert_eq!(moved.position, 1.5);
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.position == 1.5),
+    );
+    assert_eq!(client.session(id).position, 1.5);
+    // The actor's final save (exit) keeps the position.
+    let kill = Request::SessionKill(SessionKillParams {
+        session_id: id,
+        force: true,
+    });
+    client.call(kill).into_result::<()>().unwrap();
+    assert_eq!(client.wait_state(id, SessionState::Exited).position, 1.5);
+
+    // Exited: moved in the store.
+    let again: Session = client.call(move_to(id, -3.0)).into_result().unwrap();
+    assert_eq!(again.position, -3.0);
+    assert_eq!(client.session(id).position, -3.0);
+    client.wait_event_where(
+        |e| matches!(e, Event::SessionUpdated(s) if s.id == id && s.position == -3.0),
+    );
+    assert_eq!(
+        error_code(client.call(move_to(Ulid::new(), 1.0))),
+        ErrorCode::NotFound
+    );
+    client.stop();
+}
+
 /// `tab.pin` and `project.update` `pinned`: stored, announced, `position` untouched, kept by
 /// other changes, and still there after a daemon restart.
 #[test]

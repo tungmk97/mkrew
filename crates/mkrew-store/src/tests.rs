@@ -26,6 +26,7 @@ fn session(project_id: Ulid, started_at: i64) -> Session {
         started_at,
         ended_at: None,
         pinned: false,
+        position: 0.0,
         plan_path: None,
     }
 }
@@ -1390,6 +1391,22 @@ fn pinned_persists_for_workspaces_sessions_and_tabs() {
         store.set_tab_pinned(Ulid::new(), true),
         Err(StoreError::TabNotFound(_))
     ));
+}
+
+#[test]
+fn session_position_persists_through_insert_and_update() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let mut s = Session {
+        position: 1.5,
+        ..session(p.id, 1)
+    };
+    store.insert_session(&s).unwrap();
+    assert_eq!(open(&dir).get_session(s.id).unwrap().position, 1.5);
+    s.position = -2.25;
+    store.update_session(&s).unwrap();
+    assert_eq!(open(&dir).list_sessions(None).unwrap()[0].position, -2.25);
 }
 
 #[test]

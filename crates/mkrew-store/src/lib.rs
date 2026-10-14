@@ -33,6 +33,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0016_pinned.sql"),
     include_str!("../migrations/0017_session_plan.sql"),
     include_str!("../migrations/0018_run_env_file_from_workspace.sql"),
+    include_str!("../migrations/0019_session_position.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
@@ -724,8 +725,8 @@ impl Store {
         self.conn.execute(
             "INSERT INTO session (id, task_id, project_id, agent_profile, kind, title,
                 native_session_id, state, exit_code, cols, rows, started_at, ended_at,
-                state_source, state_changed_at, color, pinned, plan_path)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                state_source, state_changed_at, color, pinned, plan_path, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 session.id.to_string(),
                 session.task_id.map(|id| id.to_string()),
@@ -745,6 +746,7 @@ impl Store {
                 session.color,
                 session.pinned,
                 session.plan_path,
+                session.position,
             ],
         )?;
         Ok(())
@@ -756,7 +758,7 @@ impl Store {
         let changed = self.conn.execute(
             "UPDATE session SET title = ?2, native_session_id = ?3, state = ?4, exit_code = ?5,
                 cols = ?6, rows = ?7, ended_at = ?8, state_source = ?9, state_changed_at = ?10,
-                color = ?11, pinned = ?12, plan_path = ?13
+                color = ?11, pinned = ?12, plan_path = ?13, position = ?14
              WHERE id = ?1",
             params![
                 session.id.to_string(),
@@ -772,6 +774,7 @@ impl Store {
                 session.color,
                 session.pinned,
                 session.plan_path,
+                session.position,
             ],
         )?;
         if changed == 0 {
@@ -816,7 +819,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
                 state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at,
-                color, pinned, plan_path
+                color, pinned, plan_path, position
              FROM session WHERE (?1 IS NULL OR project_id = ?1) AND hidden = 0
              ORDER BY started_at, id",
         )?;
@@ -829,7 +832,7 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, task_id, project_id, agent_profile, kind, title, native_session_id,
                 state, exit_code, cols, rows, started_at, ended_at, state_source, state_changed_at,
-                color, pinned, plan_path
+                color, pinned, plan_path, position
              FROM session WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id.to_string()], RawSession::from_row)?;
@@ -1452,6 +1455,7 @@ struct RawSession {
     color: Option<String>,
     pinned: bool,
     plan_path: Option<String>,
+    position: f64,
 }
 
 impl RawSession {
@@ -1475,6 +1479,7 @@ impl RawSession {
             color: row.get(15)?,
             pinned: row.get(16)?,
             plan_path: row.get(17)?,
+            position: row.get(18)?,
         })
     }
 
@@ -1502,6 +1507,7 @@ impl RawSession {
             ended_at: self.ended_at,
             pinned: self.pinned,
             plan_path: self.plan_path,
+            position: self.position,
         })
     }
 }

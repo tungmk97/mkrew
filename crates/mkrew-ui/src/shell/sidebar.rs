@@ -5,6 +5,41 @@ use crate::*;
 /// Payload of a drag of the sidebar's right edge (a resize, nothing is dropped).
 pub(crate) struct SidebarGrip;
 
+/// A workspace's groups of sidebar rows; a row is dragged to a new place only inside its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RowGroup {
+    Agents,
+    Terminal,
+    Run,
+}
+
+impl RowGroup {
+    fn label(self) -> &'static str {
+        match self {
+            RowGroup::Agents => "AGENTS",
+            RowGroup::Terminal => "TERMINAL",
+            RowGroup::Run => "RUN",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            RowGroup::Agents => Icon::Sparkles,
+            RowGroup::Terminal => Icon::SquareTerminal,
+            RowGroup::Run => Icon::Play,
+        }
+    }
+}
+
+/// A sidebar row being dragged: the `index`-th row of `project_id`'s `group`.
+#[derive(Debug, Clone)]
+pub(crate) struct DraggedRow {
+    pub(crate) project_id: Ulid,
+    pub(crate) group: RowGroup,
+    pub(crate) index: usize,
+    pub(crate) title: String,
+}
+
 impl Shell {
     /// The sidebar's edge was released: saves the dragged width as `[ui] sidebar_width`.
     pub(crate) fn end_sidebar_drag(&mut self) {
@@ -43,15 +78,14 @@ impl Shell {
         }
         let shown = self.focused_session();
         let hover = theme.hover;
-        let label = div()
-            .px(px(space::S))
-            .pt(px(space::XS))
-            .text_size(font_size::META)
-            .font_weight(FontWeight(weight::MEDIUM))
-            .text_color(rgb(theme.text_muted))
-            .child("RUN")
-            .into_any_element();
-        let lines = rows.into_iter().map(|row| {
+        let collapsed = self.collapsed_groups.contains(&(project_id, RowGroup::Run));
+        let label = self.group_label(project_id, RowGroup::Run, rows.len(), collapsed, theme, cx);
+        if collapsed {
+            return vec![label];
+        }
+        let configured = summary.rows.len();
+        let lines = rows.into_iter().enumerate().map(|(index, row)| {
+            let title = row.name.clone();
             let running = matches!(row.state, RowState::Running(_));
             let (color, hollow) = match row.state {
                 RowState::Running(_) => (theme.status_done, false),
@@ -86,7 +120,7 @@ impl Shell {
                     shell.run_action(project_id, RunAction::Start, name, window, cx);
                 })),
             };
-            div()
+            let line = div()
                 .id(id.clone())
                 .group(id.clone())
                 .min_h(theme::rems_px(theme::SESSION_ROW_HEIGHT))
@@ -150,9 +184,107 @@ impl Shell {
                         .opacity(opacity::HIDDEN)
                         .group_hover(id, |style| style.opacity(opacity::FULL)),
                 )
-                .into_any_element()
+                .into_any_element();
+            // Only configured commands have a place to move to (the config order).
+            if index < configured {
+                let dragged = DraggedRow {
+                    project_id,
+                    group: RowGroup::Run,
+                    index,
+                    title,
+                };
+                self.draggable_row(line, dragged, theme, cx)
+            } else {
+                line
+            }
         });
         std::iter::once(label).chain(lines).collect()
+    }
+
+    /// Wraps a sidebar row so it can be dragged onto another row of its own group (it takes that
+    /// row's place); a row of the same group under the pointer is tinted as the drop target.
+    pub(crate) fn draggable_row(
+        &self,
+        row: gpui::AnyElement,
+        dragged: DraggedRow,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let (project_id, group, index) = (dragged.project_id, dragged.group, dragged.index);
+        let fits = move |other: &DraggedRow| other.project_id == project_id && other.group == group;
+        let preview_style = PopupStyle::of(theme);
+        let target = theme.selected;
+        div()
+            .id(SharedString::from(format!(
+                "row-drag-{project_id}-{group:?}-{index}"
+            )))
+            .rounded(px(radius::SMALL))
+            .on_drag(dragged, move |dragged, _, _, cx| {
+                let style = preview_style.clone();
+                let title = dragged.title.clone().into();
+                cx.new(|_| CardPreview { style, title })
+            })
+            .can_drop(move |any, _, _| any.downcast_ref::<DraggedRow>().is_some_and(fits))
+            .drag_over::<DraggedRow>(move |style, other, _, _| {
+                if fits(other) {
+                    style.bg(rgb(target))
+                } else {
+                    style
+                }
+            })
+            .on_drop(cx.listener(move |shell, other: &DraggedRow, window, cx| {
+                shell.drop_row(other, index, window, cx);
+            }))
+            .child(row)
+            .into_any_element()
+    }
+
+    /// `dragged` was dropped on the `to`-th row of its group: run commands are saved in the new
+    /// order (`project.update`), sessions get positions `1..=n` (`session.move`, shown at once).
+    pub(crate) fn drop_row(
+        &mut self,
+        dragged: &DraggedRow,
+        to: usize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (project_id, from) = (dragged.project_id, dragged.index);
+        if from == to {
+            return;
+        }
+        if dragged.group == RowGroup::Run {
+            let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
+                return;
+            };
+            let order: Vec<usize> = (0..project.run_commands.len()).collect();
+            let commands = sidebar::reordered(&order, from, to)
+                .into_iter()
+                .map(|(i, _)| project.run_commands[i].clone())
+                .collect();
+            let params = workspace_menu::set_run_commands(project_id, commands);
+            self.update_project(params, "Cannot reorder the run commands", window, cx);
+            return;
+        }
+        let order = (self.sidebar).group_order(project_id, dragged.group == RowGroup::Terminal);
+        for (session_id, position) in sidebar::reordered(&order, from, to) {
+            let moved = (self.sidebar.sessions().iter())
+                .any(|s| s.id == session_id && s.position != position);
+            if !moved {
+                continue;
+            }
+            self.sidebar.set_position(session_id, position);
+            self.send_edit(
+                Request::SessionMove(SessionMoveParams {
+                    session_id,
+                    position,
+                }),
+                "Cannot move the session",
+                |_: &mut Self, _: serde_json::Value| {},
+                window,
+                cx,
+            );
+        }
+        cx.notify();
     }
 
     /// The workspaces with nothing under them, as one line at the bottom: `3 empty workspaces ▸`
@@ -486,7 +618,7 @@ impl Shell {
                 )
                 .into_any_element()
         } else {
-            // A workspace's sessions and RUN group hang under a faint guide line.
+            // A workspace's AGENTS, TERMINAL and RUN groups hang under a faint guide line.
             let guide = |rows: Vec<gpui::AnyElement>| {
                 div()
                     .ml(px(space::L))
@@ -500,25 +632,56 @@ impl Shell {
             };
             let filtering = self.sidebar.filtering();
             let mut list = Vec::new();
-            let mut sessions = Vec::new();
+            let mut agents = Vec::new();
+            let mut terminals = Vec::new();
             // The open workspace whose rows are being gathered: its RUN group closes them.
             let mut open: Option<Ulid> = None;
             let mut empty = Vec::new();
+            // The AGENTS and TERMINAL labels only when the workspace shows another group too.
             let close = |list: &mut Vec<gpui::AnyElement>,
-                         sessions: &mut Vec<gpui::AnyElement>,
+                         agents: &mut Vec<gpui::AnyElement>,
+                         terminals: &mut Vec<gpui::AnyElement>,
                          open: Option<Ulid>,
                          cx: &mut Context<'_, Self>| {
-                if let Some(project_id) = open.filter(|_| !filtering) {
-                    sessions.extend(self.render_run_group(project_id, theme, cx));
+                let shown_project = open.filter(|_| !filtering);
+                let run = shown_project
+                    .map(|project_id| self.render_run_group(project_id, theme, cx))
+                    .unwrap_or_default();
+                let labeled = [agents.len(), terminals.len(), run.len()]
+                    .iter()
+                    .filter(|&&n| n > 0)
+                    .count()
+                    > 1;
+                let mut rows = Vec::new();
+                let groups = [(RowGroup::Agents, agents), (RowGroup::Terminal, terminals)];
+                for (group, rows_of) in groups {
+                    // A label (and so folding) needs the workspace's own, unfiltered rows.
+                    match shown_project.filter(|_| labeled && !rows_of.is_empty()) {
+                        Some(project_id) => {
+                            let key = (project_id, group);
+                            let collapsed = self.collapsed_groups.contains(&key);
+                            let count = rows_of.len();
+                            rows.push(
+                                self.group_label(project_id, group, count, collapsed, theme, cx),
+                            );
+                            if collapsed {
+                                rows_of.clear();
+                            } else {
+                                rows.append(rows_of);
+                            }
+                        }
+                        None => rows.append(rows_of),
+                    }
                 }
-                if !sessions.is_empty() {
-                    list.push(guide(std::mem::take(sessions)));
+                rows.extend(run);
+                if !rows.is_empty() {
+                    list.push(guide(rows));
                 }
             };
             for row in view.rows {
                 match row {
                     Row::Workspace(row) => {
-                        close(&mut list, &mut sessions, open.take(), cx);
+                        close(&mut list, &mut agents, &mut terminals, open.take(), cx);
                         let (project_id, active) =
                             (row.project_id, self.workspace == Some(row.project_id));
                         // Nothing to show under it: on the "N empty workspaces" line instead
@@ -534,17 +697,34 @@ impl Shell {
                     Row::Session(row) => {
                         let (selected, session_id) =
                             (shown == Some(row.session_id), row.session_id);
+                        let (group, rows_of) = if row.shell {
+                            (RowGroup::Terminal, &mut terminals)
+                        } else {
+                            (RowGroup::Agents, &mut agents)
+                        };
+                        let dragged = DraggedRow {
+                            project_id: row.project_id,
+                            group,
+                            index: rows_of.len(),
+                            title: row.title.clone().unwrap_or_else(|| row.agent.clone()),
+                        };
                         // One lookup, for the selected row only.
                         let progress = selected.then(|| self.plans.fraction(session_id)).flatten();
                         let badge = self.agent_badge(&row.agent);
                         let row = session_row(row, badge, selected, progress, now, theme, cx);
-                        sessions.push(self.with_peek(row, session_id, now, theme, cx));
+                        let row = self.with_peek(row, session_id, now, theme, cx);
+                        // Dragging reorders the whole group: off while a filter hides rows.
+                        rows_of.push(if filtering {
+                            row
+                        } else {
+                            self.draggable_row(row, dragged, theme, cx)
+                        });
                     }
                     // Hide what's empty: an open workspace without sessions shows nothing.
                     Row::NoSessions { .. } => {}
                 }
             }
-            close(&mut list, &mut sessions, open, cx);
+            close(&mut list, &mut agents, &mut terminals, open, cx);
             if !empty.is_empty() {
                 list.push(self.render_empty_workspaces(empty, theme, cx));
             }
@@ -851,6 +1031,84 @@ impl Shell {
                 (!meter_only).then(|| row().child(notice(theme.text_muted, text.clone())))
             }
         }
+    }
+
+    /// A group label under a workspace (`✦ AGENTS 3`, `▣ TERMINAL 4`, `▶ RUN 2`): the group's
+    /// icon, small muted caps and its row count, with room above to set the groups apart. A
+    /// click folds the group to this line (the chevron shows on hover, and while folded).
+    pub(crate) fn group_label(
+        &self,
+        project_id: Ulid,
+        group: RowGroup,
+        count: usize,
+        collapsed: bool,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let id = SharedString::from(format!("group-{project_id}-{group:?}"));
+        let hover = theme.hover;
+        div()
+            .id(id.clone())
+            .group(id.clone())
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .mt(px(space::S))
+            .px(px(space::S))
+            .py(px(space::XS))
+            .rounded(px(radius::SMALL))
+            .cursor_pointer()
+            .hover(move |style| style.bg(rgb(hover)))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::MEDIUM))
+            .text_color(rgb(theme.text_muted))
+            .tooltip(tooltip(
+                theme,
+                if collapsed {
+                    "Show this group"
+                } else {
+                    "Fold this group"
+                },
+                "",
+            ))
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                let key = (project_id, group);
+                if !shell.collapsed_groups.remove(&key) {
+                    shell.collapsed_groups.insert(key);
+                }
+                cx.notify();
+            }))
+            .child(icon_svg(
+                group.icon(),
+                theme::ICON_SIZE_SMALL,
+                theme.text_muted,
+            ))
+            .child(group.label())
+            .child(
+                div()
+                    .flex_1()
+                    .font_weight(FontWeight(weight::REGULAR))
+                    .text_color(rgb(theme.chevron_color()))
+                    .child(count.to_string()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .when(!collapsed, |el| {
+                        el.opacity(opacity::HIDDEN)
+                            .group_hover(id, |style| style.opacity(opacity::FULL))
+                    })
+                    .child(icon_svg(
+                        if collapsed {
+                            Icon::ChevronRight
+                        } else {
+                            Icon::ChevronDown
+                        },
+                        theme::ICON_SIZE_SMALL,
+                        theme.chevron_color(),
+                    )),
+            )
+            .into_any_element()
     }
 }
 

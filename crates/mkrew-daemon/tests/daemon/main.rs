@@ -26,15 +26,15 @@ use mkrew_protocol::{
     RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session,
     SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory,
     SessionInputParams, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
-    SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionQueueEvent, SessionReadParams,
-    SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams, SessionSendParams,
-    SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionUsageEvent, SessionWaitParams, SessionWaitResult, StateSource,
-    TabCreateParams, TabListParams, TabMoveParams, TabPinParams, TabRef, TabRenameParams,
-    TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams, TaskDeletedEvent,
-    TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams,
-    TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams,
-    UndoPreview, WORKSPACE_COLORS, encode,
+    SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionQueueEvent,
+    SessionReadParams, SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams,
+    SessionSendParams, SessionSendResult, SessionSetColorParams, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionUsageEvent, SessionWaitParams,
+    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabPinParams,
+    TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams,
+    TaskDeletedEvent, TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef,
+    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef,
+    TurnRestoreParams, UndoPreview, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
@@ -933,6 +933,13 @@ fn rename(session_id: Ulid, title: Option<&str>) -> Request {
 
 fn pin(session_id: Ulid, pinned: bool) -> Request {
     Request::SessionPin(SessionPinParams { session_id, pinned })
+}
+
+fn move_to(session_id: Ulid, position: f64) -> Request {
+    Request::SessionMove(SessionMoveParams {
+        session_id,
+        position,
+    })
 }
 
 fn link_plan(session_id: Ulid, path: Option<&str>) -> Request {

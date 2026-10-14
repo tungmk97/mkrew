@@ -13,11 +13,11 @@ use mkrew_protocol::{
     Frame, FrameDecoder, HelloParams, HelloResult, HookReportParams, Message, Outcome,
     PROTOCOL_VERSION, ProfileErrorInfo, Project, ProjectAddParams, ProjectUpdateParams, Request,
     Session, SessionHistory, SessionKillParams, SessionKind, SessionLinkPlanParams,
-    SessionPinParams, SessionPortsEvent, SessionReadParams, SessionRenameParams, SessionSendParams,
-    SessionSendResult, SessionSetColorParams, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionWaitParams, SessionWaitResult, StateSource, Task,
-    TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams, TaskUpdateParams,
-    TerminalTab, WORKSPACE_COLORS, encode,
+    SessionMoveParams, SessionPinParams, SessionPortsEvent, SessionReadParams, SessionRenameParams,
+    SessionSendParams, SessionSendResult, SessionSetColorParams, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionWaitParams, SessionWaitResult,
+    StateSource, Task, TaskCreateParams, TaskDeletedEvent, TaskRunParams, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, WORKSPACE_COLORS, encode,
 };
 use mkrew_store::{ProjectChanges, Store, StoreError};
 use serde::Serialize;
@@ -342,6 +342,7 @@ impl Daemon {
             }
             Request::SessionRename(params) => (self.session_rename(params).await, After::Continue),
             Request::SessionPin(params) => (self.session_pin(params).await, After::Continue),
+            Request::SessionMove(params) => (self.session_move(params).await, After::Continue),
             Request::SessionSetColor(params) => {
                 (self.session_set_color(params).await, After::Continue)
             }
@@ -535,6 +536,7 @@ impl Daemon {
             title: params.title,
             color: None,
             pinned: false,
+            position: 0.0,
             cols: params.cols,
             rows: params.rows,
             typed: None,
@@ -626,6 +628,7 @@ impl Daemon {
             title: Some(task.title),
             color: None,
             pinned: false,
+            position: 0.0,
             cols: params.cols,
             rows: params.rows,
             typed,
@@ -838,6 +841,7 @@ impl Daemon {
             terminal_title: None,
             color: start.color,
             pinned: start.pinned,
+            position: start.position,
             native_session_id: start.native_session_id,
             state: SessionState::Starting,
             state_source: StateSource::Daemon,
@@ -1235,6 +1239,23 @@ impl Daemon {
         .await
     }
 
+    /// `session.move`: like `session.pin` (live through its task, exited in the store).
+    async fn session_move(&self, params: SessionMoveParams) -> Outcome {
+        let position = params.position;
+        if !position.is_finite() {
+            return Outcome::error(
+                ErrorCode::InvalidRequest,
+                "position must be a finite number",
+            );
+        }
+        self.edit_session(
+            params.session_id,
+            move |reply| Command::Move { position, reply },
+            move |session| session.position = position,
+        )
+        .await
+    }
+
     /// `session.link_plan` (ADR 0039): a live session's task stores the link and starts or
     /// stops the file watch; the file is checked first, so a bad path changes nothing.
     async fn session_link_plan(&self, params: SessionLinkPlanParams) -> Outcome {
@@ -1618,6 +1639,8 @@ struct Start {
     color: Option<String>,
     /// A resumed session keeps the pin of the one it replaces.
     pinned: bool,
+    /// Likewise its sidebar position.
+    position: f64,
     cols: u16,
     rows: u16,
     typed: Option<String>,
