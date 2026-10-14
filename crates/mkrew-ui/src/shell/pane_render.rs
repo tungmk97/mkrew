@@ -64,8 +64,14 @@ impl Shell {
                 let dot = self.tab_dot(tab, urgent, theme);
                 let group = SharedString::from(format!("tab-{tab_id}"));
                 let icon = match tab_kind(tab, self.sidebar.sessions()) {
-                    TabKind::Agent(profile) => Some(agent_chip(self.agent_badge(&profile), theme)),
-                    TabKind::Shell => Some(agent_chip(">_".to_owned(), theme)),
+                    TabKind::Agent(profile) => {
+                        Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
+                    }
+                    TabKind::Shell => Some(agent_chip(
+                        sidebar::Badge::Text(">_".to_owned()),
+                        theme.text,
+                        theme,
+                    )),
                     TabKind::Empty => None,
                 };
                 let element = div()
@@ -783,7 +789,7 @@ impl Shell {
             .font_family(theme.ui_font_family.clone())
             .text_size(font_size::META)
             .child(
-                agent_chip(self.agent_badge(&info.agent_profile), theme)
+                agent_chip(self.agent_badge(&info.agent_profile), theme.text, theme)
                     .when_some(color, |chip, color| {
                         chip.bg(theme.tint(color)).border_color(rgb(color))
                     }),

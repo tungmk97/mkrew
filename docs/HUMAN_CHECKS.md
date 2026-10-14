@@ -15,6 +15,15 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-15 Agent logos in chips (ADR 0058)
+
+- [ ] **Logos (dark + light):** claude, codex, copilot and omp sessions show their real logo (no
+  border) in the sidebar row (full + compact), tab, pane header, board card, session panel and
+  the agent menu; the four look about the same size and sit centered. Other profiles (pwsh, Git
+  Bash, shells, your own) keep the bordered glyph/letter chip.
+- [ ] **States:** a working agent's row chip gets the accent fill and working ring with the logo
+  in accent text; a colored pane's header chip gets the tint and colored ring.
+
 ### To verify — 2026-10-15 Drag to reorder tabs and sidebar rows, Close others / to the right
 
 - [ ] **Drag (dark + light):** drag a tab along the strip and a row in AGENTS / TERMINAL / RUN →

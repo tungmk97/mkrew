@@ -434,7 +434,8 @@ needs_input_patterns = []
 never overwrites one. Optional key `kind = "agent" | "shell"` (default `agent`); a shell profile
 may omit `command` to use the OS default shell (`%COMSPEC%` / `$SHELL`). Optional key `icon` (≤ 3 characters, ADR 0025) is the badge shown
 before the agent name; a missing or blank one uses the shipped sample's icon for the same id,
-else the id's first letter, uppercased; a longer
+else the id's first letter, uppercased (the shipped `claude`, `codex`, `copilot` and `omp` ids
+show their logo instead, ADR 0058 — the one per-agent exception to §2.1, display only); a longer
 one is a parse error. Unknown keys and invalid `needs_input_patterns` regexes are parse errors.
 Profiles written before `oneshot` existed are not updated (seeding never overwrites); ✦ then
 answers `invalid_state` naming the key and the file.
@@ -956,8 +957,8 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   order is: user title > terminal title > agent name). The active tab has a 2 px accent line
   along its bottom (inset by its corner radius); in a split the panes keep only their thin
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
-  before the title. The badge is a bordered square chip; it also shows on board cards and in
-  agent menus.
+  before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
+  color, ADR 0058); it also shows on board cards and in agent menus.
 - Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
   like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on

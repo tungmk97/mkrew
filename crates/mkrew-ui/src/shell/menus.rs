@@ -806,6 +806,7 @@ pub(crate) fn agent_rows(
                             .when(!agent.is_empty(), |el| {
                                 el.child(agent_chip(
                                     sidebar::agent_badge(choice.icon.as_deref(), &agent),
+                                    theme.text,
                                     theme,
                                 ))
                             })

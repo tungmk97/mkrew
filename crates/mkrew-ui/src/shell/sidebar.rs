@@ -1223,7 +1223,7 @@ pub(crate) fn workspace_avatar(name: &str, color: Option<u32>, theme: &Theme) ->
 /// agent (none while idle), the time right-aligned, and × on hover. The selected row is ringed.
 pub(crate) fn session_row(
     row: SessionRow,
-    badge: String,
+    badge: sidebar::Badge,
     selected: bool,
     progress: Option<f32>,
     now: i64,
@@ -1294,11 +1294,21 @@ pub(crate) fn session_row(
                     row.state_source,
                     row.state_changed_at,
                 ))
-                .child(agent_chip(badge, theme).when(working, |chip| {
-                    chip.bg(rgb(theme.accent_bg))
-                        .border_color(rgb(theme.status_working))
-                        .text_color(rgb(theme.accent_text))
-                })),
+                .child(
+                    agent_chip(
+                        badge,
+                        if working {
+                            theme.accent_text
+                        } else {
+                            theme.text
+                        },
+                        theme,
+                    )
+                    .when(working, |chip| {
+                        chip.bg(rgb(theme.accent_bg))
+                            .border_color(rgb(theme.status_working))
+                    }),
+                ),
         )
         .child(
             div()
@@ -1425,7 +1435,7 @@ pub(crate) fn compact_workspace_row(
 /// replaces it); the keyboard peek still hangs on this row.
 pub(crate) fn compact_session_row(
     row: SessionRow,
-    badge: String,
+    badge: sidebar::Badge,
     selected: bool,
     now: i64,
     theme: &Theme,
@@ -1460,7 +1470,7 @@ pub(crate) fn compact_session_row(
             }),
         )
         .child(mark_slot(row.mark(), now, theme))
-        .child(agent_chip(badge, theme))
+        .child(agent_chip(badge, theme.text, theme))
         .into_any_element()
 }
 

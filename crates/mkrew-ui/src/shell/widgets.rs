@@ -785,10 +785,11 @@ pub(crate) fn logo(theme: &Theme) -> gpui::Img {
         .size(theme::rems_px(theme::LOGO_SIZE))
 }
 
-/// An agent badge (ADR 0025) as a small square chip, so glyphs and letters line up and never
-/// read as part of the name.
-pub(crate) fn agent_chip(badge: String, theme: &Theme) -> gpui::Div {
-    div()
+/// An agent badge (ADR 0025) as a small square chip, so logos, glyphs and letters line up and
+/// never read as part of the name. Logos (ADR 0058) have no border at rest; the border keeps its
+/// width, so a caller's status `border_color` still rings them. `fg` paints text and logo.
+pub(crate) fn agent_chip(badge: sidebar::Badge, fg: u32, theme: &Theme) -> gpui::Div {
+    let chip = div()
         .flex_none()
         .size(theme::rems_px(theme::AGENT_CHIP_SIZE))
         .flex()
@@ -796,11 +797,17 @@ pub(crate) fn agent_chip(badge: String, theme: &Theme) -> gpui::Div {
         .justify_center()
         .rounded(px(radius::SMALL))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .text_size(font_size::META)
-        .font_weight(FontWeight(weight::SEMIBOLD))
-        .text_color(rgb(theme.text))
-        .child(badge)
+        .text_color(rgb(fg));
+    match badge {
+        sidebar::Badge::Logo(logo) => chip
+            .border_color(gpui::transparent_black())
+            .child(icons::logo_svg(logo, theme::ICON_SIZE_SMALL, fg)),
+        sidebar::Badge::Text(text) => chip
+            .border_color(rgb(theme.border))
+            .text_size(font_size::META)
+            .font_weight(FontWeight(weight::SEMIBOLD))
+            .child(text),
+    }
 }
 
 /// Tooltip of a status: its source and how long ago it changed, aged when it opens (a

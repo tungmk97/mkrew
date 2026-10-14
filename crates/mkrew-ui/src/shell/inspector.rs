@@ -395,7 +395,11 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::S))
-                    .child(agent_chip(self.agent_badge(&session.agent_profile), theme))
+                    .child(agent_chip(
+                        self.agent_badge(&session.agent_profile),
+                        theme.text,
+                        theme,
+                    ))
                     .child(div().min_w_0().truncate().child(card.agent.clone()))
                     .child(div().flex_1())
                     .child(status_mark(session.state, now, theme)),

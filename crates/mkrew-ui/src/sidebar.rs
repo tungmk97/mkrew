@@ -8,6 +8,7 @@ use mkrew_protocol::{Event, Project, Session, SessionKind, SessionState, StateSo
 use ulid::Ulid;
 
 use crate::history;
+use crate::icons::AgentLogo;
 use crate::inbox::{self, Viewed};
 use crate::status;
 use crate::text_box::Input;
@@ -59,17 +60,28 @@ pub fn status_color(theme: &Theme, state: SessionState) -> u32 {
     }
 }
 
-/// The badge before an agent name (ADR 0025): the profile's `icon`, else the first letter of
-/// its id, uppercased (profiles written before `icon` existed, or not loaded yet).
-pub fn agent_badge(icon: Option<&str>, agent: &str) -> String {
-    match icon {
+/// What an agent chip shows (ADR 0025, ADR 0058).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Badge {
+    Logo(AgentLogo),
+    Text(String),
+}
+
+/// The badge before an agent name: a shipped agent's logo, else the profile's `icon`, else the
+/// first letter of its id, uppercased (profiles written before `icon` existed, or not loaded
+/// yet). The logo wins over `icon`: copied profiles still carry the old sample glyph.
+pub fn agent_badge(icon: Option<&str>, agent: &str) -> Badge {
+    if let Some(logo) = AgentLogo::of(agent) {
+        return Badge::Logo(logo);
+    }
+    Badge::Text(match icon {
         Some(icon) => icon.to_owned(),
         None => agent
             .chars()
             .next()
             .map(|c| c.to_uppercase().collect())
             .unwrap_or_default(),
-    }
+    })
 }
 
 /// The chips under the filter box.
