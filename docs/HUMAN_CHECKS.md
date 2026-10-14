@@ -15,6 +15,18 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Hooks run the daemon's own mk
+
+- [ ] **Reinstall integrations first:** `& "$env:LOCALAPPDATA\Programs\Mkrew\bin\mk.exe" integration install omp`
+  (and `claude`, `codex`, `copilot` if used). `mk integration status <agent>` → `installed`.
+- [ ] **omp resumes:** open an omp pane, send one prompt → the session has a native id
+  (`sqlite3 %APPDATA%\mkrew\mkrew.db "select native_session_id from session order by started_at desc limit 1"`
+  is not empty). `mk daemon stop`, reopen Mkrew → the pane resumes the same conversation.
+- [ ] **Stale mk on PATH:** with an old `mk` first on `PATH`, a new omp/Claude pane still gets a
+  native id; `%APPDATA%\mkrew\logs\hook.log` gets no new line.
+- [ ] **Claude Code exec form:** a Claude pane turns busy/idle with the new hooks (needs a Claude
+  Code with exec-form hook support).
+
 ### To verify — 2026-10-14 Installer stops only its own daemon
 
 - [ ] **Upgrade in place:** with Mkrew running from `%LOCALAPPDATA%\Programs\Mkrew`, run the new

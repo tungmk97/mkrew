@@ -79,7 +79,7 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 | Daemon binary | `mkrew-daemon` |
 | CLI binary | `mk` |
 | Crates | `mkrew-core`, `mkrew-protocol`, `mkrew-store`, `mkrew-daemon`, `mkrew-cli`, `mkrew-ui`, `mkrew-fakeagent` |
-| Env vars | `MKREW_SESSION_ID`, `MKREW_SOCKET`, `MKREW_LOG` |
+| Env vars | `MKREW_SESSION_ID`, `MKREW_SOCKET`, `MKREW_MK`, `MKREW_LOG` |
 | Config dir | `<config>/mkrew/` (e.g. `~/.config/mkrew/`, `%APPDATA%\mkrew\`) |
 | Data dir | `<data>/mkrew/` with `mkrew.db`, `logs/`, `sessions/`, `backups/` |
 | IPC endpoint | Unix socket `$XDG_RUNTIME_DIR/mkrew.sock` (fallback `<data>/mkrew.sock`); Windows named pipe `\\.\pipe\mkrew-<username>` |
@@ -461,19 +461,31 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
 
 **Hook integrations — `mk integration install|uninstall|status <agent>`**
 
-- The daemon sets `MKREW_SESSION_ID` and `MKREW_SOCKET` in every PTY it creates.
-- Claude Code: add hooks to `~/.claude/settings.json` for `SessionStart`, `UserPromptSubmit`,
-  `Notification`, `Stop`, each running `mk hook claude <event>`. The hook reads JSON from stdin and
-  takes `session_id` as `native_session_id`.
-- Codex: set `notify = ["mk", "hook", "codex"]` in `~/.codex/config.toml`; Codex passes JSON as an argument.
+- The daemon sets `MKREW_SESSION_ID`, `MKREW_SOCKET` and `MKREW_MK` (the absolute path of the
+  `mk` next to the daemon; a bare `mk.exe` when none sits next to it, and then `mk hook` does not
+  forward) in every PTY it creates (ADR 0055).
+- Hook configs never run a bare `mk`: `mk integration install` writes the canonical absolute path
+  of the `mk` that runs it; `mk hook` inside a pane re-runs itself through `MKREW_MK` when that is
+  another file, so the daemon's own version always reports. Reinstall after moving Mkrew.
+- Claude Code: hooks in `~/.claude/settings.json` for `SessionStart`, `UserPromptSubmit`,
+  `Notification`, `Stop`, each in exec form `{"type": "command", "command": "<mk>", "args":
+  ["hook", "claude", "<event>"]}` (no shell: Git Bash and PowerShell expand variables
+  differently). The hook reads JSON from stdin and takes `session_id` as `native_session_id`.
+- Codex: `notify = ["<mk>", "hook", "codex"]` in `~/.codex/config.toml` (argv, no shell); Codex
+  passes JSON as an argument.
 - Oh My Pi: `mk integration install omp` writes the Mkrew-owned extension
   `<PI_CODING_AGENT_DIR or ~/.omp/agent>/extensions/mkrew.ts`; it runs
-  `mk hook omp <busy|needs_input|done|session_start> {"session_id": …}` (root session only: not
-  with `OMPCODE=1`, not without a UI).
+  `$MKREW_MK hook omp <busy|needs_input|done|session_start> {"session_id": …}` (root session only:
+  not with `OMPCODE=1`, not without a UI).
 - GitHub Copilot CLI: `mk integration install copilot` writes the Mkrew-owned
   `<COPILOT_HOME or ~/.copilot>/hooks/mkrew.json` (`sessionStart`, `userPromptSubmitted`,
   `agentStop`, `notification` matching `permission_prompt|elicitation_dialog`), each
-  `exec: mk hook copilot <event>`, JSON on stdin, `sessionId` = `native_session_id`.
+  `exec: <mk>`, `args: [hook, copilot, <event>]`, JSON on stdin, `sessionId` = `native_session_id`.
+- Install treats an older Mkrew entry (bare `mk` or any `mk` path) as its own: status says
+  `partly installed`, install replaces it, uninstall removes it.
+- A failed `mk hook` (no daemon, `version_mismatch`, timeout) exits 1 and appends one line to
+  `<data>/logs/hook.log` (rotated to `hook.log.1` above 1 MiB): agents drop hook stderr. The
+  daemon logs a refused `hello` at `warn`.
 - Owned files (omp, Copilot): install writes the whole file (backing up a different one),
   uninstall deletes it. Install prints the `resume` line when the user's profile lacks one.
 - Install must: back up the original file (timestamped `.bak`), merge instead of overwrite, be
@@ -535,7 +547,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
 | `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
-| `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
+| `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`omp`/`copilot`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
 | `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until the daemon stops |
 | `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched |
@@ -620,7 +632,7 @@ Protocol 41: `session.move` and `Session.position`.
 - **Startup:** take the lock (exit if another daemon runs); run migrations; open the IPC endpoint;
   mark sessions left in working/needs_input/idle as `exited`; then resume (below).
 - **Spawn:** create the PTY with `portable-pty`, `cwd` = project path, env `MKREW_SESSION_ID`,
-  `MKREW_SOCKET`, `TERM=xterm-256color`. The daemon removes `OMPCODE` from the PTY environment,
+  `MKREW_SOCKET`, `MKREW_MK`, `TERM=xterm-256color`. The daemon removes `OMPCODE` from the PTY environment,
   so a daemon started from an omp shell does not make the omp extension turn itself off.
 - **PTY reader threads:** `portable-pty` reads are blocking, so each session gets ONE dedicated OS
   thread that reads into a buffer and forwards chunks over a bounded channel to tokio. Never call
