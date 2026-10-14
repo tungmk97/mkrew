@@ -13,7 +13,7 @@ pub const MAX_TURNS: usize = 20;
 /// Characters of a tool call's target.
 pub const TARGET_MAX: usize = 120;
 /// Input fields a tool call's target is taken from; the first present wins.
-const TARGET_KEYS: [&str; 5] = ["file_path", "path", "pattern", "command", "url"];
+const TARGET_KEYS: [&str; 6] = ["file_path", "path", "pattern", "command", "url", "query"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
@@ -207,7 +207,8 @@ fn own_text(block: &Value) -> Option<String> {
     (!text.is_empty()).then(|| text.to_owned())
 }
 
-/// The tool's target: the first of [`TARGET_KEYS`] in `input`, one line, cut.
+/// The tool's target: the first of [`TARGET_KEYS`] in `input`, one line, cut. Failing that,
+/// omp's `input` string (`[path#hash]` header of an edit, or plain text) as one line.
 fn target_of(input: &Value) -> String {
     TARGET_KEYS
         .iter()
@@ -222,7 +223,19 @@ fn target_of(input: &Value) -> String {
             )),
             _ => None,
         })
+        .or_else(|| input["input"].as_str().map(edit_header))
         .unwrap_or_default()
+}
+
+/// [`one_line`] of `text` without a leading `[` and a trailing `#hash]`/`]`.
+fn edit_header(text: &str) -> String {
+    let line = one_line(text);
+    let line = line.strip_prefix('[').unwrap_or(&line);
+    let line = match line.rsplit_once('#') {
+        Some((path, hash)) if hash.ends_with(']') => path,
+        _ => line.strip_suffix(']').unwrap_or(line),
+    };
+    line.to_owned()
 }
 
 /// The first non-empty line of `text`, at most [`TARGET_MAX`] characters.
@@ -242,6 +255,13 @@ fn tool(name: &Value, target: String) -> Line {
     })
 }
 
+/// The trimmed text between `<name>` and `</name>`, when non-empty.
+fn tag<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let rest = text.split_once(&format!("<{name}>"))?.1;
+    let inner = rest.split_once(&format!("</{name}>"))?.0.trim();
+    (!inner.is_empty()).then_some(inner)
+}
+
 fn claude_line(value: &Value) -> Vec<Line> {
     if value["isSidechain"] == true {
         return Vec::new();
@@ -255,11 +275,37 @@ fn claude_line(value: &Value) -> Vec<Line> {
             if value["isMeta"] == true || tool_result {
                 return Vec::new();
             }
-            block_text(content, "text")
-                .filter(|t| !t.starts_with("<command-") && !t.starts_with("<local-command-"))
-                .map(Line::Prompt)
-                .into_iter()
-                .collect()
+            let Some(text) = block_text(content, "text") else {
+                return Vec::new();
+            };
+            // Injected lines: compaction summary, background-task and SDK-peer messages,
+            // interrupts, command stdout.
+            let injected = value["isCompactSummary"] == true
+                || value["origin"]["kind"]
+                    .as_str()
+                    .is_some_and(|k| k != "human")
+                || text.starts_with("<task-notification>")
+                || text.starts_with("[Request interrupted")
+                || text.starts_with("<local-command-");
+            if injected {
+                return Vec::new();
+            }
+            // A slash command or skill: `/name args`.
+            if text.starts_with("<command-") {
+                let name = tag(&text, "command-name");
+                let args = tag(&text, "command-args");
+                return name
+                    .map(|name| {
+                        Line::Prompt(
+                            format!("{name} {args}", args = args.unwrap_or(""))
+                                .trim()
+                                .to_owned(),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+            }
+            vec![Line::Prompt(text)]
         }
         Some("assistant") => content
             .as_array()
@@ -311,6 +357,17 @@ fn codex_line(value: &Value) -> Vec<Line> {
 }
 
 fn omp_line(value: &Value) -> Vec<Line> {
+    if value["type"] == "custom_message" && value["customType"] == "skill-prompt" {
+        let details = &value["details"];
+        let Some(name) = details["name"].as_str() else {
+            return Vec::new();
+        };
+        let args = details["args"]
+            .as_str()
+            .and_then(|a| a.lines().map(str::trim).find(|l| !l.is_empty()));
+        let prompt = format!("/skill:{name} {}", args.unwrap_or(""));
+        return vec![Line::Prompt(prompt.trim().to_owned())];
+    }
     if value["type"] != "message" {
         return Vec::new();
     }
@@ -360,8 +417,10 @@ mod tests {
         reader
     }
 
-    /// Thinking, tool results, sidechain, meta and slash-command lines are left out; lines
-    /// before the first prompt are dropped; consecutive tool calls form one group.
+    /// Thinking, tool results, sidechain, meta, command stdout and injected lines (task
+    /// notification, interrupt, compaction summary, peer message) are left out; a slash command
+    /// starts a turn as `/name args`; lines before the first prompt are dropped; consecutive
+    /// tool calls form one group.
     #[test]
     fn claude_turns() {
         let reader = read(UsageFormat::ClaudeJsonl, CLAUDE);
@@ -379,6 +438,14 @@ mod tests {
                 Turn {
                     prompt: "Now add a test".into(),
                     items: vec![Item::Tools(vec![tool("Bash", "cargo test")])],
+                },
+                Turn {
+                    prompt: "/context".into(),
+                    items: vec![text("Still the context turn.")],
+                },
+                Turn {
+                    prompt: "/superpowers:writing-plans do X".into(),
+                    items: vec![text("Planning.")],
                 },
             ]
         );
@@ -413,19 +480,40 @@ mod tests {
         );
     }
 
+    /// A skill invocation starts a turn (`/skill:name` + first line of args); an `edit` call's
+    /// target is the path of its `[path#hash]` header.
     #[test]
     fn omp_turns() {
         let reader = read(UsageFormat::OmpJsonl, OMP);
         assert_eq!(
             reader.turns(),
-            [Turn {
-                prompt: "Check the plan".into(),
-                items: vec![
-                    Item::Tools(vec![tool("grep", "docs"), tool("read", "docs/PLAN.md")]),
-                    text("Not done yet."),
-                ],
-            }]
+            [
+                Turn {
+                    prompt: "Check the plan".into(),
+                    items: vec![
+                        Item::Tools(vec![tool("grep", "docs"), tool("read", "docs/PLAN.md")]),
+                        text("Not done yet."),
+                    ],
+                },
+                Turn {
+                    prompt: "/skill:writing-plans Plan the thing".into(),
+                    items: vec![Item::Tools(vec![tool("edit", "docs/PLAN.md")])],
+                },
+                Turn {
+                    prompt: "/skill:brainstorming".into(),
+                    items: vec![],
+                },
+            ]
         );
+    }
+
+    #[test]
+    fn input_targets_drop_the_edit_header_brackets() {
+        assert_eq!(edit_header("[a/b.rs#1A2B]\nPUT 1:\n+x"), "a/b.rs");
+        assert_eq!(edit_header("[a/b.rs]"), "a/b.rs");
+        assert_eq!(edit_header("plain first line\nmore"), "plain first line");
+        let query = serde_json::json!({"query": "rust gpui", "input": "ignored"});
+        assert_eq!(target_of(&query), "rust gpui");
     }
 
     /// The agent may be mid-write when we read: any split gives the same turns as one feed.
@@ -454,7 +542,14 @@ mod tests {
         assert_eq!(reader.offset(), prompt as u64);
         reader.feed(&CLAUDE[prompt..]);
         let prompts: Vec<_> = reader.turns().iter().map(|t| t.prompt.as_str()).collect();
-        assert_eq!(prompts, ["Now add a test"]);
+        assert_eq!(
+            prompts,
+            [
+                "Now add a test",
+                "/context",
+                "/superpowers:writing-plans do X"
+            ]
+        );
         assert!(reader.truncated());
         assert_eq!(reader.offset(), CLAUDE.len() as u64);
     }

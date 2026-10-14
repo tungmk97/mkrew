@@ -5,3 +5,6 @@
 {"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c2","name":"read","arguments":{"path":"docs/PLAN.md"}}]}}
 {"type":"message","message":{"role":"developer","content":[{"type":"text","text":"reminder"}]}}
 {"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Not done yet."}]}}
+{"type":"custom_message","customType":"skill-prompt","content":"[IMPORTANT: skill body]","display":true,"details":{"name":"writing-plans","path":"x/SKILL.md","args":"\n  Plan the thing\nsecond line"}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c3","name":"edit","arguments":{"i":"Editing","input":"[docs/PLAN.md#8F49]\nPUT 1.=1:\n+x"}}]}}
+{"type":"custom_message","customType":"skill-prompt","display":true,"details":{"name":"brainstorming"}}
