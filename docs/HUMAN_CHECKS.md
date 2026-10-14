@@ -17,6 +17,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify — 2026-10-14 Thread view in the session panel (ADR 0057)
 
+- [ ] **Prerequisite:** the Thread section needs a `[usage]` block in the installed agent
+  profiles. Profiles seeded before usage existed (in `%APPDATA%\mkrew\agents\`) lack it: copy
+  the `[usage]` block from the repo's `agents/claude.toml`, `codex.toml` and `omp.toml`, then
+  restart the daemon.
 - [ ] **Live (dark + light):** open the panel (`Ctrl+Shift+Y`) on a running Claude pane, then on
   an omp pane (a profile with `[usage]` and a session id) → a "Thread" section fills the panel
   under the cards: your prompts on card blocks, the agent's text as Markdown, `▸ +N tool calls`
