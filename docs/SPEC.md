@@ -255,7 +255,7 @@ CREATE TABLE session (
 CREATE TABLE session_event (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES session(id),
-  kind       TEXT NOT NULL,              -- state_changed|hook|files_changed|...
+  kind       TEXT NOT NULL,              -- state_changed|hook|files_changed|...; files_changed/hook/edited rows are pruned after 7 days (ADR 0060)
   payload    TEXT NOT NULL,              -- JSON
   at         INTEGER NOT NULL
 );
@@ -541,7 +541,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.pin` | `session_id`, `pinned` | the Session, also broadcast as `session.updated`; a live session through its task, an exited one in the store (`invalid_state` for one caught exiting); a resumed session keeps the pin (ADR 0017) |
 | `session.move` | `session_id`, `position` (finite number; non-finite = `invalid_request`) | the Session, also broadcast as `session.updated`; like `session.pin` (live through its task, exited in the store); sidebar order inside the workspace group, ascending, 0 = never moved; a resumed session keeps it |
 | `session.set_color` | `session_id`, `color?` (a workspace color name; `null` clears) | the Session, also broadcast as `session.updated` — `invalid_request` for a name outside the palette, `invalid_state` for one caught exiting (ADR 0037) |
-| `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
+| `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart); empty after retention deleted the log (ADR 0060) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
@@ -629,7 +629,7 @@ Protocol 41: `session.move` and `Session.position`.
 
 ## §8 Daemon
 
-- **Startup:** take the lock (exit if another daemon runs); run migrations; open the IPC endpoint;
+- **Startup:** take the lock (exit if another daemon runs); run migrations; run retention (ADR 0060) and `VACUUM` the database when over a quarter of it is free; open the IPC endpoint;
   mark sessions left in working/needs_input/idle as `exited`; then resume (below).
 - **Spawn:** create the PTY with `portable-pty`, `cwd` = project path, env `MKREW_SESSION_ID`,
   `MKREW_SOCKET`, `MKREW_MK`, `TERM=xterm-256color`. The daemon removes `OMPCODE` from the PTY environment,
@@ -663,7 +663,9 @@ Protocol 41: `session.move` and `Session.position`.
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
   session per 30 s. Clicking it emits `notification.clicked`.
-- **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB.
+- **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB; deleted 7 days after the session ended unless a tab still shows it (ADR 0060).
+- **Retention:** hourly (and at startup): logs as above; `session_event` rows of kind `files_changed`, `hook`, `edited` older than 7 days. Session rows, turns and `usage` events stay.
+- **Project watcher:** skips `.git`, `node_modules`, `target` and `.worktrees/`; honours every `.gitignore` from the project root down and `.git/info/exclude`, with git's precedence (the deepest level with a match decides each path prefix; nothing inside an ignored folder is reported or read). Markdown stays reported (doc review). One `files_changed` row per batch, stored on the project's newest live session.
 - **Backups:** daily copy of `mkrew.db` to `<data>/mkrew/backups/`, keep 7.
 - **Shutdown:** `daemon.stop` asks every PTY to terminate, waits ≤ 5 s, then kills.
 - **Logging:** daily rotating files; level via `MKREW_LOG`. Panics are logged with backtrace.

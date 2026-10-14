@@ -1,7 +1,7 @@
 # 0019 — Archive workspaces, hide sessions
 
 - Date: 2026-10-07
-- Status: accepted
+- Status: accepted; amended by ADR 0060 (logs and events expire)
 - Milestone: none (outside the milestone loop)
 
 ## Context
