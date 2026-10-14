@@ -889,7 +889,9 @@ impl Store {
         if free * 4 <= pages {
             return Ok(false);
         }
-        self.conn.execute_batch("VACUUM")?;
+        // WAL mode: the rewritten pages sit in the -wal file until a checkpoint.
+        self.conn
+            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(true)
     }
 

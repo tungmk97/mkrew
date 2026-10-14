@@ -1534,11 +1534,9 @@ fn vacuum_if_sparse_shrinks_the_file_only_when_mostly_free() {
         .unwrap()
         .len();
     assert!(store.vacuum_if_sparse().unwrap());
-    // WAL mode: the rewritten pages reach the main file at the checkpoint.
-    store
-        .conn
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-        .unwrap();
+    // WAL mode: the VACUUM output must reach the main file without a manual checkpoint.
+    let wal = std::fs::metadata(dir.path().join("mkrew.db-wal")).map_or(0, |m| m.len());
+    assert!(wal * 4 < before, "wal {wal} vs db {before}");
     let after = std::fs::metadata(dir.path().join("mkrew.db"))
         .unwrap()
         .len();
