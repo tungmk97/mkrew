@@ -80,6 +80,12 @@ fn locate(format: &UsageFormat, root: &Path, id: &str) -> Option<PathBuf> {
     }
 }
 
+/// The transcript of agent session `native` under the agent's own folder (SPEC §20E.3).
+/// The UI's thread view uses the same lookup as usage (ADR 0055).
+pub fn transcript_path(format: &UsageFormat, native: &str) -> Option<PathBuf> {
+    locate(format, &root(format)?, native)
+}
+
 /// The reader of one session's current transcript.
 struct Tracker {
     format: UsageFormat,
