@@ -15,6 +15,16 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Single-pane tab shows the session title
+
+- [ ] **Tab name (dark + light):** a `Terminal` / `Terminal N` tab with one pane (or a zoomed
+  pane) shows that session's title (your name, else the agent's terminal title), cut with `…`
+  when long, full title on hover. Split it → the tab goes back to `Terminal N`, the headers show
+  the titles. A tab you renamed (e.g. `Backend`) keeps its name; an untitled session keeps
+  `Terminal N`.
+- [ ] **Rename:** double-click such a tab (or F2) → the field sits in the tab's place and renames
+  the session; a split tab's double-click still renames the tab.
+
 ### To verify — 2026-10-14 Sidebar groups AGENTS / TERMINAL / RUN, drag to reorder, `Run` tab
 
 - [ ] **Restart the daemon first** (protocol 41, migration 0019: the old `run` tab becomes `Run`).

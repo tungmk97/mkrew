@@ -11,6 +11,9 @@ use ulid::Ulid;
 
 use crate::split::{Axis, Direction, Divider, Node, Preset, RESIZE_STEP, Rect};
 
+/// Title of a workspace's first tab; later ones are numbered.
+pub const FIRST_TAB_TITLE: &str = "Terminal";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tab {
     pub id: Ulid,
@@ -64,6 +67,14 @@ impl Tab {
 
     pub fn sessions(&self) -> Vec<Ulid> {
         self.layout.as_ref().map(Node::sessions).unwrap_or_default()
+    }
+
+    /// The one pane on screen (zoomed, or the only pane), which then has no header.
+    pub fn single(&self) -> Option<Ulid> {
+        match (self.zoomed, self.layout.as_ref()) {
+            (Some(session), _) | (None, Some(&Node::Pane { session })) => Some(session),
+            _ => None,
+        }
     }
 
     /// Sessions on screen: the zoomed pane alone, else every pane.
@@ -538,6 +549,24 @@ pub fn tab_kind(tab: &Tab, sessions: &[Session]) -> TabKind {
         Some(_) => TabKind::Shell,
         None => TabKind::Empty,
     }
+}
+
+/// The session title a tab shows instead of its own: while one pane fills it (no pane header
+/// shows that title) and the tab keeps its default `Terminal` / `Terminal N` name. A name the
+/// user gave the tab always wins.
+pub fn session_label<'a>(tab: &Tab, sessions: &'a [Session]) -> Option<&'a str> {
+    let default = match tab.title.strip_prefix(FIRST_TAB_TITLE) {
+        Some("") => true,
+        Some(rest) => rest
+            .strip_prefix(' ')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
+    };
+    let session = tab.single().filter(|_| default)?;
+    sessions
+        .iter()
+        .find(|s| s.id == session)
+        .and_then(crate::history::title)
 }
 
 /// Sessions to attach (in `after` only) and to detach (in `before` only) when the visible

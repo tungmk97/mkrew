@@ -551,6 +551,7 @@ fn session(project_id: Ulid, state: SessionState, started_at: i64) -> Session {
         started_at,
         ended_at: None,
         pinned: false,
+        position: 0.0,
         plan_path: None,
     }
 }
@@ -617,4 +618,45 @@ fn a_tab_shows_the_kind_of_its_focused_pane() {
     let mut empty = Tabs::new(project);
     empty.load(vec![wire(project, "new", 1.0, serde_json::Value::Null)]);
     assert_eq!(tab_kind(empty.active().unwrap(), &sessions), TabKind::Empty);
+}
+
+#[test]
+fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
+    let project = Ulid::new();
+    let mut titled = session(project, SessionState::Idle, 1);
+    titled.terminal_title = Some("Fix login".into());
+    let untitled = session(project, SessionState::Idle, 2);
+    let sessions = [titled.clone(), untitled.clone()];
+    let label = |title: &str, layout| {
+        let mut tabs = Tabs::new(project);
+        tabs.load(vec![wire(project, title, 1.0, layout)]);
+        session_label(tabs.active().unwrap(), &sessions).map(str::to_owned)
+    };
+
+    assert_eq!(
+        label("Terminal", pane(titled.id)).as_deref(),
+        Some("Fix login")
+    );
+    assert_eq!(
+        label("Terminal 12", pane(titled.id)).as_deref(),
+        Some("Fix login")
+    );
+    // A name the user gave the tab wins; so does the tab name without a session title.
+    for title in ["Backend", "Terminal 3b", "Terminal ", "Terminals"] {
+        assert_eq!(label(title, pane(titled.id)), None, "{title}");
+    }
+    assert_eq!(label("Terminal", pane(untitled.id)), None);
+
+    // Several panes: each header shows its title; zoomed, the lone pane's shows on the tab.
+    let split =
+        json!({"split":"vertical","ratio":0.5,"children":[pane(untitled.id), pane(titled.id)]});
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![wire(project, "Terminal 2", 1.0, split)]);
+    assert_eq!(session_label(tabs.active().unwrap(), &sessions), None);
+    tabs.focus(titled.id);
+    assert!(tabs.toggle_zoom());
+    assert_eq!(
+        session_label(tabs.active().unwrap(), &sessions),
+        Some("Fix login")
+    );
 }

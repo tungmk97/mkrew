@@ -17,9 +17,7 @@ impl Shell {
         // A single pane has no header: its status sits at the right end of this bar.
         let single = tabs
             .active()
-            .map(Tab::rects)
-            .filter(|rects| rects.len() == 1)
-            .and_then(|rects| rects.first().map(|(session, _)| *session))
+            .and_then(Tab::single)
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let active = tabs.active().map(|tab| tab.id);
         let hover = theme.hover;
@@ -37,13 +35,16 @@ impl Shell {
             .children(tabs.tabs().iter().map(|tab| {
                 let tab_id = tab.id;
                 let is_active = active == Some(tab_id);
-                if let Some(renaming) = self
-                    .renaming
-                    .as_ref()
-                    .filter(|r| r.target == RenameTarget::Tab(tab_id))
-                {
+                // F2 on a single pane: its rename field takes the tab's place (no header).
+                if let Some(renaming) = self.renaming.as_ref().filter(|r| {
+                    r.target == RenameTarget::Tab(tab_id)
+                        || tab.single().map(RenameTarget::Session).as_ref() == Some(&r.target)
+                }) {
                     return self.render_rename(&renaming.draft, theme, cx);
                 }
+                // A lone pane's title stands in for a default tab name.
+                let label = session_label(tab, self.sidebar.sessions());
+                let labeled = tab.single().filter(|_| label.is_some());
                 // The most urgent state among the tab's panes (SPEC §11), as one dot.
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
                 let dot = self.tab_dot(tab, urgent, theme);
@@ -99,7 +100,10 @@ impl Shell {
                             }
                             shell.sync_panes(window, cx);
                             if event.click_count() == 2 {
-                                shell.start_rename(window, cx);
+                                match labeled {
+                                    Some(session) => shell.start_pane_rename(session, window, cx),
+                                    None => shell.start_rename(window, cx),
+                                }
                             }
                             cx.notify();
                         }),
@@ -119,6 +123,9 @@ impl Shell {
                             session.state_changed_at,
                         ))
                     })
+                    .when_some(label.filter(|_| urgent.is_none()), |el, label| {
+                        el.tooltip(tooltip(theme, label, ""))
+                    })
                     .children(dot.map(|(color, hollow, pulse)| {
                         status_dot(
                             SharedString::from(format!("tab-dot-{tab_id}")),
@@ -128,7 +135,12 @@ impl Shell {
                         )
                     }))
                     .when(tab.pinned, |el| el.child(pin_mark()))
-                    .child(tab.title.clone())
+                    .child(
+                        div()
+                            .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
+                            .truncate()
+                            .child(label.unwrap_or(&tab.title).to_owned()),
+                    )
                     .child(
                         row_action(
                             SharedString::from(format!("tab-close-{tab_id}")),
@@ -206,13 +218,7 @@ impl Shell {
                     .map(|warning| notice(theme.text_muted, format!("⚠ {warning}"))),
             )
             .when_some(single, |bar, info| {
-                // F2 on a single pane: the rename field shows here (it has no header).
-                let renaming = (self.renaming.as_ref())
-                    .is_some_and(|r| r.target == RenameTarget::Session(info.id));
-                bar.when(renaming, |bar| {
-                    bar.child(div().child(self.pane_title(info, theme, cx)))
-                })
-                .child(
+                bar.child(
                     div()
                         .min_w_0()
                         .flex()

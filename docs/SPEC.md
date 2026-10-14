@@ -930,7 +930,9 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   something to say. "Turns…" is in the tab strip's `⋯` menu. The split header starts with the
   agent badge and the session/task title (F2 or a double-click renames it inline: Enter saves,
   Esc cancels, blank clears; run panes keep their command name — ADR 0031; for a single pane F2
-  shows the rename field in the tab strip; without a title an agent pane shows the title its
+  shows the rename field in the tab's place, and a tab still named `Terminal` / `Terminal N`
+  shows that pane's session title instead, cut with `…`, full on hover, a double-click renaming
+  the session — a split goes back to the tab name; without a title an agent pane shows the title its
   agent gave the terminal, e.g. Claude's conversation summary; everywhere a session is named the
   order is: user title > terminal title > agent name). The active tab has a 2 px accent line
   along its bottom (inset by its corner radius); in a split the panes keep only their thin

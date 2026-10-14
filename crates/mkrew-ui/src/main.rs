@@ -89,7 +89,10 @@ use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::{Axis, Divider, Preset};
 use mkrew_ui::status;
 use mkrew_ui::stt;
-use mkrew_ui::tabs::{Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, tab_kind};
+use mkrew_ui::tabs::{
+    FIRST_TAB_TITLE, Tab, TabKind, Tabs, newest_unplaced, on_screen, rename_params, session_label,
+    tab_kind,
+};
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
 use mkrew_ui::terminal::view::{OpenLink, TerminalPane};
@@ -128,9 +131,6 @@ const PAINT_TIMEOUT: Duration = Duration::from_millis(50);
 const OUTPUT_FRAME: Duration = Duration::from_millis(16);
 /// Most incoming frames handled per drain, so one drain never starves painting.
 const DRAIN_BATCH: usize = 256;
-
-/// Title of a workspace's first tab; later ones are numbered.
-const FIRST_TAB_TITLE: &str = "Terminal";
 
 /// Windows and macOS draw their own title bar (ADR 0034); elsewhere the OS bar stays.
 const CUSTOM_TITLE_BAR: bool = cfg!(any(target_os = "windows", target_os = "macos"));
