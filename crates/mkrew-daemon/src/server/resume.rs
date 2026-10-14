@@ -190,7 +190,7 @@ fn last_session(sessions: &[Session], task_id: Ulid) -> Option<&Session> {
 
 /// `layout` with every `{"session": old}` leaf naming `new`; `None` if `old` is not in it.
 /// The layout is the UI's opaque split tree (SPEC §5), so only leaves are touched.
-fn replace_session(layout: &Value, old: Ulid, new: Ulid) -> Option<Value> {
+pub(crate) fn replace_session(layout: &Value, old: Ulid, new: Ulid) -> Option<Value> {
     fn walk(value: &mut Value, old: &str, new: &str) -> bool {
         match value {
             Value::Object(map) => {

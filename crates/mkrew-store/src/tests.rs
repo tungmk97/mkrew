@@ -1450,3 +1450,61 @@ fn project_default_shell_persists_and_clears() {
     store.update_project(p.id, none).unwrap();
     assert_eq!(open(&dir).get_project(p.id).unwrap().default_shell, None);
 }
+
+#[test]
+fn sessions_ended_before_lists_ended_sessions_hidden_or_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let ended = |started, ended_at| Session {
+        ended_at,
+        ..session(p.id, started)
+    };
+    let (old, old_hidden, recent, live) = (
+        ended(1, Some(10)),
+        ended(2, Some(20)),
+        ended(3, Some(500)),
+        ended(4, None),
+    );
+    for s in [&old, &old_hidden, &recent, &live] {
+        store.insert_session(s).unwrap();
+    }
+    store.hide_session(old_hidden.id).unwrap();
+    let mut got = store.sessions_ended_before(100).unwrap();
+    got.sort();
+    let mut want = vec![old.id, old_hidden.id];
+    want.sort();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn prune_session_events_drops_only_old_rows_of_the_given_kinds() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let s = session(p.id, 1);
+    store.insert_session(&s).unwrap();
+    let v = serde_json::json!({});
+    for (kind, at) in [
+        ("files_changed", 5),
+        ("hook", 6),
+        ("usage", 7),
+        ("files_changed", 200),
+    ] {
+        store.insert_session_event(s.id, kind, &v, at).unwrap();
+    }
+    assert_eq!(
+        store
+            .prune_session_events(100, &["files_changed", "hook"])
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        store.session_events(s.id, "usage").unwrap().len(),
+        1,
+        "usage kept"
+    );
+    let left = store.session_events(s.id, "files_changed").unwrap();
+    assert_eq!(left.iter().map(|e| e.at).collect::<Vec<_>>(), [200]);
+    assert!(store.session_events(s.id, "hook").unwrap().is_empty());
+}

@@ -17,6 +17,9 @@ mod launch;
 pub mod lock;
 mod notify;
 mod plan;
+// Wired into startup and the hourly tick in the next commit.
+#[cfg_attr(not(test), allow(dead_code))]
+mod retention;
 mod server;
 mod session;
 mod session_log;

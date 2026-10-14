@@ -42,6 +42,7 @@ mod fanout;
 mod fs;
 mod git;
 mod resume;
+pub(crate) use resume::replace_session;
 mod run;
 mod target;
 mod task_worktree;

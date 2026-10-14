@@ -11,7 +11,8 @@ use ulid::Ulid;
 pub const EXTS: [&str; 4] = ["png", "jpg", "gif", "webp"];
 /// Largest accepted file: 10 MiB.
 pub const MAX_BYTES: usize = 10 * 1024 * 1024;
-/// Attachments of a session are kept this long after it ended: 7 days.
+/// Attachments, session logs and old events (`retention`) are kept this long after the
+/// session ended: 7 days.
 pub const KEEP_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 /// Why `attachment.save` params are rejected, as a message for `invalid_request`.
