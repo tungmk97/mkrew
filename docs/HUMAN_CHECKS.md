@@ -15,6 +15,11 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Workspace chevron only folds
+
+- [ ] **Sidebar:** with workspace A shown, click the `›` / `⌄` of workspace B → B expands or
+  collapses, A stays shown (tabs, highlight unchanged). Click B's name → B is shown.
+
 ### To verify — 2026-10-14 Finished agents stay highlighted until viewed
 
 - [ ] **Sidebar (dark + light, full + compact):** let an agent finish while another pane is

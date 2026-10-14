@@ -1158,15 +1158,30 @@ pub(crate) fn workspace_row(
                 shell.open_workspace_menu(project_id, window, cx);
             }),
         )
-        .child(icon_svg(
-            if row.expanded {
-                Icon::ChevronDown
-            } else {
-                Icon::ChevronRight
-            },
-            theme::ICON_SIZE_SMALL,
-            theme.chevron_color(),
-        ))
+        .child(
+            div()
+                .id(SharedString::from(format!(
+                    "workspace-chevron-{project_id}"
+                )))
+                .flex_none()
+                .flex()
+                .items_center()
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    // Only expands / collapses: not a click on the row (which shows it).
+                    cx.stop_propagation();
+                    shell.sidebar.toggle(project_id);
+                    cx.notify();
+                }))
+                .child(icon_svg(
+                    if row.expanded {
+                        Icon::ChevronDown
+                    } else {
+                        Icon::ChevronRight
+                    },
+                    theme::ICON_SIZE_SMALL,
+                    theme.chevron_color(),
+                )),
+        )
         .child(workspace_avatar(&row.name, color, theme))
         .child(
             div()
