@@ -710,7 +710,7 @@ impl Hub {
         lock(&self.conflicts).remove(&project_id);
     }
 
-    /// Records a debounced batch of changed files on every live session of the project
+    /// Records a debounced batch of changed files once, on the project's newest live session
     /// (session event `files_changed`, payload `{"paths": [...]}`), and attributes the changes
     /// for conflict detection to the project's session in `working`. With several sessions
     /// working the editor is unknown, so the batch is not attributed (HUMAN_CHECKS T5.6).
@@ -729,10 +729,12 @@ impl Hub {
         let at = crate::server::now_ms();
         let working: Vec<Ulid> = {
             let store = self.store();
-            for &id in &sessions {
-                if let Err(e) = store.insert_session_event(id, "files_changed", &payload, at) {
-                    tracing::warn!(%id, "files_changed not recorded: {e}");
-                }
+            // One row per batch (ADR 0060), on the newest live session: the one `doc.list`
+            // picks anyway when sessions share a change.
+            if let Some(&newest) = sessions.iter().max()
+                && let Err(e) = store.insert_session_event(newest, "files_changed", &payload, at)
+            {
+                tracing::warn!(%newest, "files_changed not recorded: {e}");
             }
             match store.list_sessions(Some(project_id)) {
                 Ok(all) => all
