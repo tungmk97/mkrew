@@ -218,11 +218,7 @@ impl Shell {
             .flex_col()
             .gap(px(space::M))
             .children(earlier)
-            .children(turns)
-            .children(
-                (session.state == SessionState::Working)
-                    .then(|| meta_line(theme, "Working…".into())),
-            );
+            .children(turns);
         Some(
             div()
                 .flex_1()
@@ -239,6 +235,21 @@ impl Shell {
                         .child("Thread"),
                 )
                 .child(list)
+                // Outside the scrolled list and always present (blank when idle): a row that
+                // came and went would change the viewport height, hence `max_offset`, and
+                // break following the bottom.
+                .child(
+                    meta_line(
+                        theme,
+                        if session.state == SessionState::Working {
+                            "Working…"
+                        } else {
+                            " "
+                        }
+                        .into(),
+                    )
+                    .flex_none(),
+                )
                 .into_any_element(),
         )
     }
