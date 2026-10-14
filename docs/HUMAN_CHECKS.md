@@ -15,6 +15,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Sidebar filter row matches the tab strip
+
+- [ ] **Visual (dark + light):** the sidebar's filter row (search field, ⌫, ⌄/›, +) is exactly as
+  tall as the tab strip to its right (`TAB_STRIP_HEIGHT`), and its bottom divider lines up with
+  the tab strip's; the All / Working / Needs you control sits below it with 8 px around.
+
 ### To verify — 2026-10-14 Thread view in the session panel (ADR 0057)
 
 - [ ] **Prerequisite:** the Thread section needs a `[usage]` block in the installed agent
