@@ -508,7 +508,7 @@ impl Shell {
     }
 
     /// The badge before `agent`'s name (ADR 0025).
-    pub(crate) fn agent_badge(&self, agent: &str) -> String {
+    pub(crate) fn agent_badge(&self, agent: &str) -> sidebar::Badge {
         sidebar::agent_badge(self.agent_icons.get(agent).map(String::as_str), agent)
     }
 

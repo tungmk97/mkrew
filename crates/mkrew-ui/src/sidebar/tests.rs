@@ -136,11 +136,14 @@ fn every_state_has_an_icon_and_text() {
 }
 
 #[test]
-fn agent_badge_uses_the_profile_icon_else_the_first_letter() {
-    assert_eq!(agent_badge(Some("π"), "omp"), "π");
-    assert_eq!(agent_badge(None, "claude"), "C");
+fn agent_badge_prefers_the_logo_then_the_profile_icon_then_the_first_letter() {
+    // A copied omp profile still carries the old sample glyph: the logo wins.
+    assert_eq!(agent_badge(Some("π"), "omp"), Badge::Logo(AgentLogo::Omp));
+    assert_eq!(agent_badge(None, "claude"), Badge::Logo(AgentLogo::Claude));
+    assert_eq!(agent_badge(Some("PS"), "pwsh"), Badge::Text("PS".into()));
+    assert_eq!(agent_badge(None, "gemini"), Badge::Text("G".into()));
     // Uppercasing works beyond ASCII.
-    assert_eq!(agent_badge(None, "ølm"), "Ø");
+    assert_eq!(agent_badge(None, "ølm"), Badge::Text("Ø".into()));
 }
 
 #[test]

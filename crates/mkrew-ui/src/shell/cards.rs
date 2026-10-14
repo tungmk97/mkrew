@@ -271,6 +271,7 @@ pub(crate) fn task_card(
                             cards.agent_icons.get(agent).map(String::as_str),
                             agent,
                         ),
+                        theme.text,
                         theme,
                     )
                 }))
