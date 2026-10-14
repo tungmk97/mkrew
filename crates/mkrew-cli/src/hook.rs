@@ -40,6 +40,7 @@ pub fn hook(agent: String, args: Vec<String>) -> anyhow::Result<ExitCode> {
         // The pane's daemon has its own `mk`; the hook config may name another one (ADR 0059).
         match std::process::Command::new(&mk)
             .arg("hook")
+            .env_remove(ENV_MK)
             .arg(&agent)
             .args(&args)
             .status()
