@@ -15,6 +15,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Toasts after the daemon crash fix (COM MTA kept alive)
+
+- [ ] **Windows toast:** after installing the new build, let an agent reach `done` (and one
+  `needs_input`) → a toast still appears, with sound when `notify.sound` is on. Click it → Mkrew
+  focuses that session. Over the next days the daemon no longer crashes (Event Viewer → Windows
+  Logs → Application: no `APPCRASH` for `mkrew-daemon.exe`).
+
 ### To verify — 2026-10-14 Workspace chevron only folds
 
 - [ ] **Sidebar:** with workspace A shown, click the `›` / `⌄` of workspace B → B expands or
