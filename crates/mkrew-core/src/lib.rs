@@ -20,6 +20,7 @@ pub mod settings;
 pub mod state;
 pub mod tailscale;
 pub mod task;
+pub mod thread;
 pub mod turn;
 pub mod usage;
 

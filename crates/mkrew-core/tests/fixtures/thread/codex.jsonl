@@ -1,0 +1,13 @@
+{"type":"session_meta","payload":{"id":"019e-thread","cwd":"C:\\w"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"rules"}]}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd</environment_context>"}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Add retries","images":[]}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[],"encrypted_content":"x"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"I'll add retries."}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll add retries."}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"rg retry\",\"workdir\":\"C:\\\\w\"}","call_id":"c1"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"none"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Add File: a.rs\n+fn a() {}\n","call_id":"c2"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"List files"}}
+{"type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"pwsh\",\"-c\",\"ls\"]}","call_id":"c3"}}

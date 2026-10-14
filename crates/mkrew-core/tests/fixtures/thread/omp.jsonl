@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"01a1-omp"}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Check the plan"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hm"},{"type":"toolCall","id":"c1","name":"grep","arguments":{"pattern":"plan","path":"docs"}}]}}
+{"type":"message","message":{"role":"toolResult","toolCallId":"c1","toolName":"grep","content":[{"type":"text","text":"none"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c2","name":"read","arguments":{"path":"docs/PLAN.md"}}]}}
+{"type":"message","message":{"role":"developer","content":[{"type":"text","text":"reminder"}]}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Not done yet."}]}}

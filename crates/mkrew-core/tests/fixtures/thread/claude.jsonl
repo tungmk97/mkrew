@@ -1,0 +1,16 @@
+{"type":"permission-mode","permissionMode":"auto","sessionId":"s1"}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"before any prompt"}]}}
+{"type":"user","isSidechain":false,"isMeta":false,"message":{"role":"user","content":"Fix the login bug"}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"thinking","thinking":"secret","signature":"x"}]}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Looking at **auth**."}]}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/auth.rs"}}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"t1","type":"tool_result","content":"fn login() {}"}]}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"Grep","input":{"pattern":"login","path":"src"}}]}}
+{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t3","name":"Bash","input":{"command":"sub agent"}}]}}
+{"type":"user","isSidechain":true,"message":{"role":"user","content":"sub-agent prompt"}}
+{"type":"user","isSidechain":false,"isMeta":true,"message":{"role":"user","content":"## Context Usage"}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"Fixed it."}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"text","text":"Now add a test"}]}}
+{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"tool_use","id":"t4","name":"Bash","input":{"command":"cargo test\n--all"}}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"<command-name>/context</command-name>"}}
+not json at all
