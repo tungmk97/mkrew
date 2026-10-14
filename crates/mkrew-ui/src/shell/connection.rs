@@ -296,6 +296,7 @@ impl Shell {
             workspace_menu: None,
             file_menu: None,
             tab_menu: None,
+            reorder: None,
             layout_menu: None,
             pane_menu: None,
             share_menu: None,

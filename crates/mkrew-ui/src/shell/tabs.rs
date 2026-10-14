@@ -515,12 +515,22 @@ impl Shell {
         cx.notify();
     }
 
-    /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕). The
-    /// daemon removes the sessions of its panes too (ADR 0041), so a running agent among them
-    /// asks first; closing the last tab leaves a fresh empty one.
+    /// `tab.close` for `tab_id` of the shown workspace (the active one, or any tab's ✕).
     pub(crate) fn close_tab(
         &mut self,
         tab_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.close_tabs(vec![tab_id], window, cx);
+    }
+
+    /// `tab.close` for each of `tab_ids` of the shown workspace. The daemon removes the sessions
+    /// of their panes too (ADR 0041), so a running agent among them asks once first; closing the
+    /// last tab leaves a fresh empty one.
+    pub(crate) fn close_tabs(
+        &mut self,
+        tab_ids: Vec<Ulid>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -530,21 +540,30 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
-        let sessions = self
-            .tabs
-            .get(&project_id)
-            .and_then(|tabs| tabs.tab(tab_id))
-            .map(Tab::sessions)
-            .unwrap_or_default();
-        let running_agent = sessions.iter().any(|id| {
-            let known = self.sidebar.sessions().iter().find(|s| s.id == *id);
-            lifecycle::close_action(known) == CloseAction::Ask
-        });
+        let closing: Vec<(Ulid, Vec<Ulid>)> = (tab_ids.into_iter())
+            .map(|tab_id| {
+                let sessions = (self.tabs.get(&project_id))
+                    .and_then(|tabs| tabs.tab(tab_id))
+                    .map(Tab::sessions)
+                    .unwrap_or_default();
+                (tab_id, sessions)
+            })
+            .collect();
+        let running_agent = (closing.iter())
+            .flat_map(|(_, sessions)| sessions)
+            .any(|id| {
+                let known = self.sidebar.sessions().iter().find(|s| s.id == *id);
+                lifecycle::close_action(known) == CloseAction::Ask
+            });
         let answer = running_agent.then(|| {
             window.prompt(
                 PromptLevel::Critical,
-                "This tab has a running agent.",
-                Some("Closing the tab stops its sessions and removes them from the sidebar."),
+                if closing.len() == 1 {
+                    "This tab has a running agent."
+                } else {
+                    "A tab being closed has a running agent."
+                },
+                Some("Closing stops the sessions in the tabs and removes them from the sidebar."),
                 &workspace_menu::REMOVE_ANSWERS,
                 cx,
             )
@@ -556,33 +575,58 @@ impl Shell {
             {
                 return;
             }
-            let closed = connection
-                .call::<()>(Request::TabClose(TabRef { tab_id }))
-                .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
-                match closed {
-                    Ok(()) => {
-                        for session in &sessions {
-                            shell.sidebar.remove_session(*session);
+            for (tab_id, sessions) in closing {
+                let closed = connection
+                    .call::<()>(Request::TabClose(TabRef { tab_id }))
+                    .await;
+                let shown = this.update_in(cx, |shell, window, cx| {
+                    match closed {
+                        Ok(()) => {
+                            for session in &sessions {
+                                shell.sidebar.remove_session(*session);
+                            }
+                            let Some(tabs) = shell.tabs.get_mut(&project_id) else {
+                                return;
+                            };
+                            tabs.remove(tab_id);
+                            if tabs.is_empty() {
+                                shell.create_tab(project_id, None, window, cx);
+                            }
+                            shell.sync_panes(window, cx);
                         }
-                        let Some(tabs) = shell.tabs.get_mut(&project_id) else {
-                            return;
-                        };
-                        tabs.remove(tab_id);
-                        if tabs.is_empty() {
-                            shell.create_tab(project_id, None, window, cx);
+                        Err(error) => {
+                            tracing::warn!(%tab_id, "tab.close failed: {error:#}");
+                            shell.tab_error = Some(format!("Cannot close the tab: {error:#}"));
                         }
-                        shell.sync_panes(window, cx);
                     }
-                    Err(error) => {
-                        tracing::warn!(%tab_id, "tab.close failed: {error:#}");
-                        shell.tab_error = Some(format!("Cannot close the tab: {error:#}"));
-                    }
+                    cx.notify();
+                });
+                if shown.is_err() {
+                    return;
                 }
-                cx.notify();
-            });
+            }
         })
         .detach();
+    }
+
+    /// "Close others" / "Close tabs to the right" of `tab_id`'s menu: it becomes the active tab
+    /// and the unpinned tabs besides it (or after it) close.
+    pub(crate) fn close_other_tabs(
+        &mut self,
+        tab_id: Ulid,
+        right_only: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.tab_menu = None;
+        let Some(tabs) = self.active_tabs_mut() else {
+            return;
+        };
+        let targets = tabs.close_targets(tab_id, right_only);
+        tabs.activate(tab_id);
+        self.sync_panes(window, cx);
+        self.close_tabs(targets, window, cx);
+        cx.notify();
     }
 
     pub(crate) fn close_focused_pane(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {

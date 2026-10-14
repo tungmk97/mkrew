@@ -370,6 +370,18 @@ fn agents_lead_terminals_and_a_drag_reorders_only_its_group() {
     assert_eq!(reordered(&[7, 8], 0, 5), [(7, 1.0), (8, 2.0)]);
 }
 
+/// Gaps are numbered 0..=len; the two beside the dragged item move nothing.
+#[test]
+fn drop_index_counts_the_gap_the_item_leaves() {
+    // Item 1 of [a, b, c]: before a → 0, after c → 2, beside itself → none.
+    assert_eq!(drop_index(1, 0), Some(0));
+    assert_eq!(drop_index(1, 1), None);
+    assert_eq!(drop_index(1, 2), None);
+    assert_eq!(drop_index(1, 3), Some(2));
+    assert_eq!(drop_index(2, 0), Some(0));
+    assert_eq!(drop_index(0, 3), Some(2));
+}
+
 #[test]
 fn workspace_row_counts_working_and_flags_needs_input() {
     let api = project("api");

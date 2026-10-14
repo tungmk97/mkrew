@@ -15,6 +15,18 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-15 Drag to reorder tabs and sidebar rows, Close others / to the right
+
+- [ ] **Drag (dark + light):** drag a tab along the strip and a row in AGENTS / TERMINAL / RUN →
+  a small chip with the title follows the pointer (just right of it), the item stays dim in its
+  place, the cursor is a closed hand, and a 2 px accent line sits in the gap where it will land
+  (left/right half of a tab, top/bottom half of a row picks the side). No line beside the item
+  itself. Release → it moves there; release outside the strip/sidebar → nothing moves.
+- [ ] **Pin groups:** a pinned tab only moves among pinned tabs, an unpinned one among unpinned.
+- [ ] **Tab menu:** right-click a middle tab → "Close others" and "Close tabs to the right" close
+  the unpinned tabs besides / after it, it becomes active, pinned tabs stay. With nothing to
+  close the item is dimmed. A running agent among them asks once.
+
 ### To verify — 2026-10-14 Hooks run the daemon's own mk
 
 - [ ] **Reinstall integrations first:** `& "$env:LOCALAPPDATA\Programs\Mkrew\bin\mk.exe" integration install omp`

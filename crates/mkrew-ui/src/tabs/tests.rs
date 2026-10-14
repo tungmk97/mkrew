@@ -498,6 +498,60 @@ fn removing_an_inactive_tab_keeps_the_active_one() {
     assert_eq!(tabs.tabs().len(), 2);
 }
 
+/// A dragged tab lands between its new neighbors (or past the ends) of its own pin group, and
+/// the strip reorders at once.
+#[test]
+fn moving_a_tab_stays_in_its_pin_group() {
+    let project = Ulid::new();
+    let [pin, one, two, three] = [
+        TerminalTab {
+            pinned: true,
+            ..wire(project, "pin", 9.0, serde_json::Value::Null)
+        },
+        wire(project, "one", 1.0, serde_json::Value::Null),
+        wire(project, "two", 2.0, serde_json::Value::Null),
+        wire(project, "three", 3.0, serde_json::Value::Null),
+    ];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![pin.clone(), one.clone(), two, three.clone()]);
+    let titles =
+        |tabs: &Tabs| -> Vec<String> { tabs.tabs().iter().map(|t| t.title.clone()).collect() };
+
+    let sent = tabs.move_tab(three.id, 0).unwrap();
+    assert_eq!((sent.tab_id, sent.position), (three.id, 0.0));
+    assert_eq!(titles(&tabs), ["pin", "three", "one", "two"]);
+    assert_eq!(tabs.move_tab(three.id, 1).unwrap().position, 1.5);
+    assert_eq!(titles(&tabs), ["pin", "one", "three", "two"]);
+    // Past the end clamps to last.
+    assert_eq!(tabs.move_tab(one.id, 9).unwrap().position, 3.0);
+    assert_eq!(titles(&tabs), ["pin", "three", "two", "one"]);
+    // The only pinned tab has nowhere to go.
+    assert!(tabs.move_tab(pin.id, 1).is_none());
+    assert!(tabs.move_tab(Ulid::new(), 0).is_none());
+}
+
+#[test]
+fn close_others_and_to_the_right_keep_pinned_tabs() {
+    let project = Ulid::new();
+    let [pin, one, two, three] = [
+        TerminalTab {
+            pinned: true,
+            ..wire(project, "pin", 9.0, serde_json::Value::Null)
+        },
+        wire(project, "one", 1.0, serde_json::Value::Null),
+        wire(project, "two", 2.0, serde_json::Value::Null),
+        wire(project, "three", 3.0, serde_json::Value::Null),
+    ];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![pin.clone(), one.clone(), two.clone(), three.clone()]);
+    assert_eq!(tabs.close_targets(two.id, false), [one.id, three.id]);
+    assert_eq!(tabs.close_targets(two.id, true), [three.id]);
+    assert!(tabs.close_targets(three.id, true).is_empty());
+    // From a pinned tab: every unpinned one is to its right.
+    assert_eq!(tabs.close_targets(pin.id, true), [one.id, two.id, three.id]);
+    assert!(tabs.close_targets(Ulid::new(), false).is_empty());
+}
+
 #[test]
 fn prune_drops_panes_of_unknown_sessions() {
     let project = Ulid::new();

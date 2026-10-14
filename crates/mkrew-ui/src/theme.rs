@@ -143,6 +143,8 @@ pub mod opacity {
     pub const FULL: f32 = 1.0;
     /// The lifted copy of a card that follows the pointer while it is dragged.
     pub const DRAGGING: f32 = 0.9;
+    /// A sidebar row or tab while it is dragged, left dim in its old place.
+    pub const DRAG_SOURCE: f32 = 0.4;
 }
 
 /// Half the gap between split panes: each pane is inset by it, so panes sit `space::XS` apart
@@ -151,6 +153,9 @@ pub const PANE_HALF_GAP: f32 = space::XS / 2.0;
 
 /// Thickness of the accent line under the header of a colored pane (ADR 0037).
 pub const PANE_ACCENT_WIDTH: f32 = 2.0;
+
+/// Thickness of the accent line marking where a dragged sidebar row or tab will land.
+pub const DROP_LINE_WIDTH: f32 = 2.0;
 
 /// Narrowest and widest the workspace sidebar gets when dragged; `[ui] sidebar_width` is
 /// clamped to them.

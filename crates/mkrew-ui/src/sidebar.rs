@@ -670,5 +670,15 @@ pub fn reordered<T: Copy>(order: &[T], from: usize, to: usize) -> Vec<(T, f64)> 
         .collect()
 }
 
+/// The item at `from` dropped into the gap before `slot` (`0..=len`): its new index, `None` if
+/// that gap is right beside it (nothing moves).
+pub fn drop_index(from: usize, slot: usize) -> Option<usize> {
+    match slot {
+        _ if slot == from || slot == from + 1 => None,
+        _ if slot > from => Some(slot - 1),
+        _ => Some(slot),
+    }
+}
+
 #[cfg(test)]
 mod tests;
