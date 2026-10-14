@@ -36,10 +36,11 @@ use mkrew_protocol::{
     RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
     SessionHistory, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
     SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
-    SessionRef, SessionSendParams, SessionSendResult, SessionSpawnResult, SessionState,
-    SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams, TabListParams,
-    TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams, TaskListParams,
-    TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview, WORKSPACE_COLORS,
+    SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
+    SessionState, SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams,
+    TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
+    TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
+    WORKSPACE_COLORS,
 };
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
@@ -120,6 +121,7 @@ use shell::git_rows::*;
 use shell::menus::*;
 use shell::pane_render::*;
 use shell::sidebar::*;
+use shell::thread_panel::*;
 use shell::widgets::*;
 
 /// Longest wait for the frame showing fed output before draining again anyway (e.g. the
@@ -455,6 +457,9 @@ struct Shell {
     views: HashMap<Ulid, View>,
     /// The session panel right of Terminals is open (closed at every start; SPEC §10).
     inspector_open: bool,
+    /// The session panel's Thread section (ADR 0057): the shown session's reading. `None`
+    /// while the panel is closed or shows no agent with a native id.
+    thread: Option<ThreadWatch>,
     /// Its width in px, from `[ui] inspector_width` and the drag.
     inspector_width: f32,
     /// The edge was dragged since the last mouse-up: the width is saved when it ends.

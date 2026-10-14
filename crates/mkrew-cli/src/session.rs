@@ -1,4 +1,4 @@
-//! `mk session list | spawn | history`, `mk send`, `mk wait` (SPEC §9).
+//! `mk session list | spawn | history | resume`, `mk send`, `mk wait` (SPEC §9).
 
 use std::fs::File;
 use std::io::Write;
@@ -6,8 +6,8 @@ use std::io::Write;
 use anyhow::Context;
 use mkrew_protocol::{
     Project, Request, Session, SessionHistory, SessionKind, SessionListParams, SessionRef,
-    SessionSendParams, SessionSendResult, SessionSpawnParams, SessionSpawnResult, SessionState,
-    SessionWaitParams, SessionWaitResult,
+    SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnParams,
+    SessionSpawnResult, SessionState, SessionWaitParams, SessionWaitResult,
 };
 use ulid::Ulid;
 
@@ -90,6 +90,16 @@ pub fn history(client: &mut Client, session_id: Ulid) -> anyhow::Result<()> {
         std::io::copy(&mut log, &mut out).with_context(|| format!("read {}", file.display()))?;
     }
     out.flush()?;
+    Ok(())
+}
+
+/// Resumes an exited agent session (ADR 0055) and prints the new session's id.
+pub fn resume(client: &mut Client, session_id: Ulid) -> anyhow::Result<()> {
+    let resumed: SessionSpawnResult = client.call(Request::SessionResume(SessionResumeParams {
+        session_id,
+        tab_id: None,
+    }))?;
+    println!("{}", resumed.session_id);
     Ok(())
 }
 

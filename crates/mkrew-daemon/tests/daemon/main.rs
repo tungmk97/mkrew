@@ -28,13 +28,14 @@ use mkrew_protocol::{
     SessionInputParams, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
     SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionQueueEvent,
     SessionReadParams, SessionReadResult, SessionRef, SessionRenameParams, SessionResizeParams,
-    SessionSendParams, SessionSendResult, SessionSetColorParams, SessionSpawnParams,
-    SessionSpawnResult, SessionState, SessionUnqueueParams, SessionUsageEvent, SessionWaitParams,
-    SessionWaitResult, StateSource, TabCreateParams, TabListParams, TabMoveParams, TabPinParams,
-    TabRef, TabRenameParams, TabSetLayoutParams, Task, TaskConfirmParams, TaskCreateParams,
-    TaskDeletedEvent, TaskFanoutParams, TaskListParams, TaskMergeResult, TaskMoveParams, TaskRef,
-    TaskRunParams, TaskStatus, TaskUndoParams, TaskUpdateParams, TerminalTab, Turn, TurnRef,
-    TurnRestoreParams, UndoPreview, WORKSPACE_COLORS, encode,
+    SessionResumeParams, SessionSendParams, SessionSendResult, SessionSetColorParams,
+    SessionSpawnParams, SessionSpawnResult, SessionState, SessionUnqueueParams, SessionUsageEvent,
+    SessionWaitParams, SessionWaitResult, StateSource, TabCreateParams, TabListParams,
+    TabMoveParams, TabPinParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
+    TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
+    TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
+    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, WORKSPACE_COLORS,
+    encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};

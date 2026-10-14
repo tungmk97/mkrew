@@ -353,6 +353,7 @@ impl Daemon {
                 });
                 (store_outcome(history), After::Continue)
             }
+            Request::SessionResume(params) => (self.session_resume(params).await, After::Continue),
             Request::SessionRead(params) if !(1..=200).contains(&params.lines) => (
                 Outcome::error(ErrorCode::InvalidRequest, "lines must be 1–200"),
                 After::Continue,

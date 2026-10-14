@@ -747,6 +747,97 @@ fn restart_resumes_free_agent_panes_in_tabs_once() {
     client.stop();
 }
 
+/// ADR 0055: `session.resume` relaunches an exited agent session into its conversation as a
+/// new session, placed in an empty tab; refused while it or its conversation still runs, and
+/// for a session whose agent never reported its id.
+#[test]
+fn an_exited_agent_session_resumes_on_request() {
+    let env = Env::new();
+    let fake = built_bin("mkrew-fakeagent");
+    let profile = |name: &str, steps: &str| {
+        let scenario = env.dir.path().join(format!("{name}.toml"));
+        std::fs::write(&scenario, steps).unwrap();
+        env.write_fake_profile_as(name, &format!("['--scenario', '{}']", scenario.display()));
+        let path = env.dir.path().join(format!("config/agents/{name}.toml"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let resume = format!(
+            "resume = '\"{}\" --resume {{session_id}}'\n",
+            fake.display()
+        );
+        std::fs::write(
+            &path,
+            text.replace("[state]", &format!("{resume}\n[state]")),
+        )
+        .unwrap();
+    };
+    profile(
+        "quits",
+        "[[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-9\"\n\
+         [[step]]\naction = \"sleep\"\nms = 500\n\
+         [[step]]\naction = \"exit\"\ncode = 0\n",
+    );
+    profile("silent", "[[step]]\naction = \"exit\"\ncode = 0\n");
+    let resume = |session_id: Ulid, tab_id: Option<Ulid>| {
+        Request::SessionResume(SessionResumeParams { session_id, tab_id })
+    };
+
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    let quit: SessionSpawnResult = client.spawn(&project, "quits").into_result().unwrap();
+    assert_eq!(
+        error_code(client.call(resume(quit.session_id, None))),
+        ErrorCode::InvalidState,
+        "still running"
+    );
+    client.wait_state(quit.session_id, SessionState::Exited);
+    let silent: SessionSpawnResult = client.spawn(&project, "silent").into_result().unwrap();
+    client.wait_state(silent.session_id, SessionState::Exited);
+    assert_eq!(
+        error_code(client.call(resume(silent.session_id, None))),
+        ErrorCode::InvalidState,
+        "no native session id"
+    );
+
+    let tab: TerminalTab = client
+        .call(create_tab(&project, "resumed"))
+        .into_result()
+        .unwrap();
+    let resumed: SessionSpawnResult = client
+        .call(resume(quit.session_id, Some(tab.id)))
+        .into_result()
+        .unwrap();
+    assert_ne!(resumed.session_id, quit.session_id, "a new session");
+    let session = client.session(resumed.session_id);
+    assert_eq!(
+        (
+            session.agent_profile.as_str(),
+            session.native_session_id.as_deref()
+        ),
+        ("quits", Some("native-9"))
+    );
+    wait_layout(
+        &mut client,
+        &project,
+        &json!({"session": resumed.session_id.to_string()}),
+    );
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let attached: SessionAttachResult =
+            client.attach(resumed.session_id).into_result().unwrap();
+        if screen_text(&attached.snapshot).contains("Resumed: native-9") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the resume command did not run");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        error_code(client.call(resume(quit.session_id, None))),
+        ErrorCode::InvalidState,
+        "its conversation already runs"
+    );
+    client.stop();
+}
+
 /// ADR 0033: a session that exits while the daemon runs leaves its tab (shell or agent
 /// alike, the sibling takes its place); a daemon stop does not, so the pane is still there
 /// for the resume (ADR 0017) after the restart.

@@ -530,6 +530,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.move` | `session_id`, `position` (finite number; non-finite = `invalid_request`) | the Session, also broadcast as `session.updated`; like `session.pin` (live through its task, exited in the store); sidebar order inside the workspace group, ascending, 0 = never moved; a resumed session keeps it |
 | `session.set_color` | `session_id`, `color?` (a workspace color name; `null` clears) | the Session, also broadcast as `session.updated` — `invalid_request` for a name outside the palette, `invalid_state` for one caught exiting (ADR 0037) |
 | `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
+| `session.resume` | `session_id`, `tab_id?` | `SessionSpawnResult` — relaunches an exited agent session into its conversation with the profile's `resume` command, as a new session (same title, color, pin, plan, size; a task's session stays the task's, in its worktree); placed where the old pane still is, else into `tab_id` when that tab is empty (the client places it otherwise). `invalid_state` while the session is live, for a shell, without `native_session_id` or `resume`, in an archived workspace, or while a live session has the same `native_session_id` or task (ADR 0055) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
@@ -646,7 +647,8 @@ Protocol 41: `session.move` and `Session.position`.
   startup, so each session is resumed at most once. A resumed session keeps its linked plan
   (`plan_path`). A session that exits while the daemon runs
   (a shell or agent that quits, a killed one, a run command) leaves its tab layout; one cut off by
-  the daemon stop keeps its pane (ADR 0017, ADR 0033).
+  the daemon stop keeps its pane (ADR 0017, ADR 0033). Any exited agent session can also be
+  resumed on request: `session.resume`, History's **Resume**, `mk session resume` (ADR 0055).
 - **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
@@ -675,6 +677,7 @@ mk task run <task-id>
 mk task undo <task-id> [--yes]         # prints files + diff since the checkpoint; --yes discards
 mk session list [--project P]
 mk session history <session-id>        # prints the session's raw output log (also exited ones)
+mk session resume <session-id>         # relaunches an exited agent session's conversation; prints the new id
 mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
 mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052)
@@ -774,7 +777,9 @@ The session panel (below) is a third column right of Terminals while open.
   children, ADR 0029; hidden when there is no repository; a click shows the Git view); the
   views Board / Terminals / Docs / Files / Git as a segmented control (tooltips show their
   shortcuts, §13), the Git one with a neutral gray `N` badge (N = changed files summed over every
-  repository, hidden at 0); then, right-aligned, the Run pill, History (`◷`), the theme toggle,
+  repository, hidden at 0); then, right-aligned, the Run pill, History (`◷`: finished sessions
+  with their logs replayed read-only; **Resume** (Enter) continues the selected agent session's
+  conversation in a new pane that gets the keyboard, ADR 0055), the theme toggle,
   the phone icon (`smartphone`, §14; a green dot while Phone access is on; the tooltip explains
   it; hidden without a daemon connection), the session-panel toggle (◨, ADR 0038) and the
   outlined `+ New ▾` (a dropdown of Agent / Shell), in every view (New's entries switch to
@@ -849,6 +854,15 @@ The session panel (below) is a third column right of Terminals while open.
   about a second (the daemon watches only that file); a file that cannot be read shows the
   reason instead of the bar. There is no "Setup / Tasks / Finish" phase bar: progress comes
   from the file only, for any agent (ADR 0039).
+  **Thread** (agent sessions whose profile has `[usage]`, after the cards, filling the rest of
+  the panel): the session's transcript read like a chat. Each prompt sits on a card block, the
+  agent's text shows as Markdown, and consecutive tool calls form one `▸ +N tool calls` row (a
+  click gives one line per call: name + target). Thinking, tool output and sub-agent lines are
+  left out. The file is read only while the panel shows the session: the last 4 MiB first (at
+  most 20 turns; older ones give "Earlier turns: Open transcript"), then what was appended,
+  checked every second. Closing the panel or focusing another pane stops reading. A muted
+  "Working…" ends the list while the agent works. The list follows the bottom unless scrolled
+  up (ADR 0057).
 - **Terminal rendering:** cell grid from `alacritty_terminal`; 256-color/truecolor, cursor,
   selection & copy, paste (bracketed), scrollback (UI-side, 10,000 lines, only for attached panes),
   search, resize → `session.resize`. Performance rules (mandatory — this is the hottest path):

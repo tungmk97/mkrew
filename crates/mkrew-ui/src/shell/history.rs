@@ -372,6 +372,67 @@ impl Shell {
         cx.notify();
     }
 
+    /// "Resume" in History (ADR 0055): relaunches the selected agent session into its
+    /// conversation, then closes the dialog and gives the new pane the keyboard.
+    pub(crate) fn resume_history(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(dialog) = self.history.as_mut() else {
+            return;
+        };
+        let Some(session) = dialog.selected_session() else {
+            return;
+        };
+        if dialog.resuming || history::resume_blocked(session).is_some() {
+            return;
+        }
+        let (project_id, session_id) = (dialog.project_id, session.id);
+        dialog.resuming = true;
+        dialog.resume_error = None;
+        let tab_id = (self.tabs.get(&project_id))
+            .and_then(|tabs| tabs.active())
+            .map(|tab| tab.id);
+        let serial = self.dialog_serial;
+        cx.notify();
+        let resumed =
+            connection.call::<SessionSpawnResult>(Request::SessionResume(SessionResumeParams {
+                session_id,
+                tab_id,
+            }));
+        cx.spawn_in(window, async move |this, cx| {
+            let resumed = resumed.await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let Some(dialog) = shell.open_history(serial) else {
+                    return;
+                };
+                dialog.resuming = false;
+                match resumed {
+                    Ok(resumed) => {
+                        shell.close_history(window, cx);
+                        shell.views.insert(project_id, View::Terminals);
+                        // Next to the focused pane of the active tab, unless the daemon put
+                        // it in an empty tab or in the old pane's place; `place_session`
+                        // focuses it, and the pane takes the keyboard once attached.
+                        if shell.tabs.contains_key(&project_id) {
+                            let id = resumed.session_id;
+                            shell.place_session(project_id, id, Axis::Vertical, window, cx);
+                        } else {
+                            shell.reveal = Some(resumed.session_id);
+                        }
+                        shell.activate_workspace(project_id, window, cx);
+                    }
+                    Err(error) => {
+                        tracing::warn!(%session_id, "session.resume failed: {error:#}");
+                        dialog.resume_error = Some(format!("Cannot resume: {error:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Esc closes the history, ↑ / ↓ pick another session (also while its pane has the
     /// keyboard: a finished session's pane passes keys on).
     pub(crate) fn history_key_down(
@@ -392,6 +453,7 @@ impl Shell {
                     self.select_history(session, window, cx);
                 }
             }
+            Some(history::Key::Resume) => self.resume_history(window, cx),
             None => {}
         }
     }
@@ -690,6 +752,32 @@ impl Shell {
                     .into_any_element(),
             ),
         };
+        let resume = dialog.selected_session().map(|session| {
+            let label = icon_text(
+                Icon::Play,
+                if dialog.resuming {
+                    "Resuming…"
+                } else {
+                    "Resume"
+                },
+                button_fg(theme, true),
+            );
+            let blocked = history::resume_blocked(session)
+                .or(dialog.resuming.then_some("Starting the agent…"));
+            match blocked {
+                None => button("history-resume", label, theme, true)
+                    .tooltip(tooltip(
+                        theme,
+                        "Continue this conversation in a new pane",
+                        "Enter",
+                    ))
+                    .on_click(cx.listener(|shell, _, window, cx| {
+                        shell.resume_history(window, cx);
+                    })),
+                Some(reason) => disabled_button("history-resume", label, theme, true)
+                    .tooltip(tooltip(theme, reason, "")),
+            }
+        });
         let panel = div()
             .id("history-dialog")
             .w(relative(theme::HISTORY_DIALOG_FRACTION))
@@ -723,6 +811,7 @@ impl Shell {
                             .text_color(rgb(theme.text))
                             .child(format!("History · {}", dialog.workspace)),
                     )
+                    .children(resume)
                     .child(
                         button("history-close", "Close", theme, false)
                             .tooltip(tooltip(theme, "Close", "Esc"))
@@ -731,6 +820,7 @@ impl Shell {
                             })),
                     ),
             )
+            .children(dialog.resume_error.clone().map(error_row))
             .child(
                 div()
                     .flex_1()

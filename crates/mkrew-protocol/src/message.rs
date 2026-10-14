@@ -155,6 +155,10 @@ pub enum Request {
     /// Returns [`SessionHistory`]; works for exited sessions too.
     #[serde(rename = "session.history")]
     SessionHistory(SessionRef),
+    /// Returns [`SessionSpawnResult`]: relaunches an exited agent session into its conversation
+    /// with the profile's `resume` command, as a new session (ADR 0055).
+    #[serde(rename = "session.resume")]
+    SessionResume(SessionResumeParams),
     /// Returns [`SessionReadResult`]; live sessions only (SPEC §20A).
     #[serde(rename = "session.read")]
     SessionRead(SessionReadParams),
@@ -1070,6 +1074,15 @@ pub struct SessionListParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionRef {
     pub session_id: Ulid,
+}
+
+/// `session.resume`: the exited agent session whose conversation goes on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionResumeParams {
+    pub session_id: Ulid,
+    /// The tab the pane goes into when that tab has no panes (like `session.spawn`).
+    #[serde(default)]
+    pub tab_id: Option<Ulid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
