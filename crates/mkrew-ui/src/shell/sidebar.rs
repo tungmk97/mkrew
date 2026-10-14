@@ -21,14 +21,6 @@ impl RowGroup {
             RowGroup::Run => "RUN",
         }
     }
-
-    fn icon(self) -> Icon {
-        match self {
-            RowGroup::Agents => Icon::Sparkles,
-            RowGroup::Terminal => Icon::SquareTerminal,
-            RowGroup::Run => Icon::Play,
-        }
-    }
 }
 
 /// A sidebar row being dragged: the `index`-th row of `project_id`'s `group`.
@@ -1033,9 +1025,9 @@ impl Shell {
         }
     }
 
-    /// A group label under a workspace (`✦ AGENTS 3`, `▣ TERMINAL 4`, `▶ RUN 2`): the group's
-    /// icon, small muted caps and its row count, with room above to set the groups apart. A
-    /// click folds the group to this line (the chevron shows on hover, and while folded).
+    /// A group label under a workspace (`⌄ AGENTS 3`, `› RUN 2` while folded): a fold chevron,
+    /// small muted caps and the row count, with room above to set the groups apart. A click
+    /// folds the group to this line.
     pub(crate) fn group_label(
         &self,
         project_id: Ulid,
@@ -1048,8 +1040,7 @@ impl Shell {
         let id = SharedString::from(format!("group-{project_id}-{group:?}"));
         let hover = theme.hover;
         div()
-            .id(id.clone())
-            .group(id.clone())
+            .id(id)
             .flex()
             .items_center()
             .gap(px(space::XS))
@@ -1079,9 +1070,13 @@ impl Shell {
                 cx.notify();
             }))
             .child(icon_svg(
-                group.icon(),
+                if collapsed {
+                    Icon::ChevronRight
+                } else {
+                    Icon::ChevronDown
+                },
                 theme::ICON_SIZE_SMALL,
-                theme.text_muted,
+                theme.chevron_color(),
             ))
             .child(group.label())
             .child(
@@ -1091,30 +1086,14 @@ impl Shell {
                     .text_color(rgb(theme.chevron_color()))
                     .child(count.to_string()),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .when(!collapsed, |el| {
-                        el.opacity(opacity::HIDDEN)
-                            .group_hover(id, |style| style.opacity(opacity::FULL))
-                    })
-                    .child(icon_svg(
-                        if collapsed {
-                            Icon::ChevronRight
-                        } else {
-                            Icon::ChevronDown
-                        },
-                        theme::ICON_SIZE_SMALL,
-                        theme.chevron_color(),
-                    )),
-            )
             .into_any_element()
     }
 }
 
 /// A workspace header row: chevron, avatar, bold name, pin; on the right its status: a
 /// `● 1 working` pill (pulsing dot) while an agent works, else a muted `2 idle`, plus an amber
-/// `? 1` while one needs you; the ⋯ menu on hover. Tooltip: the folder.
+/// `? 1` while one needs you; the ⋯ menu on hover. Tooltip: the folder. A click on the chevron
+/// only expands / collapses the row; elsewhere it shows the workspace.
 pub(crate) fn workspace_row(
     row: WorkspaceRow,
     active: bool,

@@ -36,14 +36,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] **Restart the daemon first** (protocol 41, migration 0019: the old `run` tab becomes `Run`).
 - [ ] **Groups (dark + light):** a workspace with agents, shells and run commands shows
-  `✦ AGENTS n`, `▣ TERMINAL n`, `▶ RUN n` labels with space between groups; a workspace with only
+  `⌄ AGENTS n`, `⌄ TERMINAL n`, `⌄ RUN n` labels (gray chevron, no category icon) with space between groups; a workspace with only
   agents shows no label.
 - [ ] **Drag:** drag an agent row onto another agent row → it takes that place (target row tinted
   while hovered) and keeps it after an app/daemon restart; a terminal row cannot be dropped on an
   agent or run row; dragging a RUN command reorders the config (Run setup shows the new order).
   No drag while the filter or a chip is active. A new session appears on top of its group.
-- [ ] **Fold:** hovering a group label shows a hover background and `⌄`; a click folds the group to
-  its label (`›` stays visible, count kept), a second click shows the rows again. Folding is per
+- [ ] **Fold:** hovering a group label shows a hover background; `⌄` is always visible; a click folds the group to
+  its label (`›`, count kept), a second click shows the rows again. Folding is per
   workspace and lasts until the app restarts; a filter shows all matches regardless.
 
 ### To verify — 2026-10-13 Simpler Terminals screen (ADR 0054, docs/terminals-simplify-checklist.md)
