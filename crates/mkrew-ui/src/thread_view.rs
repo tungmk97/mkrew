@@ -118,7 +118,7 @@ impl ThreadFile {
                 .turns()
                 .iter()
                 .map(|turn| PageTurn {
-                    prompt: turn.prompt.clone(),
+                    prompt: clamp_prompt(&turn.prompt),
                     items: turn
                         .items
                         .iter()
@@ -132,6 +132,17 @@ impl ThreadFile {
             truncated: self.reader.truncated(),
             first_turn: self.reader.first_turn(),
         }
+    }
+}
+
+/// Characters of a prompt shown on a card.
+const PROMPT_MAX: usize = 500;
+
+/// `text` cut to [`PROMPT_MAX`] characters, with `…` when cut.
+fn clamp_prompt(text: &str) -> String {
+    match text.char_indices().nth(PROMPT_MAX) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
     }
 }
 
@@ -221,5 +232,15 @@ mod tests {
             panic!("text expected");
         };
         assert!(!shown.blocks.is_empty());
+    }
+
+    #[test]
+    fn long_prompts_are_cut_on_a_char_boundary() {
+        assert_eq!(clamp_prompt("short"), "short");
+        let exact = "é".repeat(PROMPT_MAX);
+        assert_eq!(clamp_prompt(&exact), exact);
+        let cut = clamp_prompt(&"é".repeat(PROMPT_MAX + 1));
+        assert_eq!(cut.chars().count(), PROMPT_MAX + 1);
+        assert!(cut.ends_with('…'));
     }
 }

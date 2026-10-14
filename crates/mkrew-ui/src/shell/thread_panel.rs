@@ -163,9 +163,10 @@ impl Shell {
                                 .text_size(font_size::META)
                                 .text_color(rgb(theme.text_muted))
                                 .child(format!(
-                                    "{} +{} tool calls",
+                                    "{} +{} tool call{}",
                                     if open { "▾" } else { "▸" },
-                                    calls.len()
+                                    calls.len(),
+                                    if calls.len() == 1 { "" } else { "s" }
                                 ))
                                 .on_click(cx.listener(move |shell, _, _, cx| {
                                     if let Some(watch) = shell.thread.as_mut()
