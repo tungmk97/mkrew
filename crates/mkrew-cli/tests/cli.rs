@@ -779,14 +779,28 @@ fn integration_install_status_uninstall() {
     }
     assert_eq!(backups(&claude), 1, "one backup, of the first change only");
     assert_eq!(backups(&codex), 0, "a new file has nothing to back up");
-    let installed = std::fs::read_to_string(&settings).unwrap();
-    assert!(
-        installed.contains("mk hook claude Notification"),
-        "{installed}"
-    );
+    let installed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    let hook = &installed["hooks"]["Notification"][0]["hooks"][0];
     assert_eq!(
-        std::fs::read_to_string(codex.join("config.toml")).unwrap(),
-        "notify = [\"mk\", \"hook\", \"codex\"]\n"
+        hook["args"],
+        serde_json::json!(["hook", "claude", "Notification"])
+    );
+    let mk = hook["command"].as_str().unwrap();
+    assert!(Path::new(mk).is_absolute(), "{hook}");
+    let config: toml_edit::DocumentMut = std::fs::read_to_string(codex.join("config.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let notify: Vec<_> = config["notify"].as_array().unwrap().iter().collect();
+    assert_eq!(notify.len(), 3, "{config}");
+    assert_eq!(notify[0].as_str(), Some(mk));
+    assert_eq!(
+        notify[1..]
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>(),
+        ["hook", "codex"]
     );
 
     for agent in ["claude", "codex"] {

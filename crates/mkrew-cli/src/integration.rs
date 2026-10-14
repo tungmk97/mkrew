@@ -2,7 +2,7 @@
 //! config to `mk hook`, so Mkrew learns the agent state from the agent instead of the screen.
 //!
 //! - Claude Code: `<CLAUDE_CONFIG_DIR or ~/.claude>/settings.json`, one command hook per event.
-//! - Codex: `<CODEX_HOME or ~/.codex>/config.toml`, top-level `notify = ["mk", "hook", "codex"]`.
+//! - Codex: `<CODEX_HOME or ~/.codex>/config.toml`, top-level `notify = ["<mk>", "hook", "codex"]`.
 //! - Oh My Pi: `<PI_CODING_AGENT_DIR or ~/.omp/agent>/extensions/mkrew.ts`, a Mkrew-owned file.
 //! - GitHub Copilot CLI: `<COPILOT_HOME or ~/.copilot>/hooks/mkrew.json`, a Mkrew-owned file.
 //!
@@ -21,7 +21,7 @@ use serde_json::{Map, Value, json};
 
 /// Claude Code hook events Mkrew listens to (SPEC §6).
 const CLAUDE_EVENTS: [&str; 4] = ["SessionStart", "UserPromptSubmit", "Notification", "Stop"];
-const CODEX_NOTIFY: [&str; 3] = ["mk", "hook", "codex"];
+const CODEX_ARGS: [&str; 2] = ["hook", "codex"];
 const OMP_EXTENSION: &str = include_str!("../assets/omp-extension.ts");
 const COPILOT_HOOKS: &str = include_str!("../assets/copilot-hooks.json");
 
@@ -60,7 +60,11 @@ pub fn run(action: Action, agent: Agent) -> anyhow::Result<ExitCode> {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     })?;
-    let code = run_on(action, agent, &file)?;
+    let mk = own_mk()?;
+    let code = run_on(action, agent, &file, &mk)?;
+    if action == Action::Install && code == ExitCode::SUCCESS && agent != Agent::Omp {
+        println!("note: hooks run {mk}; reinstall after moving Mkrew");
+    }
     if action == Action::Install {
         let profile = mkrew_core::Paths::from_env()?
             .agents_dir()
@@ -101,30 +105,30 @@ fn config_file(agent: Agent, var: impl Fn(&str) -> Option<PathBuf>) -> anyhow::R
     Ok(dir.join(name))
 }
 
-fn run_on(action: Action, agent: Agent, file: &Path) -> anyhow::Result<ExitCode> {
+fn run_on(action: Action, agent: Agent, file: &Path, mk: &str) -> anyhow::Result<ExitCode> {
     let name = name(agent);
     let text = match fs::read_to_string(file) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e).with_context(|| format!("read {}", file.display())),
     };
-    let merged = match owned_contents(agent) {
-        Ok(ours) => return run_owned(action, name, file, text.as_deref(), ours),
+    let merged = match owned_contents(agent, mk) {
+        Ok(ours) => return run_owned(action, name, file, text.as_deref(), &ours),
         Err(merged) => merged,
     };
     let original = text.as_deref().unwrap_or("");
     if action == Action::Status {
         let installed = match merged {
-            Merged::Claude => claude_status(original),
-            Merged::Codex => codex_status(original),
+            Merged::Claude => claude_status(original, mk),
+            Merged::Codex => codex_status(original, mk),
         }
         .with_context(|| format!("parse {}", file.display()))?;
         return Ok(print_status(name, file, &installed));
     }
     let install = action == Action::Install;
     let updated = match merged {
-        Merged::Claude => claude_edit(original, install),
-        Merged::Codex => codex_edit(original, install),
+        Merged::Claude => claude_edit(original, install, mk),
+        Merged::Codex => codex_edit(original, install, mk),
     }
     .with_context(|| format!("update {}", file.display()))?;
     let verb = if install { "installed" } else { "uninstalled" };
@@ -158,12 +162,6 @@ fn print_status(name: &str, file: &Path, installed: &Installed) -> ExitCode {
         Installed::No => "not installed",
     };
     println!("{name}: {label} ({})", file.display());
-    if mkrew_core::lookup::find("mk".as_ref()).is_none() {
-        println!(
-            "warning: `mk` is not on PATH ({}); hooks will fail",
-            mkrew_core::lookup::SEARCHED
-        );
-    }
     if *installed == Installed::Yes {
         ExitCode::SUCCESS
     } else {
@@ -173,10 +171,10 @@ fn print_status(name: &str, file: &Path, installed: &Installed) -> ExitCode {
 
 /// omp and Copilot load every file in one directory, so Mkrew owns one file there; the
 /// others merge into the user's config.
-fn owned_contents(agent: Agent) -> Result<&'static str, Merged> {
+fn owned_contents(agent: Agent, mk: &str) -> Result<String, Merged> {
     match agent {
-        Agent::Omp => Ok(OMP_EXTENSION),
-        Agent::Copilot => Ok(COPILOT_HOOKS),
+        Agent::Omp => Ok(OMP_EXTENSION.to_owned()),
+        Agent::Copilot => Ok(copilot_hooks(mk)),
         Agent::Claude => Err(Merged::Claude),
         Agent::Codex => Err(Merged::Codex),
     }
@@ -274,8 +272,41 @@ fn back_up(file: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-fn claude_command(event: &str) -> String {
-    format!("mk hook claude {event}")
+/// The absolute path of this `mk`: hook configs name it, never a bare `mk` that `PATH` may
+/// resolve to another version (ADR 0055).
+fn own_mk() -> anyhow::Result<String> {
+    let exe = std::env::current_exe().context("locate mk")?;
+    let exe = dunce::canonicalize(&exe).with_context(|| format!("resolve {}", exe.display()))?;
+    exe.into_os_string()
+        .into_string()
+        .map_err(|exe| anyhow::anyhow!("mk's path is not UTF-8: {exe:?}"))
+}
+
+/// Whether `program` is some `mk` (any folder, or bare): older Mkrew versions wrote `mk`.
+fn is_mk(program: &str) -> bool {
+    Path::new(program)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case("mk"))
+}
+
+/// Claude Code exec form: `command` runs directly with `args`, no shell (ADR 0055).
+fn claude_hook(mk: &str, event: &str) -> Value {
+    json!({"type": "command", "command": mk, "args": ["hook", "claude", event]})
+}
+
+/// Whether a hook entry is Mkrew's for `event`: the exec form with any `mk`, or the string
+/// `mk hook claude <event>` older versions wrote.
+fn claude_hook_is_ours(hook: &Value, event: &str) -> bool {
+    let legacy = hook["command"] == format!("mk hook claude {event}").as_str();
+    let exec = hook["args"] == json!(["hook", "claude", event])
+        && hook["command"].as_str().is_some_and(is_mk);
+    legacy || exec
+}
+
+/// Copilot's hooks file running `mk`; the asset is a template with `"exec": "mk"`.
+fn copilot_hooks(mk: &str) -> String {
+    COPILOT_HOOKS.replace(r#""exec": "mk""#, &format!(r#""exec": {}"#, json!(mk)))
 }
 
 fn parse_settings(text: &str) -> anyhow::Result<Map<String, Value>> {
@@ -288,37 +319,42 @@ fn parse_settings(text: &str) -> anyhow::Result<Map<String, Value>> {
     }
 }
 
-/// Whether a matcher group (`{"matcher"?, "hooks": [...]}`) runs `command`.
-fn group_runs(group: &Value, command: &str) -> bool {
+/// Whether a matcher group (`{"matcher"?, "hooks": [...]}`) runs a hook for which `pred` holds.
+fn group_runs(group: &Value, pred: impl Fn(&Value) -> bool) -> bool {
     group["hooks"]
         .as_array()
-        .is_some_and(|hooks| hooks.iter().any(|hook| hook["command"] == command))
+        .is_some_and(|hooks| hooks.iter().any(pred))
 }
 
-fn claude_status(text: &str) -> anyhow::Result<Installed> {
+/// `Yes` when every event runs `mk`; `Partly` when some run an `mk` (older path or form).
+fn claude_status(text: &str, mk: &str) -> anyhow::Result<Installed> {
     let settings = parse_settings(text)?;
-    let found = CLAUDE_EVENTS
-        .iter()
-        .filter(|event| {
-            settings
-                .get("hooks")
-                .and_then(|hooks| hooks[**event].as_array())
-                .is_some_and(|groups| {
-                    groups
-                        .iter()
-                        .any(|group| group_runs(group, &claude_command(event)))
-                })
-        })
-        .count();
-    Ok(match found {
-        0 => Installed::No,
-        n if n == CLAUDE_EVENTS.len() => Installed::Yes,
+    let count = |pred: &dyn Fn(&Value, &str) -> bool| {
+        CLAUDE_EVENTS
+            .iter()
+            .filter(|event| {
+                settings
+                    .get("hooks")
+                    .and_then(|hooks| hooks[**event].as_array())
+                    .is_some_and(|groups| {
+                        groups
+                            .iter()
+                            .any(|group| group_runs(group, |hook| pred(hook, event)))
+                    })
+            })
+            .count()
+    };
+    let current = count(&|hook, event| *hook == claude_hook(mk, event));
+    let ours = count(&|hook, event| claude_hook_is_ours(hook, event));
+    Ok(match (current, ours) {
+        (n, _) if n == CLAUDE_EVENTS.len() => Installed::Yes,
+        (_, 0) => Installed::No,
         _ => Installed::Partly,
     })
 }
 
 /// The new `settings.json` text, or `None` if nothing changes.
-fn claude_edit(text: &str, install: bool) -> anyhow::Result<Option<String>> {
+fn claude_edit(text: &str, install: bool, mk: &str) -> anyhow::Result<Option<String>> {
     let mut settings = parse_settings(text)?;
     let before = Value::Object(settings.clone());
     let hooks = settings
@@ -328,28 +364,32 @@ fn claude_edit(text: &str, install: bool) -> anyhow::Result<Option<String>> {
         bail!("`hooks` is not an object");
     };
     for event in CLAUDE_EVENTS {
-        let command = claude_command(event);
         let groups = hooks
             .entry(event)
             .or_insert_with(|| Value::Array(Vec::new()));
         let Value::Array(groups) = groups else {
             bail!("`hooks.{event}` is not an array");
         };
-        if install {
-            if !groups.iter().any(|group| group_runs(group, &command)) {
-                groups.push(json!({"hooks": [{"type": "command", "command": command}]}));
-            }
+        if install
+            && groups
+                .iter()
+                .any(|group| group_runs(group, |hook| *hook == claude_hook(mk, event)))
+        {
             continue;
         }
-        // Drop our hooks, then the groups and events that only held them.
+        // Drop our hooks (any `mk`, either form), then the groups and events that only held them.
         groups.retain_mut(|group| {
             let Some(list) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
                 return true;
             };
             let len = list.len();
-            list.retain(|hook| hook["command"] != command.as_str());
+            list.retain(|hook| !claude_hook_is_ours(hook, event));
             !(list.is_empty() && list.len() < len)
         });
+        if install {
+            groups.push(json!({"hooks": [claude_hook(mk, event)]}));
+            continue;
+        }
         if groups.is_empty() && before["hooks"][event] != json!([]) {
             // `shift_remove`: `remove` swaps the last key into the gap.
             hooks.shift_remove(event);
@@ -371,22 +411,33 @@ fn parse_config(text: &str) -> anyhow::Result<toml_edit::DocumentMut> {
     text.parse().context("not valid TOML")
 }
 
-/// Whether `notify` is exactly Mkrew's command.
+/// Whether `notify` is an `mk hook codex` command: any `mk` path, or the bare `mk` of older versions.
 fn notify_is_ours(doc: &toml_edit::DocumentMut) -> bool {
-    doc.get("notify")
-        .and_then(toml_edit::Item::as_array)
-        .is_some_and(|notify| {
-            notify.len() == CODEX_NOTIFY.len()
-                && notify
-                    .iter()
-                    .zip(CODEX_NOTIFY)
-                    .all(|(arg, ours)| arg.as_str() == Some(ours))
-        })
+    notify_args(doc).is_some_and(|args| {
+        args.len() == 3 && is_mk(&args[0]) && args[1..] == CODEX_ARGS.map(str::to_owned)
+    })
 }
 
-fn codex_status(text: &str) -> anyhow::Result<Installed> {
-    Ok(if notify_is_ours(&parse_config(text)?) {
+/// Whether `notify` is exactly `[mk, "hook", "codex"]`.
+fn notify_is_current(doc: &toml_edit::DocumentMut, mk: &str) -> bool {
+    notify_args(doc).is_some_and(|args| args == [mk, CODEX_ARGS[0], CODEX_ARGS[1]])
+}
+
+/// `notify` as strings, when it is an array of strings.
+fn notify_args(doc: &toml_edit::DocumentMut) -> Option<Vec<String>> {
+    doc.get("notify")?
+        .as_array()?
+        .iter()
+        .map(|arg| arg.as_str().map(str::to_owned))
+        .collect()
+}
+
+fn codex_status(text: &str, mk: &str) -> anyhow::Result<Installed> {
+    let doc = parse_config(text)?;
+    Ok(if notify_is_current(&doc, mk) {
         Installed::Yes
+    } else if notify_is_ours(&doc) {
+        Installed::Partly
     } else {
         Installed::No
     })
@@ -394,18 +445,19 @@ fn codex_status(text: &str) -> anyhow::Result<Installed> {
 
 /// The new `config.toml` text, or `None` if nothing changes. Codex runs a single `notify`
 /// program, so install refuses to replace one that is not Mkrew's.
-fn codex_edit(text: &str, install: bool) -> anyhow::Result<Option<String>> {
+fn codex_edit(text: &str, install: bool, mk: &str) -> anyhow::Result<Option<String>> {
     let mut doc = parse_config(text)?;
     let other = doc
         .get("notify")
         .map(|item| item.to_string().trim().to_owned());
     match (install, notify_is_ours(&doc), other) {
-        (true, true, _) | (false, false, _) => return Ok(None),
+        (true, _, _) if notify_is_current(&doc, mk) => return Ok(None),
+        (false, false, _) => return Ok(None),
         (true, false, Some(other)) => bail!(
             "`notify` is already set to {other}; Codex runs only one notify program, remove it first"
         ),
-        (true, false, None) => {
-            let notify = toml_edit::Array::from_iter(CODEX_NOTIFY);
+        (true, _, _) => {
+            let notify = toml_edit::Array::from_iter([mk, CODEX_ARGS[0], CODEX_ARGS[1]]);
             doc.insert("notify", toml_edit::value(notify));
         }
         (false, true, _) => {
@@ -418,6 +470,77 @@ fn codex_edit(text: &str, install: bool) -> anyhow::Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MK: &str = r"C:\Program Files\Mkrew\bin\mk.exe";
+
+    #[test]
+    fn omp_extension_runs_the_daemons_mk() {
+        assert!(
+            OMP_EXTENSION.contains("process.env.MKREW_MK"),
+            "{OMP_EXTENSION}"
+        );
+        assert!(!OMP_EXTENSION.contains("execFile(\"mk\""), "no bare mk");
+    }
+
+    #[test]
+    fn claude_install_replaces_an_old_bare_mk_hook() {
+        let old = r#"{"hooks": {"Stop": [
+  {"hooks": [{"type": "command", "command": "mk hook claude Stop"}]},
+  {"hooks": [{"type": "command", "command": "mk-other"}]}
+]}}"#;
+        assert_eq!(claude_status(old, MK).unwrap(), Installed::Partly);
+        let new = claude_edit(old, true, MK).unwrap().unwrap();
+        let stop = json(&new)["hooks"]["Stop"].clone();
+        assert_eq!(
+            stop[0]["hooks"][0],
+            json!({"type": "command", "command": "mk-other"}),
+            "{new}"
+        );
+        assert_eq!(
+            stop[1]["hooks"][0],
+            json!({"type": "command", "command": MK, "args": ["hook", "claude", "Stop"]}),
+            "{new}"
+        );
+        assert!(!new.contains("mk hook claude"), "{new}");
+        assert_eq!(claude_status(&new, MK).unwrap(), Installed::Yes);
+        assert_eq!(claude_edit(&new, true, MK).unwrap(), None, "idempotent");
+        // Uninstall drops ours in both forms and keeps the user's hook.
+        let mixed = json!({"hooks": {"Stop": [
+            {"hooks": [{"type": "command", "command": "mk hook claude Stop"}]},
+            {"hooks": [claude_hook(r"D:\old\mk.exe", "Stop")]},
+            {"hooks": [{"type": "command", "command": "mk-other"}]}
+        ]}});
+        let left = json(&claude_edit(&mixed.to_string(), false, MK).unwrap().unwrap());
+        assert_eq!(
+            left,
+            json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mk-other"}]}]}})
+        );
+    }
+
+    #[test]
+    fn codex_install_upgrades_an_older_mkrew_notify() {
+        let old = "notify = [\"mk\", \"hook\", \"codex\"]\n";
+        assert_eq!(codex_status(old, MK).unwrap(), Installed::Partly);
+        let new = codex_edit(old, true, MK).unwrap().unwrap();
+        assert_eq!(notify_of(&new), [MK, "hook", "codex"]);
+        assert_eq!(codex_status(&new, MK).unwrap(), Installed::Yes);
+        assert_eq!(codex_edit(&new, true, MK).unwrap(), None);
+        assert_eq!(
+            codex_edit(old, false, MK).unwrap().unwrap().trim(),
+            "",
+            "uninstall drops the old one"
+        );
+    }
+
+    fn notify_of(text: &str) -> Vec<String> {
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        doc["notify"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    }
 
     fn json(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
@@ -446,10 +569,10 @@ mod tests {
   },
   "env": {"A": "1"}
 }"#;
-        assert_eq!(claude_status(original).unwrap(), Installed::No);
-        let installed = claude_edit(original, true).unwrap().unwrap();
-        assert_eq!(claude_status(&installed).unwrap(), Installed::Yes);
-        assert_eq!(claude_edit(&installed, true).unwrap(), None);
+        assert_eq!(claude_status(original, MK).unwrap(), Installed::No);
+        let installed = claude_edit(original, true, MK).unwrap().unwrap();
+        assert_eq!(claude_status(&installed, MK).unwrap(), Installed::Yes);
+        assert_eq!(claude_edit(&installed, true, MK).unwrap(), None);
 
         let settings = json(&installed);
         let keys: Vec<_> = settings.as_object().unwrap().keys().collect();
@@ -461,31 +584,26 @@ mod tests {
         for event in CLAUDE_EVENTS {
             let groups = settings["hooks"][event].as_array().unwrap();
             let ours = groups.last().unwrap();
-            assert_eq!(
-                ours,
-                &json(&format!(
-                    r#"{{"hooks": [{{"type": "command", "command": "mk hook claude {event}"}}]}}"#
-                ))
-            );
+            assert_eq!(ours, &json!({"hooks": [claude_hook(MK, event)]}));
         }
     }
 
     #[test]
     fn claude_uninstall_removes_only_mkrew_hooks() {
         let original = r#"{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}], "PreToolUse": []}}"#;
-        let installed = claude_edit(original, true).unwrap().unwrap();
-        let removed = claude_edit(&installed, false).unwrap().unwrap();
+        let installed = claude_edit(original, true, MK).unwrap().unwrap();
+        let removed = claude_edit(&installed, false, MK).unwrap().unwrap();
         assert_eq!(json(&removed), json(original));
-        assert_eq!(claude_status(&removed).unwrap(), Installed::No);
-        assert_eq!(claude_edit(&removed, false).unwrap(), None);
+        assert_eq!(claude_status(&removed, MK).unwrap(), Installed::No);
+        assert_eq!(claude_edit(&removed, false, MK).unwrap(), None);
 
         // A hand-added Mkrew hook sharing a group with the user's hook leaves that hook alone.
         let shared = r#"{"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": "say done"},
             {"type": "command", "command": "mk hook claude Stop"}
         ]}]}}"#;
-        assert_eq!(claude_status(shared).unwrap(), Installed::Partly);
-        let removed = claude_edit(shared, false).unwrap().unwrap();
+        assert_eq!(claude_status(shared, MK).unwrap(), Installed::Partly);
+        let removed = claude_edit(shared, false, MK).unwrap().unwrap();
         assert_eq!(
             json(&removed),
             json(
@@ -495,32 +613,32 @@ mod tests {
 
         // Removing `hooks` from the middle keeps the other keys in place.
         let middle = r#"{"a": 1, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mk hook claude Stop"}]}]}, "b": 2, "c": 3}"#;
-        let removed = claude_edit(middle, false).unwrap().unwrap();
+        let removed = claude_edit(middle, false, MK).unwrap().unwrap();
         let removed = json(&removed);
         let keys: Vec<_> = removed.as_object().unwrap().keys().collect();
         assert_eq!(keys, ["a", "b", "c"]);
 
         // Nothing installed in an empty or missing file: nothing to write.
-        assert_eq!(claude_edit("", false).unwrap(), None);
-        assert_eq!(claude_edit("{}", false).unwrap(), None);
+        assert_eq!(claude_edit("", false, MK).unwrap(), None);
+        assert_eq!(claude_edit("{}", false, MK).unwrap(), None);
     }
 
     #[test]
     fn claude_rejects_settings_it_cannot_merge() {
-        assert!(claude_edit("{", true).is_err());
-        assert!(claude_edit("[]", true).is_err());
-        assert!(claude_edit(r#"{"hooks": []}"#, true).is_err());
-        assert!(claude_edit(r#"{"hooks": {"Stop": {}}}"#, true).is_err());
-        assert!(claude_status("{").is_err());
+        assert!(claude_edit("{", true, MK).is_err());
+        assert!(claude_edit("[]", true, MK).is_err());
+        assert!(claude_edit(r#"{"hooks": []}"#, true, MK).is_err());
+        assert!(claude_edit(r#"{"hooks": {"Stop": {}}}"#, true, MK).is_err());
+        assert!(claude_status("{", MK).is_err());
     }
 
     #[test]
     fn claude_install_into_a_missing_file() {
-        let installed = claude_edit("", true).unwrap().unwrap();
+        let installed = claude_edit("", true, MK).unwrap().unwrap();
         assert!(installed.ends_with('\n'));
-        assert_eq!(claude_status(&installed).unwrap(), Installed::Yes);
+        assert_eq!(claude_status(&installed, MK).unwrap(), Installed::Yes);
         assert_eq!(
-            json(&claude_edit(&installed, false).unwrap().unwrap()),
+            json(&claude_edit(&installed, false, MK).unwrap().unwrap()),
             json("{}")
         );
     }
@@ -529,38 +647,36 @@ mod tests {
     fn codex_install_keeps_comments_and_stays_top_level() {
         let original =
             "# my config\nmodel = \"o3\" # fast\n\n[profiles.slow]\nmodel = \"o3-pro\"\n";
-        assert_eq!(codex_status(original).unwrap(), Installed::No);
-        let installed = codex_edit(original, true).unwrap().unwrap();
-        assert_eq!(
-            installed,
-            "# my config\nmodel = \"o3\" # fast\nnotify = [\"mk\", \"hook\", \"codex\"]\n\n\
-             [profiles.slow]\nmodel = \"o3-pro\"\n"
-        );
+        assert_eq!(codex_status(original, MK).unwrap(), Installed::No);
+        let installed = codex_edit(original, true, MK).unwrap().unwrap();
+        assert_eq!(notify_of(&installed), [MK, "hook", "codex"]);
+        assert!(installed.starts_with("# my config\nmodel = \"o3\" # fast\nnotify = "));
+        assert!(installed.ends_with("\n\n[profiles.slow]\nmodel = \"o3-pro\"\n"));
         let parsed: toml_edit::DocumentMut = installed.parse().unwrap();
         assert!(parsed["profiles"]["slow"].get("notify").is_none());
-        assert_eq!(codex_status(&installed).unwrap(), Installed::Yes);
-        assert_eq!(codex_edit(&installed, true).unwrap(), None);
+        assert_eq!(codex_status(&installed, MK).unwrap(), Installed::Yes);
+        assert_eq!(codex_edit(&installed, true, MK).unwrap(), None);
 
-        let removed = codex_edit(&installed, false).unwrap().unwrap();
+        let removed = codex_edit(&installed, false, MK).unwrap().unwrap();
         assert_eq!(removed, original);
-        assert_eq!(codex_edit(&removed, false).unwrap(), None);
+        assert_eq!(codex_edit(&removed, false, MK).unwrap(), None);
     }
 
     #[test]
     fn codex_never_replaces_another_notify_program() {
         let other = "notify = [\"python3\", \"notify.py\"]\n";
-        let error = codex_edit(other, true).unwrap_err().to_string();
+        let error = codex_edit(other, true, MK).unwrap_err().to_string();
         assert!(error.contains("python3"), "{error}");
-        assert_eq!(codex_status(other).unwrap(), Installed::No);
+        assert_eq!(codex_status(other, MK).unwrap(), Installed::No);
         assert_eq!(
-            codex_edit(other, false).unwrap(),
+            codex_edit(other, false, MK).unwrap(),
             None,
             "uninstall leaves it alone"
         );
-        assert!(codex_edit("notify = [", true).is_err());
+        assert!(codex_edit("notify = [", true, MK).is_err());
         assert_eq!(
-            codex_edit("", true).unwrap().unwrap(),
-            "notify = [\"mk\", \"hook\", \"codex\"]\n"
+            notify_of(&codex_edit("", true, MK).unwrap().unwrap()),
+            [MK, "hook", "codex"]
         );
     }
 
@@ -589,12 +705,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         for agent in [Agent::Omp, Agent::Copilot] {
             let file = dir.path().join(format!("{agent:?}")).join("mkrew.x");
-            let ours = owned_contents(agent).unwrap();
+            let ours = owned_contents(agent, MK).unwrap();
+            let ours = ours.as_str();
             assert_eq!(owned_status(None, ours), Installed::No);
-            run_on(Action::Install, agent, &file).unwrap();
+            run_on(Action::Install, agent, &file, MK).unwrap();
             let text = fs::read_to_string(&file).unwrap();
             assert_eq!(owned_status(Some(&text), ours), Installed::Yes);
-            run_on(Action::Install, agent, &file).unwrap();
+            run_on(Action::Install, agent, &file, MK).unwrap();
             let backups = || {
                 fs::read_dir(file.parent().unwrap())
                     .unwrap()
@@ -615,21 +732,31 @@ mod tests {
             // An older version is outdated, replaced, and kept as a backup.
             fs::write(&file, "old").unwrap();
             assert_eq!(owned_status(Some("old"), ours), Installed::Partly);
-            run_on(Action::Install, agent, &file).unwrap();
+            run_on(Action::Install, agent, &file, MK).unwrap();
             assert_eq!(fs::read_to_string(&file).unwrap(), ours);
             assert_eq!(backups(), 1);
-            run_on(Action::Uninstall, agent, &file).unwrap();
+            run_on(Action::Uninstall, agent, &file, MK).unwrap();
             assert!(!file.exists());
-            run_on(Action::Uninstall, agent, &file).unwrap();
+            run_on(Action::Uninstall, agent, &file, MK).unwrap();
         }
+
+        // The template (`"exec": "mk"`) is an older install: outdated, replaced, backed up.
+        let file = dir.path().join("template").join("mkrew.json");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, COPILOT_HOOKS).unwrap();
+        let ours = copilot_hooks(MK);
+        assert_eq!(owned_status(Some(COPILOT_HOOKS), &ours), Installed::Partly);
+        run_on(Action::Install, Agent::Copilot, &file, MK).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), ours);
+        assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 2);
     }
 
     #[test]
     fn copilot_hooks_call_mk_for_the_events_mkrew_maps() {
-        let hooks: Value = serde_json::from_str(COPILOT_HOOKS).unwrap();
+        let hooks: Value = serde_json::from_str(&copilot_hooks(MK)).unwrap();
         assert_eq!(hooks["version"], 1);
         for (event, entries) in hooks["hooks"].as_object().unwrap() {
-            assert_eq!(entries[0]["exec"], "mk");
+            assert_eq!(entries[0]["exec"], MK);
             assert_eq!(entries[0]["args"], json!(["hook", "copilot", event]));
             let known = mkrew_core::HookAgent::Copilot
                 .event(event, &json!({"notification_type": "permission_prompt"}));
