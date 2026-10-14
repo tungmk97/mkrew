@@ -9,7 +9,11 @@ const enabled = !!process.env.MKREW_SESSION_ID && process.env.OMPCODE !== "1";
 
 let queue = Promise.resolve();
 
-// One `mk hook omp <event> <json>` at a time, in order; failures are ignored (daemon down).
+// The daemon's own `mk` (MKREW_MK, set in every Mkrew pane), so a stale `mk` on PATH never
+// answers. One `mk hook omp <event> <json>` at a time, in order; `mk` logs its own failures
+// to <data>/logs/hook.log, so errors are ignored here.
+const mk = process.env.MKREW_MK || "mk";
+
 function report(event, ctx) {
   let sessionId;
   try {
@@ -20,7 +24,7 @@ function report(event, ctx) {
   queue = queue.then(
     () =>
       new Promise((done) => {
-        execFile("mk", ["hook", "omp", event, payload], { windowsHide: true, timeout: 10000 }, () => done());
+        execFile(mk, ["hook", "omp", event, payload], { windowsHide: true, timeout: 10000 }, () => done());
       }),
   );
 }

@@ -24,6 +24,17 @@ pub fn sibling_exe(base: &str) -> anyhow::Result<PathBuf> {
     })
 }
 
+/// Names the program to use instead of looking for `mk` (tests).
+pub const ENV_MK_EXE: &str = "MKREW_MK_EXE";
+
+/// `MKREW_MK_EXE` when set (tests), else `mk` next to the running daemon, else `mk` for `PATH`.
+pub fn mk_exe() -> PathBuf {
+    match std::env::var_os(ENV_MK_EXE).filter(|v| !v.is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => sibling_exe("mk").unwrap_or_else(|_| PathBuf::from("mk")),
+    }
+}
+
 /// No console window and no controlling terminal: the daemon outlives the shell (SPEC §8).
 /// The UI also uses it for the short-lived `zed` CLI.
 pub fn detach(command: &mut Command) {

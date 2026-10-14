@@ -21,9 +21,6 @@ use tokio::time::Instant;
 use crate::settings::SettingsHolder;
 use crate::spawn;
 
-/// Names the program to run instead of looking for `mk` (tests point it at the fake agent).
-pub const ENV_MK_EXE: &str = "MKREW_MK_EXE";
-
 /// A child that ran this long forgives the failures before it.
 const STABLE: Duration = Duration::from_secs(60);
 /// The longest wait between two starts.
@@ -60,7 +57,7 @@ impl Web {
 /// Supervises `mk web` per `settings.current().web.enabled` until aborted; aborting (or
 /// dropping the runtime) kills the child.
 pub fn start(web: Arc<Web>, settings: Arc<SettingsHolder>) -> JoinHandle<()> {
-    tokio::spawn(supervise(web, settings, mk_exe))
+    tokio::spawn(supervise(web, settings, spawn::mk_exe))
 }
 
 /// How a child run ended.
@@ -234,14 +231,6 @@ fn kill_with_daemon(child: &Child) {
             "mk web is not tied to the daemon's lifetime: {}",
             io::Error::last_os_error()
         );
-    }
-}
-
-/// `MKREW_MK_EXE` when set (tests), else `mk` next to the running daemon, else `PATH`.
-fn mk_exe() -> PathBuf {
-    match std::env::var_os(ENV_MK_EXE).filter(|v| !v.is_empty()) {
-        Some(path) => PathBuf::from(path),
-        None => spawn::sibling_exe("mk").unwrap_or_else(|_| PathBuf::from("mk")),
     }
 }
 

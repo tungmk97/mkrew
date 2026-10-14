@@ -42,6 +42,7 @@ mod fanout;
 mod fs;
 mod git;
 mod resume;
+pub(crate) use resume::replace_session;
 mod run;
 mod target;
 mod task_worktree;
@@ -121,6 +122,7 @@ impl Daemon {
             Arc::clone(&self.hub),
             self.paths.backups_dir(),
             self.paths.attachments_dir(),
+            self.paths.sessions_dir(),
         );
         let hub = Arc::clone(&self.hub);
         tokio::task::spawn_blocking(move || crate::turns::delete_expired_refs(&hub, now_ms()));
@@ -462,6 +464,7 @@ impl Daemon {
                 "client speaks protocol {}, daemon speaks {PROTOCOL_VERSION}; restart the daemon",
                 params.protocol_version
             );
+            tracing::warn!(client = ?params.client, "hello refused: {message}");
             return (
                 Outcome::error(ErrorCode::VersionMismatch, message),
                 After::Close,

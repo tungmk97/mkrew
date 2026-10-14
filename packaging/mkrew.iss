@@ -115,15 +115,21 @@ begin
   RegWriteExpandStringValue(EnvRoot, EnvKey, 'Path', Kept);
 end;
 
-{ Asks a running daemon of this install to stop, so its exe can be replaced or removed.
-  Agent sessions resume on the next start (SPEC §5). }
+{ Asks the daemon to stop when it runs from this install's bin, so its exe can be replaced or
+  removed; another install's daemon is left running (mk prints "left running", exit 0).
+  Agent sessions resume on the next start (SPEC §5). An mk from before --only-from exits 2
+  (unknown flag): an in-place upgrade still has to free the exe, so it stops the daemon the
+  old way. }
 procedure StopDaemon;
 var
   Mk: String;
   Code: Integer;
 begin
   Mk := ExpandConstant('{app}\bin\mk.exe');
-  if FileExists(Mk) then
+  if not FileExists(Mk) then
+    Exit;
+  Exec(Mk, 'daemon stop --only-from "' + BinDir + '"', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  if Code = 2 then
     Exec(Mk, 'daemon stop', '', SW_HIDE, ewWaitUntilTerminated, Code);
 end;
 

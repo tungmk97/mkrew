@@ -843,7 +843,8 @@ impl Store {
     }
 
     /// Leaves the session out of [`Store::list_sessions`] from now on (SPEC §7
-    /// `session.remove`, ADR 0019); its row, events, turns and log stay as history.
+    /// `session.remove`, ADR 0019); its row, turns and usage stay; its log and old events
+    /// follow retention (ADR 0060).
     pub fn hide_session(&self, id: Ulid) -> Result<()> {
         let changed = self.conn.execute(
             "UPDATE session SET hidden = 1 WHERE id = ?1",
@@ -853,6 +854,45 @@ impl Store {
             return Err(StoreError::SessionNotFound(id));
         }
         Ok(())
+    }
+
+    /// Sessions (hidden ones too) that ended before `before` (unix ms): retention candidates
+    /// (SPEC §8, ADR 0060). Live sessions have no `ended_at` and never show up.
+    pub fn sessions_ended_before(&self, before: i64) -> Result<Vec<Ulid>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM session WHERE ended_at IS NOT NULL AND ended_at < ?1")?;
+        let ids = stmt.query_map([before], |row| row.get::<_, String>(0))?;
+        ids.map(|id| parse_ulid("session.id", id?)).collect()
+    }
+
+    /// Deletes `session_event` rows of `kinds` older than `before`; returns how many.
+    pub fn prune_session_events(&self, before: i64, kinds: &[&str]) -> Result<usize> {
+        let mut deleted = 0;
+        for kind in kinds {
+            deleted += self.conn.execute(
+                "DELETE FROM session_event WHERE kind = ?1 AND at < ?2",
+                params![kind, before],
+            )?;
+        }
+        Ok(deleted)
+    }
+
+    /// Rewrites the file (`VACUUM`) when over a quarter of its pages are free (ADR 0060).
+    /// Freed pages are reused by later inserts, so only a large prune (the first retention
+    /// run) needs this; it runs at daemon startup, before any client connects.
+    pub fn vacuum_if_sparse(&self) -> Result<bool> {
+        let pages: i64 = self.conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+        let free: i64 = self
+            .conn
+            .query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+        if free * 4 <= pages {
+            return Ok(false);
+        }
+        // WAL mode: the rewritten pages sit in the -wal file until a checkpoint.
+        self.conn
+            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(true)
     }
 
     /// Appends a `session_event` row (SPEC §5); `payload` is stored as JSON text.

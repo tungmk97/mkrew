@@ -79,7 +79,7 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 | Daemon binary | `mkrew-daemon` |
 | CLI binary | `mk` |
 | Crates | `mkrew-core`, `mkrew-protocol`, `mkrew-store`, `mkrew-daemon`, `mkrew-cli`, `mkrew-ui`, `mkrew-fakeagent` |
-| Env vars | `MKREW_SESSION_ID`, `MKREW_SOCKET`, `MKREW_LOG` |
+| Env vars | `MKREW_SESSION_ID`, `MKREW_SOCKET`, `MKREW_MK`, `MKREW_LOG` |
 | Config dir | `<config>/mkrew/` (e.g. `~/.config/mkrew/`, `%APPDATA%\mkrew\`) |
 | Data dir | `<data>/mkrew/` with `mkrew.db`, `logs/`, `sessions/`, `backups/` |
 | IPC endpoint | Unix socket `$XDG_RUNTIME_DIR/mkrew.sock` (fallback `<data>/mkrew.sock`); Windows named pipe `\\.\pipe\mkrew-<username>` |
@@ -255,7 +255,7 @@ CREATE TABLE session (
 CREATE TABLE session_event (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES session(id),
-  kind       TEXT NOT NULL,              -- state_changed|hook|files_changed|...
+  kind       TEXT NOT NULL,              -- state_changed|hook|files_changed|...; files_changed/hook/edited rows are pruned after 7 days (ADR 0060)
   payload    TEXT NOT NULL,              -- JSON
   at         INTEGER NOT NULL
 );
@@ -462,19 +462,31 @@ cursor movement, so stripping ANSI from the raw stream gives garbage.
 
 **Hook integrations — `mk integration install|uninstall|status <agent>`**
 
-- The daemon sets `MKREW_SESSION_ID` and `MKREW_SOCKET` in every PTY it creates.
-- Claude Code: add hooks to `~/.claude/settings.json` for `SessionStart`, `UserPromptSubmit`,
-  `Notification`, `Stop`, each running `mk hook claude <event>`. The hook reads JSON from stdin and
-  takes `session_id` as `native_session_id`.
-- Codex: set `notify = ["mk", "hook", "codex"]` in `~/.codex/config.toml`; Codex passes JSON as an argument.
+- The daemon sets `MKREW_SESSION_ID`, `MKREW_SOCKET` and `MKREW_MK` (the absolute path of the
+  `mk` next to the daemon; the bare `mk` (`mk.exe` on Windows) when none sits next to it, and then
+  `mk hook` does not forward) in every PTY it creates (ADR 0059).
+- Hook configs never run a bare `mk`: `mk integration install` writes the canonical absolute path
+  of the `mk` that runs it; `mk hook` inside a pane re-runs itself through `MKREW_MK` when that is
+  another file, so the daemon's own version always reports. Reinstall after moving Mkrew.
+- Claude Code: hooks in `~/.claude/settings.json` for `SessionStart`, `UserPromptSubmit`,
+  `Notification`, `Stop`, each in exec form `{"type": "command", "command": "<mk>", "args":
+  ["hook", "claude", "<event>"]}` (no shell: Git Bash and PowerShell expand variables
+  differently). The hook reads JSON from stdin and takes `session_id` as `native_session_id`.
+- Codex: `notify = ["<mk>", "hook", "codex"]` in `~/.codex/config.toml` (argv, no shell); Codex
+  passes JSON as an argument.
 - Oh My Pi: `mk integration install omp` writes the Mkrew-owned extension
-  `<PI_CODING_AGENT_DIR or ~/.omp/agent>/extensions/mkrew.ts`; it runs
-  `mk hook omp <busy|needs_input|done|session_start> {"session_id": …}` (root session only: not
-  with `OMPCODE=1`, not without a UI).
+  `<PI_CODING_AGENT_DIR or ~/.omp/agent>/extensions/mkrew.ts`; it runs `MKREW_MK` (falling back to
+  `mk`) as `hook omp <busy|needs_input|done|session_start> {"session_id": …}` (root session only:
+  not with `OMPCODE=1`, not without a UI).
 - GitHub Copilot CLI: `mk integration install copilot` writes the Mkrew-owned
   `<COPILOT_HOME or ~/.copilot>/hooks/mkrew.json` (`sessionStart`, `userPromptSubmitted`,
   `agentStop`, `notification` matching `permission_prompt|elicitation_dialog`), each
-  `exec: mk hook copilot <event>`, JSON on stdin, `sessionId` = `native_session_id`.
+  `exec: <mk>`, `args: [hook, copilot, <event>]`, JSON on stdin, `sessionId` = `native_session_id`.
+- Install treats an older Mkrew entry (bare `mk` or any `mk` path) as its own: status says
+  `partly installed`, install replaces it, uninstall removes it.
+- A failed `mk hook` (no daemon, `version_mismatch`, timeout) exits 1 and appends one line to
+  `<data>/logs/hook.log` (rotated to `hook.log.1` above 1 MiB): agents drop hook stderr. The
+  daemon logs a refused `hello` at `warn`.
 - Owned files (omp, Copilot): install writes the whole file (backing up a different one),
   uninstall deletes it. Install prints the `resume` line when the user's profile lacks one.
 - Install must: back up the original file (timestamped `.bak`), merge instead of overwrite, be
@@ -530,14 +542,14 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `session.pin` | `session_id`, `pinned` | the Session, also broadcast as `session.updated`; a live session through its task, an exited one in the store (`invalid_state` for one caught exiting); a resumed session keeps the pin (ADR 0017) |
 | `session.move` | `session_id`, `position` (finite number; non-finite = `invalid_request`) | the Session, also broadcast as `session.updated`; like `session.pin` (live through its task, exited in the store); sidebar order inside the workspace group, ascending, 0 = never moved; a resumed session keeps it |
 | `session.set_color` | `session_id`, `color?` (a workspace color name; `null` clears) | the Session, also broadcast as `session.updated` — `invalid_request` for a name outside the palette, `invalid_state` for one caught exiting (ADR 0037) |
-| `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart) |
+| `session.history` | `session_id` | `files[]`: existing session log files, oldest first (`<id>.log.1`, `<id>.log`); works for exited sessions (also from before a restart); empty after retention deleted the log (ADR 0060) |
 | `session.resume` | `session_id`, `tab_id?` | `SessionSpawnResult` — relaunches an exited agent session into its conversation with the profile's `resume` command, as a new session (same title, color, pin, plan, size; a task's session stays the task's, in its worktree); placed where the old pane still is, else into `tab_id` when that tab is empty (the client places it otherwise). `invalid_state` while the session is live, for a shell, without `native_session_id` or `resume`, in an archived workspace, or while a live session has the same `native_session_id` or task (ADR 0055) |
 | `session.link_plan` | `session_id`, `path?` (a `.md` file, absolute or project-relative; `null` unlinks) | the Session (also `session.updated`) — live sessions only (`invalid_state`/`not_found` otherwise); `invalid_request` when the file is not `.md`, missing, a folder, over 2 MiB or not UTF-8; the daemon then watches that one file (ADR 0039) |
 | `session.plan` | `project_id` | `[{session_id, name, done, total, items[], error?}]` of the project's live sessions with a plan (the last announced checklist, for a client that connects later) |
 | `tab.list/create/rename/close/move` | `project_id`, `title`, `position` | TerminalTab (new tabs: `layout` = `null`; close deletes the tab and removes every session with a pane in it, like `session.remove`; no `tab` event, ADR 0041) |
 | `tab.pin` | `tab_id`, `pinned` | TerminalTab, also broadcast as `tab.updated`; `position` is left alone, so unpinning puts the tab back |
 | `tab.set_layout` | `tab_id`, `layout` | ok |
-| `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
+| `hook.report` | `mkrew_session_id`, `agent` (`claude`/`codex`/`omp`/`copilot`/`fake`), `event`, `payload` | ok — `not_found`/`invalid_state` unless the session is live; stored as a `hook` session event |
 | `agent.profiles` | – | AgentProfile[] (each with `installed`: its program, or the OS shell for a shell without `command`, is found on PATH) + parse errors |
 | `doc.list` | `project_id` | `DocFile[]` sorted by path: md files matching review globs + md files in `files_changed` session events of the last 24 h + files with unresolved comments (existing files only); each with `open_comments` (unresolved thread roots), `last_session_id?`/`last_changed_at?` (newest such event). Keeps the project watched for `doc.changed` until the daemon stops |
 | `doc.read` | `project_id`, `file_path` | `file_path`, `content`, `hash` (opaque); ≤ 2 MiB UTF-8; `invalid_request` for absolute/`..` paths. Also keeps the project watched |
@@ -619,10 +631,10 @@ Protocol 41: `session.move` and `Session.position`.
 
 ## §8 Daemon
 
-- **Startup:** take the lock (exit if another daemon runs); run migrations; open the IPC endpoint;
-  mark sessions left in working/needs_input/idle as `exited`; then resume (below).
+- **Startup:** take the lock (exit if another daemon runs); run migrations; mark sessions left in working/needs_input/idle as `exited`; run retention (ADR 0060) and `VACUUM` the database when over a quarter of it is free; open the IPC endpoint;
+  then resume (below).
 - **Spawn:** create the PTY with `portable-pty`, `cwd` = project path, env `MKREW_SESSION_ID`,
-  `MKREW_SOCKET`, `TERM=xterm-256color`. The daemon removes `OMPCODE` from the PTY environment,
+  `MKREW_SOCKET`, `MKREW_MK`, `TERM=xterm-256color`. The daemon removes `OMPCODE` from the PTY environment,
   so a daemon started from an omp shell does not make the omp extension turn itself off.
 - **PTY reader threads:** `portable-pty` reads are blocking, so each session gets ONE dedicated OS
   thread that reads into a buffer and forwards chunks over a bounded channel to tokio. Never call
@@ -654,7 +666,9 @@ Protocol 41: `session.move` and `Session.position`.
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
   session per 30 s. Clicking it emits `notification.clicked`.
-- **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB.
+- **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB; deleted 7 days after the session ended unless a tab still shows it (ADR 0060).
+- **Retention:** hourly (and at startup): logs as above; `session_event` rows of kind `files_changed`, `hook`, `edited` older than 7 days. Session rows, turns and `usage` events stay.
+- **Project watcher:** skips `.git`, `node_modules`, `target` and `.worktrees/`; honours every `.gitignore` from the project root down and `.git/info/exclude`, with git's precedence (the deepest level with a match decides each path prefix; nothing inside an ignored folder is reported or read, except Markdown, which stays reported when gitignored (not under `.git`, `node_modules`, `target`, `.worktrees`) for doc review). One `files_changed` row per batch, stored on the project's newest live session.
 - **Backups:** daily copy of `mkrew.db` to `<data>/mkrew/backups/`, keep 7.
 - **Shutdown:** `daemon.stop` asks every PTY to terminate, waits ≤ 5 s, then kills.
 - **Logging:** daily rotating files; level via `MKREW_LOG`. Panics are logged with backtrace.

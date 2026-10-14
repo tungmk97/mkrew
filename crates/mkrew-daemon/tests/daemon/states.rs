@@ -305,6 +305,26 @@ fn fake_agents_go_through_every_state_transition() {
     client.stop();
 }
 
+/// Hooks inside the pane run the daemon's own `mk` (SPEC §6, ADR 0059).
+#[test]
+fn session_env_names_the_daemons_mk() {
+    let env = Env::new();
+    let script = if cfg!(windows) {
+        "command = 'cmd.exe'\nargs = ['/c', 'echo', 'mk=[%MKREW_MK%]']"
+    } else {
+        "command = 'sh'\nargs = ['-c', 'echo \"mk=[$MKREW_MK]\"']"
+    };
+    env.write_profile("probe", &format!("name = \"Probe\"\n{script}\n"));
+    let mk = env.data_dir().join("bin").join("mk.exe");
+    let (_daemon, mut client) = env.start_with(&[(mkrew_daemon::ENV_MK_EXE, mk.as_path())]);
+    let project = client.add_project(&env.repo());
+    let spawned: SessionSpawnResult = client.spawn(&project, "probe").into_result().unwrap();
+    client.wait_state(spawned.session_id, SessionState::Exited);
+    let log = session_log(&env, spawned.session_id);
+    assert!(log.contains(&format!("mk=[{}]", mk.display())), "{log}");
+    client.stop();
+}
+
 #[test]
 fn session_env_cwd_and_exit_code_reach_the_store() {
     let env = Env::new();
@@ -365,6 +385,69 @@ fn file_watcher_records_changed_files_of_live_sessions_except_ignored_ones() {
     assert_eq!(
         changed_files(&env, id),
         BTreeSet::from(["src/lib.rs".to_owned()])
+    );
+    client.stop();
+}
+
+/// One watcher batch is one `files_changed` row, however many sessions are live, and
+/// `doc.list` still names the changed Markdown file (ADR 0060).
+#[test]
+fn one_batch_is_stored_once_for_all_live_sessions() {
+    let env = Env::new();
+    let repo = env.repo();
+    std::fs::create_dir_all(repo.join("docs")).unwrap();
+    let writer = env.dir.path().join("writer.toml");
+    std::fs::write(
+        &writer,
+        "[[step]]\naction = \"write_file\"\npath = \"docs/plan.md\"\ncontent = \"# Plan\"\n\n\
+         [[step]]\naction = \"ask\"\n",
+    )
+    .unwrap();
+    let idle = env.dir.path().join("idle.toml");
+    std::fs::write(&idle, "[[step]]\naction = \"ask\"\n").unwrap();
+    env.write_fake_profile_as("writer", &format!("['--scenario', '{}']", writer.display()));
+    env.write_fake_profile_as("idle", &format!("['--scenario', '{}']", idle.display()));
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&repo);
+    for profile in ["idle", "idle"] {
+        let spawned: SessionSpawnResult = client.spawn(&project, profile).into_result().unwrap();
+        client.wait_state(spawned.session_id, SessionState::NeedsInput);
+    }
+    let spawned: SessionSpawnResult = client.spawn(&project, "writer").into_result().unwrap();
+    client.wait_state(spawned.session_id, SessionState::NeedsInput);
+
+    let db = env.data_dir().join("mkrew.db");
+    let rows = || {
+        Store::open(&db)
+            .unwrap()
+            .project_session_events(project.id, "files_changed", 0)
+            .unwrap()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !rows()
+        .iter()
+        .any(|(_, e)| e.payload["paths"].to_string().contains("docs/plan.md"))
+    {
+        assert!(Instant::now() < deadline, "docs/plan.md never recorded");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let rows = rows();
+    let mut times: Vec<i64> = rows.iter().map(|(_, e)| e.at).collect();
+    times.dedup();
+    assert_eq!(
+        times.len(),
+        rows.len(),
+        "a batch was stored more than once: {rows:?}"
+    );
+
+    let docs = doc_list(&mut client, &project);
+    let plan = docs
+        .iter()
+        .find(|d| d.file_path == "docs/plan.md")
+        .expect("plan listed");
+    assert!(
+        plan.last_session_id.is_some() && plan.last_changed_at.is_some(),
+        "{plan:?}"
     );
     client.stop();
 }

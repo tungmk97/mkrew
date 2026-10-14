@@ -17,6 +17,7 @@ mod launch;
 pub mod lock;
 mod notify;
 mod plan;
+mod retention;
 mod server;
 mod session;
 mod session_log;
@@ -37,8 +38,8 @@ use mkrew_store::Store;
 
 pub use lock::{InstanceLock, LockError};
 pub use notify::ENV_NOTIFY;
+pub use spawn::ENV_MK_EXE;
 pub use usage::transcript_path;
-pub use web::ENV_MK_EXE;
 
 /// Process exit code when another daemon already owns the data dir.
 pub const EXIT_ALREADY_RUNNING: u8 = 2;
@@ -65,6 +66,16 @@ fn serve(paths: &Paths) -> anyhow::Result<()> {
         .context("mark stale sessions")?;
     if stale > 0 {
         tracing::info!(stale, "marked sessions from a previous run as exited");
+    }
+    // Retention before anyone connects, then reclaim what it freed (ADR 0060).
+    match retention::run(&store, &paths.sessions_dir(), server::now_ms()) {
+        Ok(purged) => tracing::info!(?purged, "retention at startup"),
+        Err(e) => tracing::warn!("retention at startup failed: {e}"),
+    }
+    match store.vacuum_if_sparse() {
+        Ok(true) => tracing::info!("database compacted"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("database not compacted: {e}"),
     }
     seed_profiles(&paths.agents_dir())?;
 

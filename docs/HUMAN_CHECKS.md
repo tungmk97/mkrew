@@ -36,6 +36,26 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   the unpinned tabs besides / after it, it becomes active, pinned tabs stay. With nothing to
   close the item is dimmed. A running agent among them asks once.
 
+### To verify — 2026-10-14 Hooks run the daemon's own mk
+
+- [ ] **Reinstall integrations first:** `& "$env:LOCALAPPDATA\Programs\Mkrew\bin\mk.exe" integration install omp`
+  (and `claude`, `codex`, `copilot` if used). `mk integration status <agent>` → `installed`.
+- [ ] **omp resumes:** open an omp pane, send one prompt → the session has a native id
+  (`sqlite3 %APPDATA%\mkrew\mkrew.db "select native_session_id from session order by started_at desc limit 1"`
+  is not empty). `mk daemon stop`, reopen Mkrew → the pane resumes the same conversation.
+- [ ] **Stale mk on PATH:** with an old `mk` first on `PATH`, a new omp/Claude pane still gets a
+  native id; `%APPDATA%\mkrew\logs\hook.log` gets no new line.
+- [ ] **Claude Code exec form:** a Claude pane turns busy/idle with the new hooks (needs a Claude
+  Code with exec-form hook support).
+
+### To verify — 2026-10-14 Installer stops only its own daemon
+
+- [ ] **Upgrade in place:** with Mkrew running from `%LOCALAPPDATA%\Programs\Mkrew`, run the new
+  setup over it → it finishes without "files in use"; reopen Mkrew → panes resume. (The first
+  upgrade from 0.1.5 uses the old `mk`, which stops the daemon the old way.)
+- [ ] **Uninstall of the smoke copy removed the real install's "Apps & features" entry** (shared
+  AppId). Repair: rerun the real setup over `%LOCALAPPDATA%\Programs\Mkrew`.
+
 ### To verify — 2026-10-14 Sidebar filter row matches the tab strip
 
 - [ ] **Visual (dark + light):** the sidebar's filter row (search field, ⌫, ⌄/›, +) is exactly as
