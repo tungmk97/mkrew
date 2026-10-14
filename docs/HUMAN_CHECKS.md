@@ -15,6 +15,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-14 Installer stops only its own daemon
+
+- [ ] **Upgrade in place:** with Mkrew running from `%LOCALAPPDATA%\Programs\Mkrew`, run the new
+  setup over it → it finishes without "files in use"; reopen Mkrew → panes resume. (The first
+  upgrade from 0.1.5 uses the old `mk`, which stops the daemon the old way.)
+- [ ] **Uninstall of the smoke copy removed the real install's "Apps & features" entry** (shared
+  AppId). Repair: rerun the real setup over `%LOCALAPPDATA%\Programs\Mkrew`.
+
 ### To verify — 2026-10-14 Workspace chevron only folds
 
 - [ ] **Sidebar:** with workspace A shown, click the `›` / `⌄` of workspace B → B expands or
