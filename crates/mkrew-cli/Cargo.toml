@@ -42,8 +42,9 @@ toml_edit = "0.25"
 ulid = "1"
 
 [target.'cfg(windows)'.dependencies]
-# `Get/SetConsoleMode`: VT input/output for `mk attach` (crossterm raw mode sets neither).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+# `Get/SetConsoleMode`: VT for `mk attach`; `QueryFullProcessImageNameW`: the daemon's exe
+# (`mk daemon stop --only-from`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

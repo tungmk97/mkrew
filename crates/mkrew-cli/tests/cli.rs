@@ -216,6 +216,36 @@ fn pid(stdout: &str) -> u32 {
     stdout[start..end].parse().unwrap()
 }
 
+/// The installer's stop (`--only-from {app}\bin`) leaves a daemon of another folder alone and
+/// stops one that runs from the folder (any spelling of it).
+#[test]
+fn daemon_stop_only_from_spares_a_daemon_of_another_folder() {
+    let env = Env::new();
+    env.ok(&["daemon", "start"]);
+    let elsewhere = tempfile::tempdir().unwrap();
+    let out = env.ok(&[
+        "daemon",
+        "stop",
+        "--only-from",
+        &elsewhere.path().to_string_lossy(),
+    ]);
+    assert!(out.contains("left running"), "{out}");
+    assert!(env.ok(&["daemon", "status"]).contains("daemon running"));
+
+    // The test daemon runs from `target/<profile>/`, next to `mk`.
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_mk"))
+        .parent()
+        .unwrap();
+    let mut spelled = bin.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        spelled = spelled.to_uppercase();
+    }
+    spelled.push(std::path::MAIN_SEPARATOR);
+    let out = env.ok(&["daemon", "stop", "--only-from", &spelled]);
+    assert!(out.contains("daemon stopped"), "{out}");
+    assert_eq!(env.mk(&["daemon", "status"]).status.code(), Some(1));
+}
+
 #[test]
 fn daemon_start_status_stop() {
     let env = Env::new();

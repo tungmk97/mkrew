@@ -187,7 +187,12 @@ enum DaemonCommand {
     /// Start the daemon detached (no-op if it is already running).
     Start,
     /// Stop the daemon and wait until it has exited.
-    Stop,
+    Stop {
+        /// Only stop a daemon whose executable is in this folder (the installer passes its
+        /// `bin`); a daemon of another install is left running.
+        #[arg(long, value_name = "DIR")]
+        only_from: Option<PathBuf>,
+    },
     /// Show whether the daemon is running (exit code 1 if not).
     Status,
 }
@@ -270,7 +275,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
     match cli.command {
         Command::Daemon { command } => match command {
             DaemonCommand::Start => daemon::start(&paths),
-            DaemonCommand::Stop => daemon::stop(&paths),
+            DaemonCommand::Stop { only_from } => daemon::stop(&paths, only_from.as_deref()),
             DaemonCommand::Status => daemon::status(&paths),
         },
         Command::Project { command } => {
