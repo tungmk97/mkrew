@@ -2,6 +2,9 @@
 @font-face{font-family:"Symbols Nerd Font Mono";src:url(vendor/SymbolsNerdFontMono-Regular.woff2) format("woff2");font-display:block;unicode-range:U+23FB-23FE,U+2665,U+26A1,U+2B58,U+E000-F8FF,U+F0000-FFFFD}
 :root{--bg:#17181C;--surface:#1F2127;--surface-raised:#2C2E37;--hover:#22242B;--selected:#262938;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--subtle:#5D616C;--accent:#7C8CFF;--accent-text:#9A9FFF;--accent-bg:#25264A;--on-accent:#17181C;--warning-bg:#3A3020;--success-bg:#1D3A31;--danger-bg:#3A2327;--s-working:#7C8CFF;--s-needs:#E3A63E;--s-done:#4CB782;--s-exited:#E5676B;--s-idle:#6E7079;--scrim:rgba(0,0,0,.55);--ws-red:#F87171;--ws-orange:#FB923C;--ws-yellow:#FACC15;--ws-lime:#A3E635;--ws-green:#4ADE80;--ws-teal:#2DD4BF;--ws-blue:#60A5FA;--ws-purple:#C084FC;--ws-pink:#F472B6;--mono:"SF Mono",Menlo,"Cascadia Mono",Consolas,monospace;color-scheme:dark}
 @media (prefers-color-scheme:light){:root{--bg:#FFFFFF;--surface:#F6F7F9;--surface-raised:#EEF0F3;--hover:#EEF0F3;--selected:#E9EAFF;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--subtle:#A0A4AF;--accent:#4F5BD5;--accent-text:#4A52D9;--accent-bg:#ECEEFF;--on-accent:#FFFFFF;--warning-bg:#FDF3E1;--success-bg:#E1F5EC;--danger-bg:#FDECEC;--s-working:#4F5BD5;--s-needs:#B7791F;--s-done:#2F855A;--s-exited:#C53030;--s-idle:#9A9CA6;--scrim:rgba(17,18,22,.32);--ws-red:#DC2626;--ws-orange:#D9560B;--ws-yellow:#A16207;--ws-lime:#4D7C0F;--ws-green:#15803D;--ws-teal:#0F766E;--ws-blue:#2563EB;--ws-purple:#9333EA;--ws-pink:#DB2777;color-scheme:light}}
+/* Home-screen app draws under the status bar, but some iPhones report the inset as 0: keep a notch/Dynamic Island clear. */
+:root{--top:env(safe-area-inset-top)}
+@media (display-mode:standalone){:root{--top:max(env(safe-area-inset-top),60px)}}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg)}
 body{overscroll-behavior:none}
@@ -14,7 +17,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* Sessions */
-.header{display:flex;align-items:center;gap:12px;min-height:56px;padding:calc(env(safe-area-inset-top) + 4px) 16px 8px;border-bottom:1px solid var(--divider)}
+.header{display:flex;align-items:center;gap:12px;min-height:56px;padding:calc(var(--top) + 4px) 16px 8px;border-bottom:1px solid var(--divider)}
 .brand{margin:0;font-size:17px;font-weight:600;letter-spacing:-.01em}
 .conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted)}
 .conn-dot{width:8px;height:8px;border-radius:50%;background:var(--s-done)}
@@ -80,7 +83,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 .input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg)}
 
 /* Session */
-.topbar{display:flex;align-items:center;gap:8px;min-height:52px;padding:env(safe-area-inset-top) 4px 4px;border-bottom:1px solid var(--divider)}
+.topbar{display:flex;align-items:center;gap:8px;min-height:52px;padding:calc(var(--top) + 4px) 4px 4px;border-bottom:1px solid var(--divider)}
 .icon-btn{width:44px;height:44px;flex:none;display:grid;place-items:center;border:0;border-radius:8px;background:none;color:var(--text-dim)}
 .s-title{flex:1;min-width:0;margin:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pill{display:inline-flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 10px 0 8px;border-radius:999px;font-size:12px;font-weight:500;color:var(--text);white-space:nowrap}
@@ -109,7 +112,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 
 /* New agent */
 .scrim{position:absolute;inset:0;z-index:10;display:flex;align-items:flex-end;background:var(--scrim)}
-.sheet{width:100%;max-height:calc(100% - max(env(safe-area-inset-top), 48px) - 24px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;animation:mkrise 160ms ease-out}
+.sheet{width:100%;max-height:calc(100% - max(var(--top), 48px) - 24px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;animation:mkrise 160ms ease-out}
 .grab{width:36px;height:4px;margin:8px auto 0;border-radius:2px;background:var(--subtle)}
 .sheet-head{display:flex;align-items:center;gap:8px;padding:4px 4px 4px 16px}
 .sheet-title{flex:1;margin:0;font-size:17px;font-weight:600}
