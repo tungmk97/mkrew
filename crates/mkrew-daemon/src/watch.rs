@@ -56,31 +56,51 @@ impl Filter {
         }
     }
 
-    /// Git's precedence: the deepest `.gitignore` with a matching line decides, then the
-    /// root rules. `relative` is relative to the root.
+    /// Like git: each prefix of `relative` (relative to the root), top down, is decided by
+    /// the deepest `.gitignore` of the folders above it with a line matching that exact path,
+    /// then by the root rules; the path is ignored once a prefix is. A folder's `.gitignore`
+    /// is only read when the walk reaches it, so none inside an ignored folder is read.
     fn ignored(&self, relative: &Path, is_dir: bool) -> bool {
         let mut nested = match self.nested.lock() {
             Ok(nested) => nested,
             Err(poisoned) => poisoned.into_inner(),
         };
-        for dir in relative.ancestors().skip(1) {
-            if dir.as_os_str().is_empty() {
-                break;
+        let mut prefixes: Vec<&Path> = relative
+            .ancestors()
+            .filter(|p| !p.as_os_str().is_empty())
+            .collect();
+        prefixes.reverse();
+        let last = prefixes.len().saturating_sub(1);
+        for (i, prefix) in prefixes.iter().enumerate() {
+            let is_dir = i < last || is_dir;
+            let mut decided = None;
+            for dir in prefix.ancestors().skip(1) {
+                if dir.as_os_str().is_empty() {
+                    break;
+                }
+                if !nested.contains_key(dir) {
+                    let rules = Gitignore::new(self.root.join(dir).join(".gitignore")).0;
+                    nested.insert(dir.to_path_buf(), rules);
+                }
+                let Some(rules) = nested.get(dir) else {
+                    continue;
+                };
+                let Ok(inner) = prefix.strip_prefix(dir) else {
+                    continue;
+                };
+                let found = rules.matched(inner, is_dir);
+                if !found.is_none() {
+                    decided = Some(found.is_ignore());
+                    break;
+                }
             }
-            let rules = nested
-                .entry(dir.to_path_buf())
-                .or_insert_with(|| Gitignore::new(self.root.join(dir).join(".gitignore")).0);
-            let Ok(inner) = relative.strip_prefix(dir) else {
-                continue;
-            };
-            let found = rules.matched_path_or_any_parents(inner, is_dir);
-            if !found.is_none() {
-                return found.is_ignore();
+            let ignored =
+                decided.unwrap_or_else(|| self.gitignore.matched(prefix, is_dir).is_ignore());
+            if ignored {
+                return true;
             }
         }
-        self.gitignore
-            .matched_path_or_any_parents(relative, is_dir)
-            .is_ignore()
+        false
     }
 
     /// `path` relative to the root with `/` separators, or `None` when it is not reported:
@@ -275,6 +295,48 @@ mod tests {
             "md stays"
         );
         assert_eq!(rel("src/lib.rs"), Some("src/lib.rs".into()));
+    }
+
+    /// Writes `files` (path, content) under a temp root and returns the filter.
+    fn tree(files: &[(&str, &str)]) -> (tempfile::TempDir, Filter) {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, content) in files {
+            let file = dir.path().join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, content).unwrap();
+        }
+        let filter = Filter::new(dir.path());
+        (dir, filter)
+    }
+
+    #[test]
+    fn a_whitelisted_folder_does_not_skip_the_other_levels() {
+        let (dir, filter) = tree(&[
+            (".gitignore", "*.log\n"),
+            ("app/.gitignore", "/*\n!/src/\n"),
+        ]);
+        let rel = |p: &str| filter.relative(&dir.path().join(p), Some(false));
+        assert_eq!(rel("app/src/debug.log"), None, "root *.log still applies");
+        assert_eq!(rel("app/src/main.rs"), Some("app/src/main.rs".into()));
+        assert_eq!(rel("app/other.txt"), None);
+    }
+
+    #[test]
+    fn gitignore_inside_an_ignored_folder_is_not_read() {
+        let (dir, filter) = tree(&[
+            ("docs/.gitignore", "runs/\n"),
+            ("docs/runs/.gitignore", "!keep.txt\n"),
+        ]);
+        let rel = |p: &str| filter.relative(&dir.path().join(p), Some(false));
+        assert_eq!(rel("docs/runs/keep.txt"), None);
+    }
+
+    #[test]
+    fn nested_gitignore_can_reinclude_a_file_the_root_ignores() {
+        let (dir, filter) = tree(&[(".gitignore", "*.log\n"), ("sub/.gitignore", "!keep.log\n")]);
+        let rel = |p: &str| filter.relative(&dir.path().join(p), Some(false));
+        assert_eq!(rel("sub/keep.log"), Some("sub/keep.log".into()));
+        assert_eq!(rel("sub/other.log"), None);
     }
 
     #[test]
