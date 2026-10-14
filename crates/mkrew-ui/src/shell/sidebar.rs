@@ -1037,7 +1037,7 @@ impl Shell {
                 } else {
                     Icon::ChevronDown
                 },
-                theme::ICON_SIZE_SMALL,
+                theme::GROUP_CHEVRON_SIZE,
                 theme.chevron_color(),
             ))
             .child(group.label())

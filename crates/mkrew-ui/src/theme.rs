@@ -301,6 +301,9 @@ pub const AGENT_CHIP_SIZE: f32 = 18.0;
 /// Side of an agent logo inside its chip (ADR 0058): a little under [`ICON_SIZE_SMALL`], so the
 /// solid marks do not crowd the row text.
 pub const AGENT_LOGO_SIZE: f32 = 12.0;
+/// The fold chevron of a sidebar group label (AGENTS / TERMINAL / RUN): under the row
+/// chevrons, so the small caps label leads.
+pub const GROUP_CHEVRON_SIZE: f32 = 12.0;
 
 /// Side of the Mkrew logo glyph in the sidebar header.
 pub const LOGO_SIZE: f32 = 18.0;
