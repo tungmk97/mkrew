@@ -1577,6 +1577,8 @@ impl Daemon {
                 let program = crate::launch::program(&p);
                 AgentProfileInfo {
                     installed: mkrew_core::lookup::find(std::ffi::OsStr::new(&program)).is_some(),
+                    ask: p.ask_command(false).is_some(),
+                    ask_web: p.ask_command(true).is_some(),
                     kind: session_kind(p.kind),
                     icon: p.icon.or_else(|| crate::sample_icon(&p.id)),
                     id: p.id,

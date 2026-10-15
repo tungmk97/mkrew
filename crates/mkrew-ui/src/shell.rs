@@ -25,6 +25,7 @@ mod git_render;
 pub(crate) mod git_rows;
 mod send_dialog;
 
+mod ask_dialog;
 mod board;
 mod composer;
 mod connection;

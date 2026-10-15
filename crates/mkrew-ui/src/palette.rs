@@ -245,6 +245,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
         Command::ToggleInspector => "View: Toggle session panel".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
+        Command::AskAi => "Global: Ask AI…".into(),
     }
 }
 
@@ -263,7 +264,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ToggleFullScreen
         | Command::ToggleSidebar
         | Command::ToggleCompactSidebar
-        | Command::VoiceInput => true,
+        | Command::VoiceInput
+        | Command::AskAi => true,
         Command::Workspace(n) => usize::from(n) <= context.workspaces,
         Command::NextWorkspace | Command::PreviousWorkspace => context.workspaces > 1,
         Command::NewShellTab

@@ -378,6 +378,10 @@ resume = "claude --resume {session_id}"
 # One-shot text (✦ commit message §12B, ✦ improve prompt §20B.1): non-interactive command,
 # split like `resume`; the prompt goes on stdin, stdout is the answer. Empty = not offered.
 oneshot = "claude -p"
+# Ask AI (§20H, ADR 0061): any question, outside every project; split like `oneshot`, the
+# question on stdin. `ask` missing = `oneshot`; `ask_web` missing = no "Web search".
+ask     = 'claude -p --safe-mode --tools "" --no-session-persistence --system-prompt "…"'
+ask_web = 'claude -p --safe-mode --tools WebSearch --no-session-persistence --system-prompt "…"'
 
 [state]
 mode = "hook+screen"            # "hook" | "screen" | "hook+screen"
@@ -566,7 +570,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.commit` | `message` | new commit hash |
 | `git.log` | `limit`, `path?` | Commit[] |
 | `git.show` | `commit` | commit info + changed files |
-| `ai.generate` | `generation_id` (client-chosen), `project_id`, `worktree_task_id?`, `agent_profile?` (none = project `default_agent`), `kind` (`commit_message`/`enhance_prompt`), `input` | `null` at once; runs the profile's `oneshot` (§6) with a 120 s limit in the project/worktree folder, prompt on stdin; answer in `ai.generated` |
+| `ai.generate` | `generation_id` (client-chosen), `project_id?` (required except for `ask`), `worktree_task_id?`, `agent_profile?` (none = project `default_agent`; required for `ask`), `kind` (`commit_message`/`enhance_prompt`/`ask`), `input`, `web?` (`ask` only, default false) | `null` at once; runs the profile's `oneshot` (§6) with a 120 s limit in the project/worktree folder, prompt on stdin; `ask` runs `ask` (else `oneshot`), or `ask_web` with `web`, in `<data>/mkrew/scratch` with the question as the prompt (ADR 0061); a missing command is `invalid_state` naming the line to add; answer in `ai.generated` |
 | `git.set_base` | `project_id`, `base_ref` (`null`/blank = auto-detect; trimmed; refused if it starts with `-` or contains whitespace or control characters) | ok — broadcasts `project.updated` (Project carries `base_ref`) |
 | `git.fetch` / `git.push` | `project_id` | ok (push = current branch to its upstream, never force) |
 | `git.repos` | `project_id` | `string[]`: `""` when the project folder is in a git repository, then each direct child folder holding `.git` (folder or file), sorted; hidden folders, `node_modules` and `target` skipped; not filtered by `.gitignore`; read on every call (ADR 0029) |
@@ -594,7 +598,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |
 | `notification.clicked` | user clicked an OS notification (UI focuses that pane) |
 | `git.changed` | workspace git state changed (debounced, ≤ once per 300 ms) |
-| `ai.generated` | answer to an `ai.generate` (`generation_id`, `project_id`, `text?` trimmed and unfenced, `error?`) |
+| `ai.generated` | answer to an `ai.generate` (`generation_id`, `project_id?` = the request's, `text?` trimmed and, except for `ask`, unfenced, `error?`) |
 
 **Framing.** Every frame = `u32` big-endian length + `u8` kind + payload. Kind `0x01` = JSON
 (requests, responses, events). Kind `0x02` = terminal output: 16-byte binary ULID of the session
@@ -1204,6 +1208,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle sidebar | Ctrl+Shift+B |
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
+| Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
 | View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -2002,3 +2007,21 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    asked for it, never followed by Enter). If neither has focus, it goes to the clipboard and the
    footer says so.
 5. Nothing is recorded or sent unless the user starts a recording, and audio is never stored.
+
+### §20H Ask AI (outside the milestones, ADR 0061)
+
+Ask an agent any question that is not about a project, without opening a terminal.
+
+1. **Open.** `Ask AI` (Ctrl+Shift+G, palette "Global: Ask AI…") opens a modal dialog, also
+   without a workspace.
+2. **Agent.** A chip per installed agent profile that can answer (`ask` or `oneshot`, §6);
+   the active workspace's default agent is picked first, else the first one. None: a line
+   says what to add to a profile.
+3. **Web search.** Off / On chips, shown when the picked agent has `ask_web` (else a line names
+   the key to add). The choice is kept in memory for the next question.
+4. **Question.** A multi-line field: Enter = new line, Ctrl+Enter or "Ask" sends
+   `ai.generate` `ask` (§7), Esc or Close closes. One question at a time: "Asking…" and
+   `◌ Thinking…` while waiting; no history, each question stands alone.
+5. **Answer.** Rendered as Markdown like the Docs preview (scrolls past
+   `theme::ASK_ANSWER_HEIGHT`); "Copy answer" puts the Markdown on the clipboard. A failure
+   shows `✕` and the reason. The question stays, so it can be edited and asked again.

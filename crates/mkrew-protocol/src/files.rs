@@ -340,13 +340,17 @@ pub enum AiKind {
     CommitMessage,
     /// A clearer version of `input`, a prompt for a coding agent.
     EnhancePrompt,
+    /// The answer to `input`, any question, outside every project (ADR 0061).
+    Ask,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiGenerateParams {
     /// Chosen by the client, so it knows the id before the answer can arrive.
     pub generation_id: Ulid,
-    pub project_id: Ulid,
+    /// Required except for `ask`, which runs outside every project.
+    #[serde(default)]
+    pub project_id: Option<Ulid>,
     /// Run in this task's worktree instead of the project folder.
     #[serde(default)]
     pub worktree_task_id: Option<Ulid>,
@@ -354,19 +358,24 @@ pub struct AiGenerateParams {
     /// `None` = the project folder. Not with `worktree_task_id`.
     #[serde(default)]
     pub repo: Option<String>,
-    /// Agent profile id; `None` = the project's default agent.
+    /// Agent profile id; `None` = the project's default agent. Required for `ask`.
     #[serde(default)]
     pub agent_profile: Option<String>,
     pub kind: AiKind,
-    /// The prompt to improve (`enhance_prompt`); unused for `commit_message`.
+    /// The prompt to improve (`enhance_prompt`) or the question (`ask`); unused for
+    /// `commit_message`.
     #[serde(default)]
     pub input: String,
+    /// `ask` only: run the profile's `ask_web` command instead of `ask`.
+    #[serde(default)]
+    pub web: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiGeneratedEvent {
     pub generation_id: Ulid,
-    pub project_id: Ulid,
+    /// The request's `project_id`.
+    pub project_id: Option<Ulid>,
     /// The agent's answer, trimmed; `None` on failure.
     pub text: Option<String>,
     /// Why there is no text.
@@ -663,12 +672,13 @@ mod tests {
             }),
             Request::AiGenerate(AiGenerateParams {
                 generation_id: sid(),
-                project_id,
+                project_id: Some(project_id),
                 worktree_task_id: wt,
                 repo: None,
                 agent_profile: Some("claude".into()),
                 kind: AiKind::EnhancePrompt,
                 input: "fix it".into(),
+                web: false,
             }),
         ];
         let methods = [
@@ -839,7 +849,7 @@ mod tests {
 
         let generated = round_trip(&Message::Event(Event::AiGenerated(AiGeneratedEvent {
             generation_id: sid(),
-            project_id: sid(),
+            project_id: None,
             text: Some("feat: x".into()),
             error: None,
         })));
@@ -853,6 +863,18 @@ mod tests {
         assert_eq!(
             (params.worktree_task_id, params.agent_profile, params.input),
             (None, None, String::new())
+        );
+        // A question needs no project; `web` defaults to off.
+        let ask: AiGenerateParams = serde_json::from_value(json!({
+            "generation_id": sid().to_string(),
+            "agent_profile": "claude",
+            "kind": "ask",
+            "input": "why?",
+        }))
+        .unwrap();
+        assert_eq!(
+            (ask.project_id, ask.kind, ask.web),
+            (None, AiKind::Ask, false)
         );
     }
 }

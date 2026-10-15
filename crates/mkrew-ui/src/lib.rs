@@ -8,12 +8,13 @@
 //! render model of the Docs preview and its GPUI elements, and the Files view-model with its
 //! editor buffer, its tree actions (new file / folder, add to `.gitignore`), its
 //! syntax highlighting and quick open, the Git view-model and its base menu, the command
-//! palette, the turn summaries, the peek popover, the broadcast dialog, the in-app confirmation
+//! palette, the turn summaries, the peek popover, the broadcast and "Ask AI" dialogs, the in-app confirmation
 //! dialog, the Files / Git worktree target, fan-out and token
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
 //! input (microphone and speech to text), the phone-access link, token and QR code and its
 //! dialog model, and the scroll bar of the Files editor and the Markdown preview.
 
+pub mod ask;
 pub mod base_dialog;
 pub mod board;
 pub mod broadcast;

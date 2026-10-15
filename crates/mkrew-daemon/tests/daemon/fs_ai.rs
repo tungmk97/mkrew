@@ -227,7 +227,7 @@ fn ai_generate_answers_with_the_oneshot_output() {
         (done.text.as_deref(), done.error),
         (Some("feat: add b"), None)
     );
-    assert_eq!(done.project_id, project.id);
+    assert_eq!(done.project_id, Some(project.id));
 
     let (id, request) = generate(project.id, Some("gen"), AiKind::EnhancePrompt, "add b");
     client.call(request).into_result::<()>().unwrap();
@@ -284,5 +284,58 @@ fn ai_generate_reports_what_is_missing() {
     assert_eq!(
         generated(&mut client, id).error.as_deref(),
         Some("No changes to describe.")
+    );
+}
+
+/// ADR 0061: a question needs no project, runs in the scratch folder, and its answer keeps a
+/// code fence (it is shown as Markdown).
+#[test]
+fn ai_generate_asks_outside_every_project() {
+    let env = Env::new();
+    let scenario = env.dir.path().join("answer.toml");
+    let mut steps =
+        String::from("[[step]]\naction = \"write_file\"\npath = \"here.txt\"\ncontent = \"x\"\n");
+    for text in ["```sh", "ls", "```"] {
+        steps.push_str(&format!(
+            "\n[[step]]\naction = \"print\"\ntext = \"{text}\"\n"
+        ));
+    }
+    std::fs::write(&scenario, steps).unwrap();
+    let fake = built_bin("mkrew-fakeagent");
+    let toml = format!(
+        "command = '{fake}'\nask = '\"{fake}\" --scenario \"{scenario}\"'\n",
+        fake = fake.display(),
+        scenario = scenario.display(),
+    );
+    env.write_profile("chat", &toml);
+    let (_daemon, mut client) = env.start();
+
+    let (id, request) = ask(Some("chat"), "how do I list files?", false);
+    client.call(request).into_result::<()>().unwrap();
+    let done = generated(&mut client, id);
+    assert_eq!(
+        (done.text.as_deref(), done.error, done.project_id),
+        (Some("```sh\nls\n```"), None, None)
+    );
+    assert!(env.data_dir().join("scratch").join("here.txt").is_file());
+
+    // Web search needs its own command; the error says which line to add, and where.
+    let (_, request) = ask(Some("chat"), "news?", true);
+    let outcome = client.call(request);
+    let message = format!("{outcome:?}");
+    assert_eq!(error_code(outcome), ErrorCode::InvalidState);
+    assert!(
+        message.contains("ask_web") && message.contains("chat.toml"),
+        "{message}"
+    );
+
+    // No agent named (there is no project default to fall back to), or no question.
+    assert_eq!(
+        error_code(client.call(ask(None, "x", false).1)),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(ask(Some("chat"), " ", false).1)),
+        ErrorCode::InvalidRequest
     );
 }

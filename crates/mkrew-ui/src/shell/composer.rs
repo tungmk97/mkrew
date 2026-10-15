@@ -133,12 +133,13 @@ impl Shell {
         cx.notify();
         let started = connection.call::<()>(Request::AiGenerate(AiGenerateParams {
             generation_id,
-            project_id,
+            project_id: Some(project_id),
             worktree_task_id: None,
             repo: None,
             agent_profile: Some(agent_profile),
             kind: AiKind::EnhancePrompt,
             input,
+            web: false,
         }));
         cx.spawn_in(window, async move |this, cx| {
             let Err(error) = started.await else {

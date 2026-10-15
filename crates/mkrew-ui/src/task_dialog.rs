@@ -372,6 +372,8 @@ mod tests {
             command: id.into(),
             icon: None,
             installed: true,
+            ask: false,
+            ask_web: false,
         }
     }
 

@@ -89,6 +89,11 @@ impl Paths {
         self.data_dir.join("worktrees")
     }
 
+    /// Where `ai.generate` `ask` runs, outside every project (ADR 0061).
+    pub fn scratch_dir(&self) -> PathBuf {
+        self.data_dir.join("scratch")
+    }
+
     pub fn agents_dir(&self) -> PathBuf {
         self.config_dir.join("agents")
     }

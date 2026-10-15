@@ -734,12 +734,13 @@ impl Shell {
         }
         let params = AiGenerateParams {
             generation_id,
-            project_id,
+            project_id: Some(project_id),
             worktree_task_id: view.worktree_task_id,
             repo: view.repo.clone(),
             agent_profile: None,
             kind: AiKind::CommitMessage,
             input: String::new(),
+            web: false,
         };
         cx.notify();
         let started = connection.call::<()>(Request::AiGenerate(params));

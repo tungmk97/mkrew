@@ -1,6 +1,7 @@
-//! `ai.generate` (SPEC §6 `oneshot`, §12B, §20B.1; ADR 0016): one-shot text from the user's
-//! own agent CLI. Mkrew never calls an LLM API: it runs the profile's non-interactive command
-//! in the project folder with the prompt on stdin and broadcasts its stdout as `ai.generated`.
+//! `ai.generate` (SPEC §6 `oneshot`, §12B, §20B.1; ADR 0016, 0061): one-shot text from the
+//! user's own agent CLI. Mkrew never calls an LLM API: it runs the profile's non-interactive
+//! command in the project folder (`ask`: the scratch folder, outside every project) with the
+//! prompt on stdin and broadcasts its stdout as `ai.generated`.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -25,62 +26,94 @@ impl Daemon {
     /// `ai.generate`: checks what it can right away, then runs the agent in the background (this
     /// connection keeps serving requests) and broadcasts `ai.generated`.
     pub(super) async fn ai_generate(&self, params: AiGenerateParams) -> Outcome {
-        if params.kind == AiKind::EnhancePrompt && params.input.trim().is_empty() {
-            let message = "ai.generate needs a prompt to improve";
+        let ask = params.kind == AiKind::Ask;
+        if params.kind != AiKind::CommitMessage && params.input.trim().is_empty() {
+            let message = if ask {
+                "ai.generate needs a question"
+            } else {
+                "ai.generate needs a prompt to improve"
+            };
             return Outcome::error(ErrorCode::InvalidRequest, message);
         }
-        let target = match self
-            .target(
-                params.project_id,
-                params.worktree_task_id,
-                params.repo.as_deref(),
-            )
-            .await
-        {
-            Ok(target) => target,
-            Err(outcome) => return outcome,
-        };
-        let Some(profile_id) = params
-            .agent_profile
-            .clone()
-            .or_else(|| target.project.default_agent.clone())
-        else {
-            let message = format!("set a default agent for {} first", target.project.name);
-            return Outcome::error(ErrorCode::InvalidState, message);
+        let (profile_id, dir) = if ask {
+            let Some(profile_id) = params.agent_profile.clone() else {
+                let message = "ai.generate ask needs an agent_profile";
+                return Outcome::error(ErrorCode::InvalidRequest, message);
+            };
+            let dir = self.paths.scratch_dir();
+            if let Err(error) = std::fs::create_dir_all(&dir) {
+                let message = format!("cannot create {}: {error}", dir.display());
+                return Outcome::error(ErrorCode::Internal, message);
+            }
+            (profile_id, dir)
+        } else {
+            let Some(project_id) = params.project_id else {
+                let message = "ai.generate needs a project_id";
+                return Outcome::error(ErrorCode::InvalidRequest, message);
+            };
+            let target = match self
+                .target(project_id, params.worktree_task_id, params.repo.as_deref())
+                .await
+            {
+                Ok(target) => target,
+                Err(outcome) => return outcome,
+            };
+            let Some(profile_id) = params
+                .agent_profile
+                .clone()
+                .or_else(|| target.project.default_agent.clone())
+            else {
+                let message = format!("set a default agent for {} first", target.project.name);
+                return Outcome::error(ErrorCode::InvalidState, message);
+            };
+            (profile_id, target.dir)
         };
         let profile = match self.load_profile(&profile_id) {
             Ok(profile) => profile,
             Err(outcome) => return outcome,
         };
-        let Some(oneshot) = profile.oneshot_command() else {
+        let (runs, key, example) = match (ask, params.web) {
+            (false, _) => (profile.oneshot_command(), "oneshot", "claude -p"),
+            (true, false) => (profile.ask_command(false), "ask", "claude -p"),
+            (true, true) => (
+                profile.ask_command(true),
+                "ask_web",
+                "claude -p --tools WebSearch",
+            ),
+        };
+        let Some(runs) = runs else {
             let file = self.paths.agents_dir().join(format!("{profile_id}.toml"));
             let message = format!(
-                "agent profile {profile_id} has no `oneshot` command: add a line like \
-                 `oneshot = \"claude -p\"` to {}",
+                "agent profile {profile_id} has no `{key}` command: add a line like \
+                 `{key} = \"{example}\"` to {}",
                 file.display()
             );
             return Outcome::error(ErrorCode::InvalidState, message);
         };
-        let builder = match launch::command(&oneshot) {
+        let builder = match launch::command(&runs) {
             Ok(builder) => builder,
             Err(error) => return Outcome::error(ErrorCode::InvalidState, error.to_string()),
         };
-        let Some(command) = child_command(&builder, &target.dir) else {
-            let message = format!("agent profile {profile_id} has an empty `oneshot` command");
+        let Some(command) = child_command(&builder, &dir) else {
+            let message = format!("agent profile {profile_id} has an empty `{key}` command");
             return Outcome::error(ErrorCode::InvalidState, message);
         };
-        let (hub, git, dir) = (Arc::clone(&self.hub), Arc::clone(&self.git), target.dir);
+        let (hub, git) = (Arc::clone(&self.hub), Arc::clone(&self.git));
         let (generation_id, project_id) = (params.generation_id, params.project_id);
         tokio::spawn(async move {
             let (kind, input) = (params.kind, params.input);
-            let prompt = tokio::task::spawn_blocking(move || prompt(&*git, &dir, kind, &input))
+            let prompt = tokio::task::spawn_blocking(move || prompt(&*git, &dir, kind, input))
                 .await
                 .map_err(|error| format!("cannot build the prompt: {error}"))
                 .and_then(|prompt| prompt);
             let result = match prompt {
                 Ok(prompt) => run(command, &prompt, TIMEOUT).await,
                 Err(error) => Err(error),
-            };
+            }
+            .and_then(|stdout| {
+                // An answer is shown as Markdown: its code blocks stay.
+                clean_output(&stdout, !ask).ok_or_else(|| "the agent printed nothing".to_owned())
+            });
             if let Err(error) = &result {
                 tracing::info!(%generation_id, "ai.generate failed: {error}");
             }
@@ -126,10 +159,11 @@ fn child_command(
 }
 
 /// What the agent is asked. Runs git, so call it off the async threads.
-fn prompt(git: &dyn GitBackend, dir: &Path, kind: AiKind, input: &str) -> Result<String, String> {
+fn prompt(git: &dyn GitBackend, dir: &Path, kind: AiKind, input: String) -> Result<String, String> {
     let failed = |error: std::io::Error| format!("git failed: {error}");
     match kind {
-        AiKind::EnhancePrompt => Ok(enhance_prompt(input)),
+        AiKind::Ask => Ok(input),
+        AiKind::EnhancePrompt => Ok(enhance_prompt(&input)),
         AiKind::CommitMessage => {
             let staged = git.file_diff(dir, ".", Side::Staged).map_err(failed)?;
             if !staged.trim().is_empty() {
@@ -193,11 +227,13 @@ fn truncated(text: &str, max: usize) -> Cow<'_, str> {
     Cow::Owned(format!("{}\n[diff truncated]\n", &text[..end]))
 }
 
-/// The answer without blank edges and a surrounding ``` fence; `None` if nothing is left.
-fn clean_output(stdout: &str) -> Option<String> {
+/// The answer without blank edges and, if `unfence`, a surrounding ``` fence; `None` if
+/// nothing is left.
+fn clean_output(stdout: &str, unfence: bool) -> Option<String> {
     let text = stdout.trim();
     let text = text
         .strip_prefix("```")
+        .filter(|_| unfence)
         .and_then(|rest| rest.split_once('\n'))
         .and_then(|(_, body)| body.trim_end().strip_suffix("```"))
         .map_or(text, str::trim);
@@ -237,8 +273,7 @@ async fn run(
             last.join(" / ")
         ));
     }
-    clean_output(&String::from_utf8_lossy(&output.stdout))
-        .ok_or_else(|| "the agent printed nothing".to_owned())
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(test)]
@@ -258,13 +293,22 @@ mod tests {
 
     #[test]
     fn answers_lose_blank_edges_and_a_code_fence() {
+        let fenced = "\n```text\nfeat: x\n\nbody\n```\n";
         assert_eq!(
-            clean_output("\n```text\nfeat: x\n\nbody\n```\n").as_deref(),
+            clean_output(fenced, true).as_deref(),
             Some("feat: x\n\nbody")
         );
-        assert_eq!(clean_output("  fix: y  \n").as_deref(), Some("fix: y"));
-        assert_eq!(clean_output("```\n```"), None);
-        assert_eq!(clean_output(" \n "), None);
+        // `ask`: a whole-answer code block is the answer.
+        assert_eq!(
+            clean_output(fenced, false).as_deref(),
+            Some("```text\nfeat: x\n\nbody\n```")
+        );
+        assert_eq!(
+            clean_output("  fix: y  \n", true).as_deref(),
+            Some("fix: y")
+        );
+        assert_eq!(clean_output("```\n```", true), None);
+        assert_eq!(clean_output(" \n ", false), None);
     }
 
     #[test]

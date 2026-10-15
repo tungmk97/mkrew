@@ -31,6 +31,10 @@ pub struct AgentProfile {
     /// Non-interactive command for one-shot text (commit messages, prompt rewrites; SPEC §6):
     /// split like `resume`, the prompt goes on stdin; `None` = this agent cannot generate.
     pub oneshot: Option<String>,
+    /// Commands answering any question outside a project (ADR 0061), split like `oneshot`:
+    /// `ask` without, `ask_web` with web search. `None` = not set.
+    pub ask: Option<String>,
+    pub ask_web: Option<String>,
     pub state: StateConfig,
     /// `[usage]` (SPEC §20E.3); `None` = no usage for this agent.
     pub usage: Option<UsageConfig>,
@@ -136,7 +140,23 @@ impl AgentProfile {
     /// This profile running its `oneshot` command (prompt on stdin, SPEC §6); `None` without
     /// one. Split like [`Self::resumed`]; env and id stay the profile's.
     pub fn oneshot_command(&self) -> Option<AgentProfile> {
-        let mut words = split_words(self.oneshot.as_deref()?).into_iter();
+        self.running(self.oneshot.as_deref()?)
+    }
+
+    /// This profile answering a question (ADR 0061): `ask_web` when `web`, else `ask`, else
+    /// `oneshot`; `None` without that command. Split like [`Self::oneshot_command`].
+    pub fn ask_command(&self, web: bool) -> Option<AgentProfile> {
+        let template = if web {
+            self.ask_web.as_deref()
+        } else {
+            self.ask.as_deref().or(self.oneshot.as_deref())
+        };
+        self.running(template?)
+    }
+
+    /// This profile running the command line `template` (split on whitespace, quotes group).
+    fn running(&self, template: &str) -> Option<AgentProfile> {
+        let mut words = split_words(template).into_iter();
         let command = words.next()?;
         Some(AgentProfile {
             command,
@@ -324,6 +344,8 @@ pub fn parse_profile(id: &str, file: &Path, src: &str) -> Result<AgentProfile, P
         env: raw.env,
         resume: raw.resume.filter(|r| !r.trim().is_empty()),
         oneshot: raw.oneshot.filter(|o| !o.trim().is_empty()),
+        ask: raw.ask.filter(|a| !a.trim().is_empty()),
+        ask_web: raw.ask_web.filter(|a| !a.trim().is_empty()),
         state: StateConfig {
             mode: raw.state.mode,
             idle_after_ms: raw.state.idle_after_ms,
@@ -352,6 +374,8 @@ struct RawProfile {
     env: BTreeMap<String, String>,
     resume: Option<String>,
     oneshot: Option<String>,
+    ask: Option<String>,
+    ask_web: Option<String>,
     #[serde(default)]
     state: RawState,
     usage: Option<RawUsage>,
@@ -532,6 +556,19 @@ oneshot = '"C:\Program Files\x.exe" -p --model fast'"#,
             None
         );
         assert_eq!(parse("command = \"x\"").unwrap().oneshot_command(), None);
+    }
+
+    #[test]
+    fn ask_falls_back_to_oneshot_but_web_needs_its_own_command() {
+        let p =
+            parse("command = \"x\"\noneshot = \"x -p\"\nask_web = 'x -p --tools \"\"'").unwrap();
+        assert_eq!(p.ask_command(false).unwrap().args, ["-p"]);
+        // An empty quoted word stays an argument (`--tools ""`).
+        assert_eq!(p.ask_command(true).unwrap().args, ["-p", "--tools", ""]);
+        let p = parse("command = \"x\"\noneshot = \"x -p\"\nask = \"x -q\"").unwrap();
+        assert_eq!(p.ask_command(false).unwrap().args, ["-q"]);
+        assert_eq!(p.ask_command(true), None);
+        assert_eq!(parse("command = \"x\"").unwrap().ask_command(false), None);
     }
 
     #[test]

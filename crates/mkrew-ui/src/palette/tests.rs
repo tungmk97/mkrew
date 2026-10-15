@@ -155,7 +155,7 @@ fn a_settings_error_opens_the_settings() {
 
 #[test]
 fn commands_carry_their_shortcut() {
-    let (keymap, errors) = Keymap::parse("new_shell_tab = \"ctrl-shift-g\"\n");
+    let (keymap, errors) = Keymap::parse("new_shell_tab = \"ctrl-shift-u\"\n");
     assert_eq!(errors, []);
     let all = entries(&keymap, &context(View::Terminals), &[], &[], &[]);
     let shell = all
@@ -163,7 +163,7 @@ fn commands_carry_their_shortcut() {
         .find(|entry| entry.action == Action::Run(Command::NewShellTab))
         .unwrap();
     assert_eq!(shell.title, "Tabs: New shell tab");
-    assert_eq!(shell.shortcut, "Ctrl+Shift+G");
+    assert_eq!(shell.shortcut, "Ctrl+Shift+U");
 }
 
 #[test]
@@ -287,7 +287,8 @@ fn availability_follows_the_view() {
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
-            Command::VoiceInput
+            Command::VoiceInput,
+            Command::AskAi
         ]
     );
     assert_eq!(extras(&none), []);

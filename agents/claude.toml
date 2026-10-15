@@ -15,6 +15,10 @@ env = {}
 resume = "claude --resume {session_id}"
 # One-shot text (✦ commit message / prompt rewrite): non-interactive, prompt on stdin.
 oneshot = "claude -p"
+# Ask AI (SPEC §20H): any question, outside every project, answered like a chat. --safe-mode
+# skips CLAUDE.md, plugins, hooks and MCP but keeps the login; ask_web may search the web.
+ask     = 'claude -p --safe-mode --tools "" --no-session-persistence --system-prompt "You are Claude, a helpful general-purpose assistant. Answer in the language of the question, using Markdown when useful."'
+ask_web = 'claude -p --safe-mode --tools WebSearch --no-session-persistence --system-prompt "You are Claude, a helpful general-purpose assistant. Answer in the language of the question, using Markdown when useful. Search the web only when the question needs current information."'
 
 [state]
 mode = "hook+screen"            # "hook" | "screen" | "hook+screen"

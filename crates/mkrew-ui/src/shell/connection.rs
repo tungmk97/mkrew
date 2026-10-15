@@ -220,6 +220,7 @@ impl Shell {
                 shell.plans = Plans::default();
                 shell.plan_error = None;
                 shell.broadcast = None;
+                shell.ask = None;
                 shell.task_dialog = None;
                 shell.undo_dialog = None;
                 shell.worktree_dialog = None;
@@ -314,6 +315,8 @@ impl Shell {
             ports: Ports::default(),
             agent_icons: HashMap::new(),
             broadcast: None,
+            ask: None,
+            ask_web: false,
             viewed: Viewed::default(),
             turns: Turns::default(),
             usages: Usages::default(),
@@ -696,6 +699,9 @@ impl Shell {
                     let result = ai_result(done);
                     for view in self.git.values_mut() {
                         view.commit.generated(done.generation_id, result.clone());
+                    }
+                    if let Some(dialog) = self.ask.as_mut() {
+                        dialog.answered(done.generation_id, result.clone());
                     }
                     self.composers.enhanced(done.generation_id, result);
                     cx.notify();

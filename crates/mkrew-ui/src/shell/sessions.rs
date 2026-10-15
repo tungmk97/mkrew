@@ -358,6 +358,7 @@ impl Shell {
             Command::ToggleInspector => self.toggle_inspector(window, cx),
             // Handled at the top of `run`.
             Command::VoiceInput => {}
+            Command::AskAi => self.open_ask(window, cx),
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),

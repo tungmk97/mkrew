@@ -15,6 +15,20 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-15 Ask AI dialog (ADR 0061)
+
+- [ ] **Restart the daemon first** (protocol 43).
+- [ ] **Profile:** add the `ask` and `ask_web` lines of the repo's `agents/claude.toml` to
+  `%APPDATA%\mkrew\agents\claude.toml` (existing profiles are not rewritten; without them Ask
+  uses `oneshot` = plain `claude -p` and "Web search" shows how to add `ask_web`).
+- [ ] **Dialog (dark + light):** Ctrl+Shift+G (also with a terminal focused, and with no
+  workspace) and palette "Global: Ask AI…" open "Ask AI". Agent chips list only installed agents
+  that can answer, the workspace's default first; Web search Off / On chips. Type a question
+  (Enter = new line), Ctrl+Enter → "Asking…" and `◌ Thinking…`, then the answer as Markdown
+  (headings, lists, code blocks) that scrolls when long; "Copy answer" copies it; Esc closes.
+- [ ] **Web search On:** "Hôm nay ngày mấy, tin công nghệ tuần này?" → today's date and sources
+  (about 30 s). Close and reopen: the On choice is kept.
+
 ### To verify — 2026-10-15 Agent logos in chips (ADR 0058)
 
 - [ ] **Logos (dark + light):** claude, codex, copilot and omp sessions show their real logo (no

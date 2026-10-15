@@ -42,6 +42,7 @@ use mkrew_protocol::{
     TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
     WORKSPACE_COLORS,
 };
+use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
@@ -405,6 +406,10 @@ struct Shell {
     agent_icons: HashMap<String, String>,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
+    /// The open "Ask AI…" dialog (modal, ADR 0061).
+    ask: Option<Ask>,
+    /// Its "Web search" switch, kept for the next question (in memory only).
+    ask_web: bool,
     /// Done sessions already seen, so they leave the Inbox.
     viewed: Viewed,
     /// Each session's last turn, summarized while it is done.
@@ -734,6 +739,11 @@ impl Render for Shell {
                         self.broadcast
                             .as_ref()
                             .map(|dialog| self.render_broadcast(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.ask
+                            .as_ref()
+                            .map(|dialog| self.render_ask(dialog, &theme, cx)),
                     )
                     .children(
                         self.history

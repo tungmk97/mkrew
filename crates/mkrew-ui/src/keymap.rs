@@ -133,6 +133,8 @@ pub enum Command {
     /// Start recording the microphone, or stop and type the speech as text into the field or
     /// terminal that has the keyboard (SPEC §20G).
     VoiceInput,
+    /// Ask an agent any question, outside every project (ADR 0061).
+    AskAi,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -242,6 +244,7 @@ impl Command {
             Command::ToggleCompactSidebar,
             Command::ToggleInspector,
             Command::VoiceInput,
+            Command::AskAi,
         ]);
         all
     }
@@ -318,6 +321,7 @@ impl Command {
             Command::ToggleCompactSidebar => "toggle_compact_sidebar".into(),
             Command::ToggleInspector => "toggle_inspector".into(),
             Command::VoiceInput => "voice_input".into(),
+            Command::AskAi => "ask_ai".into(),
         }
     }
 
@@ -406,6 +410,7 @@ impl Command {
             Command::ToggleCompactSidebar => "ctrl-alt-b".into(),
             Command::ToggleInspector => "ctrl-shift-y".into(),
             Command::VoiceInput => "ctrl-shift-d".into(),
+            Command::AskAi => "ctrl-shift-g".into(),
         }
     }
 
@@ -808,6 +813,8 @@ mod tests {
         assert_eq!(keymap.label(Command::VoiceInput), "Ctrl+Shift+D");
         // Global: it must reach the shell while a terminal or a text field has the keyboard.
         assert_eq!(Command::VoiceInput.context(), None);
+        assert_eq!(bound("ctrl-shift-g"), Some(Command::AskAi));
+        assert_eq!(Command::AskAi.context(), None);
         assert_eq!(Command::OpenKeymapSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),

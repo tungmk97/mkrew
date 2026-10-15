@@ -1465,6 +1465,12 @@ pub struct AgentProfileInfo {
     /// only installed shells (ADR 0032).
     #[serde(default)]
     pub installed: bool,
+    /// It can answer `ai.generate` `ask` (an `ask` or `oneshot` command, ADR 0061).
+    #[serde(default)]
+    pub ask: bool,
+    /// It has an `ask_web` command (`ask` with `web`).
+    #[serde(default)]
+    pub ask_web: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

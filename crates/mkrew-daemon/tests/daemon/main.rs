@@ -801,12 +801,29 @@ fn generate(project_id: Ulid, profile: Option<&str>, kind: AiKind, input: &str) 
     let generation_id = Ulid::new();
     let request = Request::AiGenerate(AiGenerateParams {
         generation_id,
-        project_id,
+        project_id: Some(project_id),
         worktree_task_id: None,
         repo: None,
         agent_profile: profile.map(str::to_owned),
         kind,
         input: input.into(),
+        web: false,
+    });
+    (generation_id, request)
+}
+
+/// `ai.generate` `ask` without a project (ADR 0061).
+fn ask(profile: Option<&str>, question: &str, web: bool) -> (Ulid, Request) {
+    let generation_id = Ulid::new();
+    let request = Request::AiGenerate(AiGenerateParams {
+        generation_id,
+        project_id: None,
+        worktree_task_id: None,
+        repo: None,
+        agent_profile: profile.map(str::to_owned),
+        kind: AiKind::Ask,
+        input: question.into(),
+        web,
     });
     (generation_id, request)
 }

@@ -555,6 +555,8 @@ fn agent_profiles_result_round_trips() {
             command: "mkrew-fakeagent".into(),
             icon: Some("ƒ".into()),
             installed: true,
+            ask: true,
+            ask_web: false,
         }],
         errors: vec![ProfileErrorInfo {
             file: "agents/broken.toml".into(),

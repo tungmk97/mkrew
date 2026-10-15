@@ -256,6 +256,10 @@ pub const COMPARE_DIALOG_WIDTH: f32 = 880.0;
 pub const TURNS_DIALOG_WIDTH: f32 = 560.0;
 pub const TURNS_LIST_HEIGHT: f32 = 400.0;
 
+/// Width of the "Ask AI" dialog, and the height its answer scrolls past (ADR 0061).
+pub const ASK_DIALOG_WIDTH: f32 = 640.0;
+pub const ASK_ANSWER_HEIGHT: f32 = 360.0;
+
 /// Share of the window's width and height the "History" dialog takes (it replays a terminal).
 pub const HISTORY_DIALOG_FRACTION: f32 = 0.9;
 

@@ -14,6 +14,7 @@ impl Shell {
             || self.git_base.is_some()
             || self.phone_open
             || self.broadcast.is_some()
+            || self.ask.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
             || self.quick_open.is_some()
