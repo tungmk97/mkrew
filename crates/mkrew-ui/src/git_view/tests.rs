@@ -1,6 +1,6 @@
 use super::*;
 use crate::highlight::Token;
-use mkrew_protocol::{ChangeKind, DiffLineKind, GitChangedEvent, Hunk};
+use mkrew_protocol::{ChangeKind, DiffLineKind, GitChangedEvent, Hunk, ViewedFile};
 
 fn file(path: &str, kind: ChangeKind) -> ChangedFile {
     ChangedFile {
@@ -1345,4 +1345,123 @@ fn keys_are_unmodified_arrows_and_j_k() {
     }
     assert_eq!(parse("ctrl-k"), None);
     assert_eq!(parse("x"), None);
+}
+
+fn viewed_file(path: &str, staged: bool) -> ViewedFile {
+    ViewedFile {
+        path: path.into(),
+        staged,
+    }
+}
+
+/// A [`loaded`] view whose daemon answered that only the staged `a.rs` is viewed.
+fn with_viewed() -> GitView {
+    let mut view = loaded();
+    let (params, serial) = view.begin_viewed();
+    view.viewed_loaded(
+        serial,
+        (params.mode, params.since),
+        vec![viewed_file("a.rs", true)],
+    );
+    view
+}
+
+#[test]
+fn the_viewed_counter_counts_every_listed_file_whatever_the_filters_hide() {
+    let view = loaded();
+    // a.rs staged + a.rs unstaged + b.rs + new.txt.
+    assert_eq!(view.viewed_counter(), Some((0, 4)));
+    let mut view = with_viewed();
+    assert_eq!(view.viewed_counter(), Some((1, 4)));
+    assert!(view.viewed.contains(Group::Staged, "a.rs"));
+    assert!(!view.viewed.contains(Group::Unstaged, "a.rs"));
+    // The file filter narrows the list, not the counter.
+    view.filter.insert("new");
+    assert_eq!(view.files().len(), 1);
+    assert_eq!(view.viewed_counter(), Some((1, 4)));
+    // No files: no counter; the History never has one.
+    let mut empty = GitView::new(Ulid::new(), None);
+    empty.begin_status();
+    empty.status_loaded(Ok(GitStatus::default()));
+    assert_eq!(empty.viewed_counter(), None);
+    let _ = view.show(Section::History);
+    assert_eq!(view.viewed_counter(), None);
+    assert!(!view.wants_viewed());
+}
+
+#[test]
+fn an_answer_for_older_asks_or_other_changes_is_dropped() {
+    let mut view = loaded();
+    assert!(view.wants_viewed());
+    let (params, first) = view.begin_viewed();
+    assert_eq!(
+        (params.mode, params.since.clone()),
+        (GitMode::Working, None)
+    );
+    let (_, second) = view.begin_viewed();
+    // The first ask answers late: dropped. The second counts.
+    view.viewed_loaded(
+        first,
+        (GitMode::Working, None),
+        vec![viewed_file("b.rs", false)],
+    );
+    assert!(!view.viewed.contains(Group::Unstaged, "b.rs"));
+    // An answer for Against base while Working is listed: dropped.
+    view.viewed_loaded(
+        second,
+        (GitMode::Base, None),
+        vec![viewed_file("b.rs", false)],
+    );
+    assert!(!view.viewed.contains(Group::Unstaged, "b.rs"));
+    view.viewed_loaded(
+        second,
+        (GitMode::Working, None),
+        vec![viewed_file("b.rs", false)],
+    );
+    assert!(view.viewed.contains(Group::Unstaged, "b.rs"));
+    // Another list starts without the marks of the first.
+    view.show(Section::Base);
+    assert!(!view.viewed.contains(Group::Unstaged, "b.rs"));
+    assert!(!view.wants_viewed(), "its status is loading");
+}
+
+#[test]
+fn toggling_marks_at_once_and_describes_the_diff_to_send() {
+    let mut view = loaded();
+    let staged = target(Group::Staged, "a.rs");
+    let params = view.toggle_viewed(&staged).unwrap();
+    assert!(params.viewed);
+    assert_eq!(params.diff, staged.params(view.project_id, None, None));
+    assert!(params.diff.staged);
+    assert!(view.viewed.contains(Group::Staged, "a.rs"));
+    assert!(!view.viewed.contains(Group::Unstaged, "a.rs"));
+    // Again: cleared.
+    assert!(!view.toggle_viewed(&staged).unwrap().viewed);
+    assert!(!view.viewed.contains(Group::Staged, "a.rs"));
+    // A toggle makes an older in-flight answer stale.
+    let (_, serial) = view.begin_viewed();
+    view.toggle_viewed(&staged);
+    view.viewed_loaded(serial, (GitMode::Working, None), vec![]);
+    assert!(view.viewed.contains(Group::Staged, "a.rs"));
+    // A History file has nothing to mark.
+    assert_eq!(view.toggle_viewed(&commit_target("abc", "x")), None);
+}
+
+#[test]
+fn a_viewed_selected_file_collapses_until_show_diff() {
+    let mut view = with_viewed();
+    // a.rs staged is selected by `loaded()` and viewed.
+    assert!(view.diff_collapsed());
+    view.unfold();
+    assert!(!view.diff_collapsed());
+    // Marking it again, or selecting another file, starts collapsed / open again.
+    let staged = target(Group::Staged, "a.rs");
+    view.toggle_viewed(&staged);
+    assert!(!view.diff_collapsed(), "not viewed any more");
+    view.toggle_viewed(&staged);
+    assert!(view.diff_collapsed());
+    view.unfold();
+    view.select(target(Group::Unstaged, "b.rs"));
+    view.select(staged);
+    assert!(view.diff_collapsed(), "selecting resets Show diff");
 }

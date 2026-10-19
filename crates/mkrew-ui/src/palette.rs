@@ -241,6 +241,7 @@ pub fn title(command: Command) -> String {
         Command::GitUnstage => "Git: Unstage selected file or hunk".into(),
         Command::GitFocusCommit => "Git: Focus commit message".into(),
         Command::GitToggleDiffMode => "Git: Toggle Unified / Split diff".into(),
+        Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
         Command::CommandPalette => "Global: Command palette".into(),
@@ -322,6 +323,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitStage
         | Command::GitUnstage
         | Command::GitToggleDiffMode
+        | Command::GitToggleViewed
         | Command::GitFocusCommit => in_view(View::Git),
     }
 }

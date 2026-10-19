@@ -40,7 +40,7 @@ use mkrew_protocol::{
     SessionState, SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams,
     TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
     TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
-    WORKSPACE_COLORS,
+    ViewedFile, WORKSPACE_COLORS,
 };
 use mkrew_ui::attention::{self, Tracker};
 use mkrew_ui::base_dialog::{self, BaseDialog};

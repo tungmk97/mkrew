@@ -346,6 +346,8 @@ impl Shell {
                 };
                 let requests = view.status_loaded(loaded);
                 shell.git_requests(project_id, requests, window, cx);
+                // Which of the listed files are still marked as viewed (no-op in the History).
+                shell.load_git_viewed(project_id, window, cx);
                 // Everything committed: the box is gone, the list takes the keyboard back.
                 if shell.git_commit_focus.is_focused(window) && !shell.git_commit_shown() {
                     window.focus(&shell.git_focus, cx);

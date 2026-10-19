@@ -41,6 +41,7 @@ pub mod git_graph;
 pub mod git_history;
 pub mod git_summary;
 pub mod git_view;
+pub mod git_viewed;
 pub mod glyph;
 pub mod gutter;
 pub mod highlight;

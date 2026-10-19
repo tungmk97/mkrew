@@ -23,6 +23,7 @@ pub(crate) mod git_diff;
 pub(crate) mod git_menus;
 mod git_render;
 pub(crate) mod git_rows;
+mod git_viewed;
 mod send_dialog;
 
 mod attention;
