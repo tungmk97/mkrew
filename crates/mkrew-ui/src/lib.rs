@@ -26,6 +26,7 @@ pub mod confirm;
 pub mod conflicts;
 pub mod connect;
 pub mod context_menu;
+pub mod desktop;
 pub mod diagram;
 pub mod doc_dialog;
 pub mod docs;
