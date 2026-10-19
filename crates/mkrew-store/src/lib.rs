@@ -1088,6 +1088,7 @@ impl Store {
         Ok(())
     }
 
+    // ponytail: marks of old `since:` lists are never pruned; the retention pass is the upgrade path.
     /// The viewed marks of `scope` as `(path, hash)`, in path order (ADR 0065).
     pub fn viewed_marks(&self, scope: &ViewedScope<'_>) -> Result<Vec<(String, String)>> {
         let mut stmt = self.conn.prepare(

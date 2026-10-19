@@ -1465,3 +1465,26 @@ fn a_viewed_selected_file_collapses_until_show_diff() {
     view.select(staged);
     assert!(view.diff_collapsed(), "selecting resets Show diff");
 }
+
+#[test]
+fn a_collapsed_diff_ignores_hunk_keys_and_stages_the_whole_file() {
+    let mut view = with_viewed();
+    let a = target(Group::Staged, "a.rs");
+    view.begin_diff();
+    view.diff_loaded(&a, Ok(laid_out(vec![hunk(1, 1, 1, 1), hunk(20, 1, 20, 1)])));
+    assert!(view.diff_collapsed());
+    view.key(Key::NextHunk);
+    view.key(Key::PreviousHunk);
+    assert_eq!(view.hunk, None);
+    // A hunk chosen before the collapse is not staged blind.
+    view.hunk = Some(1);
+    let file = view.stage_key(Stage::Unstage).unwrap();
+    assert_eq!(paths(&file), (Stage::Unstage, vec!["a.rs".into()], None));
+    // Show diff: hunk keys and hunk staging work again.
+    view.unfold();
+    let hunk = view.stage_key(Stage::Unstage).unwrap();
+    assert_eq!(paths(&hunk), (Stage::Unstage, vec![], Some(20)));
+    view.hunk = None;
+    view.key(Key::NextHunk);
+    assert_eq!(view.hunk, Some(0));
+}

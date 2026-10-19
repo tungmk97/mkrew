@@ -1373,6 +1373,9 @@ impl GitView {
         let Diff::Shown(shown) = &self.diff else {
             return;
         };
+        if self.diff_collapsed() {
+            return;
+        }
         let count = shown.diff.hunks.len();
         if count == 0 {
             return;
@@ -1509,7 +1512,9 @@ impl GitView {
         if self.staging || Stage::of(selected.group) != Some(stage) {
             return None;
         }
+        // A collapsed diff hides its hunks: `s` / `u` take the whole file then.
         self.hunk
+            .filter(|_| !self.diff_collapsed())
             .and_then(|hunk| self.hunk_change(hunk))
             .or_else(|| self.file_change(selected))
     }

@@ -57,14 +57,18 @@ by telling the agent.
 
 ### To verify — 2026-10-19 Mark files as viewed in the Git view (ADR 0065, plan docs/superpowers/plans/2026-10-19-git-viewed-files.md)
 
-- [ ] **Restart the daemon first** (protocol 45, migration 0021). Migrations count by position, so
-  merge jira-board (0020) first before this branch's daemon touches a real database.
+- [ ] **Restart the daemon first** (protocol 45, migration 0021). Migrations count by position:
+  when this branch merges with master, `MIGRATIONS` must read `… 0019, 0020_run_exit_after,
+  0021_viewed_files`. Until then do not run this branch's daemon on the real data folder (do the
+  manual checks after the merge, or with a sandbox `MKREW_DATA_DIR`). jira-board's 0020 must move
+  to 0022 or later.
 - [ ] **Mark and dim (dark + light):** Git view on a workspace with ≥ 5 changed files. Each file row
   has a small box before the Stage button. Click one: ✓ in the accent color, the row dims (still
   readable), the header shows `Viewed 1/5` under the Working / Vs. base / History tabs, selection
   does not move. Select that file: the diff panel says "Marked as viewed." with **Show diff**; the
   toolbar shows a checked "Viewed" button. Show diff opens it; selecting another file and coming
   back collapses it again.
+  Light theme: the ✓ on a dimmed row reads clearly.
 - [ ] **Keyboard:** with the file list focused, `v` toggles the selected file (also from the
   palette: "Git: Mark file as viewed / not viewed"); the tooltip of the toolbar button shows V. Mark
   every file: the counter reads `Viewed 5/5 ✓`. `v` is not bound while the commit box or the

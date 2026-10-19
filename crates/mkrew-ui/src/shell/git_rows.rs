@@ -179,6 +179,7 @@ pub(crate) fn git_file_row(
     };
     let hover = theme.hover;
     let id = SharedString::from(format!("git-file-{group:?}-{}", file.path));
+    let dim = viewed && !picked;
     list_row(id.clone())
         .group(id.clone())
         // Indented under its commit inside the full-width row (a margin would overflow it).
@@ -199,8 +200,7 @@ pub(crate) fn git_file_row(
             }))
         })
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-        // A viewed row steps back; the selected one stays fully readable.
-        .when(viewed && !picked, |el| el.opacity(opacity::VIEWED))
+        // A viewed row steps back (its content, not the ✓ box); the selected one stays readable.
         .active(|style| style.opacity(opacity::ACTIVE))
         .child(
             div()
@@ -210,6 +210,7 @@ pub(crate) fn git_file_row(
                 .text_size(font_size::META)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
+                .when(dim, |el| el.opacity(opacity::VIEWED))
                 .tooltip(tooltip(theme, what, ""))
                 .child(letter),
         )
@@ -221,6 +222,7 @@ pub(crate) fn git_file_row(
                 .items_center()
                 .gap(px(space::XS))
                 .overflow_hidden()
+                .when(dim, |el| el.opacity(opacity::VIEWED))
                 .child(
                     div()
                         .min_w_0()
@@ -238,9 +240,9 @@ pub(crate) fn git_file_row(
                         .child(dir)
                 })),
         )
-        .children(
-            git_view::counts(file).map(|(added, removed)| change_counts(added, removed, theme)),
-        )
+        .children(git_view::counts(file).map(|(added, removed)| {
+            change_counts(added, removed, theme).when(dim, |el| el.opacity(opacity::VIEWED))
+        }))
         // Not for a History commit's files (never marked).
         .when(group != git_view::Group::Commit, |el| {
             let target = target.clone();

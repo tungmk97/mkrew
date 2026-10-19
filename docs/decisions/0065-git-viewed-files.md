@@ -53,7 +53,8 @@ write reloads settings in the UI and the daemon, and marks are an unbounded per-
   can drop them if the table ever grows.
 - Marks are per machine (the daemon's database), not in the repository.
 - Migration position risk: the store applies migrations by array position (`user_version`),
-  not by file number. On this branch `0021_viewed_files.sql` sits right after 0019, before the
-  jira-board branch's `0020`. Running this branch against a real database before jira-board
-  lands would record a wrong `user_version`. Merge jira-board first and re-check the
-  migration numbers and order at merge time.
+  not by file number. When this branch merges with master (which has `0020_run_exit_after`),
+  `MIGRATIONS` must read `… 0019, 0020_run_exit_after, 0021_viewed_files`. Until then this
+  branch's daemon must not run on the real data folder (a wrong `user_version` would be
+  recorded); use a sandbox `MKREW_DATA_DIR`. The jira-board migration 0020 must move to 0022
+  or later.
