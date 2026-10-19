@@ -28,6 +28,8 @@ pub struct Settings {
     pub features: FeatureSettings,
     /// `[web]`: phone access (ADR 0053).
     pub web: WebSettings,
+    /// `[jira]`: Jira issues on the Board (SPEC §20I, ADR 0062).
+    pub jira: JiraSettings,
 }
 
 /// `[features]` (ADR 0046): modules that are off unless switched on.
@@ -155,6 +157,29 @@ impl Default for VoiceSettings {
             language: String::new(),
             prompt: VOICE_PROMPT_DEFAULT.into(),
             max_seconds: 120,
+        }
+    }
+}
+
+/// `[jira]` (SPEC §20I, ADR 0062): the Jira Cloud site the Board reads issues from.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JiraSettings {
+    /// `acme.atlassian.net` (with or without `https://`); empty = Jira off.
+    pub site: String,
+    /// The Atlassian account email used with the API token.
+    pub email: String,
+    /// Name of the environment variable holding the API token; the token is never read
+    /// from this file.
+    pub api_token_env: String,
+}
+
+impl Default for JiraSettings {
+    fn default() -> Self {
+        Self {
+            site: String::new(),
+            email: String::new(),
+            api_token_env: "JIRA_API_TOKEN".into(),
         }
     }
 }
@@ -427,7 +452,15 @@ pub fn template() -> &'static str {
      # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
      # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
      [web]\n\
-     # enabled = false\n"
+     # enabled = false\n\
+     \n\
+     # Jira issues on the Board (Tasks | Jira): the Jira Cloud site to read from. The API token\n\
+     # comes from the environment variable named by api_token_env, never from this file.\n\
+     # site: like acme.atlassian.net; empty turns Jira off.\n\
+     [jira]\n\
+     # site = \"\"\n\
+     # email = \"\"\n\
+     # api_token_env = \"JIRA_API_TOKEN\"\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -499,6 +532,9 @@ mod tests {
             !settings.web.enabled,
             "phone access is off until the user turns it on"
         );
+        assert_eq!(settings.jira.site, "");
+        assert_eq!(settings.jira.email, "");
+        assert_eq!(settings.jira.api_token_env, "JIRA_API_TOKEN");
         assert_eq!(settings.composer.file_ref, "@{path}");
         assert_eq!(settings.zed.follow_debounce_ms, 1500);
         assert_eq!(settings.voice.base_url, "https://api.groq.com/openai/v1");
@@ -608,6 +644,7 @@ enabled = true
                     turns: false,
                 },
                 web: WebSettings { enabled: true },
+                jira: JiraSettings::default(),
             }
         );
     }
@@ -654,6 +691,27 @@ enabled = true
         // The key itself never lives in the file (SPEC §20G).
         let message = parse_err("[voice]\napi_key = \"gsk_x\"\n");
         assert!(message.contains("unknown field `api_key`"), "{message}");
+    }
+
+    #[test]
+    fn jira_section_parses_and_rejects_a_token() {
+        let jira = parse(
+            Path::new("settings.toml"),
+            "[jira]\nsite = \"acme.atlassian.net\"\nemail = \"an@acme.com\"\napi_token_env = \"ACME_JIRA\"\n",
+        )
+        .unwrap()
+        .jira;
+        assert_eq!(
+            jira,
+            JiraSettings {
+                site: "acme.atlassian.net".into(),
+                email: "an@acme.com".into(),
+                api_token_env: "ACME_JIRA".into(),
+            }
+        );
+        // The token itself never lives in the file (SPEC §20I).
+        let message = parse_err("[jira]\napi_token = \"x\"\n");
+        assert!(message.contains("unknown field `api_token`"), "{message}");
     }
 
     #[test]
