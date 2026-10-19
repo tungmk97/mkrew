@@ -549,7 +549,7 @@ pub(crate) fn viewed_box(on: bool, theme: &Theme) -> gpui::Div {
         .justify_center()
         .rounded(px(radius::SMALL))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
+        .border_color(rgb(theme.text_muted))
         .text_size(font_size::META)
         .text_color(rgb(theme.accent))
         .child(if on { "✓" } else { "" })
