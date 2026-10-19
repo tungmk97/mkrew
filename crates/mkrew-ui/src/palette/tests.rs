@@ -15,6 +15,7 @@ fn context(view: View) -> Context {
         fan_out: false,
         agents: false,
         agent_pane: false,
+        markable: false,
         run_stopped: false,
         run_live: false,
         features: FeatureSettings {
@@ -567,4 +568,20 @@ fn the_query_takes_select_all_and_ctrl_backspace() {
     assert!(palette.query_selected());
     palette.key(Key::Insert("view".into()));
     assert_eq!((palette.query(), palette.query_selected()), ("view", false));
+}
+
+#[test]
+fn mark_unread_is_listed_only_for_a_session_that_can_be_marked() {
+    assert!(!Extra::MarkUnread.available(&context(View::Terminals)));
+    let marked = Context {
+        markable: true,
+        ..context(View::Terminals)
+    };
+    assert!(Extra::MarkUnread.available(&marked));
+    let entry = entries(&Keymap::defaults(), &marked, &[], &[], &[])
+        .into_iter()
+        .find(|entry| entry.action == Action::Extra(Extra::MarkUnread))
+        .expect("listed");
+    assert_eq!(entry.title, "Agent: Mark unread");
+    assert_eq!(entry.shortcut, "", "palette-only: no key is bound");
 }

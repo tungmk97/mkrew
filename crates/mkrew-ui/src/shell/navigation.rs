@@ -380,6 +380,9 @@ impl Shell {
             fan_out,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
             agent_pane: self.focused_agent().is_some(),
+            markable: self
+                .focused_session()
+                .is_some_and(|id| self.can_mark_unread(id)),
             run_stopped: workspace.is_some()
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
             run_live: run_state.any_live(),
@@ -541,6 +544,11 @@ impl Shell {
                     }
                     Extra::RunSetup => self.open_run_setup(project_id, false, window, cx),
                     Extra::RunShowTab => self.show_run_tab(project_id, window, cx),
+                    Extra::MarkUnread => {
+                        if let Some(session) = self.focused_session() {
+                            self.mark_unread(session, cx);
+                        }
+                    }
                     // Handled above: it needs no workspace.
                     Extra::OpenSettings => self.open_settings(cx),
                     Extra::PhoneAccess => self.open_phone_access(window, cx),

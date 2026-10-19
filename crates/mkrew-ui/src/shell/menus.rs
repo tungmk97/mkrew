@@ -577,6 +577,7 @@ impl Shell {
         let renamable = mkrew_core::run::command_name(session).is_none();
         let current = session.color.as_deref();
         let pinned = session.pinned;
+        let markable = inbox::can_mark_unread(session, &self.viewed);
         let separator = || {
             div()
                 .h(px(theme::BORDER_WIDTH))
@@ -598,6 +599,21 @@ impl Shell {
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.pin_session(session_id, !pinned, window, cx);
                     })),
+            )
+            .child(
+                menu_item("pane-menu-unread".into(), theme)
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(rgb(theme.text))
+                            .child("Mark unread"),
+                    )
+                    .when(markable, |el| {
+                        el.on_click(cx.listener(move |shell, _, _, cx| {
+                            shell.mark_unread(session_id, cx);
+                        }))
+                    })
+                    .when(!markable, |el| el.opacity(opacity::DISABLED)),
             )
             .child(separator())
             .child(

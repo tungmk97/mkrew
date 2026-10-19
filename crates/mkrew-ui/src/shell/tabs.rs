@@ -343,6 +343,26 @@ impl Shell {
         );
     }
 
+    /// Whether "Mark unread" applies to `session_id` (a finished agent not already in Needs you).
+    pub(crate) fn can_mark_unread(&self, session_id: Ulid) -> bool {
+        (self.sidebar.sessions().iter())
+            .find(|s| s.id == session_id)
+            .is_some_and(|session| inbox::can_mark_unread(session, &self.viewed))
+    }
+
+    /// "Mark unread" (pane menu, palette): the finished agent session is back in Needs you until
+    /// its pane is focused again (ADR 0064). UI memory only, like "viewed".
+    pub(crate) fn mark_unread(&mut self, session_id: Ulid, cx: &mut Context<'_, Self>) {
+        self.pane_menu = None;
+        if let Some(session) = (self.sidebar.sessions().iter())
+            .find(|s| s.id == session_id)
+            .filter(|session| inbox::can_mark_unread(session, &self.viewed))
+        {
+            self.viewed.mark_unread(session);
+        }
+        cx.notify();
+    }
+
     /// "Pin" / "Unpin" of a tab (tab menu): `tab.pin`. The `tab.updated` event that follows
     /// moves the tab.
     pub(crate) fn pin_tab(

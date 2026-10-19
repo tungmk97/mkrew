@@ -36,9 +36,15 @@ impl Shell {
             cx.notify();
         })
         .detach();
-        // Coming back to the window views the focused pane (a done session leaves the Inbox).
-        cx.observe_window_activation(window, |_, _, cx| cx.notify())
-            .detach();
+        // Coming back to the window views the focused pane (a done session leaves the Inbox),
+        // even one marked unread while it kept the keyboard.
+        cx.observe_window_activation(window, |shell, window, cx| {
+            if window.is_window_active() {
+                shell.viewed.activated();
+            }
+            cx.notify();
+        })
+        .detach();
         // Unsaved Files changes (§2.5): the close button asks first.
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
