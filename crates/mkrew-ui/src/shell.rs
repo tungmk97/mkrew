@@ -37,6 +37,7 @@ mod phone_access;
 mod run;
 mod sessions;
 mod tabs;
+mod toasts;
 mod task_dialog;
 pub(crate) mod thread_panel;
 mod voice_input;

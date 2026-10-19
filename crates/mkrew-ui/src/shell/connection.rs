@@ -91,6 +91,10 @@ impl Shell {
                         }
                         cx.notify();
                     }
+                    // Toasts hide here, within one tick of their time (SPEC §14).
+                    if shell.toasts.expire(Instant::now()) {
+                        cx.notify();
+                    }
                     shell.sync_thread(cx);
                     let sessions = shell.sidebar.sessions();
                     let board_due = shell.workspace.is_some_and(|project_id| {
@@ -410,6 +414,7 @@ impl Shell {
             launched: Some(launched),
             first_frame_logged: false,
             sidebar_view: None,
+            toasts: Toasts::default(),
         }
     }
 

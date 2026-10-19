@@ -1366,7 +1366,14 @@ The terminal is the hero; everything else steps back.
   #FB923C #FACC15 #A3E635 #4ADE80 #2DD4BF #60A5FA #C084FC #F472B6 / light #DC2626 #D9560B
   #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
   hues ≥ 12° apart).
-- In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
+- In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
+  the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
+  each hides after about 4 s (`TOAST_DURATION`, expired on the 500 ms status tick, so 4.0–4.5 s) or
+  on its ✕. Never blocking: no focus, no animation, only the card itself takes clicks. Two kinds,
+  always icon + text: info (Lucide `info`, `accent-text`) and error (Lucide `circle-alert`,
+  `status-exited`). Used for results of an action that has no place of its own (a failure after its
+  dialog closed or its view moved, a failed settings write, a copy); a failure that has one (a
+  dialog's error row, the commit box, the tab bar notice, a card notice) stays there.
 - Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
   (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
   (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card

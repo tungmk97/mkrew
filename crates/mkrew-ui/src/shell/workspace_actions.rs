@@ -325,6 +325,7 @@ impl Shell {
         self.file_menu = None;
         if let Some(full) = self.target_file(project_id, target, path) {
             cx.write_to_clipboard(ClipboardItem::new_string(full.display().to_string()));
+            self.toast_info("Path copied", cx);
         }
         cx.notify();
     }

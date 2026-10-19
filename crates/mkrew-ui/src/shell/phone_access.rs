@@ -80,7 +80,8 @@ impl Shell {
     }
 
     /// Start / Stop: `[web] enabled` in `settings.toml`; the daemon's settings watcher does the
-    /// rest. A failed write shows in the dialog (there is no toast layer).
+    /// rest. A failed write shows in the dialog, which stays open (a failure with a place of its
+    /// own is not a toast, SPEC §14).
     pub(crate) fn set_phone_enabled(
         &mut self,
         enabled: bool,
@@ -125,6 +126,8 @@ impl Shell {
     pub(crate) fn copy_phone_link(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(text) = self.phone.copy_link() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+            // The text says "Link copied", never the link: it carries the access token.
+            self.toast_info("Link copied", cx);
         }
         cx.notify();
     }

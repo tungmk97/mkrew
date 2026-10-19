@@ -100,6 +100,7 @@ use mkrew_ui::terminal::view::{OpenLink, TerminalPane};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::toast::{self, Toasts};
 use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
@@ -601,6 +602,9 @@ struct Shell {
     /// The sidebar as its own view (see [`shell::sidebar_view::SidebarView`]); made on first
     /// render.
     sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
+    /// The in-app toasts (SPEC §14): pushed by `toast_error` / `toast_info`, expired on the
+    /// status tick.
+    toasts: Toasts,
 }
 
 impl Render for Shell {
@@ -791,7 +795,8 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
-                    ),
+                    )
+                    .children(self.render_toasts(&theme, cx)),
             )
     }
 }
