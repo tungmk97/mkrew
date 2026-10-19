@@ -65,6 +65,18 @@ impl Shell {
         let collapsed = self.collapsed_groups.contains(&(project_id, RowGroup::Run));
         let mut label =
             self.group_label(project_id, RowGroup::Run, rows.len(), collapsed, theme, cx);
+        // Folded, the label still says what runs: `:8082 :5180` (ADR 0062).
+        if collapsed && let Some(ports) = summary.ports_text() {
+            label = label.child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(theme.terminal_font_family.clone())
+                    .font_weight(FontWeight(weight::REGULAR))
+                    .text_color(rgb(theme.status_done))
+                    .child(ports),
+            );
+        }
         // Restart all / Stop all on hover while anything runs (not a fold: they stop the click).
         if summary.any_live() {
             let group_id = group_label_id(project_id, RowGroup::Run);
@@ -620,71 +632,72 @@ impl Shell {
                 )
                 .into_any_element()
         } else {
-            // A workspace's AGENTS, TERMINAL and RUN groups hang under a faint guide line.
-            let guide = |rows: Vec<gpui::AnyElement>| {
-                div()
-                    .ml(px(space::L))
-                    .pl(px(space::XS))
-                    .border_l(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.subtle))
-                    .flex()
-                    .flex_col()
-                    .children(rows)
-                    .into_any_element()
-            };
             let filtering = self.sidebar.filtering();
             let mut list = Vec::new();
             let mut agents = Vec::new();
             let mut terminals = Vec::new();
-            // The open workspace whose rows are being gathered: its RUN group closes them.
+            // The workspace being gathered: its header row (with its menu) and its color.
+            let mut card: Option<(gpui::AnyElement, Option<u32>)> = None;
+            // Its id while it is open: its RUN group closes the rows.
             let mut open: Option<Ulid> = None;
             let mut empty = Vec::new();
-            // The AGENTS and TERMINAL labels only when the workspace shows another group too.
+            // Ends the gathered workspace as one card: header, agents (never labeled), the
+            // TERMINAL group (labeled only beside agents or a RUN group), the RUN group.
             let close = |list: &mut Vec<gpui::AnyElement>,
+                         card: Option<(gpui::AnyElement, Option<u32>)>,
                          agents: &mut Vec<gpui::AnyElement>,
                          terminals: &mut Vec<gpui::AnyElement>,
                          open: Option<Ulid>,
                          cx: &mut Context<'_, Self>| {
+                let mut rows = std::mem::take(agents);
+                let Some((header, color)) = card else {
+                    terminals.clear();
+                    return;
+                };
                 let shown_project = open.filter(|_| !filtering);
                 let run = shown_project
                     .map(|project_id| self.render_run_group(project_id, theme, cx))
                     .unwrap_or_default();
-                let labeled = [agents.len(), terminals.len(), run.len()]
-                    .iter()
-                    .filter(|&&n| n > 0)
-                    .count()
-                    > 1;
-                let mut rows = Vec::new();
-                let groups = [(RowGroup::Agents, agents), (RowGroup::Terminal, terminals)];
-                for (group, rows_of) in groups {
-                    // A label (and so folding) needs the workspace's own, unfiltered rows.
-                    match shown_project.filter(|_| labeled && !rows_of.is_empty()) {
-                        Some(project_id) => {
-                            let key = (project_id, group);
-                            let collapsed = self.collapsed_groups.contains(&key);
-                            let count = rows_of.len();
-                            rows.push(
-                                self.group_label(project_id, group, count, collapsed, theme, cx)
-                                    .into_any_element(),
-                            );
-                            if collapsed {
-                                rows_of.clear();
-                            } else {
-                                rows.append(rows_of);
-                            }
+                // A label (and so folding) needs the workspace's own, unfiltered rows.
+                let labeled = !terminals.is_empty() && (!rows.is_empty() || !run.is_empty());
+                match shown_project.filter(|_| labeled) {
+                    Some(project_id) => {
+                        let collapsed =
+                            (self.collapsed_groups).contains(&(project_id, RowGroup::Terminal));
+                        let count = terminals.len();
+                        rows.push(
+                            self.group_label(
+                                project_id,
+                                RowGroup::Terminal,
+                                count,
+                                collapsed,
+                                theme,
+                                cx,
+                            )
+                            .into_any_element(),
+                        );
+                        if collapsed {
+                            terminals.clear();
+                        } else {
+                            rows.append(terminals);
                         }
-                        None => rows.append(rows_of),
                     }
+                    None => rows.append(terminals),
                 }
                 rows.extend(run);
-                if !rows.is_empty() {
-                    list.push(guide(rows));
-                }
+                list.push(workspace_card(header, color, rows, theme));
             };
             for row in view.rows {
                 match row {
                     Row::Workspace(row) => {
-                        close(&mut list, &mut agents, &mut terminals, open.take(), cx);
+                        close(
+                            &mut list,
+                            card.take(),
+                            &mut agents,
+                            &mut terminals,
+                            open.take(),
+                            cx,
+                        );
                         let (project_id, active) =
                             (row.project_id, self.workspace == Some(row.project_id));
                         // Nothing to show under it: on the "N empty workspaces" line instead
@@ -694,8 +707,10 @@ impl Shell {
                             continue;
                         }
                         open = row.expanded.then_some(project_id);
+                        let color =
+                            (row.color.as_deref()).and_then(|name| theme.workspace_color(name));
                         let row = workspace_row(row, active, theme, cx);
-                        list.push(self.with_workspace_menu(row, project_id, theme, cx));
+                        card = Some((self.with_workspace_menu(row, project_id, theme, cx), color));
                     }
                     Row::Session(row) => {
                         let (selected, session_id) =
@@ -730,7 +745,14 @@ impl Shell {
                     Row::NoSessions { .. } => {}
                 }
             }
-            close(&mut list, &mut agents, &mut terminals, open, cx);
+            close(
+                &mut list,
+                card.take(),
+                &mut agents,
+                &mut terminals,
+                open,
+                cx,
+            );
             if !empty.is_empty() {
                 list.push(self.render_empty_workspaces(empty, theme, cx));
             }
@@ -746,10 +768,12 @@ impl Shell {
                         .into_any_element(),
                 );
             }
+            // Cards apart from each other and from the sidebar edges.
             div()
                 .flex()
                 .flex_col()
-                .px(px(space::XS))
+                .gap(px(space::S))
+                .p(px(space::S))
                 .children(list)
                 .into_any_element()
         };
@@ -1042,7 +1066,7 @@ impl Shell {
         }
     }
 
-    /// A group label under a workspace (`⌄ AGENTS 3`, `› RUN 2` while folded): a fold chevron,
+    /// A group label under a workspace (`⌄ TERMINAL 2`, `› RUN 2` while folded): a fold chevron,
     /// small muted caps and the row count, with room above to set the groups apart. A click
     /// folds the group to this line. Its hover group is [`group_label_id`].
     pub(crate) fn group_label(
@@ -1112,7 +1136,8 @@ fn group_label_id(project_id: Ulid, group: RowGroup) -> SharedString {
     SharedString::from(format!("group-{project_id}-{group:?}"))
 }
 
-/// A workspace header row: chevron, avatar, bold name, pin; on the right its status: a
+/// A workspace header row (the top of its card, ADR 0062): chevron, avatar, bold name, pin; on
+/// the right its status: a
 /// `● 1 working` pill (pulsing dot) while an agent works, else a muted `2 idle`, plus an amber
 /// `? 1` while one needs you; the ⋯ menu on hover. Tooltip: the folder. A click on the chevron
 /// only expands / collapses the row; elsewhere it shows the workspace.
@@ -1210,7 +1235,7 @@ pub(crate) fn workspace_row(
                 .flex_1()
                 .min_w_0()
                 .truncate()
-                .text_size(font_size::BODY)
+                .text_size(font_size::CARD_TITLE)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(theme.text))
                 .child(row.name),
@@ -1251,6 +1276,41 @@ pub(crate) fn workspace_row(
                 shell.open_workspace_menu(project_id, window, cx);
             })),
         )
+        .into_any_element()
+}
+
+/// A workspace as one card (ADR 0062): its header row, then its rows indented under it. A
+/// colored workspace gets a thin stripe of its color along the card's left edge; a collapsed
+/// one is just the header.
+fn workspace_card(
+    header: gpui::AnyElement,
+    color: Option<u32>,
+    rows: Vec<gpui::AnyElement>,
+    theme: &Theme,
+) -> gpui::AnyElement {
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .p(px(space::XS))
+        .rounded(px(radius::MEDIUM))
+        .bg(rgb(theme.card))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.border))
+        .children(color.map(|color| {
+            div()
+                .absolute()
+                .left_0()
+                .top(px(space::S))
+                .bottom(px(space::S))
+                .w(px(theme::WORKSPACE_STRIPE_WIDTH))
+                .rounded(px(radius::SMALL))
+                .bg(rgb(color))
+        }))
+        .child(header)
+        .when(!rows.is_empty(), |el| {
+            el.child(div().pl(px(space::L)).flex().flex_col().children(rows))
+        })
         .into_any_element()
 }
 
@@ -1321,10 +1381,6 @@ pub(crate) fn session_row(
         .when(selected, |el| {
             el.bg(rgb(theme.selected))
                 .border_color(rgb(theme.selected_ring))
-        })
-        // A finish not yet viewed: tinted until the pane is focused.
-        .when(unseen && !selected, |el| {
-            el.bg(theme.tint(theme.status_done))
         })
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
@@ -1513,6 +1569,8 @@ pub(crate) fn compact_session_row(
         .rounded(px(radius::SMALL))
         .cursor_pointer()
         .when(selected, |el| el.bg(rgb(theme.selected)))
+        // A finish not yet viewed: tinted until the pane is focused (the rail has no bold title
+        // to say it, ADR 0062).
         .when(row.unseen && !selected, |el| {
             el.bg(theme.tint(theme.status_done))
         })

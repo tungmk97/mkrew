@@ -15,6 +15,21 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-19 Sidebar workspace cards (ADR 0062)
+
+- [ ] **Cards (dark + light):** with 3+ workspaces open, each is a separate rounded card, 8 px
+  apart, visible on the sidebar in light theme too; a colored workspace has a thin stripe of its
+  color on the left, an uncolored one none. A collapsed workspace is a card with only its
+  header. The name is a bit larger than the rows.
+- [ ] **Groups:** no `AGENTS` line; a workspace with agents and shells shows `TERMINAL N`; fold
+  RUN → its label shows the ports (`:8082 :5180`) in green.
+- [ ] **Finished agent:** let an agent finish while another pane is focused → its row has a
+  bold title but no green fill; focusing it clears the bold (a `done` agent's ✓ stays while it
+  is done). The compact rail still tints the unseen row.
+- [ ] **Still works:** filter text and chips (only matching cards, no TERMINAL label), drag a
+  row inside a card (accent gap line), right-click a header / row, hover peek,
+  `N empty workspaces ▸`.
+
 ### To verify — 2026-10-15 Ask AI dialog (ADR 0061)
 
 - [ ] **Restart the daemon first** (protocol 43).

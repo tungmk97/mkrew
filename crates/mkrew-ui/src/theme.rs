@@ -305,7 +305,7 @@ pub const AGENT_CHIP_SIZE: f32 = 18.0;
 /// Side of an agent logo inside its chip (ADR 0058): a little under [`ICON_SIZE_SMALL`], so the
 /// solid marks do not crowd the row text.
 pub const AGENT_LOGO_SIZE: f32 = 12.0;
-/// The fold chevron of a sidebar group label (AGENTS / TERMINAL / RUN): under the row
+/// The fold chevron of a sidebar group label (TERMINAL / RUN): under the row
 /// chevrons, so the small caps label leads.
 pub const GROUP_CHEVRON_SIZE: f32 = 12.0;
 
@@ -926,6 +926,8 @@ pub const SIDEBAR_FOOTER_HEIGHT: f32 = 32.0;
 pub const WORKSPACE_AVATAR_SIZE: f32 = 20.0;
 /// The tiny avatars on the sidebar's "N empty workspaces" line.
 pub const WORKSPACE_AVATAR_TINY: f32 = 14.0;
+/// The workspace color stripe on the left edge of a sidebar workspace card (ADR 0062).
+pub const WORKSPACE_STRIPE_WIDTH: f32 = 3.0;
 /// A status dot (run pill, tab, RUN row, working pill): px at the default font size.
 pub const STATUS_DOT_LARGE: f32 = 6.0;
 /// One breath of a pulsing status dot (working, running); its lowest opacity.

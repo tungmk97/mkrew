@@ -251,8 +251,8 @@ pub struct SessionRow {
     pub state_changed_at: i64,
     /// Pinned sessions lead their workspace's list (SPEC §10).
     pub pinned: bool,
-    /// Finished (done, or idle right after working) and not viewed since: the row is
-    /// highlighted until its pane is focused ([`inbox::needs_you`]).
+    /// Finished (done, or idle right after working) and not viewed since: a semibold title in the
+    /// full sidebar, a tint in the compact rail, until its pane is focused ([`inbox::needs_you`]).
     pub unseen: bool,
 }
 

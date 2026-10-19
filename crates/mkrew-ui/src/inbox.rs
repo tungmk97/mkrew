@@ -1,6 +1,6 @@
 //! The "needs you" set (SPEC §10, §11): every session that needs input, or finished (done, or
 //! an agent that went quiet after working) and not yet viewed, newest first. It feeds the
-//! sidebar's `Needs you` chip, its highlighted rows, its footer and "next Inbox entry". Pure and
+//! sidebar's `Needs you` chip, its bold rows, its footer and "next Inbox entry". Pure and
 //! tested headlessly.
 
 use std::collections::HashMap;
@@ -64,7 +64,7 @@ impl Viewed {
 
 /// A session that needs the user: it asks for input, or it finished (done, or idle right after
 /// working) and its pane was not focused since (a later finish shows again). The one definition
-/// behind the Inbox entries, the sidebar chip, its highlighted rows and the sidebar footer.
+/// behind the Inbox entries, the sidebar chip, its bold rows and the sidebar footer.
 pub fn needs_you(session: &Session, viewed: &Viewed) -> bool {
     match session.state {
         SessionState::NeedsInput => true,

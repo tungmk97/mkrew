@@ -391,8 +391,7 @@ struct Shell {
     new_menu: bool,
     /// The sidebar's "N empty workspaces" line is expanded (in memory only).
     empty_workspaces_open: bool,
-    /// Sidebar groups (a workspace's AGENTS / TERMINAL / RUN) folded to their label (in memory
-    /// only).
+    /// Sidebar groups (a workspace's TERMINAL / RUN) folded to their label (in memory only).
     collapsed_groups: HashSet<(Ulid, RowGroup)>,
     /// Agent panes start at reading width (`[ui] reading_width`); a pane toggled since holds
     /// its own choice here (in memory only). Shell and run panes default to full width.

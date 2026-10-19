@@ -748,15 +748,19 @@ The session panel (below) is a third column right of Terminals while open.
   above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
   you* is what the Inbox listed before: needs_input, plus done and not yet viewed (ADR 0036).
   While a filter or chip is on, only workspaces with a match show, open.
-  A workspace row: chevron, colored letter avatar, bold name, 📌, then its status: a
+  Each workspace is a card (ADR 0062): `card` fill, faint border, radius 8, 8 px between cards,
+  a 3 px stripe of the workspace color on its left edge (none without a color). Its header row:
+  chevron, colored letter avatar, bold name (card-title size), 📌, then its status: a
   `● 1 working` pill (pulsing dot) while an agent works, else muted `2 idle`, plus amber `? N`
-  while N need input; the ⋯ menu on hover (or right-click). Its sessions hang under a 1 px
-  guide line: agent glyph (in an accent chip while working; its hover says the state), title
+  while N need input; the ⋯ menu on hover (or right-click). Its sessions sit indented in the
+  card, agents first without a label (TERMINAL is labeled beside agents or RUN): agent glyph
+  (in an accent chip while working; its hover says the state), title
   (ellipsized), the glyph of a waiting / done agent (none while idle), the time, ✕ on hover; the
   selected row is ringed. Run sessions are not session rows: a **RUN** group under the
   workspace lists each run command (green dot running, hollow gray stopped, red exited), its
-  name and its ports in green monospace; a running one opens its pane on click (right-click:
-  pane menu, ✕ on hover), a stopped one has ▶ on hover. Workspaces with no session and no run
+  name and its ports in green monospace (folded, its label shows the ports); a running one
+  opens its pane on click (right-click: pane menu, ✕ on hover), a stopped one has ▶ on hover.
+  Workspaces with no session and no run
   command (except the shown one and pinned ones) sit on one line at the bottom,
   `N empty workspaces ▸` with their tiny avatars; a click lists them as normal rows.
   The **footer** (inside the sidebar's width) has the Inbox state (`Inbox clear`, or amber
@@ -778,7 +782,8 @@ The session panel (below) is a third column right of Terminals while open.
   sidebar (`session.remove`; it asks first and the session is stopped). A session that exits needs
   no removing (ADR 0033).
 - **Color:** the workspace menu's swatches give a workspace one of 9 colors, shown as a letter
-  avatar tinted with the color before its name (decoration only, ADR 0020, ADR 0027).
+  avatar tinted with the color before its name and a 3 px stripe on its sidebar card
+  (decoration only, ADR 0020, ADR 0027, ADR 0062).
   A pane has its own color too: right-click its header → Change color (same palette; ADR 0037).
 - **Pin:** the workspace menu, the pane menu (right-click a sidebar session row or a pane header)
   and the tab menu have Pin / Unpin (`project.update` `pinned`, `session.pin`, `tab.pin`, §7). A
@@ -984,7 +989,8 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
 - Workspace row: `● N working` (a pill, pulsing dot) while an agent works, else `N idle`; amber
   `? N` while N need input; no token total (the session panel shows usage). Sidebar session rows
-  hang under a faint guide line: agent chip (an accent chip while working; its hover gives the
+  sit indented in the workspace's card (ADR 0062): agent chip (an accent chip while working;
+  its hover gives the
   state in words and when it changed), title, the state glyph of a waiting or done agent (none
   while idle) and, on the right, only the time of a working or idle session (`17m`). Agent rows,
   selected or not, show just the session/task title on one line (the chip names the agent);
@@ -1277,7 +1283,8 @@ The terminal is the hero; everything else steps back.
 2. **Soft.** Moderate corner radius; very light shadows only on floating layers (popover, dialog,
    palette). No saturated colors besides the accent and status colors. Workspace colors
    (ADR 0020) and pane colors (ADR 0037) are the exception: a small tinted letter avatar per
-   workspace, and a tinted agent chip with a thin line under the header of a colored pane.
+   workspace and a 3 px stripe on its sidebar card, and a tinted agent chip with a thin line
+   under the header of a colored pane.
 3. **One accent color** for selection, primary buttons, focus. Status colors only for agent states.
 4. **Progressive disclosure.** Secondary actions on cards, pane headers and rows appear on hover/focus.
 5. **Gentle motion.** Panels, view switches, drag & drop: 120–180 ms ease-out. Small, slow working dots.
