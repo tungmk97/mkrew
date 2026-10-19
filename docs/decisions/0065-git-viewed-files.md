@@ -16,7 +16,7 @@ write reloads settings in the UI and the daemon, and marks are an unbounded per-
 ## Decision
 
 - A mark is a row `viewed_file(project_id, worktree_task_id, repo, list, path, hash, marked_at)`
-  in the daemon's SQLite (migration 0021). `list` = `working` (Staged, Unstaged, Untracked),
+  in the daemon's SQLite (migration 0022). `list` = `working` (Staged, Unstaged, Untracked),
   `base`, or `since:<checkpoint>`; `worktree_task_id` and `repo` are `''` for the project
   folder / the workspace's own repository. `hash` = FNV-1a 64 of the text `git diff` prints for
   the file when it was marked (binary changes count: the text holds the blob ids).
@@ -26,7 +26,7 @@ write reloads settings in the UI and the daemon, and marks are an unbounded per-
   diff cache and returns `ViewedFile { path, staged }` for each mark that still stands. Marks
   whose hash no longer matches (the diff changed, or the file no longer changes) are deleted
   there. A `working` mark stands on the staged or the unstaged side, whichever hashes the same:
-  staging a whole viewed file keeps it viewed. Protocol 45.
+  staging a whole viewed file keeps it viewed. Protocol 46.
 - UI: a box on each file row, `v` in the Git view (SPEC §13), a toolbar button, a palette
   command; viewed rows dim, the selected viewed file's diff collapses ("Show diff" opens it),
   the header shows `Viewed N/M`. Not in the History.
@@ -53,8 +53,8 @@ write reloads settings in the UI and the daemon, and marks are an unbounded per-
   can drop them if the table ever grows.
 - Marks are per machine (the daemon's database), not in the repository.
 - Migration position risk: the store applies migrations by array position (`user_version`),
-  not by file number. When this branch merges with master (which has `0020_run_exit_after`),
-  `MIGRATIONS` must read `… 0019, 0020_run_exit_after, 0021_viewed_files`. Until then this
-  branch's daemon must not run on the real data folder (a wrong `user_version` would be
-  recorded); use a sandbox `MKREW_DATA_DIR`. The jira-board migration 0020 must move to 0022
-  or later.
+  not by file number. Master (6240b22, Jira) already has `0020_run_exit_after` and
+  `0021_project_jira_keys`, so after merging master `MIGRATIONS` ends
+  `… 0019, 0020_run_exit_after, 0021_project_jira_keys, 0022_viewed_files`, and the protocol is 46
+  (Jira is 45). Until master is merged this branch's daemon must not run on the real data
+  folder (a wrong `user_version` would be recorded); use a sandbox `MKREW_DATA_DIR`.
