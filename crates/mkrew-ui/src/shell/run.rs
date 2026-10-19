@@ -15,7 +15,8 @@ impl Shell {
 
     /// `project.run_start` / `run_restart` / `run_stop` (`name` = one command, `None` = all).
     /// Running from all-stopped shows the run tab; restarts keep the view (SPEC §10). A
-    /// failure shows in the sidebar notice.
+    /// failure shows in the sidebar notice. An open Run menu stays open and shows the new
+    /// states; a click outside it closes it.
     pub(crate) fn run_action(
         &mut self,
         project_id: Ulid,
@@ -24,8 +25,6 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.run_menu = None;
-        cx.notify();
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -391,7 +390,7 @@ impl Shell {
             let running = matches!(row.state, RowState::Running(_));
             let (color, hollow) = match row.state {
                 RowState::Running(_) => (theme.status_done, false),
-                RowState::Exited(_) => (theme.status_exited, false),
+                RowState::Exited => (theme.status_exited, false),
                 RowState::Stopped => (theme.status_idle, true),
             };
             let controls: &[(Icon, &'static str, RunAction)] = if running {
@@ -545,8 +544,9 @@ impl Shell {
         .into_any_element()
     }
 
-    /// "Run setup": one card per command, "+ Add command", "Start with the daemon", errors,
-    /// Cancel and Save (Ctrl+Enter).
+    /// "Run setup": a header naming the workspace, one card per command (number, name,
+    /// Duplicate / Remove; Name + Folder, Command, Env file, Env), "+ Add command" under the
+    /// cards, errors, then a footer with "Start with the daemon", Cancel and Save (Ctrl+Enter).
     pub(crate) fn render_run_setup(
         &self,
         setup: &RunSetup,
@@ -557,13 +557,34 @@ impl Shell {
         if let Some(picker) = &setup.picker {
             return self.render_run_picker(picker, theme, cx);
         }
-        let label = |text: &'static str| {
+        // A field's caption, with a muted hint after it.
+        let label = |text: &'static str, hint: &'static str| {
             div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
                 .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
-                .child(text)
+                .child(
+                    div()
+                        .font_weight(FontWeight(weight::MEDIUM))
+                        .text_color(rgb(theme.text_dim))
+                        .child(text),
+                )
+                .when(!hint.is_empty(), |el| {
+                    el.child(div().text_color(rgb(theme.text_muted)).child(hint))
+                })
         };
+        let group = |caption: gpui::Div, field: gpui::AnyElement| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(space::XS))
+                .child(caption)
+                .child(field)
+        };
+        let mono = theme.terminal_font_family.clone();
         let field = |cx: &mut Context<'_, Self>,
                      i: usize,
                      which: Field,
@@ -614,7 +635,7 @@ impl Shell {
             .id("run-cards")
             .flex()
             .flex_col()
-            .gap(px(space::S))
+            .gap(px(space::M))
             // Room for the scroll bar over the right edge.
             .pr(px(theme::SCROLLBAR_WIDTH))
             .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
@@ -631,7 +652,8 @@ impl Shell {
                 "run-dir-browse",
                 "Choose a folder in the workspace",
             );
-            let command = field(cx, i, Field::Command, "run-command", "e.g. npm run dev");
+            let command = field(cx, i, Field::Command, "run-command", "e.g. npm run dev")
+                .font_family(mono.clone());
             let env_file = field(cx, i, Field::EnvFile, "run-env-file", "e.g. EA-BE/.env");
             let env_file = browse(
                 cx,
@@ -641,11 +663,70 @@ impl Shell {
                 "run-env-file-browse",
                 "Choose a file in the workspace",
             );
-            let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev");
-            let title = match setup.cards[i].name.as_str().trim() {
-                "" => format!("Command {}", i + 1),
-                name => name.to_owned(),
+            let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev")
+                .font_family(mono.clone());
+            let named = setup.cards[i].name.as_str().trim();
+            let title = div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(font_size::BODY)
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(if named.is_empty() {
+                    theme.text_muted
+                } else {
+                    theme.text
+                }))
+                .child(if named.is_empty() {
+                    "New command".to_owned()
+                } else {
+                    named.to_owned()
+                });
+            let number = div()
+                .flex_none()
+                .px(px(space::S))
+                .rounded_full()
+                .bg(rgb(theme.accent_bg))
+                .text_color(rgb(theme.accent_text))
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::MEDIUM))
+                .child((i + 1).to_string());
+            let card_action = |id: &'static str, glyph: Icon, tip: &'static str| {
+                quiet_button(
+                    id,
+                    icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
+                    theme.surface_raised,
+                )
+                .tooltip(tooltip(theme, tip, ""))
             };
+            let header = div()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .child(number)
+                .child(title)
+                .child(
+                    card_action("run-duplicate", Icon::Copy, "Duplicate this command").on_click(
+                        cx.listener(move |shell, _, _, cx| {
+                            if let Some(setup) = shell.run_setup.as_mut() {
+                                setup.duplicate_card(i);
+                                shell.reveal_run_card();
+                            }
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    card_action("run-remove", Icon::Trash2, "Remove this command").on_click(
+                        cx.listener(move |shell, _, _, cx| {
+                            if let Some(setup) = shell.run_setup.as_mut() {
+                                setup.remove_card(i);
+                            }
+                            cx.notify();
+                        }),
+                    ),
+                );
             cards = cards.child(
                 // The id scopes the card's field and button ids (the same in every card).
                 div()
@@ -653,73 +734,59 @@ impl Shell {
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(px(space::XS))
-                    .p(px(space::S))
+                    .gap(px(space::M))
+                    .p(px(space::M))
                     .rounded(px(radius::MEDIUM))
                     .border(px(theme::BORDER_WIDTH))
                     .border_color(rgb(theme.border))
-                    .child(
-                        div()
-                            .text_size(font_size::BODY)
-                            .font_weight(FontWeight(weight::SEMIBOLD))
-                            .text_color(rgb(theme.text))
-                            .truncate()
-                            .child(title),
-                    )
+                    .child(header)
                     .child(
                         div()
                             .flex()
                             .gap(px(space::S))
-                            .child(div().flex_1().child(label("Name")).child(name))
-                            .child(div().flex_1().child(label("Folder")).child(dir)),
+                            .child(group(label("Name", ""), name.into_any_element()))
+                            .child(group(label("Folder", ""), dir.into_any_element())),
                     )
-                    .child(label("Command"))
-                    .child(command)
-                    .child(label("Env file (optional, relative to the workspace)"))
-                    .child(env_file)
-                    .child(label("Env (KEY=VALUE per line, wins over the env file)"))
-                    .child(env)
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap(px(space::XS))
-                            .child(
-                                quiet_button(
-                                    "run-duplicate",
-                                    icon_text(Icon::Copy, "Duplicate", theme.text_muted),
-                                    theme,
-                                    theme.surface_raised,
-                                )
-                                .on_click(cx.listener(
-                                    move |shell, _, _, cx| {
-                                        if let Some(setup) = shell.run_setup.as_mut() {
-                                            setup.duplicate_card(i);
-                                            shell.reveal_run_card();
-                                        }
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .child(
-                                quiet_button(
-                                    "run-remove",
-                                    icon_text(Icon::Trash2, "Remove", theme.text_muted),
-                                    theme,
-                                    theme.surface_raised,
-                                )
-                                .on_click(cx.listener(
-                                    move |shell, _, _, cx| {
-                                        if let Some(setup) = shell.run_setup.as_mut() {
-                                            setup.remove_card(i);
-                                        }
-                                        cx.notify();
-                                    },
-                                )),
-                            ),
-                    ),
+                    .child(group(label("Command", ""), command.into_any_element()))
+                    .child(group(
+                        label("Env file", "optional, relative to the workspace"),
+                        env_file.into_any_element(),
+                    ))
+                    .child(group(
+                        label("Env", "KEY=VALUE per line, wins over the env file"),
+                        env.into_any_element(),
+                    )),
             );
         }
+        let add_hover = theme.hover;
+        cards = cards.child(
+            div()
+                .id("run-add")
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .py(px(space::S))
+                .rounded(px(radius::MEDIUM))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border))
+                .cursor_pointer()
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text_muted))
+                .hover(move |style| style.bg(rgb(add_hover)))
+                .active(|style| style.opacity(opacity::ACTIVE))
+                .child(icon_text(Icon::Plus, "Add command", theme.text_muted))
+                .on_click(cx.listener(|shell, _, _, cx| {
+                    if let Some(setup) = shell.run_setup.as_mut() {
+                        setup.add_card();
+                        shell.reveal_run_card();
+                    }
+                    cx.notify();
+                })),
+        );
+        let workspace = (self.sidebar.projects().iter())
+            .find(|project| project.id == setup.project_id)
+            .map(|project| project.name.clone());
         let error_row = |error: String| {
             div()
                 .flex()
@@ -771,7 +838,7 @@ impl Shell {
                     .text_color(rgb(theme.accent))
                     .child(if setup.autostart { "✓" } else { "" }),
             )
-            .child(div().flex_1().child("Start with the daemon"))
+            .child("Start with the daemon")
             .child(
                 div()
                     .text_size(font_size::META)
@@ -783,7 +850,7 @@ impl Shell {
             .w(px(theme::DIALOG_WIDTH))
             .flex()
             .flex_col()
-            .gap(px(space::M))
+            .gap(px(space::L))
             .p(px(space::XL))
             .rounded(px(radius::LARGE))
             .border(px(theme::BORDER_WIDTH))
@@ -797,18 +864,39 @@ impl Shell {
             .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx))
             .child(
                 div()
-                    .text_size(font_size::CARD_TITLE)
-                    .font_weight(FontWeight(weight::SEMIBOLD))
-                    .text_color(rgb(theme.text))
-                    .child("Run setup"),
-            )
-            .child(
-                div()
-                    .text_size(font_size::BODY)
-                    .text_color(rgb(theme.text))
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::XS))
                     .child(
-                        "Each command runs in its own pane of the “run” tab, in a shell started \
-                         in its folder.",
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(space::S))
+                            .child(icon_svg(Icon::Play, theme::ICON_SIZE, theme.accent))
+                            .child(
+                                div()
+                                    .text_size(font_size::CARD_TITLE)
+                                    .font_weight(FontWeight(weight::SEMIBOLD))
+                                    .text_color(rgb(theme.text))
+                                    .child("Run setup"),
+                            )
+                            .children(workspace.map(|name| {
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(font_size::BODY)
+                                    .text_color(rgb(theme.text_muted))
+                                    .child(format!("· {name}"))
+                            })),
+                    )
+                    .child(
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(
+                                "Each command runs in its own pane of the “run” tab, in a shell \
+                                 started in its folder.",
+                            ),
                     ),
             )
             .child(div().relative().child(cards).child(scrollbar::bar(
@@ -816,32 +904,17 @@ impl Shell {
                 Rc::clone(&self.run_setup_drag),
                 theme,
             )))
-            .child(
-                div().flex().child(
-                    button(
-                        "run-add",
-                        icon_text(Icon::Plus, "Add command", button_fg(theme, false)),
-                        theme,
-                        false,
-                    )
-                    .on_click(cx.listener(|shell, _, _, cx| {
-                        if let Some(setup) = shell.run_setup.as_mut() {
-                            setup.add_card();
-                            shell.reveal_run_card();
-                        }
-                        cx.notify();
-                    })),
-                ),
-            )
-            .child(autostart)
             .children(setup.error.clone().map(error_row))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_end()
                     .gap(px(space::S))
-                    .pt(px(space::S))
+                    .pt(px(space::M))
+                    .border_t(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.divider))
+                    .child(autostart)
+                    .child(div().flex_1())
                     .child(
                         button("run-cancel", "Cancel", theme, false)
                             .tooltip(tooltip(theme, "Keep the current commands", "Esc"))

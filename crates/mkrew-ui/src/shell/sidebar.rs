@@ -34,8 +34,9 @@ impl Shell {
     /// The RUN group under an open workspace: a small `RUN` label, then one row per run
     /// command (green dot while running, hollow gray when stopped, red after an exit), its
     /// name and its ports in green monospace; then live runs whose command left the config. A
-    /// running row opens its terminal like a session row (right-click: the pane menu; × on
-    /// hover removes it); a stopped one shows ▶ on hover. Empty without run commands.
+    /// running row opens its terminal like a session row (right-click: the pane menu) and
+    /// shows ↻ Restart and a red ■ Stop on hover (a stray run: Stop only); a stopped one shows
+    /// ▶ on hover. Empty without run commands.
     pub(crate) fn render_run_group(
         &self,
         project_id: Ulid,
@@ -62,7 +63,47 @@ impl Shell {
         let shown = self.focused_session();
         let hover = theme.hover;
         let collapsed = self.collapsed_groups.contains(&(project_id, RowGroup::Run));
-        let label = self.group_label(project_id, RowGroup::Run, rows.len(), collapsed, theme, cx);
+        let mut label =
+            self.group_label(project_id, RowGroup::Run, rows.len(), collapsed, theme, cx);
+        // Restart all / Stop all on hover while anything runs (not a fold: they stop the click).
+        if summary.any_live() {
+            let group_id = group_label_id(project_id, RowGroup::Run);
+            let all: [(Icon, &'static str, RunAction); 2] = [
+                (Icon::RotateCw, "Restart all", RunAction::Restart),
+                (Icon::CircleStop, "Stop all", RunAction::Stop),
+            ];
+            label = label.child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .opacity(opacity::HIDDEN)
+                    .group_hover(group_id, |style| style.opacity(opacity::FULL))
+                    .children(all.map(|(glyph, tip, action)| {
+                        let colors = run::action_colors(action, theme);
+                        div()
+                            .id(SharedString::from(format!(
+                                "run-all-{action:?}-{project_id}"
+                            )))
+                            .flex()
+                            .items_center()
+                            // No vertical padding: the label keeps its height.
+                            .px(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .cursor_pointer()
+                            .hover(move |style| style.bg(rgb(colors.tint)))
+                            .active(|style| style.opacity(opacity::ACTIVE))
+                            .tooltip(tooltip(theme, tip, ""))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                cx.stop_propagation();
+                                shell.run_action(project_id, action, None, window, cx);
+                            }))
+                            .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
+                    })),
+            );
+        }
+        let label = label.into_any_element();
         if collapsed {
             return vec![label];
         }
@@ -72,7 +113,7 @@ impl Shell {
             let running = matches!(row.state, RowState::Running(_));
             let (color, hollow) = match row.state {
                 RowState::Running(_) => (theme.status_done, false),
-                RowState::Exited(_) => (theme.status_exited, false),
+                RowState::Exited => (theme.status_exited, false),
                 RowState::Stopped => (theme.status_idle, true),
             };
             let id = SharedString::from(format!("run-row-{project_id}-{}", row.name));
@@ -80,29 +121,46 @@ impl Shell {
             let selected = live.is_some() && live == shown;
             let name = row.name.clone();
             let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
-            let action = match live {
-                Some(session_id) => row_action(
-                    SharedString::from(format!("run-remove-{session_id}")),
-                    icon_svg(Icon::X, theme::ICON_SIZE_SMALL, theme.text_muted),
-                    theme,
-                )
-                .tooltip(tooltip(theme, "Remove from the sidebar", ""))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.remove_session(session_id, window, cx);
-                })),
-                None => row_action(
-                    SharedString::from(format!("run-start-{project_id}-{name}")),
-                    icon_svg(Icon::Play, theme::ICON_SIZE_SMALL, theme.text_muted),
-                    theme,
-                )
-                .tooltip(tooltip(theme, "Run this command", ""))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    let name = Some(name.clone());
-                    shell.run_action(project_id, RunAction::Start, name, window, cx);
-                })),
+            let controls: &[(Icon, &'static str, RunAction)] = match live {
+                Some(_) if index < configured => &[
+                    (Icon::RotateCw, "Restart this command", RunAction::Restart),
+                    (Icon::CircleStop, "Stop this command", RunAction::Stop),
+                ],
+                Some(_) => &[(Icon::CircleStop, "Stop this command", RunAction::Stop)],
+                None => &[(Icon::Play, "Run this command", RunAction::Start)],
             };
+            let actions = controls.iter().map(|&(glyph, tip, action)| {
+                let name = name.clone();
+                let colors = run::action_colors(action, theme);
+                // Not `row_action`: it sets its own hover, and a second `.hover()` panics.
+                div()
+                    .id(SharedString::from(format!(
+                        "run-{action:?}-{project_id}-{name}"
+                    )))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .p(px(space::XS))
+                    .rounded(px(radius::SMALL))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(rgb(colors.tint)))
+                    .active(|style| style.opacity(opacity::ACTIVE))
+                    .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg))
+                    .tooltip(tooltip(theme, tip, ""))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        cx.stop_propagation();
+                        shell.run_action(project_id, action, Some(name.clone()), window, cx);
+                    }))
+            });
+            let actions = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .children(actions)
+                // Secondary actions: shown on hover only (SPEC §14).
+                .opacity(opacity::HIDDEN)
+                .group_hover(id.clone(), |style| style.opacity(opacity::FULL));
             let line = div()
                 .id(id.clone())
                 .group(id.clone())
@@ -162,11 +220,7 @@ impl Shell {
                             .child(ports.join(" ")),
                     )
                 })
-                .child(
-                    action
-                        .opacity(opacity::HIDDEN)
-                        .group_hover(id, |style| style.opacity(opacity::FULL)),
-                )
+                .child(actions)
                 .into_any_element();
             // Only configured commands have a place to move to (the config order).
             if index < configured {
@@ -610,7 +664,8 @@ impl Shell {
                             let collapsed = self.collapsed_groups.contains(&key);
                             let count = rows_of.len();
                             rows.push(
-                                self.group_label(project_id, group, count, collapsed, theme, cx),
+                                self.group_label(project_id, group, count, collapsed, theme, cx)
+                                    .into_any_element(),
                             );
                             if collapsed {
                                 rows_of.clear();
@@ -989,7 +1044,7 @@ impl Shell {
 
     /// A group label under a workspace (`⌄ AGENTS 3`, `› RUN 2` while folded): a fold chevron,
     /// small muted caps and the row count, with room above to set the groups apart. A click
-    /// folds the group to this line.
+    /// folds the group to this line. Its hover group is [`group_label_id`].
     pub(crate) fn group_label(
         &self,
         project_id: Ulid,
@@ -998,11 +1053,12 @@ impl Shell {
         collapsed: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let id = SharedString::from(format!("group-{project_id}-{group:?}"));
+    ) -> gpui::Stateful<gpui::Div> {
+        let id = group_label_id(project_id, group);
         let hover = theme.hover;
         div()
-            .id(id)
+            .id(id.clone())
+            .group(id)
             .flex()
             .items_center()
             .gap(px(space::XS))
@@ -1048,8 +1104,12 @@ impl Shell {
                     .text_color(rgb(theme.chevron_color()))
                     .child(count.to_string()),
             )
-            .into_any_element()
     }
+}
+
+/// The element id and hover group of a [`Shell::group_label`].
+fn group_label_id(project_id: Ulid, group: RowGroup) -> SharedString {
+    SharedString::from(format!("group-{project_id}-{group:?}"))
 }
 
 /// A workspace header row: chevron, avatar, bold name, pin; on the right its status: a

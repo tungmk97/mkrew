@@ -95,7 +95,9 @@ pub enum RowState {
     /// Never started (or its sessions are gone).
     Stopped,
     Running(SessionState),
-    Exited(Option<i32>),
+    /// Its newest session ended. The exit code is not shown: a killed process reports a
+    /// huge Windows status that reads like a timestamp.
+    Exited,
 }
 
 /// One configured command.
@@ -227,7 +229,7 @@ pub fn summary(project: &Project, sessions: &[Session], ports: &Ports) -> Summar
                 },
                 (None, Some(s)) => Row {
                     name,
-                    state: RowState::Exited(s.exit_code),
+                    state: RowState::Exited,
                     session_id: Some(s.id),
                     ports: Vec::new(),
                 },
@@ -254,8 +256,7 @@ pub fn state_text(state: &RowState) -> String {
     match state {
         RowState::Stopped => "○ stopped".to_owned(),
         RowState::Running(_) => "● running".to_owned(),
-        RowState::Exited(Some(code)) => format!("✕ exited {code}"),
-        RowState::Exited(None) => "✕ exited".to_owned(),
+        RowState::Exited => "✕ exited".to_owned(),
     }
 }
 
@@ -381,8 +382,8 @@ mod tests {
         assert_eq!(s.label(), "1/2 running");
         assert_eq!(s.ports_text(), None);
         assert!(s.warning());
-        assert_eq!(state_text(&s.rows[0].state), "✕ exited 1");
-        assert_eq!(s.tooltip(), "BE — exited 1\nFE — no port yet");
+        assert_eq!(state_text(&s.rows[0].state), "✕ exited");
+        assert_eq!(s.tooltip(), "BE — exited\nFE — no port yet");
     }
 
     #[test]

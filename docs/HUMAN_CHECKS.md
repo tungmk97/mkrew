@@ -173,11 +173,28 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   agents start full width.
 - [ ] **Voice:** with the sidebar hidden, recording still shows its meter in the title bar.
 
+### To verify — 2026-10-15 RUN row controls, "exited" text, Run setup redesign
+
+- [ ] **Sidebar RUN (dark + light):** a running command's row shows its ports; hovering it shows
+  ↻ Restart and a red ■ Stop, both work without opening the pane. A run whose command left the
+  config shows ■ only. A stopped/exited row shows ▶ on hover. Hovering the `RUN` label while
+  anything runs shows ↻ Restart all and a red ■ Stop all at its right; clicking them does not
+  fold the group, and the label keeps its height. Nothing running: no buttons there.
+- [ ] **Run menu stays open:** in the Run pill's menu, ↻ / ■ on a row, Restart all, Stop all and
+  Start all keep the menu open and its rows update; a click outside closes it.
+- [ ] **Exited:** stop a run (or Ctrl+C it): the Run menu row, the pill tooltip and the sidebar
+  tooltip say just `exited`, no number.
+- [ ] **Run setup look (dark + light):** header `▶ Run setup · <workspace>` with a muted line
+  under it; each card has a number chip, its name (or muted "New command"), icon Duplicate /
+  Remove at its top right; Command and Env in the terminal font; "+ Add command" is a full-width
+  row under the last card; footer: "Start with the daemon" left, Cancel / Save right, above a
+  hairline.
+
 ### To verify — 2026-10-13 Run setup: Add command scrolls, card titles, scroll bar
 
 - [ ] **Run setup (dark + light):** with 2+ commands, "Add command" scrolls the list to the new
-  empty card ("Command N" title, name focused); Duplicate and Tab into a hidden card scroll too.
-  Each card's top shows its name (or "Command N"). A thumb on the list's right edge scrolls when
+  empty card ("New command" title, name focused); Duplicate and Tab into a hidden card scroll too.
+  Each card's top shows its name (or "New command"). A thumb on the list's right edge scrolls when
   the cards overflow and is hidden when they fit. At 8 commands, Add shows the limit.
 
 ### To verify — 2026-10-13 Mkrew web extras (plan docs/superpowers/plans/2026-10-13-mobile-web-extras.md)
