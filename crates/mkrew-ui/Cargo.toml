@@ -15,6 +15,8 @@ path = "src/main.rs"
 [dependencies]
 alacritty_terminal = "0.26"
 anyhow = "1"
+# Basic auth for Jira (SPEC §20I); 0.22 is already in the tree.
+base64 = "0.22"
 # `future::or` for the paint-or-timeout wait; 2.x is already in the tree via gpui.
 futures-lite = "2"
 # Incoming events/output for the GPUI side; 2.x is already in the tree via gpui.
