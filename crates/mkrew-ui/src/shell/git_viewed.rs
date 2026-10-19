@@ -68,6 +68,7 @@ impl Shell {
             let _ = this.update_in(cx, |shell, window, cx| {
                 if let Some(error) = failure {
                     tracing::warn!(%project_id, path = target.path, "git.set_viewed failed: {error}");
+                    shell.toast_error(format!("Cannot mark {}: {error}", target.path), cx);
                 }
                 shell.load_git_viewed(project_id, window, cx);
             });
