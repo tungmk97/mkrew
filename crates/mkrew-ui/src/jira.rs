@@ -59,13 +59,19 @@ pub fn base_url(site: &str) -> String {
     format!("https://{}", host.trim_end_matches('/'))
 }
 
-/// Where requests go: `base_url(site)`, except an explicit `http://` origin is kept as is
-/// (loopback tests; Jira Cloud is always https).
+/// Where requests go: `base_url(site)` (https), except an explicit `http://` origin on a
+/// loopback host (`127.0.0.1` or `localhost`, optional port) is kept as is, for the tests.
+/// Any other `http://` site is upgraded so the API token never travels in plain text.
 fn origin(site: &str) -> String {
     let site = site.trim();
-    match site.strip_prefix("http://") {
-        Some(_) => site.trim_end_matches('/').to_owned(),
-        None => base_url(site),
+    let loopback = site.strip_prefix("http://").is_some_and(|rest| {
+        let host = rest.split(['/', ':']).next().unwrap_or_default();
+        host == "127.0.0.1" || host == "localhost"
+    });
+    if loopback {
+        site.trim_end_matches('/').to_owned()
+    } else {
+        base_url(site)
     }
 }
 
@@ -322,6 +328,19 @@ mod tests {
             "http://acme.atlassian.net",
         ] {
             assert_eq!(base_url(site), "https://acme.atlassian.net", "{site}");
+        }
+    }
+
+    #[test]
+    fn only_loopback_may_use_plain_http() {
+        for (site, want) in [
+            ("http://acme.atlassian.net", "https://acme.atlassian.net"),
+            ("http://localhost.evil.com", "https://localhost.evil.com"),
+            ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
+            ("http://localhost", "http://localhost"),
+            ("acme.atlassian.net", "https://acme.atlassian.net"),
+        ] {
+            assert_eq!(origin(site), want, "{site}");
         }
     }
 
