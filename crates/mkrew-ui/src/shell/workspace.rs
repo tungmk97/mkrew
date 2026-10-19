@@ -29,7 +29,7 @@ impl Shell {
         self.workspace_switcher = false;
         if switched {
             self.close_menus();
-            self.end_inspector_drag();
+            self.end_inspector_drag(cx);
             // Nothing is kept for the workspace that is no longer shown.
             self.git_summary = None;
         }
@@ -356,7 +356,7 @@ impl Shell {
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if view != View::Terminals {
             // The panel (and its grip) leaves with Terminals: end a drag in progress.
-            self.end_inspector_drag();
+            self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);

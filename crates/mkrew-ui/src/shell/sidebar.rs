@@ -25,9 +25,9 @@ impl RowGroup {
 
 impl Shell {
     /// The sidebar's edge was released: saves the dragged width as `[ui] sidebar_width`.
-    pub(crate) fn end_sidebar_drag(&mut self) {
+    pub(crate) fn end_sidebar_drag(&mut self, cx: &mut Context<'_, Self>) {
         if std::mem::take(&mut self.sidebar_dragging) {
-            self.save_width("sidebar_width", self.sidebar_width);
+            self.save_width("sidebar_width", self.sidebar_width, cx);
         }
     }
 
@@ -722,11 +722,11 @@ impl Shell {
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|shell, _, _, _| shell.end_sidebar_drag()),
+                cx.listener(|shell, _, _, cx| shell.end_sidebar_drag(cx)),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|shell, _, _, _| shell.end_sidebar_drag()),
+                cx.listener(|shell, _, _, cx| shell.end_sidebar_drag(cx)),
             );
         // The header and the filter stay in view; the workspace list scrolls below them.
         div()
