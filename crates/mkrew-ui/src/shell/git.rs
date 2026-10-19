@@ -623,6 +623,14 @@ impl Shell {
                     tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
                 }
                 let Some(view) = shell.git_at(project_id, &at) else {
+                    // The view moved to another repo or worktree: no row left for the failure.
+                    if let Err(error) = result {
+                        let what = match stage {
+                            git_view::Stage::Stage => "Stage",
+                            git_view::Stage::Unstage => "Unstage",
+                        };
+                        shell.toast_error(format!("{what} failed: {error}"), cx);
+                    }
                     return;
                 };
                 let requests = view.staged(result);
@@ -707,6 +715,9 @@ impl Shell {
                     tracing::warn!(%project_id, "git.commit failed: {error}");
                 }
                 let Some(view) = shell.git_at(project_id, &at) else {
+                    if let Err(error) = result {
+                        shell.toast_error(format!("Commit failed: {error}"), cx);
+                    }
                     return;
                 };
                 view.commit.committed(result);
@@ -788,6 +799,9 @@ impl Shell {
                     tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
                 }
                 let Some(view) = shell.git_at(project_id, &at) else {
+                    if let Err(error) = result {
+                        shell.toast_error(format!("{} failed: {error}", remote.label()), cx);
+                    }
                     return;
                 };
                 view.remotes.finished(remote, result);

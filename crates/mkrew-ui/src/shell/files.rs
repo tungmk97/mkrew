@@ -503,8 +503,13 @@ impl Shell {
                     tracing::warn!(%project_id, path = %save.path, "fs.write failed: {error}");
                 }
                 let done = matches!(&written, Ok(written) if written.saved);
-                if let Some(view) = shell.files_at(project_id, target) {
-                    view.saved(&save.path, save.point, written);
+                let unshown = match shell.files_at(project_id, target) {
+                    Some(view) => view.saved(&save.path, save.point, written),
+                    // The workspace's Files view is gone.
+                    None => files_view::unshown_save(written),
+                };
+                if let Some(message) = unshown {
+                    shell.toast_error(message, cx);
                 }
                 if let (true, Some(then)) = (done, then) {
                     then(shell, window, cx);

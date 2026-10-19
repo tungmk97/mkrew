@@ -77,6 +77,8 @@ impl Shell {
                         if let Some(dialog) = open {
                             dialog.busy = false;
                             dialog.error = Some(error);
+                        } else {
+                            shell.toast_error(format!("Discard failed: {error}"), cx);
                         }
                         cx.notify();
                     }
@@ -186,6 +188,8 @@ impl Shell {
                         tracing::warn!(%project_id, "git.set_base failed: {error}");
                         if let Some(dialog) = open {
                             dialog.failed(error);
+                        } else {
+                            shell.toast_error(format!("Cannot set the base: {error}"), cx);
                         }
                         cx.notify();
                     }

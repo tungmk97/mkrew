@@ -286,6 +286,10 @@ impl Shell {
             let answer = sent.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_worktree(serial) else {
+                    // Closed meanwhile: a merge or removal that failed has no dialog to say so.
+                    if let Err(error) = &answer {
+                        shell.toast_error(format!("The worktree action failed: {error:#}"), cx);
+                    }
                     return;
                 };
                 let failure = answer.and_then(|value| {

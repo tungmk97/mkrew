@@ -199,6 +199,9 @@ impl Shell {
                     if let Some(dialog) = shell.open_undo(serial) {
                         dialog.undo_failed(&error);
                         shell.load_undo_preview(window, cx);
+                    } else {
+                        // Esc closed the dialog while it ran: no row left to say why.
+                        shell.toast_error(format!("Undo failed: {error}"), cx);
                     }
                     cx.notify();
                 }

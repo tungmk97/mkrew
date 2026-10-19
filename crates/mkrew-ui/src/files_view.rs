@@ -162,6 +162,15 @@ pub struct FilesView {
     saving: bool,
 }
 
+/// A save's answer that has no file view to land in: only a failure or a refused save is news.
+pub fn unshown_save(written: Result<FsWritten, String>) -> Option<String> {
+    match written {
+        Ok(written) if written.saved => None,
+        Ok(_) => Some("Not saved: the file changed on disk meanwhile.".to_owned()),
+        Err(error) => Some(format!("Not saved: {error}")),
+    }
+}
+
 impl FilesView {
     pub fn new(project_id: Ulid, worktree_task_id: Option<Ulid>) -> FilesView {
         FilesView {
@@ -696,14 +705,21 @@ impl FilesView {
         })
     }
 
-    /// The `fs.write` answer for `path`, which saved the state `point`.
-    pub fn saved(&mut self, path: &str, point: Option<u64>, written: Result<FsWritten, String>) {
+    /// The `fs.write` answer for `path`, which saved the state `point`. `Some(why)` when the
+    /// answer has nowhere to show because the user opened another file meanwhile: the shell
+    /// toasts it.
+    pub fn saved(
+        &mut self,
+        path: &str,
+        point: Option<u64>,
+        written: Result<FsWritten, String>,
+    ) -> Option<String> {
         self.saving = false;
         if self.file.as_deref() != Some(path) {
-            return;
+            return unshown_save(written);
         }
         let Content::Shown(shown) = &mut self.content else {
-            return;
+            return unshown_save(written);
         };
         match written {
             Ok(written) if written.saved => {
@@ -716,6 +732,7 @@ impl FilesView {
             Ok(written) => shown.disk_changed = Some(written.hash),
             Err(error) => shown.save_error = Some(format!("Not saved: {error}")),
         }
+        None
     }
 
     /// The row Enter opens: the cursor's, while that row is still listed (an agent may have
