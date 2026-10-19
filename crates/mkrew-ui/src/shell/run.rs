@@ -574,7 +574,7 @@ impl Shell {
                     el.child(div().text_color(rgb(theme.text_muted)).child(hint))
                 })
         };
-        let group = |caption: gpui::Div, field: gpui::AnyElement| {
+        let group_field = |caption: gpui::Div, field: gpui::AnyElement| {
             div()
                 .flex_1()
                 .min_w_0()
@@ -590,22 +590,19 @@ impl Shell {
                      which: Field,
                      id: &'static str,
                      placeholder: &'static str| {
-            let input = setup.cards[i].input(which);
             caret_field(
                 id,
-                input.as_str(),
-                input.cursor(),
-                input.selection(),
+                setup.cards[i].input(which),
                 placeholder,
                 setup.focus == Focus::Field(i, which),
                 theme,
+                cx,
+                move |shell, caret| {
+                    if let Some(setup) = shell.run_setup.as_mut() {
+                        setup.click(i, which, caret.at, caret.extend, caret.clicks);
+                    }
+                },
             )
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                if let Some(setup) = shell.run_setup.as_mut() {
-                    setup.focus = Focus::Field(i, which);
-                }
-                cx.notify();
-            }))
         };
         // A field with "Browse…" beside it, which picks its value from the workspace.
         let browse = |cx: &mut Context<'_, Self>,
@@ -631,17 +628,203 @@ impl Shell {
                         })),
                 )
         };
+        // A checkbox row ("Start with the daemon", a card's "Close the pane when it ends");
+        // Space flips the focused one.
+        let check = |id: &'static str,
+                     label: &'static str,
+                     checked: bool,
+                     focused: bool,
+                     tip: &'static str| {
+            let hover = theme.surface_raised;
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .px(px(space::XS))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(gpui::transparent_black())
+                .when(focused, |el| el.border_color(rgb(theme.pane_focus_border)))
+                .cursor_pointer()
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text))
+                .hover(move |style| style.bg(rgb(hover)))
+                .active(|style| style.opacity(opacity::ACTIVE))
+                .tooltip(tooltip(theme, tip, "Space"))
+                .child(
+                    div()
+                        .size(px(space::M))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(radius::SMALL))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(theme.border))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.accent))
+                        .child(if checked { "✓" } else { "" }),
+                )
+                .child(label)
+                .when(focused, |el| {
+                    el.child(
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child("Space"),
+                    )
+                })
+        };
         let mut cards = div()
             .id("run-cards")
             .flex()
             .flex_col()
-            .gap(px(space::M))
+            .gap(px(space::S))
             // Room for the scroll bar over the right edge.
             .pr(px(theme::SCROLLBAR_WIDTH))
             .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
             .overflow_y_scroll()
             .track_scroll(&self.run_setup_scroll);
+        // Only the card holding the keyboard shows its fields; the others are one line each.
+        let open = setup.focused_card();
         for i in 0..setup.cards.len() {
+            let card = &setup.cards[i];
+            let named = card.name.as_str().trim();
+            let title = div()
+                .flex_none()
+                .max_w(px(theme::RUN_NAME_MAX_WIDTH))
+                .truncate()
+                .text_size(font_size::BODY)
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(if named.is_empty() {
+                    theme.text_muted
+                } else {
+                    theme.text
+                }))
+                .child(if named.is_empty() {
+                    "New command".to_owned()
+                } else {
+                    named.to_owned()
+                });
+            let number = div()
+                .flex_none()
+                .px(px(space::S))
+                .rounded_full()
+                .bg(rgb(theme.accent_bg))
+                .text_color(rgb(theme.accent_text))
+                .text_size(font_size::META)
+                .font_weight(FontWeight(weight::MEDIUM))
+                .child((i + 1).to_string());
+            let group = SharedString::from(format!("run-card-{i}"));
+            let card_action = |id: &'static str, glyph: Icon, tip: &'static str| {
+                quiet_button(
+                    id,
+                    icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted),
+                    theme,
+                    theme.surface_raised,
+                )
+                .tooltip(tooltip(theme, tip, ""))
+            };
+            let actions = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .when(open != Some(i), |el| {
+                    el.opacity(opacity::HIDDEN)
+                        .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
+                })
+                .child(
+                    card_action("run-duplicate", Icon::Copy, "Duplicate this command").on_click(
+                        cx.listener(move |shell, _, _, cx| {
+                            // Not a click on the folded card (which would open it).
+                            cx.stop_propagation();
+                            if let Some(setup) = shell.run_setup.as_mut() {
+                                setup.duplicate_card(i);
+                                shell.reveal_run_card();
+                            }
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    card_action("run-remove", Icon::Trash2, "Remove this command").on_click(
+                        cx.listener(move |shell, _, _, cx| {
+                            cx.stop_propagation();
+                            if let Some(setup) = shell.run_setup.as_mut() {
+                                setup.remove_card(i);
+                            }
+                            cx.notify();
+                        }),
+                    ),
+                );
+            // The id scopes the card's field and button ids (the same in every card).
+            let frame = div()
+                .id(("run-card", i))
+                .group(group.clone())
+                .flex_none()
+                .flex()
+                .flex_col()
+                .rounded(px(radius::MEDIUM))
+                .border(px(theme::BORDER_WIDTH))
+                .border_color(rgb(theme.border));
+            if open != Some(i) {
+                // Folded: number, name, the command and its folder; a click opens it.
+                let command = card.command.as_str().trim();
+                let dir = card.dir.as_str().trim();
+                let hover = theme.hover;
+                cards = cards.child(
+                    frame
+                        .px(px(space::M))
+                        .py(px(space::S))
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(rgb(hover)))
+                        .active(|style| style.opacity(opacity::ACTIVE))
+                        .on_click(cx.listener(move |shell, _, _, cx| {
+                            if let Some(setup) = shell.run_setup.as_mut() {
+                                setup.focus = Focus::Field(i, Field::Command);
+                                shell.reveal_run_card();
+                            }
+                            cx.notify();
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(space::S))
+                                .child(number)
+                                .child(title)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .font_family(mono.clone())
+                                        .text_size(font_size::META)
+                                        .text_color(rgb(theme.text_muted))
+                                        .child(if command.is_empty() {
+                                            "no command yet".to_owned()
+                                        } else {
+                                            command.to_owned()
+                                        }),
+                                )
+                                .when(!dir.is_empty() && dir != ".", |el| {
+                                    el.child(
+                                        div()
+                                            .flex_none()
+                                            .max_w(px(theme::RUN_NAME_MAX_WIDTH))
+                                            .truncate()
+                                            .text_size(font_size::META)
+                                            .text_color(rgb(theme.text_muted))
+                                            .child(dir.to_owned()),
+                                    )
+                                })
+                                .child(actions),
+                        ),
+                );
+                continue;
+            }
             let name = field(cx, i, Field::Name, "run-name", "e.g. BE");
             let dir = field(cx, i, Field::Dir, "run-dir", ". or EA-BE");
             let dir = browse(
@@ -665,97 +848,57 @@ impl Shell {
             );
             let env = field(cx, i, Field::Env, "run-env", "e.g. ENVIRONMENT=dev")
                 .font_family(mono.clone());
-            let named = setup.cards[i].name.as_str().trim();
-            let title = div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .text_size(font_size::BODY)
-                .font_weight(FontWeight(weight::SEMIBOLD))
-                .text_color(rgb(if named.is_empty() {
-                    theme.text_muted
-                } else {
-                    theme.text
-                }))
-                .child(if named.is_empty() {
-                    "New command".to_owned()
-                } else {
-                    named.to_owned()
-                });
-            let number = div()
-                .flex_none()
-                .px(px(space::S))
-                .rounded_full()
-                .bg(rgb(theme.accent_bg))
-                .text_color(rgb(theme.accent_text))
-                .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .child((i + 1).to_string());
-            let card_action = |id: &'static str, glyph: Icon, tip: &'static str| {
-                quiet_button(
-                    id,
-                    icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted),
-                    theme,
-                    theme.surface_raised,
-                )
-                .tooltip(tooltip(theme, tip, ""))
-            };
-            let header = div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .child(number)
-                .child(title)
-                .child(
-                    card_action("run-duplicate", Icon::Copy, "Duplicate this command").on_click(
-                        cx.listener(move |shell, _, _, cx| {
-                            if let Some(setup) = shell.run_setup.as_mut() {
-                                setup.duplicate_card(i);
-                                shell.reveal_run_card();
-                            }
-                            cx.notify();
-                        }),
-                    ),
-                )
-                .child(
-                    card_action("run-remove", Icon::Trash2, "Remove this command").on_click(
-                        cx.listener(move |shell, _, _, cx| {
-                            if let Some(setup) = shell.run_setup.as_mut() {
-                                setup.remove_card(i);
-                            }
-                            cx.notify();
-                        }),
-                    ),
-                );
+            let exit = check(
+                "run-exit",
+                "Close the pane when it ends",
+                card.exit_after,
+                setup.focus == Focus::Exit(i),
+                "Off: the shell stays open after the command, showing its output",
+            )
+            .on_click(cx.listener(move |shell, _, _, cx| {
+                if let Some(setup) = shell.run_setup.as_mut()
+                    && let Some(card) = setup.cards.get_mut(i)
+                {
+                    card.exit_after = !card.exit_after;
+                    setup.focus = Focus::Exit(i);
+                }
+                cx.notify();
+            }));
             cards = cards.child(
-                // The id scopes the card's field and button ids (the same in every card).
-                div()
-                    .id(("run-card", i))
-                    .flex_none()
-                    .flex()
-                    .flex_col()
+                frame
                     .gap(px(space::M))
                     .p(px(space::M))
-                    .rounded(px(radius::MEDIUM))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.border))
-                    .child(header)
+                    .bg(rgb(theme.card))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(space::S))
+                            .child(number)
+                            .child(title)
+                            .child(div().flex_1())
+                            .child(actions),
+                    )
                     .child(
                         div()
                             .flex()
                             .gap(px(space::S))
-                            .child(group(label("Name", ""), name.into_any_element()))
-                            .child(group(label("Folder", ""), dir.into_any_element())),
+                            .child(group_field(label("Name", ""), name.into_any_element()))
+                            .child(group_field(label("Folder", ""), dir.into_any_element())),
                     )
-                    .child(group(label("Command", ""), command.into_any_element()))
-                    .child(group(
+                    .child(group_field(
+                        label("Command", ""),
+                        command.into_any_element(),
+                    ))
+                    .child(group_field(
                         label("Env file", "optional, relative to the workspace"),
                         env_file.into_any_element(),
                     ))
-                    .child(group(
+                    .child(group_field(
                         label("Env", "KEY=VALUE per line, wins over the env file"),
                         env.into_any_element(),
-                    )),
+                    ))
+                    .child(exit),
             );
         }
         let add_hover = theme.hover;
@@ -795,56 +938,19 @@ impl Shell {
                 .child(div().text_color(rgb(theme.status_exited)).child("✕"))
                 .child(div().text_color(rgb(theme.text)).child(error))
         };
-        let hover = theme.surface_raised;
-        let autostart = div()
-            .id("run-autostart")
-            .flex()
-            .items_center()
-            .gap(px(space::S))
-            .px(px(space::XS))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(gpui::transparent_black())
-            .when(setup.focus == Focus::Autostart, |el| {
-                el.border_color(rgb(theme.pane_focus_border))
-            })
-            .cursor_pointer()
-            .text_size(font_size::BODY)
-            .text_color(rgb(theme.text))
-            .hover(move |style| style.bg(rgb(hover)))
-            .active(|style| style.opacity(opacity::ACTIVE))
-            .tooltip(tooltip(
-                theme,
-                "Start the run commands when the daemon starts",
-                "Space",
-            ))
-            .on_click(cx.listener(|shell, _, _, cx| {
-                if let Some(setup) = shell.run_setup.as_mut() {
-                    setup.autostart = !setup.autostart;
-                }
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .size(px(space::M))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(radius::SMALL))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.border))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.accent))
-                    .child(if setup.autostart { "✓" } else { "" }),
-            )
-            .child("Start with the daemon")
-            .child(
-                div()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child("Space"),
-            );
+        let autostart = check(
+            "run-autostart",
+            "Start with the daemon",
+            setup.autostart,
+            setup.focus == Focus::Autostart,
+            "Start the run commands when the daemon starts",
+        )
+        .on_click(cx.listener(|shell, _, _, cx| {
+            if let Some(setup) = shell.run_setup.as_mut() {
+                setup.autostart = !setup.autostart;
+            }
+            cx.notify();
+        }));
         let panel = div()
             .id("run-setup")
             .w(px(theme::DIALOG_WIDTH))

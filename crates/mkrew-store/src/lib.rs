@@ -34,6 +34,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0017_session_plan.sql"),
     include_str!("../migrations/0018_run_env_file_from_workspace.sql"),
     include_str!("../migrations/0019_session_position.sql"),
+    include_str!("../migrations/0020_run_exit_after.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
@@ -253,7 +254,7 @@ impl Store {
     /// Run commands of one project (`Some`) or of all of them, with their project id, in order.
     fn run_commands_where(&self, project_id: Option<Ulid>) -> Result<Vec<(String, RunCommand)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT project_id, name, dir, command, env_file, env FROM run_command
+            "SELECT project_id, name, dir, command, env_file, env, exit_after FROM run_command
              WHERE ?1 IS NULL OR project_id = ?1 ORDER BY project_id, position",
         )?;
         let rows = stmt.query_map([project_id.map(|id| id.to_string())], |row| {
@@ -264,10 +265,11 @@ impl Store {
                 row.get::<_, String>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, String>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?;
         rows.map(|row| {
-            let (project_id, name, dir, command, env_file, env) = row?;
+            let (project_id, name, dir, command, env_file, env, exit_after) = row?;
             let env = serde_json::from_str(&env).map_err(|_| corrupt("run_command.env", env))?;
             Ok((
                 project_id,
@@ -277,6 +279,7 @@ impl Store {
                     command,
                     env_file,
                     env,
+                    exit_after,
                 },
             ))
         })
@@ -327,8 +330,8 @@ impl Store {
                 #[allow(clippy::expect_used)]
                 let env = serde_json::to_string(&command.env).expect("string pairs serialize");
                 tx.execute(
-                    "INSERT INTO run_command (project_id, position, name, dir, command, env_file, env)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT INTO run_command (project_id, position, name, dir, command, env_file, env, exit_after)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         id.to_string(),
                         position as i64,
@@ -336,7 +339,8 @@ impl Store {
                         command.dir,
                         command.command,
                         command.env_file,
-                        env
+                        env,
+                        command.exit_after
                     ],
                 )?;
             }

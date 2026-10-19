@@ -196,15 +196,15 @@ impl Shell {
             )
             .into_any_element()
         });
-        let question = dialog.question.input();
+        // Its keys edit at the end of the text (SPEC §13): a click does nothing more.
         let field = caret_field(
             "ask-question",
-            question.as_str(),
-            question.cursor(),
-            question.selection(),
+            dialog.question.input(),
             "Ask anything…",
             true,
             theme,
+            cx,
+            |_, _| {},
         )
         .h(px(theme::PROMPT_FIELD_HEIGHT))
         .overflow_y_scroll()

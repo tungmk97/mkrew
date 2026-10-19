@@ -232,6 +232,8 @@ pub const CONFIRM_DIALOG_WIDTH: f32 = 420.0;
 
 /// Height of the Run setup dialog's command list before it scrolls.
 pub const RUN_SETUP_MAX_HEIGHT: f32 = 420.0;
+/// Widest a folded Run setup card's name or folder gets before it is cut with `…`.
+pub const RUN_NAME_MAX_WIDTH: f32 = 140.0;
 
 /// Height of the prompt field in the task dialog (it scrolls past that).
 pub const PROMPT_FIELD_HEIGHT: f32 = 140.0;

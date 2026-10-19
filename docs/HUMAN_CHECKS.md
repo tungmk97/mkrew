@@ -22,6 +22,21 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   bar; scroll the list and the terminal, then check again. Dark and light iPhone theme. The New agent
   sheet's dimming still covers the whole page.
 
+### To verify — 2026-10-19 Run setup: exit option, folded cards, clickable caret (ADR 0063)
+
+- [ ] **Restart the daemon first** (protocol 44, migration 0020).
+- [ ] **Exit option:** a saved command now has `Close the pane when it ends` off: `echo hi` →
+  the pane stays with `hi` and a prompt; tick the box, save, ▶ → the pane leaves the Run tab
+  when the command ends. Tab reaches the box after Env; Space flips it.
+- [ ] **Folded cards (dark + light):** with 3+ commands only the focused card shows its fields;
+  the others are one line (number, name, mono command, folder) with Duplicate / Remove on hover;
+  a click opens that card at Command; Add / Duplicate still scroll to the new card.
+- [ ] **Caret:** in Command / Env, click mid-text → the caret lands there and typing / Backspace
+  act there; drag or Shift+click selects; double-click a word, triple-click a line. Long commands
+  wrap and the caret stays on the right glyph (Vietnamese text too).
+- [ ] **Other fields look unchanged (dark + light):** composer, task dialog, palette, filters,
+  commit box: text, placeholder, caret at the end and the Ctrl+A highlight render as before.
+
 ### To verify — 2026-10-19 Sidebar workspace cards (ADR 0062)
 
 - [ ] **Cards (dark + light):** with 3+ workspaces open, each is a separate rounded card, 8 px

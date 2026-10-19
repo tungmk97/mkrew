@@ -852,6 +852,7 @@ fn run_command(name: &str, dir: &str, command: &str) -> RunCommand {
         command: command.into(),
         env_file: None,
         env: Vec::new(),
+        exit_after: false,
     }
 }
 

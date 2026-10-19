@@ -91,6 +91,7 @@ pub fn normalize(commands: Vec<RunCommand>) -> Result<Vec<RunCommand>, RunError>
             dir,
             env_file,
             env: raw.env,
+            exit_after: raw.exit_after,
         });
     }
     Ok(checked)
@@ -191,9 +192,13 @@ pub fn scan_ports(line: &str) -> Vec<u16> {
     ports
 }
 
-/// The line typed into a run session's `shell` (its program path): the command, then an exit
-/// in that shell's syntax, so the session ends with the command.
-pub fn typed_line(shell: &str, command: &str) -> String {
+/// The line typed into a run session's `shell` (its program path): the command, then, when
+/// `exit` is set, an exit in that shell's syntax, so the session ends with the command.
+/// Without it the shell stays open after the command, showing its output.
+pub fn typed_line(shell: &str, command: &str, exit: bool) -> String {
+    if !exit {
+        return format!("{command}\r");
+    }
     let file = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
     let stem = file.split('.').next().unwrap_or(file).to_ascii_lowercase();
     match stem.as_str() {
@@ -325,21 +330,30 @@ mod tests {
     }
 
     #[test]
-    fn the_typed_line_exits_the_shell_when_the_command_ends() {
+    fn the_typed_line_exits_the_shell_only_when_asked() {
         assert_eq!(
-            typed_line(r"C:\Windows\System32\cmd.exe", "npm run dev"),
+            typed_line(r"C:\Windows\System32\cmd.exe", "npm run dev", true),
             "npm run dev & exit\r"
         );
         assert_eq!(
-            typed_line("pwsh", "npm run dev"),
+            typed_line("pwsh", "npm run dev", true),
             "npm run dev; exit $LASTEXITCODE\r"
         );
         assert_eq!(
-            typed_line("C:/Program Files/PowerShell/7/PWSH.EXE", "x"),
+            typed_line("C:/Program Files/PowerShell/7/PWSH.EXE", "x", true),
             "x; exit $LASTEXITCODE\r"
         );
-        assert_eq!(typed_line("powershell.exe", "x"), "x; exit $LASTEXITCODE\r");
-        assert_eq!(typed_line("/bin/bash", "cargo run"), "cargo run; exit\r");
+        assert_eq!(
+            typed_line("powershell.exe", "x", true),
+            "x; exit $LASTEXITCODE\r"
+        );
+        assert_eq!(
+            typed_line("/bin/bash", "cargo run", true),
+            "cargo run; exit\r"
+        );
+        for shell in [r"C:\Windows\System32\cmd.exe", "pwsh", "/bin/bash"] {
+            assert_eq!(typed_line(shell, "npm run dev", false), "npm run dev\r");
+        }
     }
 
     fn shell(kind: SessionKind, title: Option<&str>) -> Session {
@@ -405,6 +419,7 @@ mod tests {
             command: command.into(),
             env_file: None,
             env: Vec::new(),
+            exit_after: false,
         }
     }
 
@@ -427,12 +442,14 @@ mod tests {
         let raw = mkrew_protocol::RunCommand {
             env_file: Some("  ".into()),
             env: vars(&[("PORT", "1")]),
+            exit_after: true,
             ..command(" BE ", " ", " npm run dev ")
         };
         assert_eq!(
             normalize(vec![raw]).unwrap(),
             [mkrew_protocol::RunCommand {
                 env: vars(&[("PORT", "1")]),
+                exit_after: true,
                 ..command("BE", ".", "npm run dev")
             }]
         );

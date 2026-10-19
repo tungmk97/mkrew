@@ -198,6 +198,44 @@ impl Input {
         self.cursor = to;
     }
 
+    /// A press (or drag, `extend`) at byte `at`: one click puts the caret there, `extend`
+    /// (Shift, a drag) selects from the anchor; two select the word (or run of blanks or
+    /// punctuation) under it, three its line.
+    pub fn click(&mut self, at: usize, extend: bool, clicks: usize) {
+        let mut at = at.min(self.text.len());
+        while !self.text.is_char_boundary(at) {
+            at -= 1;
+        }
+        let text = self.text.as_str();
+        let (start, end) = match clicks {
+            0 | 1 => {
+                self.anchor = extend.then(|| self.anchor.unwrap_or(self.cursor));
+                self.cursor = at;
+                return;
+            }
+            2 => {
+                let Some(kind) = (text[at..].chars().next())
+                    .filter(|c| *c != '\n')
+                    .or_else(|| text[..at].chars().next_back())
+                    .map(class)
+                else {
+                    return;
+                };
+                let same = |c: char| c != '\n' && class(c) == kind;
+                (
+                    text[..at].trim_end_matches(same).len(),
+                    text.len() - text[at..].trim_start_matches(same).len(),
+                )
+            }
+            _ => (
+                text[..at].rfind('\n').map_or(0, |i| i + 1),
+                text[at..].find('\n').map_or(text.len(), |i| at + i),
+            ),
+        };
+        self.anchor = Some(start);
+        self.cursor = end;
+    }
+
     /// Where `motion` takes the caret. Home / End stay on the caret's line; ↑ / ↓ keep its
     /// column (in chars) and stop at the text's start / end.
     fn target(&self, motion: Motion) -> usize {
@@ -369,6 +407,11 @@ impl TextBox {
         self.input.edit(key)
     }
 
+    /// [`Input::click`] on the box.
+    pub fn click(&mut self, at: usize, extend: bool, clicks: usize) {
+        self.input.click(at, extend, clicks);
+    }
+
     /// Types typed or pasted text at the caret (replacing the selection), turning `\r\n` and
     /// `\r` line breaks into `\n`.
     pub fn insert(&mut self, text: &str) {
@@ -380,6 +423,46 @@ impl TextBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clicks_place_the_caret_and_select_words_and_lines() {
+        let mut input = Input::from("npm run dev");
+        input.click(4, false, 1);
+        assert_eq!((input.cursor(), input.selection()), (4, None));
+        input.insert("x");
+        assert_eq!(
+            input.as_str(),
+            "npm xrun dev",
+            "typing goes to the clicked place"
+        );
+        input.click(99, true, 1);
+        assert_eq!(
+            input.selection(),
+            Some(5..12),
+            "a drag extends from the anchor"
+        );
+        input.click(6, false, 2);
+        assert_eq!(input.selected_text(), Some("xrun"));
+        input.click(input.len(), false, 2);
+        assert_eq!(
+            input.selected_text(),
+            Some("dev"),
+            "at the end: the word before"
+        );
+        let mut text = TextBox::default();
+        text.insert("A=1\nPORT=8080");
+        text.click(6, false, 3);
+        assert_eq!(text.input().selected_text(), Some("PORT=8080"));
+        text.click(3, false, 2);
+        assert_eq!(
+            text.input().selected_text(),
+            Some("1"),
+            "a word stops at the line end"
+        );
+        let mut wide = Input::from("ví dụ");
+        wide.click(2, false, 1);
+        assert_eq!(wide.cursor(), 1, "a byte inside a char goes to its start");
+    }
 
     #[test]
     fn enter_types_a_new_line_and_ctrl_enter_submits() {

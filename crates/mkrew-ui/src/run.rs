@@ -292,6 +292,7 @@ mod tests {
                     command: "x".into(),
                     env_file: None,
                     env: Vec::new(),
+                    exit_after: false,
                 })
                 .collect(),
             run_autostart: false,

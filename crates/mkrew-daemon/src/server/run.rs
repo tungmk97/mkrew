@@ -139,7 +139,11 @@ impl Daemon {
                     position: old.map_or(0.0, |s| s.position),
                     cols: params.cols,
                     rows: params.rows,
-                    typed: Some(run::typed_line(&program, &command.command)),
+                    typed: Some(run::typed_line(
+                        &program,
+                        &command.command,
+                        command.exit_after,
+                    )),
                     native_session_id: None,
                     dir: Some(dir),
                     banner: None,

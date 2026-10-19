@@ -506,6 +506,9 @@ pub struct RunCommand {
     /// Applied after `env_file`.
     #[serde(default)]
     pub env: Vec<(String, String)>,
+    /// Type an exit after the command, so the pane closes when it ends (off: the shell stays).
+    #[serde(default)]
+    pub exit_after: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

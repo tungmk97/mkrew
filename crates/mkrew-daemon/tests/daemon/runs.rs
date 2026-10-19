@@ -15,6 +15,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
         command: " uv run main.py ".into(),
         env_file: Some(" ".into()),
         env: vec![("ENVIRONMENT".into(), "dev".into())],
+        exit_after: false,
     };
     let saved: Project = client
         .call(Request::ProjectUpdate(ProjectUpdateParams {
@@ -37,6 +38,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
             command: "uv run main.py".into(),
             env_file: None,
             env: vec![("ENVIRONMENT".into(), "dev".into())],
+            exit_after: false,
         }]
     );
     assert!(saved.run_autostart);
@@ -308,7 +310,10 @@ fn run_commands_auto_start_after_a_daemon_restart_and_end_with_their_command() {
     client
         .call(set_runs(
             &project,
-            vec![run_command("dev", ".", "echo started> started.txt")],
+            vec![RunCommand {
+                exit_after: true,
+                ..run_command("dev", ".", "echo started> started.txt")
+            }],
             Some(true),
         ))
         .into_result::<Project>()

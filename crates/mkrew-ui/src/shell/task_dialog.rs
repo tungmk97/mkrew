@@ -256,21 +256,20 @@ impl Shell {
                 Field::Title => &dialog.title,
                 Field::Prompt => dialog.prompt.input(),
             };
+            // Its keys edit at the end of the text (SPEC §13): a click only focuses it.
             caret_field(
                 id,
-                input.as_str(),
-                input.cursor(),
-                input.selection(),
+                input,
                 placeholder,
                 dialog.field == which,
                 theme,
+                cx,
+                move |shell, _| {
+                    if let Some(dialog) = shell.task_dialog.as_mut() {
+                        dialog.field = which;
+                    }
+                },
             )
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                if let Some(dialog) = shell.task_dialog.as_mut() {
-                    dialog.field = which;
-                    cx.notify();
-                }
-            }))
         };
         let agents = match &dialog.agents {
             Agents::Loading => vec![label("Loading agents…").into_any_element()],

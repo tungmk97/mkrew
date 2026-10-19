@@ -452,6 +452,7 @@ fn run(name: &str) -> RunCommand {
         command: "uv run main.py".into(),
         env_file: Some(".env".into()),
         env: vec![("ENVIRONMENT".into(), "dev".into())],
+        exit_after: false,
     }
 }
 
@@ -462,7 +463,13 @@ fn run_commands_are_saved_in_order_and_replaced_as_a_whole() {
     let p = store.add_project(dir.path(), None).unwrap();
     assert!(p.run_commands.is_empty() && !p.run_autostart);
 
-    let two = [run("BE"), run("FE")];
+    let two = [
+        run("BE"),
+        RunCommand {
+            exit_after: true,
+            ..run("FE")
+        },
+    ];
     let saved = store
         .update_project(
             p.id,
@@ -539,6 +546,7 @@ fn the_dev_command_becomes_a_run_command_named_dev() {
             command: "npm run dev".into(),
             env_file: None,
             env: Vec::new(),
+            exit_after: false,
         }]
     );
     assert!(a.run_autostart);

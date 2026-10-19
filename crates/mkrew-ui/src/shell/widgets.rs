@@ -383,12 +383,104 @@ pub(crate) fn text_field(
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let selection = (selected && !text.is_empty()).then_some(0..text.len());
-    caret_field(id, text, text.len(), selection, placeholder, focused, theme)
+    field_frame(id, text, text.len(), selection, placeholder, focused, theme).0
 }
 
-/// A [`text_field`] whose caret sits at byte `cursor`, with the bytes of `selection`
-/// highlighted (no caret then).
+/// A press or drag in a [`caret_field`]: the byte under the pointer, whether it extends the
+/// selection (Shift, a drag) and the click count (2 = word, 3 = line).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Caret {
+    pub at: usize,
+    pub extend: bool,
+    pub clicks: usize,
+}
+
+/// A field that edits `input` like a normal text box: the caret and selection drawn where
+/// they are, a click puts the caret under the pointer, a drag or Shift+click selects, a
+/// double / triple click selects the word / line. `on_caret` focuses the field and applies
+/// the [`Caret`] (`Input::click`).
 pub(crate) fn caret_field(
+    id: &'static str,
+    input: &Input,
+    placeholder: &'static str,
+    focused: bool,
+    theme: &Theme,
+    cx: &Context<'_, Shell>,
+    on_caret: impl Fn(&mut Shell, Caret) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let (field, layout) = field_frame(
+        id,
+        input.as_str(),
+        input.cursor(),
+        input.selection(),
+        placeholder,
+        focused,
+        theme,
+    );
+    let on_caret = Rc::new(on_caret);
+    let at = move |position: Point<Pixels>| {
+        layout
+            .as_ref()
+            .map_or(0, |layout| closest_byte(layout, position))
+    };
+    let at = Rc::new(at);
+    let (down, down_at) = (Rc::clone(&on_caret), Rc::clone(&at));
+    field
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
+                down(
+                    shell,
+                    Caret {
+                        at: down_at(event.position),
+                        extend: event.modifiers.shift,
+                        clicks: event.click_count,
+                    },
+                );
+                cx.notify();
+            }),
+        )
+        .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
+            if event.dragging() {
+                let caret = Caret {
+                    at: at(event.position),
+                    extend: true,
+                    clicks: 1,
+                };
+                on_caret(shell, caret);
+                cx.notify();
+            }
+        }))
+}
+
+/// The byte of `layout`'s text nearest to window point `position`: the line under it (the
+/// first / last above / below the text), the char boundary closest along it.
+fn closest_byte(layout: &gpui::TextLayout, position: Point<Pixels>) -> usize {
+    let (bounds, line_height) = (layout.bounds(), layout.line_height());
+    let lines = layout.line_layouts();
+    let (mut top, mut start) = (bounds.top(), 0);
+    for (i, line) in lines.iter().enumerate() {
+        let height = line.size(line_height).height;
+        if position.y < top + height || i + 1 == lines.len() {
+            // Inside the line's rows: a y past its last row would find no row at all.
+            let last_row = (height - px(theme::BORDER_WIDTH)).max(Pixels::ZERO);
+            let y = (position.y - top).clamp(Pixels::ZERO, last_row);
+            let within = point(position.x - bounds.left(), y);
+            return start
+                + line
+                    .closest_index_for_position(within, line_height)
+                    .unwrap_or_else(|i| i);
+        }
+        top += height;
+        start += line.len() + 1;
+    }
+    0
+}
+
+/// The field's frame and text: the caret at byte `cursor` while `focused` (none while
+/// something is selected), the bytes of `selection` highlighted, a muted placeholder when
+/// empty. The text's layout maps pointer positions to bytes once painted (`None` when empty).
+fn field_frame(
     id: &'static str,
     text: &str,
     cursor: usize,
@@ -396,60 +488,10 @@ pub(crate) fn caret_field(
     placeholder: &'static str,
     focused: bool,
     theme: &Theme,
-) -> gpui::Stateful<gpui::Div> {
-    let caret = || {
-        div()
-            .flex_none()
-            .w(px(theme::BORDER_WIDTH))
-            .h(font_size::BODY)
-            .bg(rgb(theme.text))
-    };
-    let piece = |text: &str, lit: bool| {
-        div()
-            .min_w_0()
-            .when(lit, |el| el.bg(rgb(theme.terminal_selection_bg)))
-            .child(text.to_owned())
-    };
-    let show_caret = focused && selection.is_none();
-    let mut start = 0;
-    let mut rows = Vec::new();
-    for line in text.split('\n') {
-        let range = start..start + line.len();
-        start = range.end + 1;
-        let mut row = div().flex().items_center();
-        let caret_here = show_caret && (range.start..=range.end).contains(&cursor);
-        if line.is_empty() {
-            // An empty line still takes a line's height; it is lit inside the selection.
-            let lit =
-                (selection.as_ref()).is_some_and(|s| s.start <= range.start && range.end <= s.end);
-            row = row
-                .when(caret_here, |row| row.child(caret()))
-                .child(piece(" ", lit));
-        } else {
-            let clamp = |at: usize| at.clamp(range.start, range.end);
-            let (lit_start, lit_end) = (selection.as_ref())
-                .map_or((clamp(cursor), clamp(cursor)), |s| {
-                    (clamp(s.start), clamp(s.end))
-                });
-            if range.start < lit_start {
-                row = row.child(piece(&text[range.start..lit_start], false));
-            }
-            if caret_here {
-                row = row.child(caret());
-            }
-            if lit_start < lit_end {
-                row = row.child(piece(&text[lit_start..lit_end], true));
-            }
-            if lit_end < range.end {
-                row = row.child(piece(&text[lit_end..range.end], false));
-            }
-        }
-        rows.push(row);
-    }
-    div()
+) -> (gpui::Stateful<gpui::Div>, Option<gpui::TextLayout>) {
+    let frame = div()
         .id(id)
-        .flex()
-        .flex_col()
+        .relative()
         .px(px(space::S))
         .py(px(space::S))
         .rounded(px(radius::MEDIUM))
@@ -462,17 +504,53 @@ pub(crate) fn caret_field(
         .bg(rgb(theme.surface_raised))
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
-        .cursor(CursorStyle::IBeam)
-        .when(text.is_empty(), |el| {
-            el.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .when(focused, |row| row.child(caret()))
-                    .child(div().text_color(rgb(theme.text_muted)).child(placeholder)),
+        .cursor(CursorStyle::IBeam);
+    if text.is_empty() {
+        let caret = div()
+            .flex_none()
+            .w(px(theme::BORDER_WIDTH))
+            .h(font_size::BODY)
+            .bg(rgb(theme.text));
+        let frame = frame.child(
+            div()
+                .flex()
+                .items_center()
+                .when(focused, |row| row.child(caret))
+                .child(div().text_color(rgb(theme.text_muted)).child(placeholder)),
+        );
+        return (frame, None);
+    }
+    let lit = HighlightStyle {
+        background_color: Some(rgb(theme.terminal_selection_bg).into()),
+        ..HighlightStyle::default()
+    };
+    let styled = StyledText::new(text.to_owned()).with_highlights(
+        selection
+            .clone()
+            .filter(|s| !s.is_empty())
+            .map(|s| (s, lit)),
+    );
+    let layout = styled.layout().clone();
+    let show_caret = focused && selection.is_none();
+    let (caret_layout, caret_color) = (layout.clone(), rgb(theme.text));
+    let cursor = cursor.min(text.len());
+    let frame = frame.child(styled).when(show_caret, |el| {
+        // Painted after the text's prepaint, so its layout knows where the caret byte sits.
+        el.child(
+            canvas(
+                |_, _, _| (),
+                move |_, (), window, _| {
+                    if let Some(at) = caret_layout.position_for_index(cursor) {
+                        let size = size(px(theme::BORDER_WIDTH), caret_layout.line_height());
+                        window.paint_quad(fill(Bounds::new(at, size), caret_color));
+                    }
+                },
             )
-        })
-        .when(!text.is_empty(), |el| el.children(rows))
+            .absolute()
+            .size_full(),
+        )
+    });
+    (frame, Some(layout))
 }
 
 /// One row of a unified diff (undo preview, Docs "View changes").

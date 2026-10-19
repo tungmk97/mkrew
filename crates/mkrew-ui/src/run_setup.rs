@@ -18,6 +18,8 @@ pub struct Card {
     pub env_file: Input,
     /// `KEY=VALUE` lines.
     pub env: TextBox,
+    /// "Close the pane when it ends": an exit is typed after the command.
+    pub exit_after: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,8 @@ impl Picker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Field(usize, Field),
+    /// The card's "Close the pane when it ends" (Space flips it).
+    Exit(usize),
     Autostart,
 }
 
@@ -155,7 +159,7 @@ impl RunSetup {
                     Focus::Field(i, field) => {
                         line(&mut self.cards[i], field).edit(&key);
                     }
-                    Focus::Autostart => {}
+                    Focus::Exit(_) | Focus::Autostart => {}
                 }
                 Outcome::Edited
             }
@@ -166,8 +170,23 @@ impl RunSetup {
     pub fn selected_text(&self) -> Option<&str> {
         match self.focus {
             Focus::Field(i, field) => self.cards.get(i)?.input(field).selected_text(),
-            Focus::Autostart => None,
+            Focus::Exit(_) | Focus::Autostart => None,
         }
+    }
+
+    /// A press or drag at byte `at` of `field` in card `card` (see `Input::click`): the field
+    /// takes the keyboard and its caret goes there.
+    pub fn click(&mut self, card: usize, field: Field, at: usize, extend: bool, clicks: usize) {
+        let Some(c) = self.cards.get_mut(card) else {
+            return;
+        };
+        // A press in another field starts there, not from that field's old anchor.
+        let extend = extend && self.focus == Focus::Field(card, field);
+        match field {
+            Field::Env => c.env.click(at, extend, clicks),
+            field => line(c, field).click(at, extend, clicks),
+        }
+        self.focus = Focus::Field(card, field);
     }
 
     /// Opens the picker for `field` (`Dir` or `EnvFile`) of card `card`; returns the folder to
@@ -237,12 +256,17 @@ impl RunSetup {
         self.focus = Focus::Field(picker.card, picker.field);
     }
 
-    /// Typed or pasted text into the focused field; Space flips "Start with the daemon".
+    /// Typed or pasted text into the focused field; Space flips a focused checkbox.
     pub fn insert(&mut self, text: &str) {
         match self.focus {
             Focus::Autostart => {
                 if text == " " {
                     self.autostart = !self.autostart;
+                }
+            }
+            Focus::Exit(i) => {
+                if text == " " {
+                    self.cards[i].exit_after = !self.cards[i].exit_after;
                 }
             }
             Focus::Field(i, Field::Env) => self.cards[i].env.insert(text),
@@ -263,11 +287,11 @@ impl RunSetup {
         self.focus = Focus::Field(self.cards.len() - 1, Field::Name);
     }
 
-    /// The card holding the keyboard, if any.
+    /// The card holding the keyboard, if any; the dialog shows only its fields.
     pub fn focused_card(&self) -> Option<usize> {
         match self.focus {
-            Focus::Field(i, _) => Some(i),
-            _ => None,
+            Focus::Field(i, _) | Focus::Exit(i) => Some(i),
+            Focus::Autostart => None,
         }
     }
 
@@ -343,6 +367,7 @@ impl RunSetup {
                 command: card.command.as_str().to_owned(),
                 env_file: Some(card.env_file.as_str().to_owned()),
                 env,
+                exit_after: card.exit_after,
             });
         }
         let commands = match normalize(commands) {
@@ -380,10 +405,11 @@ impl RunSetup {
                 let at = Field::ORDER.iter().position(|f| *f == field).unwrap_or(0);
                 match Field::ORDER.get(at + 1) {
                     Some(next) => Focus::Field(i, *next),
-                    None if i + 1 < self.cards.len() => Focus::Field(i + 1, Field::Name),
-                    None => Focus::Autostart,
+                    None => Focus::Exit(i),
                 }
             }
+            Focus::Exit(i) if i + 1 < self.cards.len() => Focus::Field(i + 1, Field::Name),
+            Focus::Exit(_) => Focus::Autostart,
         }
     }
 }
@@ -409,6 +435,7 @@ fn card(command: &RunCommand) -> Card {
         command: command.command.clone().into(),
         env_file: command.env_file.clone().unwrap_or_default().into(),
         env,
+        exit_after: command.exit_after,
     }
 }
 
@@ -474,6 +501,7 @@ mod tests {
                 ("ENVIRONMENT".into(), "dev".into()),
                 ("PYTHONPATH".into(), ".".into()),
             ],
+            exit_after: true,
         }
     }
 
@@ -571,6 +599,7 @@ mod tests {
                 command: "npm run dev".into(),
                 env_file: None,
                 env: Vec::new(),
+                exit_after: false,
             }])
         );
     }
@@ -582,17 +611,36 @@ mod tests {
         assert_eq!(setup.focus, Focus::Field(1, Field::Name));
         setup.focus = Focus::Field(0, Field::Name);
         let mut seen = vec![setup.focus];
-        for _ in 0..11 {
+        for _ in 0..13 {
             setup.key(DialogKey::SwitchField);
             seen.push(setup.focus);
         }
         assert_eq!(seen[4], Focus::Field(0, Field::Env));
-        assert_eq!(seen[5], Focus::Field(1, Field::Name));
-        assert_eq!(seen[10], Focus::Autostart);
-        assert_eq!(seen[11], Focus::Field(0, Field::Name));
+        assert_eq!(seen[5], Focus::Exit(0));
+        assert_eq!(seen[6], Focus::Field(1, Field::Name));
+        assert_eq!(seen[12], Focus::Autostart);
+        assert_eq!(seen[13], Focus::Field(0, Field::Name));
         setup.focus = Focus::Autostart;
         setup.insert(" ");
         assert!(!setup.autostart);
+        setup.focus = Focus::Exit(1);
+        setup.insert(" ");
+        assert!(setup.cards[1].exit_after, "Space flips the card's exit");
+        assert_eq!(setup.focused_card(), Some(1));
+    }
+
+    #[test]
+    fn a_click_focuses_the_field_and_moves_its_caret() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.click(0, Field::Command, 0, false, 1);
+        setup.insert("uv run ");
+        assert_eq!(setup.focus, Focus::Field(0, Field::Command));
+        assert!(setup.cards[0].command.starts_with("uv run .venv"));
+        // Shift+click in another field does not extend from that field's old anchor.
+        setup.click(0, Field::Env, 3, true, 1);
+        assert_eq!(setup.cards[0].env.input().selection(), None);
+        setup.click(0, Field::Env, 9, true, 1);
+        assert_eq!(setup.selected_text(), Some("IRONME"));
     }
 
     #[test]

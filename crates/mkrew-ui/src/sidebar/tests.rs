@@ -84,6 +84,7 @@ fn run_sessions_are_not_session_rows_and_a_workspace_with_run_commands_is_not_em
         command: "cargo run".to_owned(),
         env_file: None,
         env: Vec::new(),
+        exit_after: false,
     });
     let web = project("web");
     let mut run = session(&api, 1, SessionState::Working);

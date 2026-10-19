@@ -930,12 +930,17 @@ The session panel (below) is a third column right of Terminals while open.
   `Restart all` / `Stop all` while anything runs or `Start all` while nothing does, `Show Run
   tab`, `Run setup…` (with no command, saving there also runs). Only Stop is red. Run from
   all-stopped switches to Terminals and the `run` tab; Restart and per-command Run keep the
-  view. A stopped command, and one that ends by itself, leaves the `run` tab at once (the tab
+  view. A stopped command leaves the `run` tab at once; so does one that ends by itself when its
+  `Close the pane when it ends` box is on (ADR 0063; off, the shell stays open showing the
+  output) (the tab
   stays, empty after the last one). Restart puts the new session where the old pane was, so the
   tab shows one terminal per command, never an old one beside a new one. A run pane's title is
   `<name> · :8080`; the sidebar's RUN group lists the commands. Ports load with `session.ports` per workspace on refresh
   and stay live through the `session.ports` event. **Run setup dialog:** command cards (Name,
-  Folder, Command, Env file, Env as multi-line `KEY=VALUE`), `+ Add command`, `Duplicate` (a
+  Folder, Command, Env file, Env as multi-line `KEY=VALUE`, and a `Close the pane when it ends`
+  checkbox, off by default: on, an exit is typed after the command); only the card holding the
+  keyboard shows its fields, every other one folds to a line (number, name, command, folder;
+  Duplicate / Remove on hover) that opens on click (ADR 0063), `+ Add command`, `Duplicate` (a
   copy right below, named `<name> copy`, refused at 8), `Remove`, a
   `Start with the daemon` checkbox; Ctrl+Enter (or Enter outside Env) saves; errors show in
   the dialog. Folder and Env file have `Browse…`: a picker over the workspace (`fs.list`,
@@ -1198,7 +1203,9 @@ rename) takes Ctrl+A (select all: the next key replaces it), Ctrl+Backspace (del
 before the caret: blanks, then a run of letters / digits / `_` or of punctuation, like the Files
 editor) and Ctrl+V. The run setup fields also move the caret (←/→, Ctrl+←/→ by word, Home / End,
 Ctrl+Home / End, ↑/↓ in Env), select with Shift, and take Delete, Ctrl+Delete, Ctrl+C and
-Ctrl+X (ADR 0048); the other fields edit at the end of their text. Ctrl+Z works only in the Files
+Ctrl+X (ADR 0048); a click puts their caret under the pointer, Shift+click or a drag selects, a
+double / triple click selects the word / line (ADR 0063). The other fields edit at the end of
+their text. Ctrl+Z works only in the Files
 editor (§12A).
 Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line; Mkrew has no
 kitty / win32-input keyboard mode, so this is the one form every agent gets through ConPTY.
