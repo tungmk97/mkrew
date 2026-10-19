@@ -52,6 +52,46 @@ pub struct Daemon {
     decoder: FrameDecoder,
 }
 
+impl Daemon {
+    /// The next event the daemon pushes; replies and output on the way are skipped. `mk web`'s
+    /// push loop (ADR 0066) lives on one of these connections.
+    pub async fn next_event(&mut self) -> anyhow::Result<Event> {
+        let mut buf = vec![0u8; READ_BUFFER];
+        loop {
+            while let Some(frame) = self.decoder.next_frame()? {
+                if let Frame::Message(Message::Event(event)) = frame {
+                    return Ok(event);
+                }
+            }
+            let n = self.rx.read(&mut buf).await?;
+            if n == 0 {
+                bail!("the Mkrew daemon closed the connection");
+            }
+            self.decoder.push(&buf[..n]);
+        }
+    }
+
+    /// Sends one request and waits for its reply; events on the way are skipped.
+    pub async fn call(mut self, request: Request) -> anyhow::Result<Outcome> {
+        const ID: u64 = 1;
+        let frame = Frame::Message(Message::Request { id: ID, request });
+        self.tx.write_all(&encode(&frame)?).await?;
+        let mut buf = vec![0u8; READ_BUFFER];
+        loop {
+            while let Some(frame) = self.decoder.next_frame()? {
+                if let Frame::Message(Message::Response { id: ID, outcome }) = frame {
+                    return Ok(outcome);
+                }
+            }
+            let n = self.rx.read(&mut buf).await?;
+            if n == 0 {
+                bail!("the Mkrew daemon closed the connection");
+            }
+            self.decoder.push(&buf[..n]);
+        }
+    }
+}
+
 /// Why the relay ended, for `mk web`'s stderr; `Ok` when the browser left.
 pub async fn relay(ws: Ws, daemon: Daemon) -> anyhow::Result<()> {
     let Daemon { rx, tx, decoder } = daemon;

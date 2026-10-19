@@ -1094,11 +1094,14 @@ struct Web {
 impl Env {
     /// Starts `mk web` (which starts the daemon when none runs). `--host` keeps `tailscale` out.
     fn web(&self) -> Web {
-        let mut child = self
-            .command(&["web", "--listen", "127.0.0.1:0", "--host", "test.invalid"])
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        self.web_with(|_| {})
+    }
+
+    fn web_with(&self, configure: impl FnOnce(&mut Command)) -> Web {
+        let mut command =
+            self.command(&["web", "--listen", "127.0.0.1:0", "--host", "test.invalid"]);
+        configure(&mut command);
+        let mut child = command.stdout(Stdio::piped()).spawn().unwrap();
         let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
         let (mut port, mut token) = (None, None);
         while port.is_none() || token.is_none() {
@@ -1135,11 +1138,23 @@ type WebSocket = tungstenite::WebSocket<TcpStream>;
 impl Web {
     /// `GET target` → (status, body).
     fn get(&self, target: &str) -> (u16, String) {
+        self.send(&format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+    }
+
+    /// `POST target` with a JSON body → (status, body).
+    fn post(&self, target: &str, json: &str) -> (u16, String) {
+        self.send(&format!(
+            "POST {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{json}",
+            json.len()
+        ))
+    }
+
+    fn send(&self, raw: &str) -> (u16, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(20)))
             .unwrap();
-        write!(stream, "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").unwrap();
+        stream.write_all(raw.as_bytes()).unwrap();
         let mut response = Vec::new();
         stream.read_to_end(&mut response).unwrap();
         let text = String::from_utf8_lossy(&response).into_owned();
@@ -1358,4 +1373,97 @@ fn web_answers_503_with_the_reason_when_the_daemon_is_gone() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+/// RFC 8291's receiver: a valid P-256 key and auth secret to subscribe with.
+const PHONE_KEYS: &str = r#""keys":{"p256dh":"BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4","auth":"BTBZMqHH6r4Tts7J_aSIgg"}"#;
+
+#[test]
+fn web_push_sends_an_encrypted_message_when_a_session_needs_you() {
+    let env = Env::new();
+    env.write_fake_profile();
+    let config = env.dir.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    let settings = config.join("settings.toml");
+    let sink = env.dir.path().join("push.jsonl");
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+
+    let web = env.web_with(|command| {
+        command.env("MKREW_PUSH", &sink);
+    });
+    let key_url = format!("/push/key?t={}", web.token);
+    let subscribe_url = format!("/push/subscribe?t={}", web.token);
+    let endpoint = "https://fcm.googleapis.com/fcm/send/e2e";
+    let subscription = format!(r#"{{"endpoint":"{endpoint}",{PHONE_KEYS}}}"#);
+
+    // `[web] push` defaults to off: no key, no subscribing, so a phone page shows no bell.
+    assert_eq!(web.get(&key_url).0, 404);
+    assert_eq!(web.post(&subscribe_url, &subscription).0, 404);
+
+    std::fs::write(&settings, "[web]\npush = true\n").unwrap();
+    let (status, key) = web.get(&key_url);
+    assert_eq!((status, key.len()), (200, 87), "{key}");
+    assert_eq!(web.get("/push/key").0, 401, "no token");
+    assert_eq!(
+        web.post("/push/subscribe", &subscription).0,
+        401,
+        "no token"
+    );
+    // A subscription for any other host is refused: `mk web` never POSTs to it.
+    let evil = format!(r#"{{"endpoint":"https://evil.test/x",{PHONE_KEYS}}}"#);
+    assert_eq!(web.post(&subscribe_url, &evil).0, 400);
+    assert_eq!(web.post(&subscribe_url, "not json").0, 400);
+    assert_eq!(web.post(&subscribe_url, &subscription).0, 204);
+    // The token-gated manifest the Home Screen app needs, and the service worker.
+    let (status, manifest) = web.get(&format!("/manifest.webmanifest?t={}", web.token));
+    assert_eq!(status, 200);
+    assert!(
+        manifest.contains(&format!("/#t={}", web.token)),
+        "{manifest}"
+    );
+    assert_eq!(web.get("/manifest.webmanifest").0, 401);
+    assert_eq!(web.get("/sw.js").0, 200);
+
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let id = env
+        .ok(&["session", "spawn", "demo", "--agent", "fake"])
+        .trim()
+        .to_owned();
+    // The fake agent asks "(y/n)": the session needs input, and the phone is told.
+    env.ok(&["wait", &id, "--until", "needs_input", "--timeout", "30000"]);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let line = loop {
+        if let Ok(text) = std::fs::read_to_string(&sink)
+            && let Some(line) = text.lines().next()
+        {
+            break line.to_owned();
+        }
+        assert!(Instant::now() < deadline, "no push was sent");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let sent: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(sent["url"], endpoint);
+    let header = |name: &str| {
+        sent["headers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|pair| pair[0] == name)
+            .map(|pair| pair[1].as_str().unwrap().to_owned())
+    };
+    assert!(header("Authorization").unwrap().starts_with("vapid t="));
+    assert_eq!(header("Content-Encoding").as_deref(), Some("aes128gcm"));
+    // 86-byte header + {"title":…,"body":"needs you","session":…} + delimiter + tag.
+    assert!(sent["body_len"].as_u64().unwrap() > 86 + 60 + 17, "{sent}");
+
+    // Unsubscribing works and keeps working with push off.
+    let gone = format!(r#"{{"endpoint":"{endpoint}"}}"#);
+    assert_eq!(
+        web.post(&format!("/push/unsubscribe?t={}", web.token), &gone)
+            .0,
+        204
+    );
+    env.ok(&["send", &id, "y"]);
+    env.ok(&["wait", &id, "--until", "exited", "--timeout", "30000"]);
 }

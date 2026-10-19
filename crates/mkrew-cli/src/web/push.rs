@@ -17,10 +17,11 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use mkrew_core::settings::{self, Settings};
 use mkrew_daemon::{Throttle, decide};
-use mkrew_protocol::SessionState;
+use mkrew_protocol::{Event, Project, Request, Session, SessionListParams, SessionState};
 use serde::Serialize;
 use ulid::Ulid;
 
+use super::relay;
 use store::{Store, Subscription, endpoint_allowed, endpoint_in};
 
 /// `MKREW_PUSH=<file>`: append each message to the file as a JSON line instead of sending it
@@ -336,6 +337,83 @@ impl Push {
             eprintln!("mk web: push: {e}");
         }
     }
+}
+
+/// Watches the daemon's `session.state` events for ever and notifies the phones. A daemon that
+/// goes away (it restarts, the PC wakes from sleep) is waited for, not a reason to stop.
+pub async fn run(push: Arc<Push>, socket: String) {
+    let mut last_error = String::new();
+    loop {
+        if let Err(e) = watch(&push, &socket).await {
+            let text = format!("{e:#}");
+            if text != last_error {
+                eprintln!("mk web: push: {text}");
+                last_error = text;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn watch(push: &Arc<Push>, socket: &str) -> anyhow::Result<()> {
+    let mut daemon = relay::open_daemon(socket).await?;
+    let mut throttle = Throttle::default();
+    loop {
+        let Event::SessionState(change) = daemon.next_event().await? else {
+            continue;
+        };
+        let Some(settings) = push.settings() else {
+            continue;
+        };
+        let (id, state) = (change.session_id, change.state);
+        if !wanted(
+            &settings,
+            push.subscribers(),
+            id,
+            state,
+            &mut throttle,
+            Instant::now(),
+        ) {
+            continue;
+        }
+        match lookup(socket, id).await {
+            Ok(Some((name, project))) => {
+                if let Some(note) = payload(id, &name, &project, state) {
+                    tokio::spawn(Arc::clone(push).notify(note));
+                }
+            }
+            // The session ended between the event and the lookup.
+            Ok(None) => {}
+            Err(e) => eprintln!("mk web: push: {e:#}"),
+        }
+    }
+}
+
+/// The (session name, workspace name) of a session: its title, else the agent's own terminal
+/// title, else the profile id. Each request uses a connection of its own so the event
+/// connection never has to stop reading.
+async fn lookup(socket: &str, session_id: Ulid) -> anyhow::Result<Option<(String, String)>> {
+    let sessions: Vec<Session> = relay::open_daemon(socket)
+        .await?
+        .call(Request::SessionList(SessionListParams::default()))
+        .await?
+        .into_result()?;
+    let Some(session) = sessions.into_iter().find(|s| s.id == session_id) else {
+        return Ok(None);
+    };
+    let projects: Vec<Project> = relay::open_daemon(socket)
+        .await?
+        .call(Request::ProjectList)
+        .await?
+        .into_result()?;
+    let Some(project) = projects.into_iter().find(|p| p.id == session.project_id) else {
+        return Ok(None);
+    };
+    let name = session
+        .title
+        .or(session.terminal_title)
+        .unwrap_or(session.agent_profile);
+    Ok(Some((name, project.name)))
 }
 
 #[cfg(test)]

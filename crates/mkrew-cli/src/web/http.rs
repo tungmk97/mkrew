@@ -1,5 +1,5 @@
 //! The few HTTP requests `mk web` answers (ADR 0052): the page, a token check and the
-//! WebSocket upgrade. GET only; every answer closes the connection.
+//! WebSocket upgrade. GET, and POST for the push routes; every answer closes the connection.
 
 use super::token::Token;
 
@@ -58,6 +58,11 @@ pub const ASSETS: &[Asset] = &[
         content_type: PNG,
         body: include_bytes!("../../web/apple-touch-icon.png"),
     },
+    Asset {
+        path: "/sw.js",
+        content_type: JS,
+        body: include_bytes!("../../web/sw.js"),
+    },
 ];
 
 /// What `mk web` reads from a request head.
@@ -70,6 +75,8 @@ pub struct Head {
     /// `Upgrade: websocket` was sent.
     pub upgrade: bool,
     pub websocket_key: Option<String>,
+    /// `Content-Length`, 0 when absent or not a number.
+    pub content_length: usize,
 }
 
 /// Length of the head including its blank line, once the buffer holds all of it.
@@ -93,6 +100,7 @@ pub fn parse_head(raw: &[u8]) -> Option<Head> {
         .map(str::to_owned);
     let mut upgrade = false;
     let mut websocket_key = None;
+    let mut content_length = 0;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
@@ -102,6 +110,8 @@ pub fn parse_head(raw: &[u8]) -> Option<Head> {
             upgrade = value.eq_ignore_ascii_case("websocket");
         } else if name.eq_ignore_ascii_case("sec-websocket-key") {
             websocket_key = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("content-length") {
+            content_length = value.parse().unwrap_or(0);
         }
     }
     Some(Head {
@@ -110,6 +120,7 @@ pub fn parse_head(raw: &[u8]) -> Option<Head> {
         token,
         upgrade,
         websocket_key,
+        content_length,
     })
 }
 
@@ -126,16 +137,35 @@ pub enum Route {
     NotFound,
     BadRequest,
     MethodNotAllowed,
+    /// `GET /push/key` with the right token: answered with the VAPID public key (or 404 while
+    /// `[web] push` is off) by `web.rs`.
+    PushKey,
+    /// `POST /push/subscribe` / `/push/unsubscribe` with the right token: the body is read by `web.rs`.
+    PushSubscribe,
+    PushUnsubscribe,
+    /// `/manifest.webmanifest` with the right token: the Home Screen app's manifest.
+    Manifest(String),
 }
 
 pub fn route(head: &Head, token: &Token) -> Route {
+    let authorized = token.matches(head.token.as_deref());
+    if head.method == "POST" {
+        return match (head.path.as_str(), authorized) {
+            ("/push/subscribe", true) => Route::PushSubscribe,
+            ("/push/unsubscribe", true) => Route::PushUnsubscribe,
+            ("/push/subscribe" | "/push/unsubscribe", false) => Route::Unauthorized,
+            _ => Route::MethodNotAllowed,
+        };
+    }
     if head.method != "GET" {
         return Route::MethodNotAllowed;
     }
-    let authorized = token.matches(head.token.as_deref());
     match head.path.as_str() {
         "/check" if authorized => Route::Check,
         "/check" => Route::Unauthorized,
+        "/push/key" if authorized => Route::PushKey,
+        "/manifest.webmanifest" if authorized => Route::Manifest(manifest(token)),
+        "/push/key" | "/manifest.webmanifest" => Route::Unauthorized,
         "/ws" => match (&head.websocket_key, head.upgrade) {
             (Some(key), true) if authorized => Route::Upgrade { key: key.clone() },
             (Some(_), true) => Route::Unauthorized,
@@ -147,6 +177,22 @@ pub fn route(head: &Head, token: &Token) -> Route {
             .find(|asset| asset.path == path)
             .map_or(Route::NotFound, Route::Asset),
     }
+}
+
+/// The Web App Manifest. `start_url` carries the token: an iOS Home Screen app has its own
+/// storage, so it could not find the token the page saved in Safari (ADR 0052, ADR 0066).
+fn manifest(token: &Token) -> String {
+    serde_json::json!({
+        "name": "Mkrew",
+        "short_name": "Mkrew",
+        "start_url": format!("/#t={}", token.as_str()),
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#17181C",
+        "theme_color": "#17181C",
+        "icons": [{ "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }],
+    })
+    .to_string()
 }
 
 impl Route {
@@ -166,12 +212,24 @@ impl Route {
             Route::Check => respond("204 No Content", &[("Cache-Control", "no-store")], b""),
             Route::Unauthorized => respond("401 Unauthorized", &[], b"wrong or missing token\n"),
             Route::NotFound => respond("404 Not Found", &[], b"not found\n"),
-            Route::BadRequest | Route::Upgrade { .. } => {
-                respond("400 Bad Request", &[], b"bad request\n")
-            }
-            Route::MethodNotAllowed => {
-                respond("405 Method Not Allowed", &[("Allow", "GET")], b"GET only\n")
-            }
+            Route::Manifest(body) => respond(
+                "200 OK",
+                &[
+                    ("Content-Type", "application/manifest+json"),
+                    ("Cache-Control", "no-store"),
+                ],
+                body.as_bytes(),
+            ),
+            Route::BadRequest
+            | Route::Upgrade { .. }
+            | Route::PushKey
+            | Route::PushSubscribe
+            | Route::PushUnsubscribe => respond("400 Bad Request", &[], b"bad request\n"),
+            Route::MethodNotAllowed => respond(
+                "405 Method Not Allowed",
+                &[("Allow", "GET, POST")],
+                b"GET or POST only\n",
+            ),
         }
     }
 }
@@ -201,6 +259,18 @@ pub fn unavailable(reason: &str) -> Vec<u8> {
         "503 Service Unavailable",
         &[],
         format!("{reason}\n").as_bytes(),
+    )
+}
+
+/// A plain-text answer of the push routes, never cached.
+pub fn plain(status: &str, body: &str) -> Vec<u8> {
+    respond(
+        status,
+        &[
+            ("Content-Type", "text/plain; charset=utf-8"),
+            ("Cache-Control", "no-store"),
+        ],
+        body.as_bytes(),
     )
 }
 
@@ -244,10 +314,84 @@ mod tests {
                 token: Some("ab".repeat(32)),
                 upgrade: true,
                 websocket_key: Some("dGhlIHNhbXBsZSBub25jZQ==".into()),
+                content_length: 0,
             }
         );
         assert_eq!(parse_head(b"\xff\xfe"), None);
         assert_eq!(parse_head(b"GARBAGE\r\n\r\n"), None);
+    }
+
+    #[test]
+    fn push_and_manifest_routes_need_the_token() {
+        let good = "ab".repeat(32);
+        let get = |path: &str| route(&head(&format!("GET {path} HTTP/1.1\r\n\r\n")), &token());
+        let post = |path: &str| {
+            route(
+                &head(&format!(
+                    "POST {path} HTTP/1.1\r\nContent-Length: 2\r\n\r\n"
+                )),
+                &token(),
+            )
+        };
+        assert!(matches!(
+            get(&format!("/push/key?t={good}")),
+            Route::PushKey
+        ));
+        assert!(matches!(get("/push/key"), Route::Unauthorized));
+        assert!(matches!(
+            post(&format!("/push/subscribe?t={good}")),
+            Route::PushSubscribe
+        ));
+        assert!(matches!(
+            post(&format!("/push/unsubscribe?t={good}")),
+            Route::PushUnsubscribe
+        ));
+        assert!(matches!(post("/push/subscribe"), Route::Unauthorized));
+        assert!(matches!(
+            post(&format!("/push/key?t={good}")),
+            Route::MethodNotAllowed
+        ));
+        assert!(matches!(
+            get(&format!("/push/subscribe?t={good}")),
+            Route::NotFound
+        ));
+        assert!(matches!(get("/manifest.webmanifest"), Route::Unauthorized));
+        match get(&format!("/manifest.webmanifest?t={good}")) {
+            Route::Manifest(body) => {
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+                // The Home Screen app keeps its own storage: the token rides in start_url.
+                assert_eq!(json["start_url"], format!("/#t={good}"));
+                assert_eq!(json["display"], "standalone");
+                assert_eq!(json["scope"], "/");
+            }
+            other => panic!("{other:?}"),
+        }
+        let Route::Asset(sw) = get("/sw.js") else {
+            panic!("no service worker");
+        };
+        assert_eq!(sw.content_type, "text/javascript; charset=utf-8");
+        assert!(sw.body.starts_with(b"// Mkrew web push"));
+    }
+
+    #[test]
+    fn the_request_body_length_is_read() {
+        assert_eq!(
+            head("POST /x HTTP/1.1\r\ncontent-length: 12\r\n\r\n").content_length,
+            12
+        );
+        assert_eq!(head("POST /x HTTP/1.1\r\n\r\n").content_length, 0);
+        assert_eq!(
+            head("POST /x HTTP/1.1\r\nContent-Length: abc\r\n\r\n").content_length,
+            0
+        );
+    }
+
+    #[test]
+    fn plain_answers_are_never_cached() {
+        let text = String::from_utf8(plain("404 Not Found", "off\n")).unwrap();
+        assert!(text.starts_with("HTTP/1.1 404 Not Found\r\n"), "{text}");
+        assert!(text.contains("Cache-Control: no-store\r\n"), "{text}");
+        assert!(text.ends_with("\r\n\r\noff\n"), "{text}");
     }
 
     #[test]
