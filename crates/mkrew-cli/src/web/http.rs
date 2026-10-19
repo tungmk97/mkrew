@@ -180,7 +180,7 @@ pub fn route(head: &Head, token: &Token) -> Route {
 }
 
 /// The Web App Manifest. `start_url` carries the token: an iOS Home Screen app has its own
-/// storage, so it could not find the token the page saved in Safari (ADR 0052, ADR 0066).
+/// storage, so it could not find the token the page saved in Safari (ADR 0052, ADR 0067).
 fn manifest(token: &Token) -> String {
     serde_json::json!({
         "name": "Mkrew",

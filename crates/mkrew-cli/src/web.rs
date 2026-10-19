@@ -85,7 +85,7 @@ async fn serve(
         )
         .map_err(|e| {
             e.context(format!(
-                "cannot forget the phones in {}; the token was not renewed, fix the file and run again",
+                "cannot rewrite {} to forget the phones; the token was not renewed, fix the file and run again",
                 push_file.display()
             ))
         })?,
@@ -111,7 +111,7 @@ async fn serve(
     );
     if push.enabled() {
         println!(
-            "Phone notifications are on (ADR 0066): phones that tapped the bell are notified through their browser's push service."
+            "Phone notifications are on (ADR 0067): phones that tapped the bell are notified through their browser's push service."
         );
     }
     tokio::spawn(push::run(Arc::clone(&push), socket.clone()));

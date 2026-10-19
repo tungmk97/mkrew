@@ -108,7 +108,7 @@ pub struct Alert {
 /// The notification for `session_id` entering `state`, if any: only needs_input and done,
 /// each behind its switch, then the throttle (a switched-off kind does not use up the window;
 /// an allowed one does, even if the session lookup for the notice then fails).
-/// Also used by `mk web` for phone push (ADR 0066): one policy for toast and push.
+/// Also used by `mk web` for phone push (ADR 0067): one policy for toast and push.
 pub fn decide(
     session_id: Ulid,
     state: SessionState,

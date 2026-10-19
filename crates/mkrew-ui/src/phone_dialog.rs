@@ -167,7 +167,7 @@ pub fn serve_row(serve: &Serve, setup: &Setup) -> ServeRow {
     }
 }
 
-/// The notifications switch of the dialog (ADR 0066).
+/// The notifications switch of the dialog (ADR 0067).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushSwitch {
     TurnOn,
@@ -227,7 +227,7 @@ pub struct Local {
     pub serve: Serve,
     pub host: Option<String>,
     pub token: Option<String>,
-    /// `[web] push` in settings.toml (ADR 0066).
+    /// `[web] push` in settings.toml (ADR 0067).
     pub push: bool,
 }
 

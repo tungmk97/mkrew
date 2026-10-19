@@ -52,7 +52,7 @@ const machine = machineName(location.hostname);
 const idDecoder = new TextDecoder();
 let term = null;
 let toastTimer = 0;
-/** Phone notifications: does the PC offer them, and is this phone registered (ADR 0066). */
+/** Phone notifications: does the PC offer them, and is this phone registered (ADR 0067). */
 const push = { enabledByPc: false, subscribed: false, refused: '' };
 
 // ---- screens ----
@@ -267,7 +267,7 @@ function onEvent(name, data) {
   render();
 }
 
-// ---- phone notifications (ADR 0066) ----
+// ---- phone notifications (ADR 0067) ----
 
 /** The Home Screen app is built from this manifest; it carries the token (see `http.rs`). */
 function linkManifest() {

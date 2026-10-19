@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
-# `mk web` push (ADR 0066): base64url of keys and tokens; 0.22 is already in the tree.
+# `mk web` push (ADR 0067): base64url of keys and tokens; 0.22 is already in the tree.
 base64 = "0.22"
 clap = { version = "4.6.7", features = ["derive"] }
 crossterm = "0.29.0"
@@ -31,9 +31,9 @@ interprocess = { version = "2.4.4", features = ["tokio"] }
 mkrew-core = { version = "0.1.0", path = "../mkrew-core" }
 mkrew-daemon = { version = "0.1.0", path = "../mkrew-daemon" }
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
-# `mk web` push (ADR 0066): P-256 ECDH + ECDSA, HKDF, AES-GCM; already in the tree through rustls.
+# `mk web` push (ADR 0067): P-256 ECDH + ECDSA, HKDF, AES-GCM; already in the tree through rustls.
 ring = "0.17"
-# `derive`: the push subscription file (ADR 0066); mkrew-core already turns it on workspace-wide.
+# `derive`: the push subscription file (ADR 0067); mkrew-core already turns it on workspace-wide.
 serde = { version = "1", features = ["derive"] }
 # `preserve_order`: `mk integration` rewrites `settings.json` without reordering its keys
 # (already on workspace-wide through gpui's tree, so no other crate changes behaviour).
@@ -45,7 +45,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["h
 # Edits `~/.codex/config.toml` keeping comments and layout; 0.25 is already in the tree.
 toml_edit = "0.25"
 ulid = "1"
-# `mk web` push (ADR 0066): the HTTPS POST to the phone's push service; same build as mkrew-ui's
+# `mk web` push (ADR 0067): the HTTPS POST to the phone's push service; same build as mkrew-ui's
 # speech to text (rustls, so no OpenSSL).
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 

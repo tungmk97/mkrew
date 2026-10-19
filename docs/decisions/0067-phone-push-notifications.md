@@ -1,4 +1,4 @@
-# 0066 — Push notifications to the phone (Web Push from `mk web`)
+# 0067 — Push notifications to the phone (Web Push from `mk web`)
 
 - Date: 2026-10-19
 - Status: accepted (extends ADR 0052 and ADR 0053; changes SPEC §1 non-goals)
@@ -69,3 +69,7 @@
 - Anyone who sees the Home Screen entry's `start_url` sees the token; that is the same trust as the
   link the user already shares (ADR 0052). `mk web --new-token` revokes it.
 - Not done: several PCs on one phone page, notification actions (Approve / Deny buttons), badge count.
+- Restart the daemon after installing: `WebSettings` rejects unknown keys, so once the dialog writes
+  `[web] push = true`, an older daemon rejects the whole `settings.toml` and keeps its last good
+  settings; Stop/Start and every later setting are ignored until it restarts (same trap as
+  `flash_taskbar`, ADR 0064).

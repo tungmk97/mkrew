@@ -56,7 +56,7 @@ pub struct Daemon {
 
 impl Daemon {
     /// The next event the daemon pushes; replies and output on the way are skipped. `mk web`'s
-    /// push loop (ADR 0066) lives on one of these connections.
+    /// push loop (ADR 0067) lives on one of these connections.
     pub async fn next_event(&mut self) -> anyhow::Result<Event> {
         loop {
             while let Some(frame) = self.decoder.next_frame()? {

@@ -1,4 +1,4 @@
-// Mkrew web push (ADR 0066). Every push shows a notification, even when the page is open:
+// Mkrew web push (ADR 0067). Every push shows a notification, even when the page is open:
 // iOS removes a subscription that receives pushes without showing one.
 self.addEventListener('push', (event) => {
   let note = {};

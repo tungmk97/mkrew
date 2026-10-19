@@ -1,4 +1,4 @@
-//! Web Push from `mk web` (ADR 0066): when a session enters needs_input or done, every phone
+//! Web Push from `mk web` (ADR 0067): when a session enters needs_input or done, every phone
 //! that tapped the bell gets a system notification through its browser's push service. The
 //! policy is the desktop toast's (`mkrew_daemon::decide`: `[notify]` switches, one per session
 //! per 30 s) plus `[web] push`. Nothing here talks to the network except [`UreqSender`]; tests
@@ -63,7 +63,7 @@ impl Sender for UreqSender {
             .timeout_global(Some(SEND_TIMEOUT))
             // 4xx / 5xx are answers to read, not transport errors.
             .http_status_as_error(false)
-            // A push service must not bounce `mk web` to another host (ADR 0066): 3xx = failed.
+            // A push service must not bounce `mk web` to another host (ADR 0067): 3xx = failed.
             .max_redirects(0)
             .build()
             .into();

@@ -1391,7 +1391,7 @@ fn web_new_token_stops_when_it_cannot_forget_the_phones() {
     ]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("cannot forget the phones"), "{stderr}");
+    assert!(stderr.contains("to forget the phones"), "{stderr}");
     assert!(
         !config.join("web_token").exists(),
         "the token must not be renewed"

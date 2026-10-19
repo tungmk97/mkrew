@@ -1,5 +1,5 @@
 //! Web Push message encryption (RFC 8291, `aes128gcm` of RFC 8188) and the VAPID header
-//! (RFC 8292), on `ring` (ADR 0066). `seal` is the deterministic core the RFC vector tests;
+//! (RFC 8292), on `ring` (ADR 0067). `seal` is the deterministic core the RFC vector tests;
 //! `encrypt` adds a fresh sender key and salt.
 
 use anyhow::{Context, anyhow, bail};

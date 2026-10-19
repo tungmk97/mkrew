@@ -1,4 +1,4 @@
-//! What `mk web` push remembers (ADR 0066): the VAPID key and the phones that opted in, in one
+//! What `mk web` push remembers (ADR 0067): the VAPID key and the phones that opted in, in one
 //! private file `<config>/web_push.json`. A subscription URL is a capability to push to that
 //! phone, so it is kept like `web_token` and never printed.
 

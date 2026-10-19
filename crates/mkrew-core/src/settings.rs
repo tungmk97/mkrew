@@ -40,14 +40,14 @@ pub struct FeatureSettings {
     pub turns: bool,
 }
 
-/// `[web]` (ADR 0053, ADR 0066): the daemon runs `mk web` while `enabled` is true; `mk web`
+/// `[web]` (ADR 0053, ADR 0067): the daemon runs `mk web` while `enabled` is true; `mk web`
 /// sends phone notifications while `push` is true. The Phone access dialog writes both; the
 /// port is fixed (`mkrew_core::tailscale::WEB_PORT`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebSettings {
     pub enabled: bool,
-    /// Notifications to subscribed phones through their browser's push service (ADR 0066).
+    /// Notifications to subscribed phones through their browser's push service (ADR 0067).
     pub push: bool,
 }
 
@@ -446,7 +446,7 @@ pub fn template() -> &'static str {
      \n\
      # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
      # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
-     # Phone notifications (ADR 0066): when push is true, `mk web` notifies phones that opted in when an\n\
+     # Phone notifications (ADR 0067): when push is true, `mk web` notifies phones that opted in when an\n\
      # agent needs you or finishes. The message is encrypted for the phone and goes through its\n\
      # browser's push service (Apple, Google, Mozilla or Microsoft). [notify] needs_input / done apply.\n\
      [web]\n\
@@ -973,7 +973,7 @@ push = true
         assert!(!web("").enabled);
         assert!(!web("[web]").enabled);
         assert!(web("[web]\nenabled = true").enabled);
-        // Phone notifications (ADR 0066) are off until the user turns them on.
+        // Phone notifications (ADR 0067) are off until the user turns them on.
         assert!(!web("").push);
         assert!(!web("[web]\nenabled = true").push);
         assert!(web("[web]\npush = true").push);

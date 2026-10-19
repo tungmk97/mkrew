@@ -230,7 +230,7 @@ export function toBase64(text) {
   return btoa(binary);
 }
 
-/** The session id from `#s=<26-char id>`: a tapped notification opens it (ADR 0066). */
+/** The session id from `#s=<26-char id>`: a tapped notification opens it (ADR 0067). */
 export function sessionFromHash(hash) {
   const match = /(?:^#|&)s=([0-9A-Z]{26})(?:&|$)/.exec(hash ?? '');
   return match ? match[1] : null;
@@ -248,7 +248,7 @@ export function sameBytes(a, b) {
 }
 
 /**
- * What the bell does (ADR 0066). `enabledByPc`: `/push/key` answered (`[web] push`); `secure`:
+ * What the bell does (ADR 0067). `enabledByPc`: `/push/key` answered (`[web] push`); `secure`:
  * HTTPS or localhost; `supported`: service worker + Push API + Notification exist (an iPhone
  * Safari tab has none of Push); `ios`/`standalone`: iPhone and running from the Home Screen;
  * `refused`: why the PC turned this phone's subscription down (the bell stays, to try again).

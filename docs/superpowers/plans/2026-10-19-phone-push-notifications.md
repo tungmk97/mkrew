@@ -18,7 +18,7 @@
 
 | # | Human action / acceptance | Why |
 | --- | --- | --- |
-| 1 | **Accept ADR 0066**: with `[web] push = true`, `mk web` makes outbound HTTPS requests to Apple / Google / Mozilla / Microsoft push services (payload end-to-end encrypted to the phone; the push service sees only that *a* message went to *that* phone, its size and timing). SPEC §1's "no cloud" wording changes (Task 1). | Web Push has no serverless mode: the browser vendor's push service is the only way to wake a sleeping phone. |
+| 1 | **Accept ADR 0067**: with `[web] push = true`, `mk web` makes outbound HTTPS requests to Apple / Google / Mozilla / Microsoft push services (payload end-to-end encrypted to the phone; the push service sees only that *a* message went to *that* phone, its size and timing). SPEC §1's "no cloud" wording changes (Task 1). | Web Push has no serverless mode: the browser vendor's push service is the only way to wake a sleeping phone. |
 | 2 | Tailscale admin console: **MagicDNS + HTTPS Certificates on** and Phone access **Set up** done — the same steps README already requires for the phone page. No new Tailscale step. | Service workers + Push need a secure context (HTTPS). |
 | 3 | iPhone: **iOS 16.4+**, and the page must be **re-added to the Home Screen** once after this lands (the manifest is new), then notifications allowed from the bell. | WebKit: Web Push only works in a Home Screen web app, permission only from a tap. |
 | 4 | **Device check [INFERENCE until done]**: that iOS treats the Home Screen app made from our dynamic manifest as a push-capable web app, and that Apple's push service accepts the VAPID `sub` claim we send (`mailto:mkrew@example.com`). Both are in HUMAN_CHECKS (Task 8). If Apple answers 403 `BadJwtToken`, the fix is one constant (`SUBJECT` in `crypto.rs`) — see Task 2. | Could not be run here: no iPhone, no network from tests. |
@@ -34,7 +34,7 @@
 | Crypto/HTTP crates in `Cargo.lock` | **Present:** `ring 0.17.14` (via `rustls`), `ureq 3.4.2` (+`ureq-proto`, `rustls`, `webpki-roots`; used by `mkrew-ui` for speech to text `crates/mkrew-ui/src/stt.rs:100`), `base64 0.22.1`, `hkdf 0.12.4`, `hmac 0.12.1`, `aes 0.8.4`, `sha2`, `getrandom`. **Absent:** `p256`, `aes-gcm`, `ece`, `web-push`. `mkrew-cli` has none of the three it needs yet (`ring`, `ureq`, `base64`) but adding them adds **no package** to the lock — only three dependency lines in the `mkrew-cli` entry. | verified: `Cargo.lock` grep; `crates/mkrew-cli/Cargo.toml`; `crates/mkrew-ui/Cargo.toml:59-60` (`ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }`). |
 | `ring` covers the whole message? | Yes: `agreement::{EphemeralPrivateKey, agree_ephemeral, ECDH_P256}` (ECDH), `signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING}` (VAPID ES256, fixed 64-byte r‖s = JWT form), `hkdf::{Salt, HKDF_SHA256}`, `aead::{AES_128_GCM, LessSafeKey, Nonce}`. Limit: `ring` cannot import an ECDH private key, so the RFC 8291 vector is tested through the pure `seal` step fed with the RFC's *shared secret*; the ECDH step is tested by a round trip with a second `ring` key. | verified in `~/.cargo/registry/src/*/ring-0.17.14/src/{agreement.rs,rand.rs,hkdf.rs,aead/less_safe_key.rs,ec/suite_b/ecdsa/signing.rs}`. |
 | Where does it run? | In **`mk web`**, not the daemon. `mk web` already opens daemon connections (`relay::open_daemon`), and the daemon sends every greeted connection every event (`server.rs`: `let events = self.hub.events.subscribe()` after `hello`), including `session.state`. Nothing in the daemon depends on `ClientKind`. | verified: `crates/mkrew-daemon/src/server.rs:203-206`, `crates/mkrew-cli/src/web/relay.rs:159-202`. |
-| SPEC §1 conflict | Non-goals say "no cloud sync", "never calls LLM APIs itself", with the voice exception. Push is a new outbound call. → ADR 0066 + SPEC §1/§8/§9/§15/§20.0 edits (Task 1). | verified: `docs/SPEC.md` §1. |
+| SPEC §1 conflict | Non-goals say "no cloud sync", "never calls LLM APIs itself", with the voice exception. Push is a new outbound call. → ADR 0067 + SPEC §1/§8/§9/§15/§20.0 edits (Task 1). | verified: `docs/SPEC.md` §1. |
 | Push service hosts | Allowlist `fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`, `*.notify.windows.com`. Apple host verified (WebKit blog); the others **[INFERENCE]** from vendor docs (not re-fetched). An unknown host is refused at subscribe time (Review Focus 1); a new vendor host is a one-line change. | partly verified. |
 | VAPID `sub` | Apple rejects `mailto:…@localhost` with 403 `BadJwtToken` (GitHub issue reports found by search); a dotted domain is what those reports ask for. `example.com` passing is **[INFERENCE]** → device check. | search results. |
 | Alternatives | *Payload-less push*: still needs VAPID + the same outbound POST, and the service worker would have to call back to the PC (needs the token, and a sleeping phone's network may not be up) — no gain, rejected. *Keep-alive page / polling*: iOS suspends Home Screen apps in the background — does not work, rejected. *Full Web Push*: chosen. | reasoning; RFC 8030/8291/8292. |
@@ -43,7 +43,7 @@
 
 ## Global Constraints
 
-- Numbers are reserved for planning; before creating, re-check the newest ADR/migration/PROTOCOL_VERSION and take the next free one if another plan landed first. Reserved here: **ADR 0066**. Migration 0022 and PROTOCOL_VERSION 46 are **not used** (subscriptions live in a private file next to `web_token`; no protocol change). Last seen: ADR 0062, migration 0019, `PROTOCOL_VERSION = 43` (`crates/mkrew-protocol/src/lib.rs:16`).
+- Numbers are reserved for planning; before creating, re-check the newest ADR/migration/PROTOCOL_VERSION and take the next free one if another plan landed first. Reserved here: **ADR 0067**. Migration 0022 and PROTOCOL_VERSION 46 are **not used** (subscriptions live in a private file next to `web_token`; no protocol change). Last seen: ADR 0062, migration 0019, `PROTOCOL_VERSION = 43` (`crates/mkrew-protocol/src/lib.rs:16`).
 - Deviating from the spec needs an ADR in `docs/decisions/` **and** a `docs/SPEC.md` update in the same commit (`AGENTS.md`). Task 1 does both. Other plans edit `docs/SPEC.md` too: find SPEC anchors by the **quoted text**, not by line number.
 - No `unwrap()` / `expect()` outside tests (`[workspace.lints.clippy] unwrap_used/expect_used`); `unsafe_code = "deny"`.
 - Every change ships with tests. **No test may call a real agent or the network.** The push sender is injected (`trait Sender`); `MKREW_PUSH=<file>` swaps the network sender for a JSON-lines file (like `MKREW_NOTIFY`).
@@ -70,7 +70,7 @@ The inputs the spec implies but no happy-path test covers. Each line names the t
 
 | File | Responsibility |
 | --- | --- |
-| `docs/decisions/0066-phone-push-notifications.md` (new) | The decision: opt-in, end-to-end encrypted, external push service. |
+| `docs/decisions/0067-phone-push-notifications.md` (new) | The decision: opt-in, end-to-end encrypted, external push service. |
 | `crates/mkrew-core/src/settings.rs` | `WebSettings.push`, `write_web_push`, template lines. |
 | `crates/mkrew-cli/src/web/push.rs` (new) | `Push` (switches, subscribe/unsubscribe, deliver), `Sender` trait + `UreqSender` / `FileSender`, `Payload`, `wanted`, the event loop `run`. |
 | `crates/mkrew-cli/src/web/push/crypto.rs` (new) | RFC 8291 encryption, VAPID JWT. Pure + `ring`. |
@@ -102,10 +102,10 @@ Decisions made in chat 2026-10-19, plus the defaults picked here (one line each)
 
 ---
 
-### Task 1: ADR 0066, SPEC, and the `[web] push` setting
+### Task 1: ADR 0067, SPEC, and the `[web] push` setting
 
 **Files:**
-- Create: `docs/decisions/0066-phone-push-notifications.md`
+- Create: `docs/decisions/0067-phone-push-notifications.md`
 - Modify: `docs/SPEC.md` (§1 non-goals, §8 Notifications bullet, §9 `mk web` line, §15 Security row, §20 intro "no cloud" sentence, §20.0 settings block and Phone access paragraph)
 - Modify: `docs/decisions/0052-mobile-web.md` (one amendment line)
 - Modify: `crates/mkrew-core/src/settings.rs` (`WebSettings` ~line 47; `write_web_enabled` ~line 344; `template()` ~line 427; tests `full_file_parses` ~line 545, `web_section_defaults_off_and_rejects_other_keys` ~line 923)
@@ -125,7 +125,7 @@ In `crates/mkrew-core/src/settings.rs`, replace the body of `web_section_default
         assert!(!web("").enabled);
         assert!(!web("[web]").enabled);
         assert!(web("[web]\nenabled = true").enabled);
-        // Phone notifications (ADR 0066) are off until the user turns them on.
+        // Phone notifications (ADR 0067) are off until the user turns them on.
         assert!(!web("").push);
         assert!(!web("[web]\nenabled = true").push);
         assert!(web("[web]\npush = true").push);
@@ -165,14 +165,14 @@ Expected: FAIL to compile (`no field push`, `write_web_push` not found).
 `WebSettings` (replace the struct at `settings.rs` ~line 43-49):
 
 ```rust
-/// `[web]` (ADR 0053, ADR 0066): the daemon runs `mk web` while `enabled` is true; `mk web`
+/// `[web]` (ADR 0053, ADR 0067): the daemon runs `mk web` while `enabled` is true; `mk web`
 /// sends phone notifications while `push` is true. The Phone access dialog writes both; the
 /// port is fixed (`mkrew_core::tailscale::WEB_PORT`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebSettings {
     pub enabled: bool,
-    /// Notifications to subscribed phones through their browser's push service (ADR 0066).
+    /// Notifications to subscribed phones through their browser's push service (ADR 0067).
     pub push: bool,
 }
 ```
@@ -192,7 +192,7 @@ In `template()` replace the `[web]` tail with:
 ```rust
      # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
      # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
-     # Phone notifications (ADR 0066): push = true lets `mk web` notify phones that opted in when an\n\
+     # Phone notifications (ADR 0067): push = true lets `mk web` notify phones that opted in when an\n\
      # agent needs you or finishes. The message is encrypted for the phone and goes through its\n\
      # browser's push service (Apple, Google, Mozilla or Microsoft). [notify] needs_input / done apply.\n\
      [web]\n\
@@ -205,12 +205,12 @@ In `template()` replace the `[web]` tail with:
 Run: `cargo test -p mkrew-core settings -j 4`
 Expected: PASS (including the unchanged `write_web_enabled_*` tests).
 
-- [ ] **Step 5: Write ADR 0066**
+- [ ] **Step 5: Write ADR 0067**
 
-Create `docs/decisions/0066-phone-push-notifications.md`:
+Create `docs/decisions/0067-phone-push-notifications.md`:
 
 ```markdown
-# 0066 — Push notifications to the phone (Web Push from `mk web`)
+# 0067 — Push notifications to the phone (Web Push from `mk web`)
 
 - Date: 2026-10-19
 - Status: accepted (extends ADR 0052 and ADR 0053; changes SPEC §1 non-goals)
@@ -275,16 +275,16 @@ Create `docs/decisions/0066-phone-push-notifications.md`:
 
 In `docs/SPEC.md` (find each by the quoted text; do **not** rely on line numbers):
 
-1. §1 Non-goals — after the bullet beginning `- No native mobile app, cloud sync or user accounts.` append to that bullet: ` Optional phone notifications (§20.0 \`[web] push\`, ADR 0066) are the other exception to "no cloud" and are described below.` Then, after the bullet ending `(ADR 0045).` of "Mkrew never calls LLM APIs itself", add a new bullet:
+1. §1 Non-goals — after the bullet beginning `- No native mobile app, cloud sync or user accounts.` append to that bullet: ` Optional phone notifications (§20.0 \`[web] push\`, ADR 0067) are the other exception to "no cloud" and are described below.` Then, after the bullet ending `(ADR 0045).` of "Mkrew never calls LLM APIs itself", add a new bullet:
    ```
    - Mkrew runs no cloud service of its own. Its only outbound requests are voice input (above) and,
      only while the user has turned `[web] push` on and a phone has opted in, end-to-end encrypted
-     Web Push messages to that phone's push service (Apple, Google, Mozilla or Microsoft; ADR 0066).
+     Web Push messages to that phone's push service (Apple, Google, Mozilla or Microsoft; ADR 0067).
    ```
-2. §8 — the bullet `- **Notifications:** OS notification when a session enters needs_input or done; at most one per session per 30 s. Clicking it emits \`notification.clicked\`.` gets appended: ` While \`[web] push\` is on, \`mk web\` also sends a Web Push notification to each phone that opted in, under the same \`[notify]\` switches and the same 30 s limit (ADR 0066; §20.0).`
-3. §9 — the line `mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052)` becomes `mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052); --new-token also drops push subscriptions (ADR 0066)`.
-4. §15 Security row — before the closing ` \| ` of the `Security` row insert after `requires its token on every WebSocket, ADR 0052)`: `; with \`[web] push = true\` \`mk web\` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0066`.
-5. §20 intro — in `§1 non-goals still hold: no editor, no LLM API calls, no cloud, no native mobile app (a browser client exists, ADR 0052).` append ` Phone push (ADR 0066) is opt-in and end-to-end encrypted.`
+2. §8 — the bullet `- **Notifications:** OS notification when a session enters needs_input or done; at most one per session per 30 s. Clicking it emits \`notification.clicked\`.` gets appended: ` While \`[web] push\` is on, \`mk web\` also sends a Web Push notification to each phone that opted in, under the same \`[notify]\` switches and the same 30 s limit (ADR 0067; §20.0).`
+3. §9 — the line `mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052)` becomes `mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052); --new-token also drops push subscriptions (ADR 0067)`.
+4. §15 Security row — before the closing ` \| ` of the `Security` row insert after `requires its token on every WebSocket, ADR 0052)`: `; with \`[web] push = true\` \`mk web\` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0067`.
+5. §20 intro — in `§1 non-goals still hold: no editor, no LLM API calls, no cloud, no native mobile app (a browser client exists, ADR 0052).` append ` Phone push (ADR 0067) is opt-in and end-to-end encrypted.`
 6. §20.0 settings block — the lines
    ```
    [web]                       # ADR 0053; phone access
@@ -292,11 +292,11 @@ In `docs/SPEC.md` (find each by the quoted text; do **not** rely on line numbers
    ```
    gain a third line:
    ```
-   push = false                # ADR 0066; mk web notifies phones that opted in (needs enabled); the Phone access dialog writes it
+   push = false                # ADR 0067; mk web notifies phones that opted in (needs enabled); the Phone access dialog writes it
    ```
    and after the `**Phone access** (ADR 0053).` paragraph add:
    ```
-   **Phone notifications** (ADR 0066). While `[web] push = true`, `mk web` watches `session.state` on its
+   **Phone notifications** (ADR 0067). While `[web] push = true`, `mk web` watches `session.state` on its
    own daemon connection and, for each session entering `needs_input` or `done` (subject to
    `[notify] needs_input` / `done` and one per session per 30 s), sends a Web Push message
    (RFC 8291 `aes128gcm`, VAPID RFC 8292) to every phone that tapped the bell on the page. Title
@@ -307,13 +307,13 @@ In `docs/SPEC.md` (find each by the quoted text; do **not** rely on line numbers
    16.4+ with the page added to the Home Screen.
    ```
 
-In `docs/decisions/0052-mobile-web.md`, change the Consequences line `- Not done: push notifications, several PCs, board/files/git/docs on the phone.` to `- Not done: several PCs, board/files/git/docs on the phone. (Push notifications: ADR 0066, 2026-10-19.)`.
+In `docs/decisions/0052-mobile-web.md`, change the Consequences line `- Not done: push notifications, several PCs, board/files/git/docs on the phone.` to `- Not done: several PCs, board/files/git/docs on the phone. (Push notifications: ADR 0067, 2026-10-19.)`.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/mkrew-core/src/settings.rs docs/decisions/0066-phone-push-notifications.md docs/decisions/0052-mobile-web.md docs/SPEC.md
-git -c user.email=tungnv975@gmail.com commit -m "docs(web): ADR 0066 phone push notifications, [web] push setting"
+git add crates/mkrew-core/src/settings.rs docs/decisions/0067-phone-push-notifications.md docs/decisions/0052-mobile-web.md docs/SPEC.md
+git -c user.email=tungnv975@gmail.com commit -m "docs(web): ADR 0067 phone push notifications, [web] push setting"
 ```
 (`docs/SPEC.md` may hold other agents' hunks: use `git add -p docs/SPEC.md` and stage only the ones above.)
 
@@ -343,19 +343,19 @@ In `crates/mkrew-cli/Cargo.toml` `[dependencies]` (keep alphabetical; replace th
 
 ```toml
 anyhow = "1.0.104"
-# `mk web` push (ADR 0066): base64url of keys and tokens; 0.22 is already in the tree.
+# `mk web` push (ADR 0067): base64url of keys and tokens; 0.22 is already in the tree.
 base64 = "0.22"
 ```
 ```toml
 mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
-# `mk web` push (ADR 0066): P-256 ECDH + ECDSA, HKDF, AES-GCM; already in the tree through rustls.
+# `mk web` push (ADR 0067): P-256 ECDH + ECDSA, HKDF, AES-GCM; already in the tree through rustls.
 ring = "0.17"
-# `derive`: the push subscription file (ADR 0066); mkrew-core already turns it on workspace-wide.
+# `derive`: the push subscription file (ADR 0067); mkrew-core already turns it on workspace-wide.
 serde = { version = "1", features = ["derive"] }
 ```
 ```toml
 ulid = "1"
-# `mk web` push (ADR 0066): the HTTPS POST to the phone's push service; same build as mkrew-ui's
+# `mk web` push (ADR 0067): the HTTPS POST to the phone's push service; same build as mkrew-ui's
 # speech to text (rustls, so no OpenSSL).
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 ```
@@ -367,7 +367,7 @@ Run `cargo tree -p mkrew-cli -i ring -j 4` — Expected: lists `ring v0.17.14` w
 Create `crates/mkrew-cli/src/web/push.rs` with only:
 
 ```rust
-//! Web Push from `mk web` (ADR 0066).
+//! Web Push from `mk web` (ADR 0067).
 
 mod crypto;
 ```
@@ -548,7 +548,7 @@ Expected: FAIL to compile (`cannot find function input_key`, `Vapid`, …).
 
 ```rust
 //! Web Push message encryption (RFC 8291, `aes128gcm` of RFC 8188) and the VAPID header
-//! (RFC 8292), on `ring` (ADR 0066). `seal` is the deterministic core the RFC vector tests;
+//! (RFC 8292), on `ring` (ADR 0067). `seal` is the deterministic core the RFC vector tests;
 //! `encrypt` adds a fresh sender key and salt.
 
 use anyhow::{Context, anyhow, bail};
@@ -911,7 +911,7 @@ Expected: FAIL to compile (`Store`, `Subscription`, … not found).
 - [ ] **Step 3: Write the implementation** (above the tests in `store.rs`; add `mod store;` to `push.rs`)
 
 ```rust
-//! What `mk web` push remembers (ADR 0066): the VAPID key and the phones that opted in, in one
+//! What `mk web` push remembers (ADR 0067): the VAPID key and the phones that opted in, in one
 //! private file `<config>/web_push.json`. A subscription URL is a capability to push to that
 //! phone, so it is kept like `web_token` and never printed.
 
@@ -1150,7 +1150,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(web): push subscription st
 
 - [ ] **Step 1: Export the §8 policy from the daemon**
 
-In `notify.rs` change `struct Alert {` → `pub struct Alert {`, `fn decide(` → `pub fn decide(`, `struct Throttle {` → `pub struct Throttle {` (leave fields private). Add to the doc of `decide`: `/// Also used by \`mk web\` for phone push (ADR 0066): one policy for toast and push.` In `lib.rs` replace `pub use notify::ENV_NOTIFY;` with `pub use notify::{Alert, ENV_NOTIFY, Throttle, decide};`. (`Throttle` already derives `Default`.)
+In `notify.rs` change `struct Alert {` → `pub struct Alert {`, `fn decide(` → `pub fn decide(`, `struct Throttle {` → `pub struct Throttle {` (leave fields private). Add to the doc of `decide`: `/// Also used by \`mk web\` for phone push (ADR 0067): one policy for toast and push.` In `lib.rs` replace `pub use notify::ENV_NOTIFY;` with `pub use notify::{Alert, ENV_NOTIFY, Throttle, decide};`. (`Throttle` already derives `Default`.)
 
 Run `cargo test -p mkrew-daemon notify -j 4` — Expected: PASS (nothing else changed).
 
@@ -1358,7 +1358,7 @@ Expected: FAIL to compile (`Push`, `Sender`, `wanted`, … not found).
 - [ ] **Step 4: Implement** (replace `push.rs` above the tests; keep `mod crypto; mod store;`)
 
 ```rust
-//! Web Push from `mk web` (ADR 0066): when a session enters needs_input or done, every phone
+//! Web Push from `mk web` (ADR 0067): when a session enters needs_input or done, every phone
 //! that tapped the bell gets a system notification through its browser's push service. The
 //! policy is the desktop toast's (`mkrew_daemon::decide`: `[notify]` switches, one per session
 //! per 30 s) plus `[web] push`. Nothing here talks to the network except [`UreqSender`]; tests
@@ -1782,7 +1782,7 @@ pub fn route(head: &Head, token: &Token) -> Route {
 and add
 ```rust
 /// The Web App Manifest. `start_url` carries the token: an iOS Home Screen app has its own
-/// storage, so it could not find the token the page saved in Safari (ADR 0052, ADR 0066).
+/// storage, so it could not find the token the page saved in Safari (ADR 0052, ADR 0067).
 fn manifest(token: &Token) -> String {
     serde_json::json!({
         "name": "Mkrew",
@@ -1843,7 +1843,7 @@ After `pub struct Daemon { … }` (line 53) add:
 ```rust
 impl Daemon {
     /// The next event the daemon pushes; replies and output on the way are skipped. `mk web`'s
-    /// push loop (ADR 0066) lives on one of these connections.
+    /// push loop (ADR 0067) lives on one of these connections.
     pub async fn next_event(&mut self) -> anyhow::Result<Event> {
         let mut buf = vec![0u8; READ_BUFFER];
         loop {
@@ -2100,7 +2100,7 @@ async fn read_body(
     Ok(body)
 }
 ```
-Also print one line after the existing `println!`s: `if push.enabled() { println!("Phone notifications are on (ADR 0066): phones that tapped the bell are notified through their browser's push service."); }`.
+Also print one line after the existing `println!`s: `if push.enabled() { println!("Phone notifications are on (ADR 0067): phones that tapped the bell are notified through their browser's push service."); }`.
 
 - [ ] **Step 8: Write the end-to-end test** (`crates/mkrew-cli/tests/cli.rs`)
 
@@ -2316,7 +2316,7 @@ Expected: FAIL (`The requested module './model.mjs' does not provide an export n
 Append to `model.mjs`:
 
 ```js
-/** The session id from `#s=<26-char id>`: a tapped notification opens it (ADR 0066). */
+/** The session id from `#s=<26-char id>`: a tapped notification opens it (ADR 0067). */
 export function sessionFromHash(hash) {
   const match = /(?:^#|&)s=([0-9A-Z]{26})(?:&|$)/.exec(hash ?? '');
   return match ? match[1] : null;
@@ -2334,7 +2334,7 @@ export function sameBytes(a, b) {
 }
 
 /**
- * What the bell does (ADR 0066). `enabledByPc`: `/push/key` answered (`[web] push`); `secure`:
+ * What the bell does (ADR 0067). `enabledByPc`: `/push/key` answered (`[web] push`); `secure`:
  * HTTPS or localhost; `supported`: service worker + Push API + Notification exist (an iPhone
  * Safari tab has none of Push); `ios`/`standalone`: iPhone and running from the Home Screen.
  */
@@ -2360,7 +2360,7 @@ export function pushOffer({ enabledByPc, secure, supported, standalone, ios, per
 `crates/mkrew-cli/web/sw.js` (first line is pinned by a Rust test):
 
 ```js
-// Mkrew web push (ADR 0066). Every push shows a notification, even when the page is open:
+// Mkrew web push (ADR 0067). Every push shows a notification, even when the page is open:
 // iOS removes a subscription that receives pushes without showing one.
 self.addEventListener('push', (event) => {
   let note = {};
@@ -2435,7 +2435,7 @@ Expected: PASS (existing tests + 3 new), `--check` silent.
 5. New section before `// ---- rendering ----`:
 
 ```js
-// ---- phone notifications (ADR 0066) ----
+// ---- phone notifications (ADR 0067) ----
 
 /** The Home Screen app is built from this manifest; it carries the token (see `http.rs`). */
 function linkManifest() {
@@ -2650,11 +2650,11 @@ Expected: FAIL to compile (`push` field, `push_row` missing).
 - [ ] **Step 3: Implement**
 
 `phone_dialog.rs`:
-- `Local`: add `/// \`[web] push\` in settings.toml (ADR 0066).` `pub push: bool,`; `Local::read(config_dir: &Path, settings_file: &Path)` sets `push: mkrew_core::settings::load(settings_file).is_ok_and(|settings| settings.web.push),`.
+- `Local`: add `/// \`[web] push\` in settings.toml (ADR 0067).` `pub push: bool,`; `Local::read(config_dir: &Path, settings_file: &Path)` sets `push: mkrew_core::settings::load(settings_file).is_ok_and(|settings| settings.web.push),`.
 - `Phone`: add `/// \`[web] push\` as last read; the notifications row shows it.` `pub push: bool,` (default `false`); in `polled`, after `self.token = local.token;` add `self.push = local.push;`.
 - After `serve_row`:
 ```rust
-/// The notifications switch of the dialog (ADR 0066).
+/// The notifications switch of the dialog (ADR 0067).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushSwitch {
     TurnOn,
@@ -2796,7 +2796,7 @@ The same `[notify]` switches and the 30-second limit as the desktop notification
 - [ ] **Step 2: HUMAN_CHECKS** — add the section (date 2026-10-19):
 
 ```markdown
-### To verify — 2026-10-19 Phone push notifications (ADR 0066, plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md)
+### To verify — 2026-10-19 Phone push notifications (ADR 0067, plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md)
 
 - [ ] **Install first:** the daemon starts `mk.exe` from the install folder; install the new build, then
   Phone access → **Stop** → **Start** (no daemon restart needed: no protocol change).
@@ -2835,7 +2835,7 @@ The same `[notify]` switches and the 30-second limit as the desktop notification
 - [ ] **Step 3: PROGRESS** — append to "Notes for the next session":
 
 ```markdown
-- 2026-10-19 phone push notifications (plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md, ADR 0066): `[web] push` (`mkrew_core::settings::write_web_push`, Phone access dialog row), `mk web` watches `session.state` on its own daemon connection (`web/push.rs`, `mkrew_daemon::decide` shared with the desktop toast) and sends RFC 8291 + VAPID Web Push (`ring`, `ureq`; `web/push/crypto.rs`, `store.rs`; subscriptions in `<config>/web_push.json`, allowlisted hosts, 404/410 drop a phone, `--new-token` empties the list); page: `sw.js`, bell, dynamic token-gated manifest. No protocol change, no migration. Tests never send: `MKREW_PUSH=<file>` sink. Manual checks in HUMAN_CHECKS "2026-10-19 Phone push notifications" (iPhone Home Screen + Apple's VAPID acceptance are unverified until then). Outside the milestone loop.
+- 2026-10-19 phone push notifications (plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md, ADR 0067): `[web] push` (`mkrew_core::settings::write_web_push`, Phone access dialog row), `mk web` watches `session.state` on its own daemon connection (`web/push.rs`, `mkrew_daemon::decide` shared with the desktop toast) and sends RFC 8291 + VAPID Web Push (`ring`, `ureq`; `web/push/crypto.rs`, `store.rs`; subscriptions in `<config>/web_push.json`, allowlisted hosts, 404/410 drop a phone, `--new-token` empties the list); page: `sw.js`, bell, dynamic token-gated manifest. No protocol change, no migration. Tests never send: `MKREW_PUSH=<file>` sink. Manual checks in HUMAN_CHECKS "2026-10-19 Phone push notifications" (iPhone Home Screen + Apple's VAPID acceptance are unverified until then). Outside the milestone loop.
 ```
 
 - [ ] **Step 4: Full verify**
@@ -2857,7 +2857,7 @@ git -c user.email=tungnv975@gmail.com commit -m "docs(web): phone notifications 
 **Spec coverage** (feature brief → task):
 - Research recorded (HTTP vs HTTPS, secure context, iOS 16.4 Home Screen, crates, `mk web` vs daemon, SPEC conflict, alternatives): "Feasibility verdict" + "Research findings".
 - Web Push with VAPID + RFC 8291 + HTTPS POST: Tasks 2 (crypto), 4 (`UreqSender`, `deliver`).
-- ADR 0066 + SPEC §1 non-goals, §8, §9, §15, §20 intro, §20.0 settings + Phone access paragraph: Task 1.
+- ADR 0067 + SPEC §1 non-goals, §8, §9, §15, §20 intro, §20.0 settings + Phone access paragraph: Task 1.
 - Runs in `mk web`, receives session state events (verified `server.rs:203-206`): Task 5 (`Daemon::next_event`, `run`).
 - Respect `[notify]` switches and 30 s limit: Task 4 (`wanted` → `mkrew_daemon::decide`), tests `wanted_*`, `the_notify_switches_apply_to_phones_too`.
 - Opt-in switch `[web] push = false` + per-phone bell: Tasks 1, 6, 7.
