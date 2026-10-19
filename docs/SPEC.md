@@ -65,11 +65,14 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 **Non-goals**
 
 - Not an IDE: no LSP, completion or multi-cursor. The Files view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
-- No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052).
+- No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052). Optional phone notifications (§20.0 `[web] push`, ADR 0066) are the other exception to "no cloud" and are described below.
 - No GitHub/Linear integration in v1.
 - Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed. One exception:
   voice input (§20G) sends a recording the user started to the speech-to-text API they configured
   (ADR 0045).
+- Mkrew runs no cloud service of its own. Its only outbound requests are voice input (above) and,
+  only while the user has turned `[web] push` on and a phone has opted in, end-to-end encrypted
+  Web Push messages to that phone's push service (Apple, Google, Mozilla or Microsoft; ADR 0066).
 
 **Naming**
 
@@ -670,7 +673,9 @@ Protocol 45 (ADR 0065): `git.viewed`, `git.set_viewed`.
 - **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
-  session per 30 s. Clicking it emits `notification.clicked`.
+  session per 30 s. Clicking it emits `notification.clicked`. While `[web] push` is on, `mk web` also
+  sends a Web Push notification to each phone that opted in, under the same `[notify]` switches and
+  the same 30 s limit (ADR 0066; §20.0).
 - **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB; deleted 7 days after the session ended unless a tab still shows it (ADR 0060).
 - **Retention:** hourly (and at startup): logs as above; `session_event` rows of kind `files_changed`, `hook`, `edited` older than 7 days. Session rows, turns and `usage` events stay.
 - **Project watcher:** skips `.git`, `node_modules`, `target` and `.worktrees/`; honours every `.gitignore` from the project root down and `.git/info/exclude`, with git's precedence (the deepest level with a match decides each path prefix; nothing inside an ignored folder is reported or read, except Markdown, which stays reported when gitignored (not under `.git`, `node_modules`, `target`, `.worktrees`) for doc review). One `files_changed` row per batch, stored on the project's newest live session.
@@ -700,7 +705,7 @@ mk session history <session-id>        # prints the session's raw output log (al
 mk session resume <session-id>         # relaunches an exited agent session's conversation; prints the new id
 mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
-mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052)
+mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052); --new-token also drops push subscriptions (ADR 0066)
 mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
 mk integration install|uninstall|status <claude|codex|omp|copilot>
@@ -1413,7 +1418,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 | Input latency | key press → glyph on screen < 16 ms (local) |
 | Idle CPU | UI + daemon < 1% of the machine with no output (GPUI's Windows vsync floor alone is 1–2% of one core) |
 | Memory | UI < 150 MB, daemon < 50 MB with 6 sessions (agents excluded) |
-| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); `hook.report` rejected unless the session id belongs to a live session |
+| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); with `[web] push = true` `mk web` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0066; `hook.report` rejected unless the session id belongs to a live session |
 | Data | SQLite WAL; daily DB backup, keep 7 |
 | Errors | panics logged with backtrace; UI shows an error instead of dying silently |
 | History | per-session output log, rotated at 5 MB |
@@ -1667,7 +1672,8 @@ Goal: make the daily loop with agents fast — notice who needs you, answer with
 views, instruct precisely, review and undo per turn, and isolate parallel work when asked.
 Inspired by herdr (peek), Zed's agent panel (queue, follow, per-turn checkpoints, keep awake) and
 Orca (worktrees, fan-out, usage). §1 non-goals still hold: no editor, no LLM API calls, no cloud,
-no native mobile app (a browser client exists, ADR 0052).
+no native mobile app (a browser client exists, ADR 0052). Phone push (ADR 0066) is opt-in and
+end-to-end encrypted.
 
 Every v2 feature keeps §2: agent differences live in TOML profiles; the daemon owns state; it
 works on native Windows; nothing touches the user's branch, index or files without a confirmed
@@ -1724,6 +1730,7 @@ docs = false                # §12 Docs view, "Review in Docs"; applies live
 turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
 [web]                       # ADR 0053; phone access
 enabled = false             # the daemon runs `mk web` while true; the Phone access dialog writes it
+push = false                # ADR 0066; mk web notifies phones that opted in (needs enabled); the Phone access dialog writes it
 ```
 
 **Phone access** (ADR 0053). While `[web] enabled = true` the daemon supervises `mk web` as a
@@ -1731,6 +1738,17 @@ windowless child (`mk.exe` next to `mkrew-daemon.exe`, else on PATH; stderr's la
 `error`; a child that exits is started again after 1, 2, 4 … 60 s; `enabled = false` kills it).
 `daemon.status.web` reports `{enabled, running, error?}`. The Phone access dialog (§14) writes the
 key and shows the link; `mk web --new-token` still revokes old links.
+
+**Phone notifications** (ADR 0066). While `[web] push = true`, `mk web` watches `session.state` on its
+own daemon connection and, for each session entering `needs_input` or `done` (subject to
+`[notify] needs_input` / `done` and one per session per 30 s), sends a Web Push message
+(RFC 8291 `aes128gcm`, VAPID RFC 8292) to every phone that tapped the bell on the page. Title
+`<session> · <workspace>`, body `needs you` / `done`; tapping it opens the page on that session.
+No notification payload carries the access token; the manifest `start_url` does (the iOS Home
+Screen app stores it). Subscriptions and the VAPID key live in `<config>/web_push.json`; a push
+service answer 404 / 410 removes a subscription; `mk web --new-token` empties the list. Only Apple,
+Google, Mozilla and Microsoft push hosts are accepted. The page needs HTTPS (`tailscale serve`), and
+on iPhone iOS 16.4+ with the page added to the Home Screen.
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
 enters `working` from `starting`, `idle`, `done` or `needs_input` after user input; it **ends** at
