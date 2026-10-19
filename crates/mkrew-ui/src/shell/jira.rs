@@ -133,6 +133,9 @@ impl Shell {
                 .spawn(async move { mkrew_ui::jira::issue_draft(&settings, &token, &fetched_key) })
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {
+                // A slow reply never replaces a dialog opened meanwhile, nor opens in another
+                // workspace: the draft is dropped (the human clicks the row again).
+                let free = !shell.modal_open() && shell.workspace == Some(project_id);
                 let Some(view) = shell.jira.get_mut(&project_id) else {
                     return;
                 };
@@ -141,11 +144,12 @@ impl Shell {
                 }
                 view.opening = None;
                 match draft {
-                    Ok(draft) => shell.open_task_dialog(
+                    Ok(draft) if free => shell.open_task_dialog(
                         TaskDialog::from_draft(project_id, draft),
                         window,
                         cx,
                     ),
+                    Ok(_) => {}
                     Err(error) => view.row_error = Some((key, format!("{error:#}"))),
                 }
                 cx.notify();
