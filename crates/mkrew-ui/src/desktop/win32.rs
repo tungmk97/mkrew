@@ -217,6 +217,14 @@ impl Tray {
     }
 }
 
+/// The icon goes with the `Tray` (dropped when the window closes or the app shuts down), so no
+/// ghost is left in the notification area; [`Tray::remove`] again is harmless.
+impl Drop for Tray {
+    fn drop(&mut self) {
+        self.remove();
+    }
+}
+
 /// Tray-thread state, reached from the window procedure.
 struct State {
     shared: Arc<Shared>,
@@ -378,6 +386,8 @@ unsafe extern "system" fn window_proc(
         other if other == state.taskbar_created => {
             let (icon, rgb) = state.kind.get();
             state.apply(hwnd, NIM_ADD, icon, rgb);
+            // The new taskbar button has no overlay either.
+            state.send(TrayEvent::TaskbarRestarted);
         }
         // SAFETY: forwarding the unchanged message.
         _ => return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
@@ -466,7 +476,7 @@ pub struct Os {
 }
 
 impl Os {
-    pub fn new(window: &gpui::Window) -> (Self, async_channel::Receiver<TrayEvent>) {
+    pub fn new(window: &gpui::Window, socket: &str) -> (Self, async_channel::Receiver<TrayEvent>) {
         let hwnd = match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
             Ok(RawWindowHandle::Win32(handle)) => Some(HWND(handle.hwnd.get() as *mut c_void)),
             _ => None,
@@ -481,7 +491,7 @@ impl Os {
                 .inspect_err(|error| tracing::warn!("taskbar badge unavailable: {error}"))
                 .ok()
         });
-        let (tray, events) = match Tray::start(&super::current_key()) {
+        let (tray, events) = match Tray::start(&super::current_key(socket)) {
             Some((tray, events)) => (Some(tray), events),
             None => (None, async_channel::unbounded::<TrayEvent>().1),
         };
@@ -498,10 +508,11 @@ impl Os {
     /// The overlay icon with `count` (cleared at 0).
     pub fn set_badge(&mut self, count: usize, bg: u32, ink: u32) {
         self.badge = (count > 0).then_some(Badge { count, bg, ink });
-        self.apply_badge();
+        self.reapply_badge();
     }
 
-    fn apply_badge(&self) {
+    /// Sets the overlay again: a button Explorer made after `show_window` or a restart has none.
+    pub fn reapply_badge(&self) {
         let (Some(hwnd), Some(list)) = (self.hwnd, &self.list) else {
             return;
         };
@@ -586,8 +597,8 @@ impl Os {
             };
             let _ = ShowWindow(hwnd, command);
         }
-        // A hidden window's taskbar button starts without its overlay.
-        self.apply_badge();
+        // The taskbar button comes back asynchronously, without its overlay: the UI calls
+        // `reapply_badge` shortly after (`Shell::restore_window`).
     }
 }
 

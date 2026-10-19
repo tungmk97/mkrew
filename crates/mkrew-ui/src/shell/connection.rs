@@ -49,7 +49,7 @@ impl Shell {
         })
         .detach();
         // The tray icon (Windows): its clicks arrive here from the tray thread.
-        let (desktop, tray_events) = Desktop::new(window);
+        let (desktop, tray_events) = Desktop::new(window, &paths.socket);
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = tray_events.recv().await {
                 let handled =
@@ -58,12 +58,6 @@ impl Shell {
                     return;
                 }
             }
-        })
-        .detach();
-        // An icon left in the notification area would linger until the mouse passes over it.
-        cx.on_app_quit(|shell, _| {
-            shell.desktop.remove_tray();
-            async {}
         })
         .detach();
         // Unsaved Files changes (§2.5): the close button asks first.

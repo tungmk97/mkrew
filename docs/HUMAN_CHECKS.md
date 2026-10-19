@@ -66,17 +66,19 @@ by telling the agent.
   as `&`), a greyed `● N working`, `Open Mkrew`, `Quit UI (agents keep running)`. Left click opens
   the window. A line opens that session's pane, also from a hidden or minimized window.
 - [ ] **Close to tray:** ✕ and Alt+F4 hide the window (no taskbar button); `mk session list` still
-  shows the agents. Tray → Open: the same layout, terminals show their content again. With
-  `[ui] close_to_tray = false` ✕ quits the UI (agents keep running).
+  shows the agents. Tray → Open: the same layout, terminals show their content again, and with
+  sessions waiting the taskbar badge still shows (it is set again half a second after Open). With
+  `[ui] close_to_tray = false` ✕ quits the UI (agents keep running) and leaves no tray icon
+  behind (hover the notification area).
 - [ ] **Quit UI with an unsaved Files edit:** the window appears and asks Save / Don't save /
   Cancel; Cancel leaves the UI running; afterwards Quit UI ends it and `mk session list` still
   shows the agents.
 - [ ] **Toast click while hidden:** the window comes back on that session's pane.
 - [ ] **Explorer restart** (`taskkill /f /im explorer.exe`, then `explorer`): the tray icon comes
-  back; the badge is set again after the next change.
+  back, and so does the badge.
 - [ ] **Second launch:** starting `mkrew.exe` again (Start menu) while it is hidden shows the
   running window and opens no second tray icon. A dev build (`target\debug\mkrew.exe`) next to
-  the installed one runs on its own.
+  the installed one runs on its own, and so does the same exe with another `MKREW_SOCKET`.
 - [ ] **Mark unread (dark + light):** right-click a finished session's row (and its pane header) →
   **Mark unread**: the row is tinted, the Needs you chip, the badge and the tray count go up by
   one; it stays while that pane keeps the keyboard; focusing another pane and coming back clears

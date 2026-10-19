@@ -161,9 +161,10 @@ fn main() {
     for error in &keymap_errors {
         tracing::warn!("{error}; using the default for it");
     }
-    // A second launch of the same exe shows the running window (it may be hidden in the tray)
-    // instead of opening another one; a dev build at another path starts on its own.
-    if mkrew_ui::desktop::raise_running_instance() {
+    // A second launch of the same exe on the same daemon shows the running window (it may be
+    // hidden in the tray) instead of opening another one; a dev build at another path, or on
+    // another `MKREW_SOCKET`, starts on its own.
+    if mkrew_ui::desktop::raise_running_instance(&paths.socket) {
         return;
     }
     gpui_platform::application()

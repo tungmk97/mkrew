@@ -26,30 +26,41 @@ pub enum TrayEvent {
     Session(Ulid),
     /// Quit the UI (the daemon and the agents keep running).
     Quit,
+    /// Explorer restarted and made the taskbar buttons again: set the badge again.
+    TaskbarRestarted,
 }
 
-/// FNV-1a of the lower-cased exe path. Two launches of the same exe share it, a dev build at
-/// another path does not (the second launch only forwards to its own kind).
-pub fn instance_key(exe: &str) -> String {
+/// FNV-1a of the lower-cased exe path and the daemon socket. Two launches of the same exe on
+/// the same daemon share it; a dev build at another path, or the same exe on another
+/// `MKREW_SOCKET`, does not (the second launch only forwards to its own kind).
+pub fn instance_key(exe: &str, socket: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in exe.to_lowercase().bytes() {
+    // NUL cannot occur in a path: "a" + "bc" never collides with "ab" + "c".
+    let (exe, socket) = (exe.to_lowercase(), socket.to_lowercase());
+    for byte in exe.bytes().chain([0]).chain(socket.bytes()) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
 }
 
-/// [`instance_key`] of the running exe.
-pub(crate) fn current_key() -> String {
+/// [`instance_key`] of the running exe and `socket`.
+pub(crate) fn current_key(socket: &str) -> String {
     std::env::current_exe()
-        .map(|exe| instance_key(&exe.to_string_lossy()))
+        .map(|exe| instance_key(&exe.to_string_lossy(), socket))
         .unwrap_or_default()
 }
 
-/// Asks another running Mkrew of the same exe to show its window. `true`: it was asked, this
-/// launch should end.
-pub fn raise_running_instance() -> bool {
-    os::raise(&current_key())
+/// Asks another running Mkrew of the same exe and daemon to show its window. `true`: it was
+/// asked, this launch should end.
+pub fn raise_running_instance(socket: &str) -> bool {
+    let raised = os::raise(&current_key(socket));
+    if raised {
+        tracing::info!(
+            "Mkrew is already running on {socket}: asked it to show its window, exiting"
+        );
+    }
+    raised
 }
 
 /// A menu line with `&` doubled: Win32 menus read a lone `&` as an accelerator mark.
@@ -63,11 +74,23 @@ mod tests {
 
     #[test]
     fn the_instance_key_is_per_exe_path_and_ignores_case() {
-        let installed = instance_key(r"C:\Program Files\Mkrew\mkrew.exe");
-        assert_eq!(installed, instance_key(r"c:\program files\mkrew\MKREW.EXE"));
+        let pipe = r"\\.\pipe\mkrew-jane";
+        let installed = instance_key(r"C:\Program Files\Mkrew\mkrew.exe", pipe);
+        assert_eq!(
+            installed,
+            instance_key(r"c:\program files\mkrew\MKREW.EXE", pipe)
+        );
         assert_ne!(
             installed,
-            instance_key(r"C:\src\mkrew\target\debug\mkrew.exe")
+            instance_key(r"C:\src\mkrew\target\debug\mkrew.exe", pipe)
+        );
+        assert_ne!(
+            installed,
+            instance_key(
+                r"C:\Program Files\Mkrew\mkrew.exe",
+                r"\\.\pipe\mkrew-sandbox"
+            ),
+            "same exe, another daemon"
         );
         assert_eq!(installed.len(), 16);
     }

@@ -8,7 +8,10 @@ pub struct Os;
 
 impl Os {
     /// The receiver is closed at once: there is no tray to listen to.
-    pub fn new(_window: &gpui::Window) -> (Self, async_channel::Receiver<TrayEvent>) {
+    pub fn new(
+        _window: &gpui::Window,
+        _socket: &str,
+    ) -> (Self, async_channel::Receiver<TrayEvent>) {
         (Self, async_channel::unbounded::<TrayEvent>().1)
     }
 
@@ -17,6 +20,8 @@ impl Os {
     }
 
     pub fn set_badge(&mut self, _count: usize, _bg: u32, _ink: u32) {}
+
+    pub fn reapply_badge(&self) {}
 
     pub fn flash(&mut self, _on: bool) {}
 

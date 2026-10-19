@@ -33,10 +33,17 @@ impl Shell {
     }
 
     /// Shows the window again (tray, toast click, second launch) and raises it. gpui's
-    /// `activate_window` only restores a *minimized* window, not a hidden one.
-    pub(crate) fn restore_window(&mut self, window: &mut Window) {
+    /// `activate_window` only restores a *minimized* window, not a hidden one. Explorer makes
+    /// the taskbar button again a moment later, without its badge, so that is set once more
+    /// after a tick.
+    pub(crate) fn restore_window(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.desktop.show_window();
         window.activate_window();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(theme::STATUS_TICK).await;
+            let _ = this.update(cx, |shell, _| shell.desktop.reapply_badge());
+        })
+        .detach();
     }
 
     /// A click in the tray.
@@ -47,12 +54,13 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         match event {
-            TrayEvent::Open => self.restore_window(window),
+            TrayEvent::Open => self.restore_window(window, cx),
             TrayEvent::Session(session) => {
-                self.restore_window(window);
+                self.restore_window(window, cx);
                 self.open_session(session, window, cx);
             }
             TrayEvent::Quit => self.quit_ui(window, cx),
+            TrayEvent::TaskbarRestarted => self.desktop.reapply_badge(),
         }
         cx.notify();
     }
@@ -62,7 +70,7 @@ impl Shell {
     pub(crate) fn quit_ui(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let again: AfterSave = Box::new(|shell, window, cx| shell.quit_ui(window, cx));
         if self.ask_unsaved(again, window, cx) {
-            self.restore_window(window);
+            self.restore_window(window, cx);
             return;
         }
         self.desktop.remove_tray();

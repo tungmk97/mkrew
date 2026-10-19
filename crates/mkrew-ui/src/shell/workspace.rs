@@ -251,7 +251,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.restore_window(window);
+        self.restore_window(window, cx);
         let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
         match inbox::jump(projects, sessions, session, project_id) {
             Some(Jump::Session(session)) => self.open_session(session, window, cx),
