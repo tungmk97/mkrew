@@ -1,4 +1,4 @@
-//! Jira project keys of a workspace (SPEC §20I, ADR 0062).
+//! Jira project keys of a workspace (SPEC §20I, ADR 0063).
 
 /// Trims, upper-cases, drops empty entries and duplicates (first one wins), then checks each
 /// key is a Jira project key (`^[A-Z][A-Z0-9_]+$`). The error names the first bad key.

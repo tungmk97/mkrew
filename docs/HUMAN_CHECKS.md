@@ -15,7 +15,7 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
-### To verify — 2026-10-19 Jira on the Board (ADR 0062, plan docs/superpowers/plans/2026-10-19-jira-board.md)
+### To verify — 2026-10-19 Jira on the Board (ADR 0063, plan docs/superpowers/plans/2026-10-19-jira-board.md)
 
 - [ ] **Restart the daemon first** (protocol 44).
 - [ ] **Setup:** create an API token at id.atlassian.com → Security → API tokens; run

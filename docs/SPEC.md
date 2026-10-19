@@ -173,7 +173,8 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | Fuzzy matching | `nucleo-matcher` | quick open files (M7) |
 | Diff | `similar` | |
 | Microphone | `cpal` | voice input (§20G); WASAPI on Windows, ALSA on Linux |
-| HTTPS client | `ureq` (rustls) | voice input speech to text (§20G) |
+| HTTPS client | `ureq` (rustls) | voice input speech to text (§20G); Jira REST (§20I) |
+| Base64 | `base64` | Jira Basic auth header (§20I) |
 | Errors | `thiserror` (libs), `anyhow` (bins) | |
 | Logging | `tracing`, `tracing-subscriber`, `tracing-appender` | |
 | Tests | `insta`, `tempfile` | |
@@ -326,7 +327,7 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 `0015_session_color.sql` adds `session.color TEXT` (ADR 0037). `0016_pinned.sql` adds `pinned INTEGER NOT NULL DEFAULT 0` to `project`, `session` and
 `terminal_tab` (pinned workspaces, sessions and tabs lead their lists, §10).
 `0017_session_plan.sql` adds `session.plan_path TEXT` (the linked plan `.md`: relative to the project folder with `/` when inside, else absolute; NULL = none; ADR 0039).
-`0020_project_jira_keys.sql` adds `project.jira_keys TEXT` (JSON array of Jira project keys, NULL = none; §20I, ADR 0062).
+`0020_project_jira_keys.sql` adds `project.jira_keys TEXT` (JSON array of Jira project keys, NULL = none; §20I, ADR 0063).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -524,7 +525,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | Method | Main params | Returns |
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
-| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color`, `pinned` (update only), `review_globs`, `default_agent?`, `default_shell?`, `jira_keys?` | Project (`update`: absent field = unchanged, `null` = cleared; `pinned` is a bool; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `default_shell` must be a shell profile (same absent / `null` rules); `jira_keys` (string list) replaces the list, `[]` clears it, `null` = unchanged; each key is trimmed, upper-cased and de-duplicated (first-seen order), and must match `^[A-Z][A-Z0-9_]+$` (`invalid_request` naming the key; ADR 0062); `color` must be one of red, orange, yellow, lime, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
+| `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color`, `pinned` (update only), `review_globs`, `default_agent?`, `default_shell?`, `jira_keys?` | Project (`update`: absent field = unchanged, `null` = cleared; `pinned` is a bool; `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `default_shell` must be a shell profile (same absent / `null` rules); `jira_keys` (string list) replaces the list, `[]` clears it, `null` = unchanged; each key is trimmed, upper-cased and de-duplicated (first-seen order), and must match `^[A-Z][A-Z0-9_]+$` (`invalid_request` naming the key; ADR 0063); `color` must be one of red, orange, yellow, lime, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
 | `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>` (always the `shell` profile, not `default_shell`; ADR 0032): without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file (relative to the project folder), then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
 | `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab and keeps its color and pin |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs. Each one leaves the `run` tab when it exits (§10) |
@@ -632,7 +633,7 @@ Protocol 40 (ADR 0053): `daemon.status` gains `web`.
 
 Protocol 41: `session.move` and `Session.position`.
 
-Protocol 44: `Project.jira_keys`, `project.update` `jira_keys?` (ADR 0062).
+Protocol 44: `Project.jira_keys`, `project.update` `jira_keys?` (ADR 0063).
 
 ---
 
@@ -1710,7 +1711,7 @@ docs = false                # §12 Docs view, "Review in Docs"; applies live
 turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
 [web]                       # ADR 0053; phone access
 enabled = false             # the daemon runs `mk web` while true; the Phone access dialog writes it
-[jira]                      # §20I, ADR 0062; "" site = off
+[jira]                      # §20I, ADR 0063; "" site = off
 site = ""                   # "acme.atlassian.net"
 email = ""
 api_token_env = "JIRA_API_TOKEN"  # env var holding the API token; never the token itself
@@ -2034,7 +2035,7 @@ Ask an agent any question that is not about a project, without opening a termina
    `theme::ASK_ANSWER_HEIGHT`); "Copy answer" puts the Markdown on the clipboard. A failure
    shows `✕` and the reason. The question stays, so it can be edited and asked again.
 
-### §20I Jira on the Board (outside the milestones, ADR 0062)
+### §20I Jira on the Board (outside the milestones, ADR 0063)
 
 Pick a Jira ticket on the Board and start a task from it. Jira Cloud only (`*.atlassian.net`,
 email + API token); the UI calls Jira's REST API v3 itself, the daemon never does (§1: with
@@ -2060,7 +2061,7 @@ speech to text, this is the second user-configured use of the network, and only 
    `Done`) as a chip. Nothing found: "No open issues assigned to you in PROJ, BILL".
 4. **Open.** A task belongs to issue `PROJ-123` when it is in the workspace and its title starts
    with `PROJ-123 ` (the key and one space; `PROJ-12` does not match `PROJ-123 x`; no column,
-   ADR 0062). Click a row with a linked task: the Board switches to `Tasks` and the task's edit
+   ADR 0063). Click a row with a linked task: the Board switches to `Tasks` and the task's edit
    dialog opens; no second task is made. Click a row without one: the row shows working dots
    while `GET /rest/api/3/issue/PROJ-123?fields=summary,description` runs, then the New task
    dialog opens with title `PROJ-123 <summary>`, the workspace's default agent, "Run in a

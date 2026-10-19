@@ -1,4 +1,4 @@
-//! Jira Cloud REST v3 for the Board's Jira side (SPEC §20I, ADR 0062): pure helpers and two
+//! Jira Cloud REST v3 for the Board's Jira side (SPEC §20I, ADR 0063): pure helpers and two
 //! blocking calls, run on the background executor. Nothing here touches gpui, so it can move
 //! to the daemon unchanged.
 

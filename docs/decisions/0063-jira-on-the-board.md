@@ -1,4 +1,4 @@
-# 0062 — Jira issues on the Board, read by the UI over REST
+# 0063 — Jira issues on the Board, read by the UI over REST
 
 - Date: 2026-10-19
 - Status: accepted (SPEC §5, §7, §9, §10, §20.0, §20I)

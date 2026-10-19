@@ -28,7 +28,7 @@ pub struct Settings {
     pub features: FeatureSettings,
     /// `[web]`: phone access (ADR 0053).
     pub web: WebSettings,
-    /// `[jira]`: Jira issues on the Board (SPEC §20I, ADR 0062).
+    /// `[jira]`: Jira issues on the Board (SPEC §20I, ADR 0063).
     pub jira: JiraSettings,
 }
 
@@ -161,7 +161,7 @@ impl Default for VoiceSettings {
     }
 }
 
-/// `[jira]` (SPEC §20I, ADR 0062): the Jira Cloud site the Board reads issues from.
+/// `[jira]` (SPEC §20I, ADR 0063): the Jira Cloud site the Board reads issues from.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct JiraSettings {
