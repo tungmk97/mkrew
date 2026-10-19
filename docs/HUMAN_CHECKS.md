@@ -51,6 +51,45 @@ by telling the agent.
   review subagents; those tasks were done by the controller without a per-task review. They get
   the plan review and the final branch review once the limit resets.
 
+### To verify — 2026-10-19 Phone push notifications (ADR 0066, plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md)
+
+- [ ] **Install first:** the daemon starts `mk.exe` from the install folder; install the new build, then
+  Phone access → **Stop** → **Start** (no daemon restart needed: no protocol change).
+- [ ] **Prerequisites (same as the phone page):** Tailscale MagicDNS + HTTPS Certificates on, **Set up** done.
+- [ ] **Dialog (dark + light):** with phone access On, a row "Phone notifications: off" + **Turn on** shows under
+  the Tailscale row; Turn on → "Phone notifications: on" + **Turn off** and the hint line "On the phone, open
+  Mkrew from the Home Screen and tap the bell."; Stop phone access → the row disappears. No clipped text at 520 px.
+- [ ] **iPhone, first time [the open risk of the plan]:** the bell needs the Home Screen app (not a Safari tab).
+  Remove the old Home Screen icon, open the link in Safari, wait until the Sessions list shows, Share → Add to
+  Home Screen, open the new icon: it opens **without** asking for the token (the manifest's `start_url` carries
+  it). The bell shows at the top; tap it → iOS asks to allow notifications → Allow → the bell turns accent and a
+  toast says you will get a notification.
+  *If the bell is missing in the Home Screen app:* open `https://<pc>/manifest.webmanifest?t=<token>` in Safari and
+  check it shows JSON; if the app still has no bell, iOS did not take the manifest — report it.
+- [ ] **Needs you:** in Mkrew start an agent that asks something (or `mk session spawn <project> --agent fake`), lock the
+  phone → within ~5 s a notification "fake · <workspace>" / "needs you" appears on the Lock Screen. Tap it → the Mkrew
+  app opens on that session (do it from a closed app, from the list, and from another open session).
+- [ ] **Done:** let an agent finish → "<name> · <workspace>" / "done".
+- [ ] **Limits:** two quick `needs_input` / `done` changes of one session → one notification (30 s). Set `[notify]
+  needs_input = false` in `settings.toml` → no "needs you" notification, "done" still comes.
+- [ ] **Off switches:** Turn off in the dialog → no notification; reload the phone page → the bell is gone. Turn on
+  again → the bell is back and notifications resume without tapping it (the page re-registers itself).
+- [ ] **Bell off:** tap the bell on the phone (on → off) → no more notifications; `%APPDATA%\mkrew\web_push.json`
+  lost that phone's entry.
+- [ ] **Revoke:** with phone access Stopped, run `mk web --new-token`, Ctrl+C, Start → `web_push.json` has an empty
+  `subscriptions` list and the same `vapid`; the phone shows the token screen; paste the new link → it works and
+  notifications resume.
+- [ ] **Revoke, unreadable file:** make `web_push.json` unreadable (e.g. open it exclusively, or put garbage in it) and
+  run `mk web --new-token` → it stops with an error and the **old token is kept** (`web_token` unchanged, old
+  phone link still works after Start).
+- [ ] **Apple accepts the sender:** if no notification arrives on iPhone but Chrome works, run `mk web` by hand and read
+  stderr: `mk web: push to https://web.push.apple.com: HTTP 403` means Apple rejected the VAPID contact
+  (`SUBJECT` in `crates/mkrew-cli/src/web/push/crypto.rs`); report it.
+- [ ] **Offline phone:** airplane mode, trigger a notification, leave airplane mode within an hour → it arrives.
+- [ ] **Daemon restart:** with notifications on, `mk daemon stop` / start (or reboot) → a new `needs_input` still notifies
+  (the push loop reconnects within ~2 s).
+- [ ] **Privacy:** `web_push.json` is not readable by other users (Unix); no endpoint URL appears in any log line.
+
 ### To verify — 2026-10-19 Mark files as viewed in the Git view (ADR 0065, plan docs/superpowers/plans/2026-10-19-git-viewed-files.md)
 
 - [ ] **Restart the daemon first** (protocol 45, migration 0021). Migrations count by position:
