@@ -79,7 +79,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
-use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, SetUp, Switch};
+use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};

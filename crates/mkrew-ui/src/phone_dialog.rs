@@ -167,6 +167,44 @@ pub fn serve_row(serve: &Serve, setup: &Setup) -> ServeRow {
     }
 }
 
+/// The notifications switch of the dialog (ADR 0066).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushSwitch {
+    TurnOn,
+    TurnOff,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushRow {
+    pub mark: Mark,
+    pub text: &'static str,
+    pub switch: PushSwitch,
+}
+
+/// The Phone notifications row. It shows while phone access is on: the phone page is what asks
+/// for notifications, so the switch means nothing before.
+pub fn push_row(daemon: &Daemon, push: bool) -> Option<PushRow> {
+    let Daemon::Known(web) = daemon else {
+        return None;
+    };
+    if !web.enabled {
+        return None;
+    }
+    Some(if push {
+        PushRow {
+            mark: Mark::On,
+            text: "Phone notifications: on",
+            switch: PushSwitch::TurnOff,
+        }
+    } else {
+        PushRow {
+            mark: Mark::Off,
+            text: "Phone notifications: off",
+            switch: PushSwitch::TurnOn,
+        }
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkBlock {
     Hidden,
@@ -189,10 +227,12 @@ pub struct Local {
     pub serve: Serve,
     pub host: Option<String>,
     pub token: Option<String>,
+    /// `[web] push` in settings.toml (ADR 0066).
+    pub push: bool,
 }
 
 impl Local {
-    pub fn read(config_dir: &Path) -> Local {
+    pub fn read(config_dir: &Path, settings_file: &Path) -> Local {
         let check = tailscale::serve_status();
         // No second process when the first one already failed.
         let host = if check.is_ok() {
@@ -204,6 +244,7 @@ impl Local {
             serve: serve_state(check, host.as_deref()),
             host,
             token: phone::read_token(config_dir),
+            push: mkrew_core::settings::load(settings_file).is_ok_and(|settings| settings.web.push),
         }
     }
 }
@@ -222,6 +263,8 @@ pub struct Phone {
     last_poll: Option<Instant>,
     host: Option<String>,
     token: Option<String>,
+    /// `[web] push` as last read; the notifications row shows it.
+    pub push: bool,
     link: Option<Link>,
 }
 
@@ -238,6 +281,7 @@ impl Default for Phone {
             last_poll: None,
             host: None,
             token: None,
+            push: false,
             link: None,
         }
     }
@@ -320,6 +364,7 @@ impl Phone {
         self.serve = local.serve;
         self.host = local.host;
         self.token = local.token;
+        self.push = local.push;
         self.link = match (&self.host, &self.token) {
             (Some(host), Some(token)) => {
                 let text = phone::link(host, token);
@@ -405,6 +450,7 @@ mod tests {
             serve: serve_state(Ok(ServeCheck::Ready), host),
             host: host.map(str::to_owned),
             token,
+            push: false,
         }
     }
 
@@ -676,6 +722,7 @@ mod tests {
                 serve: Serve::Missing,
                 host: Some("pc.ts.net".into()),
                 token: None,
+                push: false,
             }),
             t0,
             COLORS,
@@ -694,6 +741,48 @@ mod tests {
             (Setup::Idle, Serve::Ready)
         );
         assert!(!phone.begin_setup(), "already set up");
+    }
+
+    #[test]
+    fn the_notifications_row_exists_only_while_phone_access_is_on() {
+        assert_eq!(push_row(&Daemon::Loading, true), None);
+        assert_eq!(push_row(&Daemon::Failed("closed".into()), true), None);
+        assert_eq!(
+            push_row(&known(false, false, None), true),
+            None,
+            "phone access off"
+        );
+        let off = push_row(&known(true, true, None), false).unwrap();
+        assert_eq!(
+            (off.mark, off.text, off.switch),
+            (Mark::Off, "Phone notifications: off", PushSwitch::TurnOn)
+        );
+        // Enabled but `mk web` not up yet (restarting): the row stays so it does not flicker.
+        let on = push_row(&known(true, false, Some("address in use")), true).unwrap();
+        assert_eq!(
+            (on.mark, on.text, on.switch),
+            (Mark::On, "Phone notifications: on", PushSwitch::TurnOff)
+        );
+    }
+
+    #[test]
+    fn a_poll_brings_the_push_switch_from_settings_toml() {
+        let t0 = Instant::now();
+        let mut phone = Phone::default();
+        assert!(!phone.push);
+        phone.polled(
+            Ok(web(true, true, None)),
+            Some(Local {
+                push: true,
+                ..local(Some("pc.ts.net"), None)
+            }),
+            t0,
+            COLORS,
+        );
+        assert!(phone.push);
+        // The icon's own poll (dialog closed) has no `Local`: the last value stays.
+        phone.polled(Ok(web(true, true, None)), None, t0, COLORS);
+        assert!(phone.push);
     }
 
     #[test]
