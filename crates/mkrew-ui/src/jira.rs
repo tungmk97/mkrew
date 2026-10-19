@@ -2,14 +2,18 @@
 //! blocking calls, run on the background executor. Nothing here touches gpui, so it can move
 //! to the daemon unchanged.
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine as _;
 use mkrew_core::settings::JiraSettings;
 use serde_json::{Value, json};
+use std::time::Duration;
 
 /// Issues per search; one page only.
 // ponytail: first 50 issues only; follow nextPageToken if someone has more open issues
 const MAX_RESULTS: u32 = 50;
+
+/// Whole-request limit for one Jira call.
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 /// One row of the Jira list.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +57,60 @@ pub fn base_url(site: &str) -> String {
         .or_else(|| host.strip_prefix("http://"))
         .unwrap_or(host);
     format!("https://{}", host.trim_end_matches('/'))
+}
+
+/// Where requests go: `base_url(site)`, except an explicit `http://` origin is kept as is
+/// (loopback tests; Jira Cloud is always https).
+fn origin(site: &str) -> String {
+    let site = site.trim();
+    match site.strip_prefix("http://") {
+        Some(_) => site.trim_end_matches('/').to_owned(),
+        None => base_url(site),
+    }
+}
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        // 4xx bodies carry Jira's reason (unknown project): read them.
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
+/// The open issues of `keys` assigned to the user. Blocking: run it off the UI thread.
+pub fn search(settings: &JiraSettings, token: &str, keys: &[String]) -> Result<Vec<Issue>> {
+    let origin = origin(&settings.site);
+    let mut response = agent()
+        .post(format!("{origin}/rest/api/3/search/jql").as_str())
+        .header("Authorization", auth_header(&settings.email, token))
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .send(search_body(keys).as_bytes())
+        .with_context(|| format!("Cannot reach {origin}"))?;
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .context("cannot read Jira's answer")?;
+    parse_search(status, &body)
+}
+
+/// The task draft of one issue. Blocking: run it off the UI thread.
+pub fn issue_draft(settings: &JiraSettings, token: &str, key: &str) -> Result<Draft> {
+    let origin = origin(&settings.site);
+    let mut response = agent()
+        .get(format!("{origin}/rest/api/3/issue/{key}?fields=summary,description").as_str())
+        .header("Authorization", auth_header(&settings.email, token))
+        .header("Accept", "application/json")
+        .call()
+        .with_context(|| format!("Cannot reach {origin}"))?;
+    let status = response.status().as_u16();
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .context("cannot read Jira's answer")?;
+    parse_issue(&settings.site, key, status, &body)
 }
 
 pub fn auth_header(email: &str, token: &str) -> String {
@@ -404,5 +462,120 @@ mod tests {
                 .prompt,
             "PROJ-8: No text\nhttps://acme.atlassian.net/browse/PROJ-8"
         );
+    }
+
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    /// One request on a loopback port (SPEC §16): returns the request head and body.
+    fn serve_once(
+        status: &str,
+        answer: &'static str,
+    ) -> (u16, std::thread::JoinHandle<(String, String)>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let status = status.to_owned();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut head = String::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                head.push_str(&line);
+            }
+            let length: usize = head
+                .lines()
+                .find_map(|line| {
+                    let line = line.to_ascii_lowercase();
+                    line.strip_prefix("content-length:")?.trim().parse().ok()
+                })
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            write!(
+                reader.get_mut(),
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{answer}",
+                answer.len()
+            )
+            .unwrap();
+            (head, String::from_utf8(body).unwrap())
+        });
+        (port, server)
+    }
+
+    #[test]
+    fn search_posts_the_jql_with_basic_auth() {
+        let (port, server) = serve_once(
+            "200 OK",
+            r#"{"issues":[{"key":"PROJ-7","fields":{"summary":"Fix login","status":{"name":"To Do"},"issuetype":{"name":"Bug"}}}]}"#,
+        );
+        let settings = JiraSettings {
+            site: format!("http://127.0.0.1:{port}"),
+            ..settings()
+        };
+        let issues = search(&settings, "tok", &["PROJ".to_owned()]).unwrap();
+        assert_eq!(issues[0].key, "PROJ-7");
+        let (head, body) = server.join().unwrap();
+        let head = head.to_ascii_lowercase();
+        assert!(
+            head.starts_with("post /rest/api/3/search/jql http/1.1\r\n"),
+            "{head}"
+        );
+        assert!(
+            head.contains("authorization: basic yw5aywntzs5jb206dg9r\r\n"),
+            "{head}"
+        );
+        assert!(
+            head.contains("content-type: application/json\r\n"),
+            "{head}"
+        );
+        assert_eq!(body, search_body(&["PROJ".to_owned()]));
+    }
+
+    #[test]
+    fn issue_draft_gets_the_issue_and_keeps_the_token_out_of_errors() {
+        let (port, server) = serve_once(
+            "200 OK",
+            r#"{"key":"PROJ-7","fields":{"summary":"Fix login","description":null}}"#,
+        );
+        let jira = JiraSettings {
+            site: format!("http://127.0.0.1:{port}"),
+            ..settings()
+        };
+        let draft = issue_draft(&jira, "tok", "PROJ-7").unwrap();
+        assert_eq!(draft.title, "PROJ-7 Fix login");
+        let (head, _) = server.join().unwrap();
+        assert!(
+            head.to_ascii_lowercase().starts_with(
+                "get /rest/api/3/issue/proj-7?fields=summary,description http/1.1\r\n"
+            ),
+            "{head}"
+        );
+        let (port, server) = serve_once("401 Unauthorized", "");
+        let jira = JiraSettings {
+            site: format!("http://127.0.0.1:{port}"),
+            ..settings()
+        };
+        let error = format!("{:#}", issue_draft(&jira, "s3cret", "PROJ-7").unwrap_err());
+        server.join().unwrap();
+        assert!(!error.contains("s3cret"), "{error}");
+        assert!(error.starts_with("Jira rejected the login"), "{error}");
+        let closed = JiraSettings {
+            site: "http://127.0.0.1:9".into(),
+            ..settings()
+        };
+        let error = format!(
+            "{:#}",
+            search(&closed, "s3cret", &["PROJ".to_owned()]).unwrap_err()
+        );
+        assert!(
+            error.starts_with("Cannot reach http://127.0.0.1:9"),
+            "{error}"
+        );
+        assert!(!error.contains("s3cret"), "{error}");
     }
 }
