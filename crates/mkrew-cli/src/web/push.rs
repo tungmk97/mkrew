@@ -200,7 +200,7 @@ impl Push {
             store: Mutex::new(None),
             sender,
         };
-        if push.enabled() {
+        if push.enabled() || (renew && file.exists()) {
             *push.lock() = Some(Store::open(file, renew)?);
         }
         Ok(push)
@@ -240,7 +240,7 @@ impl Push {
     }
 
     pub fn subscribers(&self) -> usize {
-        self.lock().as_ref().map_or(0, |s| s.subscriptions().len())
+        self.with_store(|s| s.subscriptions().len()).unwrap_or(0)
     }
 
     /// The VAPID public key (base64url) the page subscribes with; `None` while push is off.
@@ -553,6 +553,36 @@ mod tests {
             Reply::Done
         ));
         assert_eq!(on.subscribers(), 0);
+    }
+
+    #[test]
+    fn new_token_forgets_phones_even_with_push_off_and_a_runtime_switch_on_finds_them() {
+        let (dir, on, _) = push_with(true, &[]);
+        assert!(matches!(on.subscribe(SUB_JSON.as_bytes()), Reply::Done));
+        let file = dir.path().join("web_push.json");
+        let settings = dir.path().join("settings.toml");
+        let sender: Arc<dyn Sender> = Arc::new(UreqSender);
+        // Push off, no renew: nothing opened; switching on later finds the phone.
+        std::fs::write(&settings, "[web]\npush = false\n").unwrap();
+        let off = Push::open(&file, settings.clone(), false, sender.clone()).unwrap();
+        assert_eq!(off.subscribers(), 0);
+        std::fs::write(&settings, "[web]\npush = true\n").unwrap();
+        assert_eq!(off.subscribers(), 1);
+        // --new-token with push off still drops the phones.
+        std::fs::write(&settings, "[web]\npush = false\n").unwrap();
+        Push::open(&file, settings, true, sender).unwrap();
+        assert!(
+            !std::fs::read_to_string(&file)
+                .unwrap()
+                .contains("fcm.googleapis.com")
+        );
+    }
+
+    #[test]
+    fn subscribers_with_push_off_and_no_file_is_zero_and_creates_nothing() {
+        let (dir, push, _) = push_with(false, &[]);
+        assert_eq!(push.subscribers(), 0);
+        assert!(!dir.path().join("web_push.json").exists());
     }
 
     #[test]
