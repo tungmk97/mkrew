@@ -22,7 +22,7 @@ finished and not yet viewed) is only visible inside the window. "Viewed" is UI m
   Open Mkrew, Quit UI (agents keep running).
 - **Close to tray:** `[ui] close_to_tray` (default true): ✕ / Alt+F4 hide the window
   (`ShowWindow(SW_HIDE)` on the window's HWND, vetoing gpui's close) while the tray icon exists;
-  the tray, a toast click or a second launch of the same exe shows it. Quit UI asks about unsaved
+  the tray, a toast click or a second launch of the same exe on the same daemon socket shows it. Quit UI asks about unsaved
   Files changes first. The daemon keeps the agents running anyway (SPEC §2.2).
 - **Mark unread:** pane menu (also the sidebar row's) and palette "Agent: Mark unread" put a
   finished agent session back into Needs you until its pane is focused again or it changes state.
@@ -52,8 +52,10 @@ finished and not yet viewed) is only visible inside the window. "Viewed" is UI m
   (both already in the tree); `Cargo.lock` gains edges, no new package. `unsafe` is confined to
   `crates/mkrew-ui/src/desktop/win32.rs`.
 - A hidden window detaches every pane (SPEC §10), so a tray-resident UI costs almost nothing.
-- Starting `mkrew.exe` again shows the running window; a dev build at another path stays independent.
+- Starting `mkrew.exe` again shows the running window; a dev build at another path, or a UI on
+  another daemon socket (`MKREW_SOCKET`), stays independent.
 - `NotifySettings` is `deny_unknown_fields` and shared with the daemon: a daemon older than this
   change reports `flash_taskbar` as an unknown key until it is restarted.
-- Explorer restarts: the tray icon is re-added on `TaskbarCreated`; the overlay is set again on the
-  next count change or when the window is shown.
+- Explorer restarts: the tray icon is re-added on `TaskbarCreated` and the UI re-applies the
+  overlay; after the window is shown again the overlay is re-applied one status tick (500 ms)
+  later, once Explorer has made the new taskbar button.

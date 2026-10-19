@@ -41,6 +41,12 @@ by telling the agent.
   **0066** (phone push, plan said 0065; the approved ADR "0065" is that one). SPEC: tray is §20J
   (§20H Ask AI, §20I Jira are on other branches; this branch's SPEC jumps from §20G to §20J until
   they merge). Migration 0021 and protocol 45 for viewed files (0020 / 44 are jira-board's).
+  At 21:40 the main checkout also held another agent's uncommitted "run exit_after" work with
+  ADR 0063, migration 0020 and protocol 44, the same numbers as jira-board. Whichever of those two
+  lands second must renumber, and it may then hit this branch's 0064 / 0021 / 45: check the
+  numbers again at merge time. Migrations are counted by position (`user_version`), so every
+  branch's migrations must be merged in number order before a daemon of this branch touches a
+  real database.
 - [ ] **`Cargo.lock` not committed (project rule):** the tray plan made `mkrew-ui` depend on
   `windows` 0.62 and `raw-window-handle` 0.6 directly (no new package, both were already in the
   tree through gpui). The lock file in this worktree is modified and must be committed before

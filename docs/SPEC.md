@@ -2031,7 +2031,7 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
    left click opens the window.
 4. **Close to tray (Windows).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window
    instead of closing it (no pane is attached while hidden, §10). The tray menu, a toast click and
-   starting Mkrew again (same exe) show it. `false`, or no tray icon: ✕ quits the UI as before
+   starting Mkrew again (same exe, same daemon socket) show it. `false`, or no tray icon: ✕ quits the UI as before
    (unsaved Files changes ask first). `Quit UI` shows the window if unsaved Files changes need an
    answer, then ends the UI; the daemon and every agent keep running (§2.2).
 5. **Mark unread.** Pane menu (right-click a split pane's header or a sidebar session row) **Mark
