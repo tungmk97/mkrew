@@ -648,9 +648,10 @@ impl Render for Shell {
             .flex_col()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
-            .when(self.view() == View::Board, |el| {
-                el.key_context(BOARD_CONTEXT)
-            })
+            .when(
+                self.view() == View::Board && !self.jira_side_shown(),
+                |el| el.key_context(BOARD_CONTEXT),
+            )
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
             .when(self.view() == View::Files, |el| {
                 el.key_context(FILES_CONTEXT)

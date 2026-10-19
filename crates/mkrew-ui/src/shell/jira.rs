@@ -1,4 +1,4 @@
-//! The Board's Jira side (SPEC §20I, ADR 0062): the `Tasks | Jira` switch, the workspace's
+//! The Board's Jira side (SPEC §20I, ADR 0063): the `Tasks | Jira` switch, the workspace's
 //! Jira keys field, the issue list, and opening an issue as a task draft.
 
 use crate::*;
@@ -26,6 +26,15 @@ impl Shell {
             .iter()
             .find(|p| p.id == project_id)
             .map_or(&[][..], |p| p.jira_keys.as_slice())
+    }
+
+    /// The Jira list replaces the cards of the shown workspace's Board.
+    pub(crate) fn jira_side_shown(&self) -> bool {
+        self.jira_on
+            && self
+                .workspace
+                .and_then(|project_id| self.jira.get(&project_id))
+                .is_some_and(|view| view.source == Source::Jira)
     }
 
     pub(crate) fn set_board_source(
@@ -106,6 +115,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if !self.board.is_loaded() {
+            self.jira.entry(project_id).or_default().row_error =
+                Some((key, "Tasks are still loading, try again".into()));
+            cx.notify();
+            return;
+        }
         if let Some(task) =
             mkrew_ui::jira_board::linked_task(self.board.tasks(), project_id, &key).cloned()
         {
@@ -191,6 +206,7 @@ impl Shell {
                         // The sidebar may not have `project.updated` yet: search the saved keys.
                         if !project.jira_keys.is_empty() {
                             view.keys_field = None;
+                            shell.focus_pane(window, cx);
                             shell.search_jira(project_id, project.jira_keys, window, cx);
                         }
                     }
