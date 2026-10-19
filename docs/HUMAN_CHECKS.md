@@ -15,6 +15,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-19 Mkrew web: no blur at the top on iPhone (ADR 0052)
+
+- [ ] Restart `mk web` (it embeds `app.css`). In the Home Screen app and in a Safari tab, the
+  status bar strip is solid page colour, with no blur over the sessions header or the session top
+  bar; scroll the list and the terminal, then check again. Dark and light iPhone theme. The New agent
+  sheet's dimming still covers the whole page.
+
 ### To verify — 2026-10-19 Sidebar workspace cards (ADR 0062)
 
 - [ ] **Cards (dark + light):** with 3+ workspaces open, each is a separate rounded card, 8 px

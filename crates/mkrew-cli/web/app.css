@@ -8,6 +8,8 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg)}
 body{overscroll-behavior:none}
+/* iOS 27 blurs the top of the page (far below the status bar in the Home Screen app); a solid fixed strip at the very top replaces the blur with this color. */
+body::before{content:"";position:fixed;top:0;left:0;right:0;z-index:5;height:max(var(--top),6px);background:var(--bg)}
 [hidden]{display:none!important}
 button{font:inherit;color:inherit;cursor:pointer}
 button:disabled{cursor:not-allowed;opacity:.5}
