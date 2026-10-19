@@ -357,8 +357,10 @@ impl Shell {
         if let Some(session) = (self.sidebar.sessions().iter())
             .find(|s| s.id == session_id)
             .filter(|session| inbox::can_mark_unread(session, &self.viewed))
+            .cloned()
         {
-            self.viewed.mark_unread(session);
+            self.viewed.mark_unread(&session);
+            self.sync_attention(cx);
         }
         cx.notify();
     }

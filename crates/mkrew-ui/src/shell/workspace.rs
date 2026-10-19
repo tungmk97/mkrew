@@ -242,8 +242,8 @@ impl Shell {
         self.activate_workspace(project_id, window, cx);
     }
 
-    /// An OS notification was clicked (§7): raises the window (restoring it if minimized) and
-    /// shows the session's pane, or at least its workspace if the session is not listed yet.
+    /// An OS notification was clicked (§7): raises the window (showing it again if it was hidden
+    /// to the tray, restoring it if minimized) and shows the session's pane, or at least its workspace if the session is not listed yet.
     pub(crate) fn notification_clicked(
         &mut self,
         session: Ulid,
@@ -251,7 +251,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        window.activate_window();
+        self.restore_window(window);
         let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
         match inbox::jump(projects, sessions, session, project_id) {
             Some(Jump::Session(session)) => self.open_session(session, window, cx),

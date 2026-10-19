@@ -15,10 +15,12 @@ impl Shell {
         let settings_file = paths.settings_file();
         // A broken settings file keeps the defaults, like the other reads here.
         let settings = mkrew_core::settings::load(&settings_file).unwrap_or_default();
+        let flash_taskbar = settings.notify.flash_taskbar;
         let features = settings.features;
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
+        let close_to_tray = ui.close_to_tray;
         let reading_default = ui.reading_width;
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
@@ -37,12 +39,31 @@ impl Shell {
         })
         .detach();
         // Coming back to the window views the focused pane (a done session leaves the Inbox),
-        // even one marked unread while it kept the keyboard.
+        // even one marked unread while it kept the keyboard, and ends the taskbar flash.
         cx.observe_window_activation(window, |shell, window, cx| {
             if window.is_window_active() {
                 shell.viewed.activated();
+                shell.desktop.flash(false);
             }
             cx.notify();
+        })
+        .detach();
+        // The tray icon (Windows): its clicks arrive here from the tray thread.
+        let (desktop, tray_events) = Desktop::new(window);
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok(event) = tray_events.recv().await {
+                let handled =
+                    this.update_in(cx, |shell, window, cx| shell.tray_event(event, window, cx));
+                if handled.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+        // An icon left in the notification area would linger until the mouse passes over it.
+        cx.on_app_quit(|shell, _| {
+            shell.desktop.remove_tray();
+            async {}
         })
         .detach();
         // Unsaved Files changes (§2.5): the close button asks first.
@@ -82,6 +103,11 @@ impl Shell {
                                 if let Ok(settings) =
                                     mkrew_core::settings::load(&shell.settings_file)
                                 {
+                                    shell.close_to_tray = settings.ui.close_to_tray;
+                                    shell.flash_taskbar = settings.notify.flash_taskbar;
+                                    if !shell.flash_taskbar {
+                                        shell.desktop.flash(false);
+                                    }
                                     shell.apply_diff_mode(settings.ui.diff_mode);
                                     shell.diff_wrap = settings.ui.diff_wrap;
                                     shell.reading_default = settings.ui.reading_width;
@@ -325,6 +351,10 @@ impl Shell {
             agent_icons: HashMap::new(),
             broadcast: None,
             viewed: Viewed::default(),
+            desktop,
+            attention: Tracker::default(),
+            close_to_tray,
+            flash_taskbar,
             turns: Turns::default(),
             usages: Usages::default(),
             plans: Plans::default(),
@@ -477,6 +507,7 @@ impl Shell {
                 match listed {
                     Ok((projects, sessions)) => {
                         shell.sidebar.load(projects, sessions);
+                        shell.sync_attention(cx);
                         shell.load_usage(window, cx);
                         shell.load_ports(window, cx);
                         shell.load_plans(window, cx);
@@ -655,11 +686,20 @@ impl Shell {
                         .as_ref()
                         .is_some_and(|peek| peek.session_id == state.session_id);
                 }
-                // Before the sidebar applies it: `viewed` reads the previous state.
+                // Before the sidebar applies it: `viewed` and the flash read the previous state.
+                if self.flash_taskbar
+                    && !window.is_window_active()
+                    && attention::entered_needs_input(event, self.sidebar.sessions())
+                {
+                    self.desktop.flash(true);
+                }
                 self.viewed.apply(event, self.sidebar.sessions());
                 match self.sidebar.apply(event) {
                     Change::None => {}
-                    Change::Redraw => cx.notify(),
+                    Change::Redraw => {
+                        cx.notify();
+                        self.sync_attention(cx);
+                    }
                     // A new session (e.g. spawned by `mk`): re-list.
                     Change::Refresh => self.refresh(window, cx),
                 }
