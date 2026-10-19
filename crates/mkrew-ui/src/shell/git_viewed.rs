@@ -42,8 +42,8 @@ impl Shell {
     }
 
     /// Marks `target` viewed or not (the `v` key, a row's box, the toolbar button): shown at
-    /// once, then sent; the daemon is asked again afterwards, so a failure just puts its truth
-    /// back.
+    /// once, then sent; the daemon is asked again afterwards, so a failure puts its truth back
+    /// and a toast says why.
     pub(crate) fn toggle_git_viewed(
         &mut self,
         project_id: Ulid,

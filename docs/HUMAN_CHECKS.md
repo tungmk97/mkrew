@@ -41,8 +41,8 @@ by telling the agent.
   (`0022_viewed_files`) and protocol **46** for viewed files. After merging master, `MIGRATIONS`
   ends `… 0019, 0020_run_exit_after, 0021_project_jira_keys, 0022_viewed_files` (the store counts
   by position), protocol is 46 (Jira is 45), and SPEC keeps §20H, §20I and §20J. Until master is
-  merged, this branch's daemon must not run on the real data folder. Merge checklist: 9 conflicts —
-  `settings.rs` (template: keep `# push = false` in `[web]`, then the `[jira]` block; test:
+  merged, this branch's daemon must not run on the real data folder. Merge checklist: 10 conflicts —
+  `mkrew-protocol/src/lib.rs` (take 46), `settings.rs` (template: keep `# push = false` in `[web]`, then the `[jira]` block; test:
   `WebSettings { enabled: true, push: true }` and `jira: JiraSettings::default()`), store
   `lib.rs` (migration list as above), `inbox.rs` doc (master's "bold rows" plus "taskbar badge and
   the tray"), `lib.rs` / `shell.rs` / `main.rs` (keep both the `ask` and `attention` lines), SPEC
@@ -155,7 +155,7 @@ by telling the agent.
 - [ ] **Quit UI with an unsaved Files edit:** the window appears and asks Save / Don't save /
   Cancel; Cancel leaves the UI running; afterwards Quit UI ends it and `mk session list` still
   shows the agents.
-- [ ] **Toast click while hidden:** the window comes back on that session's pane.
+- [ ] **OS notification click while hidden:** the window comes back on that session's pane.
 - [ ] **Explorer restart** (`taskkill /f /im explorer.exe`, then `explorer`): the tray icon comes
   back, and so does the badge.
 - [ ] **Second launch:** starting `mkrew.exe` again (Start menu) while it is hidden shows the

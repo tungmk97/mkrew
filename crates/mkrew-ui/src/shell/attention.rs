@@ -32,7 +32,7 @@ impl Shell {
         }
     }
 
-    /// Shows the window again (tray, toast click, second launch) and raises it. gpui's
+    /// Shows the window again (tray, OS notification click, second launch) and raises it. gpui's
     /// `activate_window` only restores a *minimized* window, not a hidden one. Explorer makes
     /// the taskbar button again a moment later, without its badge, so that is set once more
     /// after a tick.
