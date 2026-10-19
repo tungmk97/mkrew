@@ -57,6 +57,7 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
     if let Some(run_autostart) = changes.run_autostart {
         let updated: Project = client.call(Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
+            jira_keys: None,
             name: None,
             default_agent: None,
             default_shell: None,

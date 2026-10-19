@@ -281,6 +281,7 @@ mod tests {
     fn project(names: &[&str]) -> Project {
         Project {
             id: Ulid::new(),
+            jira_keys: Vec::new(),
             name: "EA".into(),
             path: "/ea".into(),
             run_commands: names

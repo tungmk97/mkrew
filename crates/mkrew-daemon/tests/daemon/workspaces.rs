@@ -421,6 +421,7 @@ fn workspace_and_tab_pins_persist_across_daemon_restart() {
     let pin_project = |pinned| {
         Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
+            jira_keys: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -612,6 +613,7 @@ fn workspace_colors_are_set_cleared_and_checked() {
     let color = |color: Option<&str>| {
         Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
+            jira_keys: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -635,5 +637,39 @@ fn workspace_colors_are_set_cleared_and_checked() {
     );
     let cleared: Project = client.call(color(None)).into_result().unwrap();
     assert_eq!(cleared.color, None);
+    client.stop();
+}
+
+#[test]
+fn jira_keys_are_normalised_saved_and_cleared() {
+    let env = Env::new();
+    let (_daemon, mut client) = env.start();
+    let project = client.add_project(&env.repo());
+    assert!(project.jira_keys.is_empty());
+    let update = |keys: Vec<&str>| {
+        Request::ProjectUpdate(ProjectUpdateParams {
+            project_id: project.id,
+            name: None,
+            default_agent: None,
+            default_shell: None,
+            run_commands: None,
+            run_autostart: None,
+            color: None,
+            pinned: None,
+            jira_keys: Some(keys.into_iter().map(str::to_owned).collect()),
+        })
+    };
+    let saved: Project = client
+        .call(update(vec![" proj ", "Bill", "PROJ"]))
+        .into_result()
+        .unwrap();
+    assert_eq!(saved.jira_keys, ["PROJ", "BILL"]);
+    client.wait_event(&Event::ProjectUpdated(saved));
+    assert_eq!(
+        error_code(client.call(update(vec!["PR-1"]))),
+        ErrorCode::InvalidRequest
+    );
+    let cleared: Project = client.call(update(Vec::new())).into_result().unwrap();
+    assert!(cleared.jira_keys.is_empty());
     client.stop();
 }

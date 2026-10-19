@@ -166,6 +166,7 @@ mod tests {
     fn project(name: &str) -> Project {
         Project {
             id: Ulid::new(),
+            jira_keys: Vec::new(),
             name: name.to_owned(),
             path: format!("C:\\src\\{name}"),
             run_commands: Vec::new(),

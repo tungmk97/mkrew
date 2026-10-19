@@ -100,6 +100,7 @@ fn every_m1_request_round_trips() {
         }),
         Request::ProjectUpdate(ProjectUpdateParams {
             project_id: sid(),
+            jira_keys: None,
             name: Some("demo".into()),
             default_agent: Some(None),
             default_shell: None,
@@ -430,6 +431,15 @@ fn project_update_tells_missing_from_null() {
         parse(json!({"project_id": id, "run_commands": []})).run_commands,
         Some(Vec::new())
     );
+    assert_eq!(parse(json!({"project_id": id})).jira_keys, None);
+    assert_eq!(
+        parse(json!({"project_id": id, "jira_keys": []})).jira_keys,
+        Some(Vec::new())
+    );
+    assert_eq!(
+        parse(json!({"project_id": id, "jira_keys": ["PROJ"]})).jira_keys,
+        Some(vec!["PROJ".to_owned()])
+    );
     assert_eq!(parse(json!({"project_id": id})).color, None);
     assert_eq!(
         parse(json!({"project_id": id, "color": null})).color,
@@ -448,6 +458,7 @@ fn project_update_tells_missing_from_null() {
     // Unchanged fields are left out on the wire, a cleared one is `null`.
     let keep = ProjectUpdateParams {
         project_id: sid(),
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -659,6 +670,7 @@ fn event_wire_shape_matches_spec() {
     })));
     round_trip(&Message::Event(Event::ProjectUpdated(Project {
         id: sid(),
+        jira_keys: vec!["PROJ".into()],
         name: "demo".into(),
         path: "/tmp/demo".into(),
         run_commands: vec![RunCommand {

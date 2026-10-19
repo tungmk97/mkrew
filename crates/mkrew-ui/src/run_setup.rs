@@ -356,6 +356,7 @@ impl RunSetup {
         self.error = None;
         Some(ProjectUpdateParams {
             project_id: self.project_id,
+            jira_keys: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -449,6 +450,7 @@ mod tests {
     fn project(commands: Vec<RunCommand>) -> Project {
         Project {
             id: Ulid::new(),
+            jira_keys: Vec::new(),
             name: "EA".into(),
             path: "/ea".into(),
             run_commands: commands,
