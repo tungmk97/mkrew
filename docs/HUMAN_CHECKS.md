@@ -55,6 +55,35 @@ by telling the agent.
   review subagents; those tasks were done by the controller without a per-task review. They get
   the plan review and the final branch review once the limit resets.
 
+### To verify — 2026-10-19 Mark files as viewed in the Git view (ADR 0065, plan docs/superpowers/plans/2026-10-19-git-viewed-files.md)
+
+- [ ] **Restart the daemon first** (protocol 45, migration 0021). Migrations count by position, so
+  merge jira-board (0020) first before this branch's daemon touches a real database.
+- [ ] **Mark and dim (dark + light):** Git view on a workspace with ≥ 5 changed files. Each file row
+  has a small box before the Stage button. Click one: ✓ in the accent color, the row dims (still
+  readable), the header shows `Viewed 1/5` under the Working / Vs. base / History tabs, selection
+  does not move. Select that file: the diff panel says "Marked as viewed." with **Show diff**; the
+  toolbar shows a checked "Viewed" button. Show diff opens it; selecting another file and coming
+  back collapses it again.
+- [ ] **Keyboard:** with the file list focused, `v` toggles the selected file (also from the
+  palette: "Git: Mark file as viewed / not viewed"); the tooltip of the toolbar button shows V. Mark
+  every file: the counter reads `Viewed 5/5 ✓`. `v` is not bound while the commit box or the
+  file filter has the keyboard (typing "v" there types a v).
+- [ ] **A change clears the mark:** mark a file, then let an agent (or an editor) change it →
+  within a second its box unchecks, the row un-dims and the diff shows. Revert the file by hand
+  to the marked text afterwards: it stays unviewed (the mark was deleted).
+- [ ] **Staging:** mark an unstaged file, press `s`: in Staged it is still checked and dimmed.
+  Edit it again: the Staged copy stays viewed, the new Changes copy is not.
+- [ ] **Other lists:** mark files in Vs. base, switch to Working and back: the Vs. base marks are
+  still there. Open a task's "View changes": its own marks. In a task worktree (chooser) marks
+  are separate from the project folder's.
+- [ ] **Repositories:** a workspace with `fe/` and `be/` repos: marking `fe/x.txt` leaves `be/x.txt`
+  unmarked; the Repo chips keep each repo's marks.
+- [ ] **History:** no boxes, no counter, `v` does nothing.
+- [ ] **Restart Mkrew and the daemon:** the marks come back.
+- [ ] **Many files:** with ~50 viewed files and an agent saving files, the list keeps updating
+  without freezing.
+
 ### To verify — 2026-10-19 Tray, taskbar badge, close to tray, Mark unread (ADR 0064)
 
 - [ ] **Restart the daemon after installing** (settings only, no protocol change): an older daemon
