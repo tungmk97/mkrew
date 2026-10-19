@@ -107,7 +107,10 @@ mod tests {
         assert_eq!(texts(&toasts), ["Cannot save the theme"]);
         assert!(toasts.expire(base + TOAST_DURATION));
         assert!(toasts.items().is_empty());
-        assert!(!toasts.expire(base + TOAST_DURATION * 2), "nothing left to drop");
+        assert!(
+            !toasts.expire(base + TOAST_DURATION * 2),
+            "nothing left to drop"
+        );
     }
 
     #[test]

@@ -718,12 +718,19 @@ fn a_save_that_comes_back_after_the_file_was_left_is_reported() {
         saved: true,
         hash: "#x".into(),
     };
-    assert_eq!(view.saved("README.md", None, Ok(fine)), None, "a good save is no news");
+    assert_eq!(
+        view.saved("README.md", None, Ok(fine)),
+        None,
+        "a good save is no news"
+    );
     // Shown: the banner has it, nothing more to say.
     let mut view = opened("a\n");
     view.editor_mut().unwrap().insert("b");
     let save = view.begin_save().unwrap();
-    assert_eq!(view.saved("README.md", save.point, Err("disk full".into())), None);
+    assert_eq!(
+        view.saved("README.md", save.point, Err("disk full".into())),
+        None
+    );
 }
 
 #[test]
