@@ -45,9 +45,11 @@ pub enum Switch {
 pub struct Changes {
     pub base: Option<Option<String>>,
     pub run_autostart: Option<bool>,
+    /// `Some(vec![])` clears.
+    pub jira: Option<Vec<String>>,
 }
 
-/// `mk project update <project> [--base <ref> | --auto-base] [--run-autostart on|off]`.
+/// `mk project update <project> [--base <ref> | --auto-base] [--run-autostart on|off] [--jira <keys>]`.
 pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::Result<()> {
     let projects: Vec<Project> = client.call(Request::ProjectList)?;
     let project = resolve_project(&projects, project)?;
@@ -68,6 +70,25 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
         }))?;
         let state = if updated.run_autostart { "on" } else { "off" };
         println!("run auto-start of {}: {state}", updated.name);
+    }
+    if let Some(keys) = changes.jira {
+        let updated: Project = client.call(Request::ProjectUpdate(ProjectUpdateParams {
+            project_id: project.id,
+            name: None,
+            default_agent: None,
+            default_shell: None,
+            run_commands: None,
+            run_autostart: None,
+            color: None,
+            pinned: None,
+            jira_keys: Some(keys),
+        }))?;
+        let keys = if updated.jira_keys.is_empty() {
+            "none".to_owned()
+        } else {
+            updated.jira_keys.join(", ")
+        };
+        println!("Jira keys of {}: {keys}", updated.name);
     }
     Ok(())
 }
