@@ -48,8 +48,9 @@
   notification payload carries it; the payload holds only the title, the body and the session id.
   The token is in the Web App Manifest's `start_url` (served at `/manifest.webmanifest`, gated by the
   token), because the iOS Home Screen app has its own storage and must open the page with the token.
-  iOS stores that `start_url` with the Home Screen entry. Tapping a notification opens the page from
-  the `start_url` the browser already holds, so the notification itself needs no token.
+  iOS stores that `start_url` with the Home Screen entry. Tapping a notification focuses the open
+  page or opens `/#s=<session>`; the page takes the token from its own storage (saved from
+  `start_url` on first launch), so the notification itself carries no token.
 - **Crypto and HTTP:** `ring` (P-256 ECDH and ECDSA, HKDF, AES-128-GCM) and `ureq` (HTTPS POST),
   both already in the dependency tree for rustls / speech to text; no new package.
 - **Page:** a service worker (`/sw.js`), the token-gated manifest above and a bell button.
@@ -59,7 +60,7 @@
 
 ## Consequences
 
-- SPEC §1, §8, §9, §15, §20.0 change. No protocol version change, no migration.
+- SPEC §1, §8, §9, §15, the §20 intro and §20.0 change. No protocol version change, no migration.
 - With `push = true` the PC makes outbound HTTPS requests to the four push services. With the
   default `false`, behaviour is exactly as before.
 - Push is best effort (TTL 1 h): a phone offline longer than that misses the notice.
