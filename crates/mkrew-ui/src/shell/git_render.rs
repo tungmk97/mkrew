@@ -233,6 +233,7 @@ impl Shell {
             )
             .child(self.git_tabs(project_id, view, status, theme, cx))
             .children(self.git_base_line(project_id, view, status, theme, cx))
+            .children(git_viewed_line(view, theme))
             .children(
                 view.refresh_error
                     .clone()

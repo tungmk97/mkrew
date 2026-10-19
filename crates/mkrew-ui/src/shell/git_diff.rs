@@ -84,6 +84,22 @@ impl Shell {
                 )),
             )
             .into_any_element(),
+            git_view::Diff::Shown(_) if view.diff_collapsed() => message(
+                theme,
+                None,
+                "Marked as viewed.".into(),
+                Some("Its diff has not changed since you marked it.".into()),
+            )
+            .flex_1()
+            .child(
+                button("git-viewed-show", "Show diff", theme, true).on_click(cx.listener(
+                    move |shell, _, _, cx| {
+                        shell.git_view(project_id).unfold();
+                        cx.notify();
+                    },
+                )),
+            )
+            .into_any_element(),
             git_view::Diff::Shown(shown) if shown.diff.binary || shown.diff.too_large => {
                 let sentence = if shown.diff.binary {
                     "This is a binary file."
@@ -385,6 +401,35 @@ impl Shell {
                     shell.stage_git(project_id, change.clone(), window, cx);
                 }))
         });
+        let viewed = (selected.group != git_view::Group::Commit).then(|| {
+            let on = view.viewed.contains(selected.group, &selected.path);
+            let target = selected.clone();
+            quiet_button(
+                "git-viewed",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .child(viewed_box(on, theme))
+                    .child("Viewed"),
+                theme,
+                theme.hover,
+            )
+            .flex_none()
+            .tooltip(tooltip(
+                theme,
+                if on {
+                    "Mark as not viewed"
+                } else {
+                    "Mark as viewed: its diff collapses until it changes"
+                },
+                self.keymap.label(Command::GitToggleViewed),
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                window.focus(&shell.git_focus, cx);
+                shell.toggle_git_viewed(project_id, target.clone(), window, cx);
+            }))
+        });
         div()
             .flex_none()
             .min_h(theme::rems_px(theme::GIT_DIFF_TOOLBAR_HEIGHT))
@@ -412,6 +457,7 @@ impl Shell {
                     .h(px(space::L))
                     .bg(rgb(theme.divider)),
             )
+            .children(viewed)
             .child(self.zed_button("git-zed", false, project_id, theme, cx))
             .children(discard)
             .children(stage)

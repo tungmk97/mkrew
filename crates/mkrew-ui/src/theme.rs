@@ -142,6 +142,8 @@ pub mod opacity {
     pub const SECONDARY: f32 = 0.8;
     /// A control that cannot be used right now (e.g. Save while saving).
     pub const DISABLED: f32 = 0.5;
+    /// A changed-file row marked as viewed (SPEC §12B): dimmed, still readable.
+    pub const VIEWED: f32 = 0.6;
     /// The unlit dots of the `working` mark.
     pub const STATUS_DOT_DIM: f32 = 0.35;
     /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
