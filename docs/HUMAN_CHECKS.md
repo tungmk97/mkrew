@@ -35,18 +35,14 @@ by telling the agent.
   errors around 18:00, that was this collision: a rebuild there fixes it. About 20 test daemons
   from earlier failed runs still run from `target/debug/mkrew-daemon.exe` (not yours, not
   killed); the locked exes were renamed `*.locked-old.exe`.
-- [ ] **Numbers:** ADR 0061 (Ask AI) and 0062 (sidebar cards) are on other branches, and the
-  jira-board plan still needs an ADR (its plan said 0062, already taken), so 0063 was left for it.
-  This branch uses ADR **0064** (tray, plan said 0063), **0065** (viewed files, plan said 0064) and
-  **0066** (phone push, plan said 0065; the approved ADR "0065" is that one). SPEC: tray is §20J
-  (§20H Ask AI, §20I Jira are on other branches; this branch's SPEC jumps from §20G to §20J until
-  they merge). Migration 0021 and protocol 45 for viewed files (0020 / 44 are jira-board's).
-  At 21:40 the main checkout also held another agent's uncommitted "run exit_after" work with
-  ADR 0063, migration 0020 and protocol 44, the same numbers as jira-board. Whichever of those two
-  lands second must renumber, and it may then hit this branch's 0064 / 0021 / 45: check the
-  numbers again at merge time. Migrations are counted by position (`user_version`), so every
-  branch's migrations must be merged in number order before a daemon of this branch touches a
-  real database.
+- [ ] **Numbers:** ADR 0061 (Ask AI), 0062 (sidebar cards) and 0063 (run `exit_after`, commit
+  83d775a) are on master; jira-board also claims ADR 0063 / migration 0020 / protocol 44, which
+  master took first, so jira-board must renumber. This branch uses ADR **0064** (tray, plan said
+  0063), **0065** (viewed files, plan said 0064) and **0066** (phone push, plan said 0065; the
+  approved ADR "0065" is that one), SPEC §20J for the tray, migration **0021** and protocol **45**
+  for viewed files. The branch was cut before master's 0020 / protocol 44: when it merges,
+  `MIGRATIONS` must read `… 0019, 0020_run_exit_after, 0021_viewed_files` (they count by
+  position), and until then this branch's daemon must not touch the real data folder.
 - [ ] **`Cargo.lock` not committed (project rule):** the tray plan made `mkrew-ui` depend on
   `windows` 0.62 and `raw-window-handle` 0.6 directly (no new package, both were already in the
   tree through gpui). The lock file in this worktree is modified and must be committed before
