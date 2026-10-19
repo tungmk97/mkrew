@@ -70,6 +70,7 @@ use mkrew_ui::icons::{self, Icon, icon_svg};
 use mkrew_ui::ime;
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::inspector;
+use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
     GIT_CONTEXT, Keymap, KeymapError, Run,
@@ -432,6 +433,12 @@ struct Shell {
     conflicts: Conflicts,
     /// Why the last card action (drop, Run, Approve) failed, shown on its workspace's board.
     card_error: Option<(Ulid, String)>,
+    /// The Board's Jira side per workspace (SPEC §20I); kept across reconnects.
+    jira: HashMap<Ulid, JiraView>,
+    /// `[jira] site` is set: the Board shows the `Tasks | Jira` switch.
+    jira_on: bool,
+    /// The Jira keys field.
+    jira_keys_focus: FocusHandle,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).

@@ -16,6 +16,7 @@ impl Shell {
         // A broken settings file keeps the defaults, like the other reads here.
         let settings = mkrew_core::settings::load(&settings_file).unwrap_or_default();
         let features = settings.features;
+        let jira_on = !settings.jira.site.trim().is_empty();
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
@@ -78,6 +79,7 @@ impl Shell {
                                 {
                                     shell.apply_diff_mode(settings.ui.diff_mode);
                                     shell.diff_wrap = settings.ui.diff_wrap;
+                                    shell.jira_on = !settings.jira.site.trim().is_empty();
                                     shell.reading_default = settings.ui.reading_width;
                                     if shell.features != settings.features {
                                         // `view()` may now map Docs to Terminals.
@@ -99,7 +101,9 @@ impl Shell {
                     });
                     // The recording meter has its own faster redraw (`toggle_voice`).
                     let transcribing = matches!(shell.voice, voice::State::Transcribing);
-                    let due = board_due || shell.starting_pane.is_some() || transcribing;
+                    let jira_busy = shell.jira.values().any(JiraView::busy);
+                    let due =
+                        board_due || shell.starting_pane.is_some() || transcribing || jira_busy;
                     if window.is_visible() && (due || status::redraw_due(sessions, last, now)) {
                         cx.notify();
                     }
@@ -334,6 +338,9 @@ impl Shell {
             board_error: None,
             conflicts: Conflicts::default(),
             card_error: None,
+            jira: HashMap::new(),
+            jira_on,
+            jira_keys_focus: cx.focus_handle(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,

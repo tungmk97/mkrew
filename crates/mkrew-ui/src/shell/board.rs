@@ -498,17 +498,39 @@ impl Shell {
             .flex_1()
             .into_any_element()
         };
+        let header = self.render_board_header(project_id, theme, cx);
+        let source = self
+            .jira
+            .get(&project_id)
+            .map_or(Source::Tasks, |view| view.source);
+        let framed = |header: Option<gpui::Div>, child: gpui::AnyElement| {
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .font_family(theme.ui_font_family.clone())
+                .children(header)
+                .child(child)
+                .into_any_element()
+        };
+        if self.jira_on && source == Source::Jira {
+            let list = self.render_jira(project_id, now, theme, window, cx);
+            return framed(header, list);
+        }
         if !self.board.is_loaded() {
-            return match &self.board_error {
+            let shown = match &self.board_error {
                 Some(error) => empty("Cannot load the tasks.", Some(error.clone())),
                 None => empty("Loading tasks…", None),
             };
+            return framed(header, shown);
         }
         if !self.board.has_tasks(project_id) {
-            return message(theme, None, "No tasks yet.".into(), None)
+            let shown = message(theme, None, "No tasks yet.".into(), None)
                 .flex_1()
                 .child(self.new_task_button(project_id, true, theme, cx))
                 .into_any_element();
+            return framed(header, shown);
         }
         let default_agent = project.and_then(|p| p.default_agent.as_deref());
         let columns = self
@@ -537,6 +559,7 @@ impl Shell {
             .flex()
             .flex_col()
             .font_family(theme.ui_font_family.clone())
+            .children(header)
             // A later `task.list` failed: the cards may be stale.
             .children(self.board_error.clone().map(|error| {
                 notice(theme.text, format!("✕ Cannot reload the tasks: {error}"))

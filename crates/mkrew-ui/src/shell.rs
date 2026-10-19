@@ -32,6 +32,7 @@ mod connection;
 mod dialogs;
 mod focus;
 mod history;
+mod jira;
 mod navigation;
 mod peek;
 mod phone_access;
