@@ -12,8 +12,10 @@
 //! dialog, the Files / Git worktree target, fan-out and token
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
 //! input (microphone and speech to text), the phone-access link, token and QR code and its
-//! dialog model, the toast queue, and the scroll bar of the Files editor and the Markdown preview.
+//! dialog model, the toast queue, the scroll bar of the Files editor and the Markdown preview, and
+//! the taskbar / tray attention model.
 
+pub mod attention;
 pub mod base_dialog;
 pub mod board;
 pub mod broadcast;
