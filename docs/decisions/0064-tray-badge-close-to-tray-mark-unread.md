@@ -22,7 +22,7 @@ finished and not yet viewed) is only visible inside the window. "Viewed" is UI m
   Open Mkrew, Quit UI (agents keep running).
 - **Close to tray:** `[ui] close_to_tray` (default true): ✕ / Alt+F4 hide the window
   (`ShowWindow(SW_HIDE)` on the window's HWND, vetoing gpui's close) while the tray icon exists;
-  the tray, a toast click or a second launch of the same exe on the same daemon socket shows it. Quit UI asks about unsaved
+  the tray, an OS notification click or a second launch of the same exe on the same daemon socket shows it. Quit UI asks about unsaved
   Files changes first. The daemon keeps the agents running anyway (SPEC §2.2).
 - **Mark unread:** pane menu (also the sidebar row's) and palette "Agent: Mark unread" put a
   finished agent session back into Needs you until its pane is focused again or it changes state.

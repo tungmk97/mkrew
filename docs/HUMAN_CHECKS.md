@@ -21,8 +21,8 @@ Questions the plans did not answer against the real code, and the default taken.
 by telling the agent.
 
 - [ ] **Base:** the plans were written against `fb1ac83` (Ask AI) plus a dirty tree; the branch is cut
-  from `master` (`aa8a930`), which has no Ask AI code. Edits were located by symbol. Checks that
-  mention Ask AI apply once `feat/ask-ai` is merged too.
+  from `master` (`aa8a930`). Ask AI is on master now, so the checks that mention it apply as
+  written after the merge. Edits were located by symbol.
 - [ ] **Shared `target/`:** this worktree builds into the main checkout's `target/` (disk space). The
   `jira-board` worktree builds there at the same time, and Cargo names workspace-crate artifacts
   by their path relative to the workspace, so the two branches overwrote each other's rlibs (this
@@ -35,26 +35,35 @@ by telling the agent.
   errors around 18:00, that was this collision: a rebuild there fixes it. About 20 test daemons
   from earlier failed runs still run from `target/debug/mkrew-daemon.exe` (not yours, not
   killed); the locked exes were renamed `*.locked-old.exe`.
-- [ ] **Numbers:** ADR 0061 (Ask AI), 0062 (sidebar cards) and 0063 (run `exit_after`, commit
-  83d775a) are on master; jira-board also claims ADR 0063 / migration 0020 / protocol 44, which
-  master took first, so jira-board must renumber. This branch uses ADR **0064** (tray, plan said
-  0063), **0065** (viewed files, plan said 0064) and **0066** (phone push, plan said 0065; the
-  approved ADR "0065" is that one), SPEC §20J for the tray, migration **0021** and protocol **45**
-  for viewed files. The branch was cut before master's 0020 / protocol 44: when it merges,
-  `MIGRATIONS` must read `… 0019, 0020_run_exit_after, 0021_viewed_files` (they count by
-  position), and until then this branch's daemon must not touch the real data folder.
+- [ ] **Numbers and merge notes:** master (6240b22, Jira) took ADR **0066**, migration **0021**
+  (`0021_project_jira_keys`) and protocol **45**. This branch uses ADR **0064** (tray), **0065**
+  (viewed files) and **0067** (phone push), SPEC §20J for the tray, migration **0022**
+  (`0022_viewed_files`) and protocol **46** for viewed files. After merging master, `MIGRATIONS`
+  ends `… 0019, 0020_run_exit_after, 0021_project_jira_keys, 0022_viewed_files` (the store counts
+  by position), protocol is 46 (Jira is 45), and SPEC keeps §20H, §20I and §20J. Until master is
+  merged, this branch's daemon must not run on the real data folder. Merge checklist: 9 conflicts —
+  `settings.rs` (template: keep `# push = false` in `[web]`, then the `[jira]` block; test:
+  `WebSettings { enabled: true, push: true }` and `jira: JiraSettings::default()`), store
+  `lib.rs` (migration list as above), `inbox.rs` doc (master's "bold rows" plus "taskbar badge and
+  the tray"), `lib.rs` / `shell.rs` / `main.rs` (keep both the `ask` and `attention` lines), SPEC
+  (both migration lines, both protocol lines, `push` and `[jira]`), HUMAN_CHECKS and PROGRESS (keep
+  both sides). Then add `jira_keys: Vec::new()` to the `Project { .. }` literal in the test helper
+  of `crates/mkrew-ui/src/attention.rs` (it merges cleanly but does not compile without it), and
+  regenerate `Cargo.lock` (the human commits it).
 - [ ] **`Cargo.lock` not committed (project rule):** the tray plan made `mkrew-ui` depend on
   `windows` 0.62 and `raw-window-handle` 0.6 directly (no new package, both were already in the
   tree through gpui). The lock file in this worktree is modified and must be committed before
   `scripts/package*` (they build with `--locked`).
-- [ ] **Per-task reviews of the tray plan, Tasks 5-9:** the API's daily spend limit stopped the
-  review subagents; those tasks were done by the controller without a per-task review. They get
-  the plan review and the final branch review once the limit resets.
+- [ ] **Per-task reviews of the tray plan, Tasks 5-9:** not pending. The API's daily spend limit
+  stopped the per-task review subagents, but the plan review (3 Important findings, fixed) and the
+  final branch review covered those tasks.
 
-### To verify — 2026-10-19 Phone push notifications (ADR 0066, plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md)
+### To verify — 2026-10-19 Phone push notifications (ADR 0067, plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md)
 
 - [ ] **Install first:** the daemon starts `mk.exe` from the install folder; install the new build, then
-  Phone access → **Stop** → **Start** (no daemon restart needed: no protocol change).
+  restart the daemon (no protocol change, but an older daemon rejects `[web] push` as an unknown key
+  and keeps its last good settings, so Stop/Start and later settings are ignored until it restarts), then
+  Phone access → **Stop** → **Start**.
 - [ ] **Prerequisites (same as the phone page):** Tailscale MagicDNS + HTTPS Certificates on, **Set up** done.
 - [ ] **Dialog (dark + light):** with phone access On, a row "Phone notifications: off" + **Turn on** shows under
   the Tailscale row; Turn on → "Phone notifications: on" + **Turn off** and the hint line "On the phone, open
@@ -92,11 +101,10 @@ by telling the agent.
 
 ### To verify — 2026-10-19 Mark files as viewed in the Git view (ADR 0065, plan docs/superpowers/plans/2026-10-19-git-viewed-files.md)
 
-- [ ] **Restart the daemon first** (protocol 45, migration 0021). Migrations count by position:
-  when this branch merges with master, `MIGRATIONS` must read `… 0019, 0020_run_exit_after,
-  0021_viewed_files`. Until then do not run this branch's daemon on the real data folder (do the
-  manual checks after the merge, or with a sandbox `MKREW_DATA_DIR`). jira-board's 0020 must move
-  to 0022 or later.
+- [ ] **Restart the daemon first** (protocol 46, migration 0022). Do not run this branch's daemon on
+  the real data folder before master is merged into it (a daemon that lacks master's
+  `0021_project_jira_keys` would record a wrong `user_version`); do the manual checks after the
+  merge (see "Numbers" above), or with a sandbox `MKREW_DATA_DIR`.
 - [ ] **Mark and dim (dark + light):** Git view on a workspace with ≥ 5 changed files. Each file row
   has a small box before the Stage button. Click one: ✓ in the accent color, the row dims (still
   readable), the header shows `Viewed 1/5` under the Working / Vs. base / History tabs, selection
@@ -176,8 +184,8 @@ by telling the agent.
   → at most 3 cards, the oldest is gone.
 - [ ] **Never blocks:** with a card showing, type in a terminal and in the composer (keys still go
   there; the card never takes focus), click the pane and the sidebar next to the card (works); only
-  the card itself swallows a click. Open a dialog (the command palette, or Ask AI once
-  `feat/ask-ai` is merged) with a card showing → the card is drawn above the shade, Esc still
+  the card itself swallows a click. Open a dialog (the command palette or Ask AI) with a card showing
+  → the card is drawn above the shade, Esc still
   closes the dialog.
 - [ ] **Long text and scale:** a long error (Git → Push to a remote that rejects with a long hook
   message) → the card keeps its width and shows at most 4 lines. Set `[ui] font_size = 18` → the
