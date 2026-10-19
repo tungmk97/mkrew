@@ -383,11 +383,49 @@ pub fn uncommitted(status: &GitStatus) -> Vec<String> {
         .collect()
 }
 
+/// The toast for a `task.merge` answer that came back after its dialog was closed: a merge
+/// stopped by conflicts is news (it is not an error, so it would be silent), a clean one is not.
+pub fn unshown_merge(answer: serde_json::Value) -> Option<String> {
+    match serde_json::from_value::<TaskMergeResult>(answer) {
+        Ok(result) if result.merged => None,
+        Ok(result) => Some(format!(
+            "Merge stopped: {} files conflict ({}).",
+            result.conflicts.len(),
+            result.conflicts.join(", ")
+        )),
+        Err(_) => Some("Merge: unreadable answer from the daemon.".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::{ChangedFile, SessionKind, StateSource, TaskStatus};
 
     use super::*;
+
+    #[test]
+    fn a_merge_answer_after_the_dialog_closed_reports_only_conflicts() {
+        let answer = |merged: bool, conflicts: &[&str]| {
+            serde_json::to_value(TaskMergeResult {
+                merged,
+                conflicts: conflicts.iter().map(|path| (*path).to_owned()).collect(),
+            })
+            .unwrap()
+        };
+        assert_eq!(
+            unshown_merge(answer(true, &[])),
+            None,
+            "a clean merge is no news"
+        );
+        assert_eq!(
+            unshown_merge(answer(false, &["src/a.rs", "src/b.rs"])).as_deref(),
+            Some("Merge stopped: 2 files conflict (src/a.rs, src/b.rs).")
+        );
+        assert_eq!(
+            unshown_merge(serde_json::json!({ "unexpected": 1 })).as_deref(),
+            Some("Merge: unreadable answer from the daemon.")
+        );
+    }
 
     fn task(worktree: bool) -> Task {
         Task {

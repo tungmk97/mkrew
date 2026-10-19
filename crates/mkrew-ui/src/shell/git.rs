@@ -625,11 +625,7 @@ impl Shell {
                 let Some(view) = shell.git_at(project_id, &at) else {
                     // The view moved to another repo or worktree: no row left for the failure.
                     if let Err(error) = result {
-                        let what = match stage {
-                            git_view::Stage::Stage => "Stage",
-                            git_view::Stage::Unstage => "Unstage",
-                        };
-                        shell.toast_error(format!("{what} failed: {error}"), cx);
+                        shell.toast_error(format!("{} failed: {error}", stage.label()), cx);
                     }
                     return;
                 };

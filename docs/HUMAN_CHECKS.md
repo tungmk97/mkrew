@@ -61,9 +61,11 @@ by telling the agent.
   into the composer → "The image is over 10 MiB, so it was not attached."; Share → Follow in Zed
   with `zed` removed from PATH, let an agent edit a file → one card "Cannot follow in Zed: …" (not
   one per edit); open Undo task on a card, press Esc at once while it runs and make it fail (e.g. a
-  file locked by another program) → "Undo failed: …"; Git view → Push, switch workspace before it
-  answers and let it fail → "Push failed: …". A ✕ on a queued text of a session whose text was just
-  written shows nothing (not an error).
+  file locked by another program) → "Undo failed: …"; Git view → Push, switch the Git view to another
+  worktree or repo (target chooser) before it answers and let it fail → "Push failed: …" (switching
+  workspace keeps the old view, so its error waits there instead). Worktree dialog → Merge a branch
+  that conflicts, Esc while it runs → "Merge stopped: N files conflict (…)". A ✕ on a queued text
+  of a session whose text was just written shows nothing (not an error).
 - [ ] **Kept in place:** Phone access → Start with a read-only `settings.toml` → the error row stays
   inside the dialog (and no toast); a failed commit still shows under the commit box; `Cannot
   start agent` still shows in the tab bar.

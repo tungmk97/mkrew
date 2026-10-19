@@ -278,6 +278,7 @@ impl Shell {
             return;
         };
         let task_id = dialog.task_id;
+        let merging = matches!(dialog.step, worktree_dialog::Step::Merge(_));
         dialog.busy = true;
         dialog.error = None;
         cx.notify();
@@ -286,9 +287,15 @@ impl Shell {
             let answer = sent.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 let Some(dialog) = shell.open_worktree(serial) else {
-                    // Closed meanwhile: a merge or removal that failed has no dialog to say so.
-                    if let Err(error) = &answer {
-                        shell.toast_error(format!("The worktree action failed: {error:#}"), cx);
+                    // Closed meanwhile: a merge or removal that failed, or a merge stopped by
+                    // conflicts, has no dialog to say so.
+                    let unshown = match answer {
+                        Err(error) => Some(format!("The worktree action failed: {error:#}")),
+                        Ok(value) if merging => worktree_dialog::unshown_merge(value),
+                        Ok(_) => None,
+                    };
+                    if let Some(message) = unshown {
+                        shell.toast_error(message, cx);
                     }
                     return;
                 };
