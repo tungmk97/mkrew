@@ -35,6 +35,55 @@ by telling the agent.
   errors around 18:00, that was this collision: a rebuild there fixes it. About 20 test daemons
   from earlier failed runs still run from `target/debug/mkrew-daemon.exe` (not yours, not
   killed); the locked exes were renamed `*.locked-old.exe`.
+- [ ] **Numbers:** ADR 0061 (Ask AI) and 0062 (sidebar cards) are on other branches, and the
+  jira-board plan still needs an ADR (its plan said 0062, already taken), so 0063 was left for it.
+  This branch uses ADR **0064** (tray, plan said 0063), **0065** (viewed files, plan said 0064) and
+  **0066** (phone push, plan said 0065; the approved ADR "0065" is that one). SPEC: tray is §20J
+  (§20H Ask AI, §20I Jira are on other branches; this branch's SPEC jumps from §20G to §20J until
+  they merge). Migration 0021 and protocol 45 for viewed files (0020 / 44 are jira-board's).
+- [ ] **`Cargo.lock` not committed (project rule):** the tray plan made `mkrew-ui` depend on
+  `windows` 0.62 and `raw-window-handle` 0.6 directly (no new package, both were already in the
+  tree through gpui). The lock file in this worktree is modified and must be committed before
+  `scripts/package*` (they build with `--locked`).
+- [ ] **Per-task reviews of the tray plan, Tasks 5-9:** the API's daily spend limit stopped the
+  review subagents; those tasks were done by the controller without a per-task review. They get
+  the plan review and the final branch review once the limit resets.
+
+### To verify — 2026-10-19 Tray, taskbar badge, close to tray, Mark unread (ADR 0064)
+
+- [ ] **Restart the daemon after installing** (settings only, no protocol change): an older daemon
+  reports `[notify] flash_taskbar` as an unknown key. Cargo.lock gained edges (`windows`,
+  `raw-window-handle`); commit it before `scripts/package*` (they build `--locked`).
+- [ ] **Taskbar badge (dark + light, 100 % / 150 % / 200 % DPI):** with two agents waiting for
+  input the Mkrew taskbar button shows an amber `2`; answering one → `1`; none → no overlay; ten or
+  more → `9+`. Hover text / screen reader says "2 need you".
+- [ ] **Flash:** minimize Mkrew, make an agent need input → the taskbar button flashes until you
+  click it. It does not flash while the window is focused. `[notify] flash_taskbar = false` in
+  settings.toml (saved, within a second) → no flash.
+- [ ] **Tray icon:** Mkrew's logo while idle; a dot in the working color while an agent works; an
+  amber dot while something needs you; the tooltip reads `Mkrew · 2 need you · 1 working`.
+  Right-click: up to 8 lines `agent · workspace — state, age` (an `&` in a workspace name shows
+  as `&`), a greyed `● N working`, `Open Mkrew`, `Quit UI (agents keep running)`. Left click opens
+  the window. A line opens that session's pane, also from a hidden or minimized window.
+- [ ] **Close to tray:** ✕ and Alt+F4 hide the window (no taskbar button); `mk session list` still
+  shows the agents. Tray → Open: the same layout, terminals show their content again. With
+  `[ui] close_to_tray = false` ✕ quits the UI (agents keep running).
+- [ ] **Quit UI with an unsaved Files edit:** the window appears and asks Save / Don't save /
+  Cancel; Cancel leaves the UI running; afterwards Quit UI ends it and `mk session list` still
+  shows the agents.
+- [ ] **Toast click while hidden:** the window comes back on that session's pane.
+- [ ] **Explorer restart** (`taskkill /f /im explorer.exe`, then `explorer`): the tray icon comes
+  back; the badge is set again after the next change.
+- [ ] **Second launch:** starting `mkrew.exe` again (Start menu) while it is hidden shows the
+  running window and opens no second tray icon. A dev build (`target\debug\mkrew.exe`) next to
+  the installed one runs on its own.
+- [ ] **Mark unread (dark + light):** right-click a finished session's row (and its pane header) →
+  **Mark unread**: the row is tinted, the Needs you chip, the badge and the tray count go up by
+  one; it stays while that pane keeps the keyboard; focusing another pane and coming back clears
+  it, and so does Alt+Tab away and back. Palette "Agent: Mark unread" does the same on the focused pane. The item is greyed for a
+  session that works, already needs you, or is a terminal. Restarting the UI forgets marks (as it
+  forgets "viewed").
+- [ ] **macOS / Linux (CI only):** nothing changes — no badge, no tray, ✕ quits.
 
 ### To verify — 2026-10-19 In-app toasts (SPEC §14)
 
