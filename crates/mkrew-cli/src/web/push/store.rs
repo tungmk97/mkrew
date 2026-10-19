@@ -114,8 +114,10 @@ pub struct Store {
 }
 
 impl Store {
-    /// Loads `file`. A missing or unreadable file makes a new VAPID key (phones must then tap
-    /// the bell again; one stderr line says so). `drop_subscriptions` (`mk web --new-token`)
+    /// Loads `file`. A missing file, or one that is not a valid store, makes a new VAPID key
+    /// (phones must then tap the bell again; a bad file gets one stderr line). A file that
+    /// cannot be read (sharing violation, not UTF-8) is an error and is left alone, so the
+    /// phones in it are not lost. `drop_subscriptions` (`mk web --new-token`)
     /// forgets the phones and keeps the key. Entries whose endpoint is not allowed (a
     /// hand-edited or old file) are dropped on load.
     pub fn open(file: &Path, drop_subscriptions: bool) -> anyhow::Result<Self> {
@@ -130,7 +132,8 @@ impl Store {
                     (Self::fresh(file)?, true)
                 }
             },
-            Err(_) => (Self::fresh(file)?, true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Self::fresh(file)?, true),
+            Err(e) => return Err(e).with_context(|| format!("read {}", file.display())),
         };
         if drop_subscriptions && !store.subs.is_empty() {
             store.subs.clear();
@@ -353,6 +356,20 @@ mod tests {
         );
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(!on_disk.contains("web.push.apple.com"), "{on_disk}");
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file(&dir);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap(); // not UTF-8: read_to_string fails
+        assert!(Store::open(&path, false).is_err());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            [0xff, 0xfe, 0x00],
+            "left untouched"
+        );
     }
 
     #[test]
