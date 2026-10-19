@@ -16,7 +16,7 @@ impl Shell {
     }
 
     /// Opens a followed session's edit in Zed once `wait` passed without a later edit; a
-    /// failure is logged (following stays on).
+    /// failure is a toast (following stays on).
     pub(crate) fn follow_wait(
         &mut self,
         wait: follow::Wait,
@@ -40,18 +40,22 @@ impl Shell {
                     return;
                 };
                 // The PATH lookup and process spawn stay off the UI thread: this fires on
-                // every followed edit, not on a click.
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Err(error) = zed::open(&full, edit.line) {
-                            tracing::warn!(
-                                %session_id,
-                                path = edit.path,
-                                "follow in Zed failed: {error}"
-                            );
-                        }
-                    })
-                    .detach();
+                // every followed edit, not on a click. A failure is a toast; the same one
+                // restarts instead of stacking, so a missing Zed is one card, not one per edit.
+                let (path, line) = (edit.path, edit.line);
+                cx.spawn(async move |this, cx| {
+                    let opened = cx
+                        .background_executor()
+                        .spawn(async move { zed::open(&full, line).map_err(|e| e.to_string()) })
+                        .await;
+                    if let Err(error) = opened {
+                        tracing::warn!(%session_id, path, "follow in Zed failed: {error}");
+                        let _ = this.update(cx, |shell, cx| {
+                            shell.toast_error(format!("Cannot follow in Zed: {error}"), cx);
+                        });
+                    }
+                })
+                .detach();
             });
         })
         .detach();

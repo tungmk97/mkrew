@@ -26,7 +26,7 @@ use mkrew_protocol::{
 use ulid::Ulid;
 
 use crate::client::Connection;
-use crate::composer::{attachment, typed_paths};
+use crate::composer::{attachment, attachment_refusal, typed_paths};
 use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
@@ -38,9 +38,6 @@ use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space};
 
 /// Cell width guess used only until the terminal font is resolved.
 const CELL_WIDTH_ESTIMATE: f32 = 0.6;
-
-/// `attachment.save` refuses larger images (§20B.5); not worth sending.
-const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
 
 /// One attached session: the UI-side emulator plus its shaped-row cache.
 pub struct TerminalPane {
@@ -89,6 +86,13 @@ pub enum OpenLink {
 }
 
 impl EventEmitter<OpenLink> for TerminalPane {}
+
+/// A pasted image could not be attached (too big, or `attachment.save` failed): the shell shows
+/// the text as a toast (SPEC §14).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttachFailed(pub String);
+
+impl EventEmitter<AttachFailed> for TerminalPane {}
 
 /// The link under the pointer while Ctrl / Cmd is held: its row and cells, for the underline.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -681,11 +685,13 @@ impl TerminalPane {
         )
     }
 
-    /// Stores a clipboard image through `attachment.save`, then types its path (§20B.5).
+    /// Stores a clipboard image through `attachment.save`, then types its path (§20B.5). A
+    /// failure reaches the user as [`AttachFailed`].
     fn paste_image(&mut self, ext: &str, data: Vec<u8>, cx: &mut Context<'_, Self>) {
         let session_id = self.session_id;
-        if data.len() > MAX_ATTACHMENT_BYTES {
-            tracing::warn!(%session_id, size = data.len(), "pasted image over 10 MiB, not saved");
+        if let Some(message) = attachment_refusal(data.len()) {
+            tracing::warn!(%session_id, size = data.len(), "pasted image over the limit, not saved");
+            cx.emit(AttachFailed(message));
             return;
         }
         let saved = self
@@ -701,7 +707,12 @@ impl TerminalPane {
                     pane.type_text(&typed_paths([saved.path.as_str()]), cx)
                 });
             }
-            Err(error) => tracing::warn!(%session_id, "attachment.save failed: {error:#}"),
+            Err(error) => {
+                tracing::warn!(%session_id, "attachment.save failed: {error:#}");
+                let _ = this.update(cx, |_, cx| {
+                    cx.emit(AttachFailed(format!("Cannot attach the image: {error:#}")));
+                });
+            }
         })
         .detach();
     }

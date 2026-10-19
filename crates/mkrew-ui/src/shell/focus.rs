@@ -176,6 +176,10 @@ impl Shell {
                     },
                 )
                 .detach();
+                cx.subscribe(&pane, |shell, _, failed: &AttachFailed, cx| {
+                    shell.toast_error(failed.0.clone(), cx);
+                })
+                .detach();
                 shell.panes.insert(session, pane);
                 if shell.focused_session() == Some(session) {
                     shell.focus_pane(window, cx);

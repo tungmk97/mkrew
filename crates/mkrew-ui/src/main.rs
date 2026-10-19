@@ -96,7 +96,7 @@ use mkrew_ui::tabs::{
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
-use mkrew_ui::terminal::view::{OpenLink, TerminalPane};
+use mkrew_ui::terminal::view::{AttachFailed, OpenLink, TerminalPane};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
