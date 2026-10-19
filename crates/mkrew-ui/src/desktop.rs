@@ -40,7 +40,7 @@ pub fn instance_key(exe: &str) -> String {
 }
 
 /// [`instance_key`] of the running exe.
-fn current_key() -> String {
+pub(crate) fn current_key() -> String {
     std::env::current_exe()
         .map(|exe| instance_key(&exe.to_string_lossy()))
         .unwrap_or_default()

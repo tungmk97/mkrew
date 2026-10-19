@@ -1,12 +1,17 @@
 //! Windows side of [`super::Desktop`] (ADR 0064): the taskbar overlay and flash of the main
 //! window and hiding / showing it, through the `windows` crate gpui's backend already builds
-//! with. The tray is in the same file (added by the next task).
+//! with. The tray icon lives here too, on its own thread.
 #![allow(unsafe_code)]
 
 use std::ffi::c_void;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows::Win32::Foundation::HWND;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::mpsc::SyncSender;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
@@ -16,6 +21,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_SHOW, ShowWindow,
 };
 use windows::core::HSTRING;
+
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Shell::{
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFY_ICON_MESSAGE,
+    NOTIFYICONDATAW, Shell_NotifyIconW,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
+    FindWindowW, GetCursorPos, GetMessageW, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MF_GRAYED,
+    MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, RegisterWindowMessageW,
+    SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
+    WNDCLASSW,
+};
+use windows::core::{PCWSTR, w};
+
+use super::escape_menu;
+use crate::status;
 
 use super::TrayEvent;
 use crate::attention::{Icon, TrayMenu};
@@ -80,12 +104,365 @@ struct Badge {
     ink: u32,
 }
 
+/// Tray icon callback (`uCallbackMessage`); `lParam` is the mouse message.
+const WM_TRAY: u32 = WM_APP + 1;
+/// UI → tray thread: `wParam` icon index (0 idle, 1 working, 2 needs you), `lParam` `0xRRGGBB`.
+const WM_TRAY_STATE: u32 = WM_APP + 2;
+/// A second launch asks the first to show its window.
+const WM_OPEN: u32 = WM_APP + 3;
+const ICON_ID: u32 = 1;
+const CMD_OPEN: i32 = 1;
+const CMD_QUIT: i32 = 2;
+const CMD_SESSION: i32 = 100;
+
+/// What the UI thread shares with the tray thread.
+struct Shared {
+    menu: Mutex<TrayMenu>,
+    /// The icon is in the notification area.
+    shown: AtomicBool,
+    /// The tray window, 0 until it exists.
+    hwnd: AtomicIsize,
+    events: async_channel::Sender<TrayEvent>,
+}
+
+/// The tray icon: its hidden window and message loop live on the `mkrew-tray` thread.
+pub struct Tray {
+    shared: Arc<Shared>,
+}
+
+fn class_name(key: &str) -> Vec<u16> {
+    format!("MkrewTray.{key}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn icon_index(icon: Icon) -> usize {
+    match icon {
+        Icon::Idle => 0,
+        Icon::Working => 1,
+        Icon::NeedsYou => 2,
+    }
+}
+
+fn icon_of(index: usize) -> Icon {
+    match index {
+        1 => Icon::Working,
+        2 => Icon::NeedsYou,
+        _ => Icon::Idle,
+    }
+}
+
+impl Tray {
+    /// Starts the tray thread; `None` if its window could not be made.
+    pub fn start(key: &str) -> Option<(Tray, async_channel::Receiver<TrayEvent>)> {
+        let (events, receiver) = async_channel::unbounded();
+        let shared = Arc::new(Shared {
+            menu: Mutex::new(TrayMenu::default()),
+            shown: AtomicBool::new(false),
+            hwnd: AtomicIsize::new(0),
+            events,
+        });
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let (class, thread) = (class_name(key), Arc::clone(&shared));
+        std::thread::Builder::new()
+            .name("mkrew-tray".into())
+            .spawn(move || run(&class, &thread, &ready))
+            .ok()?;
+        started.recv_timeout(Duration::from_secs(2)).ok()?;
+        (shared.hwnd.load(Ordering::Acquire) != 0).then_some((Tray { shared }, receiver))
+    }
+
+    /// The icon is in the notification area (a failed `NIM_ADD` leaves it false).
+    pub fn shown(&self) -> bool {
+        self.shared.shown.load(Ordering::Relaxed)
+    }
+
+    /// New menu data and icon; the tray thread applies them.
+    pub fn set(&self, icon: Icon, rgb: u32, menu: TrayMenu) {
+        *self
+            .shared
+            .menu
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = menu;
+        let hwnd = HWND(self.shared.hwnd.load(Ordering::Acquire) as *mut c_void);
+        // SAFETY: posting to a window of this process; a dead window just fails.
+        let posted = unsafe {
+            PostMessageW(
+                Some(hwnd),
+                WM_TRAY_STATE,
+                WPARAM(icon_index(icon)),
+                LPARAM(rgb as isize),
+            )
+        };
+        if let Err(error) = posted {
+            tracing::warn!("cannot update the tray icon: {error}");
+        }
+    }
+
+    /// Takes the icon out of the notification area (the process is about to exit).
+    pub fn remove(&self) {
+        let hwnd = HWND(self.shared.hwnd.load(Ordering::Acquire) as *mut c_void);
+        let data = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: ICON_ID,
+            ..Default::default()
+        };
+        // SAFETY: `data` is initialised and names the icon `run` added.
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_DELETE, &data);
+        }
+        self.shared.shown.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Tray-thread state, reached from the window procedure.
+struct State {
+    shared: Arc<Shared>,
+    /// `RegisterWindowMessageW("TaskbarCreated")`: Explorer restarted, add the icon again.
+    taskbar_created: u32,
+    /// The icon currently in the notification area.
+    current: RefCell<Option<OwnedIcon>>,
+    /// The last (icon, color), for the re-add.
+    kind: Cell<(Icon, u32)>,
+}
+
+thread_local! {
+    static STATE: RefCell<Option<Rc<State>>> = const { RefCell::new(None) };
+}
+
+fn app_icon(size: u32) -> Option<OwnedIcon> {
+    let side = i32::try_from(size).ok()?;
+    // SAFETY: resource id 1 of this exe is the app icon (`mkrew.rc`); the handle is ours to destroy.
+    unsafe {
+        let module = GetModuleHandleW(PCWSTR::null()).ok()?;
+        let handle = LoadImageW(
+            Some(HINSTANCE(module.0)),
+            PCWSTR(std::ptr::without_provenance::<u16>(1)),
+            IMAGE_ICON,
+            side,
+            side,
+            LR_DEFAULTCOLOR,
+        )
+        .ok()?;
+        Some(OwnedIcon(HICON(handle.0)))
+    }
+}
+
+impl State {
+    fn send(&self, event: TrayEvent) {
+        let _ = self.shared.events.try_send(event);
+    }
+
+    /// `NIM_ADD` or `NIM_MODIFY` with the icon for `icon` / `rgb` and the current tooltip.
+    fn apply(&self, hwnd: HWND, message: NOTIFY_ICON_MESSAGE, icon: Icon, rgb: u32) {
+        self.kind.set((icon, rgb));
+        let size = small_icon_size();
+        let made = match icon {
+            Icon::Idle => app_icon(size),
+            Icon::Working | Icon::NeedsYou => icon_from(&glyph::dot(size, rgb)),
+        };
+        let tip = (self.shared.menu.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .tip();
+        let mut data = NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: ICON_ID,
+            uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
+            uCallbackMessage: WM_TRAY,
+            hIcon: made
+                .as_ref()
+                .map_or(HICON(std::ptr::null_mut()), |icon| icon.0),
+            ..Default::default()
+        };
+        for (slot, unit) in data.szTip.iter_mut().zip(tip.encode_utf16().take(127)) {
+            *slot = unit;
+        }
+        // SAFETY: `data` is fully initialised and `cbSize` is set.
+        let ok = unsafe { Shell_NotifyIconW(message, &data) }.as_bool();
+        if message == NIM_ADD {
+            self.shared.shown.store(ok, Ordering::Relaxed);
+            if !ok {
+                tracing::warn!("the tray icon could not be added; ✕ will quit");
+            }
+        }
+        if ok {
+            // The shell has the new icon: the old one can go.
+            *self.current.borrow_mut() = made;
+        }
+    }
+
+    /// The right-click menu: sessions that need you, `● N working`, Open, Quit UI.
+    fn show_menu(&self, hwnd: HWND) {
+        let menu = (self.shared.menu.lock())
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let now = status::now_ms();
+        // SAFETY: a popup menu made, shown and destroyed on this thread; `hwnd` is our window.
+        let picked = unsafe {
+            let Ok(popup) = CreatePopupMenu() else {
+                return;
+            };
+            for (index, item) in menu.items.iter().enumerate() {
+                let text = HSTRING::from(escape_menu(&item.text(now)));
+                let _ = AppendMenuW(popup, MF_STRING, CMD_SESSION as usize + index, &text);
+            }
+            if !menu.items.is_empty() {
+                let _ = AppendMenuW(popup, MF_SEPARATOR, 0, PCWSTR::null());
+            }
+            let working = HSTRING::from(format!("● {} working", menu.working));
+            let _ = AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, &working);
+            let _ = AppendMenuW(popup, MF_SEPARATOR, 0, PCWSTR::null());
+            let _ = AppendMenuW(popup, MF_STRING, CMD_OPEN as usize, w!("Open Mkrew"));
+            let _ = AppendMenuW(
+                popup,
+                MF_STRING,
+                CMD_QUIT as usize,
+                w!("Quit UI (agents keep running)"),
+            );
+            let mut at = POINT::default();
+            let _ = GetCursorPos(&mut at);
+            // A tray menu only closes when its owner is the foreground window; the WM_NULL
+            // after it lets the menu go away (the documented tray-menu recipe).
+            let _ = SetForegroundWindow(hwnd);
+            let picked = TrackPopupMenu(
+                popup,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
+                at.x,
+                at.y,
+                None,
+                hwnd,
+                None,
+            );
+            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
+            let _ = DestroyMenu(popup);
+            picked.0
+        };
+        match picked {
+            0 => {}
+            CMD_OPEN => self.send(TrayEvent::Open),
+            CMD_QUIT => self.send(TrayEvent::Quit),
+            id if id >= CMD_SESSION => {
+                let index = usize::try_from(id - CMD_SESSION).unwrap_or(usize::MAX);
+                if let Some(item) = menu.items.get(index) {
+                    self.send(TrayEvent::Session(item.session_id));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+unsafe extern "system" fn window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    // Cloned out so no borrow is held while a menu pumps messages back into this procedure.
+    let state = STATE.with(|state| state.borrow().clone());
+    let Some(state) = state else {
+        // SAFETY: forwarding the unchanged message.
+        return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+    };
+    match message {
+        WM_TRAY => match lparam.0 as u32 {
+            WM_LBUTTONUP => state.send(TrayEvent::Open),
+            WM_RBUTTONUP => state.show_menu(hwnd),
+            _ => {}
+        },
+        WM_TRAY_STATE => state.apply(hwnd, NIM_MODIFY, icon_of(wparam.0), lparam.0 as u32),
+        WM_OPEN => state.send(TrayEvent::Open),
+        other if other == state.taskbar_created => {
+            let (icon, rgb) = state.kind.get();
+            state.apply(hwnd, NIM_ADD, icon, rgb);
+        }
+        // SAFETY: forwarding the unchanged message.
+        _ => return unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+    LRESULT(0)
+}
+
+/// The tray thread: register the class, make the hidden window, add the icon, pump messages.
+fn run(class: &[u16], shared: &Arc<Shared>, ready: &SyncSender<()>) {
+    // SAFETY: Win32 window creation on this thread; `class` outlives every call that reads it.
+    unsafe {
+        let Ok(module) = GetModuleHandleW(PCWSTR::null()) else {
+            let _ = ready.send(());
+            return;
+        };
+        let hinstance = HINSTANCE(module.0);
+        let class_name = PCWSTR(class.as_ptr());
+        let window_class = WNDCLASSW {
+            lpfnWndProc: Some(window_proc),
+            hInstance: hinstance,
+            lpszClassName: class_name,
+            ..Default::default()
+        };
+        if RegisterClassW(&window_class) == 0 {
+            tracing::warn!("cannot register the tray window class");
+            let _ = ready.send(());
+            return;
+        }
+        // A plain hidden top-level window (never shown): only top-level windows get the
+        // `TaskbarCreated` broadcast, and `FindWindowW` of a second launch finds only those.
+        let Ok(hwnd) = CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            class_name,
+            w!("Mkrew tray"),
+            WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(hinstance),
+            None,
+        ) else {
+            tracing::warn!("cannot make the tray window");
+            let _ = ready.send(());
+            return;
+        };
+        let state = Rc::new(State {
+            shared: Arc::clone(shared),
+            taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
+            current: RefCell::new(None),
+            kind: Cell::new((Icon::Idle, 0)),
+        });
+        STATE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&state)));
+        state.apply(hwnd, NIM_ADD, Icon::Idle, 0);
+        shared.hwnd.store(hwnd.0 as isize, Ordering::Release);
+        let _ = ready.send(());
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).0 > 0 {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+}
+
+/// Another running Mkrew of the same exe was asked to show its window.
+pub fn raise(key: &str) -> bool {
+    let class = class_name(key);
+    // SAFETY: `class` is NUL-terminated and outlives both calls.
+    unsafe {
+        let Ok(hwnd) = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) else {
+            return false;
+        };
+        PostMessageW(Some(hwnd), WM_OPEN, WPARAM(0), LPARAM(0)).is_ok()
+    }
+}
+
 /// The main window's Windows-only extras.
 pub struct Os {
     hwnd: Option<HWND>,
     list: Option<ITaskbarList3>,
     flashing: bool,
     badge: Option<Badge>,
+    tray: Option<Tray>,
 }
 
 impl Os {
@@ -104,17 +481,18 @@ impl Os {
                 .inspect_err(|error| tracing::warn!("taskbar badge unavailable: {error}"))
                 .ok()
         });
+        let (tray, events) = match Tray::start(&super::current_key()) {
+            Some((tray, events)) => (Some(tray), events),
+            None => (None, async_channel::unbounded::<TrayEvent>().1),
+        };
         let this = Self {
             hwnd,
             list,
             flashing: false,
             badge: None,
+            tray,
         };
-        (this, async_channel::unbounded::<TrayEvent>().1)
-    }
-
-    pub fn has_tray(&self) -> bool {
-        false
+        (this, events)
     }
 
     /// The overlay icon with `count` (cleared at 0).
@@ -168,9 +546,21 @@ impl Os {
         }
     }
 
-    pub fn set_tray(&self, _icon: Icon, _rgb: u32, _menu: TrayMenu) {}
+    pub fn has_tray(&self) -> bool {
+        self.tray.as_ref().is_some_and(Tray::shown)
+    }
 
-    pub fn remove_tray(&self) {}
+    pub fn set_tray(&self, icon: Icon, rgb: u32, menu: TrayMenu) {
+        if let Some(tray) = &self.tray {
+            tray.set(icon, rgb, menu);
+        }
+    }
+
+    pub fn remove_tray(&self) {
+        if let Some(tray) = &self.tray {
+            tray.remove();
+        }
+    }
 
     /// Hides the window (and its taskbar button); gpui reports it as `WindowVisibility::Hidden`.
     pub fn hide_window(&mut self) {
@@ -201,13 +591,29 @@ impl Os {
     }
 }
 
-pub fn raise(_key: &str) -> bool {
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_launch_reaches_the_tray_window() {
+        let key = format!("test-{}", std::process::id());
+        assert!(!raise(&key), "nobody listens yet");
+        let (tray, events) = Tray::start(&key).expect("the tray window");
+        assert!(raise(&key));
+        let started = std::time::Instant::now();
+        let event = loop {
+            if let Ok(event) = events.try_recv() {
+                break Some(event);
+            }
+            if started.elapsed() > std::time::Duration::from_secs(2) {
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(event, Some(TrayEvent::Open));
+        tray.remove();
+    }
 
     #[test]
     fn a_badge_bitmap_becomes_an_icon() {
