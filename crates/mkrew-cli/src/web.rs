@@ -3,6 +3,7 @@
 //! tailnet. The daemon itself never listens on the network (SPEC §15).
 
 mod http;
+mod push;
 mod relay;
 mod token;
 
