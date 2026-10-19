@@ -72,21 +72,30 @@ async fn serve(
         .await
         .with_context(|| format!("listen on {listen}"))?;
     // After the bind: a second `mk web --new-token` must not replace the token of the running one.
-    let token = token::load_or_create(&config_dir.join("web_token"), new_token)?;
-    // `--new-token` revokes the old links, so it also forgets the phones that got push through them.
-    // A store that cannot be opened must not take the page down with it.
+    // `--new-token` revokes the old links, so it also forgets the phones that got push through
+    // them. That happens before the new token is written: if the phones cannot be forgotten,
+    // `mk web` stops with the old token still in place. Without `--new-token` a store that
+    // cannot be opened must not take the page down with it.
+    let push_file = config_dir.join("web_push.json");
     let push = match push::Push::open(
-        &config_dir.join("web_push.json"),
+        &push_file,
         settings_file,
         new_token,
         push::sender_from_env(),
     ) {
         Ok(push) => Some(Arc::new(push)),
+        Err(e) if new_token => {
+            return Err(e.context(format!(
+                "cannot forget the phones in {}; the token was not renewed, fix the file and run again",
+                push_file.display()
+            )));
+        }
         Err(e) => {
             eprintln!("mk web: phone notifications are unavailable: {e:#}");
             None
         }
     };
+    let token = token::load_or_create(&config_dir.join("web_token"), new_token)?;
     let addr = listener.local_addr()?;
     println!("Mkrew web is listening on http://{addr}");
     match &host {

@@ -1375,6 +1375,30 @@ fn web_answers_503_with_the_reason_when_the_daemon_is_gone() {
     }
 }
 
+#[test]
+fn web_new_token_stops_when_it_cannot_forget_the_phones() {
+    let env = Env::new();
+    let config = env.dir.path().join("config");
+    // A directory where the store file should be: it exists but cannot be read.
+    std::fs::create_dir_all(config.join("web_push.json")).unwrap();
+    let output = env.mk(&[
+        "web",
+        "--listen",
+        "127.0.0.1:0",
+        "--host",
+        "test.invalid",
+        "--new-token",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot forget the phones"), "{stderr}");
+    assert!(
+        !config.join("web_token").exists(),
+        "the token must not be renewed"
+    );
+    env.ok(&["daemon", "stop"]);
+}
+
 /// RFC 8291's receiver: a valid P-256 key and auth secret to subscribe with.
 const PHONE_KEYS: &str = r#""keys":{"p256dh":"BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4","auth":"BTBZMqHH6r4Tts7J_aSIgg"}"#;
 
