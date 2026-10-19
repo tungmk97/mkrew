@@ -1418,6 +1418,30 @@ fn session_position_persists_through_insert_and_update() {
 }
 
 #[test]
+fn project_jira_keys_persist_and_clear() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    assert!(p.jira_keys.is_empty());
+    let keys = ["PROJ".to_owned(), "BILL".to_owned()];
+    let set = ProjectChanges {
+        jira_keys: Some(&keys),
+        ..ProjectChanges::default()
+    };
+    assert_eq!(store.update_project(p.id, set).unwrap().jira_keys, keys);
+    drop(store);
+    let store = open(&dir);
+    assert_eq!(store.get_project(p.id).unwrap().jira_keys, keys);
+    let clear = ProjectChanges {
+        jira_keys: Some(&[]),
+        ..ProjectChanges::default()
+    };
+    store.update_project(p.id, clear).unwrap();
+    drop(store);
+    assert!(open(&dir).get_project(p.id).unwrap().jira_keys.is_empty());
+}
+
+#[test]
 fn project_default_shell_persists_and_clears() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);

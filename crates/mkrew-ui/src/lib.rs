@@ -46,6 +46,8 @@ pub mod icons;
 pub mod ime;
 pub mod inbox;
 pub mod inspector;
+pub mod jira;
+pub mod jira_board;
 pub mod keymap;
 pub mod lifecycle;
 pub mod markdown;

@@ -418,6 +418,7 @@ impl Shell {
                     self.open_task_dialog(TaskDialog::new(project_id), window, cx);
                 }
             }
+            Command::RunTask if self.jira_side_shown() => {}
             Command::RunTask => {
                 // Only bound while a board is shown; the selection may be another workspace's.
                 let target = self

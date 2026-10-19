@@ -667,6 +667,7 @@ fn spawn_params(project: &Project, kind: SessionKind, tab_id: Option<Ulid>) -> R
 fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
     Request::ProjectUpdate(ProjectUpdateParams {
         project_id: project.id,
+        jira_keys: None,
         name: None,
         default_agent: Some(agent.map(str::to_owned)),
         default_shell: None,
@@ -680,6 +681,7 @@ fn set_default_agent(project: &Project, agent: Option<&str>) -> Request {
 fn set_default_shell(project: &Project, shell: Option<&str>) -> Request {
     Request::ProjectUpdate(ProjectUpdateParams {
         project_id: project.id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: Some(shell.map(str::to_owned)),
@@ -872,6 +874,7 @@ fn long(windows: &str, unix: &str) -> String {
 fn set_runs(project: &Project, commands: Vec<RunCommand>, autostart: Option<bool>) -> Request {
     Request::ProjectUpdate(ProjectUpdateParams {
         project_id: project.id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: None,

@@ -80,6 +80,7 @@ pub fn agent_choices(
 pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
+        jira_keys: None,
         name: None,
         default_agent: Some(Some(agent.to_owned())),
         default_shell: None,
@@ -94,6 +95,7 @@ pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
 pub fn set_default_shell(project_id: Ulid, shell: &str) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: Some(Some(shell.to_owned())),
@@ -108,6 +110,7 @@ pub fn set_default_shell(project_id: Ulid, shell: &str) -> ProjectUpdateParams {
 pub fn set_color(project_id: Ulid, color: Option<&str>) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -122,6 +125,7 @@ pub fn set_color(project_id: Ulid, color: Option<&str>) -> ProjectUpdateParams {
 pub fn set_pinned(project_id: Ulid, pinned: bool) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -136,6 +140,7 @@ pub fn set_pinned(project_id: Ulid, pinned: bool) -> ProjectUpdateParams {
 pub fn set_run_commands(project_id: Ulid, commands: Vec<RunCommand>) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -143,6 +148,21 @@ pub fn set_run_commands(project_id: Ulid, commands: Vec<RunCommand>) -> ProjectU
         run_autostart: None,
         color: None,
         pinned: None,
+    }
+}
+
+/// `project.update` replacing the workspace's Jira project keys (`[]` clears them).
+pub fn set_jira_keys(project_id: Ulid, keys: Vec<String>) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        project_id,
+        name: None,
+        default_agent: None,
+        default_shell: None,
+        run_commands: None,
+        run_autostart: None,
+        color: None,
+        pinned: None,
+        jira_keys: Some(keys),
     }
 }
 

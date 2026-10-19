@@ -20,6 +20,8 @@ const ULID_LEN: usize = 16;
 
 /// One decoded frame.
 #[derive(Debug, Clone, PartialEq)]
+// A `Message` (the `Project` event) is the common case; boxing it would add an allocation per frame.
+#[allow(clippy::large_enum_variant)]
 pub enum Frame {
     /// A request, response or event.
     Message(Message),

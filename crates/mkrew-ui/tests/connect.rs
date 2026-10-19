@@ -90,6 +90,7 @@ fn spawns_the_daemon_once_then_reuses_it() {
     .unwrap();
     let renamed = first.call::<Project>(Request::ProjectUpdate(ProjectUpdateParams {
         project_id: added.id,
+        jira_keys: None,
         name: Some("renamed".into()),
         default_agent: None,
         default_shell: None,

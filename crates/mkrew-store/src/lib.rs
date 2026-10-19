@@ -35,10 +35,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0018_run_env_file_from_workspace.sql"),
     include_str!("../migrations/0019_session_position.sql"),
     include_str!("../migrations/0020_run_exit_after.sql"),
+    include_str!("../migrations/0021_project_jira_keys.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
-const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell, pinned";
+const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell, pinned, jira_keys";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -90,6 +91,8 @@ pub struct ProjectChanges<'a> {
     pub color: Option<Option<&'a str>>,
     /// `Some(false)` unpins; `None` leaves it.
     pub pinned: Option<bool>,
+    /// Replaces the Jira project keys; `Some(&[])` clears them.
+    pub jira_keys: Option<&'a [String]>,
 }
 
 pub struct Store {
@@ -157,6 +160,7 @@ impl Store {
             base_ref: None,
             color: None,
             pinned: false,
+            jira_keys: Vec::new(),
         };
         let inserted = self.conn.execute(
             "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -307,9 +311,16 @@ impl Store {
         if let Some(pinned) = changes.pinned {
             project.pinned = pinned;
         }
+        if let Some(keys) = changes.jira_keys {
+            project.jira_keys = keys.to_vec();
+        }
+        // A Vec of strings always serializes.
+        #[allow(clippy::expect_used)]
+        let jira_keys = (!project.jira_keys.is_empty())
+            .then(|| serde_json::to_string(&project.jira_keys).expect("strings serialize"));
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6, pinned = ?7 WHERE id = ?1",
+            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6, pinned = ?7, jira_keys = ?8 WHERE id = ?1",
             params![
                 id.to_string(),
                 project.name,
@@ -317,7 +328,8 @@ impl Store {
                 project.run_autostart,
                 project.color,
                 project.default_shell,
-                project.pinned
+                project.pinned,
+                jira_keys
             ],
         )?;
         if let Some(commands) = changes.run_commands {
@@ -1435,6 +1447,7 @@ struct RawProject {
     color: Option<String>,
     default_shell: Option<String>,
     pinned: bool,
+    jira_keys: Option<String>,
 }
 
 impl RawProject {
@@ -1452,10 +1465,17 @@ impl RawProject {
             color: row.get(9)?,
             default_shell: row.get(10)?,
             pinned: row.get(11)?,
+            jira_keys: row.get(12)?,
         })
     }
 
     fn into_project(self) -> Result<Project> {
+        let jira_keys = match self.jira_keys {
+            Some(json) => {
+                serde_json::from_str(&json).map_err(|_| corrupt("project.jira_keys", json))?
+            }
+            None => Vec::new(),
+        };
         let review_globs = match self.review_globs {
             Some(json) => Some(
                 serde_json::from_str(&json).map_err(|_| corrupt("project.review_globs", json))?,
@@ -1476,6 +1496,7 @@ impl RawProject {
             base_ref: self.base_ref,
             color: self.color,
             pinned: self.pinned,
+            jira_keys,
         })
     }
 }

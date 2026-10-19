@@ -489,6 +489,9 @@ pub struct Project {
     /// Pinned workspaces lead the sidebar (SPEC §10).
     #[serde(default)]
     pub pinned: bool,
+    /// Jira project keys linked to this workspace (SPEC §20I); empty = none.
+    #[serde(default)]
+    pub jira_keys: Vec<String>,
 }
 
 /// One command of a project's Run button (SPEC §10, ADR 0018): typed into its own shell in
@@ -775,6 +778,9 @@ pub struct ProjectUpdateParams {
     /// Pin or unpin the workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned: Option<bool>,
+    /// Replaces the Jira project keys; `[]` clears them. Normalised by the daemon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jira_keys: Option<Vec<String>>,
 }
 
 /// `project.run_start` / `project.run_restart`: `name` = one command, none = all.

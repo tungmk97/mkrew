@@ -8,6 +8,7 @@
 pub mod conflict;
 pub mod git;
 pub mod hook;
+pub mod jira;
 pub mod log_tail;
 pub mod lookup;
 pub mod paths;

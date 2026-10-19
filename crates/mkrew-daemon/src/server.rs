@@ -960,7 +960,8 @@ impl Daemon {
     }
 
     /// Changes the project; a new `default_agent` must name an agent profile, a new
-    /// `default_shell` a shell profile; run commands are checked and trimmed (SPEC §10).
+    /// `default_shell` a shell profile; run commands are checked and trimmed (SPEC §10); Jira
+    /// keys are normalised (`mkrew_core::jira::normalize_keys`).
     fn project_update(&self, params: ProjectUpdateParams) -> Outcome {
         if let Some(Some(id)) = &params.default_agent
             && let Err(outcome) = self.check_profile_kind(id, mkrew_core::ProfileKind::Agent)
@@ -979,6 +980,14 @@ impl Daemon {
         {
             Ok(commands) => commands,
             Err(e) => return Outcome::error(ErrorCode::InvalidRequest, e.to_string()),
+        };
+        let jira_keys = match params
+            .jira_keys
+            .map(mkrew_core::jira::normalize_keys)
+            .transpose()
+        {
+            Ok(keys) => keys,
+            Err(message) => return Outcome::error(ErrorCode::InvalidRequest, message),
         };
         if let Some(Some(color)) = &params.color
             && !WORKSPACE_COLORS.contains(&color.as_str())
@@ -999,6 +1008,7 @@ impl Daemon {
                 run_autostart: params.run_autostart,
                 color: params.color.as_ref().map(Option::as_deref),
                 pinned: params.pinned,
+                jira_keys: jira_keys.as_deref(),
             },
         );
         if let Ok(project) = &updated {

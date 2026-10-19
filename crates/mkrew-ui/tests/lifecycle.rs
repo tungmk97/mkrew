@@ -125,6 +125,7 @@ fn hidden_agent_survives_the_ui_and_can_be_killed_later() {
     .unwrap();
     let _: Project = block_on(first.call(Request::ProjectUpdate(ProjectUpdateParams {
         project_id: project.id,
+        jira_keys: None,
         name: None,
         default_agent: Some(Some("fake".into())),
         default_shell: None,

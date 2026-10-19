@@ -386,6 +386,22 @@ fn project_run_autostart_is_switched_on_update() {
 }
 
 #[test]
+fn project_jira_keys_are_set_and_cleared_on_update() {
+    let env = Env::new();
+    let repo = env.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    env.ok(&["daemon", "start"]);
+    env.ok(&["project", "add", repo.to_str().unwrap(), "--name", "demo"]);
+    let set = env.ok(&["project", "update", "demo", "--jira", "proj, BILL"]);
+    assert_eq!(set.trim(), "Jira keys of demo: PROJ, BILL");
+    let cleared = env.ok(&["project", "update", "demo", "--jira", ""]);
+    assert_eq!(cleared.trim(), "Jira keys of demo: none");
+    let bad = env.mk(&["project", "update", "demo", "--jira", "PR-1"]);
+    assert!(!bad.status.success());
+    env.ok(&["daemon", "stop"]);
+}
+
+#[test]
 fn attach_detach_and_reattach_restores_the_screen() {
     let env = Env::new();
     env.write_fake_profile();

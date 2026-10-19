@@ -224,6 +224,9 @@ enum ProjectCommand {
         /// Run the workspace's run commands after the daemon starts.
         #[arg(long, group = "change", value_enum)]
         run_autostart: Option<project::Switch>,
+        /// Jira project keys of the workspace, comma-separated (`PROJ,BILL`); "" clears them.
+        #[arg(long, group = "change")]
+        jira: Option<String>,
     },
     /// Run the workspace's run commands (all, or one by name); prints `<name> <session id>`.
     Run {
@@ -290,6 +293,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                     base,
                     auto_base,
                     run_autostart,
+                    jira,
                 } => project::update(
                     &mut client,
                     &project,
@@ -297,6 +301,7 @@ fn run(cli: Cli) -> anyhow::Result<ExitCode> {
                     project::Changes {
                         base: (base.is_some() || auto_base).then_some(base),
                         run_autostart: run_autostart.map(|s| s == project::Switch::On),
+                        jira: jira.map(|list| list.split(',').map(str::to_owned).collect()),
                     },
                 ),
                 ProjectCommand::Run { project, name } => {

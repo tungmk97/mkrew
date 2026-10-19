@@ -34,6 +34,8 @@ const HELLO_ID: u64 = 1;
 
 /// A push message from the daemon.
 #[derive(Debug, Clone, PartialEq)]
+// Events are the common case; boxing them would add an allocation per push.
+#[allow(clippy::large_enum_variant)]
 pub enum Incoming {
     Event(Event),
     /// Raw PTY bytes of an attached session.

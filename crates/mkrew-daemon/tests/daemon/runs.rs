@@ -20,6 +20,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
     let saved: Project = client
         .call(Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
+            jira_keys: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -49,6 +50,7 @@ fn project_run_settings_are_checked_trimmed_and_saved() {
     };
     let refused = client.call(Request::ProjectUpdate(ProjectUpdateParams {
         project_id: project.id,
+        jira_keys: None,
         name: None,
         default_agent: None,
         default_shell: None,

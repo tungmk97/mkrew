@@ -52,6 +52,35 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   row inside a card (accent gap line), right-click a header / row, hover peek,
   `N empty workspaces ▸`.
 
+### To verify — 2026-10-19 Jira on the Board (ADR 0066, plan docs/superpowers/plans/2026-10-19-jira-board.md)
+
+- [ ] **Restart the daemon first** (protocol 45).
+- [ ] **Setup:** create an API token at id.atlassian.com → Security → API tokens; run
+  `setx JIRA_API_TOKEN <token>`, then quit and restart Mkrew. In `settings.toml` set
+  `[jira] site = "<you>.atlassian.net"` and `email = "<your Atlassian email>"`.
+- [ ] **Switch (dark + light):** with `[jira] site` set the Board shows `Tasks | Jira` (within
+  about 1 s of saving the file); empty `site` again and the switch disappears. On Jira, a
+  workspace without keys shows "Link this workspace to Jira projects" and the keys field
+  (`PROJ, BILL`) has the keyboard at once (caret, focus ring). Type your project key in lower
+  case (`proj`) and Save → header `PROJ · Edit · Refresh` and your open issues, newest first.
+- [ ] **Keys field:** Edit pre-fills `PROJ`; Esc clears the text, a second Esc leaves the field
+  and the header returns; a key such as `a-b` → `✕` message under the field and nothing is
+  saved. Refresh reloads; the Jira tab keeps its issues when you switch to Tasks and back (until
+  you restart or press Refresh).
+- [ ] **Issue rows (dark + light):** type, key (medium weight), summary cut with `…` when the
+  window is narrow, status; working dots on the clicked row while the ticket loads; a linked
+  task shows its column chip; a failed fetch shows `✕ <reason>` under that row only.
+- [ ] **Open:** click an issue → New task dialog with `KEY summary` and the ticket text (lists,
+  code, links readable). Tick "Run in a worktree", Save, Run the card → branch `mkrew/key-…`.
+  Back on Jira the row shows `Running`; clicking it opens the task, no second task. Click a
+  row, then open another dialog before the answer arrives: no second dialog replaces it.
+- [ ] **Errors + Retry:** `setx JIRA_API_TOKEN ""` + restart → `Cannot load Jira issues.` with
+  `Set the environment variable JIRA_API_TOKEN to your Jira API token` and Retry; a wrong token
+  → `Jira rejected the login…`; key `NOPE` → Jira's message; Wi-Fi off → `Cannot reach
+  https://…`; Retry loads again once fixed. The token never shows.
+- [ ] **CLI:** `mk project update <workspace> --jira PROJ,BILL` prints `Jira keys of …: PROJ, BILL`
+  and the Board header follows.
+
 ### To verify — 2026-10-15 Ask AI dialog (ADR 0061)
 
 - [ ] **Restart the daemon first** (protocol 43).

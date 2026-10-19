@@ -148,6 +148,11 @@ impl TaskDialog {
         }
     }
 
+    /// A new task pre-filled from a Jira issue (SPEC §20I): default agent, no worktree.
+    pub fn from_draft(project_id: Ulid, draft: crate::jira::Draft) -> Self {
+        Self::open(Mode::New { project_id }, draft.title, draft.prompt, None)
+    }
+
     fn open(mode: Mode, title: String, text: String, agent: Option<String>) -> Self {
         let mut prompt = TextBox::default();
         prompt.insert(&text);
@@ -329,6 +334,26 @@ mod tests {
     use mkrew_protocol::TaskStatus;
 
     use super::*;
+
+    #[test]
+    fn a_jira_draft_opens_as_a_new_task_without_a_worktree() {
+        let project_id = Ulid::new();
+        let dialog = TaskDialog::from_draft(
+            project_id,
+            crate::jira::Draft {
+                title: "PROJ-7 Fix login".into(),
+                prompt: "PROJ-7: Fix login\nhttps://x/browse/PROJ-7".into(),
+            },
+        );
+        assert_eq!(dialog.mode, Mode::New { project_id });
+        assert_eq!(dialog.title.as_str(), "PROJ-7 Fix login");
+        assert_eq!(
+            dialog.prompt.text(),
+            "PROJ-7: Fix login\nhttps://x/browse/PROJ-7"
+        );
+        assert_eq!(dialog.agent, None);
+        assert!(!dialog.worktree);
+    }
 
     fn key(spec: &str) -> Option<DialogKey> {
         let mut keystroke = Keystroke::parse(spec).unwrap();
