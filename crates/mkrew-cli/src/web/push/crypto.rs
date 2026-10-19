@@ -96,7 +96,7 @@ pub fn seal(
     let mut body = Vec::with_capacity(86 + record.len());
     body.extend_from_slice(salt);
     body.extend_from_slice(&RECORD_SIZE.to_be_bytes());
-    body.push(65);
+    body.push(P256_POINT as u8);
     body.extend_from_slice(as_public);
     body.extend_from_slice(&record);
     Ok(body)
@@ -254,16 +254,17 @@ mod tests {
         assert_eq!(body.len(), 144);
     }
 
-    /// The phone's side of RFC 8291, with `ring`: proves `encrypt`'s ECDH half.
+    /// The phone's side of RFC 8291, with `ring`: proves `encrypt`'s ECDH half. `None`: the
+    /// record does not open with these keys.
     fn decrypt(
         ua_private: EphemeralPrivateKey,
         ua_public: &[u8],
         auth: &[u8],
         body: &[u8],
-    ) -> Vec<u8> {
+    ) -> Option<Vec<u8>> {
         let (salt, rest) = body.split_at(16);
         assert_eq!(&rest[..4], &RECORD_SIZE.to_be_bytes());
-        assert_eq!(rest[4], 65, "keyid is the 65-byte sender key");
+        assert_eq!(usize::from(rest[4]), P256_POINT, "keyid is the sender key");
         let as_public = &rest[5..70];
         let secret = agreement::agree_ephemeral(
             ua_private,
@@ -281,23 +282,38 @@ mod tests {
                 Aad::empty(),
                 &mut record,
             )
-            .unwrap();
+            .ok()?;
         assert_eq!(plain.last(), Some(&2), "padding delimiter");
-        plain[..plain.len() - 1].to_vec()
+        Some(plain[..plain.len() - 1].to_vec())
+    }
+
+    fn phone() -> (EphemeralPrivateKey, Vec<u8>) {
+        let private =
+            EphemeralPrivateKey::generate(&agreement::ECDH_P256, &SystemRandom::new()).unwrap();
+        let public = private.compute_public_key().unwrap().as_ref().to_vec();
+        (private, public)
     }
 
     #[test]
-    fn a_phone_can_read_what_encrypt_made_and_nobody_else() {
-        let rng = SystemRandom::new();
-        let ua_private = EphemeralPrivateKey::generate(&agreement::ECDH_P256, &rng).unwrap();
-        let ua_public = ua_private.compute_public_key().unwrap().as_ref().to_vec();
+    fn only_the_phone_with_the_right_keys_and_auth_can_read_what_encrypt_made() {
         let auth = [7u8; 16];
         let text = r#"{"title":"omp · mkrew","body":"needs you","session":"01J0"}"#.as_bytes();
+        let (ua_private, ua_public) = phone();
         let body = encrypt(&ua_public, &auth, text).unwrap();
         assert_eq!(body.len(), 86 + text.len() + 1 + 16);
-        assert_eq!(decrypt(ua_private, &ua_public, &auth, &body), text);
+        assert_eq!(
+            decrypt(ua_private, &ua_public, &auth, &body).as_deref(),
+            Some(text)
+        );
         // A second message differs (fresh sender key and salt every time).
         assert_ne!(body, encrypt(&ua_public, &auth, text).unwrap());
+        // The right phone with the wrong auth secret cannot read it.
+        let (private, public) = phone();
+        let body = encrypt(&public, &auth, text).unwrap();
+        assert_eq!(decrypt(private, &public, &[8u8; 16], &body), None);
+        // Another phone cannot read it.
+        let (other_private, other_public) = phone();
+        assert_eq!(decrypt(other_private, &other_public, &auth, &body), None);
     }
 
     #[test]

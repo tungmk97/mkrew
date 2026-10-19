@@ -230,3 +230,13 @@ test('the bell shows only when the PC offers notifications, and says why it cann
   assert.deepEqual([on.show, on.usable, on.on], [true, true, true]);
   assert.match(on.hint, /turn off/i);
 });
+
+test('a refusal by the PC keeps the bell and shows the reason', () => {
+  const base = { enabledByPc: true, secure: true, supported: true, standalone: true, ios: false, permission: 'granted', subscribed: false };
+  const refused = pushOffer({ ...base, refused: 'this PC already notifies 8 phones' });
+  assert.deepEqual([refused.show, refused.usable, refused.on], [true, true, false]);
+  assert.match(refused.hint, /already notifies 8 phones/);
+  assert.match(refused.hint, /try again/i);
+  // Once subscribed the reason no longer applies.
+  assert.match(pushOffer({ ...base, subscribed: true, refused: 'x' }).hint, /turn off/i);
+});

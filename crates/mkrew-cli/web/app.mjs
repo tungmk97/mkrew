@@ -53,7 +53,7 @@ const idDecoder = new TextDecoder();
 let term = null;
 let toastTimer = 0;
 /** Phone notifications: does the PC offer them, and is this phone registered (ADR 0066). */
-const push = { enabledByPc: false, subscribed: false };
+const push = { enabledByPc: false, subscribed: false, refused: '' };
 
 // ---- screens ----
 
@@ -271,11 +271,13 @@ function onEvent(name, data) {
 
 /** The Home Screen app is built from this manifest; it carries the token (see `http.rs`). */
 function linkManifest() {
-  if (document.querySelector('link[rel="manifest"]')) return;
-  const link = document.createElement('link');
-  link.rel = 'manifest';
-  link.href = `/manifest.webmanifest?t=${state.token}`;
-  document.head.append(link);
+  let link = document.querySelector('link[rel="manifest"]');
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'manifest';
+    document.head.append(link);
+  }
+  link.href = `/manifest.webmanifest?t=${state.token}`; // a token entered again must replace the old one
 }
 
 function pushSupported() {
@@ -291,6 +293,7 @@ function pushInfo() {
     ios: /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)),
     permission: 'Notification' in window ? Notification.permission : 'default',
     subscribed: push.subscribed,
+    refused: push.refused,
   };
 }
 
@@ -320,12 +323,18 @@ async function initPush() {
     const key = await pcKey();
     push.enabledByPc = key !== null;
     push.subscribed = false;
+    push.refused = '';
     if (key && pushSupported() && Notification.permission === 'granted') {
       const sub = await currentSubscription();
       if (sub && sameBytes(new Uint8Array(sub.options.applicationServerKey ?? []), key)) {
-        // The PC may have forgotten this phone (`mk web --new-token`): tell it again.
-        await sendSubscription(sub);
-        push.subscribed = true;
+        // The PC may have forgotten this phone (`mk web --new-token`): tell it again. A refusal
+        // (too many phones, store unavailable) keeps the bell, so the user can retry or turn off.
+        try {
+          await sendSubscription(sub);
+          push.subscribed = true;
+        } catch (err) {
+          push.refused = err.message;
+        }
       } else if (sub) {
         // Made for another VAPID key: it can never be pushed to. The bell offers a new one.
         await sub.unsubscribe();
@@ -352,8 +361,14 @@ async function enablePush() {
   await navigator.serviceWorker.ready;
   const sub = (await reg.pushManager.getSubscription())
     ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
-  await sendSubscription(sub);
+  try {
+    await sendSubscription(sub);
+  } catch (err) {
+    await sub.unsubscribe(); // do not keep a subscription the PC will never push to
+    throw err;
+  }
   push.subscribed = true;
+  push.refused = '';
 }
 
 async function disablePush() {

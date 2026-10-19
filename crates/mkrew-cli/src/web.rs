@@ -53,8 +53,7 @@ pub fn run(paths: &Paths, args: Args) -> anyhow::Result<ExitCode> {
 struct Shared {
     socket: String,
     token: token::Token,
-    /// `None` when the push store could not be opened: the page is still served, without push.
-    push: Option<Arc<push::Push>>,
+    push: Arc<push::Push>,
 }
 
 /// A subscription is a few hundred bytes; anything bigger is not from the page.
@@ -74,27 +73,23 @@ async fn serve(
     // After the bind: a second `mk web --new-token` must not replace the token of the running one.
     // `--new-token` revokes the old links, so it also forgets the phones that got push through
     // them. That happens before the new token is written: if the phones cannot be forgotten,
-    // `mk web` stops with the old token still in place. Without `--new-token` a store that
-    // cannot be opened must not take the page down with it.
+    // `mk web` stops with the old token still in place. Otherwise the push store opens lazily,
+    // so a store that cannot be opened never takes the page down, and is retried on every use.
     let push_file = config_dir.join("web_push.json");
-    let push = match push::Push::open(
-        &push_file,
-        settings_file,
-        new_token,
-        push::sender_from_env(),
-    ) {
-        Ok(push) => Some(Arc::new(push)),
-        Err(e) if new_token => {
-            return Err(e.context(format!(
+    let push = Arc::new(
+        push::Push::open(
+            &push_file,
+            settings_file,
+            new_token,
+            push::sender_from_env(),
+        )
+        .map_err(|e| {
+            e.context(format!(
                 "cannot forget the phones in {}; the token was not renewed, fix the file and run again",
                 push_file.display()
-            )));
-        }
-        Err(e) => {
-            eprintln!("mk web: phone notifications are unavailable: {e:#}");
-            None
-        }
-    };
+            ))
+        })?,
+    );
     let token = token::load_or_create(&config_dir.join("web_token"), new_token)?;
     let addr = listener.local_addr()?;
     println!("Mkrew web is listening on http://{addr}");
@@ -114,14 +109,12 @@ async fn serve(
         "First time on this PC: run `tailscale serve --bg {}` so the link works on your tailnet.",
         addr.port()
     );
-    if let Some(push) = &push {
-        if push.enabled() {
-            println!(
-                "Phone notifications are on (ADR 0066): phones that tapped the bell are notified through their browser's push service."
-            );
-        }
-        tokio::spawn(push::run(Arc::clone(push), socket.clone()));
+    if push.enabled() {
+        println!(
+            "Phone notifications are on (ADR 0066): phones that tapped the bell are notified through their browser's push service."
+        );
     }
+    tokio::spawn(push::run(Arc::clone(&push), socket.clone()));
     let shared = Arc::new(Shared {
         socket,
         token,
@@ -173,7 +166,7 @@ async fn handle(mut stream: TcpStream, shared: &Shared) -> anyhow::Result<()> {
             return relay::relay(ws, daemon).await;
         }
         http::Route::PushKey => {
-            let reply = match shared.push.as_deref().and_then(push::Push::public_key) {
+            let reply = match shared.push.public_key() {
                 Some(key) => http::plain("200 OK", &key),
                 None => answer(push::Reply::Off),
             };
@@ -184,10 +177,9 @@ async fn handle(mut stream: TcpStream, shared: &Shared) -> anyhow::Result<()> {
                 push::Reply::Bad("the request is too large".into())
             } else {
                 let body = read_body(&mut stream, rest, length).await?;
-                match (&shared.push, &route) {
-                    (Some(push), http::Route::PushSubscribe) => push.subscribe(&body),
-                    (Some(push), _) => push.unsubscribe(&body),
-                    (None, _) => push::Reply::Off,
+                match &route {
+                    http::Route::PushSubscribe => shared.push.subscribe(&body),
+                    _ => shared.push.unsubscribe(&body),
                 }
             };
             stream.write_all(&answer(reply)).await?;

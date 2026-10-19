@@ -179,15 +179,18 @@ pub struct Push {
     file: PathBuf,
     settings_file: PathBuf,
     renew: bool,
-    /// Opened (and the VAPID key made) only while `[web] push` is on; `None` until then.
+    /// `None` until first used while `[web] push` is on (that is when the VAPID key is made),
+    /// or until `--new-token` opened it to forget the phones.
     store: Mutex<Option<Store>>,
+    /// The last "cannot open the store" line, so a store that stays unreadable is told once.
+    last_error: Mutex<String>,
     sender: Arc<dyn Sender>,
 }
 
 impl Push {
-    /// `renew` (`mk web --new-token`) forgets the phones; the VAPID key stays. With `[web] push`
-    /// off nothing is read or created; the store opens on first use after push is turned on.
-    /// An `Err` is for the caller to log: `mk web` serves the page without push.
+    /// `renew` (`mk web --new-token`) forgets the phones now when a store file exists (the VAPID
+    /// key stays); an `Err` is then fatal for the caller. Otherwise nothing is read or created:
+    /// the store opens on first use while push is on, and a failure is retried on the next use.
     pub fn open(
         file: &Path,
         settings_file: PathBuf,
@@ -199,10 +202,11 @@ impl Push {
             settings_file,
             renew,
             store: Mutex::new(None),
+            last_error: Mutex::new(String::new()),
             sender,
         };
-        if push.enabled() || (renew && file.exists()) {
-            *push.lock() = Some(Store::open(file, renew)?);
+        if renew && file.exists() {
+            *push.lock() = Some(Store::open(file, true)?);
         }
         Ok(push)
     }
@@ -212,7 +216,7 @@ impl Push {
     }
 
     /// Runs `f` on the store, opening it first when push is on now. `None`: push is off and
-    /// the store is not open, or opening failed (logged).
+    /// the store is not open, or opening failed (logged once per distinct message).
     fn with_store<T>(&self, f: impl FnOnce(&mut Store) -> T) -> Option<T> {
         let mut guard = self.lock();
         if guard.is_none() {
@@ -220,9 +224,23 @@ impl Push {
                 return None;
             }
             match Store::open(&self.file, self.renew) {
-                Ok(store) => *guard = Some(store),
+                Ok(store) => {
+                    self.last_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .clear();
+                    *guard = Some(store);
+                }
                 Err(e) => {
-                    eprintln!("mk web: push store: {e:#}");
+                    let text = format!("{e:#}");
+                    let mut last = self
+                        .last_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    if *last != text {
+                        eprintln!("mk web: push store: {text}");
+                        *last = text;
+                    }
                     return None;
                 }
             }
@@ -683,15 +701,25 @@ mod tests {
     }
 
     #[test]
-    fn a_store_failure_is_an_error_from_open_not_a_panic() {
+    fn a_store_failure_at_startup_is_retried_not_remembered() {
         let dir = tempfile::tempdir().unwrap();
         let settings = dir.path().join("settings.toml");
         std::fs::write(&settings, "[web]\npush = true\n").unwrap();
-        // The file's parent is a regular file, so the key cannot be saved.
-        let blocker = dir.path().join("blocker");
-        std::fs::write(&blocker, "x").unwrap();
+        let file = dir.path().join("web_push.json");
+        std::fs::write(&file, [0xff, 0xfe, 0x00]).unwrap(); // not UTF-8: cannot be read
         let sender: Arc<dyn Sender> = Arc::new(UreqSender);
-        assert!(Push::open(&blocker.join("web_push.json"), settings, false, sender).is_err());
+        let push = Push::open(&file, settings.clone(), false, sender.clone()).unwrap();
+        assert_eq!(push.public_key(), None, "unreadable now");
+        assert_eq!(push.subscribers(), 0);
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(
+            push.public_key().unwrap().len(),
+            87,
+            "the next call retries"
+        );
+        // --new-token must forget the phones, so for it the failure is an error.
+        std::fs::write(&file, [0xff, 0xfe, 0x00]).unwrap();
+        assert!(Push::open(&file, settings, true, sender).is_err());
     }
 
     #[test]

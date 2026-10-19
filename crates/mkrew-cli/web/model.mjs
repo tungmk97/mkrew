@@ -250,9 +250,10 @@ export function sameBytes(a, b) {
 /**
  * What the bell does (ADR 0066). `enabledByPc`: `/push/key` answered (`[web] push`); `secure`:
  * HTTPS or localhost; `supported`: service worker + Push API + Notification exist (an iPhone
- * Safari tab has none of Push); `ios`/`standalone`: iPhone and running from the Home Screen.
+ * Safari tab has none of Push); `ios`/`standalone`: iPhone and running from the Home Screen;
+ * `refused`: why the PC turned this phone's subscription down (the bell stays, to try again).
  */
-export function pushOffer({ enabledByPc, secure, supported, standalone, ios, permission, subscribed }) {
+export function pushOffer({ enabledByPc, secure, supported, standalone, ios, permission, subscribed, refused = '' }) {
   if (!enabledByPc || !secure) return { show: false };
   if (!supported) {
     if (!ios || standalone) return { show: false };
@@ -266,6 +267,8 @@ export function pushOffer({ enabledByPc, secure, supported, standalone, ios, per
   }
   return {
     show: true, usable: true, on: subscribed,
-    hint: subscribed ? 'Notifications are on. Tap to turn off.' : 'Tap to get a notification when an agent needs you.',
+    hint: subscribed ? 'Notifications are on. Tap to turn off.'
+      : refused ? `${refused} Tap to try again.`
+      : 'Tap to get a notification when an agent needs you.',
   };
 }

@@ -286,7 +286,7 @@ impl Shell {
                     PushSwitch::TurnOn => button("phone-push-on", "Turn on", theme, false)
                         .tooltip(tooltip(
                             theme,
-                            "Notify the phone when an agent needs you or finishes. The message is encrypted for the phone and goes through Apple's, Google's or Mozilla's push service",
+                            "Notify the phone when an agent needs you or finishes. The message is encrypted for the phone and goes through Apple's, Google's, Mozilla's or Microsoft's push service",
                             "",
                         ))
                         .on_click(cx.listener(|shell, _, window, cx| {

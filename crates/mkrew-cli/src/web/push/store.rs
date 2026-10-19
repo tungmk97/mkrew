@@ -184,6 +184,9 @@ impl Store {
     pub fn add(&mut self, sub: Subscription) -> anyhow::Result<()> {
         sub.check()?;
         if let Some(known) = self.subs.iter_mut().find(|s| s.endpoint == sub.endpoint) {
+            if *known == sub {
+                return Ok(()); // the page resends it on every reconnect: no rewrite, no fsync
+            }
             *known = sub;
         } else if self.subs.len() >= MAX_SUBSCRIPTIONS {
             bail!("this PC already notifies {MAX_SUBSCRIPTIONS} phones");
@@ -330,6 +333,22 @@ mod tests {
         assert_eq!(store.subscriptions().len(), 1);
         store.remove(endpoint).unwrap();
         assert!(store.subscriptions().is_empty());
+    }
+
+    #[test]
+    fn adding_the_same_subscription_again_does_not_write_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file(&dir);
+        let mut store = Store::open(&path, false).unwrap();
+        let phone = sub("https://web.push.apple.com/abc");
+        store.add(phone.clone()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        store.add(phone).unwrap();
+        assert!(!path.exists(), "unchanged: nothing saved");
+        let mut changed = sub("https://web.push.apple.com/abc");
+        changed.auth = "AAAAAAAAAAAAAAAAAAAAAA".into();
+        store.add(changed).unwrap();
+        assert!(path.exists(), "new keys are saved");
     }
 
     #[test]

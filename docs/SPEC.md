@@ -1730,7 +1730,7 @@ docs = false                # §12 Docs view, "Review in Docs"; applies live
 turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
 [web]                       # ADR 0053; phone access
 enabled = false             # the daemon runs `mk web` while true; the Phone access dialog writes it
-push = false                # ADR 0066; mk web notifies phones that opted in (needs enabled); the Phone access dialog writes it
+push = false                # ADR 0066; mk web notifies phones that opted in (sends while `mk web` runs); the Phone access dialog writes it
 ```
 
 **Phone access** (ADR 0053). While `[web] enabled = true` the daemon supervises `mk web` as a
