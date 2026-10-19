@@ -12,7 +12,7 @@
 //! dialog, the Files / Git worktree target, fan-out and token
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
 //! input (microphone and speech to text), the phone-access link, token and QR code and its
-//! dialog model, and the scroll bar of the Files editor and the Markdown preview.
+//! dialog model, the toast queue, and the scroll bar of the Files editor and the Markdown preview.
 
 pub mod base_dialog;
 pub mod board;
@@ -72,6 +72,7 @@ pub mod text_box;
 pub mod text_find;
 pub mod theme;
 pub mod thread_view;
+pub mod toast;
 pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;
