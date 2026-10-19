@@ -15,6 +15,59 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### Decided without asking — 2026-10-19 branch `feat/attention-review-push` (4 plans: toast, tray, viewed files, phone push)
+
+Questions the plans did not answer against the real code, and the default taken. Change any of them
+by telling the agent.
+
+- [ ] **Base:** the plans were written against `fb1ac83` (Ask AI) plus a dirty tree; the branch is cut
+  from `master` (`aa8a930`), which has no Ask AI code. Edits were located by symbol. Checks that
+  mention Ask AI apply once `feat/ask-ai` is merged too.
+- [ ] **Shared `target/`:** this worktree builds into the main checkout's `target/` (disk space). The
+  `jira-board` worktree builds there at the same time, and Cargo names workspace-crate artifacts
+  by their path relative to the workspace, so the two branches overwrote each other's rlibs (this
+  branch's `mkrew-store` compiled against jira's `mkrew-protocol`). Fix, local only: the
+  worktree's untracked `.cargo/config.toml` sets `codegen-units = 255` on the workspace crates,
+  which gives them their own artifact names; third-party crates are still shared. The exes in
+  `target/debug/` (`mk`, `mkrew-daemon`, `mkrew-fakeagent`) are still one file per name: the
+  `mkrew-cli` daemon tests can fail with "client speaks protocol N, daemon speaks M" if the other
+  worktree builds during a run; rebuild and re-run. If the jira-board worktree saw odd compile
+  errors around 18:00, that was this collision: a rebuild there fixes it. About 20 test daemons
+  from earlier failed runs still run from `target/debug/mkrew-daemon.exe` (not yours, not
+  killed); the locked exes were renamed `*.locked-old.exe`.
+
+### To verify — 2026-10-19 In-app toasts (SPEC §14)
+
+- [ ] **Info toast (dark + light):** Files tree → right-click a file → Copy path → a card appears
+  bottom-right over the content ("Path copied", `info` icon in accent, ✕ at the right, 8 px between
+  cards, 16 px from the window edge). It hides by itself after about 4 s (4.0–4.5 s); ✕ closes it at
+  once; the ✕ tooltip says "Dismiss". Phone access → Copy link → "Link copied" (never the link).
+- [ ] **Error toast:** break `%APPDATA%\mkrew\settings.toml` (delete a `]`), click the title bar theme
+  toggle → "Cannot save the theme: …" with the red `circle-alert` icon and the text in the normal
+  text color; the theme still changes for this session and the palette lists the settings problem.
+  Drag the sidebar edge / the session panel edge → "Cannot save the panel width: …". Fix the file.
+- [ ] **Stack:** toggle the theme five times quickly → still one card (the same text restarts its
+  time). Then trigger three different failures (theme toggle, diff layout, panel drag) and a fourth
+  → at most 3 cards, the oldest is gone.
+- [ ] **Never blocks:** with a card showing, type in a terminal and in the composer (keys still go
+  there; the card never takes focus), click the pane and the sidebar next to the card (works); only
+  the card itself swallows a click. Open a dialog (the command palette, or Ask AI once
+  `feat/ask-ai` is merged) with a card showing → the card is drawn above the shade, Esc still
+  closes the dialog.
+- [ ] **Long text and scale:** a long error (Git → Push to a remote that rejects with a long hook
+  message) → the card keeps its width and shows at most 4 lines. Set `[ui] font_size = 18` → the
+  card widens with the text; no clipping. Light theme: icon, text and ✕ are readable on the card.
+- [ ] **Silent failures now visible:** paste a clipboard image over 10 MiB into a terminal pane and
+  into the composer → "The image is over 10 MiB, so it was not attached."; Share → Follow in Zed
+  with `zed` removed from PATH, let an agent edit a file → one card "Cannot follow in Zed: …" (not
+  one per edit); open Undo task on a card, press Esc at once while it runs and make it fail (e.g. a
+  file locked by another program) → "Undo failed: …"; Git view → Push, switch workspace before it
+  answers and let it fail → "Push failed: …". A ✕ on a queued text of a session whose text was just
+  written shows nothing (not an error).
+- [ ] **Kept in place:** Phone access → Start with a read-only `settings.toml` → the error row stays
+  inside the dialog (and no toast); a failed commit still shows under the commit box; `Cannot
+  start agent` still shows in the tab bar.
+
 ### To verify — 2026-10-15 Agent logos in chips (ADR 0058)
 
 - [ ] **Logos (dark + light):** claude, codex, copilot and omp sessions show their real logo (no

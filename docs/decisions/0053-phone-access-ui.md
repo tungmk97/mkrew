@@ -52,4 +52,4 @@ iPhone without typing.
 - A hand-started `mk web` (or a Task Scheduler entry) still works but competes for port 8787: the
   dialog then shows `Not running: <bind error>. Retrying…`.
 - Stop kills the child: open phone sockets drop at once.
-- The UI cannot show a toast (none exists); a failed Start / Stop is an error row in the dialog.
+- The dialog stays open, so a failed Start / Stop is an error row in the dialog, not a toast (SPEC §14: a failure that has a place of its own stays there; the toast layer was added later).
