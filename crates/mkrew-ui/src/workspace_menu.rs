@@ -151,6 +151,21 @@ pub fn set_run_commands(project_id: Ulid, commands: Vec<RunCommand>) -> ProjectU
     }
 }
 
+/// `project.update` replacing the workspace's Jira project keys (`[]` clears them).
+pub fn set_jira_keys(project_id: Ulid, keys: Vec<String>) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        project_id,
+        name: None,
+        default_agent: None,
+        default_shell: None,
+        run_commands: None,
+        run_autostart: None,
+        color: None,
+        pinned: None,
+        jira_keys: Some(keys),
+    }
+}
+
 /// Answers of the "Remove …?" confirmations; index 0 removes ([`crate::task_dialog::confirms_delete`]).
 pub const REMOVE_ANSWERS: [&str; 2] = ["Remove", "Cancel"];
 
