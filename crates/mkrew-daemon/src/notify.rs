@@ -414,6 +414,7 @@ mod tests {
             needs_input,
             done,
             sound,
+            ..NotifySettings::default()
         }
     }
 

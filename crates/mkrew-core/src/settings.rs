@@ -57,6 +57,9 @@ pub struct NotifySettings {
     pub done: bool,
     /// The notification plays the OS default sound.
     pub sound: bool,
+    /// Windows: the taskbar button flashes while a session needs input and the window is not
+    /// focused (SPEC §20J). The daemon ignores it; the UI reads it.
+    pub flash_taskbar: bool,
 }
 
 impl Default for NotifySettings {
@@ -65,6 +68,7 @@ impl Default for NotifySettings {
             needs_input: true,
             done: true,
             sound: true,
+            flash_taskbar: true,
         }
     }
 }
@@ -249,6 +253,9 @@ pub struct UiSettings {
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
+    /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides it to the tray icon instead of
+    /// quitting the UI (Windows, while the tray icon exists). The agents run in the daemon either way.
+    pub close_to_tray: bool,
 }
 
 impl Default for UiSettings {
@@ -263,6 +270,7 @@ impl Default for UiSettings {
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
             sidebar_width: SIDEBAR_WIDTH_DEFAULT,
             reading_width: true,
+            close_to_tray: true,
         }
     }
 }
@@ -372,6 +380,7 @@ pub fn template() -> &'static str {
      # needs_input = true\n\
      # done = true\n\
      # sound = true\n\
+     # flash_taskbar = true\n\
      \n\
      [awake]\n\
      # keep_awake = true\n\
@@ -388,6 +397,7 @@ pub fn template() -> &'static str {
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
+     # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
@@ -397,6 +407,7 @@ pub fn template() -> &'static str {
      # inspector_width = 300\n\
      # sidebar_width = 280\n\
      # reading_width = true\n\
+     # close_to_tray = true\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -548,6 +559,7 @@ mod tests {
 needs_input = false
 done = false
 sound = false
+flash_taskbar = false
 
 [awake]
 keep_awake = false
@@ -561,6 +573,7 @@ follow_debounce_ms = 500
 [ui]
 font_family = "Inter"
 font_size = 14
+close_to_tray = false
 
 [terminal]
 font_family = "JetBrains Mono"
@@ -580,6 +593,7 @@ enabled = true
                     needs_input: false,
                     done: false,
                     sound: false,
+                    flash_taskbar: false,
                 },
                 awake: AwakeSettings { keep_awake: false },
                 composer: ComposerSettings {
@@ -597,6 +611,7 @@ enabled = true
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                     sidebar_width: SIDEBAR_WIDTH_DEFAULT,
                     reading_width: true,
+                    close_to_tray: false,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
@@ -749,6 +764,22 @@ enabled = true
         assert!(ui("").diff_wrap);
         assert!(!ui("[ui]\ndiff_wrap = false").diff_wrap);
         assert!(parse_err("[ui]\ndiff_wrap = \"no\"").contains("invalid type"));
+    }
+
+    #[test]
+    fn flash_taskbar_and_close_to_tray_default_on_and_parse() {
+        let settings = |src: &str| parse(Path::new("s.toml"), src).unwrap();
+        assert!(settings("").notify.flash_taskbar);
+        assert!(settings("").ui.close_to_tray);
+        let off = settings("[notify]\nflash_taskbar = false\n");
+        assert!(!off.notify.flash_taskbar);
+        assert!(
+            off.ui.close_to_tray,
+            "another section's key does not change it"
+        );
+        assert!(!settings("[ui]\nclose_to_tray = false\n").ui.close_to_tray);
+        assert!(parse_err("[notify]\nflash_taskbar = 1\n").contains("invalid type"));
+        assert!(parse_err("[ui]\nclose_to_tra = false\n").contains("unknown field `close_to_tra`"));
     }
 
     #[test]

@@ -803,7 +803,7 @@ The session panel (below) is a third column right of Terminals while open.
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
   and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
   the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
-  □ shows the Windows 11 Snap Layouts flyout), all edges resize; the controls are hidden in full
+  □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full
   screen. **macOS:** native traffic lights at the left, drag and double-click as the OS does.
   **Linux:** the OS title bar stays. Minimum window size 1100 × 560. Without a workspace only
   the logo, the sidebar toggle, the drag area and the window controls show.
@@ -974,7 +974,7 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
 - Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
-  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
+  like F2; greyed for a run pane), **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
   top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
@@ -1640,7 +1640,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] Comments on unchanged code files (diff-line comments exist since M7)?
 - [ ] License if the repo goes public.
 
-**Backlog after v2:** tray icon / taskbar badge; "mark unread" in the Inbox; remote workspaces
+**Backlog after v2:** remote workspaces
 over SSH; compact density; `gix` git backend; pull/rebase/branch switching and
 conflict resolution in-app; GitHub (PR/issue → task); money
 estimates from token usage.
@@ -1674,6 +1674,7 @@ are errors (same rule as profiles). Full shape with defaults:
 needs_input = true          # OS notification on needs_input
 done = true                 # OS notification on done
 sound = true                # notification plays the OS default sound
+flash_taskbar = true        # §20J; Windows: the taskbar button flashes while a session needs input and the window is not focused
 
 [awake]
 keep_awake = true           # §20A.5
@@ -1691,6 +1692,7 @@ theme = "system"            # §14; "system" | "light" | "dark"; the title bar t
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the session panel's width (dragging its edge writes it; kept 240–560)
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
+close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
@@ -2009,3 +2011,33 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    asked for it, never followed by Enter). If neither has focus, it goes to the clipboard and the
    footer says so.
 5. Nothing is recorded or sent unless the user starts a recording, and audio is never stored.
+
+### §20J Tray, taskbar badge and mark unread (outside the milestones, ADR 0064)
+
+Notice who needs you with the window minimized, hidden or behind others. "Needs you" is the
+sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet viewed.
+
+1. **Taskbar badge (Windows).** The main window's taskbar button shows an overlay icon with that
+   count (`ITaskbarList3::SetOverlayIcon`; amber, `9+` from 10; description "3 need you");
+   cleared at 0. macOS and Linux: nothing (gpui has no dock-badge call).
+2. **Flash (Windows).** When a session enters `needs_input` while the window is not focused, the
+   taskbar button flashes until the window is focused (`FlashWindowEx`); it stops on focus and when
+   nothing needs you any more. `[notify] flash_taskbar = false` turns it off (applies live).
+3. **Tray icon (Windows).** Owned by the UI process, shown while it runs. Icon: Mkrew's own while
+   nothing works or waits, a dot in the working color while an agent works, a dot in the needs-input
+   color while something needs you; tooltip `Mkrew · 2 need you · 1 working`. Right-click menu: up to
+   8 sessions that need you, newest first, `agent · workspace — state, age` (a click shows the window
+   and opens that pane); a greyed `● N working`; `Open Mkrew`; `Quit UI (agents keep running)`. A
+   left click opens the window.
+4. **Close to tray (Windows).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window
+   instead of closing it (no pane is attached while hidden, §10). The tray menu, a toast click and
+   starting Mkrew again (same exe) show it. `false`, or no tray icon: ✕ quits the UI as before
+   (unsaved Files changes ask first). `Quit UI` shows the window if unsaved Files changes need an
+   answer, then ends the UI; the daemon and every agent keep running (§2.2).
+5. **Mark unread.** Pane menu (right-click a split pane's header or a sidebar session row) **Mark
+   unread** and palette "Agent: Mark unread" (no key) put a finished agent session (done, or idle
+   after work) back into Needs you — chip, row tint, Inbox, badge, tray — until its pane is focused
+   again in the active window or its state changes. Greyed for a session that already needs you,
+   works, or is a terminal. Not saved: like "viewed" it lives in UI memory.
+6. **Cost.** Counts come from the sessions the UI already holds; the badge, the icon and the menu
+   are updated only when the count (or the listed set) changes, never per frame.
