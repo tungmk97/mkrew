@@ -229,3 +229,43 @@ export function toBase64(text) {
   for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
+
+/** The session id from `#s=<26-char id>`: a tapped notification opens it (ADR 0066). */
+export function sessionFromHash(hash) {
+  const match = /(?:^#|&)s=([0-9A-Z]{26})(?:&|$)/.exec(hash ?? '');
+  return match ? match[1] : null;
+}
+
+/** Bytes of a base64url string (the VAPID public key the browser subscribes with). */
+export function fromBase64Url(text) {
+  const base64 = text.trim().replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='));
+  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+}
+
+export function sameBytes(a, b) {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+/**
+ * What the bell does (ADR 0066). `enabledByPc`: `/push/key` answered (`[web] push`); `secure`:
+ * HTTPS or localhost; `supported`: service worker + Push API + Notification exist (an iPhone
+ * Safari tab has none of Push); `ios`/`standalone`: iPhone and running from the Home Screen.
+ */
+export function pushOffer({ enabledByPc, secure, supported, standalone, ios, permission, subscribed }) {
+  if (!enabledByPc || !secure) return { show: false };
+  if (!supported) {
+    if (!ios || standalone) return { show: false };
+    return {
+      show: true, usable: false, on: false,
+      hint: 'To get notifications, add Mkrew to the Home Screen (Share, then Add to Home Screen) and open it from there.',
+    };
+  }
+  if (permission === 'denied') {
+    return { show: true, usable: false, on: false, hint: 'Notifications are blocked for Mkrew. Allow them in the phone settings.' };
+  }
+  return {
+    show: true, usable: true, on: subscribed,
+    hint: subscribed ? 'Notifications are on. Tap to turn off.' : 'Tap to get a notification when an agent needs you.',
+  };
+}

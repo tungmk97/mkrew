@@ -85,6 +85,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 /* Session */
 .topbar{display:flex;align-items:center;gap:8px;min-height:52px;padding:calc(var(--top) + 4px) 4px 4px;border-bottom:1px solid var(--divider)}
 .icon-btn{width:44px;height:44px;flex:none;display:grid;place-items:center;border:0;border-radius:8px;background:none;color:var(--text-dim)}
+.icon-btn[aria-pressed="true"]{color:var(--accent-text);background:var(--accent-bg)}
 .s-title{flex:1;min-width:0;margin:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pill{display:inline-flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 10px 0 8px;border-radius:999px;font-size:12px;font-weight:500;color:var(--text);white-space:nowrap}
 .pill--needs{background:var(--warning-bg)}.pill--done{background:var(--success-bg)}.pill--exited{background:var(--danger-bg)}.pill--working{background:var(--accent-bg)}.pill--idle{background:var(--surface)}

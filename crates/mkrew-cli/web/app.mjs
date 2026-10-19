@@ -2,9 +2,9 @@
 // `mk web`; never resizes a session (the desktop pane keeps its size, the font shrinks here).
 import { Terminal } from './vendor/xterm.mjs';
 import {
-  backoff, buildList, chipFor, displayName, esc, fitFontSize, keyBytes, loadReplies,
-  machineName, metaText, newAgentPlan, pillText, readerText, rememberReply, statusLabel, toBase64,
-  tokenFromHash, tokenFromText, wsClass,
+  backoff, buildList, chipFor, displayName, esc, fitFontSize, fromBase64Url, keyBytes, loadReplies,
+  machineName, metaText, newAgentPlan, pillText, pushOffer, readerText, rememberReply, sameBytes,
+  sessionFromHash, statusLabel, toBase64, tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -44,12 +44,16 @@ const state = {
   reloadTimer: 0,
   /** The ended session whose `session.history` reply is still awaited. */
   replaying: null,
+  /** A session a tapped notification named (`#s=` or the service worker); opened once the list loads. */
+  wantOpen: null,
   replies: loadReplies(localStorage.getItem(REPLIES_KEY)),
 };
 const machine = machineName(location.hostname);
 const idDecoder = new TextDecoder();
 let term = null;
 let toastTimer = 0;
+/** Phone notifications: does the PC offer them, and is this phone registered (ADR 0066). */
+const push = { enabledByPc: false, subscribed: false };
 
 // ---- screens ----
 
@@ -114,6 +118,7 @@ async function connect() {
     retry();
     return;
   }
+  linkManifest();
   const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?t=${state.token}`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
@@ -152,6 +157,8 @@ async function onConnected() {
     state.everConnected = true;
     setConnected(true);
     if (state.open && state.sessions.get(state.open)?.state !== 'exited') await attach(state.open);
+    await openWanted();
+    initPush();
   } catch (err) {
     toast(err.message);
   }
@@ -258,6 +265,133 @@ function onEvent(name, data) {
       return;
   }
   render();
+}
+
+// ---- phone notifications (ADR 0066) ----
+
+/** The Home Screen app is built from this manifest; it carries the token (see `http.rs`). */
+function linkManifest() {
+  if (document.querySelector('link[rel="manifest"]')) return;
+  const link = document.createElement('link');
+  link.rel = 'manifest';
+  link.href = `/manifest.webmanifest?t=${state.token}`;
+  document.head.append(link);
+}
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function pushInfo() {
+  return {
+    enabledByPc: push.enabledByPc,
+    secure: window.isSecureContext,
+    supported: pushSupported(),
+    standalone: navigator.standalone === true || matchMedia('(display-mode: standalone)').matches,
+    ios: /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent)),
+    permission: 'Notification' in window ? Notification.permission : 'default',
+    subscribed: push.subscribed,
+  };
+}
+
+function renderPush() {
+  const offer = pushOffer(pushInfo());
+  const bell = $('push');
+  bell.hidden = !offer.show;
+  bell.setAttribute('aria-pressed', String(Boolean(offer.on)));
+  bell.title = offer.hint ?? '';
+}
+
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration('/');
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+/** The PC's VAPID public key as bytes; `null` while `[web] push` is off there. */
+async function pcKey() {
+  const res = await fetch(`/push/key?t=${state.token}`, { cache: 'no-store' });
+  return res.ok ? fromBase64Url(await res.text()) : null;
+}
+
+/** After each connect: does the PC send notifications, and is this phone still registered there? */
+async function initPush() {
+  try {
+    const key = await pcKey();
+    push.enabledByPc = key !== null;
+    push.subscribed = false;
+    if (key && pushSupported() && Notification.permission === 'granted') {
+      const sub = await currentSubscription();
+      if (sub && sameBytes(new Uint8Array(sub.options.applicationServerKey ?? []), key)) {
+        // The PC may have forgotten this phone (`mk web --new-token`): tell it again.
+        await sendSubscription(sub);
+        push.subscribed = true;
+      } else if (sub) {
+        // Made for another VAPID key: it can never be pushed to. The bell offers a new one.
+        await sub.unsubscribe();
+      }
+    }
+  } catch {
+    // Offline or old `mk web` without push: no bell.
+    push.enabledByPc = false;
+  }
+  renderPush();
+}
+
+async function sendSubscription(sub) {
+  const res = await fetch(`/push/subscribe?t=${state.token}`, { method: 'POST', body: JSON.stringify(sub) });
+  if (!res.ok) throw new Error((await res.text()).trim() || 'The PC refused the notification setup.');
+}
+
+async function enablePush() {
+  // Asked first, straight from the tap: iOS only shows the prompt for a user gesture.
+  if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications were not allowed.');
+  const key = await pcKey();
+  if (!key) throw new Error(`Phone notifications are off on ${machine}.`);
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription())
+    ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+  await sendSubscription(sub);
+  push.subscribed = true;
+}
+
+async function disablePush() {
+  const sub = await currentSubscription();
+  if (sub) {
+    await fetch(`/push/unsubscribe?t=${state.token}`, { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+    await sub.unsubscribe();
+  }
+  push.subscribed = false;
+}
+
+async function togglePush() {
+  const offer = pushOffer(pushInfo());
+  if (!offer.usable) {
+    if (offer.hint) toast(offer.hint);
+    return;
+  }
+  try {
+    if (push.subscribed) await disablePush();
+    else await enablePush();
+    toast(push.subscribed ? 'You will get a notification when an agent needs you.' : 'Notifications are off on this phone.');
+  } catch (err) {
+    toast(err.message);
+  }
+  renderPush();
+}
+
+/** Opens the session a tapped notification named, once the list has loaded. */
+async function openWanted() {
+  const id = state.wantOpen;
+  if (!id) return;
+  state.wantOpen = null;
+  if (state.sessions.has(id) && state.open !== id) await openSession(id);
+}
+
+function openFromNotice(id) {
+  state.wantOpen = id;
+  if (state.loaded) openWanted();
 }
 
 // ---- rendering ----
@@ -702,6 +836,7 @@ function wire() {
   });
   $('new-agent').addEventListener('click', openSheet);
   $('empty-new').addEventListener('click', openSheet);
+  $('push').addEventListener('click', togglePush);
 
   $('back').addEventListener('click', () => {
     if (history.state?.session) history.back();
@@ -784,9 +919,17 @@ function wire() {
     }
   });
   setInterval(render, 30_000);
+  if ('serviceWorker' in navigator) {
+    // The service worker found this page already open: it sends the tapped session.
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.type === 'open-session' && sessionFromHash(`#s=${e.data.session}`)) openFromNotice(e.data.session);
+    });
+  }
 }
 
 function start() {
+  // Before `tokenFromHash` and any `replaceState`: that rewrites the hash to `#t=…`.
+  state.wantOpen = sessionFromHash(location.hash);
   const fromHash = tokenFromHash(location.hash);
   if (fromHash) localStorage.setItem(TOKEN_KEY, fromHash);
   state.token = fromHash ?? localStorage.getItem(TOKEN_KEY);
