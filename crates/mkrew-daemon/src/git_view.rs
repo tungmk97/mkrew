@@ -3,6 +3,7 @@
 //! checks before `git.push`. Blocking; the server runs them in
 //! `spawn_blocking`.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread::{self, ScopedJoinHandle};
 use std::time::SystemTime;
 
+use mkrew_core::viewed::{Mark, Resolved, resolve, text_hash};
 use mkrew_protocol::{
     ChangedFile, Commit, CommitDetail, FileDiff, GitDiffParams, GitMode, GitStatus,
 };
@@ -21,6 +23,9 @@ pub const MAX_DIFF_BYTES: usize = 1024 * 1024;
 
 /// Cached diffs kept before the cache starts over (each ≤ about 1 MB of diff, parsed).
 const MAX_CACHED_DIFFS: usize = 64;
+
+/// Cached diff hashes kept before the cache starts over (a hash is a few bytes).
+const MAX_CACHED_HASHES: usize = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ViewError {
@@ -44,6 +49,10 @@ pub struct GitCache {
     repos: Mutex<HashMap<PathBuf, Repo>>,
     merge_bases: Mutex<HashMap<PathBuf, MergeBase>>,
     diffs: Mutex<HashMap<DiffKey, FileDiff>>,
+    /// The hash of each diff's text (`git.viewed`, ADR 0065), keyed like `diffs`; `None` = an
+    /// empty diff. Separate from `diffs` so checking many marks never evicts the diff on
+    /// screen.
+    hashes: Mutex<HashMap<DiffKey, Option<String>>>,
 }
 
 /// `git merge-base head base`, valid until HEAD or the base moves.
@@ -225,6 +234,108 @@ pub fn diff(
     path: &str,
     snapshot: &dyn Fn() -> io::Result<String>,
 ) -> Result<FileDiff, ViewError> {
+    let key = diff_key(git, cache, dir, configured, params, path)?;
+    if let Some(cached) = lock(&cache.diffs).get(&key) {
+        return Ok(cached.clone());
+    }
+    let diff = file_diff(&diff_text(git, dir, &key, snapshot)?, path);
+    let mut diffs = lock(&cache.diffs);
+    if diffs.len() >= MAX_CACHED_DIFFS {
+        diffs.clear();
+    }
+    diffs.insert(key, diff.clone());
+    Ok(diff)
+}
+
+/// The hash of the text `git.diff` of `params` would show (ADR 0065): what a viewed mark
+/// stores. `None` = the file has no diff. Cached like [`diff`].
+pub fn diff_hash(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    configured: Option<&str>,
+    params: &GitDiffParams,
+    path: &str,
+    snapshot: &dyn Fn() -> io::Result<String>,
+) -> Result<Option<String>, ViewError> {
+    let key = diff_key(git, cache, dir, configured, params, path)?;
+    cached_hash(git, cache, dir, key, snapshot)
+}
+
+/// `git.viewed`: which of `marks` (one repository's stored marks of `list` = mode and `since`,
+/// ADR 0065) still stand, and which are stale. HEAD and the targets are resolved once, and each
+/// file's hash comes from the cache unless the file, the index or HEAD changed; Working
+/// changes read the staged side only for a mark the unstaged side did not explain. A `since`
+/// tree's working snapshot is taken at most once per call.
+pub fn viewed(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    configured: Option<&str>,
+    list: (GitMode, Option<&str>),
+    marks: Vec<Mark>,
+    snapshot: &dyn Fn() -> io::Result<String>,
+) -> Result<Resolved, ViewError> {
+    let repo = cache.repo(git, dir)?;
+    let head = git.head(dir)?;
+    let (mode, since) = list;
+    let unstaged = target_of(
+        git,
+        cache,
+        dir,
+        configured,
+        (mode, false, since),
+        head.as_deref(),
+    )?;
+    let staged = (mode == GitMode::Working)
+        .then(|| {
+            target_of(
+                git,
+                cache,
+                dir,
+                configured,
+                (mode, true, since),
+                head.as_deref(),
+            )
+        })
+        .transpose()?;
+    let sides: &[bool] = if staged.is_some() {
+        &[false, true]
+    } else {
+        &[false]
+    };
+    let memo = OnceCell::new();
+    let snapshot = || -> io::Result<String> {
+        if let Some(now) = memo.get() {
+            return Ok(String::clone(now));
+        }
+        let now = snapshot()?;
+        Ok(String::clone(memo.get_or_init(|| now)))
+    };
+    resolve(marks, sides, |path, is_staged| {
+        let target = match (&staged, is_staged) {
+            (Some(staged), true) => staged.clone(),
+            _ => unstaged.clone(),
+        };
+        let key = DiffKey {
+            dir: dir.to_owned(),
+            path: path.to_owned(),
+            target,
+            stamp: Some(stamp_of(&repo, dir, head.clone(), path)),
+        };
+        cached_hash(git, cache, dir, key, &snapshot)
+    })
+}
+
+/// The cache key of the diff `params` asks for (the same for [`diff`] and [`diff_hash`]).
+fn diff_key(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    configured: Option<&str>,
+    params: &GitDiffParams,
+    path: &str,
+) -> Result<DiffKey, ViewError> {
     let repo = cache.repo(git, dir)?;
     let (target, stamp) = match &params.commit {
         // Resolved first: a moving name (`HEAD~1`) must not hit a stale entry, and ranges or
@@ -232,58 +343,95 @@ pub fn diff(
         Some(commit) => (Target::Commit(commit_id(git, dir, commit)?), None),
         None => {
             let head = git.head(dir)?;
-            let target = match (params.mode, params.staged, &params.since) {
-                (GitMode::Working, false, _) => Target::Unstaged,
-                (GitMode::Working, true, _) => Target::Staged,
-                (GitMode::Base, _, Some(since)) => since_target(git, dir, since)?,
-                (GitMode::Base, _, None) => {
-                    let head = head.as_deref().ok_or(ViewError::NoMergeBase)?;
-                    let (_, base) =
-                        resolve_base(git, dir, configured)?.ok_or(ViewError::NoMergeBase)?;
-                    let merge_base = cache
-                        .merge_base(git, dir, head, &base)?
-                        .ok_or(ViewError::NoMergeBase)?;
-                    Target::Since(merge_base)
-                }
-            };
-            let stamp = Stamp {
-                head,
-                file: std::fs::symlink_metadata(dir.join(path))
-                    .ok()
-                    .and_then(|m| Some((m.modified().ok()?, m.len()))),
-                index: modified(&repo.git_dir.join("index")),
-            };
-            (target, Some(stamp))
+            let want = (params.mode, params.staged, params.since.as_deref());
+            let target = target_of(git, cache, dir, configured, want, head.as_deref())?;
+            (target, Some(stamp_of(&repo, dir, head, path)))
         }
     };
-    let key = DiffKey {
+    Ok(DiffKey {
         dir: dir.to_owned(),
         path: path.to_owned(),
         target,
         stamp,
-    };
-    if let Some(cached) = lock(&cache.diffs).get(&key) {
-        return Ok(cached.clone());
+    })
+}
+
+/// What a working-tree diff of `want` = (mode, staged side, `since`) compares; `head` is the
+/// current HEAD.
+fn target_of(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    configured: Option<&str>,
+    want: (GitMode, bool, Option<&str>),
+    head: Option<&str>,
+) -> Result<Target, ViewError> {
+    Ok(match want {
+        (GitMode::Working, false, _) => Target::Unstaged,
+        (GitMode::Working, true, _) => Target::Staged,
+        (GitMode::Base, _, Some(since)) => since_target(git, dir, since)?,
+        (GitMode::Base, _, None) => {
+            let head = head.ok_or(ViewError::NoMergeBase)?;
+            let (_, base) = resolve_base(git, dir, configured)?.ok_or(ViewError::NoMergeBase)?;
+            let merge_base = cache
+                .merge_base(git, dir, head, &base)?
+                .ok_or(ViewError::NoMergeBase)?;
+            Target::Since(merge_base)
+        }
+    })
+}
+
+/// What a cached working-tree diff of `path` depends on besides its target.
+fn stamp_of(repo: &Repo, dir: &Path, head: Option<String>, path: &str) -> Stamp {
+    Stamp {
+        head,
+        file: std::fs::symlink_metadata(dir.join(path))
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len()))),
+        index: modified(&repo.git_dir.join("index")),
     }
+}
+
+/// What git prints for the diff `key` names; an untracked file shows as all-new.
+fn diff_text(
+    git: &dyn GitBackend,
+    dir: &Path,
+    key: &DiffKey,
+    snapshot: &dyn Fn() -> io::Result<String>,
+) -> Result<String, ViewError> {
     let now = match key.target {
         Target::Tree(_) => snapshot()?,
         _ => String::new(),
     };
-    let mut text = git.file_diff(dir, path, key.target.side(&now))?;
+    let mut text = git.file_diff(dir, &key.path, key.target.side(&now))?;
     if text.is_empty()
         && matches!(key.target, Target::Unstaged | Target::Since(_))
-        && dir.join(path).is_file()
-        && !git.is_tracked(dir, path)?
+        && dir.join(&key.path).is_file()
+        && !git.is_tracked(dir, &key.path)?
     {
-        text = git.untracked_diff(dir, path)?;
+        text = git.untracked_diff(dir, &key.path)?;
     }
-    let diff = file_diff(&text, path);
-    let mut diffs = lock(&cache.diffs);
-    if diffs.len() >= MAX_CACHED_DIFFS {
-        diffs.clear();
+    Ok(text)
+}
+
+/// [`text_hash`] of the diff `key` names, cached.
+fn cached_hash(
+    git: &dyn GitBackend,
+    cache: &GitCache,
+    dir: &Path,
+    key: DiffKey,
+    snapshot: &dyn Fn() -> io::Result<String>,
+) -> Result<Option<String>, ViewError> {
+    if let Some(hash) = lock(&cache.hashes).get(&key) {
+        return Ok(hash.clone());
     }
-    diffs.insert(key, diff.clone());
-    Ok(diff)
+    let hash = text_hash(&diff_text(git, dir, &key, snapshot)?);
+    let mut hashes = lock(&cache.hashes);
+    if hashes.len() >= MAX_CACHED_HASHES {
+        hashes.clear();
+    }
+    hashes.insert(key, hash.clone());
+    Ok(hash)
 }
 
 /// `git.log`: up to `limit` commits touching `path` (already checked to stay inside `dir`; the

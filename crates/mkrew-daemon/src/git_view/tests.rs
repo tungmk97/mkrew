@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use mkrew_core::viewed::{Mark, Resolved, Standing};
 use mkrew_protocol::DiffLineKind;
 use ulid::Ulid;
 
@@ -622,4 +623,222 @@ fn diffs_over_the_limit_keep_only_their_counts() {
         (count, count, "big")
     );
     assert_eq!(file_diff("", "gone").path, "gone");
+}
+
+fn viewed_in(
+    cache: &GitCache,
+    dir: &Path,
+    list: (GitMode, Option<&str>),
+    marks: &[&Mark],
+) -> Resolved {
+    let marks = marks.iter().map(|m| (*m).clone()).collect();
+    super::viewed(&GitCli, cache, dir, None, list, marks, &unused).unwrap()
+}
+
+/// The mark `git.set_viewed` stores for `path` on `side` of `list` as it is now.
+fn mark_now(
+    cache: &GitCache,
+    dir: &Path,
+    path: &str,
+    mode: GitMode,
+    staged: bool,
+    since: Option<&str>,
+) -> Mark {
+    let mut p = params(mode, staged, None);
+    p.since = since.map(str::to_owned);
+    let hash = diff_hash(&GitCli, cache, dir, None, &p, path, &unused)
+        .unwrap()
+        .unwrap_or_else(|| panic!("{path} has no diff"));
+    Mark {
+        path: path.into(),
+        hash,
+    }
+}
+
+fn file(path: &str, staged: bool) -> Standing {
+    Standing {
+        path: path.into(),
+        staged,
+    }
+}
+
+#[test]
+fn a_mark_stands_until_its_diff_text_changes() {
+    let (_repo, dir) = repo();
+    std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+    let cache = GitCache::default();
+    let working = (GitMode::Working, None);
+    let mark = mark_now(&cache, &dir, "a.txt", GitMode::Working, false, None);
+
+    let resolved = viewed_in(&cache, &dir, working, &[&mark]);
+    assert_eq!(resolved.viewed, [file("a.txt", false)]);
+    assert!(resolved.stale.is_empty());
+
+    // The agent edits it again: stale.
+    std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    let resolved = viewed_in(&cache, &dir, working, &[&mark]);
+    assert_eq!(resolved.viewed, []);
+    assert_eq!(resolved.stale, std::slice::from_ref(&mark));
+
+    // The same text again stands again (the caller deletes stale rows, so a deleted mark is
+    // gone for good; this pins that the hash is the text and nothing else).
+    std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+    assert_eq!(
+        viewed_in(&cache, &dir, working, &[&mark]).viewed,
+        [file("a.txt", false)]
+    );
+
+    // Reverted to HEAD: the file no longer changes, the mark is stale.
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    assert_eq!(viewed_in(&cache, &dir, working, &[&mark]).stale, [mark]);
+}
+
+#[test]
+fn staging_a_viewed_file_keeps_it_viewed() {
+    let (_repo, dir) = repo();
+    std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+    let cache = GitCache::default();
+    let working = (GitMode::Working, None);
+    let mark = mark_now(&cache, &dir, "a.txt", GitMode::Working, false, None);
+
+    git(&dir, &["add", "a.txt"]);
+    let resolved = viewed_in(&cache, &dir, working, &[&mark]);
+    assert_eq!(resolved.viewed, [file("a.txt", true)]);
+    assert!(resolved.stale.is_empty());
+
+    // A further edit shows as unstaged: that diff was never viewed, the staged one still is.
+    std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    let resolved = viewed_in(&cache, &dir, working, &[&mark]);
+    assert_eq!(resolved.viewed, [file("a.txt", true)]);
+}
+
+#[test]
+fn binary_and_untracked_files_can_be_marked() {
+    let (_repo, dir) = repo();
+    std::fs::write(dir.join("img.bin"), [0u8, 1, 2, 3]).unwrap();
+    git(&dir, &["add", "img.bin"]);
+    git(&dir, &["commit", "-q", "-m", "bin"]);
+    std::fs::write(dir.join("img.bin"), [0u8, 1, 2, 4]).unwrap();
+    std::fs::write(dir.join("new.txt"), "n1\n").unwrap();
+    let cache = GitCache::default();
+    let working = (GitMode::Working, None);
+    let binary = mark_now(&cache, &dir, "img.bin", GitMode::Working, false, None);
+    let untracked = mark_now(&cache, &dir, "new.txt", GitMode::Working, false, None);
+    let both = [&binary, &untracked];
+    assert_eq!(
+        viewed_in(&cache, &dir, working, &both).viewed,
+        [file("img.bin", false), file("new.txt", false)]
+    );
+
+    // Another byte in the binary (a different size, so the cache cannot reuse the entry) and
+    // another line in the new file clear both.
+    std::fs::write(dir.join("img.bin"), [0u8, 1, 2, 5, 6]).unwrap();
+    std::fs::write(dir.join("new.txt"), "n1\nn2\n").unwrap();
+    let resolved = viewed_in(&cache, &dir, working, &both);
+    assert_eq!(resolved.viewed, []);
+    assert_eq!(resolved.stale.len(), 2);
+
+    // A file with no diff has no hash: nothing to mark.
+    let p = params(GitMode::Working, false, None);
+    assert_eq!(
+        diff_hash(&GitCli, &cache, &dir, None, &p, "b.txt", &unused).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn marks_follow_the_list_they_are_read_in() {
+    let (repo, dir) = repo();
+    let checkpoint = git(repo.path(), &["rev-parse", "HEAD"]);
+    std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+    git(repo.path(), &["commit", "-q", "-am", "task"]);
+    std::fs::write(dir.join("b.txt"), "b\nmore\n").unwrap();
+    let cache = GitCache::default();
+
+    // Against a checkpoint: a.txt (committed after it) and b.txt (working tree) have diffs.
+    let since = (GitMode::Base, Some(checkpoint.as_str()));
+    let a = mark_now(
+        &cache,
+        &dir,
+        "a.txt",
+        GitMode::Base,
+        false,
+        Some(checkpoint.as_str()),
+    );
+    let b = mark_now(
+        &cache,
+        &dir,
+        "b.txt",
+        GitMode::Base,
+        false,
+        Some(checkpoint.as_str()),
+    );
+    assert_eq!(
+        viewed_in(&cache, &dir, since, &[&a, &b]).viewed,
+        [file("a.txt", false), file("b.txt", false)]
+    );
+    // In Working changes only b.txt changes: a.txt's mark is not explained there (the caller
+    // only ever asks a list about its own marks).
+    assert_eq!(
+        viewed_in(&cache, &dir, (GitMode::Working, None), &[&a]).stale,
+        std::slice::from_ref(&a)
+    );
+    // Against base on `main` itself: no merge-base difference, same texts as Working.
+    let base = (GitMode::Base, None);
+    assert_eq!(
+        viewed_in(&cache, &dir, base, &[&b]).viewed,
+        [file("b.txt", false)]
+    );
+}
+
+#[test]
+fn viewed_hashes_are_cached_until_the_file_changes() {
+    let (_repo, dir) = repo();
+    std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+    let cache = GitCache::default();
+    let mark = mark_now(&cache, &dir, "a.txt", GitMode::Working, false, None);
+    let working = (GitMode::Working, None);
+    assert_eq!(lock(&cache.hashes).len(), 1);
+    // Unchanged file: the next checks read only the cache (the staged side is not read: the
+    // unstaged side explained the mark).
+    for _ in 0..3 {
+        viewed_in(&cache, &dir, working, &[&mark]);
+    }
+    assert_eq!(lock(&cache.hashes).len(), 1);
+    // A new text is a new entry.
+    std::fs::write(dir.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    viewed_in(&cache, &dir, working, &[&mark]);
+    assert!(lock(&cache.hashes).len() >= 2);
+}
+
+#[test]
+fn a_since_tree_list_takes_one_snapshot_for_all_its_marks() {
+    let (_repo, dir) = repo();
+    let tree = snapshot(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b\nmore\n").unwrap();
+    let cache = GitCache::default();
+    let taken = std::cell::Cell::new(0);
+    let now = || {
+        taken.set(taken.get() + 1);
+        snapshot(&dir)
+    };
+    let mark = |path: &str| {
+        let mut p = params(GitMode::Base, false, None);
+        p.since = Some(tree.clone());
+        let hash = diff_hash(&GitCli, &cache, &dir, None, &p, path, &now);
+        Mark {
+            path: path.into(),
+            hash: hash.unwrap().unwrap(),
+        }
+    };
+    let (a, b) = (mark("a.txt"), mark("b.txt"));
+    // A new text per file, so every check is a cache miss that needs the snapshot.
+    std::fs::write(dir.join("a.txt"), "one\nTWO\nx\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "b\nmore\ny\n").unwrap();
+    taken.set(0);
+    let list = (GitMode::Base, Some(tree.as_str()));
+    let resolved = super::viewed(&GitCli, &cache, &dir, None, list, vec![a, b], &now).unwrap();
+    assert_eq!(resolved.stale.len(), 2);
+    assert_eq!(taken.get(), 1);
 }

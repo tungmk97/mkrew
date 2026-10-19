@@ -413,6 +413,8 @@ impl Daemon {
             Request::GitRepos(params) => (self.git_repos(params).await, After::Continue),
             Request::GitStatus(params) => (self.git_status(params).await, After::Continue),
             Request::GitDiff(params) => (self.git_diff(params).await, After::Continue),
+            Request::GitViewed(params) => (self.git_viewed(params).await, After::Continue),
+            Request::GitSetViewed(params) => (self.git_set_viewed(params).await, After::Continue),
             Request::GitStage(params) => (self.git_stage(params, false).await, After::Continue),
             Request::GitUnstage(params) => (self.git_stage(params, true).await, After::Continue),
             Request::GitDiscard(params) => (self.git_discard(params).await, After::Continue),

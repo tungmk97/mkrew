@@ -326,6 +326,7 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 `0015_session_color.sql` adds `session.color TEXT` (ADR 0037). `0016_pinned.sql` adds `pinned INTEGER NOT NULL DEFAULT 0` to `project`, `session` and
 `terminal_tab` (pinned workspaces, sessions and tabs lead their lists, §10).
 `0017_session_plan.sql` adds `session.plan_path TEXT` (the linked plan `.md`: relative to the project folder with `/` when inside, else absolute; NULL = none; ADR 0039).
+`0021_viewed_files.sql` adds table `viewed_file(project_id, worktree_task_id, repo, list, path, hash, marked_at)`, one row per file the user marked as viewed in the Git view (§12B, ADR 0065).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -561,6 +562,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
 | `git.status` | `project_id`, `mode` (`working`/`base`), `since?` (base mode: compare from this commit instead of the merge-base, e.g. `task.checkpoint`; `merge_base` = it) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
 | `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
+| `git.viewed` | the params of `git.status` | `ViewedFile[]` (`path`, `staged`): the files of that list (`working` / `base` / the `since` checkpoint) whose viewed mark still stands (ADR 0065). Re-hashes the marked files through the diff cache and deletes marks whose diff text changed |
+| `git.set_viewed` | the params of `git.diff` (no `commit`), `viewed` (bool) | `null`; hashes the file's diff now and stores (`viewed: true`) or removes the mark; `invalid_state` for a file with no diff, `invalid_request` with `commit` |
 | `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
 | `git.discard` | `paths[]`, `confirm: true` | ok (destructive; UI always confirms first) |
 | `git.commit` | `message` | new commit hash |
@@ -572,7 +575,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.repos` | `project_id` | `string[]`: `""` when the project folder is in a git repository, then each direct child folder holding `.git` (folder or file), sorted; hidden folders, `node_modules` and `target` skipped; not filtered by `.gitignore`; read on every call (ADR 0029) |
 | `daemon.status/stop` | – | info / ok; `status` carries `web` = `{enabled, running, error?}`: the `mk web` child the daemon supervises while `[web] enabled` (§20.0, ADR 0053); `error` = the child's last stderr line |
 
-`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
+`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push`, `git.viewed`, `git.set_viewed` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
 
 **Events**
 
@@ -626,6 +629,8 @@ v2 adds requests and events in §20; each milestone that changes the protocol bu
 Protocol 40 (ADR 0053): `daemon.status` gains `web`.
 
 Protocol 41: `session.move` and `Session.position`.
+
+Protocol 45 (ADR 0065): `git.viewed`, `git.set_viewed`.
 
 ---
 
@@ -1140,6 +1145,14 @@ Windows (tens of ms, worse with antivirus), so:
   diff comments work in both modes (comments pick new-side lines: the right column in Split). The
   mode is global (every file, every repo of the workspace, History too) and is remembered as
   `[ui] diff_mode` (§20.0).
+- **Viewed files** (ADR 0065): each file row has a box (not in the History), the diff toolbar a
+  "Viewed" button, key `v` (§13) and the palette "Git: Mark file as viewed / not viewed". A viewed
+  row is dimmed and the selected viewed file's diff collapses to "Marked as viewed." with a
+  **Show diff** button. The side panel header shows `Viewed N/M` (M = every file of the shown
+  list, whatever "Changed by" and the file filter hide). The daemon keeps each mark in SQLite
+  with a hash of the file's diff text; it clears by itself as soon as that text changes or the
+  file stops changing (checked with every status refresh). Staging a whole viewed file keeps the
+  mark; marks of Against base, a task's changes and Working changes are separate lists.
 - **Stage / unstage** per file or per hunk (daemon builds the patch, runs `git apply --cached`).
 - **Discard** per file: always confirms and shows what will be lost.
 - **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
@@ -1242,6 +1255,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
 | Git | Toggle Unified / Split diff | d |
+| Git | Mark the selected file viewed / not viewed | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |

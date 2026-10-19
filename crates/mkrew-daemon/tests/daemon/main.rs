@@ -19,11 +19,11 @@ use mkrew_protocol::{
     DocListParams, DocReadParams, ErrorCode, Event, FileDiff, Frame, FrameDecoder, FsContent,
     FsEntry, FsFindParams, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
     GitChangedEvent, GitCommitParams, GitCommitResult, GitDiffParams, GitDiscardParams,
-    GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitShowParams,
-    GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult, HookReportParams,
-    HunkTarget, Message, Outcome, PROTOCOL_VERSION, PlanItem, Project, ProjectAddParams,
-    ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request, ResponseError,
-    RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session,
+    GitLogParams, GitMarker, GitMode, GitRemoteParams, GitSetBaseParams, GitSetViewedParams,
+    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HelloParams, HelloResult,
+    HookReportParams, HunkTarget, Message, Outcome, PROTOCOL_VERSION, PlanItem, Project,
+    ProjectAddParams, ProjectRef, ProjectUpdateParams, QueuedSend, RemoveWorktreeResult, Request,
+    ResponseError, RunCommand, RunStartParams, RunStarted, RunStopParams, ScreenSnapshot, Session,
     SessionAttachResult, SessionExitedEvent, SessionFiles, SessionFilesParams, SessionHistory,
     SessionInputParams, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
     SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionQueueEvent,
@@ -34,8 +34,8 @@ use mkrew_protocol::{
     TabMoveParams, TabPinParams, TabRef, TabRenameParams, TabSetLayoutParams, Task,
     TaskConfirmParams, TaskCreateParams, TaskDeletedEvent, TaskFanoutParams, TaskListParams,
     TaskMergeResult, TaskMoveParams, TaskRef, TaskRunParams, TaskStatus, TaskUndoParams,
-    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, WORKSPACE_COLORS,
-    encode,
+    TaskUpdateParams, TerminalTab, Turn, TurnRef, TurnRestoreParams, UndoPreview, ViewedFile,
+    WORKSPACE_COLORS, encode,
 };
 use mkrew_store::Store;
 use serde_json::{Value, json};
