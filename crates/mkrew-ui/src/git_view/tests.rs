@@ -1487,4 +1487,9 @@ fn a_collapsed_diff_ignores_hunk_keys_and_stages_the_whole_file() {
     view.hunk = None;
     view.key(Key::NextHunk);
     assert_eq!(view.hunk, Some(0));
+    // Marking the selected file drops its current hunk (no stale "Hunk i of N" after Show diff).
+    view.hunk = Some(1);
+    view.toggle_viewed(&a);
+    view.toggle_viewed(&a);
+    assert_eq!(view.hunk, None);
 }

@@ -200,7 +200,6 @@ pub(crate) fn git_file_row(
             }))
         })
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
-        // A viewed row steps back (its content, not the ✓ box); the selected one stays readable.
         .active(|style| style.opacity(opacity::ACTIVE))
         .child(
             div()
@@ -210,6 +209,7 @@ pub(crate) fn git_file_row(
                 .text_size(font_size::META)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
+                // A viewed row steps back (its content, not the ✓ box); the selected one stays readable.
                 .when(dim, |el| el.opacity(opacity::VIEWED))
                 .tooltip(tooltip(theme, what, ""))
                 .child(letter),

@@ -1588,6 +1588,10 @@ impl GitView {
         // An answer to an older `git.viewed` no longer holds.
         self.viewed_asked += 1;
         self.unfolded = None;
+        // The hunk belongs to the diff that is about to collapse.
+        if viewed && self.selected.as_ref() == Some(target) {
+            self.hunk = None;
+        }
         Some(GitSetViewedParams {
             diff: target.params(self.project_id, self.worktree_task_id, self.repo.clone()),
             viewed,

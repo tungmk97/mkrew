@@ -283,7 +283,9 @@ impl Shell {
         let counts = shown
             .filter(|shown| !shown.diff.binary)
             .map(|shown| change_counts(shown.diff.added, shown.diff.removed, theme));
-        let hunk_label = shown.and_then(|shown| {
+        // A collapsed diff has no hunks, layout or comment actions to offer.
+        let collapsed = view.diff_collapsed();
+        let hunk_label = shown.filter(|_| !collapsed).and_then(|shown| {
             let count = shown.diff.hunks.len();
             let label = match view.hunk {
                 Some(hunk) => format!("Hunk {} of {count}", hunk + 1),
@@ -306,9 +308,10 @@ impl Shell {
             )
         });
         // Unified | Split and Wrap (global, remembered): only for a diff with lines to lay out.
-        let has_lines = shown.is_some_and(|shown| {
-            !shown.diff.binary && !shown.diff.too_large && !shown.rows.is_empty()
-        });
+        let has_lines = !collapsed
+            && shown.is_some_and(|shown| {
+                !shown.diff.binary && !shown.diff.too_large && !shown.rows.is_empty()
+            });
         let layout = has_lines.then(|| {
             let wrap = self.diff_wrap;
             let hover = theme.surface_raised;
@@ -462,7 +465,7 @@ impl Shell {
             .children(discard)
             .children(stage)
             // No comments on a past commit's lines: no "⋯" (all comment actions) in the History.
-            .when(view.can_comment(), |el| {
+            .when(view.can_comment() && !collapsed, |el| {
                 el.child(self.git_diff_more(project_id, view, theme, cx))
             })
     }
