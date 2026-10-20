@@ -377,6 +377,7 @@ impl Shell {
         let connected = self.connection.is_some();
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let view = self.sidebar.view(&self.viewed);
+        let shown_in = view.shown_in(shown);
         let any_open = self.sidebar.any_expanded();
         let idle_agents = self.idle_agents().len();
         // Without workspaces: the title and `+` (the empty state below offers it too).
@@ -708,6 +709,8 @@ impl Shell {
                         );
                         let (project_id, active) =
                             (row.project_id, self.workspace == Some(row.project_id));
+                        // Its selected session row already says it is the shown one.
+                        let highlight = active && shown_in != Some(project_id);
                         // Nothing to show under it: on the "N empty workspaces" line instead
                         // (the shown and pinned ones stay in place).
                         if row.empty && !active && !row.pinned && !filtering {
@@ -727,7 +730,7 @@ impl Shell {
                                 index,
                                 title: row.name.clone().into(),
                             });
-                        let row = workspace_row(row, active, theme, cx);
+                        let row = workspace_row(row, highlight, theme, cx);
                         let header = self.with_workspace_menu(row, project_id, theme, cx);
                         card = Some((header, color, item));
                     }
@@ -909,12 +912,16 @@ impl Shell {
                 );
             }
         }
-        for row in self.sidebar.view(&self.viewed).rows {
+        let view = self.sidebar.view(&self.viewed);
+        let shown_in = view.shown_in(shown);
+        for row in view.rows {
             match row {
                 Row::Workspace(row) => {
-                    let (project_id, active) =
-                        (row.project_id, self.workspace == Some(row.project_id));
-                    let row = compact_workspace_row(row, active, theme, cx);
+                    let project_id = row.project_id;
+                    // Its selected session row already says it is the shown one.
+                    let highlight =
+                        self.workspace == Some(project_id) && shown_in != Some(project_id);
+                    let row = compact_workspace_row(row, highlight, theme, cx);
                     list.push(self.with_workspace_menu(row, project_id, theme, cx));
                 }
                 Row::Session(row) => {

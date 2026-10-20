@@ -772,7 +772,9 @@ The session panel (below) is a third column right of Terminals while open.
   card, agents first without a label (TERMINAL is labeled beside agents or RUN): agent glyph
   (in an accent chip while working; its hover says the state), title
   (ellipsized), the glyph of a waiting / done agent (none while idle), the time, ✕ on hover; the
-  selected row is ringed. Run sessions are not session rows: a **RUN** group under the
+  selected row is ringed. The shown workspace's header is filled only while none of its rows
+  is the selected one (collapsed, filtered out, or no session focused; ADR 0068), so one
+  highlight marks where you are. Run sessions are not session rows: a **RUN** group under the
   workspace lists each run command (green dot running, hollow gray stopped, red exited), its
   name and its ports in green monospace (folded, its label shows the ports); a running one
   opens its pane on click (right-click: pane menu, ✕ on hover), a stopped one has ▶ on hover.

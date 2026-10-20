@@ -26,6 +26,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Kept:** restart the app and the daemon → same order; Pin then Unpin a moved workspace →
   it returns to its dragged place. Typing in the filter turns workspace dragging off.
 
+### To verify — 2026-10-20 One sidebar highlight (ADR 0068)
+
+- [ ] **Dark + light, full sidebar and compact rail:** focus a session → only its row is
+  filled/ringed, the workspace header above is plain. Collapse that workspace, or open its Files
+  view with no session focused → the header gets the fill.
+
 ### To verify — 2026-10-19 Mkrew web: no blur at the top on iPhone (ADR 0052)
 
 - [ ] Restart `mk web` (it embeds `app.css`). In the Home Screen app and in a Safari tab, the
