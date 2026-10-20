@@ -2,14 +2,15 @@
 @font-face{font-family:"Symbols Nerd Font Mono";src:url(vendor/SymbolsNerdFontMono-Regular.woff2) format("woff2");font-display:block;unicode-range:U+23FB-23FE,U+2665,U+26A1,U+2B58,U+E000-F8FF,U+F0000-FFFFD}
 :root{--bg:#17181C;--surface:#1F2127;--surface-raised:#2C2E37;--hover:#22242B;--selected:#262938;--border:#2A2C33;--divider:#24262D;--text:#E6E7EB;--text-dim:#B4B7C0;--text-muted:#9A9CA6;--subtle:#5D616C;--accent:#7C8CFF;--accent-text:#9A9FFF;--accent-bg:#25264A;--on-accent:#17181C;--warning-bg:#3A3020;--success-bg:#1D3A31;--danger-bg:#3A2327;--s-working:#7C8CFF;--s-needs:#E3A63E;--s-done:#4CB782;--s-exited:#E5676B;--s-idle:#6E7079;--scrim:rgba(0,0,0,.55);--ws-red:#F87171;--ws-orange:#FB923C;--ws-yellow:#FACC15;--ws-lime:#A3E635;--ws-green:#4ADE80;--ws-teal:#2DD4BF;--ws-blue:#60A5FA;--ws-purple:#C084FC;--ws-pink:#F472B6;--mono:"SF Mono",Menlo,"Cascadia Mono",Consolas,monospace;color-scheme:dark}
 @media (prefers-color-scheme:light){:root{--bg:#FFFFFF;--surface:#F6F7F9;--surface-raised:#EEF0F3;--hover:#EEF0F3;--selected:#E9EAFF;--border:#E3E5EA;--divider:#ECEEF1;--text:#1B1D22;--text-dim:#474B55;--text-muted:#5F6473;--subtle:#A0A4AF;--accent:#4F5BD5;--accent-text:#4A52D9;--accent-bg:#ECEEFF;--on-accent:#FFFFFF;--warning-bg:#FDF3E1;--success-bg:#E1F5EC;--danger-bg:#FDECEC;--s-working:#4F5BD5;--s-needs:#B7791F;--s-done:#2F855A;--s-exited:#C53030;--s-idle:#9A9CA6;--scrim:rgba(17,18,22,.32);--ws-red:#DC2626;--ws-orange:#D9560B;--ws-yellow:#A16207;--ws-lime:#4D7C0F;--ws-green:#15803D;--ws-teal:#0F766E;--ws-blue:#2563EB;--ws-purple:#9333EA;--ws-pink:#DB2777;color-scheme:light}}
-/* Home-screen app draws under the status bar, but some iPhones report the inset as 0: keep a notch/Dynamic Island clear. */
+/* Home-screen app draws under the status bar, but some iPhones report the inset as 0: keep a notch/Dynamic Island clear.
+   iOS 27 also blurs ~20px below the status bar there, which no CSS removes, and reports display-mode:standalone as
+   false (only navigator.standalone is true; app.mjs adds .standalone): keep text below the blur (WebKit bug 325807). */
 :root{--top:env(safe-area-inset-top)}
 @media (display-mode:standalone){:root{--top:max(env(safe-area-inset-top),60px)}}
+:root.standalone{--top:calc(max(env(safe-area-inset-top),60px) + 24px)}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--bg)}
 body{overscroll-behavior:none}
-/* iOS 27 blurs the top of the page (far below the status bar in the Home Screen app); a solid fixed strip at the very top replaces the blur with this color. */
-body::before{content:"";position:fixed;top:0;left:0;right:0;z-index:5;height:max(var(--top),6px);background:var(--bg)}
 [hidden]{display:none!important}
 button{font:inherit;color:inherit;cursor:pointer}
 button:disabled{cursor:not-allowed;opacity:.5}

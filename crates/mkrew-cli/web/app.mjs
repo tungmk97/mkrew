@@ -8,6 +8,8 @@ import {
 } from './model.mjs';
 
 const $ = (id) => document.getElementById(id);
+// iOS 27 Home Screen app: `display-mode: standalone` is false there, so app.css keys the notch/blur gap off this class.
+if (navigator.standalone === true) document.documentElement.classList.add('standalone');
 const TOKEN_KEY = 'mkrew.token';
 const VIEW_KEY = 'mkrew.view';
 /** Session views, in the order the view button cycles them. */
