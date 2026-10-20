@@ -42,12 +42,15 @@ pub struct FeatureSettings {
     pub turns: bool,
 }
 
-/// `[web]` (ADR 0053): the daemon runs `mk web` while `enabled` is true. The Phone access
-/// dialog writes it; the port is fixed (`mkrew_core::tailscale::WEB_PORT`).
+/// `[web]` (ADR 0053, ADR 0067): the daemon runs `mk web` while `enabled` is true; `mk web`
+/// sends phone notifications while `push` is true. The Phone access dialog writes both; the
+/// port is fixed (`mkrew_core::tailscale::WEB_PORT`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebSettings {
     pub enabled: bool,
+    /// Notifications to subscribed phones through their browser's push service (ADR 0067).
+    pub push: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -59,6 +62,9 @@ pub struct NotifySettings {
     pub done: bool,
     /// The notification plays the OS default sound.
     pub sound: bool,
+    /// Windows: the taskbar button flashes while a session needs input and the window is not
+    /// focused (SPEC §20J). The daemon ignores it; the UI reads it.
+    pub flash_taskbar: bool,
 }
 
 impl Default for NotifySettings {
@@ -67,6 +73,7 @@ impl Default for NotifySettings {
             needs_input: true,
             done: true,
             sound: true,
+            flash_taskbar: true,
         }
     }
 }
@@ -274,6 +281,9 @@ pub struct UiSettings {
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
+    /// `[ui] close_to_tray` (SPEC §20J): the window's ✕ hides it to the tray icon instead of
+    /// quitting the UI (Windows, while the tray icon exists). The agents run in the daemon either way.
+    pub close_to_tray: bool,
 }
 
 impl Default for UiSettings {
@@ -288,6 +298,7 @@ impl Default for UiSettings {
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
             sidebar_width: SIDEBAR_WIDTH_DEFAULT,
             reading_width: true,
+            close_to_tray: true,
         }
     }
 }
@@ -370,6 +381,12 @@ pub fn write_web_enabled(path: &Path, enabled: bool) -> Result<(), SettingsError
     write_value(path, "web", "enabled", &enabled.to_string())
 }
 
+/// Saves `[web] push` (the Phone access dialog's notifications switch); see [`write_value`].
+/// `mk web` reads it on every request and event, so no restart is needed.
+pub fn write_web_push(path: &Path, enabled: bool) -> Result<(), SettingsError> {
+    write_value(path, "web", "push", &enabled.to_string())
+}
+
 /// A font size in px, 8–32 (checked when parsed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "u16")]
@@ -397,6 +414,7 @@ pub fn template() -> &'static str {
      # needs_input = true\n\
      # done = true\n\
      # sound = true\n\
+     # flash_taskbar = true\n\
      \n\
      [awake]\n\
      # keep_awake = true\n\
@@ -413,6 +431,7 @@ pub fn template() -> &'static str {
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
+     # Close to tray (Windows): the window's ✕ hides it to the tray icon; false quits the UI.\n\
      [ui]\n\
      # font_family = \"\"\n\
      # font_size = 13\n\
@@ -422,6 +441,7 @@ pub fn template() -> &'static str {
      # inspector_width = 300\n\
      # sidebar_width = 280\n\
      # reading_width = true\n\
+     # close_to_tray = true\n\
      \n\
      # Terminal, Files and Git code font: pick a monospace family (empty: Cascadia Code /\n\
      # SF Mono / JetBrains Mono, the first installed); size 8–32 px.\n\
@@ -451,8 +471,12 @@ pub fn template() -> &'static str {
      \n\
      # Phone access (ADR 0053): while enabled is true the daemon runs `mk web`, so a phone on your\n\
      # tailnet can reach Mkrew. The phone icon in the title bar writes it; the port is fixed (8787).\n\
+     # Phone notifications (ADR 0067): when push is true, `mk web` notifies phones that opted in when an\n\
+     # agent needs you or finishes. The message is encrypted for the phone and goes through its\n\
+     # browser's push service (Apple, Google, Mozilla or Microsoft). [notify] needs_input / done apply.\n\
      [web]\n\
      # enabled = false\n\
+     # push = false\n\
      \n\
      # Jira issues on the Board (Tasks | Jira): the Jira Cloud site to read from. The API token\n\
      # comes from the environment variable named by api_token_env, never from this file.\n\
@@ -584,6 +608,7 @@ mod tests {
 needs_input = false
 done = false
 sound = false
+flash_taskbar = false
 
 [awake]
 keep_awake = false
@@ -597,6 +622,7 @@ follow_debounce_ms = 500
 [ui]
 font_family = "Inter"
 font_size = 14
+close_to_tray = false
 
 [terminal]
 font_family = "JetBrains Mono"
@@ -607,6 +633,7 @@ docs = true
 
 [web]
 enabled = true
+push = true
 "#;
         let settings = parse(Path::new("settings.toml"), src).unwrap();
         assert_eq!(
@@ -616,6 +643,7 @@ enabled = true
                     needs_input: false,
                     done: false,
                     sound: false,
+                    flash_taskbar: false,
                 },
                 awake: AwakeSettings { keep_awake: false },
                 composer: ComposerSettings {
@@ -633,6 +661,7 @@ enabled = true
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                     sidebar_width: SIDEBAR_WIDTH_DEFAULT,
                     reading_width: true,
+                    close_to_tray: false,
                 },
                 terminal: FontSettings {
                     font_family: "JetBrains Mono".into(),
@@ -643,7 +672,10 @@ enabled = true
                     docs: true,
                     turns: false,
                 },
-                web: WebSettings { enabled: true },
+                web: WebSettings {
+                    enabled: true,
+                    push: true,
+                },
                 jira: JiraSettings::default(),
             }
         );
@@ -807,6 +839,22 @@ enabled = true
         assert!(ui("").diff_wrap);
         assert!(!ui("[ui]\ndiff_wrap = false").diff_wrap);
         assert!(parse_err("[ui]\ndiff_wrap = \"no\"").contains("invalid type"));
+    }
+
+    #[test]
+    fn flash_taskbar_and_close_to_tray_default_on_and_parse() {
+        let settings = |src: &str| parse(Path::new("s.toml"), src).unwrap();
+        assert!(settings("").notify.flash_taskbar);
+        assert!(settings("").ui.close_to_tray);
+        let off = settings("[notify]\nflash_taskbar = false\n");
+        assert!(!off.notify.flash_taskbar);
+        assert!(
+            off.ui.close_to_tray,
+            "another section's key does not change it"
+        );
+        assert!(!settings("[ui]\nclose_to_tray = false\n").ui.close_to_tray);
+        assert!(parse_err("[notify]\nflash_taskbar = 1\n").contains("invalid type"));
+        assert!(parse_err("[ui]\nclose_to_tra = false\n").contains("unknown field `close_to_tra`"));
     }
 
     #[test]
@@ -983,9 +1031,31 @@ enabled = true
         assert!(!web("").enabled);
         assert!(!web("[web]").enabled);
         assert!(web("[web]\nenabled = true").enabled);
+        // Phone notifications (ADR 0067) are off until the user turns them on.
+        assert!(!web("").push);
+        assert!(!web("[web]\nenabled = true").push);
+        assert!(web("[web]\npush = true").push);
+        assert!(parse_err("[web]\npush = \"yes\"").contains("invalid type"));
         assert!(parse_err("[web]\nenabled = \"yes\"").contains("invalid type"));
         // The port is fixed at 8787 (ADR 0053), so it is not a setting.
         assert!(parse_err("[web]\nport = 8787").contains("unknown field `port`"));
+    }
+
+    #[test]
+    fn write_web_push_keeps_enabled_and_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, "[web]\nenabled = true\n\n[features]\ndocs = true\n").unwrap();
+        write_web_push(&path, true).unwrap();
+        let settings = load(&path).unwrap();
+        assert!(settings.web.enabled && settings.web.push && settings.features.docs);
+        write_web_push(&path, false).unwrap();
+        let settings = load(&path).unwrap();
+        assert!(settings.web.enabled && !settings.web.push);
+        // No file: the commented template plus the switch.
+        let fresh = dir.path().join("fresh.toml");
+        write_web_push(&fresh, true).unwrap();
+        assert!(load(&fresh).unwrap().web.push);
     }
 
     #[test]

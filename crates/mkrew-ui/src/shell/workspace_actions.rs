@@ -325,6 +325,7 @@ impl Shell {
         self.file_menu = None;
         if let Some(full) = self.target_file(project_id, target, path) {
             cx.write_to_clipboard(ClipboardItem::new_string(full.display().to_string()));
+            self.toast_info("Path copied", cx);
         }
         cx.notify();
     }
@@ -393,8 +394,8 @@ impl Shell {
     }
 
     /// Cycles System → Light → Dark (ADR 0027) and saves it as `[ui] theme`. A settings file
-    /// that does not parse is not written; the mode still changes for this session and the
-    /// palette lists why (§20.0).
+    /// that does not parse is not written; the mode still changes for this session, the
+    /// palette lists why (§20.0) and a toast says it was not saved.
     pub(crate) fn toggle_theme(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let mode = theme::next_mode(cx.theme().mode);
         theme::refresh(mode, window, cx);
@@ -403,7 +404,7 @@ impl Shell {
         if let Err(error) =
             mkrew_core::settings::write_ui_value(&self.settings_file, "theme", &value)
         {
-            self.settings_error = Some(error.to_string());
+            self.settings_write_failed("the theme", error, cx);
         }
     }
 
@@ -426,7 +427,8 @@ impl Shell {
     }
 
     /// Switches the Git diff viewer to `mode` and saves `[ui] diff_mode`. A settings file that
-    /// does not parse keeps the choice for this run; the palette says why (§20.0).
+    /// does not parse keeps the choice for this run; the palette says why (§20.0) and a toast says it
+    /// was not saved.
     pub(crate) fn set_diff_mode(&mut self, mode: DiffMode, cx: &mut Context<'_, Self>) {
         if !self.apply_diff_mode(mode) {
             return;
@@ -436,7 +438,7 @@ impl Shell {
             "diff_mode",
             &format!("\"{}\"", mode.name()),
         ) {
-            self.settings_error = Some(error.to_string());
+            self.settings_write_failed("the diff layout", error, cx);
         }
         cx.notify();
     }
@@ -452,7 +454,7 @@ impl Shell {
             "diff_wrap",
             &wrap.to_string(),
         ) {
-            self.settings_error = Some(error.to_string());
+            self.settings_write_failed("the diff wrapping", error, cx);
         }
         cx.notify();
     }

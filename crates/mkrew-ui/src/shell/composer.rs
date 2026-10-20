@@ -72,7 +72,7 @@ impl Shell {
     }
 
     /// An image pasted into the composer (§20B.5): saved through `attachment.save` (a BMP as
-    /// PNG), then its path goes into the draft. A failure only logs, like a pane's paste.
+    /// PNG), then its path goes into the draft. A failure is a toast, like a pane's paste.
     pub(crate) fn composer_paste_image(
         &mut self,
         session: Ulid,
@@ -89,6 +89,10 @@ impl Shell {
         }) else {
             return;
         };
+        if let Some(message) = composer::attachment_refusal(data.len()) {
+            self.toast_error(message, cx);
+            return;
+        }
         let saved = connection.call::<mkrew_protocol::AttachmentSaveResult>(
             Request::AttachmentSave(mkrew_protocol::AttachmentSaveParams {
                 session_id: session,
@@ -105,7 +109,12 @@ impl Shell {
                     cx.notify();
                 });
             }
-            Err(error) => tracing::warn!(%session, "attachment.save failed: {error:#}"),
+            Err(error) => {
+                tracing::warn!(%session, "attachment.save failed: {error:#}");
+                let _ = this.update(cx, |shell, cx| {
+                    shell.toast_error(format!("Cannot attach the image: {error:#}"), cx);
+                });
+            }
         })
         .detach();
     }
@@ -386,12 +395,21 @@ impl Shell {
             session_id: session,
             send_id,
         }));
-        cx.spawn(async move |_, _| match removed.await {
-            Ok(Outcome::Result(_)) => {}
-            Ok(Outcome::Error(body)) => {
-                tracing::warn!(%session, "session.unqueue failed: {}", body.message);
+        cx.spawn(async move |this, cx| {
+            let failure = match removed.await {
+                Ok(Outcome::Result(_)) => return,
+                Ok(Outcome::Error(body)) => {
+                    tracing::warn!(%session, "session.unqueue failed: {}", body.message);
+                    composer::unqueue_failure(&body)
+                }
+                Err(error) => {
+                    tracing::warn!(%session, "session.unqueue failed: {error:#}");
+                    Some(format!("Cannot remove the queued text: {error:#}"))
+                }
+            };
+            if let Some(message) = failure {
+                let _ = this.update(cx, |shell, cx| shell.toast_error(message, cx));
             }
-            Err(error) => tracing::warn!(%session, "session.unqueue failed: {error:#}"),
         })
         .detach();
     }

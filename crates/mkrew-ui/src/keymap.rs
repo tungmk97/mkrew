@@ -108,6 +108,8 @@ pub enum Command {
     GitFocusCommit,
     /// Git only: switch the diff viewer between Unified and Split.
     GitToggleDiffMode,
+    /// Git only: mark the selected file as viewed, or clear the mark (SPEC §12B, ADR 0065).
+    GitToggleViewed,
     /// Fuzzy-find a file of the active workspace and open it in the Files view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
@@ -233,6 +235,7 @@ impl Command {
             Command::GitUnstage,
             Command::GitFocusCommit,
             Command::GitToggleDiffMode,
+            Command::GitToggleViewed,
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
@@ -310,6 +313,7 @@ impl Command {
             Command::GitUnstage => "git_unstage".into(),
             Command::GitFocusCommit => "git_focus_commit".into(),
             Command::GitToggleDiffMode => "git_toggle_diff_mode".into(),
+            Command::GitToggleViewed => "git_toggle_viewed".into(),
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
@@ -399,6 +403,7 @@ impl Command {
             Command::GitUnstage => "u".into(),
             Command::GitFocusCommit => "c".into(),
             Command::GitToggleDiffMode => "d".into(),
+            Command::GitToggleViewed => "v".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
@@ -435,6 +440,7 @@ impl Command {
             | Command::GitStage
             | Command::GitUnstage
             | Command::GitToggleDiffMode
+            | Command::GitToggleViewed
             | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
@@ -860,6 +866,7 @@ mod tests {
             ("u", Command::GitUnstage),
             ("c", Command::GitFocusCommit),
             ("d", Command::GitToggleDiffMode),
+            ("v", Command::GitToggleViewed),
         ] {
             assert_eq!(bound(keys), Some(command), "{keys}");
             assert_eq!(command.context(), Some(GIT_CONTEXT), "{command:?}");

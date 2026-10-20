@@ -153,6 +153,8 @@ impl Shell {
                             (open, shell.doc_dialog.as_mut())
                         {
                             dialog.failed(format!("Cannot send: {error:#}"));
+                        } else {
+                            shell.toast_error(format!("Cannot send the comments: {error:#}"), cx);
                         }
                     }
                 }

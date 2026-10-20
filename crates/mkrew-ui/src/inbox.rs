@@ -1,7 +1,7 @@
 //! The "needs you" set (SPEC §10, §11): every session that needs input, or finished (done, or
-//! an agent that went quiet after working) and not yet viewed, newest first. It feeds the
-//! sidebar's `Needs you` chip, its bold rows, its footer and "next Inbox entry". Pure and
-//! tested headlessly.
+//! an agent that went quiet after working, or one marked unread) and not yet viewed, newest
+//! first. It feeds the sidebar's `Needs you` chip, its bold rows, its footer and "next
+//! Inbox entry". Pure and tested headlessly.
 
 use std::collections::HashMap;
 
@@ -26,6 +26,7 @@ pub struct Entry {
 
 /// Which finishes the user has seen: a finished session leaves the Inbox once its pane was
 /// focused in the active window; a later finish (new `state_changed_at`) shows it again.
+/// "Mark unread" (ADR 0064) puts one back until it is looked at again. UI memory only.
 #[derive(Debug, Default)]
 pub struct Viewed {
     /// Session → `state_changed_at` of the state it was last viewed in.
@@ -33,12 +34,34 @@ pub struct Viewed {
     /// Agent session → `state_changed_at` of its `working → idle`: an agent without a `done`
     /// hook (or whose `done` decayed through new output) finishes this way.
     quiet: HashMap<Ulid, i64>,
+    /// Session → `state_changed_at` of the state it was marked unread in; a state change
+    /// lapses it, like `seen`.
+    unread: HashMap<Ulid, i64>,
+    /// The (session, `state_changed_at`) [`Viewed::view`] saw last. Looking at the same state
+    /// again changes nothing, so a pane marked unread while it has the keyboard stays unread.
+    last: Option<(Ulid, i64)>,
 }
 
 impl Viewed {
-    /// `session` is on screen and focused.
-    pub fn view(&mut self, session: &Session) {
-        self.seen.insert(session.id, session.state_changed_at);
+    /// `session` is on screen and focused. `true` if that changed what needs the user.
+    pub fn view(&mut self, session: &Session) -> bool {
+        let state = (session.id, session.state_changed_at);
+        if self.last.replace(state) == Some(state) {
+            return false;
+        }
+        let seen = self.seen.insert(session.id, session.state_changed_at);
+        let marked = self.unread.remove(&session.id).is_some();
+        seen != Some(session.state_changed_at) || marked
+    }
+
+    /// The window was activated: the focused pane is looked at again, even one marked unread.
+    pub fn activated(&mut self) {
+        self.last = None;
+    }
+
+    /// "Mark unread": `session` needs the user again until it is viewed (see [`can_mark_unread`]).
+    pub fn mark_unread(&mut self, session: &Session) {
+        self.unread.insert(session.id, session.state_changed_at);
     }
 
     /// Notes an agent going quiet after work. Call before the sidebar applies `event`, so
@@ -60,12 +83,21 @@ impl Viewed {
     fn seen(&self, session: &Session) -> bool {
         self.seen.get(&session.id) == Some(&session.state_changed_at)
     }
+
+    fn marked(&self, session: &Session) -> bool {
+        self.unread.get(&session.id) == Some(&session.state_changed_at)
+    }
 }
 
-/// A session that needs the user: it asks for input, or it finished (done, or idle right after
-/// working) and its pane was not focused since (a later finish shows again). The one definition
-/// behind the Inbox entries, the sidebar chip, its bold rows and the sidebar footer.
+/// A session that needs the user: it asks for input, it finished (done, or idle right after
+/// working) and its pane was not focused since (a later finish shows again), or it was marked
+/// unread and not viewed since. The one definition behind the Inbox entries, the sidebar chip,
+/// its bold rows and the sidebar footer, the taskbar badge and the tray.
 pub fn needs_you(session: &Session, viewed: &Viewed) -> bool {
+    // An exit changes the state but not `state_changed_at`: an exited session never counts.
+    if session.state != SessionState::Exited && viewed.marked(session) {
+        return true;
+    }
     match session.state {
         SessionState::NeedsInput => true,
         SessionState::Done => !viewed.seen(session),
@@ -75,6 +107,13 @@ pub fn needs_you(session: &Session, viewed: &Viewed) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether "Mark unread" applies: a finished agent (done or idle) that is not already in Needs you.
+pub fn can_mark_unread(session: &Session, viewed: &Viewed) -> bool {
+    session.kind == SessionKind::Agent
+        && matches!(session.state, SessionState::Done | SessionState::Idle)
+        && !needs_you(session, viewed)
 }
 
 /// The Inbox, newest state change first. Sessions of unknown (e.g. archived) workspaces are
@@ -395,5 +434,91 @@ mod tests {
         assert_eq!(label(0), "Inbox clear");
         assert_eq!(label(1), "1 needs you");
         assert_eq!(label(3), "3 need you");
+    }
+
+    #[test]
+    fn mark_unread_puts_a_viewed_done_back_until_it_is_viewed_again() {
+        let api = project("api");
+        let done = session(&api, SessionState::Done, 5);
+        let other = session(&api, SessionState::Working, 1);
+        let projects = [api];
+        let mut viewed = Viewed::default();
+        assert!(viewed.view(&done));
+        assert!(entries(&projects, std::slice::from_ref(&done), &viewed).is_empty());
+        assert!(can_mark_unread(&done, &viewed));
+
+        viewed.mark_unread(&done);
+        assert_eq!(
+            entries(&projects, std::slice::from_ref(&done), &viewed).len(),
+            1
+        );
+        assert!(!can_mark_unread(&done, &viewed), "it already needs you");
+
+        // The pane keeps the keyboard: looking again changes nothing, so the mark stays.
+        assert!(!viewed.view(&done));
+        assert_eq!(
+            entries(&projects, std::slice::from_ref(&done), &viewed).len(),
+            1
+        );
+
+        // Another pane, then back: viewed again.
+        viewed.view(&other);
+        assert!(viewed.view(&done));
+        assert!(entries(&projects, &[done], &viewed).is_empty());
+    }
+
+    #[test]
+    fn activating_the_window_looks_at_the_focused_pane_again() {
+        let api = project("api");
+        let done = session(&api, SessionState::Done, 5);
+        let mut viewed = Viewed::default();
+        viewed.view(&done);
+        viewed.mark_unread(&done);
+        assert!(needs_you(&done, &viewed));
+        viewed.activated();
+        assert!(viewed.view(&done), "the mark was dropped");
+        assert!(!needs_you(&done, &viewed));
+    }
+
+    #[test]
+    fn a_mark_lapses_with_the_state_and_never_lists_an_exited_session() {
+        let api = project("api");
+        let mut idle = session(&api, SessionState::Idle, 5);
+        let mut viewed = Viewed::default();
+        assert!(
+            !needs_you(&idle, &viewed),
+            "idle without work is not Needs you"
+        );
+        assert!(can_mark_unread(&idle, &viewed));
+        viewed.mark_unread(&idle);
+        assert!(needs_you(&idle, &viewed));
+
+        // `session.exited` changes the state but not `state_changed_at`.
+        idle.state = SessionState::Exited;
+        assert!(!needs_you(&idle, &viewed));
+
+        // Working again (a new state): the mark lapses.
+        idle.state = SessionState::Working;
+        idle.state_changed_at = 6;
+        assert!(!needs_you(&idle, &viewed));
+    }
+
+    #[test]
+    fn only_finished_agents_can_be_marked_unread() {
+        let api = project("api");
+        let viewed = Viewed::default();
+        let can = |state| can_mark_unread(&session(&api, state, 1), &viewed);
+        assert!(can(SessionState::Idle));
+        assert!(!can(SessionState::Working));
+        assert!(!can(SessionState::NeedsInput), "already needs you");
+        assert!(!can(SessionState::Starting));
+        assert!(!can(SessionState::Exited));
+        // Done and not viewed already needs you; a terminal never does.
+        assert!(!can(SessionState::Done));
+        let shell = Session {
+            kind: SessionKind::Shell,
+            ..session(&api, SessionState::Idle, 1)
+        };
+        assert!(!can_mark_unread(&shell, &viewed));
     }
 }

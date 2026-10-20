@@ -14,9 +14,9 @@ use gpui::Keystroke;
 use mkrew_core::settings::DiffMode;
 use mkrew_protocol::{
     ChangeKind, ChangedFile, CommentContext, Commit, CommitDetail, DiffLine, DiffLineKind, Event,
-    FileDiff, GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitShowParams,
-    GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request, Session, SessionFiles,
-    SessionFilesParams, SessionState,
+    FileDiff, GitDiffParams, GitDiscardParams, GitLogParams, GitMode, GitSetViewedParams,
+    GitShowParams, GitStageParams, GitStatus, GitStatusParams, HunkTarget, Request, Session,
+    SessionFiles, SessionFilesParams, SessionState, ViewedFile,
 };
 use ulid::Ulid;
 
@@ -24,6 +24,7 @@ use crate::comments::{self, Comments, Selection};
 use crate::git_actions::{CommitBox, Remotes};
 use crate::git_graph::{self, GraphCell, GraphRow};
 use crate::git_history::{Detail, History};
+use crate::git_viewed::ViewedSet;
 use crate::highlight::{self, Spans};
 use crate::text_box::Input;
 
@@ -594,6 +595,13 @@ pub struct GitView {
     /// Working groups folded in the list: their header stays (with its count), their files
     /// are not listed and ↑ ↓ skip them.
     pub collapsed: HashSet<Group>,
+    /// The files marked as viewed (SPEC §12B, ADR 0065): the daemon's last answer, plus the
+    /// user's toggles since. Shared with the list's render closure.
+    pub viewed: Rc<ViewedSet>,
+    /// The viewed file whose collapsed diff "Show diff" opened.
+    unfolded: Option<Target>,
+    /// Serial of the last `git.viewed` asked for or toggle made: an older answer is dropped.
+    viewed_asked: u64,
     /// The diff `comments.selection` was picked on.
     commented: Option<Target>,
     /// A stage / unstage is in flight (another is not sent meanwhile).
@@ -635,6 +643,9 @@ impl GitView {
             comments: Comments::new(CommentContext::Diff),
             filter: Input::default(),
             collapsed: HashSet::new(),
+            viewed: Rc::new(ViewedSet::default()),
+            unfolded: None,
+            viewed_asked: 0,
             commented: None,
             staging: false,
             started: false,
@@ -930,6 +941,9 @@ impl GitView {
         // Back to the same changes: the kept status lists at once; its refresh selects a file.
         if listed != self.listed() {
             self.status = Status::Loading;
+            // Another list has its own marks; the answer for it is asked after its status.
+            self.viewed = Rc::new(ViewedSet::default());
+            self.viewed_asked += 1;
         }
         self.refresh_error = None;
         Requests {
@@ -957,6 +971,13 @@ impl GitView {
                 })
                 .collect();
         }
+        self.status_files(true)
+    }
+
+    /// The changed files of the loaded status in list order. `narrowed`: only those that pass
+    /// "Changed by" and the "Filter files" text (what the list shows); else every file of the
+    /// section (what `Viewed N/M` counts).
+    fn status_files(&self, narrowed: bool) -> Vec<(Target, ChangedFile)> {
         let Status::Loaded(status) = &self.status else {
             return vec![];
         };
@@ -965,8 +986,8 @@ impl GitView {
         let group = |group: Group, files: &[ChangedFile]| {
             files
                 .iter()
-                .filter(|file| kept.is_none_or(|kept| kept.contains(&file.path)))
-                .filter(|file| self.matches(&file.path))
+                .filter(|file| !narrowed || kept.is_none_or(|kept| kept.contains(&file.path)))
+                .filter(|file| !narrowed || self.matches(&file.path))
                 .map(|file| {
                     let target = Target {
                         group,
@@ -1183,6 +1204,7 @@ impl GitView {
         self.selected = Some(target.clone());
         self.diff = Diff::Loading;
         self.hunk = None;
+        self.unfolded = None;
         self.zed_error = None;
         self.stage_error = None;
         Some(target)
@@ -1351,6 +1373,9 @@ impl GitView {
         let Diff::Shown(shown) = &self.diff else {
             return;
         };
+        if self.diff_collapsed() {
+            return;
+        }
         let count = shown.diff.hunks.len();
         if count == 0 {
             return;
@@ -1487,7 +1512,9 @@ impl GitView {
         if self.staging || Stage::of(selected.group) != Some(stage) {
             return None;
         }
+        // A collapsed diff hides its hunks: `s` / `u` take the whole file then.
         self.hunk
+            .filter(|_| !self.diff_collapsed())
             .and_then(|hunk| self.hunk_change(hunk))
             .or_else(|| self.file_change(selected))
     }
@@ -1512,6 +1539,86 @@ impl GitView {
                 Requests::default()
             }
         }
+    }
+
+    /// Whether the shown list can ask which files are viewed: loaded changes, not the
+    /// History (a commit's files are never marked).
+    pub fn wants_viewed(&self) -> bool {
+        self.history.is_none() && matches!(self.status, Status::Loaded(_))
+    }
+
+    /// A `git.viewed` is about to be sent: the params of the shown `git.status`, and its serial
+    /// (given back with the answer).
+    pub fn begin_viewed(&mut self) -> (GitStatusParams, u64) {
+        self.viewed_asked += 1;
+        let (mode, since) = self.listed();
+        let params = GitStatusParams {
+            project_id: self.project_id,
+            worktree_task_id: self.worktree_task_id,
+            repo: self.repo.clone(),
+            mode,
+            since,
+        };
+        (params, self.viewed_asked)
+    }
+
+    /// The `git.viewed` answer: kept unless a newer ask or a toggle came meanwhile, or other
+    /// changes (`asked` = mode and checkpoint) are listed now. A failed ask keeps the last
+    /// set (the shell never calls this for it).
+    pub fn viewed_loaded(
+        &mut self,
+        serial: u64,
+        asked: (GitMode, Option<String>),
+        files: Vec<ViewedFile>,
+    ) {
+        if serial != self.viewed_asked || asked != self.listed() {
+            return;
+        }
+        self.viewed = Rc::new(ViewedSet::new(files));
+    }
+
+    /// Marks `target` viewed, or clears the mark: shown at once; returns the `git.set_viewed`
+    /// to send. `None` for a History file.
+    pub fn toggle_viewed(&mut self, target: &Target) -> Option<GitSetViewedParams> {
+        if target.group == Group::Commit || self.history.is_some() {
+            return None;
+        }
+        let viewed = !self.viewed.contains(target.group, &target.path);
+        Rc::make_mut(&mut self.viewed).set(target.group, &target.path, viewed);
+        // An answer to an older `git.viewed` no longer holds.
+        self.viewed_asked += 1;
+        self.unfolded = None;
+        // The hunk belongs to the diff that is about to collapse.
+        if viewed && self.selected.as_ref() == Some(target) {
+            self.hunk = None;
+        }
+        Some(GitSetViewedParams {
+            diff: target.params(self.project_id, self.worktree_task_id, self.repo.clone()),
+            viewed,
+        })
+    }
+
+    /// The selected file is viewed and its diff is shown collapsed ("Show diff" opens it).
+    pub fn diff_collapsed(&self) -> bool {
+        self.selected.as_ref().is_some_and(|selected| {
+            self.viewed.contains(selected.group, &selected.path)
+                && self.unfolded.as_ref() != Some(selected)
+        })
+    }
+
+    /// "Show diff": opens the selected viewed file's diff (until another file is selected).
+    pub fn unfold(&mut self) {
+        self.unfolded = self.selected.clone();
+    }
+
+    /// `(viewed, listed)` for the header's `Viewed N/M`: every file of the shown list, whatever
+    /// "Changed by" and the file filter hide; `None` in the History or with nothing listed.
+    pub fn viewed_counter(&self) -> Option<(usize, usize)> {
+        if !self.wants_viewed() {
+            return None;
+        }
+        let (viewed, listed) = self.viewed.count(&self.status_files(false));
+        (listed > 0).then_some((viewed, listed))
     }
 
     /// The discard confirmation of the listed Unstaged / Untracked file `target`.

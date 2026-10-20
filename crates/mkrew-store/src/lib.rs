@@ -36,6 +36,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0019_session_position.sql"),
     include_str!("../migrations/0020_run_exit_after.sql"),
     include_str!("../migrations/0021_project_jira_keys.sql"),
+    include_str!("../migrations/0022_viewed_files.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
@@ -93,6 +94,18 @@ pub struct ProjectChanges<'a> {
     pub pinned: Option<bool>,
     /// Replaces the Jira project keys; `Some(&[])` clears them.
     pub jira_keys: Option<&'a [String]>,
+}
+
+/// Whose viewed marks (ADR 0065): one repository's list of a project folder or of a task's
+/// worktree.
+#[derive(Debug, Clone, Copy)]
+pub struct ViewedScope<'a> {
+    pub project_id: Ulid,
+    pub worktree_task_id: Option<Ulid>,
+    /// `""` = the workspace folder's own repository.
+    pub repo: &'a str,
+    /// `working`, `base` or `since:<checkpoint>` (`mkrew_core::viewed::list_key`).
+    pub list: &'a str,
 }
 
 pub struct Store {
@@ -732,6 +745,10 @@ impl Store {
             "UPDATE task SET fanout_of = NULL WHERE fanout_of = ?1",
             [id.to_string()],
         )?;
+        tx.execute(
+            "DELETE FROM viewed_file WHERE worktree_task_id = ?1",
+            [id.to_string()],
+        )?;
         tx.execute("DELETE FROM task WHERE id = ?1", [id.to_string()])?;
         tx.commit()?;
         Ok(task)
@@ -1083,6 +1100,78 @@ impl Store {
         self.conn.execute(
             "UPDATE turn SET start_tree = NULL, end_tree = NULL WHERE session_id = ?1",
             [session_id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    // ponytail: marks of old `since:` lists are never pruned; the retention pass is the upgrade path.
+    /// The viewed marks of `scope` as `(path, hash)`, in path order (ADR 0065).
+    pub fn viewed_marks(&self, scope: &ViewedScope<'_>) -> Result<Vec<(String, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path, hash FROM viewed_file
+             WHERE project_id = ?1 AND worktree_task_id = ?2 AND repo = ?3 AND list = ?4
+             ORDER BY path, hash",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                scope.project_id.to_string(),
+                scope
+                    .worktree_task_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+                scope.repo,
+                scope.list
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Marks `path` viewed with the diff `hash` it has now; marking the same text again just
+    /// refreshes the row.
+    pub fn add_viewed(&self, scope: &ViewedScope<'_>, path: &str, hash: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO viewed_file
+               (project_id, worktree_task_id, repo, list, path, hash, marked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                scope.project_id.to_string(),
+                scope
+                    .worktree_task_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+                scope.repo,
+                scope.list,
+                path,
+                hash,
+                now_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Clears the mark of `path` with `hash`, or (`None`) every mark of the path.
+    pub fn remove_viewed(
+        &self,
+        scope: &ViewedScope<'_>,
+        path: &str,
+        hash: Option<&str>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM viewed_file
+             WHERE project_id = ?1 AND worktree_task_id = ?2 AND repo = ?3 AND list = ?4
+               AND path = ?5 AND (?6 IS NULL OR hash = ?6)",
+            params![
+                scope.project_id.to_string(),
+                scope
+                    .worktree_task_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+                scope.repo,
+                scope.list,
+                path,
+                hash
+            ],
         )?;
         Ok(())
     }

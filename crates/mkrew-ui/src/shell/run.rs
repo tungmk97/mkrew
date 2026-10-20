@@ -250,6 +250,10 @@ impl Shell {
             let updated = updated.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 if shell.dialog_serial != serial || shell.run_setup.is_none() {
+                    // Closed while saving: a failure has no dialog left to show in.
+                    if let Err(error) = &updated {
+                        shell.toast_error(format!("Cannot save the run commands: {error:#}"), cx);
+                    }
                     return;
                 }
                 match updated {

@@ -29,7 +29,7 @@ impl Shell {
         self.workspace_switcher = false;
         if switched {
             self.close_menus();
-            self.end_inspector_drag();
+            self.end_inspector_drag(cx);
             // Nothing is kept for the workspace that is no longer shown.
             self.git_summary = None;
         }
@@ -242,8 +242,8 @@ impl Shell {
         self.activate_workspace(project_id, window, cx);
     }
 
-    /// An OS notification was clicked (§7): raises the window (restoring it if minimized) and
-    /// shows the session's pane, or at least its workspace if the session is not listed yet.
+    /// An OS notification was clicked (§7): raises the window (showing it again if it was hidden
+    /// to the tray, restoring it if minimized) and shows the session's pane, or at least its workspace if the session is not listed yet.
     pub(crate) fn notification_clicked(
         &mut self,
         session: Ulid,
@@ -251,7 +251,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        window.activate_window();
+        self.restore_window(window, cx);
         let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
         match inbox::jump(projects, sessions, session, project_id) {
             Some(Jump::Session(session)) => self.open_session(session, window, cx),
@@ -356,7 +356,7 @@ impl Shell {
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if view != View::Terminals {
             // The panel (and its grip) leaves with Terminals: end a drag in progress.
-            self.end_inspector_drag();
+            self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);

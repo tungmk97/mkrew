@@ -638,3 +638,200 @@ fn git_requests_reach_child_repositories_with_project_relative_paths() {
     }
     client.stop();
 }
+
+#[test]
+fn git_viewed_marks_follow_the_diff_and_clear_themselves() {
+    let env = Env::new();
+    let repo = env.repo();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "one"]);
+    std::fs::write(repo.join("a.txt"), "one\nTWO\n").unwrap();
+    std::fs::write(repo.join("new.txt"), "n\n").unwrap();
+    let (mut daemon, mut client) = env.start();
+    let id = client.add_project(&repo).id;
+    let diff = |path: &str, mode, since: Option<&str>| GitDiffParams {
+        project_id: id,
+        worktree_task_id: None,
+        repo: None,
+        path: path.into(),
+        mode,
+        staged: false,
+        commit: None,
+        since: since.map(str::to_owned),
+    };
+    let list = |mode, since: Option<&str>| {
+        Request::GitViewed(GitStatusParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: None,
+            mode,
+            since: since.map(str::to_owned),
+        })
+    };
+    let set = |params: GitDiffParams, viewed| {
+        Request::GitSetViewed(GitSetViewedParams {
+            diff: params,
+            viewed,
+        })
+    };
+    let file = |path: &str| ViewedFile {
+        path: path.into(),
+        staged: false,
+    };
+    let working = |client: &mut Client| -> Vec<ViewedFile> {
+        client
+            .call(list(GitMode::Working, None))
+            .into_result()
+            .unwrap()
+    };
+
+    assert_eq!(working(&mut client), []);
+    let _: () = client
+        .call(set(diff("a.txt", GitMode::Working, None), true))
+        .into_result()
+        .unwrap();
+    let _: () = client
+        .call(set(diff("new.txt", GitMode::Working, None), true))
+        .into_result()
+        .unwrap();
+    assert_eq!(working(&mut client), [file("a.txt"), file("new.txt")]);
+
+    // Marks survive a daemon restart; Against base is another list.
+    client.stop();
+    assert!(daemon.wait_exit().success());
+    let (_daemon, mut client) = env.start();
+    assert_eq!(working(&mut client), [file("a.txt"), file("new.txt")]);
+    let base: Vec<ViewedFile> = client
+        .call(list(GitMode::Base, None))
+        .into_result()
+        .unwrap();
+    assert_eq!(base, []);
+
+    // A mark in Against base does not disturb the Working one, and the other way round.
+    let _: () = client
+        .call(set(diff("a.txt", GitMode::Base, None), true))
+        .into_result()
+        .unwrap();
+    std::fs::write(repo.join("a.txt"), "one\nTWO\nthree\n").unwrap();
+    // Working: a.txt was edited, so its mark is gone (and deleted for good); new.txt stays.
+    assert_eq!(working(&mut client), [file("new.txt")]);
+    std::fs::write(repo.join("a.txt"), "one\nTWO\n").unwrap();
+    assert_eq!(working(&mut client), [file("new.txt")]);
+    // Never read while it was edited: the Base mark still matches the restored text.
+    let base: Vec<ViewedFile> = client
+        .call(list(GitMode::Base, None))
+        .into_result()
+        .unwrap();
+    assert_eq!(base, [file("a.txt")]);
+
+    // Unmarking: the file in Working changes, then a file with nothing to mark.
+    let _: () = client
+        .call(set(diff("new.txt", GitMode::Working, None), false))
+        .into_result()
+        .unwrap();
+    assert_eq!(working(&mut client), []);
+    assert_eq!(
+        error_code(client.call(set(diff("b.txt", GitMode::Working, None), true))),
+        ErrorCode::InvalidState
+    );
+    let mut commit = diff("a.txt", GitMode::Working, None);
+    commit.commit = Some("HEAD".into());
+    assert_eq!(
+        error_code(client.call(set(commit, true))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(set(diff("../x", GitMode::Working, None), true))),
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        error_code(client.call(list(GitMode::Base, Some("--force")))),
+        ErrorCode::InvalidRequest
+    );
+
+    // Staging a viewed file keeps it viewed, on the staged side.
+    let _: () = client
+        .call(set(diff("a.txt", GitMode::Working, None), true))
+        .into_result()
+        .unwrap();
+    git(&repo, &["add", "a.txt"]);
+    let staged: Vec<ViewedFile> = client
+        .call(list(GitMode::Working, None))
+        .into_result()
+        .unwrap();
+    assert_eq!(
+        staged,
+        [ViewedFile {
+            path: "a.txt".into(),
+            staged: true
+        }]
+    );
+    client.stop();
+}
+
+#[test]
+fn git_viewed_marks_are_per_repository_with_project_relative_paths() {
+    let env = Env::new();
+    let root = env.repo();
+    for name in ["fe", "be"] {
+        let dir = root.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "core.autocrlf", "false"]);
+        std::fs::write(dir.join("x.txt"), "one\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "one"]);
+        std::fs::write(dir.join("x.txt"), "one\nchanged\n").unwrap();
+    }
+    let (_daemon, mut client) = env.start();
+    let id = client.add_project(&root).id;
+    let set = |repo: &str| {
+        Request::GitSetViewed(GitSetViewedParams {
+            diff: GitDiffParams {
+                project_id: id,
+                worktree_task_id: None,
+                repo: Some(repo.into()),
+                path: format!("{repo}/x.txt"),
+                mode: GitMode::Working,
+                staged: false,
+                commit: None,
+                since: None,
+            },
+            viewed: true,
+        })
+    };
+    let list = |repo: &str| {
+        Request::GitViewed(GitStatusParams {
+            project_id: id,
+            worktree_task_id: None,
+            repo: Some(repo.into()),
+            mode: GitMode::Working,
+            since: None,
+        })
+    };
+    let _: () = client.call(set("fe")).into_result().unwrap();
+    let fe: Vec<ViewedFile> = client.call(list("fe")).into_result().unwrap();
+    assert_eq!(
+        fe,
+        [ViewedFile {
+            path: "fe/x.txt".into(),
+            staged: false
+        }]
+    );
+    let be: Vec<ViewedFile> = client.call(list("be")).into_result().unwrap();
+    assert_eq!(be, []);
+    // A task worktree that does not exist cannot be asked about, and not with a repo.
+    let bad = Request::GitViewed(GitStatusParams {
+        project_id: id,
+        worktree_task_id: Some(Ulid::new()),
+        repo: Some("fe".into()),
+        mode: GitMode::Working,
+        since: None,
+    });
+    assert_eq!(error_code(client.call(bad)), ErrorCode::InvalidRequest);
+    client.stop();
+}

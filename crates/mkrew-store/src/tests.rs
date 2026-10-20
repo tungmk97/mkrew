@@ -1575,3 +1575,97 @@ fn vacuum_if_sparse_shrinks_the_file_only_when_mostly_free() {
     assert!(after * 4 < before, "{before} -> {after}");
     assert!(!store.vacuum_if_sparse().unwrap(), "compact now");
 }
+
+#[test]
+fn viewed_marks_are_kept_per_scope_and_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let project = store.add_project(dir.path(), None).unwrap();
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = store.add_project(other_dir.path(), None).unwrap();
+    let task = Ulid::new();
+    let scope = |repo: &'static str, list: &'static str| ViewedScope {
+        project_id: project.id,
+        worktree_task_id: None,
+        repo,
+        list,
+    };
+    let marks = |scope: &ViewedScope<'_>| store.viewed_marks(scope).unwrap();
+    let pair = |path: &str, hash: &str| (path.to_owned(), hash.to_owned());
+
+    // Two sides of one file (staged / unstaged texts) are two rows; marking again replaces.
+    store
+        .add_viewed(&scope("", "working"), "a.rs", "h1")
+        .unwrap();
+    store
+        .add_viewed(&scope("", "working"), "a.rs", "h1")
+        .unwrap();
+    store
+        .add_viewed(&scope("", "working"), "a.rs", "h2")
+        .unwrap();
+    store
+        .add_viewed(&scope("", "working"), "b.rs", "h3")
+        .unwrap();
+    assert_eq!(
+        marks(&scope("", "working")),
+        [pair("a.rs", "h1"), pair("a.rs", "h2"), pair("b.rs", "h3")]
+    );
+
+    // Another list, repository, task worktree and project are separate.
+    store.add_viewed(&scope("", "base"), "a.rs", "h9").unwrap();
+    store
+        .add_viewed(&scope("fe", "working"), "a.rs", "h8")
+        .unwrap();
+    let in_task = ViewedScope {
+        worktree_task_id: Some(task),
+        ..scope("", "working")
+    };
+    store.add_viewed(&in_task, "a.rs", "h7").unwrap();
+    let elsewhere = ViewedScope {
+        project_id: other.id,
+        ..scope("", "working")
+    };
+    store.add_viewed(&elsewhere, "a.rs", "h6").unwrap();
+    assert_eq!(marks(&scope("", "base")), [pair("a.rs", "h9")]);
+    assert_eq!(marks(&scope("fe", "working")), [pair("a.rs", "h8")]);
+    assert_eq!(marks(&in_task), [pair("a.rs", "h7")]);
+    assert_eq!(marks(&elsewhere), [pair("a.rs", "h6")]);
+    assert_eq!(marks(&scope("", "working")).len(), 3);
+
+    // One hash, or every hash of the path.
+    store
+        .remove_viewed(&scope("", "working"), "a.rs", Some("h1"))
+        .unwrap();
+    assert_eq!(
+        marks(&scope("", "working")),
+        [pair("a.rs", "h2"), pair("b.rs", "h3")]
+    );
+    store
+        .remove_viewed(&scope("", "working"), "a.rs", None)
+        .unwrap();
+    assert_eq!(marks(&scope("", "working")), [pair("b.rs", "h3")]);
+    assert_eq!(marks(&scope("", "base")).len(), 1);
+}
+
+#[test]
+fn deleting_a_task_deletes_the_marks_of_its_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let project = store.add_project(dir.path(), None).unwrap();
+    let task = store
+        .create_task(project.id, "t", "", None, None, false)
+        .unwrap();
+    let scope = |worktree_task_id| ViewedScope {
+        project_id: project.id,
+        worktree_task_id,
+        repo: "",
+        list: "working",
+    };
+    store
+        .add_viewed(&scope(Some(task.id)), "a.rs", "h1")
+        .unwrap();
+    store.add_viewed(&scope(None), "a.rs", "h2").unwrap();
+    store.delete_task(task.id).unwrap();
+    assert_eq!(store.viewed_marks(&scope(Some(task.id))).unwrap(), []);
+    assert_eq!(store.viewed_marks(&scope(None)).unwrap().len(), 1);
+}

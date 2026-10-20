@@ -100,7 +100,7 @@ pub fn start(
 
 /// What to show for one state change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Alert {
+pub struct Alert {
     body: &'static str,
     sound: bool,
 }
@@ -108,7 +108,8 @@ struct Alert {
 /// The notification for `session_id` entering `state`, if any: only needs_input and done,
 /// each behind its switch, then the throttle (a switched-off kind does not use up the window;
 /// an allowed one does, even if the session lookup for the notice then fails).
-fn decide(
+/// Also used by `mk web` for phone push (ADR 0067): one policy for toast and push.
+pub fn decide(
     session_id: Ulid,
     state: SessionState,
     settings: &NotifySettings,
@@ -152,7 +153,7 @@ fn notice(hub: &Hub, session_id: Ulid, alert: Alert) -> Option<Notice> {
 
 /// At most one notice per session per [`THROTTLE`].
 #[derive(Debug, Default)]
-struct Throttle {
+pub struct Throttle {
     last: HashMap<Ulid, Instant>,
 }
 
@@ -414,6 +415,7 @@ mod tests {
             needs_input,
             done,
             sound,
+            ..NotifySettings::default()
         }
     }
 

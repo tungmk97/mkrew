@@ -197,6 +197,21 @@ session's size. The view button on a session cycles **Fit** (the font shrinks to
 Lost the phone or shared the link by mistake? Click **Stop**, run `mk web --new-token` and stop it
 again with `Ctrl+C`, then click **Start**: old links stop working.
 
+### Notifications on the phone
+
+Want a notification when an agent needs you while you are away from the desk?
+
+1. In the Phone access dialog, next to **Phone notifications**, click **Turn on**. With this on, this PC
+   sends a short, encrypted message to your phone's push service (Apple on iPhone, Google on Android
+   Chrome) when an agent needs you or finishes. Only your phone can read it.
+2. On the iPhone (iOS 16.4 or newer): remove the old Mkrew icon from the Home Screen if it is there, open
+   the link in Safari, then Share → Add to Home Screen, and open Mkrew **from that icon**. The bell only
+   works in that Home Screen app, not in a Safari tab.
+3. Tap the bell at the top of the Sessions list and allow notifications.
+
+The same `[notify]` switches and the 30-second limit as the desktop notification apply.
+`mk web --new-token` also forgets all phones.
+
 ## Uninstall
 
 1. Remove the agent hooks (only Mkrew's entries are removed and a `.bak` copy is kept; the omp and

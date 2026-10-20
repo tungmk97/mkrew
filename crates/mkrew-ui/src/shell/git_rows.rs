@@ -20,6 +20,7 @@ impl Shell {
         let row_theme = theme.clone();
         let now = status::now_ms();
         let lanes = view.graph_lanes();
+        let viewed = Rc::clone(&view.viewed);
         uniform_list(
             "git-file-list",
             rows.len(),
@@ -35,11 +36,17 @@ impl Shell {
                             .then(|| git_view::graph_cell(&rows, index))
                             .flatten()
                             .map(|cell| (cell, lanes));
+                        let is_viewed = matches!(
+                            row,
+                            git_view::ListRow::File(target, _)
+                                if viewed.contains(target.group, &target.path)
+                        );
                         git_file_row(
                             project_id,
                             row,
                             selected.as_ref(),
                             folded,
+                            is_viewed,
                             focused,
                             graph,
                             now,
@@ -113,12 +120,14 @@ fn list_row(id: SharedString) -> gpui::Stateful<gpui::Div> {
 /// commit ([`git_commit_row`], ages at `now`) or a note under it. The selected file has the
 /// selection fill and an accent ring (stronger while the list has the keyboard); in the
 /// History, `graph` is the row's column of the lane graph.
+/// A viewed file is dimmed and its box is checked.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn git_file_row(
     project_id: Ulid,
     row: &git_view::ListRow,
     selected: Option<&git_view::Target>,
     folded: bool,
+    viewed: bool,
     focused: bool,
     graph: Option<(GraphCell, usize)>,
     now: i64,
@@ -170,6 +179,7 @@ pub(crate) fn git_file_row(
     };
     let hover = theme.hover;
     let id = SharedString::from(format!("git-file-{group:?}-{}", file.path));
+    let dim = viewed && !picked;
     list_row(id.clone())
         .group(id.clone())
         // Indented under its commit inside the full-width row (a margin would overflow it).
@@ -199,6 +209,8 @@ pub(crate) fn git_file_row(
                 .text_size(font_size::META)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
+                // A viewed row steps back (its content, not the ✓ box); the selected one stays readable.
+                .when(dim, |el| el.opacity(opacity::VIEWED))
                 .tooltip(tooltip(theme, what, ""))
                 .child(letter),
         )
@@ -210,6 +222,7 @@ pub(crate) fn git_file_row(
                 .items_center()
                 .gap(px(space::XS))
                 .overflow_hidden()
+                .when(dim, |el| el.opacity(opacity::VIEWED))
                 .child(
                     div()
                         .min_w_0()
@@ -227,9 +240,33 @@ pub(crate) fn git_file_row(
                         .child(dir)
                 })),
         )
-        .children(
-            git_view::counts(file).map(|(added, removed)| change_counts(added, removed, theme)),
-        )
+        .children(git_view::counts(file).map(|(added, removed)| {
+            change_counts(added, removed, theme).when(dim, |el| el.opacity(opacity::VIEWED))
+        }))
+        // Not for a History commit's files (never marked).
+        .when(group != git_view::Group::Commit, |el| {
+            let target = target.clone();
+            el.child(
+                viewed_box(viewed, theme)
+                    .id(SharedString::from(format!("{id}-viewed")))
+                    .cursor_pointer()
+                    .tooltip(tooltip(
+                        theme,
+                        if viewed {
+                            "Mark as not viewed"
+                        } else {
+                            "Mark as viewed"
+                        },
+                        "",
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        // Not a click on the row (which would select it).
+                        cx.stop_propagation();
+                        window.focus(&shell.git_focus, cx);
+                        shell.toggle_git_viewed(project_id, target.clone(), window, cx);
+                    })),
+            )
+        })
         // Shown on hover and on the selected file (SPEC §14 progressive disclosure).
         .children(git_view::Stage::of(group).map(|stage| {
             let target = target.clone();
@@ -501,6 +538,51 @@ fn graph_column(cell: GraphCell, lanes: usize, theme: &Theme) -> gpui::Div {
             )
             .size_full(),
         )
+}
+
+/// The "viewed" box of a file: a small square, ✓ in the accent color while viewed (the look of
+/// the broadcast dialog's checkboxes).
+pub(crate) fn viewed_box(on: bool, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .size(px(space::M))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::SMALL))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.text_muted))
+        .text_size(font_size::META)
+        .text_color(rgb(theme.accent))
+        .child(if on { "✓" } else { "" })
+}
+
+/// `Viewed 3/10` in the side panel header (✓ once every file is viewed); none in the History
+/// or while nothing is listed.
+pub(crate) fn git_viewed_line(view: &GitView, theme: &Theme) -> Option<gpui::Stateful<gpui::Div>> {
+    let (viewed, listed) = view.viewed_counter()?;
+    Some(
+        div()
+            .id("git-viewed-count")
+            .px(px(space::M))
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .tooltip(tooltip(
+                theme,
+                "Files you marked as viewed; a mark clears when the file's diff changes",
+                "",
+            ))
+            .child(meta_line(theme, format!("Viewed {viewed}/{listed}").into()))
+            .when(viewed == listed, |el| {
+                el.child(
+                    div()
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.accent))
+                        .child("✓"),
+                )
+            }),
+    )
 }
 
 /// The chevron's column (group header, History commit) as a spacer, so rows listed under them

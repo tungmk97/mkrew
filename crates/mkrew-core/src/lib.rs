@@ -24,6 +24,7 @@ pub mod task;
 pub mod thread;
 pub mod turn;
 pub mod usage;
+pub mod viewed;
 
 pub use hook::HookAgent;
 pub use paths::Paths;

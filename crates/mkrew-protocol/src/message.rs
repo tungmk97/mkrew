@@ -19,7 +19,8 @@ use ulid::Ulid;
 use crate::files::{
     AiGenerateParams, AiGeneratedEvent, FsFindParams, FsListParams, FsReadParams, FsWriteParams,
     GitChangedEvent, GitCommitParams, GitDiffParams, GitDiscardParams, GitLogParams,
-    GitRemoteParams, GitSetBaseParams, GitShowParams, GitStageParams, GitStatusParams, ProjectRef,
+    GitRemoteParams, GitSetBaseParams, GitSetViewedParams, GitShowParams, GitStageParams,
+    GitStatusParams, ProjectRef,
 };
 
 /// One JSON frame.
@@ -196,6 +197,14 @@ pub enum Request {
     /// Returns [`FileDiff`].
     #[serde(rename = "git.diff")]
     GitDiff(GitDiffParams),
+    /// Returns `ViewedFile[]`: the files of the listed changes whose viewed mark still stands;
+    /// marks that no longer match are deleted (ADR 0065). Same params as `git.status`.
+    #[serde(rename = "git.viewed")]
+    GitViewed(GitStatusParams),
+    /// Returns nothing (`null`): marks the file as viewed (or clears the mark) for the diff the
+    /// params describe (ADR 0065).
+    #[serde(rename = "git.set_viewed")]
+    GitSetViewed(GitSetViewedParams),
     #[serde(rename = "git.stage")]
     GitStage(GitStageParams),
     #[serde(rename = "git.unstage")]

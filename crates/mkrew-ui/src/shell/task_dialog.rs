@@ -133,6 +133,8 @@ impl Shell {
                     if let Some(dialog) = shell.open_dialog(serial) {
                         dialog.busy = false;
                         dialog.error = Some(format!("Cannot save the task: {error:#}"));
+                    } else {
+                        shell.toast_error(format!("Cannot save the task: {error:#}"), cx);
                     }
                     cx.notify();
                 }
@@ -193,6 +195,8 @@ impl Shell {
                     if let Some(dialog) = shell.open_dialog(serial) {
                         dialog.busy = false;
                         dialog.error = Some(format!("Cannot delete the task: {error}"));
+                    } else {
+                        shell.toast_error(format!("Cannot delete the task: {error}"), cx);
                     }
                     cx.notify();
                 }

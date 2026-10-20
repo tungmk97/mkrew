@@ -503,8 +503,13 @@ impl Shell {
                     tracing::warn!(%project_id, path = %save.path, "fs.write failed: {error}");
                 }
                 let done = matches!(&written, Ok(written) if written.saved);
-                if let Some(view) = shell.files_at(project_id, target) {
-                    view.saved(&save.path, save.point, written);
+                let unshown = match shell.files_at(project_id, target) {
+                    Some(view) => view.saved(&save.path, save.point, written),
+                    // The workspace's Files view is gone.
+                    None => files_view::unshown_save(written),
+                };
+                if let Some(message) = unshown {
+                    shell.toast_error(message, cx);
                 }
                 if let (true, Some(then)) = (done, then) {
                     then(shell, window, cx);
@@ -562,11 +567,36 @@ impl Shell {
         .detach();
     }
 
-    /// The window's close button (§2.5): unsaved Files changes ask first, one file at a time,
-    /// and the window closes once none are left. The workspace that holds them is shown first,
-    /// so a refused save is visible.
+    /// The window's close button (§2.5, §20J): with `[ui] close_to_tray` on and a tray icon to
+    /// bring it back, the window only hides (Files changes stay in memory); otherwise unsaved
+    /// Files changes ask first, one file at a time, and the window closes once none are left.
+    /// The workspace that holds them is shown first, so a refused save is visible.
     pub(crate) fn window_should_close(
         &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if attention::hide_on_close(self.close_to_tray, self.desktop.has_tray()) {
+            self.desktop.hide_window();
+            return false;
+        }
+        let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
+        !self.ask_unsaved(again, window, cx)
+    }
+
+    /// Closes the window once no Files change is unsaved, asking about the rest first.
+    fn close_when_saved(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let again: AfterSave = Box::new(|shell, window, cx| shell.close_when_saved(window, cx));
+        if !self.ask_unsaved(again, window, cx) {
+            window.remove_window();
+        }
+    }
+
+    /// Asks about the first unsaved Files change (`then` runs after it was saved or dropped).
+    /// `true` while a question is open or was just opened, `false` when nothing is unsaved.
+    pub(crate) fn ask_unsaved(
+        &mut self,
+        then: AfterSave,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> bool {
@@ -574,24 +604,19 @@ impl Shell {
             .find(|view| view.unsaved().is_some())
             .map(|view| view.project_id);
         let Some(project_id) = unsaved else {
-            return true;
+            return false;
         };
         // A confirmation is open (Alt+F4 reaches here): answer it first; asking now would
         // replace it.
         if window.has_active_prompt() {
-            return false;
+            return true;
         }
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
         self.show_view(View::Files, window, cx);
-        let close: AfterSave = Box::new(|shell, window, cx| {
-            if shell.window_should_close(window, cx) {
-                window.remove_window();
-            }
-        });
-        self.leave_file(project_id, close, window, cx);
-        false
+        self.leave_file(project_id, then, window, cx);
+        true
     }
 
     /// Keys of the Files editor (§12A, VS Code style; not in the keymap, ADR 0028). Keys the

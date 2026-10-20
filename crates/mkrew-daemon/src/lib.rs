@@ -37,7 +37,7 @@ use mkrew_core::Paths;
 use mkrew_store::Store;
 
 pub use lock::{InstanceLock, LockError};
-pub use notify::ENV_NOTIFY;
+pub use notify::{Alert, ENV_NOTIFY, Throttle, decide};
 pub use spawn::ENV_MK_EXE;
 pub use usage::transcript_path;
 

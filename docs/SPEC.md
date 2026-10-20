@@ -65,11 +65,14 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 **Non-goals**
 
 - Not an IDE: no LSP, completion or multi-cursor. The Files view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
-- No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052).
+- No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052). Optional phone notifications (§20.0 `[web] push`, ADR 0067) are the other exception to "no cloud" and are described below.
 - No GitHub/Linear integration in v1.
 - Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed. One exception:
   voice input (§20G) sends a recording the user started to the speech-to-text API they configured
   (ADR 0045).
+- Mkrew runs no cloud service of its own. Its only outbound requests are voice input (above) and,
+  only while the user has turned `[web] push` on and a phone has opted in, end-to-end encrypted
+  Web Push messages to that phone's push service (Apple, Google, Mozilla or Microsoft; ADR 0067).
 
 **Naming**
 
@@ -328,6 +331,7 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 `terminal_tab` (pinned workspaces, sessions and tabs lead their lists, §10).
 `0017_session_plan.sql` adds `session.plan_path TEXT` (the linked plan `.md`: relative to the project folder with `/` when inside, else absolute; NULL = none; ADR 0039).
 `0021_project_jira_keys.sql` adds `project.jira_keys TEXT` (JSON array of Jira project keys, NULL = none; §20I, ADR 0066).
+`0022_viewed_files.sql` adds table `viewed_file(project_id, worktree_task_id, repo, list, path, hash, marked_at)`, one row per file the user marked as viewed in the Git view (§12B, ADR 0065).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -567,6 +571,8 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `fs.find` | `project_id`, `query`, `limit` | fuzzy file matches |
 | `git.status` | `project_id`, `mode` (`working`/`base`), `since?` (base mode: compare from this commit instead of the merge-base, e.g. `task.checkpoint`; `merge_base` = it) | `branch?`, `head?`, `upstream?`, `ahead`/`behind`, `base_ref?` + `base_auto`, `merge_base?` (base mode); changed files (`path`, `old_path?`, `kind`, `added?`/`removed?`) in `staged`/`unstaged`/`untracked` (working mode; conflicts are `unstaged`) or `against_base` (base mode) |
 | `git.diff` | `project_id`, `path`, `mode`, `staged?` (working mode: index side), `commit?`, `since?` (base mode, as in `git.status`) | `binary`, `too_large`, `added`/`removed`, `hunks[]` (`old/new_start/lines`, `header`, `lines[]` with `kind`, `text`, `old_line?`/`new_line?`, `no_newline`, `crlf`) |
+| `git.viewed` | the params of `git.status` | `ViewedFile[]` (`path`, `staged`): the files of that list (`working` / `base` / the `since` checkpoint) whose viewed mark still stands (ADR 0065). Re-hashes the marked files through the diff cache and deletes marks whose diff text changed |
+| `git.set_viewed` | the params of `git.diff` (no `commit`), `viewed` (bool) | `null`; hashes the file's diff now and stores (`viewed: true`) or removes the mark; `invalid_state` for a file with no diff, `invalid_request` with `commit` |
 | `git.stage` / `git.unstage` | `paths[]` or `hunk` | ok |
 | `git.discard` | `paths[]`, `confirm: true` | ok (destructive; UI always confirms first) |
 | `git.commit` | `message` | new commit hash |
@@ -578,7 +584,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `git.repos` | `project_id` | `string[]`: `""` when the project folder is in a git repository, then each direct child folder holding `.git` (folder or file), sorted; hidden folders, `node_modules` and `target` skipped; not filtered by `.gitignore`; read on every call (ADR 0029) |
 | `daemon.status/stop` | – | info / ok; `status` carries `web` = `{enabled, running, error?}`: the `mk web` child the daemon supervises while `[web] enabled` (§20.0, ADR 0053); `error` = the child's last stderr line |
 
-`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
+`git.status`, `git.diff`, `git.stage`/`git.unstage`, `git.discard`, `git.commit`, `git.log`, `git.show`, `git.fetch`/`git.push`, `git.viewed`, `git.set_viewed` and `ai.generate` accept `repo?`: one folder name from `git.repos`; the request runs in that child repository. Paths in requests and replies stay relative to the project folder (`fe/src/a.ts`); a path outside the repo, a bad name or `repo` together with `worktree_task_id` is `invalid_request`. `git.changed` has no repo: clients refresh the shown repo (ADR 0029).
 
 **Events**
 
@@ -635,6 +641,8 @@ Protocol 41: `session.move` and `Session.position`.
 
 Protocol 45: `Project.jira_keys`, `project.update` `jira_keys?` (ADR 0066).
 
+Protocol 46 (ADR 0065): `git.viewed`, `git.set_viewed`.
+
 ---
 
 ## §8 Daemon
@@ -673,7 +681,9 @@ Protocol 45: `Project.jira_keys`, `project.update` `jira_keys?` (ADR 0066).
 - **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
-  session per 30 s. Clicking it emits `notification.clicked`.
+  session per 30 s. Clicking it emits `notification.clicked`. While `[web] push` is on, `mk web` also
+  sends a Web Push notification to each phone that opted in, under the same `[notify]` switches and
+  the same 30 s limit (ADR 0067; §20.0).
 - **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB; deleted 7 days after the session ended unless a tab still shows it (ADR 0060).
 - **Retention:** hourly (and at startup): logs as above; `session_event` rows of kind `files_changed`, `hook`, `edited` older than 7 days. Session rows, turns and `usage` events stay.
 - **Project watcher:** skips `.git`, `node_modules`, `target` and `.worktrees/`; honours every `.gitignore` from the project root down and `.git/info/exclude`, with git's precedence (the deepest level with a match decides each path prefix; nothing inside an ignored folder is reported or read, except Markdown, which stays reported when gitignored (not under `.git`, `node_modules`, `target`, `.worktrees`) for doc review). One `files_changed` row per batch, stored on the project's newest live session.
@@ -703,7 +713,7 @@ mk session history <session-id>        # prints the session's raw output log (al
 mk session resume <session-id>         # relaunches an exited agent session's conversation; prints the new id
 mk session spawn <project> --agent <profile>   # prints the new session id
 mk attach <session-id>                 # raw-mode attach; detach with Ctrl+]
-mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052)
+mk web [--listen ADDR] [--host NAME] [--new-token]  # phone page over the tailnet (ADR 0052); --new-token also drops push subscriptions (ADR 0067)
 mk send <session-id> "<text>" [--no-submit]
 mk wait <session-id> --until idle,needs_input,done [--timeout 60000]
 mk integration install|uninstall|status <claude|codex|omp|copilot>
@@ -816,7 +826,7 @@ The session panel (below) is a third column right of Terminals while open.
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
   and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
   the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
-  □ shows the Windows 11 Snap Layouts flyout), all edges resize; the controls are hidden in full
+  □ shows the Windows 11 Snap Layouts flyout), all edges resize; ✕ and Alt+F4 hide the window to the tray while `[ui] close_to_tray` is on (§20J); the controls are hidden in full
   screen. **macOS:** native traffic lights at the left, drag and double-click as the OS does.
   **Linux:** the OS title bar stays. Minimum window size 1100 × 560. Without a workspace only
   the logo, the sidebar toggle, the drag area and the window controls show.
@@ -993,7 +1003,7 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
 - Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
-  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
+  like F2; greyed for a run pane), **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
   top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
@@ -1160,6 +1170,14 @@ Windows (tens of ms, worse with antivirus), so:
   diff comments work in both modes (comments pick new-side lines: the right column in Split). The
   mode is global (every file, every repo of the workspace, History too) and is remembered as
   `[ui] diff_mode` (§20.0).
+- **Viewed files** (ADR 0065): each file row has a box (not in the History), the diff toolbar a
+  "Viewed" button, key `v` (§13) and the palette "Git: Mark file as viewed / not viewed". A viewed
+  row is dimmed and the selected viewed file's diff collapses to "Marked as viewed." with a
+  **Show diff** button. The side panel header shows `Viewed N/M` (M = every file of the shown
+  list, whatever "Changed by" and the file filter hide). The daemon keeps each mark in SQLite
+  with a hash of the file's diff text; it clears by itself as soon as that text changes or the
+  file stops changing (checked with every status refresh). Staging a whole viewed file keeps the
+  mark; marks of Against base, a task's changes and Working changes are separate lists.
 - **Stage / unstage** per file or per hunk (daemon builds the patch, runs `git apply --cached`).
 - **Discard** per file: always confirms and shows what will be lost.
 - **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
@@ -1265,6 +1283,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
 | Git | Toggle Unified / Split diff | d |
+| Git | Mark the selected file viewed / not viewed | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
@@ -1390,7 +1409,14 @@ The terminal is the hero; everything else steps back.
   #FB923C #FACC15 #A3E635 #4ADE80 #2DD4BF #60A5FA #C084FC #F472B6 / light #DC2626 #D9560B
   #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
   hues ≥ 12° apart).
-- In-app toasts: bottom-right, auto-hide after 4 s, never blocking.
+- In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
+  the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
+  each hides after about 4 s (`TOAST_DURATION`, expired on the 500 ms status tick, so 4.0–4.5 s) or
+  on its ✕. Never blocking: no focus, no animation, only the card itself takes clicks. Two kinds,
+  always icon + text: info (Lucide `info`, `accent-text`) and error (Lucide `circle-alert`,
+  `status-exited`). Used for results of an action that has no place of its own (a failure after its
+  dialog closed or its view moved, a failed settings write, a copy); a failure that has one (a
+  dialog's error row, the commit box, the tab bar notice, a card notice) stays there.
 - Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
   (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
   (`CONFIRM_DIALOG_WIDTH`, radius 12, faint border, light shadow), the question as a card
@@ -1416,7 +1442,7 @@ exist; body text contrast ≥ 4.5:1; status never conveyed by color alone; run a
 | Input latency | key press → glyph on screen < 16 ms (local) |
 | Idle CPU | UI + daemon < 1% of the machine with no output (GPUI's Windows vsync floor alone is 1–2% of one core) |
 | Memory | UI < 150 MB, daemon < 50 MB with 6 sessions (agents excluded) |
-| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); `hook.report` rejected unless the session id belongs to a live session |
+| Security | IPC endpoint accessible by the current user only; the daemon has no network listener (`mk web` — started by the user, or by the daemon as a child while the user turned phone access on, ADR 0053 — listens on 127.0.0.1 by default and requires its token on every WebSocket, ADR 0052); with `[web] push = true` `mk web` also POSTs encrypted Web Push messages to the push service host (Apple, Google, Mozilla, Microsoft only) of each subscribed phone, ADR 0067; `hook.report` rejected unless the session id belongs to a live session |
 | Data | SQLite WAL; daily DB backup, keep 7 |
 | Errors | panics logged with backtrace; UI shows an error instead of dying silently |
 | History | per-session output log, rotated at 5 MB |
@@ -1657,7 +1683,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] Comments on unchanged code files (diff-line comments exist since M7)?
 - [ ] License if the repo goes public.
 
-**Backlog after v2:** tray icon / taskbar badge; "mark unread" in the Inbox; remote workspaces
+**Backlog after v2:** remote workspaces
 over SSH; compact density; `gix` git backend; pull/rebase/branch switching and
 conflict resolution in-app; GitHub (PR/issue → task); money
 estimates from token usage.
@@ -1670,7 +1696,8 @@ Goal: make the daily loop with agents fast — notice who needs you, answer with
 views, instruct precisely, review and undo per turn, and isolate parallel work when asked.
 Inspired by herdr (peek), Zed's agent panel (queue, follow, per-turn checkpoints, keep awake) and
 Orca (worktrees, fan-out, usage). §1 non-goals still hold: no editor, no LLM API calls, no cloud,
-no native mobile app (a browser client exists, ADR 0052).
+no native mobile app (a browser client exists, ADR 0052). Phone push (ADR 0067) is opt-in and
+end-to-end encrypted.
 
 Every v2 feature keeps §2: agent differences live in TOML profiles; the daemon owns state; it
 works on native Windows; nothing touches the user's branch, index or files without a confirmed
@@ -1691,6 +1718,7 @@ are errors (same rule as profiles). Full shape with defaults:
 needs_input = true          # OS notification on needs_input
 done = true                 # OS notification on done
 sound = true                # notification plays the OS default sound
+flash_taskbar = true        # §20J; Windows: the taskbar button flashes while a session needs input and the window is not focused
 
 [awake]
 keep_awake = true           # §20A.5
@@ -1708,6 +1736,7 @@ theme = "system"            # §14; "system" | "light" | "dark"; the title bar t
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the session panel's width (dragging its edge writes it; kept 240–560)
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
+close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
@@ -1725,6 +1754,7 @@ docs = false                # §12 Docs view, "Review in Docs"; applies live
 turns = false               # §20C.1–2 turn snapshots + "Turns…"; read when a session starts
 [web]                       # ADR 0053; phone access
 enabled = false             # the daemon runs `mk web` while true; the Phone access dialog writes it
+push = false                # ADR 0067; mk web notifies phones that opted in (sends while `mk web` runs); the Phone access dialog writes it
 [jira]                      # §20I, ADR 0066; "" site = off
 site = ""                   # "acme.atlassian.net"
 email = ""
@@ -1736,6 +1766,17 @@ windowless child (`mk.exe` next to `mkrew-daemon.exe`, else on PATH; stderr's la
 `error`; a child that exits is started again after 1, 2, 4 … 60 s; `enabled = false` kills it).
 `daemon.status.web` reports `{enabled, running, error?}`. The Phone access dialog (§14) writes the
 key and shows the link; `mk web --new-token` still revokes old links.
+
+**Phone notifications** (ADR 0067). While `[web] push = true`, `mk web` watches `session.state` on its
+own daemon connection and, for each session entering `needs_input` or `done` (subject to
+`[notify] needs_input` / `done` and one per session per 30 s), sends a Web Push message
+(RFC 8291 `aes128gcm`, VAPID RFC 8292) to every phone that tapped the bell on the page. Title
+`<session> · <workspace>`, body `needs you` / `done`; tapping it opens the page on that session.
+No notification payload carries the access token; the manifest `start_url` does (the iOS Home
+Screen app stores it). Subscriptions and the VAPID key live in `<config>/web_push.json`; a push
+service answer 404 / 410 removes a subscription; `mk web --new-token` empties the list. Only Apple,
+Google, Mozilla and Microsoft push hosts are accepted. The page needs HTTPS (`tailscale serve`), and
+on iPhone iOS 16.4+ with the page added to the Home Screen.
 
 **Turn.** One request→answer cycle of an agent session. A turn **starts** when the session
 enters `working` from `starting`, `idle`, `done` or `needs_input` after user input; it **ends** at
@@ -2107,3 +2148,33 @@ speech to text, this is the second user-configured use of the network, and only 
    and never appears in a message or a log. `site` may be a bare host or a URL; every request
    goes over `https://`, whatever scheme `site` had, except to `127.0.0.1` / `localhost`
    (tests).
+
+### §20J Tray, taskbar badge and mark unread (outside the milestones, ADR 0064)
+
+Notice who needs you with the window minimized, hidden or behind others. "Needs you" is the
+sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet viewed.
+
+1. **Taskbar badge (Windows).** The main window's taskbar button shows an overlay icon with that
+   count (`ITaskbarList3::SetOverlayIcon`; amber, `9+` from 10; description "3 need you");
+   cleared at 0. macOS and Linux: nothing (gpui has no dock-badge call).
+2. **Flash (Windows).** When a session enters `needs_input` while the window is not focused, the
+   taskbar button flashes until the window is focused (`FlashWindowEx`); it stops on focus and when
+   nothing needs you any more. `[notify] flash_taskbar = false` turns it off (applies live).
+3. **Tray icon (Windows).** Owned by the UI process, shown while it runs. Icon: Mkrew's own while
+   nothing works or waits, a dot in the working color while an agent works, a dot in the needs-input
+   color while something needs you; tooltip `Mkrew · 2 need you · 1 working`. Right-click menu: up to
+   8 sessions that need you, newest first, `agent · workspace — state, age` (a click shows the window
+   and opens that pane); a greyed `● N working`; `Open Mkrew`; `Quit UI (agents keep running)`. A
+   left click opens the window.
+4. **Close to tray (Windows).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window
+   instead of closing it (no pane is attached while hidden, §10). The tray menu, an OS notification click and
+   starting Mkrew again (same exe, same daemon socket) show it. `false`, or no tray icon: ✕ quits the UI as before
+   (unsaved Files changes ask first). `Quit UI` shows the window if unsaved Files changes need an
+   answer, then ends the UI; the daemon and every agent keep running (§2.2).
+5. **Mark unread.** Pane menu (right-click a split pane's header or a sidebar session row) **Mark
+   unread** and palette "Agent: Mark unread" (no key) put a finished agent session (done, or idle
+   after work) back into Needs you — chip, row tint, Inbox, badge, tray — until its pane is focused
+   again in the active window or its state changes. Greyed for a session that already needs you,
+   works, or is a terminal. Not saved: like "viewed" it lives in UI memory.
+6. **Cost.** Counts come from the sessions the UI already holds; the badge, the icon and the menu
+   are updated only when the count (or the listed set) changes, never per frame.

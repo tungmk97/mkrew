@@ -61,6 +61,22 @@ ulid = { version = "1", features = ["serde"] }
 # (runs on the background executor), rustls so no OpenSSL on any OS.
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 
+[target.'cfg(windows)'.dependencies]
+# Taskbar badge, flashing, tray icon and hiding the window (SPEC §20J, ADR 0064). Same 0.62 and
+# 0.6 that gpui's Windows backend already builds with, so the tree gains no package; the
+# features are ones it already enables.
+raw-window-handle = "0.6"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [build-dependencies]
 # App icon resource (build.rs); same version gpui already builds with.
 embed-resource = "3"

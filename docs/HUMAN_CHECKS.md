@@ -95,6 +95,194 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Web search On:** "Hôm nay ngày mấy, tin công nghệ tuần này?" → today's date and sources
   (about 30 s). Close and reopen: the On choice is kept.
 
+### Decided without asking — 2026-10-19 branch `feat/attention-review-push` (4 plans: toast, tray, viewed files, phone push)
+
+Questions the plans did not answer against the real code, and the default taken. Change any of them
+by telling the agent.
+
+- [ ] **Base:** the plans were written against `fb1ac83` (Ask AI) plus a dirty tree; the branch is cut
+  from `master` (`aa8a930`). Ask AI is on master now, so the checks that mention it apply as
+  written after the merge. Edits were located by symbol.
+- [ ] **Shared `target/`:** this worktree builds into the main checkout's `target/` (disk space). The
+  `jira-board` worktree builds there at the same time, and Cargo names workspace-crate artifacts
+  by their path relative to the workspace, so the two branches overwrote each other's rlibs (this
+  branch's `mkrew-store` compiled against jira's `mkrew-protocol`). Fix, local only: the
+  worktree's untracked `.cargo/config.toml` sets `codegen-units = 255` on the workspace crates,
+  which gives them their own artifact names; third-party crates are still shared. The exes in
+  `target/debug/` (`mk`, `mkrew-daemon`, `mkrew-fakeagent`) are still one file per name: the
+  `mkrew-cli` daemon tests can fail with "client speaks protocol N, daemon speaks M" if the other
+  worktree builds during a run; rebuild and re-run. If the jira-board worktree saw odd compile
+  errors around 18:00, that was this collision: a rebuild there fixes it. About 20 test daemons
+  from earlier failed runs still run from `target/debug/mkrew-daemon.exe` (not yours, not
+  killed); the locked exes were renamed `*.locked-old.exe`.
+- [ ] **Numbers and merge notes:** master (6240b22, Jira) took ADR **0066**, migration **0021**
+  (`0021_project_jira_keys`) and protocol **45**. This branch uses ADR **0064** (tray), **0065**
+  (viewed files) and **0067** (phone push), SPEC §20J for the tray, migration **0022**
+  (`0022_viewed_files`) and protocol **46** for viewed files. After merging master, `MIGRATIONS`
+  ends `… 0019, 0020_run_exit_after, 0021_project_jira_keys, 0022_viewed_files` (the store counts
+  by position), protocol is 46 (Jira is 45), and SPEC keeps §20H, §20I and §20J. Until master is
+  merged, this branch's daemon must not run on the real data folder. Merge checklist: 10 conflicts —
+  `mkrew-protocol/src/lib.rs` (take 46), `settings.rs` (template: keep `# push = false` in `[web]`, then the `[jira]` block; test:
+  `WebSettings { enabled: true, push: true }` and `jira: JiraSettings::default()`), store
+  `lib.rs` (migration list as above), `inbox.rs` doc (master's "bold rows" plus "taskbar badge and
+  the tray"), `lib.rs` / `shell.rs` / `main.rs` (keep both the `ask` and `attention` lines), SPEC
+  (both migration lines, both protocol lines, `push` and `[jira]`), HUMAN_CHECKS and PROGRESS (keep
+  both sides). Then add `jira_keys: Vec::new()` to the `Project { .. }` literal in the test helper
+  of `crates/mkrew-ui/src/attention.rs` (it merges cleanly but does not compile without it), and
+  regenerate `Cargo.lock` (the human commits it).
+- [ ] **`Cargo.lock` not committed (project rule):** the tray plan made `mkrew-ui` depend on
+  `windows` 0.62 and `raw-window-handle` 0.6 directly (no new package, both were already in the
+  tree through gpui). The lock file in this worktree is modified and must be committed before
+  `scripts/package*` (they build with `--locked`).
+- [ ] **Per-task reviews of the tray plan, Tasks 5-9:** not pending. The API's daily spend limit
+  stopped the per-task review subagents, but the plan review (3 Important findings, fixed) and the
+  final branch review covered those tasks.
+
+### To verify — 2026-10-19 Phone push notifications (ADR 0067, plan docs/superpowers/plans/2026-10-19-phone-push-notifications.md)
+
+- [ ] **Install first:** the daemon starts `mk.exe` from the install folder; install the new build, then
+  restart the daemon (no protocol change, but an older daemon rejects `[web] push` as an unknown key
+  and keeps its last good settings, so Stop/Start and later settings are ignored until it restarts), then
+  Phone access → **Stop** → **Start**.
+- [ ] **Prerequisites (same as the phone page):** Tailscale MagicDNS + HTTPS Certificates on, **Set up** done.
+- [ ] **Dialog (dark + light):** with phone access On, a row "Phone notifications: off" + **Turn on** shows under
+  the Tailscale row; Turn on → "Phone notifications: on" + **Turn off** and the hint line "On the phone, open
+  Mkrew from the Home Screen and tap the bell."; Stop phone access → the row disappears. No clipped text at 520 px.
+- [ ] **iPhone, first time [the open risk of the plan]:** the bell needs the Home Screen app (not a Safari tab).
+  Remove the old Home Screen icon, open the link in Safari, wait until the Sessions list shows, Share → Add to
+  Home Screen, open the new icon: it opens **without** asking for the token (the manifest's `start_url` carries
+  it). The bell shows at the top; tap it → iOS asks to allow notifications → Allow → the bell turns accent and a
+  toast says you will get a notification.
+  *If the bell is missing in the Home Screen app:* open `https://<pc>/manifest.webmanifest?t=<token>` in Safari and
+  check it shows JSON; if the app still has no bell, iOS did not take the manifest — report it.
+- [ ] **Needs you:** in Mkrew start an agent that asks something (or `mk session spawn <project> --agent fake`), lock the
+  phone → within ~5 s a notification "fake · <workspace>" / "needs you" appears on the Lock Screen. Tap it → the Mkrew
+  app opens on that session (do it from a closed app, from the list, and from another open session).
+- [ ] **Done:** let an agent finish → "<name> · <workspace>" / "done".
+- [ ] **Limits:** two quick `needs_input` / `done` changes of one session → one notification (30 s). Set `[notify]
+  needs_input = false` in `settings.toml` → no "needs you" notification, "done" still comes.
+- [ ] **Off switches:** Turn off in the dialog → no notification; reload the phone page → the bell is gone. Turn on
+  again → the bell is back and notifications resume without tapping it (the page re-registers itself).
+- [ ] **Bell off:** tap the bell on the phone (on → off) → no more notifications; `%APPDATA%\mkrew\web_push.json`
+  lost that phone's entry.
+- [ ] **Revoke:** with phone access Stopped, run `mk web --new-token`, Ctrl+C, Start → `web_push.json` has an empty
+  `subscriptions` list and the same `vapid`; the phone shows the token screen; paste the new link → it works and
+  notifications resume.
+- [ ] **Revoke, unreadable file:** make `web_push.json` unreadable (e.g. open it exclusively, or put garbage in it) and
+  run `mk web --new-token` → it stops with an error and the **old token is kept** (`web_token` unchanged, old
+  phone link still works after Start).
+- [ ] **Apple accepts the sender:** if no notification arrives on iPhone but Chrome works, run `mk web` by hand and read
+  stderr: `mk web: push to https://web.push.apple.com: HTTP 403` means Apple rejected the VAPID contact
+  (`SUBJECT` in `crates/mkrew-cli/src/web/push/crypto.rs`); report it.
+- [ ] **Offline phone:** airplane mode, trigger a notification, leave airplane mode within an hour → it arrives.
+- [ ] **Daemon restart:** with notifications on, `mk daemon stop` / start (or reboot) → a new `needs_input` still notifies
+  (the push loop reconnects within ~2 s).
+- [ ] **Privacy:** `web_push.json` is not readable by other users (Unix); no endpoint URL appears in any log line.
+
+### To verify — 2026-10-19 Mark files as viewed in the Git view (ADR 0065, plan docs/superpowers/plans/2026-10-19-git-viewed-files.md)
+
+- [ ] **Restart the daemon first** (protocol 46, migration 0022). Do not run this branch's daemon on
+  the real data folder before master is merged into it (a daemon that lacks master's
+  `0021_project_jira_keys` would record a wrong `user_version`); do the manual checks after the
+  merge (see "Numbers" above), or with a sandbox `MKREW_DATA_DIR`.
+- [ ] **Mark and dim (dark + light):** Git view on a workspace with ≥ 5 changed files. Each file row
+  has a small box before the Stage button. Click one: ✓ in the accent color, the row dims (still
+  readable), the header shows `Viewed 1/5` under the Working / Vs. base / History tabs, selection
+  does not move. Select that file: the diff panel says "Marked as viewed." with **Show diff**; the
+  toolbar shows a checked "Viewed" button. Show diff opens it; selecting another file and coming
+  back collapses it again.
+  Light theme: the ✓ on a dimmed row reads clearly.
+- [ ] **Keyboard:** with the file list focused, `v` toggles the selected file (also from the
+  palette: "Git: Mark file as viewed / not viewed"); the tooltip of the toolbar button shows V. Mark
+  every file: the counter reads `Viewed 5/5 ✓`. `v` is not bound while the commit box or the
+  file filter has the keyboard (typing "v" there types a v).
+- [ ] **A change clears the mark:** mark a file, then let an agent (or an editor) change it →
+  within a second its box unchecks, the row un-dims and the diff shows. Revert the file by hand
+  to the marked text afterwards: it stays unviewed (the mark was deleted).
+- [ ] **Staging:** mark an unstaged file, press `s`: in Staged it is still checked and dimmed.
+  Edit it again: the Staged copy stays viewed, the new Changes copy is not.
+- [ ] **Other lists:** mark files in Vs. base, switch to Working and back: the Vs. base marks are
+  still there. Open a task's "View changes": its own marks. In a task worktree (chooser) marks
+  are separate from the project folder's.
+- [ ] **Repositories:** a workspace with `fe/` and `be/` repos: marking `fe/x.txt` leaves `be/x.txt`
+  unmarked; the Repo chips keep each repo's marks.
+- [ ] **History:** no boxes, no counter, `v` does nothing.
+- [ ] **Restart Mkrew and the daemon:** the marks come back.
+- [ ] **Many files:** with ~50 viewed files and an agent saving files, the list keeps updating
+  without freezing.
+
+### To verify — 2026-10-19 Tray, taskbar badge, close to tray, Mark unread (ADR 0064)
+
+- [ ] **Restart the daemon after installing** (settings only, no protocol change): an older daemon
+  reports `[notify] flash_taskbar` as an unknown key. Cargo.lock gained edges (`windows`,
+  `raw-window-handle`); commit it before `scripts/package*` (they build `--locked`).
+- [ ] **Taskbar badge (dark + light, 100 % / 150 % / 200 % DPI):** with two agents waiting for
+  input the Mkrew taskbar button shows an amber `2`; answering one → `1`; none → no overlay; ten or
+  more → `9+`. Hover text / screen reader says "2 need you".
+- [ ] **Flash:** minimize Mkrew, make an agent need input → the taskbar button flashes until you
+  click it. It does not flash while the window is focused. `[notify] flash_taskbar = false` in
+  settings.toml (saved, within a second) → no flash.
+- [ ] **Tray icon:** Mkrew's logo while idle; a dot in the working color while an agent works; an
+  amber dot while something needs you; the tooltip reads `Mkrew · 2 need you · 1 working`.
+  Right-click: up to 8 lines `agent · workspace — state, age` (an `&` in a workspace name shows
+  as `&`), a greyed `● N working`, `Open Mkrew`, `Quit UI (agents keep running)`. Left click opens
+  the window. A line opens that session's pane, also from a hidden or minimized window.
+- [ ] **Close to tray:** ✕ and Alt+F4 hide the window (no taskbar button); `mk session list` still
+  shows the agents. Tray → Open: the same layout, terminals show their content again, and with
+  sessions waiting the taskbar badge still shows (it is set again half a second after Open). With
+  `[ui] close_to_tray = false` ✕ quits the UI (agents keep running) and leaves no tray icon
+  behind (hover the notification area).
+- [ ] **Quit UI with an unsaved Files edit:** the window appears and asks Save / Don't save /
+  Cancel; Cancel leaves the UI running; afterwards Quit UI ends it and `mk session list` still
+  shows the agents.
+- [ ] **OS notification click while hidden:** the window comes back on that session's pane.
+- [ ] **Explorer restart** (`taskkill /f /im explorer.exe`, then `explorer`): the tray icon comes
+  back, and so does the badge.
+- [ ] **Second launch:** starting `mkrew.exe` again (Start menu) while it is hidden shows the
+  running window and opens no second tray icon. A dev build (`target\debug\mkrew.exe`) next to
+  the installed one runs on its own, and so does the same exe with another `MKREW_SOCKET`.
+- [ ] **Mark unread (dark + light):** right-click a finished session's row (and its pane header) →
+  **Mark unread**: the row is tinted, the Needs you chip, the badge and the tray count go up by
+  one; it stays while that pane keeps the keyboard; focusing another pane and coming back clears
+  it, and so does Alt+Tab away and back. Palette "Agent: Mark unread" does the same on the focused pane. The item is greyed for a
+  session that works, already needs you, or is a terminal. Restarting the UI forgets marks (as it
+  forgets "viewed").
+- [ ] **macOS / Linux (CI only):** nothing changes — no badge, no tray, ✕ quits.
+
+### To verify — 2026-10-19 In-app toasts (SPEC §14)
+
+- [ ] **Info toast (dark + light):** Files tree → right-click a file → Copy path → a card appears
+  bottom-right over the content ("Path copied", `info` icon in accent, ✕ at the right, 8 px between
+  cards, 16 px from the window edge). It hides by itself after about 4 s (4.0–4.5 s); ✕ closes it at
+  once; the ✕ tooltip says "Dismiss". Phone access → Copy link → "Link copied" (never the link).
+- [ ] **Error toast:** break `%APPDATA%\mkrew\settings.toml` (delete a `]`), click the title bar theme
+  toggle → "Cannot save the theme: …" with the red `circle-alert` icon and the text in the normal
+  text color; the theme still changes for this session and the palette lists the settings problem.
+  Drag the sidebar edge / the session panel edge → "Cannot save the panel width: …". Fix the file.
+- [ ] **Stack:** toggle the theme five times quickly → still one card (the same text restarts its
+  time). Then trigger three different failures (theme toggle, diff layout, panel drag) and a fourth
+  → at most 3 cards, the oldest is gone.
+- [ ] **Never blocks:** with a card showing, type in a terminal and in the composer (keys still go
+  there; the card never takes focus), click the pane and the sidebar next to the card (works); only
+  the card itself swallows a click. Open a dialog (the command palette or Ask AI) with a card showing
+  → the card is drawn above the shade, Esc still
+  closes the dialog.
+- [ ] **Long text and scale:** a long error (Git → Push to a remote that rejects with a long hook
+  message) → the card keeps its width and shows at most 4 lines. Set `[ui] font_size = 18` → the
+  card widens with the text; no clipping. Light theme: icon, text and ✕ are readable on the card.
+- [ ] **Silent failures now visible:** paste a clipboard image over 10 MiB into a terminal pane and
+  into the composer → "The image is over 10 MiB, so it was not attached."; Share → Follow in Zed
+  with `zed` removed from PATH, let an agent edit a file → one card "Cannot follow in Zed: …" (not
+  one per edit); open Undo task on a card, press Esc at once while it runs and make it fail (e.g. a
+  file locked by another program) → "Undo failed: …"; Git view → Push, switch the Git view to another
+  worktree or repo (target chooser) before it answers and let it fail → "Push failed: …" (switching
+  workspace keeps the old view, so its error waits there instead). Worktree dialog → Merge a branch
+  that conflicts, Esc while it runs → "Merge stopped: N files conflict (…)". A ✕ on a queued text
+  of a session whose text was just written shows nothing (not an error).
+- [ ] **Kept in place:** Phone access → Start with a read-only `settings.toml` → the error row stays
+  inside the dialog (and no toast); a failed commit still shows under the commit box; `Cannot
+  start agent` still shows in the tab bar.
+
 ### To verify — 2026-10-15 Agent logos in chips (ADR 0058)
 
 - [ ] **Logos (dark + light):** claude, codex, copilot and omp sessions show their real logo (no

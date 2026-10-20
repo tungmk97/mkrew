@@ -346,6 +346,8 @@ impl Shell {
                 };
                 let requests = view.status_loaded(loaded);
                 shell.git_requests(project_id, requests, window, cx);
+                // Which of the listed files are still marked as viewed (no-op in the History).
+                shell.load_git_viewed(project_id, window, cx);
                 // Everything committed: the box is gone, the list takes the keyboard back.
                 if shell.git_commit_focus.is_focused(window) && !shell.git_commit_shown() {
                     window.focus(&shell.git_focus, cx);
@@ -623,6 +625,10 @@ impl Shell {
                     tracing::warn!(%project_id, ?stage, "git stage/unstage failed: {error}");
                 }
                 let Some(view) = shell.git_at(project_id, &at) else {
+                    // The view moved to another repo or worktree: no row left for the failure.
+                    if let Err(error) = result {
+                        shell.toast_error(format!("{} failed: {error}", stage.label()), cx);
+                    }
                     return;
                 };
                 let requests = view.staged(result);
@@ -707,6 +713,9 @@ impl Shell {
                     tracing::warn!(%project_id, "git.commit failed: {error}");
                 }
                 let Some(view) = shell.git_at(project_id, &at) else {
+                    if let Err(error) = result {
+                        shell.toast_error(format!("Commit failed: {error}"), cx);
+                    }
                     return;
                 };
                 view.commit.committed(result);
@@ -789,6 +798,9 @@ impl Shell {
                     tracing::warn!(%project_id, ?remote, "git fetch/push failed: {error}");
                 }
                 let Some(view) = shell.git_at(project_id, &at) else {
+                    if let Err(error) = result {
+                        shell.toast_error(format!("{} failed: {error}", remote.label()), cx);
+                    }
                     return;
                 };
                 view.remotes.finished(remote, result);

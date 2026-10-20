@@ -50,6 +50,7 @@ impl Shell {
         }
         let open = self.phone_open;
         let config_dir = self.config_dir.clone();
+        let settings_file = self.settings_file.clone();
         let status = connection.call::<mkrew_protocol::DaemonStatusResult>(Request::DaemonStatus);
         cx.spawn_in(window, async move |this, cx| {
             let web = status
@@ -59,7 +60,7 @@ impl Shell {
             let local = if open {
                 Some(
                     cx.background_executor()
-                        .spawn(async move { Local::read(&config_dir) })
+                        .spawn(async move { Local::read(&config_dir, &settings_file) })
                         .await,
                 )
             } else {
@@ -80,7 +81,8 @@ impl Shell {
     }
 
     /// Start / Stop: `[web] enabled` in `settings.toml`; the daemon's settings watcher does the
-    /// rest. A failed write shows in the dialog (there is no toast layer).
+    /// rest. A failed write shows in the dialog, which stays open (a failure with a place of its
+    /// own is not a toast, SPEC §14).
     pub(crate) fn set_phone_enabled(
         &mut self,
         enabled: bool,
@@ -91,6 +93,29 @@ impl Shell {
             Ok(()) => self.phone.written(enabled, Instant::now()),
             Err(error) => {
                 tracing::warn!("cannot write [web] enabled: {error}");
+                self.phone.write_failed(error.to_string());
+            }
+        }
+        cx.notify();
+        self.poll_phone(window, cx);
+    }
+
+    /// "Turn on" / "Turn off" of the Phone notifications row: `[web] push` in `settings.toml`.
+    /// `mk web` reads it on every request, so there is nothing to wait for. A failed write shows
+    /// in the dialog's error row (SPEC §14), not as a toast.
+    pub(crate) fn set_phone_push(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match mkrew_core::settings::write_web_push(&self.settings_file, enabled) {
+            Ok(()) => {
+                self.phone.push = enabled;
+                self.phone.notice = None;
+            }
+            Err(error) => {
+                tracing::warn!("cannot write [web] push: {error}");
                 self.phone.write_failed(error.to_string());
             }
         }
@@ -125,6 +150,8 @@ impl Shell {
     pub(crate) fn copy_phone_link(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(text) = self.phone.copy_link() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+            // The text says "Link copied", never the link: it carries the access token.
+            self.toast_info("Link copied", cx);
         }
         cx.notify();
     }
@@ -248,6 +275,36 @@ impl Shell {
                     SetUp::Busy => disabled_button("phone-setup", "Setting up…", theme, false),
                 }
             }));
+        let push_row = phone_dialog::push_row(&phone.daemon, phone.push).map(|row| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .child(glyph(row.mark))
+                .child(line(row.text.to_owned()))
+                .child(match row.switch {
+                    PushSwitch::TurnOn => button("phone-push-on", "Turn on", theme, false)
+                        .tooltip(tooltip(
+                            theme,
+                            "Notify the phone when an agent needs you or finishes. The message is encrypted for the phone and goes through Apple's, Google's, Mozilla's or Microsoft's push service",
+                            "",
+                        ))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.set_phone_push(true, window, cx);
+                        })),
+                    PushSwitch::TurnOff => button("phone-push-off", "Turn off", theme, false)
+                        .tooltip(tooltip(theme, "Stop notifying the phone", ""))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.set_phone_push(false, window, cx);
+                        })),
+                })
+        });
+        let push_hint = (phone.push && push_row.is_some()).then(|| {
+            meta_line(
+                theme,
+                "On the phone, open Mkrew from the Home Screen and tap the bell.".into(),
+            )
+        });
 
         let link: Option<gpui::AnyElement> = match phone.link_block() {
             LinkBlock::Hidden => None,
@@ -335,6 +392,8 @@ impl Shell {
             .children(phone.notice.clone().map(error_row))
             .child(serve_row)
             .children(serve.error.map(error_row))
+            .children(push_row)
+            .children(push_hint)
             .children(link)
             .child(
                 div()

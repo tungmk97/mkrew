@@ -377,6 +377,7 @@ impl Shell {
                 }
             }
             Command::GitToggleDiffMode => self.set_diff_mode(self.diff_mode.other(), cx),
+            Command::GitToggleViewed => self.toggle_selected_viewed(window, cx),
             Command::SaveFile => {
                 // Only bound while Files are shown.
                 if let Some(project_id) = self.workspace {

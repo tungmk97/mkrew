@@ -40,6 +40,8 @@ pub struct Context {
     pub agents: bool,
     /// The terminal pane that had the keyboard runs an agent (it has a composer).
     pub agent_pane: bool,
+    /// The focused pane's session can be marked unread (a finished agent, `inbox::can_mark_unread`).
+    pub markable: bool,
     /// "Run: Start all" would start something (no command yet: it opens Run setup).
     pub run_stopped: bool,
     /// A run session of the active workspace lives.
@@ -67,10 +69,11 @@ pub enum Extra {
     RunShowTab,
     OpenSettings,
     PhoneAccess,
+    MarkUnread,
 }
 
 impl Extra {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -87,6 +90,7 @@ impl Extra {
         Self::RunShowTab,
         Self::OpenSettings,
         Self::PhoneAccess,
+        Self::MarkUnread,
     ];
 
     pub fn title(self) -> &'static str {
@@ -107,6 +111,7 @@ impl Extra {
             Self::RunShowTab => "Run: Show Run tab",
             Self::OpenSettings => "Global: Open settings",
             Self::PhoneAccess => "Global: Phone access…",
+            Self::MarkUnread => "Agent: Mark unread",
         }
     }
 
@@ -135,6 +140,7 @@ impl Extra {
                 context.workspace && context.run_live
             }
             Self::RunSetup => context.workspace,
+            Self::MarkUnread => context.markable,
             Self::OpenSettings | Self::PhoneAccess => true,
         }
     }
@@ -235,6 +241,7 @@ pub fn title(command: Command) -> String {
         Command::GitUnstage => "Git: Unstage selected file or hunk".into(),
         Command::GitFocusCommit => "Git: Focus commit message".into(),
         Command::GitToggleDiffMode => "Git: Toggle Unified / Split diff".into(),
+        Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
         Command::CommandPalette => "Global: Command palette".into(),
@@ -318,6 +325,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitStage
         | Command::GitUnstage
         | Command::GitToggleDiffMode
+        | Command::GitToggleViewed
         | Command::GitFocusCommit => in_view(View::Git),
     }
 }

@@ -58,24 +58,31 @@ pub fn load_or_create(file: &Path, renew: bool) -> anyhow::Result<Token> {
     Ok(Token(text))
 }
 
-/// Owner-only on Unix; the per-user config folder already is on Windows.
-fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
+/// Writes `text` to `file` through a temp file and a rename, so a crash never leaves half a
+/// file. Owner-only on Unix, also when `file` already existed (the rename replaces it with the
+/// private temp file; the explicit chmod is the guarantee); the per-user config folder already
+/// is private on Windows.
+pub(super) fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut name = file.file_name().unwrap_or_default().to_owned();
+    name.push(".tmp");
+    let temp = file.with_file_name(name);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(file)?
-            .write_all(text.as_bytes())
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(file, text)
-    }
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options.open(&temp).and_then(|mut f| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        f.write_all(text.as_bytes())?;
+        f.sync_all()
+    });
+    written
+        .and_then(|()| std::fs::rename(&temp, file))
+        .inspect_err(|_| drop(std::fs::remove_file(&temp)))
 }
 
 #[cfg(test)]

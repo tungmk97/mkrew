@@ -698,6 +698,42 @@ fn a_save_marks_what_it_sent_and_one_runs_at_a_time() {
 }
 
 #[test]
+fn a_save_that_comes_back_after_the_file_was_left_is_reported() {
+    let mut view = opened("a\n");
+    view.editor_mut().unwrap().insert("b");
+    let save = view.begin_save().unwrap();
+    // The user opened another file while the write was in flight.
+    view.open("src/main.rs");
+    let failed = view.saved("README.md", save.point, Err("disk full".into()));
+    assert_eq!(failed.as_deref(), Some("Not saved: disk full"));
+    let newer = FsWritten {
+        saved: false,
+        hash: "#other".into(),
+    };
+    assert_eq!(
+        view.saved("README.md", None, Ok(newer)).as_deref(),
+        Some("Not saved: the file changed on disk meanwhile.")
+    );
+    let fine = FsWritten {
+        saved: true,
+        hash: "#x".into(),
+    };
+    assert_eq!(
+        view.saved("README.md", None, Ok(fine)),
+        None,
+        "a good save is no news"
+    );
+    // Shown: the banner has it, nothing more to say.
+    let mut view = opened("a\n");
+    view.editor_mut().unwrap().insert("b");
+    let save = view.begin_save().unwrap();
+    assert_eq!(
+        view.saved("README.md", save.point, Err("disk full".into())),
+        None
+    );
+}
+
+#[test]
 fn a_highlight_is_kept_only_for_the_text_it_was_made_of() {
     let mut view = opened("a\n");
     view.editor_mut().unwrap().insert("b");

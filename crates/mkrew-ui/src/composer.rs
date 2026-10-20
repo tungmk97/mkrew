@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use gpui::ImageFormat;
-use mkrew_protocol::{Event, QueuedSend, SessionSendParams};
+use mkrew_protocol::{ErrorBody, ErrorCode, Event, QueuedSend, SessionSendParams};
 use ulid::Ulid;
 
 use crate::task_dialog::DialogKey;
@@ -244,6 +244,26 @@ pub fn attachment(image: gpui::Image) -> Option<(&'static str, Vec<u8>)> {
         return Some(("png", png));
     }
     attachment_ext(image.format).map(|ext| (ext, image.bytes))
+}
+
+/// `attachment.save` refuses larger images (§20B.5); not worth sending.
+pub const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+
+/// Why a clipboard image of `len` bytes is not sent (a toast); `None` when it fits.
+pub fn attachment_refusal(len: usize) -> Option<String> {
+    (len > MAX_ATTACHMENT_BYTES).then(|| {
+        format!(
+            "The image is over {} MiB, so it was not attached.",
+            MAX_ATTACHMENT_BYTES / (1024 * 1024)
+        )
+    })
+}
+
+/// The toast for a failed `session.unqueue`. `None` for `not_found`: the text was written
+/// meanwhile and the `session.queue` event already dropped it from the list.
+pub fn unqueue_failure(body: &ErrorBody) -> Option<String> {
+    (body.code != ErrorCode::NotFound)
+        .then(|| format!("Cannot remove the queued text: {}", body.message))
 }
 
 /// The first line of a queued text, as listed in the composer.
@@ -528,5 +548,40 @@ mod tests {
         assert!(composers.queue(session).is_empty());
         assert!(!composers.apply(&event(Vec::new())));
         assert_eq!(first_line(""), "");
+    }
+
+    #[test]
+    fn an_image_over_the_daemon_limit_is_refused_with_a_reason() {
+        assert_eq!(attachment_refusal(0), None);
+        assert_eq!(
+            attachment_refusal(MAX_ATTACHMENT_BYTES),
+            None,
+            "the limit itself fits"
+        );
+        assert_eq!(
+            attachment_refusal(MAX_ATTACHMENT_BYTES + 1).as_deref(),
+            Some("The image is over 10 MiB, so it was not attached.")
+        );
+    }
+
+    #[test]
+    fn a_text_written_meanwhile_is_not_an_unqueue_failure() {
+        use mkrew_protocol::{ErrorBody, ErrorCode};
+        let body = |code, message: &str| ErrorBody {
+            code,
+            message: message.into(),
+        };
+        // The `session.queue` event already dropped it: nothing to tell the user.
+        assert_eq!(
+            unqueue_failure(&body(
+                ErrorCode::NotFound,
+                "send 01 is not queued (already written?)"
+            )),
+            None
+        );
+        assert_eq!(
+            unqueue_failure(&body(ErrorCode::InvalidState, "session exited")).as_deref(),
+            Some("Cannot remove the queued text: session exited")
+        );
     }
 }

@@ -3,8 +3,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_REPLIES, ago, backoff, buildList, chipFor, displayName, endedAt, esc, fitFontSize,
-  keyBytes, loadReplies, machineName, metaText, newAgentPlan, pillText, readerText,
-  rememberReply, statusLabel, taskTitle, toBase64, tokenFromHash, tokenFromText, wsClass,
+  fromBase64Url, keyBytes, loadReplies, machineName, metaText, newAgentPlan, pillText, pushOffer,
+  readerText, rememberReply, sameBytes, sessionFromHash, statusLabel, taskTitle, toBase64,
+  tokenFromHash, tokenFromText, wsClass,
 } from './model.mjs';
 
 const T = 'ab'.repeat(32);
@@ -185,4 +186,57 @@ test('read view joins soft-wrapped rows, tames boxes and squeezes blank rows', (
   assert.equal(readerText([row(''), row('│   │')]), '');
   // A continuation row with no row before it starts the text.
   assert.equal(readerText([row('tail', true)]), 'tail');
+});
+
+test('a tapped notification opens the session named in #s=', () => {
+  const id = '01J0000000000000000000ABCD';
+  assert.equal(sessionFromHash(`#s=${id}`), id);
+  assert.equal(sessionFromHash(`#t=${T}&s=${id}`), id);
+  assert.equal(sessionFromHash(`#s=${id}0`), null);
+  assert.equal(sessionFromHash('#s=abc'), null);
+  assert.equal(sessionFromHash(`#t=${T}`), null);
+  assert.equal(sessionFromHash(''), null);
+  assert.equal(sessionFromHash(undefined), null);
+});
+
+test('the VAPID key decodes from base64url and compares by bytes', () => {
+  // The RFC 8291 sender key: 65 bytes, an uncompressed point (starts with 4).
+  const key = fromBase64Url('BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8\n');
+  assert.equal(key.length, 65);
+  assert.equal(key[0], 4);
+  assert.ok(sameBytes(key, fromBase64Url('BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8')));
+  assert.ok(!sameBytes(key, key.slice(0, 64)));
+  assert.ok(!sameBytes(new Uint8Array([1, 2]), new Uint8Array([1, 3])));
+});
+
+test('the bell shows only when the PC offers notifications, and says why it cannot work', () => {
+  const base = { enabledByPc: true, secure: true, supported: true, standalone: true, ios: true, permission: 'default', subscribed: false };
+  assert.deepEqual(pushOffer({ ...base, enabledByPc: false }), { show: false });
+  // Plain http on a tailnet IP: no service worker, nothing to offer.
+  assert.deepEqual(pushOffer({ ...base, secure: false, supported: false }), { show: false });
+  // iPhone in a Safari tab: no PushManager until the page is on the Home Screen.
+  const tab = pushOffer({ ...base, supported: false, standalone: false });
+  assert.equal(tab.show, true);
+  assert.equal(tab.usable, false);
+  assert.match(tab.hint, /Home Screen/);
+  // A browser without Push that is not an iPhone: nothing to say.
+  assert.deepEqual(pushOffer({ ...base, supported: false, ios: false }), { show: false });
+  const denied = pushOffer({ ...base, permission: 'denied' });
+  assert.equal(denied.usable, false);
+  assert.match(denied.hint, /blocked/i);
+  const off = pushOffer(base);
+  assert.deepEqual([off.show, off.usable, off.on], [true, true, false]);
+  const on = pushOffer({ ...base, permission: 'granted', subscribed: true });
+  assert.deepEqual([on.show, on.usable, on.on], [true, true, true]);
+  assert.match(on.hint, /turn off/i);
+});
+
+test('a refusal by the PC keeps the bell and shows the reason', () => {
+  const base = { enabledByPc: true, secure: true, supported: true, standalone: true, ios: false, permission: 'granted', subscribed: false };
+  const refused = pushOffer({ ...base, refused: 'this PC already notifies 8 phones' });
+  assert.deepEqual([refused.show, refused.usable, refused.on], [true, true, false]);
+  assert.match(refused.hint, /already notifies 8 phones/);
+  assert.match(refused.hint, /try again/i);
+  // Once subscribed the reason no longer applies.
+  assert.match(pushOffer({ ...base, subscribed: true, refused: 'x' }).hint, /turn off/i);
 });

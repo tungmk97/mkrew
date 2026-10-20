@@ -16,26 +16,27 @@ impl Shell {
             self.inspector_open = !self.inspector_open;
             if !self.inspector_open {
                 // The grip is gone: no mouse-up will end a drag in progress.
-                self.end_inspector_drag();
+                self.end_inspector_drag(cx);
             }
         }
         cx.notify();
     }
 
     /// The edge was released: saves the dragged width as `[ui] inspector_width`.
-    pub(crate) fn end_inspector_drag(&mut self) {
+    pub(crate) fn end_inspector_drag(&mut self, cx: &mut Context<'_, Self>) {
         if std::mem::take(&mut self.inspector_dragging) {
-            self.save_width("inspector_width", self.inspector_width);
+            self.save_width("inspector_width", self.inspector_width, cx);
         }
     }
 
     /// Saves a dragged panel width as `[ui] <key>` (one write per drag; the file is hand-edited
-    /// config). A file that does not parse is not written; the palette lists why (§20.0).
-    pub(crate) fn save_width(&mut self, key: &str, width: f32) {
+    /// config). A file that does not parse is not written; the palette lists why (§20.0) and a
+    /// toast says the width was not saved.
+    pub(crate) fn save_width(&mut self, key: &str, width: f32, cx: &mut Context<'_, Self>) {
         // Clamped to its theme limits while dragged, so it fits a u16.
         let width = (width.round() as u16).to_string();
         if let Err(error) = mkrew_core::settings::write_ui_value(&self.settings_file, key, &width) {
-            self.settings_error = Some(error.to_string());
+            self.settings_write_failed("the panel width", error, cx);
         }
     }
 
@@ -121,11 +122,11 @@ impl Shell {
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|shell, _, _, _| shell.end_inspector_drag()),
+                cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             )
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|shell, _, _, _| shell.end_inspector_drag()),
+                cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
         let thread = session.and_then(|s| self.render_thread_section(s, theme, cx));
         let cards = div()

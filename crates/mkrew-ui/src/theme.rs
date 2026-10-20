@@ -59,8 +59,14 @@ pub mod motion {
     pub const SLOW: Duration = Duration::from_millis(180);
 }
 
-/// In-app toasts auto-hide after this long.
+/// In-app toasts auto-hide after this long (expired on the [`STATUS_TICK`], so up to one tick
+/// later).
 pub const TOAST_DURATION: Duration = Duration::from_secs(4);
+
+/// Width of a toast card (px at the default 13 px body, drawn with [`rems_px`]) and the lines
+/// its text shows before it is cut.
+pub const TOAST_WIDTH: f32 = 320.0;
+pub const TOAST_MAX_LINES: usize = 4;
 
 /// Status refresh period: one step of the `working` dots and the elapsed/idle time update
 /// (SPEC §11, §14).
@@ -136,6 +142,8 @@ pub mod opacity {
     pub const SECONDARY: f32 = 0.8;
     /// A control that cannot be used right now (e.g. Save while saving).
     pub const DISABLED: f32 = 0.5;
+    /// A changed-file row marked as viewed (SPEC §12B): dimmed, still readable.
+    pub const VIEWED: f32 = 0.6;
     /// The unlit dots of the `working` mark.
     pub const STATUS_DOT_DIM: f32 = 0.35;
     /// Hover-revealed actions (SPEC §14 progressive disclosure): hidden, then fully shown.
@@ -1173,6 +1181,24 @@ mod tests {
                     let ratio = contrast(fg, bg);
                     assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
                 }
+            }
+        }
+    }
+
+    /// A toast card is `surface_raised`: its text, its two marks (info accent, error red) and
+    /// the ✕ must read on it in both appearances.
+    #[test]
+    fn toast_text_and_marks_read_on_the_card() {
+        for theme in [Theme::dark(), Theme::light()] {
+            let ratio = contrast(theme.text, theme.surface_raised);
+            assert!(ratio >= 4.5, "text: {ratio:.2}");
+            for (name, mark) in [
+                ("info", theme.accent_text),
+                ("error", theme.status_exited),
+                ("close", theme.text_muted),
+            ] {
+                let ratio = contrast(mark, theme.surface_raised);
+                assert!(ratio >= 3.0, "{name}: {ratio:.2}");
             }
         }
     }

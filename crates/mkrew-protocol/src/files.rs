@@ -157,6 +157,27 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
+/// `git.set_viewed` (ADR 0065): marks the file of `diff` as viewed, or clears the mark, for the
+/// diff `diff` describes (`mode`, `staged`, `since` as in `git.diff`; `commit` must be `None`:
+/// a commit's files are never marked). The daemon hashes that diff's text as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GitSetViewedParams {
+    #[serde(flatten)]
+    pub diff: GitDiffParams,
+    pub viewed: bool,
+}
+
+/// One file of a `git.viewed` answer whose mark still stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewedFile {
+    /// Project-relative, like [`ChangedFile::path`].
+    pub path: String,
+    /// `true` = the staged (index) side of Working changes; `false` = every other list (the
+    /// unstaged side, untracked, against base, since a checkpoint), as in `git.diff`.
+    #[serde(default)]
+    pub staged: bool,
+}
+
 /// One `@@ -old_start,old_lines +new_start,new_lines @@ header` block.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Hunk {
@@ -587,6 +608,26 @@ mod tests {
                 commit: Some("abc".into()),
                 since: None,
             }),
+            Request::GitViewed(GitStatusParams {
+                project_id,
+                worktree_task_id: wt,
+                repo: Some("fe".into()),
+                mode: GitMode::Working,
+                since: None,
+            }),
+            Request::GitSetViewed(GitSetViewedParams {
+                diff: GitDiffParams {
+                    project_id,
+                    worktree_task_id: wt,
+                    repo: None,
+                    path: "src/a.rs".into(),
+                    mode: GitMode::Base,
+                    staged: false,
+                    commit: None,
+                    since: Some("abc".into()),
+                },
+                viewed: true,
+            }),
             Request::GitStage(GitStageParams {
                 project_id,
                 worktree_task_id: wt,
@@ -684,6 +725,8 @@ mod tests {
         let methods = [
             "git.status",
             "git.diff",
+            "git.viewed",
+            "git.set_viewed",
             "git.stage",
             "git.unstage",
             "git.discard",
@@ -708,6 +751,25 @@ mod tests {
             });
             assert_eq!(value["method"], method);
         }
+    }
+
+    #[test]
+    fn set_viewed_flattens_the_diff_params_and_a_viewed_file_defaults_to_the_unstaged_side() {
+        let id = sid().to_string();
+        let set: GitSetViewedParams =
+            serde_json::from_value(json!({"project_id": id, "path": "a", "viewed": true})).unwrap();
+        assert_eq!(
+            (
+                set.diff.path.as_str(),
+                set.diff.mode,
+                set.diff.staged,
+                set.viewed
+            ),
+            ("a", GitMode::Working, false, true)
+        );
+        assert_eq!(serde_json::to_value(&set).unwrap()["path"], "a");
+        let file: ViewedFile = serde_json::from_value(json!({"path": "a"})).unwrap();
+        assert!(!file.staged);
     }
 
     #[test]

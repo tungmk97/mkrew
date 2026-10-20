@@ -3,11 +3,14 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use mkrew_core::viewed::{self, Mark};
 use mkrew_protocol::{
     ChangedFile, ErrorCode, Event, GitChangedEvent, GitCommitParams, GitCommitResult,
     GitDiffParams, GitDiscardParams, GitLogParams, GitRemoteParams, GitSetBaseParams,
-    GitShowParams, GitStageParams, GitStatusParams, HunkTarget, Outcome, Project, ProjectRef,
+    GitSetViewedParams, GitShowParams, GitStageParams, GitStatusParams, HunkTarget, Outcome,
+    Project, ProjectRef, ViewedFile,
 };
+use mkrew_store::ViewedScope;
 use serde::Serialize;
 use tokio::task::JoinError;
 use ulid::Ulid;
@@ -117,6 +120,168 @@ impl Daemon {
         })
         .await;
         view_outcome("git.diff", diff)
+    }
+
+    /// `git.viewed` (ADR 0065): which files of the listed changes (`params` as in
+    /// `git.status`) are still marked as viewed. A mark whose file's diff text changed, or
+    /// whose file no longer changes, is deleted here; marks of other lists are not touched.
+    pub(super) async fn git_viewed(&self, params: GitStatusParams) -> Outcome {
+        if let Some(since) = &params.since
+            && let Err(reason) = check_ref(since)
+        {
+            return Outcome::error(ErrorCode::InvalidRequest, reason);
+        }
+        let target = match self
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let repo_key = target.repo.clone().unwrap_or_default();
+        let list = viewed::list_key(params.mode, params.since.as_deref());
+        let scope = ViewedScope {
+            project_id: params.project_id,
+            worktree_task_id: params.worktree_task_id,
+            repo: &repo_key,
+            list: &list,
+        };
+        let stored = self.store().viewed_marks(&scope);
+        let marks: Vec<Mark> = match stored {
+            Ok(stored) => stored
+                .into_iter()
+                .map(|(path, hash)| Mark { path, hash })
+                .collect(),
+            Err(e) => return store_outcome::<()>(Err(e)),
+        };
+        if marks.is_empty() {
+            return ok(&Vec::<ViewedFile>::new());
+        }
+        let (hub, cache) = (Arc::clone(&self.hub), Arc::clone(&self.git_cache));
+        let Target {
+            project: Project { id, base_ref, .. },
+            dir,
+            repo,
+            ..
+        } = target;
+        let (mode, since) = (params.mode, params.since);
+        let resolved = tokio::task::spawn_blocking(move || {
+            git_view::viewed(
+                &*hub.git,
+                &cache,
+                &dir,
+                base_ref.as_deref(),
+                (mode, since.as_deref()),
+                marks,
+                &|| hub.snapshots.tree(&*hub.git, id, &dir),
+            )
+        })
+        .await;
+        let result = resolved.map(|inner| {
+            inner.map(|resolved| {
+                let store = self.store();
+                for stale in &resolved.stale {
+                    let hash = Some(stale.hash.as_str());
+                    if let Err(e) = store.remove_viewed(&scope, &stale.path, hash) {
+                        tracing::warn!(
+                            project_id = %scope.project_id,
+                            "stale viewed mark not deleted: {e}"
+                        );
+                    }
+                }
+                drop(store);
+                resolved
+                    .viewed
+                    .into_iter()
+                    .map(|file| ViewedFile {
+                        path: in_repo(repo.as_deref(), &file.path),
+                        staged: file.staged,
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+        view_outcome("git.viewed", result)
+    }
+
+    /// `git.set_viewed` (ADR 0065): hashes the file's diff as it is now and stores the mark
+    /// (`invalid_state` for a file with no diff), or removes it: the mark of that exact text,
+    /// else (no diff any more) every mark of the file in the list.
+    pub(super) async fn git_set_viewed(&self, params: GitSetViewedParams) -> Outcome {
+        let GitSetViewedParams {
+            diff: params,
+            viewed: on,
+        } = params;
+        if params.commit.is_some() {
+            let message = "a commit's files cannot be marked as viewed";
+            return Outcome::error(ErrorCode::InvalidRequest, message);
+        }
+        if let Some(since) = &params.since
+            && let Err(reason) = check_ref(since)
+        {
+            return Outcome::error(ErrorCode::InvalidRequest, reason);
+        }
+        let path = match project_path(params.repo.as_deref(), &params.path) {
+            Ok(path) => path,
+            Err(outcome) => return outcome,
+        };
+        let target = match self
+            .target(
+                params.project_id,
+                params.worktree_task_id,
+                params.repo.as_deref(),
+            )
+            .await
+        {
+            Ok(target) => target,
+            Err(outcome) => return outcome,
+        };
+        let repo_key = target.repo.clone().unwrap_or_default();
+        let list = viewed::list_key(params.mode, params.since.as_deref());
+        let (hub, cache) = (Arc::clone(&self.hub), Arc::clone(&self.git_cache));
+        let Target {
+            project: Project { id, base_ref, .. },
+            dir,
+            ..
+        } = target;
+        let hashed = {
+            let (params, path) = (params.clone(), path.clone());
+            tokio::task::spawn_blocking(move || {
+                let snapshot = || hub.snapshots.tree(&*hub.git, id, &dir);
+                git_view::diff_hash(
+                    &*hub.git,
+                    &cache,
+                    &dir,
+                    base_ref.as_deref(),
+                    &params,
+                    &path,
+                    &snapshot,
+                )
+            })
+            .await
+        };
+        let hash = match hashed {
+            Ok(Ok(hash)) => hash,
+            other => return view_outcome("git.set_viewed", other),
+        };
+        let scope = ViewedScope {
+            project_id: params.project_id,
+            worktree_task_id: params.worktree_task_id,
+            repo: &repo_key,
+            list: &list,
+        };
+        let stored = match (on, hash) {
+            (true, Some(hash)) => self.store().add_viewed(&scope, &path, &hash),
+            (true, None) => {
+                let message = format!("{path} has no changes to mark as viewed");
+                return Outcome::error(ErrorCode::InvalidState, message);
+            }
+            (false, hash) => self.store().remove_viewed(&scope, &path, hash.as_deref()),
+        };
+        store_outcome(stored)
     }
 
     /// `git.stage` / `git.unstage` (`unstage`): whole files by path, or one hunk of the

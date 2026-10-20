@@ -40,9 +40,10 @@ use mkrew_protocol::{
     SessionState, SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams,
     TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
     TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
-    WORKSPACE_COLORS,
+    ViewedFile, WORKSPACE_COLORS,
 };
 use mkrew_ui::ask::{self, Ask};
+use mkrew_ui::attention::{self, Tracker};
 use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
@@ -51,6 +52,7 @@ use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
+use mkrew_ui::desktop::{Desktop, TrayEvent};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
@@ -79,7 +81,7 @@ use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
-use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, SetUp, Switch};
+use mkrew_ui::phone_dialog::{self, LinkBlock, Local, Mark, Phone, PushSwitch, SetUp, Switch};
 use mkrew_ui::plan::{self, Plans};
 use mkrew_ui::preview;
 use mkrew_ui::prompt_picker::{self, PromptPicker};
@@ -98,10 +100,11 @@ use mkrew_ui::tabs::{
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
-use mkrew_ui::terminal::view::{OpenLink, TerminalPane};
+use mkrew_ui::terminal::view::{AttachFailed, OpenLink, TerminalPane};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
+use mkrew_ui::toast::{self, Toasts};
 use mkrew_ui::turn::Turns;
 use mkrew_ui::turns_dialog::{self, TurnsDialog};
 use mkrew_ui::undo_dialog::{self, LineKind, Preview, UndoDialog};
@@ -159,6 +162,12 @@ fn main() {
     let (keymap, keymap_errors) = Keymap::load(&paths.keymap_file());
     for error in &keymap_errors {
         tracing::warn!("{error}; using the default for it");
+    }
+    // A second launch of the same exe on the same daemon shows the running window (it may be
+    // hidden in the tray) instead of opening another one; a dev build at another path, or on
+    // another `MKREW_SOCKET`, starts on its own.
+    if mkrew_ui::desktop::raise_running_instance(&paths.socket) {
+        return;
     }
     gpui_platform::application()
         .with_assets(icons::Assets)
@@ -412,6 +421,14 @@ struct Shell {
     ask_web: bool,
     /// Done sessions already seen, so they leave the Inbox.
     viewed: Viewed,
+    /// The OS around the window (ADR 0064): taskbar badge and flash, tray icon, hide / show.
+    desktop: Desktop,
+    /// What `desktop` last showed, so only a change reaches the OS.
+    attention: Tracker,
+    /// `[ui] close_to_tray`: the window's ✕ hides it while the tray icon is there.
+    close_to_tray: bool,
+    /// `[notify] flash_taskbar`.
+    flash_taskbar: bool,
     /// Each session's last turn, summarized while it is done.
     turns: Turns,
     /// Each session's newest token usage (SPEC §20E.3).
@@ -612,6 +629,9 @@ struct Shell {
     /// The sidebar as its own view (see [`shell::sidebar_view::SidebarView`]); made on first
     /// render.
     sidebar_view: Option<Entity<shell::sidebar_view::SidebarView>>,
+    /// The in-app toasts (SPEC §14): pushed by `toast_error` / `toast_info`, expired on the
+    /// status tick.
+    toasts: Toasts,
 }
 
 impl Render for Shell {
@@ -634,12 +654,17 @@ impl Render for Shell {
         // One clock reading per frame, so every spinner and time agrees.
         let now = status::now_ms();
         // Rendering is what marks the focused pane of the active window viewed (its done leaves
-        // the Inbox): every state change and window activation re-renders.
+        // the Inbox): every state change and window activation re-renders. A change in what
+        // needs the user also reaches the badge and the tray.
+        let mut viewed_changed = false;
         if window.is_window_active()
             && let Some(id) = self.focused_session()
             && let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)
         {
-            self.viewed.view(session);
+            viewed_changed = self.viewed.view(session);
+        }
+        if viewed_changed {
+            self.sync_attention(cx);
         }
         div()
             .size_full()
@@ -808,7 +833,8 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
-                    ),
+                    )
+                    .children(self.render_toasts(&theme, cx)),
             )
     }
 }
