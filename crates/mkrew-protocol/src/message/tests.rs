@@ -101,6 +101,7 @@ fn every_m1_request_round_trips() {
         Request::ProjectUpdate(ProjectUpdateParams {
             project_id: sid(),
             jira_keys: None,
+            position: None,
             name: Some("demo".into()),
             default_agent: Some(None),
             default_shell: None,
@@ -460,6 +461,7 @@ fn project_update_tells_missing_from_null() {
     let keep = ProjectUpdateParams {
         project_id: sid(),
         jira_keys: None,
+        position: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -672,6 +674,7 @@ fn event_wire_shape_matches_spec() {
     round_trip(&Message::Event(Event::ProjectUpdated(Project {
         id: sid(),
         jira_keys: vec!["PROJ".into()],
+        position: 0,
         name: "demo".into(),
         path: "/tmp/demo".into(),
         run_commands: vec![RunCommand {

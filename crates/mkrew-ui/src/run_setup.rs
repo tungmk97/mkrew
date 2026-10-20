@@ -382,6 +382,7 @@ impl RunSetup {
         Some(ProjectUpdateParams {
             project_id: self.project_id,
             jira_keys: None,
+            position: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -478,6 +479,7 @@ mod tests {
         Project {
             id: Ulid::new(),
             jira_keys: Vec::new(),
+            position: 0,
             name: "EA".into(),
             path: "/ea".into(),
             run_commands: commands,

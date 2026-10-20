@@ -60,6 +60,7 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
         let updated: Project = client.call(Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
             jira_keys: None,
+            position: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -81,6 +82,7 @@ pub fn update(client: &mut Client, project: &str, changes: Changes) -> anyhow::R
             run_autostart: None,
             color: None,
             pinned: None,
+            position: None,
             jira_keys: Some(keys),
         }))?;
         let keys = if updated.jira_keys.is_empty() {

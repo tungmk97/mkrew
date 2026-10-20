@@ -125,6 +125,17 @@ pub struct View {
     pub rows: Vec<Row>,
 }
 
+impl View {
+    /// The workspace whose listed rows hold `session`: its row is highlighted there, so that
+    /// workspace's header is not (a collapsed or filtered-out one has no such row).
+    pub fn shown_in(&self, session: Option<Ulid>) -> Option<Ulid> {
+        self.rows.iter().find_map(|row| match row {
+            Row::Session(row) if Some(row.session_id) == session => Some(row.project_id),
+            _ => None,
+        })
+    }
+}
+
 /// Whether the (lowercase) `query` matches a session: every whitespace-separated word must be
 /// found in one of `fields` (workspace name, agent, title), ignoring case.
 // ponytail: lowercases the three fields per session per frame while a query is typed; cache
@@ -446,6 +457,22 @@ impl Sidebar {
         self.update_session(session_id, |session| session.position = position);
     }
 
+    /// A workspace's position from a sidebar drag, shown before the `project.updated` echo.
+    pub fn set_project_position(&mut self, project_id: Ulid, position: i64) {
+        if let Some(project) = self.projects.iter_mut().find(|p| p.id == project_id) {
+            project.position = position;
+            self.sort_projects();
+        }
+    }
+
+    /// The ids of the pinned (`pinned` true) or unpinned workspaces, in sidebar order.
+    pub fn workspace_order(&self, pinned: bool) -> Vec<Ulid> {
+        (self.projects.iter())
+            .filter(|p| p.pinned == pinned)
+            .map(|p| p.id)
+            .collect()
+    }
+
     /// The live session ids of `project_id`'s AGENTS (`shell` false) or TERMINAL group, in
     /// sidebar order (unfiltered: dragging is off while filtering).
     pub fn group_order(&self, project_id: Ulid, shell: bool) -> Vec<Ulid> {
@@ -662,10 +689,11 @@ impl Sidebar {
         self.sort_projects();
     }
 
-    /// Pinned workspaces first. Within a group the daemon's order is by age (`created_at`), so
-    /// an unpinned workspace returns to its own place; the sort is stable for equal ages.
+    /// Pinned workspaces first; within a group by dragged `position`, then age (`created_at`),
+    /// so an unpinned workspace returns to its own place.
     fn sort_projects(&mut self) {
-        self.projects.sort_by_key(|p| (!p.pinned, p.created_at));
+        self.projects
+            .sort_by_key(|p| (!p.pinned, p.position, p.created_at));
     }
 }
 

@@ -81,6 +81,7 @@ pub fn set_default_agent(project_id: Ulid, agent: &str) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
         jira_keys: None,
+        position: None,
         name: None,
         default_agent: Some(Some(agent.to_owned())),
         default_shell: None,
@@ -96,6 +97,7 @@ pub fn set_default_shell(project_id: Ulid, shell: &str) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
         jira_keys: None,
+        position: None,
         name: None,
         default_agent: None,
         default_shell: Some(Some(shell.to_owned())),
@@ -111,6 +113,7 @@ pub fn set_color(project_id: Ulid, color: Option<&str>) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
         jira_keys: None,
+        position: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -126,6 +129,7 @@ pub fn set_pinned(project_id: Ulid, pinned: bool) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
         jira_keys: None,
+        position: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -136,11 +140,21 @@ pub fn set_pinned(project_id: Ulid, pinned: bool) -> ProjectUpdateParams {
     }
 }
 
+/// `project.update` with the workspace's new sidebar order (a drag of its card).
+pub fn set_position(project_id: Ulid, position: i64) -> ProjectUpdateParams {
+    ProjectUpdateParams {
+        position: Some(position),
+        pinned: None,
+        ..set_pinned(project_id, false)
+    }
+}
+
 /// `project.update` with the run commands in a new order (a drag in the sidebar's RUN group).
 pub fn set_run_commands(project_id: Ulid, commands: Vec<RunCommand>) -> ProjectUpdateParams {
     ProjectUpdateParams {
         project_id,
         jira_keys: None,
+        position: None,
         name: None,
         default_agent: None,
         default_shell: None,
@@ -162,6 +176,7 @@ pub fn set_jira_keys(project_id: Ulid, keys: Vec<String>) -> ProjectUpdateParams
         run_autostart: None,
         color: None,
         pinned: None,
+        position: None,
         jira_keys: Some(keys),
     }
 }

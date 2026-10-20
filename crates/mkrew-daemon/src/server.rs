@@ -1011,6 +1011,7 @@ impl Daemon {
                 color: params.color.as_ref().map(Option::as_deref),
                 pinned: params.pinned,
                 jira_keys: jira_keys.as_deref(),
+                position: params.position,
             },
         );
         if let Ok(project) = &updated {

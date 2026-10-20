@@ -501,6 +501,10 @@ pub struct Project {
     /// Jira project keys linked to this workspace (SPEC §20I); empty = none.
     #[serde(default)]
     pub jira_keys: Vec<String>,
+    /// Sidebar order inside its pinned or unpinned group, ascending; 0 = never moved (then by
+    /// age). Set with `project.update` `position` (a drag in the sidebar).
+    #[serde(default)]
+    pub position: i64,
 }
 
 /// One command of a project's Run button (SPEC §10, ADR 0018): typed into its own shell in
@@ -790,6 +794,9 @@ pub struct ProjectUpdateParams {
     /// Replaces the Jira project keys; `[]` clears them. Normalised by the daemon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira_keys: Option<Vec<String>>,
+    /// New sidebar order (a drag in the sidebar; the UI numbers its group `1..=n`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<i64>,
 }
 
 /// `project.run_start` / `project.run_restart`: `name` = one command, none = all.

@@ -397,8 +397,8 @@ fn sessions_are_moved_live_and_exited_and_the_position_persists() {
     client.stop();
 }
 
-/// `tab.pin` and `project.update` `pinned`: stored, announced, `position` untouched, kept by
-/// other changes, and still there after a daemon restart.
+/// `tab.pin` and `project.update` `pinned` / `position`: stored, announced, `position`
+/// untouched by a pin, kept by other changes, and still there after a daemon restart.
 #[test]
 fn workspace_and_tab_pins_persist_across_daemon_restart() {
     let env = Env::new();
@@ -422,6 +422,7 @@ fn workspace_and_tab_pins_persist_across_daemon_restart() {
         Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
             jira_keys: None,
+            position: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -454,12 +455,29 @@ fn workspace_and_tab_pins_persist_across_daemon_restart() {
         .into_result()
         .unwrap();
     assert!(other.pinned);
+    // A sidebar drag: announced, kept by the pin.
+    let moved = Request::ProjectUpdate(ProjectUpdateParams {
+        project_id: project.id,
+        jira_keys: None,
+        position: Some(3),
+        name: None,
+        default_agent: None,
+        default_shell: None,
+        run_commands: None,
+        run_autostart: None,
+        color: None,
+        pinned: None,
+    });
+    let moved: Project = client.call(moved).into_result().unwrap();
+    assert_eq!((moved.position, moved.pinned), (3, true));
+    client.wait_event(&Event::ProjectUpdated(moved));
 
     client.stop();
     assert!(daemon.wait_exit().success());
     let (_daemon, mut client) = env.start();
     let listed: Vec<Project> = client.call(Request::ProjectList).into_result().unwrap();
     assert!(listed[0].pinned);
+    assert_eq!(listed[0].position, 3);
     let tabs = list_tabs(&mut client, &project);
     let tabs: Vec<(&str, bool)> = tabs.iter().map(|t| (t.title.as_str(), t.pinned)).collect();
     assert_eq!(tabs, [("one", false), ("two", true)]);
@@ -614,6 +632,7 @@ fn workspace_colors_are_set_cleared_and_checked() {
         Request::ProjectUpdate(ProjectUpdateParams {
             project_id: project.id,
             jira_keys: None,
+            position: None,
             name: None,
             default_agent: None,
             default_shell: None,
@@ -656,6 +675,7 @@ fn jira_keys_are_normalised_saved_and_cleared() {
             run_autostart: None,
             color: None,
             pinned: None,
+            position: None,
             jira_keys: Some(keys.into_iter().map(str::to_owned).collect()),
         })
     };

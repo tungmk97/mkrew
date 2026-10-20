@@ -206,6 +206,7 @@ mod tests {
         Project {
             id: Ulid::new(),
             jira_keys: Vec::new(),
+            position: 0,
             name: name.to_owned(),
             path: format!("C:\\src\\{name}"),
             run_commands: Vec::new(),

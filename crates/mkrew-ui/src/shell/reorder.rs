@@ -1,6 +1,6 @@
-//! Drag to reorder, one look for the sidebar's rows and the tab strip: a small chip follows the
-//! pointer, the dragged item stays dim in its place and an accent line marks the gap it lands in
-//! (the half of the item under the pointer picks the side).
+//! Drag to reorder, one look for the sidebar's workspace cards and rows and the tab strip: a
+//! small chip follows the pointer, the dragged item stays dim in its place and an accent line
+//! marks the gap it lands in (the half of the item under the pointer picks the side).
 
 use crate::*;
 
@@ -11,6 +11,8 @@ pub(crate) enum ReorderList {
     Rows(Ulid, RowGroup),
     /// A workspace's pinned (`true`) or unpinned tabs.
     Tabs(Ulid, bool),
+    /// The pinned (`true`) or unpinned workspace cards of the full sidebar.
+    Workspaces(bool),
 }
 
 /// Payload of a reorder drag: the `index`-th item of `list`.
@@ -149,6 +151,9 @@ impl Shell {
             ReorderList::Tabs(project_id, pinned) => {
                 self.drop_tab(project_id, pinned, item.index, to, window, cx);
             }
+            ReorderList::Workspaces(pinned) => {
+                self.drop_workspace(pinned, item.index, to, window, cx);
+            }
         }
     }
 
@@ -180,6 +185,31 @@ impl Shell {
             window,
             cx,
         );
+    }
+
+    /// The `from`-th of the pinned or unpinned workspaces goes to place `to` among them: the
+    /// group gets positions `1..=n`, shown at once and saved with `project.update`.
+    fn drop_workspace(
+        &mut self,
+        pinned: bool,
+        from: usize,
+        to: usize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let order = self.sidebar.workspace_order(pinned);
+        for (project_id, position) in sidebar::reordered(&order, from, to) {
+            // Positions are 1..=n: exact as integers.
+            #[allow(clippy::cast_possible_truncation)]
+            let position = position as i64;
+            let moved = (self.sidebar.projects().iter())
+                .any(|p| p.id == project_id && p.position != position);
+            if moved {
+                self.sidebar.set_project_position(project_id, position);
+                let params = workspace_menu::set_position(project_id, position);
+                self.update_project(params, "Cannot move the workspace", window, cx);
+            }
+        }
     }
 }
 

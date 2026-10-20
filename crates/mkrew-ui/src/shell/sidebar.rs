@@ -636,21 +636,25 @@ impl Shell {
             let mut list = Vec::new();
             let mut agents = Vec::new();
             let mut terminals = Vec::new();
-            // The workspace being gathered: its header row (with its menu) and its color.
-            let mut card: Option<(gpui::AnyElement, Option<u32>)> = None;
+            // The workspace being gathered: its header row (with its menu), its color and, while
+            // not filtering, its drag payload.
+            type Card = (gpui::AnyElement, Option<u32>, Option<DraggedItem>);
+            let mut card: Option<Card> = None;
+            // Index among the pinned / unpinned workspaces: hidden empty ones count too.
+            let orders = [false, true].map(|pinned| self.sidebar.workspace_order(pinned));
             // Its id while it is open: its RUN group closes the rows.
             let mut open: Option<Ulid> = None;
             let mut empty = Vec::new();
             // Ends the gathered workspace as one card: header, agents (never labeled), the
             // TERMINAL group (labeled only beside agents or a RUN group), the RUN group.
             let close = |list: &mut Vec<gpui::AnyElement>,
-                         card: Option<(gpui::AnyElement, Option<u32>)>,
+                         card: Option<Card>,
                          agents: &mut Vec<gpui::AnyElement>,
                          terminals: &mut Vec<gpui::AnyElement>,
                          open: Option<Ulid>,
                          cx: &mut Context<'_, Self>| {
                 let mut rows = std::mem::take(agents);
-                let Some((header, color)) = card else {
+                let Some((header, color, item)) = card else {
                     terminals.clear();
                     return;
                 };
@@ -685,7 +689,11 @@ impl Shell {
                     None => rows.append(terminals),
                 }
                 rows.extend(run);
-                list.push(workspace_card(header, color, rows, theme));
+                let card = workspace_card(header, color, rows, theme);
+                list.push(match item {
+                    Some(item) => self.reorderable(card, item, false, space::S, theme, cx),
+                    None => card,
+                });
             };
             for row in view.rows {
                 match row {
@@ -709,8 +717,19 @@ impl Shell {
                         open = row.expanded.then_some(project_id);
                         let color =
                             (row.color.as_deref()).and_then(|name| theme.workspace_color(name));
+                        let pinned = row.pinned;
+                        // Dragging reorders the whole group: off while a filter hides cards.
+                        let item = (orders[usize::from(pinned)].iter())
+                            .position(|id| *id == project_id)
+                            .filter(|_| !filtering)
+                            .map(|index| DraggedItem {
+                                list: ReorderList::Workspaces(pinned),
+                                index,
+                                title: row.name.clone().into(),
+                            });
                         let row = workspace_row(row, active, theme, cx);
-                        card = Some((self.with_workspace_menu(row, project_id, theme, cx), color));
+                        let header = self.with_workspace_menu(row, project_id, theme, cx);
+                        card = Some((header, color, item));
                     }
                     Row::Session(row) => {
                         let (selected, session_id) =

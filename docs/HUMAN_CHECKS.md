@@ -15,6 +15,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-20 Drag to reorder workspaces (ADR 0069)
+
+- [ ] **Restart the daemon first** (protocol 47, migration 0023).
+- [ ] **Drag (dark + light):** with 3+ unpinned workspaces, drag a card by its header onto another
+  → a title chip follows the pointer, the card dims, an accent line sits in the 8 px gap between
+  cards; release → the card moves there. A pinned card only moves among pinned ones.
+- [ ] **Rows still drag on their own:** dragging a session or RUN row inside a card moves the row,
+  never the card; clicks, right-click menus and the chevron on the header still work.
+- [ ] **Kept:** restart the app and the daemon → same order; Pin then Unpin a moved workspace →
+  it returns to its dragged place. Typing in the filter turns workspace dragging off.
+
 ### To verify — 2026-10-19 Mkrew web: no blur at the top on iPhone (ADR 0052)
 
 - [ ] Restart `mk web` (it embeds `app.css`). In the Home Screen app and in a Safari tab, the

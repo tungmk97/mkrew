@@ -202,6 +202,7 @@ mod tests {
             color: None,
             pinned: false,
             jira_keys: Vec::new(),
+            position: 0,
         }
     }
 

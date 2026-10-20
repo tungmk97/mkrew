@@ -283,6 +283,7 @@ mod tests {
         Project {
             id: Ulid::new(),
             jira_keys: Vec::new(),
+            position: 0,
             name: "EA".into(),
             path: "/ea".into(),
             run_commands: names

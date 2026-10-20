@@ -52,6 +52,7 @@ fn project(name: &str, archived: bool) -> Project {
     Project {
         id: Ulid::new(),
         jira_keys: Vec::new(),
+        position: 0,
         name: name.into(),
         path: format!("C:/{name}"),
         run_commands: Vec::new(),

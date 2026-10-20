@@ -37,10 +37,11 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../migrations/0020_run_exit_after.sql"),
     include_str!("../migrations/0021_project_jira_keys.sql"),
     include_str!("../migrations/0022_viewed_files.sql"),
+    include_str!("../migrations/0023_project_position.sql"),
 ];
 
 /// Columns of [`RawProject::from_row`], in its order.
-const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell, pinned, jira_keys";
+const PROJECT_COLUMNS: &str = "id, name, path, default_agent, review_globs, created_at, archived, base_ref, run_autostart, color, default_shell, pinned, jira_keys, position";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -94,6 +95,8 @@ pub struct ProjectChanges<'a> {
     pub pinned: Option<bool>,
     /// Replaces the Jira project keys; `Some(&[])` clears them.
     pub jira_keys: Option<&'a [String]>,
+    /// Sidebar order inside the pinned or unpinned group (a drag).
+    pub position: Option<i64>,
 }
 
 /// Whose viewed marks (ADR 0065): one repository's list of a project folder or of a task's
@@ -174,6 +177,7 @@ impl Store {
             color: None,
             pinned: false,
             jira_keys: Vec::new(),
+            position: 0,
         };
         let inserted = self.conn.execute(
             "INSERT INTO project (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -203,11 +207,12 @@ impl Store {
         }
     }
 
-    /// All projects (archived ones too: clients hide them), oldest first.
+    /// All projects (archived ones too: clients hide them), by dragged `position`, then oldest
+    /// first.
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let mut projects: Vec<Project> = {
             let mut stmt = self.conn.prepare(&format!(
-                "SELECT {PROJECT_COLUMNS} FROM project ORDER BY created_at, id"
+                "SELECT {PROJECT_COLUMNS} FROM project ORDER BY position, created_at, id"
             ))?;
             let rows = stmt.query_map([], RawProject::from_row)?;
             rows.map(|r| r?.into_project()).collect::<Result<_>>()?
@@ -327,13 +332,16 @@ impl Store {
         if let Some(keys) = changes.jira_keys {
             project.jira_keys = keys.to_vec();
         }
+        if let Some(position) = changes.position {
+            project.position = position;
+        }
         // A Vec of strings always serializes.
         #[allow(clippy::expect_used)]
         let jira_keys = (!project.jira_keys.is_empty())
             .then(|| serde_json::to_string(&project.jira_keys).expect("strings serialize"));
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6, pinned = ?7, jira_keys = ?8 WHERE id = ?1",
+            "UPDATE project SET name = ?2, default_agent = ?3, run_autostart = ?4, color = ?5, default_shell = ?6, pinned = ?7, jira_keys = ?8, position = ?9 WHERE id = ?1",
             params![
                 id.to_string(),
                 project.name,
@@ -342,7 +350,8 @@ impl Store {
                 project.color,
                 project.default_shell,
                 project.pinned,
-                jira_keys
+                jira_keys,
+                project.position
             ],
         )?;
         if let Some(commands) = changes.run_commands {
@@ -1537,6 +1546,7 @@ struct RawProject {
     default_shell: Option<String>,
     pinned: bool,
     jira_keys: Option<String>,
+    position: i64,
 }
 
 impl RawProject {
@@ -1555,6 +1565,7 @@ impl RawProject {
             default_shell: row.get(10)?,
             pinned: row.get(11)?,
             jira_keys: row.get(12)?,
+            position: row.get(13)?,
         })
     }
 
@@ -1586,6 +1597,7 @@ impl RawProject {
             color: self.color,
             pinned: self.pinned,
             jira_keys,
+            position: self.position,
         })
     }
 }

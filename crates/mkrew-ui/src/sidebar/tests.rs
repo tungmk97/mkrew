@@ -6,6 +6,7 @@ fn project(name: &str) -> Project {
     Project {
         id: Ulid::new(),
         jira_keys: Vec::new(),
+        position: 0,
         name: name.to_owned(),
         path: format!("C:\\src\\{name}"),
         run_commands: Vec::new(),
@@ -304,6 +305,15 @@ fn pinned_workspaces_lead_and_unpinning_restores_the_old_order() {
         ..b.clone()
     }));
     assert_eq!(names(&sidebar), ["c", "a", "b"]);
+
+    // A drag moves `b` above `a` among the unpinned: the pinned `c` still leads.
+    let order = sidebar.workspace_order(false);
+    assert_eq!(order, [a.id, b.id]);
+    for (project_id, position) in reordered(&order, 1, 0) {
+        sidebar.set_project_position(project_id, position as i64);
+    }
+    assert_eq!(names(&sidebar), ["c", "b", "a"]);
+    assert_eq!(sidebar.workspace_order(true), [c.id]);
 
     // A fresh list puts pinned workspaces first too.
     let mut reloaded = Sidebar::default();
@@ -819,4 +829,21 @@ fn compact_tips_spell_out_what_the_rail_leaves_out() {
     // No summary (done is not summarised), no title: no empty lines, no dangling `·`.
     assert_eq!(workspace_tip(workspace(&rows[2])), "web\nC:\\src\\web");
     assert_eq!(session_tip(sessions[1], 121_000), "claude\ndone");
+}
+
+#[test]
+fn shown_in_names_the_workspace_only_while_the_session_row_is_listed() {
+    let api = project("api");
+    let s = session(&api, 1, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone()], vec![s.clone()]);
+    let viewed = Viewed::default();
+    assert_eq!(sidebar.view(&viewed).shown_in(Some(s.id)), Some(api.id));
+    assert_eq!(sidebar.view(&viewed).shown_in(None), None);
+    sidebar.toggle(api.id);
+    assert_eq!(
+        sidebar.view(&viewed).shown_in(Some(s.id)),
+        None,
+        "collapsed"
+    );
 }

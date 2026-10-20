@@ -1354,6 +1354,37 @@ fn project_color_persists_and_clears() {
 }
 
 #[test]
+fn projects_list_by_dragged_position_then_age() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let [a, b, c] = ["a", "b", "c"].map(|name| {
+        let path = dir.path().join(name);
+        std::fs::create_dir(&path).unwrap();
+        store.add_project(&path, None).unwrap()
+    });
+    let names = |store: &Store| -> Vec<String> {
+        let projects = store.list_projects().unwrap();
+        projects.into_iter().map(|p| p.name).collect()
+    };
+    assert_eq!(names(&store), ["a", "b", "c"], "never moved: oldest first");
+    let at = |position| ProjectChanges {
+        position: Some(position),
+        ..ProjectChanges::default()
+    };
+    // The UI numbers the dragged group 1..=n: `c` to the top.
+    for (project, position) in [(&c, 1), (&a, 2), (&b, 3)] {
+        store.update_project(project.id, at(position)).unwrap();
+    }
+    // Another change keeps the position; it survives a reopen.
+    let rename = ProjectChanges {
+        name: Some("a2"),
+        ..ProjectChanges::default()
+    };
+    assert_eq!(store.update_project(a.id, rename).unwrap().position, 2);
+    assert_eq!(names(&open(&dir)), ["c", "a2", "b"]);
+}
+
+#[test]
 fn pinned_persists_for_workspaces_sessions_and_tabs() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir);
