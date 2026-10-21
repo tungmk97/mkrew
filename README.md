@@ -37,14 +37,16 @@ Both create a Start Menu shortcut "Mkrew" and an entry in Settings → Apps for 
 and uninstall stop a running daemon first. Silent install: add `/VERYSILENT` plus `/CURRENTUSER`
 or `/ALLUSERS`. Open a new terminal afterwards so the new `PATH` applies.
 
-### Windows (MSI)
+### macOS (app)
 
-Run `mkrew-<version>-x64.msi`. It installs to `C:\Program Files\Mkrew\` (`bin\` with the
-three programs, `agents\` with reference copies of the sample profiles), adds `bin\` to the
-system `PATH` and creates a Start Menu shortcut "Mkrew". Open a new terminal afterwards so the
-new `PATH` applies.
+Unzip `mkrew-<version>-macos-arm64.zip` and drag `Mkrew.app` to `/Applications`. The app is not
+signed with an Apple Developer ID: the first time, right-click it → Open → Open (or run
+`xattr -dr com.apple.quarantine /Applications/Mkrew.app`). For `mk` in a terminal:
+`ln -s /Applications/Mkrew.app/Contents/MacOS/mk /usr/local/bin/mk`. An app opened from Finder
+does not get your shell's `PATH`; if `claude` or `codex` is not found, stop the daemon
+(`mk daemon stop`) and start the app from a terminal: `/Applications/Mkrew.app/Contents/MacOS/mkrew &`.
 
-### Linux / macOS (tar.gz)
+### Linux (tar.gz)
 
 ```bash
 tar -xzf mkrew-<version>-<os>-<arch>.tar.gz
@@ -56,6 +58,13 @@ mkrew
 
 The archive holds `bin/{mkrew,mk,mkrew-daemon}`, `agents/*.toml` (reference copies of the sample
 profiles) and this README.
+
+### Updates
+
+Mkrew checks GitHub for a new release when it opens and every 6 hours. A new version shows an
+arrow button in the title bar: click it, confirm, and Mkrew installs it, reopens, and agent panes
+resume their conversation (shells do not come back). Windows needs no admin for a "for me only"
+install. An old MSI install cannot update itself: uninstall it and run the setup once.
 
 ### From source
 
@@ -70,8 +79,14 @@ cargo install --locked --path crates/mkrew-daemon   # mkrew-daemon
 ```
 
 All three land in `~/.cargo/bin`, which rustup already puts on your `PATH`. Release packages:
-`bash scripts/package.sh` (tar.gz), `pwsh scripts/package-setup.ps1` (setup .exe, needs Inno
-Setup 6) or `pwsh scripts/package.ps1` (MSI, needs WiX 7).
+`bash scripts/package.sh` (tar.gz; `--app` on macOS for the app zip) or
+`pwsh scripts/package-setup.ps1` (setup .exe, needs Inno Setup 6).
+
+### Releasing
+
+Bump `version` in the root `Cargo.toml`, commit, then `git tag vX.Y.Z` and push the commit and
+the tag. The Release workflow builds the Windows setup, the macOS app and the Linux tar.gz and
+publishes the release; running copies of Mkrew offer it within 6 hours.
 
 ## Configure agents
 

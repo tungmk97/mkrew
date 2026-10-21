@@ -44,8 +44,10 @@ fn readme_has_the_required_sections() {
     let text = readme();
     for heading in [
         "## Install",
-        "### Windows (MSI)",
-        "### Linux / macOS (tar.gz)",
+        "### Windows (setup .exe)",
+        "### macOS (app)",
+        "### Linux (tar.gz)",
+        "### Updates",
         "### From source",
         "## Configure agents",
         "## Uninstall",

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Release archive for Linux/macOS (SPEC §4): dist/mkrew-<version>-<os>-<arch>.tar.gz holding
 # bin/{mkrew,mk,mkrew-daemon}, agents/*.toml (sample profiles) and README.md.
-# Usage: scripts/package.sh [--no-build] [--bin-dir DIR] [--out DIR]
+# --app (macOS): dist/mkrew-<version>-macos-<arch>.zip holding an ad-hoc signed Mkrew.app.
+# Usage: scripts/package.sh [--no-build] [--bin-dir DIR] [--out DIR] [--app]
 # Prints the archive path. Nothing is published.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,9 +10,11 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 bin_dir="$root/target/release"
 out="$root/dist"
 build=1
+app=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) build=0 ;;
+    --app) app=1 ;;
     --bin-dir) bin_dir="${2:?--bin-dir needs a directory}"; shift ;;
     --out) out="${2:?--out needs a directory}"; shift ;;
     *) echo "package: unknown argument $1" >&2; exit 2 ;;
@@ -30,6 +33,42 @@ fi
 
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
+
+if [ "$app" = 1 ]; then
+  [ "$(uname -s)" = Darwin ] || { echo "package: --app needs macOS" >&2; exit 1; }
+  bundle="$stage/Mkrew.app"
+  mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources/agents"
+  for bin in mkrew mk mkrew-daemon; do
+    cp "$bin_dir/$bin" "$bundle/Contents/MacOS/$bin"
+    chmod 755 "$bundle/Contents/MacOS/$bin"
+  done
+  cp "$root"/agents/*.toml "$bundle/Contents/Resources/agents/"
+  cat > "$bundle/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>dev.mkrew.app</string>
+  <key>CFBundleName</key><string>Mkrew</string>
+  <key>CFBundleExecutable</key><string>mkrew</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+PLIST
+  # Ad-hoc signature (ADR 0071): no Developer ID; the first open needs right-click → Open.
+  codesign --force --deep -s - "$bundle"
+  mkdir -p "$out"
+  out="$(cd "$out" && pwd)"
+  zip="$out/mkrew-$version-macos-$(uname -m).zip"
+  rm -f "$zip"
+  ditto -c -k --keepParent "$bundle" "$zip"
+  echo "$zip"
+  exit 0
+fi
 mkdir -p "$stage/$name/bin" "$stage/$name/agents"
 for bin in mkrew mk mkrew-daemon; do
   cp "$bin_dir/$bin" "$stage/$name/bin/$bin"

@@ -1,4 +1,4 @@
-//! Release packaging (SPEC §4): the installer and the tar.gz ship `mkrew`, `mk`, the daemon
+//! Release packaging (SPEC §4): the setup .exe and the tar.gz ship `mkrew`, `mk`, the daemon
 //! and every sample agent profile.
 
 // Helpers outside `#[test]` fns are not covered by `allow-unwrap-in-tests`.
@@ -24,17 +24,15 @@ fn sample_profiles() -> Vec<String> {
     names
 }
 
+/// A silent in-app update (`/LAUNCH=1`, ADR 0071) reopens Mkrew; a normal silent install does not.
 #[test]
-fn installer_lists_binaries_and_profiles() {
-    let wxs = std::fs::read_to_string(repo_root().join("packaging/mkrew.wxs")).unwrap();
-    for bin in BINS {
-        let source = format!(r#"Source="$(BinDir)\{bin}.exe""#);
-        assert!(wxs.contains(&source), "missing {source}");
-    }
-    // Every `agents/*.toml` is picked up by the wildcard into the agents folder.
-    assert!(wxs.contains(r#"<Directory Id="AGENTSDIR" Name="agents">"#));
-    assert!(wxs.contains(r#"<Files Include="$(AgentsDir)\*.toml" />"#));
-    assert!(wxs.contains(r#"Name="PATH" Value="[BINDIR]""#));
+fn setup_exe_relaunches_after_an_in_app_update() {
+    let iss = std::fs::read_to_string(repo_root().join("packaging/mkrew.iss")).unwrap();
+    assert!(iss.contains(
+        r#"Filename: "{app}\bin\mkrew.exe"; Flags: nowait; Check: LaunchAfterUpdate"#
+    ));
+    assert!(iss.contains("function LaunchAfterUpdate: Boolean;"));
+    assert!(iss.contains("ExpandConstant('{param:LAUNCH|0}') = '1'"));
 }
 
 /// The setup .exe ships the same files and lets the user pick per-user (no admin) or all users.
