@@ -51,6 +51,7 @@ if [ "$app" = 1 ]; then
   <key>CFBundleIdentifier</key><string>dev.mkrew.app</string>
   <key>CFBundleName</key><string>Mkrew</string>
   <key>CFBundleExecutable</key><string>mkrew</string>
+  <key>NSMicrophoneUsageDescription</key><string>Voice input turns your speech into text.</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$version</string>

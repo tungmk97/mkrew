@@ -24,13 +24,15 @@ fn sample_profiles() -> Vec<String> {
     names
 }
 
-/// A silent in-app update (`/LAUNCH=1`, ADR 0071) reopens Mkrew; a normal silent install does not.
+/// A silent in-app update (`/LAUNCH=1`, ADR 0071) reopens Mkrew as the logged-in user (an
+/// all-users setup runs elevated; the app, daemon and agents must not); a normal silent install
+/// does not reopen it.
 #[test]
 fn setup_exe_relaunches_after_an_in_app_update() {
     let iss = std::fs::read_to_string(repo_root().join("packaging/mkrew.iss")).unwrap();
-    assert!(
-        iss.contains(r#"Filename: "{app}\bin\mkrew.exe"; Flags: nowait; Check: LaunchAfterUpdate"#)
-    );
+    assert!(iss.contains(
+        r#"Filename: "{app}\bin\mkrew.exe"; Flags: nowait runasoriginaluser; Check: LaunchAfterUpdate"#
+    ));
     assert!(iss.contains("function LaunchAfterUpdate: Boolean;"));
     assert!(iss.contains("ExpandConstant('{param:LAUNCH|0}') = '1'"));
 }

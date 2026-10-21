@@ -123,20 +123,53 @@ impl Shell {
                 cx.notify();
             });
             let dir = std::env::temp_dir().join("mkrew-update");
-            let result = cx
+            let file = cx
                 .background_executor()
-                .spawn(async move {
-                    update::download(&asset, &dir).and_then(|file| update::apply(&kind, &file))
-                })
+                .spawn(async move { update::download(&asset, &dir) })
                 .await;
-            let _ = this.update_in(cx, |shell, window, cx| match result {
-                Ok(()) => shell.quit_ui(window, cx),
-                Err(error) => {
-                    shell.updating = false;
-                    shell.toast_error(format!("Update failed: {error:#}"), cx);
-                }
+            let _ = this.update_in(cx, |shell, window, cx| match file {
+                Ok(file) => shell.apply_update(kind, file, window, cx),
+                Err(error) => shell.update_failed(&error, cx),
             });
         })
         .detach();
+    }
+
+    /// The download is there: ask about Files edits made meanwhile (the installer closes the app),
+    /// then put it in place and quit. Cancel leaves the app running; a click on ⬆ starts over.
+    fn apply_update(
+        &mut self,
+        kind: InstallKind,
+        file: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (again_kind, again_file) = (kind.clone(), file.clone());
+        let again: AfterSave = Box::new(move |shell, window, cx| {
+            shell.apply_update(again_kind, again_file, window, cx);
+        });
+        if self.ask_unsaved(again, window, cx) {
+            self.updating = false;
+            cx.notify();
+            return;
+        }
+        self.updating = true;
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { update::apply(&kind, &file) })
+                .await;
+            let _ = this.update_in(cx, |shell, window, cx| match result {
+                Ok(()) => shell.quit_ui(window, cx),
+                Err(error) => shell.update_failed(&error, cx),
+            });
+        })
+        .detach();
+    }
+
+    fn update_failed(&mut self, error: &anyhow::Error, cx: &mut Context<'_, Self>) {
+        self.updating = false;
+        self.toast_error(format!("Update failed: {error:#}"), cx);
     }
 }

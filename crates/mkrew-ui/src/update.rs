@@ -80,7 +80,9 @@ pub enum InstallKind {
     Manual,
 }
 
-pub fn install_kind(os: &str, exe: &Path, local_app_data: Option<&Path>) -> InstallKind {
+/// `program_files` = the machine's Program Files folders: an Inno install inside one is "for all
+/// users", anywhere else (`%LOCALAPPDATA%\Programs`, a custom folder) "for me only".
+pub fn install_kind(os: &str, exe: &Path, program_files: &[PathBuf]) -> InstallKind {
     match os {
         "windows" => {
             let Some(app) = exe.parent().and_then(Path::parent) else {
@@ -91,8 +93,12 @@ pub fn install_kind(os: &str, exe: &Path, local_app_data: Option<&Path>) -> Inst
             }
             // Case-insensitive: Windows paths differ in drive-letter case between APIs.
             let lower = |path: &Path| path.to_string_lossy().to_lowercase();
-            let per_user = local_app_data.is_some_and(|dir| lower(exe).starts_with(&lower(dir)));
-            InstallKind::Inno { per_user }
+            let all_users = program_files
+                .iter()
+                .any(|dir| lower(exe).starts_with(&lower(dir)));
+            InstallKind::Inno {
+                per_user: !all_users,
+            }
         }
         "macos" => {
             let macos = exe.parent();
@@ -120,8 +126,12 @@ pub fn current_install() -> InstallKind {
     let Ok(exe) = std::env::current_exe() else {
         return InstallKind::Manual;
     };
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    install_kind(std::env::consts::OS, &exe, local.as_deref())
+    let program_files: Vec<PathBuf> = ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .collect();
+    install_kind(std::env::consts::OS, &exe, &program_files)
 }
 
 /// Inno setup switches: silent, reopen Mkrew after (`[Run]` `LaunchAfterUpdate`), same scope.
@@ -290,20 +300,25 @@ pub fn apply(kind: &InstallKind, file: &Path) -> Result<()> {
                 "ditto",
             )?;
             let bin = bundle.join("Contents").join("MacOS");
-            // Returns once the daemon released its lock; agents resume on the next start.
+            // The daemon on our socket is this app's. Plain `stop`: `--only-from` reads `/proc`,
+            // which macOS lacks (it would leave the old daemon running). Returns once the daemon
+            // released its lock; agents resume on the next start.
             run(
-                std::process::Command::new(bin.join("mk"))
-                    .args(["daemon", "stop", "--only-from"])
-                    .arg(&bin),
+                std::process::Command::new(bin.join("mk")).args(["daemon", "stop"]),
                 "mk daemon stop",
             )?;
             swap_bundle(bundle, &dir.join("Mkrew.app"))?;
             let _ = std::fs::remove_dir_all(&dir);
-            std::process::Command::new("/usr/bin/open")
-                .arg("-n")
-                .arg(bundle)
-                .spawn()
-                .context("open the new Mkrew")?;
+            // Started directly (not `open`), so the new app and its daemon keep this process's
+            // environment (`PATH` with `claude`/`codex` when Mkrew was started from a terminal).
+            let mut relaunch = std::process::Command::new(bin.join("mkrew"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                // Its own process group: it outlives this UI.
+                relaunch.process_group(0);
+            }
+            relaunch.spawn().context("open the new Mkrew")?;
             Ok(())
         }
         InstallKind::Manual => bail!("this install cannot update itself"),
@@ -423,27 +438,27 @@ mod tests {
     #[test]
     fn inno_install_is_detected_by_its_uninstaller() {
         let tmp = tempfile::tempdir().unwrap();
-        let local = tmp.path().join("Local");
-        let app = local.join("Programs").join("Mkrew");
-        std::fs::create_dir_all(app.join("bin")).unwrap();
-        let exe = app.join("bin").join("mkrew.exe");
+        let program_files = tmp.path().join("Program Files");
+        let custom = tmp.path().join("Apps").join("Mkrew");
+        std::fs::create_dir_all(custom.join("bin")).unwrap();
+        let exe = custom.join("bin").join("mkrew.exe");
         // No uninstaller yet: a dev build or an MSI install.
         assert_eq!(
-            install_kind("windows", &exe, Some(&local)),
+            install_kind("windows", &exe, std::slice::from_ref(&program_files)),
             InstallKind::Manual
         );
-        std::fs::write(app.join("unins000.exe"), b"").unwrap();
+        // "For me only" in a custom folder is still per-user: no UAC, no second copy.
+        std::fs::write(custom.join("unins000.exe"), b"").unwrap();
         assert_eq!(
-            install_kind("windows", &exe, Some(&local)),
+            install_kind("windows", &exe, std::slice::from_ref(&program_files)),
             InstallKind::Inno { per_user: true }
         );
-        let other = tmp.path().join("Elsewhere");
+        let all_users = program_files.join("Mkrew");
+        std::fs::create_dir_all(all_users.join("bin")).unwrap();
+        std::fs::write(all_users.join("unins000.exe"), b"").unwrap();
+        let exe = all_users.join("bin").join("mkrew.exe");
         assert_eq!(
-            install_kind("windows", &exe, Some(&other)),
-            InstallKind::Inno { per_user: false }
-        );
-        assert_eq!(
-            install_kind("windows", &exe, None),
+            install_kind("windows", &exe, &[tmp.path().join("x86"), program_files]),
             InstallKind::Inno { per_user: false }
         );
     }
@@ -454,12 +469,12 @@ mod tests {
         let bundle = tmp.path().join("Mkrew.app");
         let exe = bundle.join("Contents").join("MacOS").join("mkrew");
         assert_eq!(
-            install_kind("macos", &exe, None),
+            install_kind("macos", &exe, &[]),
             InstallKind::MacApp { bundle }
         );
         let dev = tmp.path().join("target").join("release").join("mkrew");
-        assert_eq!(install_kind("macos", &dev, None), InstallKind::Manual);
-        assert_eq!(install_kind("linux", &exe, None), InstallKind::Manual);
+        assert_eq!(install_kind("macos", &dev, &[]), InstallKind::Manual);
+        assert_eq!(install_kind("linux", &exe, &[]), InstallKind::Manual);
     }
 
     #[test]

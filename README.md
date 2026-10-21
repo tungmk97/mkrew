@@ -40,8 +40,9 @@ or `/ALLUSERS`. Open a new terminal afterwards so the new `PATH` applies.
 ### macOS (app)
 
 Unzip `mkrew-<version>-macos-arm64.zip` and drag `Mkrew.app` to `/Applications`. The app is not
-signed with an Apple Developer ID: the first time, right-click it → Open → Open (or run
-`xattr -dr com.apple.quarantine /Applications/Mkrew.app`). For `mk` in a terminal:
+signed with an Apple Developer ID, so Gatekeeper blocks the first open: run
+`xattr -dr com.apple.quarantine /Applications/Mkrew.app`, or open it once, then System Settings →
+Privacy & Security → Open Anyway (macOS 14 and older: right-click → Open). For `mk` in a terminal:
 `ln -s /Applications/Mkrew.app/Contents/MacOS/mk /usr/local/bin/mk`. An app opened from Finder
 does not get your shell's `PATH`; if `claude` or `codex` is not found, stop the daemon
 (`mk daemon stop`) and start the app from a terminal: `/Applications/Mkrew.app/Contents/MacOS/mkrew &`.
@@ -84,9 +85,10 @@ All three land in `~/.cargo/bin`, which rustup already puts on your `PATH`. Rele
 
 ### Releasing
 
-Bump `version` in the root `Cargo.toml`, commit, then `git tag vX.Y.Z` and push the commit and
-the tag. The Release workflow builds the Windows setup, the macOS app and the Linux tar.gz and
-publishes the release; running copies of Mkrew offer it within 6 hours.
+Bump `version` in the root `Cargo.toml`, build once (`cargo build`) so `Cargo.lock` follows, commit
+both, then `git tag vX.Y.Z` and push the commit and the tag (the release build uses `--locked`).
+The Release workflow builds the Windows setup, the macOS app and the Linux tar.gz and publishes
+the release; running copies of Mkrew offer it within 6 hours.
 
 ## Configure agents
 

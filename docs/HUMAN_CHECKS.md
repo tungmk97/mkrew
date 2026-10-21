@@ -40,9 +40,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   page instead.
 - [ ] **Up to date:** palette "Global: Check for updates" → "Mkrew <v> is up to date"; offline →
   "Update check failed: …".
-- [ ] **macOS (if a Mac is at hand):** unzip, drag `Mkrew.app` to `/Applications`, right-click →
-  Open once; publish N+1 → ⬆ → Update → the app reopens at N+1 without a Gatekeeper prompt, agent
-  panes resume; `Mkrew.app.old` is gone after the next start.
+- [ ] **macOS (if a Mac is at hand):** unzip, drag `Mkrew.app` to `/Applications`, clear quarantine
+  (`xattr -dr …` or Privacy & Security → Open Anyway); start it from a terminal; publish N+1 → ⬆ →
+  Update → the app reopens at N+1 without a Gatekeeper prompt, `mk daemon status` shows the new
+  version, agent panes resume (their `claude`/`codex` found); voice input asks for the microphone
+  instead of crashing; `Mkrew.app.old` is gone after the next start.
+- [ ] **All-users update not elevated:** after a "for all users" update, Task Manager → Details →
+  `mkrew.exe` / `mkrew-daemon.exe` show Elevated = No.
 
 ### To verify — 2026-10-21 Task dialog prompt shows its text
 

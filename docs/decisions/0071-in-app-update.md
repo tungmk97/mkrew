@@ -28,8 +28,12 @@ on Windows, and the agents keep their conversations.
   reopens Mkrew.
 - macOS: `scripts/package.sh --app` builds an ad-hoc signed `Mkrew.app` zipped with `ditto`
   (no Developer ID, no notarization). The UI unzips it beside the bundle, runs the bundle's
-  `mk daemon stop --only-from <Contents/MacOS>`, renames the bundle to `.old` (put back if the
-  next move fails), moves the new one in, `open -n`, and quits. Leftovers go at the next start.
+  `mk daemon stop` (not `--only-from`: it reads `/proc`, which macOS lacks), renames the bundle
+  to `.old` (put back if the next move fails), moves the new one in, starts its `mkrew` directly
+  (so the new app and daemon keep the current `PATH`), and quits. Leftovers go at the next start.
+- An all-users update relaunches Mkrew with `runasoriginaluser`: setup runs elevated, the app,
+  daemon and agents must not. The install scope is "all users" only when the exe is under a
+  Program Files folder; any other Inno install (custom folder too) updates "for me only".
 - Agents continue through the existing daemon resume (SPEC §8, ADR 0017): the new daemon resumes
   every interrupted agent pane in its conversation. PTYs live in the daemon, so the processes
   themselves cannot survive a daemon replacement.
@@ -42,6 +46,7 @@ on Windows, and the agents keep their conversations.
 - An update stops running turns, plain shells and run commands without autostart.
 - Old MSI installs (no `unins000.exe`), dev builds, Linux and Intel Macs get the release page
   instead of an in-place install. An MSI user uninstalls it and runs the setup once.
-- macOS first install needs right-click → Open once; in-app downloads carry no quarantine flag.
+- macOS first install needs `xattr -dr com.apple.quarantine` or Privacy & Security → Open Anyway
+  (macOS 15); in-app downloads carry no quarantine flag.
 - No checksum: a compromised GitHub account or release could ship anything. Add a `SHA256SUMS`
   asset and check it when the app has other users.

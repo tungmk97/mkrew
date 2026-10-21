@@ -2213,9 +2213,11 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    `<temp>/mkrew-update/` (its name must be a plain file name, its length the release's `size`).
    Windows: the setup runs detached with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LAUNCH=1` +
    `/CURRENTUSER` or `/ALLUSERS` (UAC only then), the UI quits; setup stops the daemon, installs
-   and reopens Mkrew. macOS: `ditto` unpacks beside the bundle, `mk daemon stop --only-from
-   <Contents/MacOS>`, the bundle is renamed `.old` (put back on failure), the new one moved in,
-   `open -n`, the UI quits; `.old` and the unpack folder are removed at the next start. A failure
+   and reopens Mkrew as the logged-in user (`runasoriginaluser`). macOS: `ditto` unpacks beside
+   the bundle, the bundle's `mk daemon stop`, the bundle is renamed `.old` (put back on failure),
+   the new one moved in, its `mkrew` started directly (keeps the environment, so `PATH`), the UI
+   quits; `.old` and the unpack folder are removed at the next start. Files edits made while it
+   downloaded are asked about before the installer runs. A failure
    before the quit shows an error toast and keeps the app running.
 5. **What survives.** The new UI starts a new daemon, which resumes agent panes and tasks (§8).
    No checksum or signature beyond HTTPS.
