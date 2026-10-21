@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 /// The newest published (non-draft, non-pre-release) release of the public repo.
@@ -155,6 +155,169 @@ pub fn prompt_detail(working: usize) -> String {
     text
 }
 
+const API_TIMEOUT: Duration = Duration::from_secs(10);
+/// A setup is ~30 MB; slow links get time, a dead one still ends.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const USER_AGENT: &str = concat!("mkrew/", env!("CARGO_PKG_VERSION"));
+
+fn agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
+/// The newest release; `None` while nothing is published (GitHub answers 404).
+pub fn fetch_latest() -> Result<Option<Release>> {
+    let mut response = agent(API_TIMEOUT)
+        .get(RELEASES_API)
+        .header("User-Agent", USER_AGENT)
+        .header("Accept", "application/vnd.github+json")
+        .call()
+        .context("cannot reach GitHub")?;
+    let status = response.status().as_u16();
+    if status == 404 {
+        return Ok(None);
+    }
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .context("cannot read GitHub's answer")?;
+    if status != 200 {
+        bail!("GitHub answered {status}");
+    }
+    parse_release(&body).map(Some)
+}
+
+/// The asset's name as a plain file name (it comes from the network).
+fn safe_file_name(name: &str) -> Result<&str> {
+    let plain = !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':']);
+    if plain {
+        Ok(name)
+    } else {
+        bail!("refusing the asset name {name:?}")
+    }
+}
+
+/// Downloads `asset` into `dir`; the byte count must match the release's `size`.
+pub fn download(asset: &Asset, dir: &Path) -> Result<PathBuf> {
+    let path = dir.join(safe_file_name(&asset.name)?);
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let mut response = agent(DOWNLOAD_TIMEOUT)
+        .get(&asset.url)
+        .header("User-Agent", USER_AGENT)
+        .call()
+        .with_context(|| format!("cannot download {}", asset.name))?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        bail!("download of {} answered {status}", asset.name);
+    }
+    let mut file =
+        std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
+    // The limit makes a longer body an error instead of an endless write.
+    let mut body = response.body_mut().with_config().limit(asset.size).reader();
+    let written =
+        std::io::copy(&mut body, &mut file).with_context(|| format!("download {}", asset.name))?;
+    if written != asset.size {
+        bail!(
+            "download of {} stopped at {written} of {} bytes",
+            asset.name,
+            asset.size
+        );
+    }
+    Ok(path)
+}
+
+/// `Mkrew.app` → `Mkrew.app.old`, next to it.
+fn old_bundle(bundle: &Path) -> PathBuf {
+    let mut name = bundle.file_name().unwrap_or_default().to_os_string();
+    name.push(".old");
+    bundle.with_file_name(name)
+}
+
+/// Where a macOS update is unpacked: beside the bundle, so the swap is a same-volume rename.
+fn unpack_dir(bundle: &Path) -> PathBuf {
+    bundle.with_file_name(".mkrew-update")
+}
+
+/// Moves `bundle` aside to [`old_bundle`] and `new_app` into its place; on failure the old one
+/// is put back.
+fn swap_bundle(bundle: &Path, new_app: &Path) -> Result<()> {
+    let old = old_bundle(bundle);
+    let _ = std::fs::remove_dir_all(&old);
+    std::fs::rename(bundle, &old).with_context(|| format!("move {} aside", bundle.display()))?;
+    if let Err(error) = std::fs::rename(new_app, bundle) {
+        let _ = std::fs::rename(&old, bundle);
+        return Err(error).with_context(|| format!("put the new app at {}", bundle.display()));
+    }
+    Ok(())
+}
+
+fn run(command: &mut std::process::Command, what: &str) -> Result<()> {
+    let status = command.status().with_context(|| format!("run {what}"))?;
+    if !status.success() {
+        bail!("{what} failed ({status})");
+    }
+    Ok(())
+}
+
+/// Puts the downloaded `file` in place. After `Ok` the caller quits the UI: on Windows the
+/// detached setup stops the daemon, installs and reopens Mkrew; on macOS the new app is already
+/// in place and opened.
+pub fn apply(kind: &InstallKind, file: &Path) -> Result<()> {
+    match kind {
+        InstallKind::Inno { per_user } => {
+            let mut command = std::process::Command::new(file);
+            command.args(installer_args(*per_user));
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: the setup outlives the UI.
+                command.creation_flags(0x0000_0008 | 0x0000_0200);
+            }
+            command.spawn().context("start the installer")?;
+            Ok(())
+        }
+        InstallKind::MacApp { bundle } => {
+            let dir = unpack_dir(bundle);
+            let _ = std::fs::remove_dir_all(&dir);
+            run(
+                std::process::Command::new("/usr/bin/ditto")
+                    .args(["-x", "-k"])
+                    .arg(file)
+                    .arg(&dir),
+                "ditto",
+            )?;
+            let bin = bundle.join("Contents").join("MacOS");
+            // Returns once the daemon released its lock; agents resume on the next start.
+            run(
+                std::process::Command::new(bin.join("mk"))
+                    .args(["daemon", "stop", "--only-from"])
+                    .arg(&bin),
+                "mk daemon stop",
+            )?;
+            swap_bundle(bundle, &dir.join("Mkrew.app"))?;
+            let _ = std::fs::remove_dir_all(&dir);
+            std::process::Command::new("/usr/bin/open")
+                .arg("-n")
+                .arg(bundle)
+                .spawn()
+                .context("open the new Mkrew")?;
+            Ok(())
+        }
+        InstallKind::Manual => bail!("this install cannot update itself"),
+    }
+}
+
+/// Removes what a previous macOS update left beside the bundle.
+pub fn clean_leftovers(kind: &InstallKind) {
+    if let InstallKind::MacApp { bundle } = kind {
+        let _ = std::fs::remove_dir_all(old_bundle(bundle));
+        let _ = std::fs::remove_dir_all(unpack_dir(bundle));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +331,48 @@ mod tests {
             {"name": "mkrew-0.1.7-linux-x86_64.tar.gz", "browser_download_url": "https://x/c", "size": 30}
         ]
     }"#;
+
+    #[test]
+    fn asset_names_with_path_parts_are_refused() {
+        assert_eq!(
+            safe_file_name("mkrew-0.1.7-x64-setup.exe").unwrap(),
+            "mkrew-0.1.7-x64-setup.exe"
+        );
+        assert!(safe_file_name("../evil-x64-setup.exe").is_err());
+        assert!(safe_file_name("a/b.zip").is_err());
+        assert!(safe_file_name(r"a\b.zip").is_err());
+        assert!(safe_file_name("").is_err());
+        assert!(safe_file_name("..").is_err());
+    }
+
+    #[test]
+    fn swap_puts_the_new_bundle_in_place_and_keeps_the_old() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("Mkrew.app");
+        let new_app = tmp.path().join(".mkrew-update").join("Mkrew.app");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("v"), "old").unwrap();
+        std::fs::create_dir_all(&new_app).unwrap();
+        std::fs::write(new_app.join("v"), "new").unwrap();
+        swap_bundle(&bundle, &new_app).unwrap();
+        assert_eq!(std::fs::read_to_string(bundle.join("v")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(old_bundle(&bundle).join("v")).unwrap(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn failed_swap_restores_the_old_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("Mkrew.app");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("v"), "old").unwrap();
+        let missing = tmp.path().join("nope").join("Mkrew.app");
+        assert!(swap_bundle(&bundle, &missing).is_err());
+        assert_eq!(std::fs::read_to_string(bundle.join("v")).unwrap(), "old");
+        assert!(!old_bundle(&bundle).exists());
+    }
 
     #[test]
     fn parses_release_and_strips_v() {
