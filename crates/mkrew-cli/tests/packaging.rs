@@ -28,9 +28,9 @@ fn sample_profiles() -> Vec<String> {
 #[test]
 fn setup_exe_relaunches_after_an_in_app_update() {
     let iss = std::fs::read_to_string(repo_root().join("packaging/mkrew.iss")).unwrap();
-    assert!(iss.contains(
-        r#"Filename: "{app}\bin\mkrew.exe"; Flags: nowait; Check: LaunchAfterUpdate"#
-    ));
+    assert!(
+        iss.contains(r#"Filename: "{app}\bin\mkrew.exe"; Flags: nowait; Check: LaunchAfterUpdate"#)
+    );
     assert!(iss.contains("function LaunchAfterUpdate: Boolean;"));
     assert!(iss.contains("ExpandConstant('{param:LAUNCH|0}') = '1'"));
 }

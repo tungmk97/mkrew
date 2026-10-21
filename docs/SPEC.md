@@ -189,8 +189,8 @@ mkrew/
 ├── Cargo.toml                # workspace
 ├── AGENTS.md / CLAUDE.md     # agent instructions
 ├── docs/                     # SPEC, PROGRESS, BUILD_LOOP, HUMAN_CHECKS, decisions/, screenshots/
-├── scripts/                  # verify, autobuild, status, package (MSI / setup .exe / tar.gz)
-├── packaging/                # mkrew.wxs (WiX 7 MSI), mkrew.iss (Inno Setup 6 setup .exe)
+├── scripts/                  # verify, autobuild, status, package (setup .exe / tar.gz / macOS app)
+├── packaging/                # mkrew.iss (Inno Setup 6 setup .exe)
 ├── agents/                   # sample profiles: claude.toml codex.toml omp.toml shell.toml fake.toml
 └── crates/
     ├── mkrew-core/           # models, config, profile parsing, state machine. NO I/O beyond files, except the `tailscale` CLI runs of `mkrew_core::tailscale` (ADR 0053).
@@ -1416,6 +1416,9 @@ The terminal is the hero; everything else steps back.
   #FB923C #FACC15 #A3E635 #4ADE80 #2DD4BF #60A5FA #C084FC #F472B6 / light #DC2626 #D9560B
   #A16207 #4D7C0F #15803D #0F766E #2563EB #9333EA #DB2777 (≥ 3:1 on every surface; neighbouring
   hues ≥ 12° apart).
+- Update button (§20K): Lucide `circle-arrow-up` in `accent-text` in the title bar right before
+  the phone icon while a newer release is known; dimmed (`opacity::DISABLED`) and not clickable
+  while it downloads.
 - In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
   the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
   each hides after about 4 s (`TOAST_DURATION`, expired on the 500 ms status tick, so 4.0–4.5 s) or
@@ -1615,7 +1618,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 
 - [ ] Full command palette; keymap customization via `keymap.toml` with duplicate detection.
 - [ ] Dev server per workspace: run `dev_command` in its own tab; optional auto-start after daemon start.
-- [ ] Windows installer (MSI or similar) and tar.gz for Linux/macOS.
+- [ ] Windows setup .exe (per-user, no admin), macOS app zip, Linux tar.gz.
 - [ ] README: install, configure agents, uninstall.
 - [ ] Non-functional checks from §15 measured and recorded in `docs/decisions/` or the README.
 
@@ -2185,3 +2188,34 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
    works, or is a terminal. Not saved: like "viewed" it lives in UI memory.
 6. **Cost.** Counts come from the sessions the UI already holds; the badge, the icon and the menu
    are updated only when the count (or the listed set) changes, never per frame.
+
+### §20K In-app update (outside the milestones, ADR 0071)
+
+A tag push publishes a release; a running Mkrew offers it and installs it in place.
+
+1. **Release.** `v*` tag whose number equals the root `Cargo.toml` `version` (the workflow
+   refuses others). The Release workflow publishes (no draft) `mkrew-<v>-x64-setup.exe`,
+   `mkrew-<v>-macos-arm64.zip` (ad-hoc signed `Mkrew.app`) and the Linux tar.gz.
+2. **Check.** The UI asks `https://api.github.com/repos/tungmk97/mkrew/releases/latest` at window
+   open and every 6 h (10 s timeout, background executor), and on palette "Global: Check for
+   updates" (no key). Only a plain `a.b.c` tag strictly greater than the running version counts.
+   404, network or parse errors show nothing (one log line); the palette check answers with a
+   toast ("… is up to date", "… is available", or the error). A newer version shows the update
+   button (§14) and one info toast "Mkrew <v> is available".
+3. **Install kind.** Windows: `<exe dir>/../unins000.exe` exists → Inno setup, per-user when the
+   exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle.
+   Anything else (dev build, MSI install, Linux, Intel Mac, no matching asset): the button opens
+   the release page.
+4. **Apply.** Unsaved Files changes are asked about first. A confirmation (`window.prompt`):
+   "Update to Mkrew <v>?", detail "Mkrew closes, installs and reopens. Agent panes resume their
+   conversation." + "N agents are working; their current turn stops." when any is + "Shells and
+   run commands without autostart do not come back."; Update / Cancel. The asset is downloaded to
+   `<temp>/mkrew-update/` (its name must be a plain file name, its length the release's `size`).
+   Windows: the setup runs detached with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LAUNCH=1` +
+   `/CURRENTUSER` or `/ALLUSERS` (UAC only then), the UI quits; setup stops the daemon, installs
+   and reopens Mkrew. macOS: `ditto` unpacks beside the bundle, `mk daemon stop --only-from
+   <Contents/MacOS>`, the bundle is renamed `.old` (put back on failure), the new one moved in,
+   `open -n`, the UI quits; `.old` and the unpack folder are removed at the next start. A failure
+   before the quit shows an error toast and keeps the app running.
+5. **What survives.** The new UI starts a new daemon, which resumes agent panes and tasks (§8).
+   No checksum or signature beyond HTTPS.

@@ -10,10 +10,39 @@ How to answer: write your answer under the item, move it to "Done", and if the l
 
 _Items that stop the loop until you answer._
 
+- [ ] **In-app update — your commits (ADR 0071).** Commit the paths the agent may not:
+  `.github/workflows/release.yml` (Inno setup, `--app`, tag check, no `--draft`),
+  `packaging/mkrew.iss` (`LaunchAfterUpdate`), the deletion of `packaging/mkrew.wxs`, and
+  `docs/BUILD_VI.md`. Then bump `version`, commit, `git tag v<next>` and push both. The first
+  release is what installed copies compare against; the updater only runs in builds that have it.
+
 ## To verify (non-blocking)
 
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
+
+### To verify — 2026-10-21 In-app update (ADR 0071, SPEC §20K)
+
+- [ ] **Release run:** the tag's Release workflow builds 3 jobs; the release is published (not a
+  draft) with `mkrew-<v>-x64-setup.exe`, `mkrew-<v>-macos-arm64.zip` and the Linux tar.gz. A tag
+  that differs from `Cargo.toml` fails at the first step. The Windows job finds `ISCC.exe` after
+  `choco install innosetup` (never run here).
+- [ ] **Windows end to end:** install release N "for me only", open 2 agent panes (one working)
+  and a shell, publish N+1 → within 6 h, or at once via palette "Global: Check for updates", a
+  toast "Mkrew N+1 is available" and the ⬆ button left of the phone icon (accent, tooltip
+  `Update to Mkrew N+1 (you have N)`; dark + light). Click → the prompt says "1 agent is
+  working…" → Update → button dims, no UAC, Mkrew closes and reopens at N+1 (`mk --version`),
+  both agent panes resume their conversation, the shell pane is gone.
+- [ ] **Unsaved file:** with an unsaved edit in Files, click ⬆ → Save / Don't save / Cancel is
+  asked first; Cancel leaves everything as it was.
+- [ ] **All-users install:** a "for all users" install shows UAC once when updating.
+- [ ] **Dev build / old MSI:** `cargo run -p mkrew-ui` or an MSI install: ⬆ opens the release
+  page instead.
+- [ ] **Up to date:** palette "Global: Check for updates" → "Mkrew <v> is up to date"; offline →
+  "Update check failed: …".
+- [ ] **macOS (if a Mac is at hand):** unzip, drag `Mkrew.app` to `/Applications`, right-click →
+  Open once; publish N+1 → ⬆ → Update → the app reopens at N+1 without a Gatekeeper prompt, agent
+  panes resume; `Mkrew.app.old` is gone after the next start.
 
 ### To verify — 2026-10-21 Task dialog prompt shows its text
 
@@ -1855,13 +1884,8 @@ only then run `Stop-Process -Name mkrew-daemon` (PowerShell). Then start `cargo 
   `find = ""`, restart: the sidebar shows the first error (+2 more), Ctrl+Shift+P lists three
   "Keymap error: …" rows at the top, picking one opens the file; Ctrl+Shift+X still closes a
   pane. Without Zed on `PATH` the error shows in the sidebar.
-- [ ] (T8.7) **Windows installer.** Never built here (no WiX/.NET; the test only string-checks
-  `packaging/mkrew.wxs`). Run the Release workflow by hand (`workflow_dispatch`) or locally:
-  `dotnet tool install --global wix --version 7.0.0`, `pwsh scripts/package.ps1 -AcceptWixEula`.
-  On a clean Windows: `msiexec /i dist\mkrew-<v>-x64.msi` installs `Program Files\Mkrew\bin\
-  {mkrew,mk,mkrew-daemon}.exe` + `agents\*.toml`, adds `bin` to the system PATH (new terminal:
-  `mk --help`), adds a Start Menu "Mkrew" shortcut that opens the app with no console window;
-  installing a newer version replaces it; uninstall removes files, shortcut and PATH entry.
+- [-] (T8.7) **Windows installer (MSI).** Dropped by ADR 0071: the Inno setup is the only
+  Windows installer; see "2026-10-21 In-app update".
 - [ ] (T8.7) **tar.gz.** Built and listed only with fake binaries (test). Check the Release
   workflow artifacts on Linux and macOS (macOS is not in CI, so gpui may not build there):
   unpack, `bin/mk --help`, `bin/mkrew` starts and spawns `bin/mkrew-daemon`.
