@@ -9,9 +9,9 @@ Tài liệu cho người dùng (MK). Mkrew gồm 3 chương trình phải nằm 
 | --- | --- | --- | --- |
 | Hỗ trợ theo SPEC §1 | chính (first-class) | có | có |
 | CI (`ci.yml`: fmt, clippy, test) | có | có | **không** |
-| Gói phát hành (`release.yml`) | MSI | tar.gz | tar.gz |
+| Gói phát hành (`release.yml`) | setup .exe (Inno, cài không cần admin) | tar.gz | `Mkrew.app` (.zip) |
 | Đã chạy thử thật | có | chưa | chưa |
-| Hạn chế đã biết | — | xem mục Linux | phím tắt vẫn là `Ctrl` (chưa đổi sang `Cmd`); không phải `.app`, chưa ký số |
+| Hạn chế đã biết | — | xem mục Linux | phím tắt vẫn là `Ctrl` (chưa đổi sang `Cmd`); `.app` chỉ ký ad-hoc |
 
 Không cross-compile từ Windows sang Linux/macOS được: GPUI cần thư viện đồ họa của Linux, còn
 shader Metal chỉ biên dịch được bằng Xcode trên macOS. Build trên đúng hệ điều hành đó, hoặc dùng
@@ -26,13 +26,15 @@ Bạn code và test trên Windows như hiện tại. Bản Linux và macOS do Gi
 
 | Nền tảng | File trên trang Releases | Người dùng làm gì |
 | --- | --- | --- |
-| Windows x64 | `mkrew-<version>-x64.msi` | Bấm đúp để cài, rồi mở "Mkrew" trong Start Menu. `mk` được thêm vào `PATH`. |
+| Windows x64 | `mkrew-<version>-x64-setup.exe` | Bấm đúp, chọn "Install for me only" (không cần admin), rồi mở "Mkrew" trong Start Menu. `mk` được thêm vào `PATH`. |
 | Linux x86_64 | `mkrew-<version>-linux-x86_64.tar.gz` | Giải nén, thêm `bin/` vào `PATH`, chạy `mkrew` (mục Linux bên dưới). |
-| macOS Apple Silicon | `mkrew-<version>-darwin-arm64.tar.gz` | Giải nén, gỡ cờ cách ly, thêm `bin/` vào `PATH`, chạy `mkrew` trong Terminal (mục macOS). |
+| macOS Apple Silicon | `mkrew-<version>-macos-arm64.zip` | Giải nén, kéo `Mkrew.app` vào `/Applications`, lần đầu chuột phải → Open (mục macOS). |
 
 Vì sao không có `.exe` lẻ, `.dmg` hay AppImage:
 
-- App gồm 3 chương trình (`mkrew`, `mkrew-daemon`, `mk`). MSI cài cả ba và đặt `mk` vào `PATH`.
+- App gồm 3 chương trình (`mkrew`, `mkrew-daemon`, `mk`). Setup cài cả ba và đặt `mk` vào `PATH`.
+- Bản đã cài tự kiểm tra bản mới trên GitHub (lúc mở và mỗi 6 giờ). Có bản mới thì title bar hiện
+  nút mũi tên; bấm vào, Mkrew tự cài, mở lại, các agent tiếp tục hội thoại cũ (ADR 0071).
 - Trên Linux/macOS, `mkrew` được chạy từ terminal để daemon nhận `PATH` của shell. App mở từ
   Finder hoặc menu Linux thường không thấy `claude`, `codex` cài qua npm/Homebrew.
 
@@ -41,7 +43,8 @@ Vì sao không có `.exe` lẻ, `.dmg` hay AppImage:
 1. Một lần duy nhất: tạo repo trên GitHub, `git remote add origin <url>` rồi push nhánh chính
    (vòng lặp agent không bao giờ push). Repo public thì Actions miễn phí. Repo private bị giới hạn
    số phút chạy mỗi tháng, và phút chạy trên macOS bị tính gấp 10.
-2. Tăng `version` trong mục `[workspace.package]` của `Cargo.toml` (tên file lấy từ đây), rồi commit.
+2. Tăng `version` trong mục `[workspace.package]` của `Cargo.toml` (tên file lấy từ đây), chạy
+   `cargo build` một lần để `Cargo.lock` cập nhật theo, rồi commit cả hai (CI build bằng `--locked`).
 3. Gắn tag cùng số phiên bản và push:
 
    ```bash
@@ -49,10 +52,10 @@ Vì sao không có `.exe` lẻ, `.dmg` hay AppImage:
    git push origin <nhánh-chính> v0.2.0
    ```
 
-4. Workflow "Release" build 3 gói song song. Job `publish` tạo một **bản nháp** (draft) GitHub
-   Release có đủ 3 file.
-5. Vào tab Releases, mở bản nháp, kiểm tra rồi bấm "Publish release". Người dùng tải ở
-   `https://github.com/<bạn>/<repo>/releases/latest`.
+4. Workflow "Release" kiểm tra tag khớp `version`, build 3 gói song song, rồi job `publish` tạo
+   GitHub Release **công khai ngay** (không còn bản nháp). Người dùng tải ở
+   `https://github.com/<bạn>/<repo>/releases/latest`; các máy đang chạy Mkrew thấy bản mới trong
+   vòng 6 giờ (hoặc bấm "Global: Check for updates" trong palette).
 
 Muốn build thử mà không tạo release: vào Actions → "Release" → "Run workflow", rồi tải các artifact
 ở cuối trang của lần chạy đó. Artifact là file zip, phải đăng nhập GitHub mới tải được và bị xóa
@@ -94,9 +97,9 @@ Linux/Mac (hoặc nhờ người có máy) và làm theo mục "Kiểm tra sau k
 3. Cài vào máy, chọn một trong hai cách:
    - **Từ source:** `cargo install --locked --path crates/mkrew-ui`, rồi tương tự với
      `crates/mkrew-cli` và `crates/mkrew-daemon`. Cả ba vào `~\.cargo\bin` (đã có trong `PATH`).
-   - **Gói MSI:** cài .NET SDK 8, rồi `dotnet tool install --global wix --version 7.0.0`, rồi
-     `pwsh scripts/package.ps1 -AcceptWixEula`. Kết quả nằm ở `dist\mkrew-<version>-x64.msi`. MSI cài
-     vào `C:\Program Files\Mkrew\` và thêm `bin\` vào `PATH`.
+   - **Gói setup:** cài Inno Setup 6 (`winget install JRSoftware.InnoSetup --scope user`), rồi
+     `pwsh scripts/package-setup.ps1`. Kết quả nằm ở `dist\mkrew-<version>-x64-setup.exe`.
+     "Install for me only" cài vào `%LOCALAPPDATA%\Programs\Mkrew\` (không cần admin).
 
 ## Linux
 
@@ -152,28 +155,29 @@ Lưu ý khi chạy:
 
    Nếu `xcrun` báo không tìm thấy `metal` (Xcode mới tách Metal Toolchain ra riêng), chạy
    `xcodebuild -downloadComponent MetalToolchain`.
-2. Build, chạy thử và đóng gói giống Linux: `cargo build --release --locked -p mkrew-ui -p mkrew-cli -p mkrew-daemon`,
-   `./target/release/mkrew`, `bash scripts/package.sh` (ra `dist/mkrew-<version>-darwin-arm64.tar.gz`).
-   Giải nén và thêm `bin` vào `PATH` như Linux (`~/.zshrc`).
-3. File tar.gz tải về từ máy khác (ví dụ từ GitHub Actions) chưa được ký số, nên Gatekeeper sẽ
-   chặn. Gỡ cờ cách ly bằng: `xattr -dr com.apple.quarantine ~/.local/opt/mkrew`.
+2. Build và chạy thử: `cargo build --release --locked -p mkrew-ui -p mkrew-cli -p mkrew-daemon`,
+   `./target/release/mkrew`. Đóng gói app: `bash scripts/package.sh --app` (ra
+   `dist/mkrew-<version>-macos-arm64.zip` chứa `Mkrew.app` ký ad-hoc).
+3. Giải nén, kéo `Mkrew.app` vào `/Applications`. Bản tải từ máy khác chưa ký Developer ID nên lần
+   đầu Gatekeeper chặn: chuột phải → Open → Open, hoặc
+   `xattr -dr com.apple.quarantine /Applications/Mkrew.app`. Các lần cập nhật trong app không bị chặn.
 
-Hạn chế: chạy `mkrew` từ terminal (không có `.app` trong Dock/Launchpad). Phím tắt vẫn dùng `Ctrl`
-như Windows. Thông báo không báo lại khi bạn bấm vào.
+Hạn chế: mở từ Finder thì daemon không có `PATH` của shell; nếu không thấy `claude`/`codex`, chạy
+`mk daemon stop` rồi mở `/Applications/Mkrew.app/Contents/MacOS/mkrew &` từ terminal. Phím tắt vẫn
+dùng `Ctrl` như Windows. Thông báo không báo lại khi bạn bấm vào.
 
 ## Build cả 3 nền tảng bằng GitHub Actions
 
 `.github/workflows/release.yml` build trên `windows-latest`, `ubuntu-latest` và `macos-latest`.
 Mỗi máy chạy đúng script đóng gói của nó và tải gói lên thành artifact của lần chạy. Khi push tag
-`v*`, workflow còn tạo một bản nháp GitHub Release có đủ 3 gói (xem mục "Phát hành bản tải về").
+`v*`, workflow kiểm tra tag khớp `version` rồi publish GitHub Release có đủ 3 gói.
 
 1. Push repo lên GitHub (vòng lặp agent không bao giờ push, bạn tự làm).
 2. Chạy workflow bằng một trong hai cách: tab Actions → "Release" → "Run workflow", hoặc tạo tag:
    `git tag v0.1.0 && git push origin v0.1.0`.
 3. Tải `mkrew-<tag>-<os>` ở cuối trang của lần chạy đó.
 
-WiX 7 yêu cầu chấp nhận EULA OSMF. Workflow đang truyền `-AcceptWixEula`; quyết định này thuộc
-về bạn (xem `docs/HUMAN_CHECKS.md`).
+Windows dùng Inno Setup (cài bằng `choco` trên runner); không còn MSI/WiX.
 
 ## Kiểm tra sau khi cài
 

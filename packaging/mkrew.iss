@@ -56,6 +56,9 @@ Name: "{autodesktop}\Mkrew"; Filename: "{app}\bin\mkrew.exe"; WorkingDir: "{app}
 
 [Run]
 Filename: "{app}\bin\mkrew.exe"; Description: "{cm:LaunchProgram,Mkrew}"; Flags: nowait postinstall skipifsilent
+; In-app update (ADR 0071): the UI runs setup with /VERYSILENT /LAUNCH=1 and quits; reopen it as
+; the logged-in user (an all-users setup runs elevated; the app, daemon and agents must not).
+Filename: "{app}\bin\mkrew.exe"; Flags: nowait runasoriginaluser; Check: LaunchAfterUpdate
 
 [Code]
 const
@@ -131,6 +134,12 @@ begin
   Exec(Mk, 'daemon stop --only-from "' + BinDir + '"', '', SW_HIDE, ewWaitUntilTerminated, Code);
   if Code = 2 then
     Exec(Mk, 'daemon stop', '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+{ True for the silent setup started by Mkrew's own update (/LAUNCH=1). }
+function LaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:LAUNCH|0}') = '1');
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

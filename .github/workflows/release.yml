@@ -1,5 +1,5 @@
-# Release packages (SPEC §4): MSI on Windows, tar.gz on Linux/macOS, uploaded as workflow artifacts.
-# A `v*` tag push also attaches them to a *draft* GitHub Release; the maintainer publishes it by hand.
+# Release packages (SPEC §4, ADR 0071): Windows setup .exe, macOS Mkrew.app zip, Linux tar.gz.
+# A `v*` tag push publishes them as the latest GitHub Release, which running Mkrew copies offer.
 name: Release
 
 on:
@@ -26,32 +26,34 @@ jobs:
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
+      # The tag must name the version being built (README "Releasing").
+      - if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          want="$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)"
+          [ "${GITHUB_REF_NAME#v}" = "$want" ] || { echo "tag $GITHUB_REF_NAME does not match Cargo.toml $want" >&2; exit 1; }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # gpui's x11/wayland backends (mkrew-ui) link against these.
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libfontconfig-dev libasound2-dev
       - if: runner.os == 'Windows'
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
+        run: choco install innosetup -y --no-progress
       - if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          dotnet tool install --global wix --version 7.0.0
-          "$env:USERPROFILE\.dotnet\tools" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-      # Accepting the WiX OSMF EULA is the maintainer's call (docs/HUMAN_CHECKS.md).
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/package.ps1 -AcceptWixEula
-      - if: runner.os != 'Windows'
+        run: ./scripts/package-setup.ps1
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: bash scripts/package.sh --app
+      - if: runner.os == 'Linux'
         shell: bash
         run: bash scripts/package.sh
       - uses: actions/upload-artifact@v4
         with:
           name: mkrew-${{ github.ref_name }}-${{ matrix.os }}
           path: |
-            dist/*.msi
+            dist/*-setup.exe
+            dist/*.zip
             dist/*.tar.gz
           if-no-files-found: error
 
@@ -70,5 +72,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >
           gh release create "${{ github.ref_name }}" dist/*
-          --repo "${{ github.repository }}" --draft --generate-notes
+          --repo "${{ github.repository }}" --generate-notes
           --title "Mkrew ${{ github.ref_name }}"
