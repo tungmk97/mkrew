@@ -171,6 +171,7 @@ impl Shell {
                         shell.toggle_theme(window, cx);
                     })),
             )
+            .children(self.render_update_button(theme, cx))
             .children(self.render_phone_button(theme, cx));
         if workspace.is_some() {
             right = right.child(self.inspector_toggle(theme, cx)).child(

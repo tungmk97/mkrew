@@ -69,11 +69,12 @@ pub enum Extra {
     RunShowTab,
     OpenSettings,
     PhoneAccess,
+    CheckUpdates,
     MarkUnread,
 }
 
 impl Extra {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -90,6 +91,7 @@ impl Extra {
         Self::RunShowTab,
         Self::OpenSettings,
         Self::PhoneAccess,
+        Self::CheckUpdates,
         Self::MarkUnread,
     ];
 
@@ -111,6 +113,7 @@ impl Extra {
             Self::RunShowTab => "Run: Show Run tab",
             Self::OpenSettings => "Global: Open settings",
             Self::PhoneAccess => "Global: Phone access…",
+            Self::CheckUpdates => "Global: Check for updates",
             Self::MarkUnread => "Agent: Mark unread",
         }
     }
@@ -141,7 +144,7 @@ impl Extra {
             }
             Self::RunSetup => context.workspace,
             Self::MarkUnread => context.markable,
-            Self::OpenSettings | Self::PhoneAccess => true,
+            Self::OpenSettings | Self::PhoneAccess | Self::CheckUpdates => true,
         }
     }
 }

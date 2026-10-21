@@ -329,6 +329,22 @@ fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
     assert_eq!(entry.shortcut, "", "palette-only: no key is bound");
 }
 
+#[test]
+fn check_updates_is_listed_without_a_workspace() {
+    let none = Context {
+        workspace: false,
+        workspaces: 0,
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    let listed = entries(&Keymap::defaults(), &none, &[], &[], &[]);
+    let entry = listed
+        .iter()
+        .find(|e| e.action == Action::Extra(Extra::CheckUpdates))
+        .expect("listed without a workspace");
+    assert_eq!(entry.title, "Global: Check for updates");
+}
+
 fn extras(context: &Context) -> Vec<Extra> {
     entries(&Keymap::defaults(), context, &[], &[], &[])
         .into_iter()
@@ -336,7 +352,10 @@ fn extras(context: &Context) -> Vec<Extra> {
             Action::Extra(extra)
                 if !matches!(
                     extra,
-                    Extra::RunSetup | Extra::OpenSettings | Extra::PhoneAccess
+                    Extra::RunSetup
+                        | Extra::OpenSettings
+                        | Extra::PhoneAccess
+                        | Extra::CheckUpdates
                 ) =>
             {
                 Some(extra)

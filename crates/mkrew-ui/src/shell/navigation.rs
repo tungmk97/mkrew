@@ -481,6 +481,7 @@ impl Shell {
             }
             palette::Action::Extra(Extra::OpenSettings) => self.open_settings(cx),
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
+            palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(extra) => {
                 let Some(project_id) = workspace else {
                     return;
@@ -552,6 +553,7 @@ impl Shell {
                     // Handled above: it needs no workspace.
                     Extra::OpenSettings => self.open_settings(cx),
                     Extra::PhoneAccess => self.open_phone_access(window, cx),
+                    Extra::CheckUpdates => self.check_updates(true, window, cx),
                 }
             }
             palette::Action::GoTo(palette::Target::Workspace(project_id)) => {

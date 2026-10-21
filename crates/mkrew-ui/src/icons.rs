@@ -49,6 +49,7 @@ icons! {
         ChevronDown => "chevron-down",
         ChevronLeft => "chevron-left",
         ChevronRight => "chevron-right",
+        CircleArrowUp => "circle-arrow-up",
         CircleAlert => "circle-alert",
         CircleStop => "circle-stop",
         Columns2 => "columns-2",

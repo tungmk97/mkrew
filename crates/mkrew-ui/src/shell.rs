@@ -44,6 +44,7 @@ mod tabs;
 mod task_dialog;
 pub(crate) mod thread_panel;
 mod toasts;
+mod update;
 mod voice_input;
 mod workspace;
 mod workspace_actions;

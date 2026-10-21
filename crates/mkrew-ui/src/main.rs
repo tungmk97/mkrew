@@ -312,6 +312,10 @@ struct Shell {
     status: Status,
     /// Dropping it closes the connection.
     connection: Option<Rc<Connection>>,
+    /// A newer published release (SPEC §20K), shown as the title bar update button.
+    update: Option<mkrew_ui::update::Release>,
+    /// The update is downloading / being put in place: the button ignores clicks.
+    updating: bool,
     sidebar: Sidebar,
     /// A `project.list` + `session.list` is in flight.
     refreshing: bool,

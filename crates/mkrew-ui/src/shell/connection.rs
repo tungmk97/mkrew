@@ -161,6 +161,27 @@ impl Shell {
             }
         })
         .detach();
+        // In-app update (SPEC §20K): ask GitHub now and every `CHECK_EVERY`; clear what a
+        // previous macOS update left beside the app.
+        cx.background_executor()
+            .spawn(async {
+                mkrew_ui::update::clean_leftovers(&mkrew_ui::update::current_install());
+            })
+            .detach();
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                let checked = this.update_in(cx, |shell, window, cx| {
+                    shell.check_updates(false, window, cx)
+                });
+                if checked.is_err() {
+                    return;
+                }
+                cx.background_executor()
+                    .timer(mkrew_ui::update::CHECK_EVERY)
+                    .await;
+            }
+        })
+        .detach();
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let rename_focus = cx.focus_handle();
@@ -290,6 +311,8 @@ impl Shell {
         Self {
             status: Status::Connecting,
             connection: None,
+            update: None,
+            updating: false,
             sidebar: Sidebar::default(),
             refreshing: false,
             refresh_again: false,
