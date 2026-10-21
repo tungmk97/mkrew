@@ -260,7 +260,7 @@ impl Shell {
                 Field::Title => &dialog.title,
                 Field::Prompt => dialog.prompt.input(),
             };
-            // Its keys edit at the end of the text (SPEC §13): a click only focuses it.
+            // A click focuses it and puts the caret under the pointer (drag / Shift+click select).
             caret_field(
                 id,
                 input,
@@ -268,9 +268,9 @@ impl Shell {
                 dialog.field == which,
                 theme,
                 cx,
-                move |shell, _| {
+                move |shell, caret| {
                     if let Some(dialog) = shell.task_dialog.as_mut() {
-                        dialog.field = which;
+                        dialog.click(which, caret.at, caret.extend, caret.clicks);
                     }
                 },
             )

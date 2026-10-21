@@ -535,7 +535,10 @@ fn field_frame(
     let (caret_layout, caret_color) = (layout.clone(), rgb(theme.text));
     let cursor = cursor.min(text.len());
     let frame = frame.child(styled).when(show_caret, |el| {
-        // Painted after the text's prepaint, so its layout knows where the caret byte sits.
+        // Painted after the text's prepaint, so its layout knows where the caret byte sits. It
+        // paints at the layout's window position, so it takes no room: a full-size layer would
+        // sit below the text and add its height to a scrolling field's content, scrolling the
+        // text out of view (the task dialog's prompt).
         el.child(
             canvas(
                 |_, _, _| (),
@@ -547,7 +550,7 @@ fn field_frame(
                 },
             )
             .absolute()
-            .size_full(),
+            .size_0(),
         )
     });
     (frame, Some(layout))

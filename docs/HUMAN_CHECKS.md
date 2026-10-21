@@ -15,6 +15,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-21 Task dialog prompt shows its text
+
+- [ ] **Prompt (dark + light):** Board → New task, click Prompt, type → the text and caret show
+  (before, the text was stored but scrolled out of view). Type 8+ lines → it follows the last
+  line. Click mid-text in Title or Prompt → the caret lands there; drag / Shift+click selects.
+  Ask AI's question field shows its text too.
+
 ### To verify — 2026-10-20 Drag to reorder workspaces (ADR 0069)
 
 - [ ] **Restart the daemon first** (protocol 47, migration 0023).

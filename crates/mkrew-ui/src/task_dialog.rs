@@ -224,6 +224,18 @@ impl TaskDialog {
         }
     }
 
+    /// A press or drag at byte `at` of `field` (see `Input::click`): the field takes the keys
+    /// and its caret goes there.
+    pub fn click(&mut self, field: Field, at: usize, extend: bool, clicks: usize) {
+        // A press in the other field starts there, not from that field's old anchor.
+        let extend = extend && self.field == field;
+        match field {
+            Field::Title => self.title.click(at, extend, clicks),
+            Field::Prompt => self.prompt.click(at, extend, clicks),
+        }
+        self.field = field;
+    }
+
     /// Types `text` into the focused field; the title stays on one line.
     pub fn insert(&mut self, text: &str) {
         match self.field {
@@ -460,6 +472,20 @@ mod tests {
         dialog.insert("one\r\ntwo");
         assert_eq!(dialog.title, "a b");
         assert_eq!(dialog.prompt.text(), "one\ntwo");
+    }
+
+    #[test]
+    fn a_click_focuses_the_field_and_types_at_the_clicked_byte() {
+        let mut dialog = TaskDialog::edit(task());
+        dialog.click(Field::Prompt, 3, false, 1);
+        assert_eq!(dialog.field, Field::Prompt);
+        dialog.insert("X");
+        assert_eq!(dialog.prompt.text(), "FixX the login bug");
+        // Shift+click in the other field starts there, not from its old anchor.
+        dialog.click(Field::Title, 3, true, 1);
+        assert_eq!(dialog.title.selection(), None);
+        dialog.click(Field::Title, 0, true, 1);
+        assert_eq!(dialog.selected_text(), Some("Fix"));
     }
 
     #[test]
