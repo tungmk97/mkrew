@@ -13,7 +13,7 @@
 //! usage, platform text input (IME, Unikey) for the fields and terminals, the Run button, voice
 //! input (microphone and speech to text), the phone-access link, token and QR code and its
 //! dialog model, the toast queue, the scroll bar of the Files editor and the Markdown preview, and
-//! the taskbar / tray attention model.
+//! the taskbar / tray attention model, and the in-app update (GitHub releases, install in place).
 
 pub mod ask;
 pub mod attention;
@@ -84,6 +84,7 @@ pub mod toast;
 pub mod turn;
 pub mod turns_dialog;
 pub mod undo_dialog;
+pub mod update;
 pub mod usage;
 pub mod voice;
 pub mod workspace_menu;
