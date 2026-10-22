@@ -25,8 +25,9 @@ async-channel = "2"
 cpal = "0.18.2"
 # gpui snapshot pinned by gpui-component 0.7 (ADR 0001); the platform crate provides `application()`.
 # `x11`/`wayland`: Linux windowing backends (off by default; without one the app panics at start).
+# `font-kit`: the macOS text system (off by default; without it macOS renders no text at all).
 gpui = { package = "gpui-pre", version = "=0.3.7" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["x11", "wayland"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["x11", "wayland", "font-kit"] }
 # Clipboard bitmaps (Windows CF_DIB → BMP) re-encoded as PNG for `attachment.save` (ADR 0026);
 # already in the tree via gpui.
 image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
