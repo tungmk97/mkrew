@@ -220,7 +220,8 @@ impl Store {
     pub fn list_projects(&self) -> Result<Vec<Project>> {
         let mut projects: Vec<Project> = {
             let mut stmt = self.conn.prepare(&format!(
-                "SELECT {PROJECT_COLUMNS} FROM project ORDER BY position, created_at, id"
+                // `rowid`, not `id`: ULIDs made in the same millisecond are in random order.
+                "SELECT {PROJECT_COLUMNS} FROM project ORDER BY position, created_at, rowid"
             ))?;
             let rows = stmt.query_map([], RawProject::from_row)?;
             rows.map(|r| r?.into_project()).collect::<Result<_>>()?

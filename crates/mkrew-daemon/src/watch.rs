@@ -25,20 +25,30 @@ const WATCH_IGNORED: [&str; 1] = [".worktrees"];
 
 /// `path` spelled under `root` when it is the same place written another way (case, `\\?\`,
 /// an 8.3 short name such as `RUNNER~1`), so [`Filter::relative`] sees it inside the project.
-/// Unchanged when it already is, lies elsewhere, or cannot be resolved (gone). Costs a
-/// `canonicalize` only for a path outside the root's spelling: for paths named by a hook, not
-/// for watcher events (those always come under the root).
+/// Unchanged when it already is or lies elsewhere. A file that does not exist (yet, or any
+/// more) is resolved through its nearest existing folder. Costs a `canonicalize` only for a
+/// path outside the root's spelling: for paths named by a hook, not for watcher events (those
+/// always come under the root).
 pub fn under_root(root: &Path, path: &Path) -> PathBuf {
     if path.starts_with(root) {
         return path.to_owned();
     }
-    match (dunce::canonicalize(root), dunce::canonicalize(path)) {
-        (Ok(canonical_root), Ok(canonical)) => match canonical.strip_prefix(&canonical_root) {
-            Ok(relative) => root.join(relative),
-            Err(_) => path.to_owned(),
-        },
-        _ => path.to_owned(),
+    let Ok(canonical_root) = dunce::canonicalize(root) else {
+        return path.to_owned();
+    };
+    for existing in path.ancestors() {
+        let Ok(canonical) = dunce::canonicalize(existing) else {
+            continue;
+        };
+        let (Ok(inside), Ok(rest)) = (
+            canonical.strip_prefix(&canonical_root),
+            path.strip_prefix(existing),
+        ) else {
+            return path.to_owned();
+        };
+        return root.join(inside).join(rest);
     }
+    path.to_owned()
 }
 
 /// Which changed paths of one project are reported.
@@ -302,6 +312,16 @@ mod tests {
             filter.relative(&path, Some(false)).as_deref(),
             Some("src/a.rs")
         );
+        // A file the hook names before it exists (or after it was deleted) too.
+        let gone = PathBuf::from(
+            dir.path()
+                .join("new")
+                .join("b.rs")
+                .to_string_lossy()
+                .to_uppercase(),
+        );
+        let path = under_root(dir.path(), &gone);
+        assert!(path.starts_with(dir.path()), "{}", path.display());
         // Already under the root, or outside it: unchanged.
         let inside = dir.path().join("src").join("a.rs");
         assert_eq!(under_root(dir.path(), &inside), inside);
