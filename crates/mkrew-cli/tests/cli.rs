@@ -1474,8 +1474,9 @@ fn web_push_sends_an_encrypted_message_when_a_session_needs_you() {
     env.ok(&["wait", &id, "--until", "needs_input", "--timeout", "30000"]);
     let deadline = Instant::now() + Duration::from_secs(30);
     let line = loop {
+        // Only a finished line: the sink may be read while `mk web` is still writing it.
         if let Ok(text) = std::fs::read_to_string(&sink)
-            && let Some(line) = text.lines().next()
+            && let Some((line, _)) = text.split_once('\n')
         {
             break line.to_owned();
         }
