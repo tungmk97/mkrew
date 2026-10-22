@@ -12,6 +12,9 @@ workspace = true
 # Headless emulator per session (SPEC §8); same version as the M0 spike.
 alacritty_terminal = "0.26"
 anyhow = "1"
+# Canonical paths without `\\?\`: an 8.3 / case variant of the project folder is still inside
+# it (plan links, hook edits); already in the tree through mkrew-cli.
+dunce = "1.0.5"
 # `.gitignore` matching for the project file watcher (SPEC §4).
 ignore = "0.4.33"
 interprocess = { version = "2.4.4", features = ["tokio"] }
@@ -48,7 +51,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 rustix = { version = "1", features = ["process"] }
 
 [dev-dependencies]
-dunce = "1.0.5"
 tempfile = "3"
 # Paused clock for the watcher's debounce test.
 tokio = { version = "1", features = ["test-util"] }

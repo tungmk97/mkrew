@@ -158,11 +158,11 @@ fn big_paste_to_a_child_that_does_not_read_leaves_the_daemon_responsive() {
     let project = client.add_project(&env.repo());
     let sleeper: SessionSpawnResult = client.spawn(&project, "sleeper").into_result().unwrap();
     let sleeper = sleeper.session_id;
-    client
-        .attach(sleeper)
-        .into_result::<SessionAttachResult>()
-        .unwrap();
-    client.wait_output(sleeper, "Sleeper ready.");
+    let attached: SessionAttachResult = client.attach(sleeper).into_result().unwrap();
+    // Printed before the attach it is in the snapshot, after it in the output frames.
+    if !screen_text(&attached.snapshot).contains("Sleeper ready.") {
+        client.wait_output(sleeper, "Sleeper ready.");
+    }
 
     // A 4 MiB paste on its own connection; it may wait until the session is killed.
     let socket = env.socket.clone();

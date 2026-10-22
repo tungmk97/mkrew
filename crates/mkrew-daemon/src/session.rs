@@ -358,7 +358,20 @@ impl Hub {
     }
 
     /// Starts the PTY and its session task. Must run inside the tokio runtime.
+    /// The project is watched before the child starts, so files it writes at once are seen
+    /// (a recursive inotify watch takes a while on a big tree); a failed spawn drops the watch
+    /// again unless another session of the project is live.
     pub fn spawn(self: &std::sync::Arc<Self>, spec: SpawnSpec) -> Result<(), SpawnError> {
+        let project_id = spec.session.project_id;
+        self.watch_project(project_id, &spec.project_dir, false);
+        let spawned = self.spawn_watched(spec);
+        if spawned.is_err() {
+            self.unwatch_idle_project(project_id);
+        }
+        spawned
+    }
+
+    fn spawn_watched(self: &std::sync::Arc<Self>, spec: SpawnSpec) -> Result<(), SpawnError> {
         let SpawnSpec {
             session,
             profile,
@@ -503,7 +516,6 @@ impl Hub {
             }
         }
         tracing::info!(id = %session.id, profile = %profile.id, cwd = %cwd.display(), "session spawned");
-        self.watch_project(session.project_id, &project_dir, false);
         // A resumed session keeps its plan (SPEC §8): read and watch it again.
         if let Some(plan) = &session.plan_path {
             let file = project_dir.join(plan);
@@ -851,7 +863,7 @@ impl Hub {
         let paths: Vec<String> = reported
             .iter()
             .filter_map(|path| {
-                let path = root.join(path);
+                let path = watch::under_root(&root, &root.join(path));
                 let is_dir = path.metadata().ok().map(|m| m.is_dir());
                 filter.relative(&path, is_dir)
             })

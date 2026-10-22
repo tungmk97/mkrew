@@ -15,6 +15,7 @@ fn worktree_tasks_run_and_resume_in_their_own_worktree() {
         &scenario,
         "[[step]]\naction = \"write_file\"\npath = \"made.txt\"\ncontent = \"run\"\n\
          [[step]]\naction = \"hook\"\nevent = \"busy\"\nsession_id = \"native-wt\"\n\
+         [[step]]\naction = \"spinner\"\ntext = \"working\"\nms = 1000\n\
          [[step]]\naction = \"ask\"\n",
     )
     .unwrap();

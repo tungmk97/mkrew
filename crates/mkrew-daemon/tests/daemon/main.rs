@@ -562,13 +562,26 @@ fn record_states(
     }
 }
 
+/// The running daemon's database. Opening runs the (no-op) migration in an IMMEDIATE
+/// transaction, which competes with the daemon's writes; on a slow CI runner that can outlast
+/// SQLite's busy timeout, so a busy open is tried again until [`TIMEOUT`].
+fn live_store(env: &Env) -> Store {
+    let db = env.data_dir().join("mkrew.db");
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        match Store::open(&db) {
+            Ok(store) => return store,
+            Err(e) if e.is_busy() && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("open {}: {e}", db.display()),
+        }
+    }
+}
+
 /// Every path recorded so far in the session's `files_changed` events.
 fn changed_files(env: &Env, id: Ulid) -> BTreeSet<String> {
-    let db = env.data_dir().join("mkrew.db");
-    let events = Store::open(&db)
-        .unwrap()
-        .session_events(id, "files_changed")
-        .unwrap();
+    let events = live_store(env).session_events(id, "files_changed").unwrap();
     events
         .iter()
         .flat_map(|e| e.payload["paths"].as_array().unwrap().clone())

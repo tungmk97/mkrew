@@ -99,8 +99,8 @@ impl Plans {
 /// A client's plan path as `(stored form, file)`: relative to `root` with `/` when it lies
 /// inside the project (the folder can move), else as given (absolute). `Err` = the message for
 /// `invalid_request`: not `.md`, missing, a folder, too large, not UTF-8 text.
-// ponytail: a path that differs from `root` only in case or `\\?\` form is stored absolute;
-// it still works, it just does not follow a moved folder.
+// The comparison is on canonical paths, so case, `\\?\` and 8.3 short names (`RUNNER~1`) of
+// the same folder still count as inside the project.
 pub fn locate(root: &Path, picked: &str) -> Result<(String, PathBuf), String> {
     let picked = picked.trim();
     if !docs::is_markdown(picked) {
@@ -116,7 +116,9 @@ pub fn locate(root: &Path, picked: &str) -> Result<(String, PathBuf), String> {
         }
     }
     docs::read(&file).map_err(|e| format!("cannot read the plan: {e}"))?;
-    let stored = match file.strip_prefix(root) {
+    let canonical = |path: &Path| dunce::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let (canonical_file, canonical_root) = (canonical(&file), canonical(root));
+    let stored = match canonical_file.strip_prefix(&canonical_root) {
         Ok(relative) => relative
             .components()
             .map(|part| part.as_os_str().to_string_lossy())
@@ -202,6 +204,18 @@ mod tests {
         let (stored, file) = locate(&project, "../near.md").unwrap();
         assert_eq!(PathBuf::from(&stored), side.path().join("near.md"));
         assert_eq!(file, side.path().join("near.md"));
+    }
+
+    /// The same folder spelled differently (Windows: case, or a CI runner's 8.3 temp path
+    /// `RUNNER~1`) is still the project: stored relative.
+    #[cfg(windows)]
+    #[test]
+    fn locate_matches_the_project_however_it_is_spelled() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("PLAN.md"), "- [ ] a\n").unwrap();
+        let picked = root.path().join("PLAN.md").to_string_lossy().to_uppercase();
+        let (stored, _) = locate(root.path(), &picked).unwrap();
+        assert_eq!(stored, "PLAN.md");
     }
 
     #[test]

@@ -77,6 +77,14 @@ pub enum StoreError {
     TurnNotFound { session_id: Ulid, n: u32 },
 }
 
+impl StoreError {
+    /// Another connection held the database past the busy timeout ("database is locked").
+    pub fn is_busy(&self) -> bool {
+        matches!(self, Self::Sqlite(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ErrorCode::DatabaseBusy)
+    }
+}
+
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;
 
 /// `Store::update_project` changes: `None` leaves a field unchanged, `Some(None)` clears it.

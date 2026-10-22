@@ -217,8 +217,8 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
     git(&repo, &["commit", "-q", "-m", "one"]);
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let scenario = env.dir.path().join("editor.toml");
-    // The agent's start output is screen-detected as turn 1; the `done` hook ends it, so the
-    // `busy` hook starts turn 2.
+    // The agent's start output may be screen-detected as a turn of its own (timing): the turn
+    // that matters is the one the `busy` hook starts and the `done` hook ends, with the edits.
     std::fs::write(
         &scenario,
         "[[step]]\naction = \"hook\"\nevent = \"done\"\n\n\
@@ -246,8 +246,10 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
     let id = spawned.session_id;
     answer_after_watcher_saw_notes(&env, &mut client, id);
 
-    let event = client
-        .wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id && t.n == 2));
+    let event = client.wait_event_where(|e| {
+        matches!(e, Event::SessionTurn(t) if t.session_id == id
+            && t.files.iter().any(|f| f.path == "a.txt"))
+    });
     let Event::SessionTurn(turn) = event else {
         unreachable!()
     };
@@ -260,7 +262,7 @@ fn a_hook_turn_start_is_snapshotted_before_the_agent_edits() {
         counts,
         [("a.txt", Some(2), Some(0)), ("notes.txt", Some(1), Some(0))]
     );
-    let start = format!("refs/mkrew/turns/{id}/2");
+    let start = format!("refs/mkrew/turns/{id}/{}", turn.n);
     assert_eq!(git(&repo, &["ls-tree", "--name-only", &start]), "a.txt");
     assert_eq!(git(&repo, &["show", &format!("{start}:a.txt")]), "one");
     assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head);

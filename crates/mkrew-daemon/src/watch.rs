@@ -23,6 +23,24 @@ pub const ALWAYS_IGNORED: [&str; 3] = [".git", "node_modules", "target"];
 /// still shows it, so it is not in [`ALWAYS_IGNORED`].
 const WATCH_IGNORED: [&str; 1] = [".worktrees"];
 
+/// `path` spelled under `root` when it is the same place written another way (case, `\\?\`,
+/// an 8.3 short name such as `RUNNER~1`), so [`Filter::relative`] sees it inside the project.
+/// Unchanged when it already is, lies elsewhere, or cannot be resolved (gone). Costs a
+/// `canonicalize` only for a path outside the root's spelling: for paths named by a hook, not
+/// for watcher events (those always come under the root).
+pub fn under_root(root: &Path, path: &Path) -> PathBuf {
+    if path.starts_with(root) {
+        return path.to_owned();
+    }
+    match (dunce::canonicalize(root), dunce::canonicalize(path)) {
+        (Ok(canonical_root), Ok(canonical)) => match canonical.strip_prefix(&canonical_root) {
+            Ok(relative) => root.join(relative),
+            Err(_) => path.to_owned(),
+        },
+        _ => path.to_owned(),
+    }
+}
+
 /// Which changed paths of one project are reported.
 // ponytail: the global `core.excludesFile` is not read (machine config would leak into
 // tests); add it via `GitignoreBuilder` if users report noise it would remove.
@@ -262,6 +280,33 @@ mod tests {
         std::fs::write(dir.path().join(".gitignore"), gitignore).unwrap();
         let filter = Filter::new(dir.path());
         (dir, filter)
+    }
+
+    /// A hook names the file with another spelling of the project folder (Windows: case, or a
+    /// CI runner's 8.3 temp path `RUNNER~1`): it is still inside the project.
+    #[cfg(windows)]
+    #[test]
+    fn a_differently_spelled_absolute_path_is_inside_the_root() {
+        let (dir, filter) = filter("");
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("a.rs"), "x").unwrap();
+        let other = PathBuf::from(
+            dir.path()
+                .join("src")
+                .join("a.rs")
+                .to_string_lossy()
+                .to_uppercase(),
+        );
+        let path = under_root(dir.path(), &other);
+        assert_eq!(
+            filter.relative(&path, Some(false)).as_deref(),
+            Some("src/a.rs")
+        );
+        // Already under the root, or outside it: unchanged.
+        let inside = dir.path().join("src").join("a.rs");
+        assert_eq!(under_root(dir.path(), &inside), inside);
+        let elsewhere = tempfile::tempdir().unwrap();
+        assert_eq!(under_root(dir.path(), elsewhere.path()), elsewhere.path());
     }
 
     #[test]
