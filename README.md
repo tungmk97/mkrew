@@ -89,6 +89,7 @@ Bump `version` in the root `Cargo.toml`, build once (`cargo build`) so `Cargo.lo
 both, then `git tag vX.Y.Z` and push the commit and the tag (the release build uses `--locked`).
 The Release workflow builds the Windows setup, the macOS app and the Linux tar.gz and publishes
 the release; running copies of Mkrew offer it within 6 hours.
+Agents do all of this with the `mkrew-release` skill (`.claude/skills/mkrew-release`).
 
 ## Configure agents
 
