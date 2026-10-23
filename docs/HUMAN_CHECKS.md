@@ -28,8 +28,8 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   both themes, over code spans too. Shift+click extends; double-click selects a word (also in
   Vietnamese text); Ctrl+A selects all; Esc clears. Typing letters in Preview changes nothing.
 - [ ] **Copy:** Ctrl+C, paste into Notepad → plain text, table cells separated by tabs, list
-  items with `- ` / `1. ` / `[x] `, no Mermaid source. Ctrl+A copy keeps the list markers; a
-  drag or double-click copies exactly what is selected.
+  items with `- ` / `1. ` / `[x] `, no Mermaid source. Ctrl+A copies every item with its marker;
+  a drag or double-click adds no marker to the list item it starts in, items after it keep theirs.
 - [ ] **Edit (dark + light):** hover a block → ✎ inside its top-right corner on a rounded
   background; click → its Markdown in a field (caret, Unikey typing, click mid-text, drag to
   select, Ctrl+C / X / V), with the hint "Ctrl+Enter apply · Esc cancel". A click inside the
@@ -39,10 +39,13 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   long file scrolled down: the ✎ and field stay on the right block.
 - [ ] **Docs view unchanged:** Docs preview still picks blocks for comments; Ask AI and the
   thread panel render Markdown as before.
+- [ ] **Agent rewrites the file during a block edit:** open a ✎ field, let an agent change the
+  file → the preview updates, the field closes, toast "The file changed; your block edit was
+  closed".
 - **Known limits (not bugs):** nested lists copy without indentation; no autoscroll while
-  dragging past the edge; an emptied block leaves a blank line; Ctrl+S / Ctrl+F while the field
-  is focused save/search without the pending field text (the field stays open); a long block's
-  field has no caret autoscroll.
+  dragging past the edge; an emptied block leaves a blank line; Ctrl+S while the field is
+  focused saves without the pending field text (the field stays open); Ctrl+F switches to Source
+  and the open field is closed (its text dropped); a long block's field has no caret autoscroll.
 
 ### To verify — 2026-10-21 In-app update (ADR 0071, SPEC §20K)
 

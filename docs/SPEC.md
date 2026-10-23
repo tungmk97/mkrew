@@ -1109,9 +1109,9 @@ Only edit this file. When done, for EACH comment run:
   toggle; Source is the editor above. In Preview (ADR 0072) the text can be selected with the
   mouse across blocks (Shift+click extends, double-click takes a word, Ctrl+A selects the page,
   Esc clears) and Ctrl+C copies it as shown (blocks and lines on their own lines, table cells
-  tab-separated, list markers `- ` / `N. ` / `[x] `, drawn diagrams copy nothing; only Ctrl+A
-  copy adds the markers of whole items, a drag or double-click copies exactly the selected
-  range). Hovering a top-level block shows ✎ at its top-right corner: its Markdown opens in a
+  tab-separated, list markers `- ` / `N. ` / `[x] `, drawn diagrams copy nothing; a drag or
+  double-click adds no marker to the list item it starts in, items after it keep theirs, and
+  Ctrl+A copies every item with its marker). Hovering a top-level block shows ✎ at its top-right corner: its Markdown opens in a
   field in its place; Ctrl+Enter puts it back over the block's source lines (one undo step,
   unsaved like any edit), Esc or a click outside cancels; refused with a toast when the text
   changed since the field opened. The preview is built from
