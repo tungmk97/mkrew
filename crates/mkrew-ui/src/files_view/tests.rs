@@ -1018,3 +1018,25 @@ fn a_new_page_clears_the_selection() {
     view.preview_ready(stamp, page(&source));
     assert_eq!(view.preview_selection, None);
 }
+
+#[test]
+fn a_new_page_reports_the_block_edit_it_closed() {
+    let mut view = previewed("a\n\nb\n");
+    assert!(view.open_block_edit(0));
+    view.editor_mut().unwrap().insert("x");
+    let (stamp, source) = view.preview_request().expect("the new text is parsed");
+    assert!(view.preview_ready(stamp, page(&source)), "an edit was open");
+    assert!(view.block_edit.is_none());
+    view.editor_mut().unwrap().insert("y");
+    let (stamp, source) = view.preview_request().expect("the new text is parsed");
+    assert!(!view.preview_ready(stamp, page(&source)), "nothing open");
+}
+
+#[test]
+fn ctrl_f_leaves_the_preview_and_drops_edit_and_selection() {
+    let mut view = previewed("a\n\nb\n");
+    assert!(view.open_block_edit(0));
+    view.preview_select_all();
+    assert!(view.open_find(false));
+    assert!(view.block_edit.is_none() && view.preview_selection.is_none());
+}

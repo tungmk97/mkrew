@@ -202,18 +202,26 @@ fn selectable(
         .into_any_element()
 }
 
-/// `highlights` (sorted, not overlapping) with the selection `sel` drawn on `bg`, in a text of
-/// `len` bytes: highlights are cut at the selection's ends, their selected parts get `bg` (over
-/// a code span's own background), selected plain text gets `bg` alone. `sel` may end past the
-/// text. Hand-made because `gpui::combine_highlights` folds overlaps in `HashSet` order.
+/// `highlights` (sorted, not overlapping) with the selection `sel` drawn on `bg`, in `text`:
+/// highlights are cut at the selection's ends, their selected parts get `bg` (over a code
+/// span's own background), selected plain text gets `bg` alone. `sel` may end past the text
+/// or inside a character (a stale page): both ends snap down to a character boundary.
+/// Hand-made because `gpui::combine_highlights` folds overlaps in `HashSet` order.
 pub fn with_selection(
     highlights: Vec<(Range<usize>, HighlightStyle)>,
     sel: Option<Range<usize>>,
-    len: usize,
+    text: &str,
     bg: Hsla,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
+    let snap = |mut at: usize| {
+        at = at.min(text.len());
+        while !text.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    };
     let Some(sel) = sel
-        .map(|sel| sel.start.min(len)..sel.end.min(len))
+        .map(|sel| snap(sel.start)..snap(sel.end))
         .filter(|sel| !sel.is_empty())
     else {
         return highlights;
@@ -618,13 +626,9 @@ fn code_block(lang: Option<&str>, code: &Code, pick: Option<&Pick>, theme: &Them
                         line.clone()
                     };
                     div().child(selectable(pick, |sel, bg| {
-                        let len = line.len();
-                        StyledText::new(line).with_highlights(with_selection(
-                            code_highlights(spans, &[], theme),
-                            sel,
-                            len,
-                            bg,
-                        ))
+                        let highlights =
+                            with_selection(code_highlights(spans, &[], theme), sel, &line, bg);
+                        StyledText::new(line).with_highlights(highlights)
                     }))
                 })),
         )
@@ -683,8 +687,7 @@ fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -
         };
         (range, highlight)
     });
-    let len = text.len();
-    let highlights = with_selection(highlights.collect(), selected, len, bg);
+    let highlights = with_selection(highlights.collect(), selected, &text, bg);
     StyledText::new(text)
         .with_highlights(highlights)
         .with_font_family_overrides(mono)
@@ -1124,7 +1127,7 @@ mod tests {
 
     #[test]
     fn selection_cuts_highlights_and_fills_plain_text() {
-        let merged = with_selection(vec![(0..5, bold())], Some(3..8), 10, lit());
+        let merged = with_selection(vec![(0..5, bold())], Some(3..8), "0123456789", lit());
         let on = |style: HighlightStyle| HighlightStyle {
             background_color: Some(lit()),
             ..style
@@ -1145,7 +1148,7 @@ mod tests {
             background_color: Some(Hsla::from(rgb(0x111111))),
             ..HighlightStyle::default()
         };
-        let merged = with_selection(vec![(2..4, code)], Some(0..usize::MAX), 6, lit());
+        let merged = with_selection(vec![(2..4, code)], Some(0..usize::MAX), "abcdef", lit());
         let backgrounds: Vec<_> = merged
             .iter()
             .map(|(r, s)| (r.clone(), s.background_color))
@@ -1163,12 +1166,30 @@ mod tests {
     #[test]
     fn no_selection_keeps_the_highlights() {
         assert_eq!(
-            with_selection(vec![(0..5, bold())], None, 5, lit()),
+            with_selection(vec![(0..5, bold())], None, "hello", lit()),
             vec![(0..5, bold())]
         );
         assert_eq!(
-            with_selection(vec![(0..5, bold())], Some(9..12), 5, lit()),
+            with_selection(vec![(0..5, bold())], Some(9..12), "hello", lit()),
             vec![(0..5, bold())]
+        );
+    }
+
+    #[test]
+    fn selection_ends_inside_a_character_snap_down_to_a_boundary() {
+        // "Việt": ệ is bytes 2..5.
+        let ranges = |sel| {
+            with_selection(vec![], Some(sel), "Việt", lit())
+                .into_iter()
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ranges(0..4), vec![0..2], "end inside ệ");
+        assert_eq!(ranges(3..6), vec![2..6], "start inside ệ");
+        assert_eq!(
+            ranges(3..4),
+            Vec::<Range<usize>>::new(),
+            "empty once snapped"
         );
     }
 

@@ -549,6 +549,8 @@ impl FilesView {
         }
         // Matches and the replace row act on the editor's text.
         self.mode = Mode::Source;
+        self.block_edit = None;
+        self.preview_selection = None;
         let Content::Shown(shown) = &self.content else {
             return false;
         };
@@ -684,18 +686,19 @@ impl FilesView {
     }
 
     /// The page built for `stamp`. Dropped when another text replaced the one it was built
-    /// from, or when a newer page is already here (builds can finish out of order).
-    pub fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) {
+    /// from, or when a newer page is already here (builds can finish out of order). Returns
+    /// `true` when an open block edit was closed by the new page.
+    pub fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) -> bool {
         let newer = (self.preview.as_ref()).is_some_and(|preview| preview.stamp >= stamp);
         if stamp.0 != self.text_id || newer {
-            return;
+            return false;
         }
         self.preview = Some(MdPreview {
             stamp,
             shown: Rc::new(shown),
         });
         self.preview_selection = None;
-        self.block_edit = None;
+        self.block_edit.take().is_some()
     }
 
     /// A press on the preview at `at`: a caret, Shift extends, a double click takes the word.

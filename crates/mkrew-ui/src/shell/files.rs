@@ -197,8 +197,10 @@ impl Shell {
                 .spawn(async move { Shown::from_text(&text) })
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {
-                if let Some(view) = shell.files_at(project_id, target) {
-                    view.preview_ready(stamp, page);
+                let dropped = (shell.files_at(project_id, target))
+                    .is_some_and(|view| view.preview_ready(stamp, page));
+                if dropped {
+                    shell.toast_info("The file changed; your block edit was closed", cx);
                 }
                 shell.build_preview(project_id, window, cx);
                 cx.notify();
