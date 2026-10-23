@@ -75,6 +75,7 @@ icons! {
         PanelLeftClose => "panel-left-close",
         PanelLeftOpen => "panel-left-open",
         PanelRight => "panel-right",
+        Pencil => "pencil",
         Play => "play",
         Plus => "plus",
         RotateCw => "rotate-cw",

@@ -436,6 +436,7 @@ impl Shell {
             file_code_scroll: UniformListScrollHandle::new(),
             file_code_drag: scrollbar::Drag::default(),
             file_editor_focus: cx.focus_handle(),
+            file_block_focus: cx.focus_handle(),
             file_text_left: Rc::default(),
             git: HashMap::new(),
             git_repos: HashMap::new(),

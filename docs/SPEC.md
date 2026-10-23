@@ -1047,7 +1047,8 @@ Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, comman
 - **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
-  lines highlights them (ADR 0006; character selection and anchor-aligned cards are backlog).
+  lines highlights them (ADR 0006; character selection in Docs and anchor-aligned cards are
+  backlog; the Files preview selects characters, ADR 0072).
 - **Re-anchoring:** on `doc.changed`, find `quote` in the new content to update lines; if not found
   → `outdated` (still visible, never auto-deleted).
 - **Send to agent:** sends all open comments of the file (or the selected ones) to one session.
@@ -1105,7 +1106,15 @@ Only edit this file. When done, for EACH comment run:
 - **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
   §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````
   blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Source`
-  toggle; Source is the editor above, and editing only happens there. The preview is built from
+  toggle; Source is the editor above. In Preview (ADR 0072) the text can be selected with the
+  mouse across blocks (Shift+click extends, double-click takes a word, Ctrl+A selects the page,
+  Esc clears) and Ctrl+C copies it as shown (blocks and lines on their own lines, table cells
+  tab-separated, list markers `- ` / `N. ` / `[x] `, drawn diagrams copy nothing; a drag or
+  double-click adds no marker to the list item it starts in, items after it keep theirs, and
+  Ctrl+A copies every item with its marker). Hovering a top-level block shows ✎ at its top-right corner: its Markdown opens in a
+  field in its place; Ctrl+Enter puts it back over the block's source lines (one undo step,
+  unsaved like any edit), Esc or a click outside cancels; refused with a toast when the text
+  changed since the field opened. The preview is built from
   the editor's text, so unsaved changes show in it and toggling never loses them; it is parsed
   when the file is read and when switching to Preview after an edit, never per keystroke. Find
   and "Open at a line" switch to Source. Another file starts in Preview. Links in the preview

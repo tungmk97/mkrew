@@ -522,6 +522,7 @@ impl Shell {
                         docs.opening,
                         shown,
                         Some(wrap),
+                        None,
                         fonts,
                         theme,
                     )
@@ -607,28 +608,6 @@ impl Shell {
                             .child(label)
                     }),
             )
-    }
-
-    /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
-    /// (unsaved edits included).
-    pub(crate) fn render_md_preview(
-        &self,
-        view: &FilesView,
-        fonts: &theme::Fonts,
-        theme: &Theme,
-    ) -> gpui::AnyElement {
-        match view.preview() {
-            None => message(theme, None, "Rendering the preview…".into(), None)
-                .flex_1()
-                .into_any_element(),
-            Some(shown) if shown.blocks.is_empty() => {
-                message(theme, None, "This file is empty.".into(), None)
-                    .flex_1()
-                    .into_any_element()
-            }
-            Some(shown) => preview::page(&self.file_page, view.opening, shown, None, fonts, theme)
-                .into_any_element(),
-        }
     }
 }
 

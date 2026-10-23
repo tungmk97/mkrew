@@ -885,3 +885,158 @@ fn enter_opens_the_cursor_row_only_while_it_is_listed() {
     view.cursor = Some("gone.txt".into());
     assert_eq!(view.enter_target(), None, "the row is gone");
 }
+
+use crate::preview_select::Point;
+use crate::task_dialog::DialogKey;
+
+/// README.md opened with `text` and its preview built.
+fn previewed(text: &str) -> FilesView {
+    let mut view = opened(text);
+    let (stamp, source) = view.preview_request().expect("a preview to build");
+    view.preview_ready(stamp, page(&source));
+    view
+}
+
+fn point(block: usize, byte: usize) -> Point {
+    Point {
+        block,
+        piece: 0,
+        byte,
+    }
+}
+
+#[test]
+fn a_drag_in_the_preview_copies_the_rendered_text() {
+    let mut view = previewed("# Title\n\nold para\n\nend\n");
+    view.preview_click(point(1, 0), false, 1);
+    view.preview_drag(point(1, 3));
+    assert_eq!(view.preview_copy().as_deref(), Some("old"));
+    view.preview_click(point(2, 3), true, 1);
+    assert_eq!(
+        view.preview_copy().as_deref(),
+        Some("old para\nend"),
+        "Shift extends"
+    );
+    view.preview_click(point(1, 5), false, 2);
+    assert_eq!(
+        view.preview_copy().as_deref(),
+        Some("para"),
+        "double click: a word"
+    );
+    view.preview_select_all();
+    assert_eq!(view.preview_copy().as_deref(), Some("Title\nold para\nend"));
+    assert!(view.clear_preview_selection());
+    assert_eq!(view.preview_copy(), None);
+}
+
+#[test]
+fn edit_keys_do_nothing_while_previewing() {
+    let mut view = previewed("a\n");
+    view.preview_click(point(0, 0), false, 1);
+    view.preview_select_all();
+    let _ = view.preview_copy();
+    assert_eq!(text(&view), "a\n");
+    assert_eq!(view.unsaved(), None);
+}
+
+#[test]
+fn applying_a_block_edit_replaces_its_lines_in_one_undo_step() {
+    let mut view = previewed("# T\n\nold para\n\nend\n");
+    assert!(view.open_block_edit(1));
+    assert_eq!(
+        view.block_edit.as_ref().map(|edit| edit.text.text()),
+        Some("old para")
+    );
+    view.block_edit_key(DialogKey::SelectAll);
+    view.block_edit_key(DialogKey::Insert("new".into()));
+    view.block_edit_key(DialogKey::Enter);
+    view.block_edit_key(DialogKey::Insert("line".into()));
+    assert_eq!(
+        view.block_edit_key(DialogKey::Save),
+        BlockEditOutcome::Apply
+    );
+    assert_eq!(view.apply_block_edit(), Ok(()));
+    assert_eq!(text(&view), "# T\n\nnew\nline\n\nend\n");
+    assert!(view.block_edit.is_none());
+    assert_eq!(view.unsaved(), Some("README.md"));
+    view.editor_mut().unwrap().key(EditKey::Undo, 10);
+    assert_eq!(text(&view), "# T\n\nold para\n\nend\n");
+}
+
+#[test]
+fn an_emptied_block_leaves_a_blank_line() {
+    let mut view = previewed("a\n\nb\n\nc\n");
+    assert!(view.open_block_edit(1));
+    view.block_edit_key(DialogKey::SelectAll);
+    view.block_edit_key(DialogKey::Backspace);
+    assert_eq!(view.apply_block_edit(), Ok(()));
+    assert_eq!(text(&view), "a\n\n\n\nc\n");
+}
+
+#[test]
+fn a_block_edit_is_refused_once_the_text_changed() {
+    let mut view = previewed("a\n\nb\n");
+    assert!(view.open_block_edit(1));
+    view.editor_mut().unwrap().insert("x");
+    assert_eq!(view.apply_block_edit(), Err(StaleEdit));
+    assert_eq!(text(&view), "xa\n\nb\n", "nothing written");
+    assert!(view.block_edit.is_some(), "the typed text stays to copy");
+    view.block_edit = None;
+    assert!(!view.open_block_edit(0), "the page is of the old text");
+}
+
+#[test]
+fn esc_cancels_and_leaving_the_preview_drops_edit_and_selection() {
+    let mut view = previewed("a\n\nb\n");
+    assert!(view.open_block_edit(0));
+    assert_eq!(
+        view.block_edit_key(DialogKey::Cancel),
+        BlockEditOutcome::Cancel
+    );
+    view.preview_click(point(0, 0), false, 1);
+    view.preview_drag(point(0, 1));
+    view.toggle_mode();
+    assert!(view.block_edit.is_none() && view.preview_selection.is_none());
+    view.toggle_mode();
+    assert!(view.open_block_edit(0));
+    view.preview_select_all();
+    view.open("src/main.rs");
+    assert!(view.block_edit.is_none() && view.preview_selection.is_none());
+}
+
+#[test]
+fn a_new_page_clears_the_selection() {
+    let mut view = previewed("a\n");
+    assert!(view.open_block_edit(0));
+    assert_eq!(view.apply_block_edit(), Ok(()));
+    view.preview_select_all();
+    assert!(
+        view.preview_selection.is_some(),
+        "the old page is still shown"
+    );
+    let (stamp, source) = view.preview_request().expect("the edited text is parsed");
+    view.preview_ready(stamp, page(&source));
+    assert_eq!(view.preview_selection, None);
+}
+
+#[test]
+fn a_new_page_reports_the_block_edit_it_closed() {
+    let mut view = previewed("a\n\nb\n");
+    assert!(view.open_block_edit(0));
+    view.editor_mut().unwrap().insert("x");
+    let (stamp, source) = view.preview_request().expect("the new text is parsed");
+    assert!(view.preview_ready(stamp, page(&source)), "an edit was open");
+    assert!(view.block_edit.is_none());
+    view.editor_mut().unwrap().insert("y");
+    let (stamp, source) = view.preview_request().expect("the new text is parsed");
+    assert!(!view.preview_ready(stamp, page(&source)), "nothing open");
+}
+
+#[test]
+fn ctrl_f_leaves_the_preview_and_drops_edit_and_selection() {
+    let mut view = previewed("a\n\nb\n");
+    assert!(view.open_block_edit(0));
+    view.preview_select_all();
+    assert!(view.open_find(false));
+    assert!(view.block_edit.is_none() && view.preview_selection.is_none());
+}
