@@ -18,6 +18,7 @@ impl Shell {
         let flash_taskbar = settings.notify.flash_taskbar;
         let features = settings.features;
         let jira_on = !settings.jira.site.trim().is_empty();
+        let jira_mine = settings.jira.mine;
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
@@ -106,6 +107,13 @@ impl Shell {
                                     shell.apply_diff_mode(settings.ui.diff_mode);
                                     shell.diff_wrap = settings.ui.diff_wrap;
                                     shell.jira_on = !settings.jira.site.trim().is_empty();
+                                    // A hand edit of `[jira] mine` searches the shown list again.
+                                    if shell.apply_jira_mine(settings.jira.mine)
+                                        && shell.jira_side_shown()
+                                        && let Some(project_id) = shell.workspace
+                                    {
+                                        shell.load_jira(project_id, window, cx);
+                                    }
                                     shell.reading_default = settings.ui.reading_width;
                                     if shell.features != settings.features {
                                         // `view()` may now map Docs to Terminals.
@@ -397,6 +405,7 @@ impl Shell {
             card_error: None,
             jira: HashMap::new(),
             jira_on,
+            jira_mine,
             jira_keys_focus: cx.focus_handle(),
             selected_card: None,
             starting: HashSet::new(),

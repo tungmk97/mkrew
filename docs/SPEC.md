@@ -1769,6 +1769,7 @@ push = false                # ADR 0067; mk web notifies phones that opted in (se
 site = ""                   # "acme.atlassian.net"
 email = ""
 api_token_env = "JIRA_API_TOKEN"  # env var holding the API token; never the token itself
+mine = false                      # the Board's All | Mine filter (it writes this)
 ```
 
 **Phone access** (ADR 0053). While `[web] enabled = true` the daemon supervises `mk web` as a
@@ -2117,9 +2118,10 @@ speech to text, this is the second user-configured use of the network, and only 
    `✕ <message>` (e.g. a key that is not letters, digits and `_`). Save sends `project.update`
    `jira_keys` (the daemon trims and upper-cases, so `proj` becomes `PROJ`) and then loads the
    issues. With keys the header reads `PROJ, BILL · Edit · All | Mine · Refresh`: Edit shows the
-   same field pre-filled (Esc on an empty field leaves it), `All | Mine` (default `All`, kept per
-   workspace in memory) picks every open issue or only the user's and searches again, Refresh
-   searches again.
+   same field pre-filled (Esc on an empty field leaves it), `All | Mine` picks every open issue
+   or only the user's and searches again; the choice is `[jira] mine` (default `false` = `All`),
+   one for every workspace, saved at once and kept across restarts (other workspaces' lists are
+   dropped and load again on Refresh or the next switch to Jira). Refresh searches again.
 3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype`,
    `maxResults` 50 (the first 50 only; no paging, no polling), JQL `project in (PROJ, BILL) AND
    statusCategory != Done ORDER BY updated DESC`; `Mine` adds `AND assignee = currentUser()`

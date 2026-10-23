@@ -457,6 +457,8 @@ struct Shell {
     jira: HashMap<Ulid, JiraView>,
     /// `[jira] site` is set: the Board shows the `Tasks | Jira` switch.
     jira_on: bool,
+    /// `[jira] mine`: the `All | Mine` filter, every workspace.
+    jira_mine: bool,
     /// The Jira keys field.
     jira_keys_focus: FocusHandle,
     /// The card Ctrl+Enter runs (clicked last).

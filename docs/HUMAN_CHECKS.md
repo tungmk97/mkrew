@@ -139,8 +139,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   and the Board header follows.
 - [ ] **All | Mine (2026-10-23, dark + light):** header reads `PROJ · Edit · All | Mine ·
   Refresh`; `All` (default) lists every open issue of the keys, `Mine` only yours (empty:
-  "No open issues assigned to you in …"); each click searches again and the choice stays per
-  workspace until restart.
+  "No open issues assigned to you in …"); each click searches again. The choice is saved as
+  `[jira] mine` in `settings.toml`: restart Mkrew and it stays; another workspace shows the same
+  filter (Refresh loads it); a hand edit of `mine` reloads the shown list within about 1 s.
 
 ### To verify — 2026-10-15 Ask AI dialog (ADR 0061)
 
