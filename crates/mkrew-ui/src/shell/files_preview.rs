@@ -159,7 +159,9 @@ impl Shell {
                     div()
                         .absolute()
                         .top_0()
-                        .right(px(-space::XL))
+                        .right_0()
+                        .rounded(px(radius::SMALL))
+                        .bg(rgb(theme.surface_raised))
                         .opacity(opacity::HIDDEN)
                         .group_hover(group, |style| style.opacity(opacity::FULL))
                         .child(
