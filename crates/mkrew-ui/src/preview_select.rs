@@ -183,6 +183,15 @@ pub fn copy_text(shown: &Shown, selection: &Selection) -> String {
     if selection.is_empty() {
         return String::new();
     }
+    // Ctrl+A is the only selection that keeps the list markers.
+    if select_all(shown) == Some(*selection) {
+        let texts: Vec<String> = (shown.blocks.iter())
+            .map(|block| flat(block, shown))
+            .filter(|flat| !flat.pieces.is_empty())
+            .map(|flat| flat.text)
+            .collect();
+        return texts.join("\n");
+    }
     let (start, end) = selection.ordered();
     let mut parts = Vec::new();
     for index in start.block..=end.block {
@@ -193,8 +202,7 @@ pub fn copy_text(shown: &Shown, selection: &Selection) -> String {
         if flat.pieces.is_empty() {
             continue;
         }
-        // The very start of a block keeps its list marker.
-        let from = if index == start.block && (start.piece, start.byte) != (0, 0) {
+        let from = if index == start.block {
             flat.offset(start.piece, start.byte)
         } else {
             0
@@ -379,6 +387,19 @@ mod tests {
         assert_eq!(selection.range_in(2, 1), Some(0..4));
         assert_eq!(selection.range_in(2, 2), None, "after the end");
         assert_eq!(Selection::caret(at(1, 0, 1)).range_in(1, 0), None);
+    }
+
+    #[test]
+    fn list_markers_are_copied_only_by_select_all() {
+        let page = shown("- one\n- two\n");
+        let word = word_at(&page, at(0, 0, 1));
+        assert_eq!(copy_text(&page, &word), "one");
+        let drag = Selection {
+            anchor: at(0, 0, 0),
+            head: at(0, 0, 2),
+        };
+        assert_eq!(copy_text(&page, &drag), "on");
+        assert_eq!(all(&page), "- one\n- two");
     }
 
     #[test]
