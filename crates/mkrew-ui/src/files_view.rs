@@ -16,7 +16,10 @@ use ulid::Ulid;
 use crate::docs::{self, Mode};
 use crate::editor::{Editor, Pos};
 use crate::highlight::Code;
-use crate::text_box::Input;
+use crate::markdown::Lines;
+use crate::preview_select::{self, Point, Selection};
+use crate::task_dialog::DialogKey;
+use crate::text_box::{Input, TextBox};
 use crate::text_find::{self, TextFind};
 
 /// One folder's children.
@@ -112,6 +115,30 @@ struct MdPreview {
     shown: Rc<docs::Shown>,
 }
 
+/// The top-level block of the preview whose Markdown is edited in place (SPEC §12A, ADR 0072):
+/// its source lines as of `stamp`, and the field's text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockEdit {
+    pub block: usize,
+    pub lines: Lines,
+    stamp: Stamp,
+    pub text: TextBox,
+}
+
+/// What a key in the block edit field does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockEditOutcome {
+    Edited,
+    /// Esc: close it, the typed text is dropped.
+    Cancel,
+    /// Ctrl+Enter.
+    Apply,
+}
+
+/// The text changed since the field opened: applying could hit the wrong lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaleEdit;
+
 /// One workspace's Files view.
 #[derive(Debug)]
 pub struct FilesView {
@@ -158,6 +185,10 @@ pub struct FilesView {
     /// The last page built, and the stamp last asked for (one build per text).
     preview: Option<MdPreview>,
     preview_asked: Option<Stamp>,
+    /// The preview's text selection; cleared with every new page.
+    pub preview_selection: Option<Selection>,
+    /// The block being edited in the preview, `None` = none.
+    pub block_edit: Option<BlockEdit>,
     /// An `fs.write` is in flight.
     saving: bool,
 }
@@ -198,6 +229,8 @@ impl FilesView {
             text_id: 0,
             preview: None,
             preview_asked: None,
+            preview_selection: None,
+            block_edit: None,
         }
     }
 
@@ -369,6 +402,8 @@ impl FilesView {
         self.mode = Mode::Preview;
         self.preview = None;
         self.preview_asked = None;
+        self.preview_selection = None;
+        self.block_edit = None;
         Some(path.to_owned())
     }
 
@@ -613,6 +648,8 @@ impl FilesView {
             Mode::Preview => Mode::Source,
             Mode::Source => Mode::Preview,
         };
+        self.preview_selection = None;
+        self.block_edit = None;
     }
 
     /// What a page of the editor's text now would be built from (`None`: nothing editable
@@ -657,6 +694,139 @@ impl FilesView {
             stamp,
             shown: Rc::new(shown),
         });
+        self.preview_selection = None;
+        self.block_edit = None;
+    }
+
+    /// A press on the preview at `at`: a caret, Shift extends, a double click takes the word.
+    pub fn preview_click(&mut self, at: Point, extend: bool, clicks: usize) {
+        let Some(shown) = self.preview().cloned() else {
+            return;
+        };
+        self.preview_selection = Some(match self.preview_selection {
+            _ if clicks == 2 => preview_select::word_at(&shown, at),
+            Some(selection) if extend => Selection {
+                head: at,
+                ..selection
+            },
+            _ => Selection::caret(at),
+        });
+    }
+
+    pub fn preview_drag(&mut self, at: Point) {
+        if let Some(selection) = &mut self.preview_selection {
+            selection.head = at;
+        }
+    }
+
+    pub fn preview_select_all(&mut self) {
+        self.preview_selection = self
+            .preview()
+            .and_then(|shown| preview_select::select_all(shown));
+    }
+
+    /// Ctrl+C in the preview: the selected text as shown; `None` when nothing is selected.
+    pub fn preview_copy(&self) -> Option<String> {
+        let text = preview_select::copy_text(self.preview()?, self.preview_selection.as_ref()?);
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Esc: `true` when there was a selection.
+    pub fn clear_preview_selection(&mut self) -> bool {
+        self.preview_selection.take().is_some()
+    }
+
+    /// ✎ on block `block`: its source lines go into the field. Refused while the page is of an
+    /// older text (its lines may have moved) or the file cannot be edited.
+    pub fn open_block_edit(&mut self, block: usize) -> bool {
+        let Some(stamp) = self.stamp() else {
+            return false;
+        };
+        let current = self
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.stamp == stamp);
+        let lines = self
+            .preview()
+            .and_then(|shown| shown.blocks.get(block))
+            .map(|block| block.lines);
+        let (Some(lines), true) = (lines, current) else {
+            return false;
+        };
+        let Some(shown) = self.shown() else {
+            return false;
+        };
+        let source = shown.editor.lines();
+        let from = (lines.start as usize).saturating_sub(1);
+        let to = (lines.end as usize).min(source.len());
+        if from >= to {
+            return false;
+        }
+        let mut text = TextBox::default();
+        text.insert(&source[from..to].join("\n"));
+        self.block_edit = Some(BlockEdit {
+            block,
+            lines,
+            stamp,
+            text,
+        });
+        true
+    }
+
+    /// A key in the field. Clipboard keys are the shell's: it reads the selection before Copy /
+    /// Cut and inserts the clipboard on Paste.
+    pub fn block_edit_key(&mut self, key: DialogKey) -> BlockEditOutcome {
+        let Some(edit) = &mut self.block_edit else {
+            return BlockEditOutcome::Cancel;
+        };
+        match key {
+            DialogKey::Cancel => return BlockEditOutcome::Cancel,
+            DialogKey::Save => return BlockEditOutcome::Apply,
+            DialogKey::Enter => edit.text.insert("\n"),
+            DialogKey::Insert(text) => edit.text.insert(&text),
+            DialogKey::Cut => {
+                if edit.text.input().selection().is_some() {
+                    edit.text.edit(&DialogKey::Backspace);
+                }
+            }
+            DialogKey::Paste | DialogKey::Copy | DialogKey::SwitchField => {}
+            key => {
+                edit.text.edit(&key);
+            }
+        }
+        BlockEditOutcome::Edited
+    }
+
+    /// Ctrl+Enter: the field's text replaces the block's lines as one undo step and the field
+    /// closes (the caller rebuilds the page). The field stays when the text changed since it
+    /// opened.
+    pub fn apply_block_edit(&mut self) -> Result<(), StaleEdit> {
+        let Some(edit) = self.block_edit.take() else {
+            return Ok(());
+        };
+        if self.stamp() != Some(edit.stamp) {
+            self.block_edit = Some(edit);
+            return Err(StaleEdit);
+        }
+        let Some(editor) = self.editor_mut() else {
+            return Ok(());
+        };
+        let from = (edit.lines.start as usize).saturating_sub(1);
+        let last = (edit.lines.end as usize)
+            .min(editor.lines().len())
+            .saturating_sub(1);
+        let Some(end_col) = editor.lines().get(last).map(String::len) else {
+            return Ok(());
+        };
+        editor.replace(
+            Pos { line: from, col: 0 }..Pos {
+                line: last,
+                col: end_col,
+            },
+            edit.text.text(),
+        );
+        self.preview_selection = None;
+        Ok(())
     }
 
     /// The editor of an editable file (not binary or too large).
