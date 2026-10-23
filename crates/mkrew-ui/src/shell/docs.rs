@@ -522,6 +522,7 @@ impl Shell {
                         docs.opening,
                         shown,
                         Some(wrap),
+                        None,
                         fonts,
                         theme,
                     )
@@ -626,8 +627,16 @@ impl Shell {
                     .flex_1()
                     .into_any_element()
             }
-            Some(shown) => preview::page(&self.file_page, view.opening, shown, None, fonts, theme)
-                .into_any_element(),
+            Some(shown) => preview::page(
+                &self.file_page,
+                view.opening,
+                shown,
+                None,
+                None,
+                fonts,
+                theme,
+            )
+            .into_any_element(),
         }
     }
 }

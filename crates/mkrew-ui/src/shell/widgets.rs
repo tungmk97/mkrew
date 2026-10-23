@@ -1,5 +1,6 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
+use crate::preview::closest_byte;
 use crate::*;
 use gpui::{Animation, AnimationExt, pulsating_between};
 
@@ -451,30 +452,6 @@ pub(crate) fn caret_field(
                 cx.notify();
             }
         }))
-}
-
-/// The byte of `layout`'s text nearest to window point `position`: the line under it (the
-/// first / last above / below the text), the char boundary closest along it.
-fn closest_byte(layout: &gpui::TextLayout, position: Point<Pixels>) -> usize {
-    let (bounds, line_height) = (layout.bounds(), layout.line_height());
-    let lines = layout.line_layouts();
-    let (mut top, mut start) = (bounds.top(), 0);
-    for (i, line) in lines.iter().enumerate() {
-        let height = line.size(line_height).height;
-        if position.y < top + height || i + 1 == lines.len() {
-            // Inside the line's rows: a y past its last row would find no row at all.
-            let last_row = (height - px(theme::BORDER_WIDTH)).max(Pixels::ZERO);
-            let y = (position.y - top).clamp(Pixels::ZERO, last_row);
-            let within = point(position.x - bounds.left(), y);
-            return start
-                + line
-                    .closest_index_for_position(within, line_height)
-                    .unwrap_or_else(|i| i);
-        }
-        top += height;
-        start += line.len() + 1;
-    }
-    0
 }
 
 /// The field's frame and text: the caret at byte `cursor` while `focused` (none while
