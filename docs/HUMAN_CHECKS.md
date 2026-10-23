@@ -21,6 +21,29 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-23 Select, copy and edit in the Files Markdown preview (ADR 0072)
+
+- [ ] **Select (dark + light):** Files → a `.md` with heading, paragraph, table, list, code and
+  a ```mermaid block. Drag across them → the selection color follows the pointer, readable in
+  both themes, over code spans too. Shift+click extends; double-click selects a word (also in
+  Vietnamese text); Ctrl+A selects all; Esc clears. Typing letters in Preview changes nothing.
+- [ ] **Copy:** Ctrl+C, paste into Notepad → plain text, table cells separated by tabs, list
+  items with `- ` / `1. ` / `[x] `, no Mermaid source. Ctrl+A copy keeps the list markers; a
+  drag or double-click copies exactly what is selected.
+- [ ] **Edit (dark + light):** hover a block → ✎ inside its top-right corner on a rounded
+  background; click → its Markdown in a field (caret, Unikey typing, click mid-text, drag to
+  select, Ctrl+C / X / V), with the hint "Ctrl+Enter apply · Esc cancel". A click inside the
+  field keeps typing there. Ctrl+Enter → the preview updates, the file shows unsaved, Ctrl+S
+  saves; Source → Ctrl+Z undoes the whole edit. Esc / click outside cancels. Blocks below never
+  overlap the field while it grows. Click ✎ on another block → the field moves there. Try a
+  long file scrolled down: the ✎ and field stay on the right block.
+- [ ] **Docs view unchanged:** Docs preview still picks blocks for comments; Ask AI and the
+  thread panel render Markdown as before.
+- **Known limits (not bugs):** nested lists copy without indentation; no autoscroll while
+  dragging past the edge; an emptied block leaves a blank line; Ctrl+S / Ctrl+F while the field
+  is focused save/search without the pending field text (the field stays open); a long block's
+  field has no caret autoscroll.
+
 ### To verify — 2026-10-21 In-app update (ADR 0071, SPEC §20K)
 
 - [ ] **Release run:** the tag's Release workflow builds 3 jobs; the release is published (not a
