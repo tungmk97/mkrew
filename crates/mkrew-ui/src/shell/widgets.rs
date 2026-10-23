@@ -345,12 +345,18 @@ pub(crate) fn typing_input(
     typing_target: &ime::FocusedField<Shell>,
     cx: &Context<'_, Shell>,
 ) -> impl IntoElement + use<> {
-    let (focus, view, marked, typing_target) = (
-        focus.clone(),
-        cx.entity(),
-        marked.clone(),
-        typing_target.clone(),
-    );
+    typing_input_for(cx.entity(), focus, on_key, marked, typing_target)
+}
+
+/// [`typing_input`] from outside a `Context` (a closure holding the view).
+pub(crate) fn typing_input_for(
+    view: Entity<Shell>,
+    focus: &FocusHandle,
+    on_key: ime::OnKey<Shell>,
+    marked: &Rc<ime::Composing<FocusHandle>>,
+    typing_target: &ime::FocusedField<Shell>,
+) -> impl IntoElement + use<> {
+    let (focus, marked, typing_target) = (focus.clone(), marked.clone(), typing_target.clone());
     canvas(
         |_, _, _| (),
         move |bounds, (), window, cx| {
@@ -409,6 +415,27 @@ pub(crate) fn caret_field(
     cx: &Context<'_, Shell>,
     on_caret: impl Fn(&mut Shell, Caret) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    caret_field_for(
+        &cx.entity(),
+        id,
+        input,
+        placeholder,
+        focused,
+        theme,
+        on_caret,
+    )
+}
+
+/// [`caret_field`] from outside a `Context` (a closure holding the view).
+pub(crate) fn caret_field_for(
+    view: &Entity<Shell>,
+    id: &'static str,
+    input: &Input,
+    placeholder: &'static str,
+    focused: bool,
+    theme: &Theme,
+    on_caret: impl Fn(&mut Shell, Caret) + 'static,
+) -> gpui::Stateful<gpui::Div> {
     let (field, layout) = field_frame(
         id,
         input.as_str(),
@@ -427,31 +454,38 @@ pub(crate) fn caret_field(
     let at = Rc::new(at);
     let (down, down_at) = (Rc::clone(&on_caret), Rc::clone(&at));
     field
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
-                down(
-                    shell,
-                    Caret {
-                        at: down_at(event.position),
-                        extend: event.modifiers.shift,
-                        clicks: event.click_count,
-                    },
-                );
-                cx.notify();
-            }),
-        )
-        .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
-            if event.dragging() {
-                let caret = Caret {
-                    at: at(event.position),
-                    extend: true,
-                    clicks: 1,
-                };
-                on_caret(shell, caret);
-                cx.notify();
+        .on_mouse_down(MouseButton::Left, {
+            let view = view.clone();
+            move |event: &MouseDownEvent, _, cx: &mut App| {
+                view.update(cx, |shell, cx| {
+                    down(
+                        shell,
+                        Caret {
+                            at: down_at(event.position),
+                            extend: event.modifiers.shift,
+                            clicks: event.click_count,
+                        },
+                    );
+                    cx.notify();
+                });
             }
-        }))
+        })
+        .on_mouse_move({
+            let view = view.clone();
+            move |event: &MouseMoveEvent, _, cx: &mut App| {
+                if event.dragging() {
+                    view.update(cx, |shell, cx| {
+                        let caret = Caret {
+                            at: at(event.position),
+                            extend: true,
+                            clicks: 1,
+                        };
+                        on_caret(shell, caret);
+                        cx.notify();
+                    });
+                }
+            }
+        })
 }
 
 /// The field's frame and text: the caret at byte `cursor` while `focused` (none while
