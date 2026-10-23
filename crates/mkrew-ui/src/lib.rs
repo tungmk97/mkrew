@@ -63,6 +63,7 @@ pub mod phone;
 pub mod phone_dialog;
 pub mod plan;
 pub mod preview;
+pub mod preview_select;
 pub mod prompt_picker;
 pub mod quick_open;
 pub mod router;
