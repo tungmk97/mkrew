@@ -34,9 +34,9 @@ the UI already re-applies it on its mtime poll (`shell/connection.rs`).
 
 | Unit | File | Does |
 |---|---|---|
-| Field table | `crates/mkrew-core/src/settings_fields.rs` (new module beside `settings.rs`) | `pub const FIELDS: &[Field]`. `Field { page, section, key, kind, label, help, hidden }`. `Kind`: `Bool`, `Choice(&[&str])`, `Number { min, max }`, `Text`, `Font`. `pub fn value(&Settings, &Field) -> String` gives the current value as a TOML literal. |
+| Setting table | `crates/mkrew-core/src/settings_fields.rs` (new module beside `settings.rs`) | `pub const SETTINGS: &[Setting]`. `Setting { page, section, key, kind, label, help, hidden }`. `Kind`: `Bool`, `Choice(&[&str])`, `Number`, `Text`, `Font` (ranges are checked by serde when parsed and named in `help`). `Setting::current(&Settings) -> String` is the shown value (read through `Serialize` + `toml::Value`, so no per-key match); `Setting::literal(text) -> String` is the TOML literal written; `Setting::write(path, text)`. |
 | Settings write | `crates/mkrew-core/src/settings.rs` | `write_value` becomes `pub`. Unchanged behavior: parses before writing, keeps comments and CRLF. |
-| Keymap write | `crates/mkrew-ui/src/keymap.rs` | `pub fn write_binding(path, command, keys: Option<&str>) -> Result<(), KeymapError>`. `Some` sets `<name> = "<keys>"`, `None` removes the line (back to the default). Builds the new text, runs `Keymap::parse`, writes only when it reports no error. Template created first when the file is missing. |
+| Keymap write | `crates/mkrew-ui/src/keymap.rs` | `pub fn write_binding(path, command, keys: Option<&str>) -> Result<(Keymap, Vec<KeymapError>), KeymapError>`. `Some` sets `<name> = "<keys>"`, `None` puts back the template's commented default line (back to the default). Builds the new text, runs `Keymap::parse`, writes only when it reports no error the file did not already have (an old problem elsewhere does not block the edit; a syntax error does). Template created first when the file is missing. Returns the new keymap and the problems the file still has. |
 | Dialog model | `crates/mkrew-ui/src/settings_dialog.rs` (new, pure) | Open page, focused row, text drafts, per-row error, keyboard search, capture state, Esc order. |
 | Render + events | `crates/mkrew-ui/src/shell/settings.rs` (new) | Draws the dialog from theme tokens, writes on change, rebinds keys. |
 
@@ -116,8 +116,8 @@ Permanent tests:
 
 | Test | Guards |
 |---|---|
-| `FIELDS` matches `template()` | every template key has exactly one `Field`, and the reverse |
-| write each `Field` | writing its default to a temp file and loading gives that value back; comments stay |
+| `SETTINGS` matches `template()` | every template key has exactly one `Setting`, and the reverse |
+| write each `Setting` | writing its default to a temp file and loading gives that value back; comments stay |
 | bad values refused | `ui.font_size = 40`, `voice.max_seconds = 0`: error returned, file bytes unchanged |
 | `write_binding` | set, replace, remove; comments and CRLF kept; template created when missing |
 | duplicate refused | binding a used keystroke: error names the other command, file unchanged |
@@ -141,7 +141,7 @@ lines in `settings.toml` and `keymap.toml`.
 ## Merge with master
 
 Master has an uncommitted `[jira] mine` key (with `write_jira_mine`). When merged it needs a
-`Field` (`Bool`, page Jira), or the `FIELDS` matches `template()` test fails. Note this in
+`Setting` (`Bool`, page Jira), or the `SETTINGS` matches `template()` test fails. Note this in
 HUMAN_CHECKS "Numbers and merge notes".
 
 ## Build note
