@@ -8,9 +8,13 @@ use mkrew_core::settings::JiraSettings;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-/// Issues per search; one page only.
-// ponytail: first 50 issues only; follow nextPageToken if someone has more open issues
+/// Issues per page.
 const MAX_RESULTS: u32 = 50;
+
+/// Pages per search, so the list stops at 500 issues. Also stops a token chain that never
+/// ends (a reported Jira bug).
+// ponytail: hard 500-issue cap; add "Load more" if a workspace really has more open issues
+const MAX_PAGES: usize = 10;
 
 /// Whole-request limit for one Jira call.
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -84,7 +88,8 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-/// The open issues of `keys`, only the user's when `mine`. Blocking: run it off the UI thread.
+/// The open issues of `keys`, only the user's when `mine`, following `nextPageToken` for up to
+/// [`MAX_PAGES`] pages. Blocking: run it off the UI thread.
 pub fn search(
     settings: &JiraSettings,
     token: &str,
@@ -92,19 +97,30 @@ pub fn search(
     mine: bool,
 ) -> Result<Vec<Issue>> {
     let origin = origin(&settings.site);
-    let mut response = agent()
-        .post(format!("{origin}/rest/api/3/search/jql").as_str())
-        .header("Authorization", auth_header(&settings.email, token))
-        .header("Accept", "application/json")
-        .header("Content-Type", "application/json")
-        .send(search_body(keys, mine).as_bytes())
-        .with_context(|| format!("Cannot reach {origin}"))?;
-    let status = response.status().as_u16();
-    let body = response
-        .body_mut()
-        .read_to_string()
-        .context("cannot read Jira's answer")?;
-    parse_search(status, &body)
+    let mut issues = Vec::new();
+    let mut page: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let mut response = agent()
+            .post(format!("{origin}/rest/api/3/search/jql").as_str())
+            .header("Authorization", auth_header(&settings.email, token))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send(search_body(keys, mine, page.as_deref()).as_bytes())
+            .with_context(|| format!("Cannot reach {origin}"))?;
+        let status = response.status().as_u16();
+        let body = response
+            .body_mut()
+            .read_to_string()
+            .context("cannot read Jira's answer")?;
+        let (found, next) = parse_search(status, &body)?;
+        let empty = found.is_empty();
+        issues.extend(found);
+        match next {
+            Some(next) if !empty => page = Some(next),
+            _ => break,
+        }
+    }
+    Ok(issues)
 }
 
 /// The task draft of one issue. Blocking: run it off the UI thread.
@@ -145,22 +161,33 @@ pub fn jql(keys: &[String], mine: bool) -> String {
     )
 }
 
-pub fn search_body(keys: &[String], mine: bool) -> String {
-    json!({
+/// The search body; `page` is the `nextPageToken` of the previous answer.
+pub fn search_body(keys: &[String], mine: bool, page: Option<&str>) -> String {
+    let mut body = json!({
         "jql": jql(keys, mine),
         "fields": ["summary", "status", "issuetype"],
         "maxResults": MAX_RESULTS,
-    })
-    .to_string()
+    });
+    if let Some(page) = page {
+        body["nextPageToken"] = page.into();
+    }
+    body.to_string()
 }
 
-pub fn parse_search(status: u16, body: &str) -> Result<Vec<Issue>> {
+/// The rows of one page and the token of the next one (`None` on the last page).
+pub fn parse_search(status: u16, body: &str) -> Result<(Vec<Issue>, Option<String>)> {
     let json = answer(status, body, None)?;
     let issues = json
         .get("issues")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("unexpected answer from Jira: {}", short(body)))?;
-    Ok(issues
+    let last = json.get("isLast").and_then(Value::as_bool) == Some(true);
+    let next = json
+        .get("nextPageToken")
+        .and_then(Value::as_str)
+        .filter(|token| !last && !token.is_empty())
+        .map(str::to_owned);
+    let issues = issues
         .iter()
         .map(|issue| Issue {
             key: text(issue, "/key"),
@@ -168,7 +195,8 @@ pub fn parse_search(status: u16, body: &str) -> Result<Vec<Issue>> {
             status: text(issue, "/fields/status/name"),
             kind: text(issue, "/fields/issuetype/name"),
         })
-        .collect())
+        .collect();
+    Ok((issues, next))
 }
 
 pub fn parse_issue(site: &str, key: &str, status: u16, body: &str) -> Result<Draft> {
@@ -375,7 +403,7 @@ mod tests {
             "project in (PROJ, BILL) AND assignee = currentUser() AND statusCategory != Done \
              ORDER BY updated DESC"
         );
-        let body: Value = serde_json::from_str(&search_body(&keys[..1], true)).unwrap();
+        let body: Value = serde_json::from_str(&search_body(&keys[..1], true, None)).unwrap();
         assert_eq!(
             body,
             json!({
@@ -393,7 +421,7 @@ mod tests {
             {"id":"2","key":"BILL-2","fields":{"summary":"Invoice PDF","status":{"name":"To Do"},"issuetype":{"name":"Story"}}}
         ],"isLast":true}"#;
         assert_eq!(
-            parse_search(200, body).unwrap(),
+            parse_search(200, body).unwrap().0,
             [
                 Issue {
                     key: "PROJ-7".into(),
@@ -409,7 +437,15 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(parse_search(200, r#"{"issues":[]}"#).unwrap(), []);
+        assert_eq!(
+            parse_search(200, r#"{"issues":[]}"#).unwrap(),
+            (vec![], None)
+        );
+        // The next page's token, unless Jira says this page is the last.
+        let more = r#"{"issues":[],"nextPageToken":"t2","isLast":false}"#;
+        assert_eq!(parse_search(200, more).unwrap().1.as_deref(), Some("t2"));
+        let last = r#"{"issues":[],"nextPageToken":"t2","isLast":true}"#;
+        assert_eq!(parse_search(200, last).unwrap().1, None);
         let odd = parse_search(200, "{}").unwrap_err().to_string();
         assert!(odd.starts_with("unexpected answer from Jira"), "{odd}");
     }
@@ -501,43 +537,61 @@ mod tests {
 
     /// One request on a loopback port (SPEC §16): returns the request head and body.
     fn serve_once(
-        status: &str,
+        status: &'static str,
         answer: &'static str,
     ) -> (u16, std::thread::JoinHandle<(String, String)>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let status = status.to_owned();
+        let server = std::thread::spawn(move || answer_one(&listener, status, answer));
+        (port, server)
+    }
+
+    /// One `200 OK` request per answer, in order: returns each request body.
+    fn serve_pages(answers: Vec<&'static str>) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
         let server = std::thread::spawn(move || {
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream);
-            let mut head = String::new();
-            loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" {
-                    break;
-                }
-                head.push_str(&line);
-            }
-            let length: usize = head
-                .lines()
-                .find_map(|line| {
-                    let line = line.to_ascii_lowercase();
-                    line.strip_prefix("content-length:")?.trim().parse().ok()
-                })
-                .unwrap_or(0);
-            let mut body = vec![0; length];
-            reader.read_exact(&mut body).unwrap();
-            write!(
-                reader.get_mut(),
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
-                 Connection: close\r\n\r\n{answer}",
-                answer.len()
-            )
-            .unwrap();
-            (head, String::from_utf8(body).unwrap())
+            answers
+                .into_iter()
+                .map(|answer| answer_one(&listener, "200 OK", answer).1)
+                .collect()
         });
         (port, server)
+    }
+
+    fn answer_one(
+        listener: &std::net::TcpListener,
+        status: &str,
+        answer: &str,
+    ) -> (String, String) {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut head = String::new();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            head.push_str(&line);
+        }
+        let length: usize = head
+            .lines()
+            .find_map(|line| {
+                let line = line.to_ascii_lowercase();
+                line.strip_prefix("content-length:")?.trim().parse().ok()
+            })
+            .unwrap_or(0);
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        write!(
+            reader.get_mut(),
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n{answer}",
+            answer.len()
+        )
+        .unwrap();
+        (head, String::from_utf8(body).unwrap())
     }
 
     #[test]
@@ -566,7 +620,30 @@ mod tests {
             head.contains("content-type: application/json\r\n"),
             "{head}"
         );
-        assert_eq!(body, search_body(&["PROJ".to_owned()], false));
+        assert_eq!(body, search_body(&["PROJ".to_owned()], false, None));
+    }
+
+    #[test]
+    fn search_follows_next_page_tokens_until_the_last_page() {
+        let (port, server) = serve_pages(vec![
+            r#"{"issues":[{"key":"PROJ-1","fields":{}}],"nextPageToken":"t2","isLast":false}"#,
+            r#"{"issues":[{"key":"PROJ-2","fields":{}}],"isLast":true}"#,
+        ]);
+        let settings = JiraSettings {
+            site: format!("http://127.0.0.1:{port}"),
+            ..settings()
+        };
+        let issues = search(&settings, "tok", &["PROJ".to_owned()], false).unwrap();
+        let keys: Vec<_> = issues.iter().map(|issue| issue.key.as_str()).collect();
+        assert_eq!(keys, ["PROJ-1", "PROJ-2"]);
+        let bodies = server.join().unwrap();
+        assert_eq!(
+            bodies,
+            [
+                search_body(&["PROJ".to_owned()], false, None),
+                search_body(&["PROJ".to_owned()], false, Some("t2")),
+            ]
+        );
     }
 
     #[test]

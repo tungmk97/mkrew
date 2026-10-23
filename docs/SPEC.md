@@ -2123,7 +2123,9 @@ speech to text, this is the second user-configured use of the network, and only 
    one for every workspace, saved at once and kept across restarts (other workspaces' lists are
    dropped and load again on Refresh or the next switch to Jira). Refresh searches again.
 3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype`,
-   `maxResults` 50 (the first 50 only; no paging, no polling), JQL `project in (PROJ, BILL) AND
+   `maxResults` 50 per page; while an answer has `nextPageToken` and not `isLast: true`, the next
+   page is asked with that token, up to 10 pages (the first 500 issues; an empty page also
+   stops; no polling). The list shows once every page arrived. JQL `project in (PROJ, BILL) AND
    statusCategory != Done ORDER BY updated DESC`; `Mine` adds `AND assignee = currentUser()`
    before `statusCategory`. While it runs:
    "Loading Jira issues…" with working dots. A row: issue type, key, summary (one line, cut with
