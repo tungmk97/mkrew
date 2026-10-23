@@ -137,6 +137,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   https://…`; Retry loads again once fixed. The token never shows.
 - [ ] **CLI:** `mk project update <workspace> --jira PROJ,BILL` prints `Jira keys of …: PROJ, BILL`
   and the Board header follows.
+- [ ] **All | Mine (2026-10-23, dark + light):** header reads `PROJ · Edit · All | Mine ·
+  Refresh`; `All` (default) lists every open issue of the keys, `Mine` only yours (empty:
+  "No open issues assigned to you in …"); each click searches again and the choice stays per
+  workspace until restart.
 
 ### To verify — 2026-10-15 Ask AI dialog (ADR 0061)
 

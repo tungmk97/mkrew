@@ -84,15 +84,20 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-/// The open issues of `keys` assigned to the user. Blocking: run it off the UI thread.
-pub fn search(settings: &JiraSettings, token: &str, keys: &[String]) -> Result<Vec<Issue>> {
+/// The open issues of `keys`, only the user's when `mine`. Blocking: run it off the UI thread.
+pub fn search(
+    settings: &JiraSettings,
+    token: &str,
+    keys: &[String],
+    mine: bool,
+) -> Result<Vec<Issue>> {
     let origin = origin(&settings.site);
     let mut response = agent()
         .post(format!("{origin}/rest/api/3/search/jql").as_str())
         .header("Authorization", auth_header(&settings.email, token))
         .header("Accept", "application/json")
         .header("Content-Type", "application/json")
-        .send(search_body(keys).as_bytes())
+        .send(search_body(keys, mine).as_bytes())
         .with_context(|| format!("Cannot reach {origin}"))?;
     let status = response.status().as_u16();
     let body = response
@@ -128,16 +133,21 @@ pub fn auth_header(email: &str, token: &str) -> String {
 }
 
 /// Keys are checked by the daemon (`mkrew_core::jira::normalize_keys`), so no quoting.
-pub fn jql(keys: &[String]) -> String {
+pub fn jql(keys: &[String], mine: bool) -> String {
+    let assignee = if mine {
+        " AND assignee = currentUser()"
+    } else {
+        ""
+    };
     format!(
-        "project in ({}) AND assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
+        "project in ({}){assignee} AND statusCategory != Done ORDER BY updated DESC",
         keys.join(", ")
     )
 }
 
-pub fn search_body(keys: &[String]) -> String {
+pub fn search_body(keys: &[String], mine: bool) -> String {
     json!({
-        "jql": jql(keys),
+        "jql": jql(keys, mine),
         "fields": ["summary", "status", "issuetype"],
         "maxResults": MAX_RESULTS,
     })
@@ -354,14 +364,18 @@ mod tests {
     }
 
     #[test]
-    fn jql_lists_open_issues_of_the_keys_assigned_to_me() {
+    fn jql_lists_open_issues_of_the_keys_all_or_mine() {
         let keys = ["PROJ".to_owned(), "BILL".to_owned()];
         assert_eq!(
-            jql(&keys),
+            jql(&keys, false),
+            "project in (PROJ, BILL) AND statusCategory != Done ORDER BY updated DESC"
+        );
+        assert_eq!(
+            jql(&keys, true),
             "project in (PROJ, BILL) AND assignee = currentUser() AND statusCategory != Done \
              ORDER BY updated DESC"
         );
-        let body: Value = serde_json::from_str(&search_body(&keys[..1])).unwrap();
+        let body: Value = serde_json::from_str(&search_body(&keys[..1], true)).unwrap();
         assert_eq!(
             body,
             json!({
@@ -536,7 +550,7 @@ mod tests {
             site: format!("http://127.0.0.1:{port}"),
             ..settings()
         };
-        let issues = search(&settings, "tok", &["PROJ".to_owned()]).unwrap();
+        let issues = search(&settings, "tok", &["PROJ".to_owned()], false).unwrap();
         assert_eq!(issues[0].key, "PROJ-7");
         let (head, body) = server.join().unwrap();
         let head = head.to_ascii_lowercase();
@@ -552,7 +566,7 @@ mod tests {
             head.contains("content-type: application/json\r\n"),
             "{head}"
         );
-        assert_eq!(body, search_body(&["PROJ".to_owned()]));
+        assert_eq!(body, search_body(&["PROJ".to_owned()], false));
     }
 
     #[test]
@@ -589,7 +603,7 @@ mod tests {
         };
         let error = format!(
             "{:#}",
-            search(&closed, "s3cret", &["PROJ".to_owned()]).unwrap_err()
+            search(&closed, "s3cret", &["PROJ".to_owned()], false).unwrap_err()
         );
         assert!(
             error.starts_with("Cannot reach http://127.0.0.1:9"),

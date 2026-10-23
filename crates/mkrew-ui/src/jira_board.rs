@@ -30,6 +30,8 @@ pub enum Load {
 pub struct JiraView {
     pub source: Source,
     pub load: Load,
+    /// Only the issues assigned to the user (`Mine`); default `All`.
+    pub mine: bool,
     /// Bumped per search; an answer with an older serial is dropped.
     serial: u64,
     /// `Some` while the keys field shows (no keys yet, or Edit).

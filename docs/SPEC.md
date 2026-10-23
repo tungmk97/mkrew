@@ -2116,14 +2116,18 @@ speech to text, this is the second user-configured use of the network, and only 
    and Save; Enter also saves, Esc clears the text. A daemon error shows under the field as
    `✕ <message>` (e.g. a key that is not letters, digits and `_`). Save sends `project.update`
    `jira_keys` (the daemon trims and upper-cases, so `proj` becomes `PROJ`) and then loads the
-   issues. With keys the header reads `PROJ, BILL · Edit · Refresh`: Edit shows the same field
-   pre-filled (Esc on an empty field leaves it), Refresh searches again.
+   issues. With keys the header reads `PROJ, BILL · Edit · All | Mine · Refresh`: Edit shows the
+   same field pre-filled (Esc on an empty field leaves it), `All | Mine` (default `All`, kept per
+   workspace in memory) picks every open issue or only the user's and searches again, Refresh
+   searches again.
 3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype`,
    `maxResults` 50 (the first 50 only; no paging, no polling), JQL `project in (PROJ, BILL) AND
-   assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`. While it runs:
+   statusCategory != Done ORDER BY updated DESC`; `Mine` adds `AND assignee = currentUser()`
+   before `statusCategory`. While it runs:
    "Loading Jira issues…" with working dots. A row: issue type, key, summary (one line, cut with
    `…`), status and, when a task is linked, that task's column (`Todo`, `Running`, `Review`,
-   `Done`) as a chip. Nothing found: "No open issues assigned to you in PROJ, BILL".
+   `Done`) as a chip. Nothing found: "No open issues in PROJ, BILL" (`Mine`: "No open issues
+   assigned to you in PROJ, BILL").
 4. **Open.** A task belongs to issue `PROJ-123` when it is in the workspace and its title starts
    with `PROJ-123 ` (the key and one space; `PROJ-12` does not match `PROJ-123 x`; no column,
    ADR 0066). Click a row with a linked task: the Board switches to `Tasks` and the task's edit

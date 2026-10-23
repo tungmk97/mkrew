@@ -70,7 +70,7 @@ impl Shell {
         self.search_jira(project_id, keys, window, cx);
     }
 
-    /// Sends the search for `keys` on the background executor.
+    /// Sends the search for `keys` (all or the user's, per the view) on the background executor.
     fn search_jira(
         &mut self,
         project_id: Ulid,
@@ -80,6 +80,7 @@ impl Shell {
     ) {
         let setup = self.jira_setup();
         let view = self.jira.entry(project_id).or_default();
+        let mine = view.mine;
         let serial = view.start_load();
         let (settings, token) = match setup {
             Ok(setup) => setup,
@@ -93,7 +94,7 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { mkrew_ui::jira::search(&settings, &token, &keys) })
+                .spawn(async move { mkrew_ui::jira::search(&settings, &token, &keys, mine) })
                 .await
                 .map_err(|error| format!("{error:#}"));
             let _ = this.update(cx, |shell, cx| {
@@ -266,7 +267,7 @@ impl Shell {
     }
 
     /// The `Tasks | Jira` switch (only when `[jira] site` is set); in Jira mode with keys, the
-    /// keys, Edit and Refresh.
+    /// keys, Edit, the `All | Mine` filter and Refresh.
     pub(crate) fn render_board_header(
         &self,
         project_id: Ulid,
@@ -276,10 +277,9 @@ impl Shell {
         if !self.jira_on {
             return None;
         }
-        let source = self
-            .jira
-            .get(&project_id)
-            .map_or(Source::Tasks, |v| v.source);
+        let view = self.jira.get(&project_id);
+        let source = view.map_or(Source::Tasks, |v| v.source);
+        let mine = view.is_some_and(|v| v.mine);
         let keys = self.jira_keys_of(project_id);
         let toggle = self.mode_toggle(
             "board-source",
@@ -314,6 +314,19 @@ impl Shell {
                         },
                     )),
                 )
+                .child(self.mode_toggle(
+                    "jira-assignee",
+                    mine,
+                    [(false, "All"), (true, "Mine")],
+                    "All issues / assigned to me",
+                    SharedString::default(),
+                    move |shell, mine, window, cx| {
+                        shell.jira.entry(project_id).or_default().mine = mine;
+                        shell.load_jira(project_id, window, cx);
+                    },
+                    theme,
+                    cx,
+                ))
                 .child(
                     button(
                         "jira-refresh",
@@ -412,7 +425,12 @@ impl Shell {
             Load::Loaded(issues) if issues.is_empty() => message(
                 theme,
                 None,
-                format!("No open issues assigned to you in {}", keys.join(", ")).into(),
+                if view.is_some_and(|v| v.mine) {
+                    format!("No open issues assigned to you in {}", keys.join(", "))
+                } else {
+                    format!("No open issues in {}", keys.join(", "))
+                }
+                .into(),
                 None,
             )
             .flex_1()
