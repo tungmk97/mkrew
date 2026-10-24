@@ -225,8 +225,14 @@ pub fn download(asset: &Asset, dir: &Path) -> Result<PathBuf> {
     }
     let mut file =
         std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
-    // The limit makes a longer body an error instead of an endless write.
-    let mut body = response.body_mut().with_config().limit(asset.size).reader();
+    // The limit makes a longer body an error instead of an endless write. One byte over the
+    // size: ureq's limit reader errors on the read after `limit` bytes even at end of body, so
+    // `limit(size)` failed every complete download; a longer body still fails the check below.
+    let mut body = response
+        .body_mut()
+        .with_config()
+        .limit(asset.size + 1)
+        .reader();
     let written =
         std::io::copy(&mut body, &mut file).with_context(|| format!("download {}", asset.name))?;
     if written != asset.size {
@@ -346,6 +352,38 @@ mod tests {
             {"name": "mkrew-0.1.7-linux-x86_64.tar.gz", "browser_download_url": "https://x/c", "size": 30}
         ]
     }"#;
+
+    /// Serves `body` once on localhost (no network) and returns the asset pointing at it.
+    fn serve(body: &'static [u8], size: u64) -> Asset {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+        });
+        Asset {
+            name: "setup.exe".into(),
+            url: format!("http://127.0.0.1:{port}/setup.exe"),
+            size,
+        }
+    }
+
+    #[test]
+    fn a_complete_download_succeeds_and_a_longer_body_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = download(&serve(b"0123456789", 10), dir.path()).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"0123456789");
+        let error = download(&serve(b"0123456789AB", 10), dir.path()).unwrap_err();
+        assert!(format!("{error:#}").contains("download"), "{error:#}");
+    }
 
     #[test]
     fn asset_names_with_path_parts_are_refused() {
