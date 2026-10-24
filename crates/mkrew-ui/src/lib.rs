@@ -69,6 +69,7 @@ pub mod router;
 pub mod run;
 pub mod run_setup;
 pub mod scrollbar;
+pub mod settings_dialog;
 pub mod sidebar;
 pub mod split;
 pub mod status;
