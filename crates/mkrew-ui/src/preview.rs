@@ -757,6 +757,7 @@ pub fn token_color(token: Token, theme: &Theme) -> u32 {
         Token::Keyword => theme.syntax_keyword,
         Token::Type => theme.syntax_type,
         Token::Function => theme.syntax_function,
+        Token::Key => theme.info_soft,
     }
 }
 

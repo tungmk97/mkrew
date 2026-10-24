@@ -33,16 +33,19 @@ pub enum Token {
     Keyword,
     Type,
     Function,
+    /// A mapping key (JSON / YAML object keys).
+    Key,
 }
 
 impl Token {
-    const ALL: [Token; 6] = [
+    const ALL: [Token; 7] = [
         Token::Comment,
         Token::String,
         Token::Number,
         Token::Keyword,
         Token::Type,
         Token::Function,
+        Token::Key,
     ];
 
     /// TextMate scope selectors of each token (the most specific match wins).
@@ -58,6 +61,12 @@ impl Token {
             Token::Function => {
                 "entity.name.function, support.function, variable.function, \
                  entity.other.attribute-name, meta.attribute"
+            }
+            // More specific than `string`, so a quoted key is a key, not a string (the bundled
+            // JSON syntax scopes keys `meta.structure.dictionary.key`, newer ones `meta.mapping.key`).
+            Token::Key => {
+                "meta.structure.dictionary.key string, meta.mapping.key string, \
+                 support.type.property-name.json"
             }
         }
     }
@@ -350,6 +359,22 @@ mod tests {
                     .all(|(range, _)| line.get(range.clone()).is_some())
             );
         }
+    }
+
+    #[test]
+    fn json_keys_are_keys_and_values_stay_strings() {
+        let code = Code::new(&read("a.json", "{\"port\": \"8080\"}\n", None));
+        let line = tokens(&code, 0);
+        assert!(
+            line.iter()
+                .any(|(text, token)| text.contains("port") && *token == Token::Key),
+            "{line:?}"
+        );
+        assert!(
+            line.iter()
+                .any(|(text, token)| text.contains("8080") && *token == Token::String),
+            "{line:?}"
+        );
     }
 
     #[test]

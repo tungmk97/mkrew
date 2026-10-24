@@ -28,6 +28,8 @@ session list (workspace cards, session rows, RUN groups) was explicitly kept as 
   Overlines are upper case (the old "no all-caps text" rule is lifted for them only).
 - Fonts: Inter when installed and `[ui] font_family` is unset, else the system font (not
   bundled); JetBrains Mono first in the terminal / code font list.
+- Syntax: a `Key` token for JSON / YAML mapping keys, drawn in `info_soft` (#93BCF6) in the Git
+  diff, the Files viewer and Docs code blocks.
 
 ## Consequences
 
