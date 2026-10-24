@@ -117,19 +117,21 @@ pub fn redraw_due(sessions: &[Session], last_ms: i64, now_ms: i64) -> bool {
 }
 
 /// Pane border color: amber while the session needs input, the faint accent when focused
-/// among several panes, else the plain border.
+/// among several panes, else none (a lone pane blends into the window).
 pub fn pane_border(
     theme: &Theme,
     state: Option<SessionState>,
     several: bool,
     focused: bool,
-) -> u32 {
+) -> Option<u32> {
     if state == Some(SessionState::NeedsInput) {
-        theme.status_needs_input
+        Some(theme.status_needs_input)
     } else if several && focused {
-        theme.pane_focus_border
+        Some(theme.pane_focus_border)
+    } else if several {
+        Some(theme.border)
     } else {
-        theme.border
+        None
     }
 }
 
@@ -249,19 +251,19 @@ mod tests {
             let needs = Some(SessionState::NeedsInput);
             assert_eq!(
                 pane_border(&theme, needs, false, false),
-                theme.status_needs_input
+                Some(theme.status_needs_input)
             );
             assert_eq!(
                 pane_border(&theme, needs, true, true),
-                theme.status_needs_input
+                Some(theme.status_needs_input)
             );
             let working = Some(SessionState::Working);
             assert_eq!(
                 pane_border(&theme, working, true, true),
-                theme.pane_focus_border
+                Some(theme.pane_focus_border)
             );
-            assert_eq!(pane_border(&theme, working, false, true), theme.border);
-            assert_eq!(pane_border(&theme, None, true, false), theme.border);
+            assert_eq!(pane_border(&theme, None, true, false), Some(theme.border));
+            assert_eq!(pane_border(&theme, working, false, true), None, "lone pane");
         }
     }
 

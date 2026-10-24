@@ -1390,6 +1390,9 @@ The terminal is the hero; everything else steps back.
   Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
   family (`theme::TERMINAL_GLYPH_FALLBACKS`), then the system fallback. ANSI palette
   harmonized with the theme.
+- Terminal: 16 px padding; bar cursor in the accent color (hollow block when the pane is
+  unfocused; a program's DECSCUSR shape wins); a lone pane has no border, borders mark the
+  focused split pane and needs-input.
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
   draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color,
   16 px in icon buttons and 14 px among text (`ICON_SIZE`, `ICON_SIZE_SMALL`). The glyphs this

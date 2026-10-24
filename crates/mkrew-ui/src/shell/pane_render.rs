@@ -525,14 +525,16 @@ impl Shell {
                 )
             })
             // Drawn above the terminal so its corners stay rounded.
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(px(radius::MEDIUM))
-                    .border(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(border)),
-            )
+            .when_some(border, |el, border| {
+                el.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(px(radius::MEDIUM))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_color(rgb(border)),
+                )
+            })
     }
 
     /// An agent pane at reading width: its own toggle, else `[ui] reading_width`. Shell and run

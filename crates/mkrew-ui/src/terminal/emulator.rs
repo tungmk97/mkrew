@@ -15,7 +15,9 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, TermMode};
-use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, StdSyncHandler};
+use alacritty_terminal::vte::ansi::{
+    Color, CursorShape, CursorStyle, NamedColor, Processor, StdSyncHandler,
+};
 use mkrew_protocol::ScreenSnapshot;
 use mkrew_protocol::paint::paint;
 
@@ -59,7 +61,8 @@ pub enum Found {
 pub struct Cursor {
     pub row: usize,
     pub col: usize,
-    pub visible: bool,
+    /// `Hidden` when the program hid it; a bar unless the program asked for another shape.
+    pub shape: CursorShape,
 }
 
 /// Snapshot of the visible screen.
@@ -128,6 +131,10 @@ impl Emulator {
     pub fn new(cols: usize, rows: usize) -> Self {
         let config = Config {
             scrolling_history: SCROLLBACK_LINES,
+            default_cursor_style: CursorStyle {
+                shape: CursorShape::Beam,
+                blinking: false,
+            },
             ..Config::default()
         };
         Self {
@@ -391,7 +398,7 @@ impl Emulator {
         let cursor = Cursor {
             row: (content.cursor.point.line.0 + offset).max(0) as usize,
             col: content.cursor.point.column.0,
-            visible: content.cursor.shape != CursorShape::Hidden,
+            shape: content.cursor.shape,
         };
         // One pass over the matched cells (the current match last, so it wins), not a lookup
         // per cell: a one-letter query can match thousands of times on screen.
@@ -452,9 +459,25 @@ mod tests {
             Cursor {
                 row: 1,
                 col: 5,
-                visible: true
+                shape: CursorShape::Beam
             }
         );
+    }
+
+    #[test]
+    fn program_cursor_shape_overrides_the_bar() {
+        let mut emu = Emulator::new(10, 3);
+        assert_eq!(emu.grid().cursor.shape, CursorShape::Beam);
+        emu.advance(b"\x1b[2 q");
+        assert_eq!(emu.grid().cursor.shape, CursorShape::Block);
+        emu.advance(b"\x1b[0 q");
+        assert_eq!(
+            emu.grid().cursor.shape,
+            CursorShape::Beam,
+            "reset = default"
+        );
+        emu.advance(b"\x1b[?25l");
+        assert_eq!(emu.grid().cursor.shape, CursorShape::Hidden);
     }
 
     #[test]

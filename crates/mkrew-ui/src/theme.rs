@@ -607,6 +607,8 @@ pub struct Theme {
     /// Padding around the terminal grid (spacing scale).
     pub terminal_padding: f32,
     pub terminal_underline_thickness: f32,
+    /// Width of the bar (beam) cursor.
+    pub terminal_cursor_width: f32,
     /// Weight of a dim (SGR 2) foreground blended towards the background, 0–1.
     pub dim_blend: f32,
     /// Opacity of the overlay that dims unfocused panes (~5%).
@@ -864,8 +866,9 @@ impl Theme {
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
             terminal_line_height: 1.35,
-            terminal_padding: space::S,
+            terminal_padding: space::L,
             terminal_underline_thickness: 1.0,
+            terminal_cursor_width: 2.0,
             dim_blend: 0.6,
             unfocused_pane_dim: 0.05,
         }

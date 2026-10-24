@@ -4,6 +4,7 @@
 
 use std::fmt::Write as _;
 
+use alacritty_terminal::vte::ansi::CursorShape;
 use mkrew_protocol::{CellRun, CursorSnapshot, ScreenSnapshot, TermColor, TermModes};
 use mkrew_ui::terminal::emulator::Emulator;
 use mkrew_ui::terminal::layout::layout_row;
@@ -22,8 +23,9 @@ fn dump(emulator: &Emulator, theme: &Theme) -> String {
     let grid = emulator.grid();
     let mut out = String::new();
     for (index, cells) in grid.rows.iter().enumerate() {
-        let cursor_col =
-            (grid.cursor.visible && grid.cursor.row == index).then_some(grid.cursor.col);
+        // Every visible cursor is laid out as the block here, so the snapshot covers that path.
+        let cursor_col = (grid.cursor.shape != CursorShape::Hidden && grid.cursor.row == index)
+            .then_some(grid.cursor.col);
         let layout = layout_row(cells, cursor_col, theme);
         if layout.segments.is_empty() && layout.backgrounds.is_empty() {
             continue;

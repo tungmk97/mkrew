@@ -10,14 +10,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use alacritty_terminal::index::Side;
+use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId, Entity,
-    EventEmitter, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, Hsla,
-    InspectorElementId, KeyDownEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine, SharedString, Style,
-    TextAlign, TextRun, UnderlineStyle, Window, canvas, div, fill, font, point, px, relative, rgb,
-    size,
+    App, BorderStyle, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element,
+    ElementId, Entity, EventEmitter, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
+    Hsla, InspectorElementId, KeyDownEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent, ShapedLine,
+    SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, canvas, div, fill, font,
+    outline, point, px, relative, rgb, size,
 };
 use mkrew_protocol::{
     AttachmentSaveParams, AttachmentSaveResult, Outcome, Request, ScreenSnapshot, Session,
@@ -958,8 +959,16 @@ impl Element for TerminalElement {
         let mut rows = self.rows.borrow_mut();
         rows.start_frame(grid.rows.len());
         let cursor = grid.cursor;
+        // Unfocused panes show a hollow block; otherwise the program's shape (a bar by default).
+        let shape = match cursor.shape {
+            CursorShape::Hidden => None,
+            _ if !self.pane.read(cx).has_focus(window, cx) => Some(CursorShape::HollowBlock),
+            shape => Some(shape),
+        };
         for (index, cells) in grid.rows.iter().enumerate() {
-            let cursor_col = (cursor.visible && cursor.row == index).then_some(cursor.col);
+            // Only a block goes through the row layout (it recolors the glyph under it).
+            let cursor_col =
+                (shape == Some(CursorShape::Block) && cursor.row == index).then_some(cursor.col);
             let row = rows.row(index, cells, cursor_col, || {
                 let layout = layout_row(cells, cursor_col, theme);
                 let segments = layout
@@ -1008,6 +1017,33 @@ impl Element for TerminalElement {
                 let _ = line.paint(at, line_height, TextAlign::Left, None, window, cx);
             }
         }
+        let caret = Bounds::new(
+            point(
+                origin.x + cell_width * cursor.col as f32,
+                origin.y + line_height * cursor.row as f32,
+            ),
+            size(cell_width, line_height),
+        );
+        if cursor.row < grid.rows.len() {
+            let (accent, width) = (hsla(theme.accent), px(theme.terminal_cursor_width));
+            match shape {
+                Some(CursorShape::Beam) => window.paint_quad(fill(
+                    Bounds::new(caret.origin, size(width, line_height)),
+                    accent,
+                )),
+                Some(CursorShape::Underline) => window.paint_quad(fill(
+                    Bounds::new(
+                        point(caret.origin.x, caret.origin.y + line_height - width),
+                        size(cell_width, width),
+                    ),
+                    accent,
+                )),
+                Some(CursorShape::HollowBlock) => {
+                    window.paint_quad(outline(caret, accent, BorderStyle::Solid))
+                }
+                _ => {}
+            }
+        }
         // The link under the pointer: one underline in the accent color, outside the row cache.
         if let Some(link) = &self.pane.read(cx).hover_link
             && link.row < grid.rows.len()
@@ -1024,13 +1060,6 @@ impl Element for TerminalElement {
         }
         let pane = self.pane.read(cx);
         let (focus, marked) = (pane.focus_handle.clone(), pane.ime_marked.clone());
-        let caret = Bounds::new(
-            point(
-                origin.x + cell_width * cursor.col as f32,
-                origin.y + line_height * cursor.row as f32,
-            ),
-            size(cell_width, line_height),
-        );
         let typing = crate::ime::Typing {
             view: self.pane.clone(),
             on_key: TerminalPane::key_down,
