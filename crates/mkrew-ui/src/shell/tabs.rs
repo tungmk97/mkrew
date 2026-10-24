@@ -796,29 +796,19 @@ impl Shell {
         .detach();
     }
 
-    /// Idle agent sessions in every workspace (what the sidebar's ⌫ removes).
-    pub(crate) fn idle_agents(&self) -> Vec<Ulid> {
-        self.sidebar
-            .sessions()
-            .iter()
-            .filter(|s| s.kind == SessionKind::Agent && s.state == SessionState::Idle)
-            .map(|s| s.id)
-            .collect()
-    }
-
-    /// ⌫ in the sidebar header: after one confirmation, `session.remove` each idle agent
-    /// (which stops it) and close its pane, like [`Shell::remove_session`].
+    /// ⌫ in the sidebar header: after one confirmation, `session.remove` each idle agent and
+    /// terminal (which stops it) and close its pane, like [`Shell::remove_session`].
     pub(crate) fn remove_idle_agents(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        let ids = self.idle_agents();
+        let ids = self.sidebar.idle_agents_and_terminals();
         if ids.is_empty() {
             return;
         }
         let answer = window.prompt(
             PromptLevel::Critical,
-            &format!("Remove {} idle agents?", ids.len()),
+            &format!("Remove {} idle agents and terminals?", ids.len()),
             Some("They are stopped and their panes close."),
             &workspace_menu::REMOVE_ANSWERS,
             cx,

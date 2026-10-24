@@ -346,6 +346,20 @@ impl Sidebar {
         &self.sessions
     }
 
+    /// What the sidebar header's ⌫ removes: idle agents and every terminal row (live shells,
+    /// not run sessions: the RUN group owns those).
+    pub fn idle_agents_and_terminals(&self) -> Vec<Ulid> {
+        (self.sessions.iter())
+            .filter(|s| match s.kind {
+                SessionKind::Agent => s.state == SessionState::Idle,
+                SessionKind::Shell => {
+                    s.state != SessionState::Exited && mkrew_core::run::command_name(s).is_none()
+                }
+            })
+            .map(|s| s.id)
+            .collect()
+    }
+
     /// A `project.list` + `session.list` was just sent.
     pub fn begin_load(&mut self) {
         self.since_load = Some(Vec::new());

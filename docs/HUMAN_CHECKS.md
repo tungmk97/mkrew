@@ -25,6 +25,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 - [ ] Terminal seamless look: lone pane without border, 16 px padding, bar cursor / hollow when unfocused, vim block cursor (dark + light).
 
+### To verify — 2026-10-24 sidebar ⌫ also removes terminals
+
+- [ ] **Remove idle agents and terminals:** with an idle agent and a shell pane (TERMINAL group), the header `⌫` tooltip reads "Remove idle agents and terminals (2)" → Remove: both leave the sidebar and their panes close; a Run process stays.
+
 ### To verify — 2026-10-24 Settings dialog (ADR 0073, plan docs/superpowers/plans/2026-10-24-settings-dialog.md)
 
 - [ ] **Look (dark + light, 100 / 150 / 200 % DPI):** Ctrl+, → page list left, rows right, footer links; focus ring on the focused row; switch, segments, text field and font pick readable; a small window shrinks the dialog and the rows scroll. (The agent saw dark and light at one DPI scale only, and not the font pick list.)

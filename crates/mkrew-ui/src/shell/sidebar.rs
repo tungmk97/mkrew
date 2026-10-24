@@ -379,7 +379,7 @@ impl Shell {
         let view = self.sidebar.view(&self.viewed);
         let shown_in = view.shown_in(shown);
         let any_open = self.sidebar.any_expanded();
-        let idle_agents = self.idle_agents().len();
+        let removable = self.sidebar.idle_agents_and_terminals().len();
         // Without workspaces: the title and `+` (the empty state below offers it too).
         let header = (connected && self.sidebar.is_empty()).then(|| {
             div()
@@ -475,12 +475,12 @@ impl Shell {
                 .flex_none()
                 .flex()
                 .items_center()
-                .when(idle_agents > 0, |el| {
+                .when(removable > 0, |el| {
                     el.child(
                         icon_button("remove-idle-agents", Icon::Delete, theme)
                             .tooltip(tooltip(
                                 theme,
-                                &format!("Remove idle agents ({idle_agents})"),
+                                &format!("Remove idle agents and terminals ({removable})"),
                                 "",
                             ))
                             .on_click(cx.listener(|shell, _, window, cx| {

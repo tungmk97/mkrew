@@ -113,6 +113,30 @@ fn run_sessions_are_not_session_rows_and_a_workspace_with_run_commands_is_not_em
 }
 
 #[test]
+fn the_header_delete_takes_idle_agents_and_live_terminals_but_not_runs() {
+    let api = project("api");
+    let shell = |state| Session {
+        kind: SessionKind::Shell,
+        ..session(&api, 1, state)
+    };
+    let idle = session(&api, 1, SessionState::Idle);
+    let working = session(&api, 2, SessionState::Working);
+    let terminal = shell(SessionState::Working);
+    let exited = shell(SessionState::Exited);
+    let mut run = shell(SessionState::Idle);
+    run.title = Some("run:BE".to_owned());
+    let mut sidebar = Sidebar::default();
+    sidebar.load(
+        vec![api.clone()],
+        vec![idle.clone(), working, terminal.clone(), exited, run],
+    );
+    assert_eq!(
+        sidebar.idle_agents_and_terminals(),
+        vec![idle.id, terminal.id]
+    );
+}
+
+#[test]
 fn every_state_has_an_icon_and_text() {
     let states = [
         SessionState::Starting,
