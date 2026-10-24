@@ -149,11 +149,13 @@ fn keymap_errors_open_the_keymap_settings() {
 #[test]
 fn a_settings_error_opens_the_settings() {
     let error = "settings.toml:2:13: font_size must be 8–32 px, got 4";
-    let listed = settings_error(Some(error));
+    let keymap = Keymap::defaults();
+    let listed = settings_error(&keymap, Some(error));
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].action, Action::Extra(Extra::OpenSettings));
+    assert_eq!(listed[0].action, Action::Run(Command::OpenSettings));
+    assert_eq!(listed[0].shortcut, "Ctrl+,");
     assert_eq!(listed[0].title, format!("Settings error: {error}"));
-    assert!(settings_error(None).is_empty());
+    assert!(settings_error(&keymap, None).is_empty());
 }
 
 #[test]
@@ -298,7 +300,7 @@ fn availability_follows_the_view() {
     assert!(
         entries(&Keymap::defaults(), &none, &[], &[], &[])
             .iter()
-            .any(|e| e.action == Action::Extra(Extra::OpenSettings)),
+            .any(|e| e.action == Action::Run(Command::OpenSettings)),
         "settings open without a workspace"
     );
 }
@@ -352,10 +354,7 @@ fn extras(context: &Context) -> Vec<Extra> {
             Action::Extra(extra)
                 if !matches!(
                     extra,
-                    Extra::RunSetup
-                        | Extra::OpenSettings
-                        | Extra::PhoneAccess
-                        | Extra::CheckUpdates
+                    Extra::RunSetup | Extra::PhoneAccess | Extra::CheckUpdates
                 ) =>
             {
                 Some(extra)
@@ -436,7 +435,7 @@ fn palette_only_actions_follow_the_view_and_state() {
         assert!(!titles[..i].contains(title), "{title}");
         assert!(!commands.iter().any(|command| command == title), "{title}");
     }
-    assert!(titles.contains(&"Global: Edit settings.toml"));
+    assert!(titles.contains(&"Global: Phone access…"));
     // Palette-only actions come after the commands, before "Go to".
     let all = entries(
         &Keymap::defaults(),

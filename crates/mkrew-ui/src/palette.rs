@@ -67,14 +67,13 @@ pub enum Extra {
     RunStop,
     RunSetup,
     RunShowTab,
-    OpenSettings,
     PhoneAccess,
     CheckUpdates,
     MarkUnread,
 }
 
 impl Extra {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 17] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -89,7 +88,6 @@ impl Extra {
         Self::RunStop,
         Self::RunSetup,
         Self::RunShowTab,
-        Self::OpenSettings,
         Self::PhoneAccess,
         Self::CheckUpdates,
         Self::MarkUnread,
@@ -111,7 +109,6 @@ impl Extra {
             Self::RunStop => "Run: Stop all",
             Self::RunSetup => "Run: Setup…",
             Self::RunShowTab => "Run: Show Run tab",
-            Self::OpenSettings => "Global: Edit settings.toml",
             Self::PhoneAccess => "Global: Phone access…",
             Self::CheckUpdates => "Global: Check for updates",
             Self::MarkUnread => "Agent: Mark unread",
@@ -144,7 +141,7 @@ impl Extra {
             }
             Self::RunSetup => context.workspace,
             Self::MarkUnread => context.markable,
-            Self::OpenSettings | Self::PhoneAccess | Self::CheckUpdates => true,
+            Self::PhoneAccess | Self::CheckUpdates => true,
         }
     }
 }
@@ -347,13 +344,13 @@ pub fn keymap_errors(keymap: &Keymap, errors: &[KeymapError]) -> Vec<Entry> {
 }
 
 /// The `settings.toml` problem (SPEC §20.0), listed before the commands like keymap errors;
-/// picking it opens the settings to fix it.
-pub fn settings_error(error: Option<&str>) -> Vec<Entry> {
+/// picking it opens the Settings dialog, which shows the problem and "Fix in Zed".
+pub fn settings_error(keymap: &Keymap, error: Option<&str>) -> Vec<Entry> {
     error
         .map(|error| Entry {
-            action: Action::Extra(Extra::OpenSettings),
+            action: Action::Run(Command::OpenSettings),
             title: format!("Settings error: {error}"),
-            shortcut: String::new(),
+            shortcut: keymap.label(Command::OpenSettings),
         })
         .into_iter()
         .collect()

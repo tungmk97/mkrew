@@ -231,6 +231,18 @@ pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 /// Width of a modal dialog (the task dialog).
 pub const DIALOG_WIDTH: f32 = 520.0;
 
+/// The Settings dialog (ADR 0072): its size, the page list width and the value column.
+pub const SETTINGS_DIALOG_WIDTH: f32 = 760.0;
+pub const SETTINGS_DIALOG_HEIGHT: f32 = 560.0;
+pub const SETTINGS_NAV_WIDTH: f32 = 180.0;
+pub const SETTINGS_CONTROL_WIDTH: f32 = 240.0;
+/// Tallest the font pick's list grows (it scrolls past that).
+pub const SETTINGS_FONT_LIST_HEIGHT: f32 = 200.0;
+/// An on/off switch: track size and the knob's inset.
+pub const SWITCH_WIDTH: f32 = 32.0;
+pub const SWITCH_HEIGHT: f32 = 18.0;
+pub const SWITCH_INSET: f32 = 2.0;
+
 /// Side of the Phone access QR code (ADR 0053): px at the default 13 px body, scaled with
 /// `[ui] font_size` ([`rems_px`]). Big enough for a camera across a desk.
 pub const PHONE_QR_SIZE: f32 = 216.0;

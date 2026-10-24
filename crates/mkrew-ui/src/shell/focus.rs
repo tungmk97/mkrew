@@ -21,6 +21,7 @@ impl Shell {
             || self.palette.is_some()
             || self.prompt_picker.is_some()
             || self.run_setup.is_some()
+            || self.settings_dialog.is_some()
     }
 
     /// Closes every transient popover menu. Called by every bound command.

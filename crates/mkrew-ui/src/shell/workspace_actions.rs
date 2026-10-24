@@ -377,6 +377,24 @@ impl Shell {
         cx.notify();
     }
 
+    /// Makes `keymap` the bound shortcuts at once (the Settings dialog wrote it): GPUI's key
+    /// bindings, tooltips, the palette and the sidebar notice.
+    pub(crate) fn set_keymap(
+        &mut self,
+        keymap: Keymap,
+        errors: Vec<KeymapError>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
+        cx.clear_key_bindings();
+        cx.bind_keys(bindings);
+        cx.set_global(ActiveKeymap(keymap.clone()));
+        self.keymap_error = keymap::notice(&errors);
+        self.keymap_errors = errors;
+        self.keymap = keymap;
+        cx.notify();
+    }
+
     /// Settings dialog "Edit settings.toml in Zed": creates the commented template if missing
     /// and opens it in Zed; a failure shows in the sidebar.
     pub(crate) fn edit_settings_file(&mut self, cx: &mut Context<'_, Self>) {

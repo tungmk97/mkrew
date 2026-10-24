@@ -90,6 +90,7 @@ use mkrew_ui::router::{Delivery, Router};
 use mkrew_ui::run::{self, Ports, RowState, RunAction, Summary};
 use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
+use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
 use mkrew_ui::split::{Axis, Divider, Preset};
 use mkrew_ui::status;
@@ -387,6 +388,10 @@ struct Shell {
     phone: Phone,
     /// The "Phone access" dialog is open (modal).
     phone_open: bool,
+    /// The open Settings dialog (modal, ADR 0072).
+    settings_dialog: Option<SettingsDialog>,
+    /// Scrolls its rows.
+    settings_scroll: ScrollHandle,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
@@ -775,6 +780,14 @@ impl Render for Shell {
                         self.phone_open
                             .then(|| self.render_phone_access(&theme, cx)),
                     )
+                    .children(self.settings_dialog.as_ref().map(|dialog| {
+                        self.render_settings_dialog(
+                            dialog,
+                            window.viewport_size().height,
+                            &theme,
+                            cx,
+                        )
+                    }))
                     .children(
                         self.run_setup
                             .as_ref()

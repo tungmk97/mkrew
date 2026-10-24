@@ -307,6 +307,8 @@ impl Shell {
             config_dir,
             phone: Phone::default(),
             phone_open: false,
+            settings_dialog: None,
+            settings_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
             tab_menu: None,
@@ -569,6 +571,11 @@ impl Shell {
             }
             // The last good settings stay; the palette lists why (§20.0).
             Err(error) => self.settings_error = Some(error),
+        }
+        if let Some(dialog) = &mut self.settings_dialog {
+            dialog.reload(
+                mkrew_core::settings::load(&self.settings_file).map_err(|error| error.to_string()),
+            );
         }
         cx.notify();
     }

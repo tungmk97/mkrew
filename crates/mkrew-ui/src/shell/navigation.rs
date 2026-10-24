@@ -388,7 +388,7 @@ impl Shell {
             run_live: run_state.any_live(),
             features: self.features,
         };
-        let mut entries = palette::settings_error(self.settings_error.as_deref());
+        let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
         entries.extend(palette::keymap_errors(&self.keymap, &self.keymap_errors));
         entries.extend(palette::entries(
             &self.keymap,
@@ -479,7 +479,6 @@ impl Shell {
                 // the last rendered frame (root if gone), so terminal commands reach the pane.
                 window.dispatch_action(Box::new(Run(command)), cx);
             }
-            palette::Action::Extra(Extra::OpenSettings) => self.edit_settings_file(cx),
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(extra) => {
@@ -551,7 +550,6 @@ impl Shell {
                         }
                     }
                     // Handled above: it needs no workspace.
-                    Extra::OpenSettings => self.edit_settings_file(cx),
                     Extra::PhoneAccess => self.open_phone_access(window, cx),
                     Extra::CheckUpdates => self.check_updates(true, window, cx),
                 }
