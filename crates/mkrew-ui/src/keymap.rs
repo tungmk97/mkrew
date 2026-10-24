@@ -557,6 +557,36 @@ pub fn write_binding(
     Ok((keymap, after))
 }
 
+/// The command, other than `command`, bound to the same key as `keys` once both are folded by
+/// `mapper` the way the platform reports typed keys. On Windows Ctrl+Shift+2 arrives as `ctrl-@`
+/// (US layout), so a captured `ctrl-@` clashes with the default `ctrl-shift-2`; the plain
+/// [`Keymap::parse`] duplicate check cannot see that, and GPUI would pick one of the two by
+/// command order.
+pub fn folded_clash(
+    keymap: &Keymap,
+    command: Command,
+    keys: &str,
+    mapper: &dyn gpui::PlatformKeyboardMapper,
+) -> Option<Command> {
+    let fold = |command: Command, keys: &str| {
+        let binding =
+            gpui::KeyBinding::load(keys, Box::new(Run(command)), None, true, None, mapper).ok()?;
+        binding
+            .keystrokes()
+            .first()
+            .map(|keystroke| keystroke.inner().clone())
+    };
+    let wanted = fold(command, keys)?;
+    keymap
+        .bindings()
+        .iter()
+        .filter(|(other, _)| *other != command)
+        .find(|(other, bound)| {
+            fold(*other, &bound.unparse()).is_some_and(|folded| same_keys(&folded, &wanted))
+        })
+        .map(|(other, _)| *other)
+}
+
 /// `keys` as shortcut text ("Ctrl+Shift+K"); the raw text when it is not a keystroke.
 pub fn keys_label(keys: &str) -> String {
     parse_keys(keys).map_or_else(|| keys.to_owned(), |keystroke| label(&keystroke))
@@ -1263,5 +1293,56 @@ mod tests {
     fn keys_label_matches_the_shortcut_text() {
         assert_eq!(keys_label("ctrl-shift-k"), "Ctrl+Shift+K");
         assert_eq!(keys_label("nonsense key"), "nonsense key");
+    }
+
+    #[test]
+    fn a_clash_is_found_among_the_other_commands_only() {
+        let keymap = Keymap::defaults();
+        let mapper = gpui::DummyKeyboardMapper;
+        let taken = Command::AddWorkspace.default_keys();
+        assert_eq!(
+            folded_clash(&keymap, Command::ClosePane, &taken, &mapper),
+            Some(Command::AddWorkspace)
+        );
+        assert_eq!(
+            folded_clash(&keymap, Command::AddWorkspace, &taken, &mapper),
+            None
+        );
+        assert_eq!(
+            folded_clash(&keymap, Command::ClosePane, "ctrl-alt-shift-y", &mapper),
+            None
+        );
+    }
+
+    /// Review finding: a key captured as Windows reports it (`ctrl-@`) must clash with the
+    /// default written with Shift (`ctrl-shift-2`), or the dialog accepts a binding that GPUI
+    /// resolves against the default by command order.
+    #[cfg(windows)]
+    #[test]
+    fn a_captured_folded_key_clashes_with_the_shifted_default_it_shadows() {
+        let platform = gpui_platform::current_platform(true);
+        let mapper = platform.keyboard_mapper();
+        let keymap = Keymap::defaults();
+        let reported = gpui::KeyBinding::load(
+            "ctrl-shift-2",
+            Box::new(Run(Command::ShowTerminals)),
+            None,
+            true,
+            None,
+            mapper.as_ref(),
+        )
+        .unwrap()
+        .keystrokes()[0]
+            .inner()
+            .unparse();
+        assert_ne!(reported, "ctrl-shift-2", "Windows folds the shifted digit");
+        assert_eq!(
+            folded_clash(&keymap, Command::AddWorkspace, &reported, mapper.as_ref()),
+            Some(Command::ShowTerminals)
+        );
+        assert_eq!(
+            folded_clash(&keymap, Command::ShowTerminals, &reported, mapper.as_ref()),
+            None
+        );
     }
 }

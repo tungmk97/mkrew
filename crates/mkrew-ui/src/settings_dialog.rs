@@ -50,9 +50,34 @@ impl Row {
         }
     }
 
-    fn is_text(&self) -> bool {
-        matches!(self, Row::Setting(s) if matches!(s.kind, Kind::Text | Kind::Number))
+    /// A click on the row only moves the keyboard to it: a text row waits for typing, a choice
+    /// row changes through its own segments (Enter / Space cycle it).
+    fn click_focuses_only(&self) -> bool {
+        matches!(
+            self,
+            Row::Setting(s) if matches!(s.kind, Kind::Text | Kind::Number | Kind::Choice(_))
+        )
     }
+}
+
+/// Whether `keystroke` may become `command`'s binding. A command that works everywhere would
+/// take a plain key (Enter, Tab, a letter) from the terminal and every text field, so it needs
+/// Ctrl, Alt or Win, or a function key; a command of one view (Git, Files, Board, Docs) takes
+/// any key, like its defaults.
+fn bindable(command: Command, keystroke: &Keystroke) -> bool {
+    let m = keystroke.modifiers;
+    let function = keystroke
+        .key
+        .strip_prefix('f')
+        .and_then(|n| n.parse::<u8>().ok())
+        .is_some_and(|n| (1..=24).contains(&n));
+    m.control
+        || m.alt
+        || m.platform
+        || function
+        || command
+            .context()
+            .is_some_and(|context| !context.contains("Terminal"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,15 +272,20 @@ impl SettingsDialog {
         }
     }
 
-    /// A click: focus, then act like Enter (a text row only takes the keyboard). A click that
-    /// leaves a changed draft writes that draft first; the next click acts.
+    /// A click: focus, then act like Enter (a text or choice row only takes the keyboard). A
+    /// click that leaves a changed draft writes that draft first; the next click acts.
     pub fn click(&mut self, focus: Focus, keymap: &Keymap) -> Effect {
         let left = self.move_focus(focus, keymap);
         if left != Effect::None {
             return left;
         }
         match focus {
-            Focus::Row(i) if !self.rows(keymap).get(i).is_some_and(Row::is_text) => {
+            Focus::Row(i)
+                if !self
+                    .rows(keymap)
+                    .get(i)
+                    .is_some_and(Row::click_focuses_only) =>
+            {
                 self.activate(keymap)
             }
             _ => Effect::None,
@@ -347,6 +377,13 @@ impl SettingsDialog {
     pub fn key(&mut self, keystroke: &Keystroke, paste: Option<&str>, keymap: &Keymap) -> Effect {
         if let Some(command) = self.capture.take() {
             if keystroke.key == "escape" && keystroke.modifiers == Default::default() {
+                return Effect::None;
+            }
+            if !bindable(command, keystroke) {
+                self.errors.insert(
+                    command.name(),
+                    "Use Ctrl, Alt or Win with the key (or a function key)".to_owned(),
+                );
                 return Effect::None;
             }
             return Effect::Bind {
@@ -667,6 +704,54 @@ mod tests {
             }
         );
         assert!(d.font_pick.is_none());
+    }
+
+    /// Review finding: a click on a choice row (its label, or the selected segment) moved it
+    /// to the next choice; only a click on another segment, Enter or Space changes it.
+    #[test]
+    fn a_click_on_a_choice_row_only_focuses_it() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Settings(Page::Appearance));
+        let index = d
+            .rows(&keymap)
+            .iter()
+            .position(|row| matches!(row, Row::Setting(s) if s.id() == "ui.theme"))
+            .unwrap();
+        assert_eq!(d.click(Focus::Row(index), &keymap), Effect::None);
+        assert_eq!(d.focus, Focus::Row(index));
+    }
+
+    /// Review finding: any key was captured, so Enter or Tab (to move on) became a global
+    /// binding that stole that key from the terminal.
+    #[test]
+    fn a_plain_key_is_not_captured_for_a_global_command() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        d.set_tab(Tab::Keyboard);
+        d.click(Focus::Row(0), &keymap);
+        assert_eq!(d.capture, Some(Command::AddWorkspace));
+        assert_eq!(d.key(&key("enter"), None, &keymap), Effect::None);
+        assert_eq!(d.capture, None);
+        assert!(d.errors.contains_key("add_workspace"), "the row says why");
+        // A key with Ctrl / Alt / Win, or a function key, is fine.
+        d.click(Focus::Row(0), &keymap);
+        assert_eq!(
+            d.key(&key("f5"), None, &keymap),
+            Effect::Bind {
+                command: Command::AddWorkspace,
+                keys: Some("f5".into())
+            }
+        );
+        // A command that only works in a view (Git here) takes a plain key.
+        d.capture = Some(Command::GitStage);
+        assert_eq!(
+            d.key(&key("x"), None, &keymap),
+            Effect::Bind {
+                command: Command::GitStage,
+                keys: Some("x".into())
+            }
+        );
     }
 
     #[test]

@@ -46,6 +46,19 @@ impl Shell {
         };
         let effect = dialog.key(&event.keystroke, paste.as_deref(), &keymap);
         self.apply_settings_effect(effect, window, cx);
+        // Keep the focused row on screen: the banner and the search box come before the rows.
+        if let Some(dialog) = &self.settings_dialog
+            && let Focus::Row(index) = dialog.focus
+        {
+            let banner = match (&dialog.settings, dialog.tab) {
+                (Err(_), Tab::Settings(_)) => true,
+                (_, Tab::Keyboard) => keymap::notice(&self.keymap_errors).is_some(),
+                _ => false,
+            };
+            let search = dialog.tab == Tab::Keyboard;
+            self.settings_scroll
+                .scroll_to_item(index + usize::from(banner) + usize::from(search));
+        }
     }
 
     /// Writes what the dialog asked for and feeds the result back to it.
@@ -75,7 +88,19 @@ impl Shell {
                 }
             }
             Effect::Bind { command, keys } => {
-                let result = keymap::write_binding(&self.keymap_file, command, keys.as_deref());
+                // GPUI folds Shift+digit keys; a clash the file check cannot see is refused here.
+                let clash = keys.as_deref().and_then(|keys| {
+                    keymap::folded_clash(&self.keymap, command, keys, cx.keyboard_mapper().as_ref())
+                        .map(|other| keymap::KeymapError::Duplicate {
+                            command: command.name(),
+                            keys: keys.to_owned(),
+                            other: other.name(),
+                        })
+                });
+                let result = match clash {
+                    Some(error) => Err(error),
+                    None => keymap::write_binding(&self.keymap_file, command, keys.as_deref()),
+                };
                 let reply = match result {
                     Ok((keymap, errors)) => {
                         self.set_keymap(keymap, errors, cx);
