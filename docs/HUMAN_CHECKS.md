@@ -28,9 +28,35 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Broken file:** delete a `]` in settings.toml → the dialog shows the error and "Fix in Zed", the controls do nothing; fix it → the rows become editable within a second.
 - [ ] **Read-only file:** make settings.toml read-only → a change shows the error under its row, no toast.
 - [ ] **Keyboard:** rebind, press the new key without restarting; a duplicate is refused with the other command's name; Reset brings the default back; switch the keyboard layout (US ↔ Vietnamese) → the new binding still works.
-- [ ] **Shift + digit / punctuation:** rebind to Ctrl+Shift+2 and to Ctrl+Shift+/ → both work. The key is written the way Windows reports it (`ctrl-@`), so the duplicate check does not warn when it shadows a default such as `show_terminals` (`ctrl-shift-2`): known, noted in ADR 0073.
+- [ ] **Shift + digit / punctuation:** rebind a command to Ctrl+Shift+7 and to Ctrl+Shift+/ → both work (the key is written the way Windows reports it, e.g. `ctrl-&`). Ctrl+Shift+2 (the default of `show_terminals`) is refused with that command's name.
 - [ ] **Old keymap:** a keymap.toml with `open_keymap_settings = "…"` lists "unknown command" in the palette; Ctrl+, still opens the dialog.
-- [ ] **Numbers and merge notes:** 2026-10-24 `feat/settings-ui`: ADR 0073 (master took 0072), no protocol/migration. Merging with master: every key master added to `settings.rs`'s `template()` since `7fe269e` (e.g. `[jira] mine`, perf `[features] turn_snapshots` / `conflict_detection`) needs a row in `mkrew_core::settings_fields::SETTINGS`, or `every_template_key_has_exactly_one_setting` fails. Also drop master's `Extra::OpenSettings` if it came back (the palette entry is the `open_settings` command now).
+- [ ] **Merge note:** 2026-10-24 `feat/settings-ui`: ADR 0073 (master took 0072), no protocol/migration. A new `settings.toml` template key needs a row in `mkrew_core::settings_fields::SETTINGS`, or `every_template_key_has_exactly_one_setting` fails (`[jira] mine` was added at the merge).
+
+### To verify — 2026-10-23 Select, copy and edit in the Files Markdown preview (ADR 0072)
+
+- [ ] **Select (dark + light):** Files → a `.md` with heading, paragraph, table, list, code and
+  a ```mermaid block. Drag across them → the selection color follows the pointer, readable in
+  both themes, over code spans too. Shift+click extends; double-click selects a word (also in
+  Vietnamese text); Ctrl+A selects all; Esc clears. Typing letters in Preview changes nothing.
+- [ ] **Copy:** Ctrl+C, paste into Notepad → plain text, table cells separated by tabs, list
+  items with `- ` / `1. ` / `[x] `, no Mermaid source. Ctrl+A copies every item with its marker;
+  a drag or double-click adds no marker to the list item it starts in, items after it keep theirs.
+- [ ] **Edit (dark + light):** hover a block → ✎ inside its top-right corner on a rounded
+  background; click → its Markdown in a field (caret, Unikey typing, click mid-text, drag to
+  select, Ctrl+C / X / V), with the hint "Ctrl+Enter apply · Esc cancel". A click inside the
+  field keeps typing there. Ctrl+Enter → the preview updates, the file shows unsaved, Ctrl+S
+  saves; Source → Ctrl+Z undoes the whole edit. Esc / click outside cancels. Blocks below never
+  overlap the field while it grows. Click ✎ on another block → the field moves there. Try a
+  long file scrolled down: the ✎ and field stay on the right block.
+- [ ] **Docs view unchanged:** Docs preview still picks blocks for comments; Ask AI and the
+  thread panel render Markdown as before.
+- [ ] **Agent rewrites the file during a block edit:** open a ✎ field, let an agent change the
+  file → the preview updates, the field closes, toast "The file changed; your block edit was
+  closed".
+- **Known limits (not bugs):** nested lists copy without indentation; no autoscroll while
+  dragging past the edge; an emptied block leaves a blank line; Ctrl+S while the field is
+  focused saves without the pending field text (the field stays open); Ctrl+F switches to Source
+  and the open field is closed (its text dropped); a long block's field has no caret autoscroll.
 
 ### To verify — 2026-10-21 In-app update (ADR 0071, SPEC §20K)
 
@@ -150,8 +176,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   and the Board header follows.
 - [ ] **All | Mine (2026-10-23, dark + light):** header reads `PROJ · Edit · All | Mine ·
   Refresh`; `All` (default) lists every open issue of the keys, `Mine` only yours (empty:
-  "No open issues assigned to you in …"); each click searches again and the choice stays per
-  workspace until restart.
+  "No open issues assigned to you in …"); each click searches again. The choice is saved as
+  `[jira] mine` in `settings.toml`: restart Mkrew and it stays; another workspace shows the same
+  filter (Refresh loads it); a hand edit of `mine` reloads the shown list within about 1 s.
+- [ ] **Paging (2026-10-23):** in a project with more than 50 open issues, `All` lists them all
+  (up to 500), still newest first, with no duplicate rows.
 
 ### To verify — 2026-10-15 Ask AI dialog (ADR 0061)
 

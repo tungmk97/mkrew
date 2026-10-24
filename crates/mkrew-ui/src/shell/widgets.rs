@@ -1,5 +1,6 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
+use crate::preview::closest_byte;
 use crate::*;
 use gpui::{Animation, AnimationExt, pulsating_between};
 
@@ -344,12 +345,18 @@ pub(crate) fn typing_input(
     typing_target: &ime::FocusedField<Shell>,
     cx: &Context<'_, Shell>,
 ) -> impl IntoElement + use<> {
-    let (focus, view, marked, typing_target) = (
-        focus.clone(),
-        cx.entity(),
-        marked.clone(),
-        typing_target.clone(),
-    );
+    typing_input_for(cx.entity(), focus, on_key, marked, typing_target)
+}
+
+/// [`typing_input`] from outside a `Context` (a closure holding the view).
+pub(crate) fn typing_input_for(
+    view: Entity<Shell>,
+    focus: &FocusHandle,
+    on_key: ime::OnKey<Shell>,
+    marked: &Rc<ime::Composing<FocusHandle>>,
+    typing_target: &ime::FocusedField<Shell>,
+) -> impl IntoElement + use<> {
+    let (focus, marked, typing_target) = (focus.clone(), marked.clone(), typing_target.clone());
     canvas(
         |_, _, _| (),
         move |bounds, (), window, cx| {
@@ -408,6 +415,27 @@ pub(crate) fn caret_field(
     cx: &Context<'_, Shell>,
     on_caret: impl Fn(&mut Shell, Caret) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    caret_field_for(
+        &cx.entity(),
+        id,
+        input,
+        placeholder,
+        focused,
+        theme,
+        on_caret,
+    )
+}
+
+/// [`caret_field`] from outside a `Context` (a closure holding the view).
+pub(crate) fn caret_field_for(
+    view: &Entity<Shell>,
+    id: &'static str,
+    input: &Input,
+    placeholder: &'static str,
+    focused: bool,
+    theme: &Theme,
+    on_caret: impl Fn(&mut Shell, Caret) + 'static,
+) -> gpui::Stateful<gpui::Div> {
     let (field, layout) = field_frame(
         id,
         input.as_str(),
@@ -426,55 +454,38 @@ pub(crate) fn caret_field(
     let at = Rc::new(at);
     let (down, down_at) = (Rc::clone(&on_caret), Rc::clone(&at));
     field
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
-                down(
-                    shell,
-                    Caret {
-                        at: down_at(event.position),
-                        extend: event.modifiers.shift,
-                        clicks: event.click_count,
-                    },
-                );
-                cx.notify();
-            }),
-        )
-        .on_mouse_move(cx.listener(move |shell, event: &MouseMoveEvent, _, cx| {
-            if event.dragging() {
-                let caret = Caret {
-                    at: at(event.position),
-                    extend: true,
-                    clicks: 1,
-                };
-                on_caret(shell, caret);
-                cx.notify();
+        .on_mouse_down(MouseButton::Left, {
+            let view = view.clone();
+            move |event: &MouseDownEvent, _, cx: &mut App| {
+                view.update(cx, |shell, cx| {
+                    down(
+                        shell,
+                        Caret {
+                            at: down_at(event.position),
+                            extend: event.modifiers.shift,
+                            clicks: event.click_count,
+                        },
+                    );
+                    cx.notify();
+                });
             }
-        }))
-}
-
-/// The byte of `layout`'s text nearest to window point `position`: the line under it (the
-/// first / last above / below the text), the char boundary closest along it.
-fn closest_byte(layout: &gpui::TextLayout, position: Point<Pixels>) -> usize {
-    let (bounds, line_height) = (layout.bounds(), layout.line_height());
-    let lines = layout.line_layouts();
-    let (mut top, mut start) = (bounds.top(), 0);
-    for (i, line) in lines.iter().enumerate() {
-        let height = line.size(line_height).height;
-        if position.y < top + height || i + 1 == lines.len() {
-            // Inside the line's rows: a y past its last row would find no row at all.
-            let last_row = (height - px(theme::BORDER_WIDTH)).max(Pixels::ZERO);
-            let y = (position.y - top).clamp(Pixels::ZERO, last_row);
-            let within = point(position.x - bounds.left(), y);
-            return start
-                + line
-                    .closest_index_for_position(within, line_height)
-                    .unwrap_or_else(|i| i);
-        }
-        top += height;
-        start += line.len() + 1;
-    }
-    0
+        })
+        .on_mouse_move({
+            let view = view.clone();
+            move |event: &MouseMoveEvent, _, cx: &mut App| {
+                if event.dragging() {
+                    view.update(cx, |shell, cx| {
+                        let caret = Caret {
+                            at: at(event.position),
+                            extend: true,
+                            clicks: 1,
+                        };
+                        on_caret(shell, caret);
+                        cx.notify();
+                    });
+                }
+            }
+        })
 }
 
 /// The field's frame and text: the caret at byte `cursor` while `focused` (none while

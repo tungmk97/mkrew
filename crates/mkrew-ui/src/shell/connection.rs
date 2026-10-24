@@ -18,6 +18,7 @@ impl Shell {
         let flash_taskbar = settings.notify.flash_taskbar;
         let features = settings.features;
         let jira_on = !settings.jira.site.trim().is_empty();
+        let jira_mine = settings.jira.mine;
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
@@ -355,6 +356,7 @@ impl Shell {
             card_error: None,
             jira: HashMap::new(),
             jira_on,
+            jira_mine,
             jira_keys_focus: cx.focus_handle(),
             selected_card: None,
             starting: HashSet::new(),
@@ -385,6 +387,7 @@ impl Shell {
             file_code_scroll: UniformListScrollHandle::new(),
             file_code_drag: scrollbar::Drag::default(),
             file_editor_focus: cx.focus_handle(),
+            file_block_focus: cx.focus_handle(),
             file_text_left: Rc::default(),
             git: HashMap::new(),
             git_repos: HashMap::new(),
@@ -561,6 +564,13 @@ impl Shell {
                     self.apply_diff_mode(settings.ui.diff_mode);
                     self.diff_wrap = settings.ui.diff_wrap;
                     self.jira_on = !settings.jira.site.trim().is_empty();
+                    // A hand edit of `[jira] mine` searches the shown list again.
+                    if self.apply_jira_mine(settings.jira.mine)
+                        && self.jira_side_shown()
+                        && let Some(project_id) = self.workspace
+                    {
+                        self.load_jira(project_id, window, cx);
+                    }
                     self.reading_default = settings.ui.reading_width;
                     if self.features != settings.features {
                         // `view()` may now map Docs to Terminals.

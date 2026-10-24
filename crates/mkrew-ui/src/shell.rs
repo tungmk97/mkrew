@@ -16,6 +16,7 @@ mod comments;
 pub(crate) mod confirm_prompt;
 pub(crate) mod docs;
 mod files;
+mod files_preview;
 pub(crate) mod files_render;
 pub(crate) mod git;
 mod git_dialogs;

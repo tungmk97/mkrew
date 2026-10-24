@@ -70,7 +70,8 @@ impl Shell {
         self.search_jira(project_id, keys, window, cx);
     }
 
-    /// Sends the search for `keys` (all or the user's, per the view) on the background executor.
+    /// Sends the search for `keys` (all or the user's, per `[jira] mine`) on the background
+    /// executor.
     fn search_jira(
         &mut self,
         project_id: Ulid,
@@ -79,8 +80,8 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         let setup = self.jira_setup();
+        let mine = self.jira_mine;
         let view = self.jira.entry(project_id).or_default();
-        let mine = view.mine;
         let serial = view.start_load();
         let (settings, token) = match setup {
             Ok(setup) => setup,
@@ -106,6 +107,35 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Sets the `All | Mine` filter; every workspace's list is dropped (searched again on Refresh
+    /// or the next switch to Jira). False when nothing changed.
+    pub(crate) fn apply_jira_mine(&mut self, mine: bool) -> bool {
+        if self.jira_mine == mine {
+            return false;
+        }
+        self.jira_mine = mine;
+        self.jira.values_mut().for_each(JiraView::forget);
+        true
+    }
+
+    /// The `All | Mine` click: saves `[jira] mine` and searches the workspace again. A settings
+    /// file that does not parse keeps the choice for this run (toast, §20.0).
+    fn set_jira_mine(
+        &mut self,
+        project_id: Ulid,
+        mine: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.apply_jira_mine(mine) {
+            return;
+        }
+        if let Err(error) = mkrew_core::settings::write_jira_mine(&self.settings_file, mine) {
+            self.settings_write_failed("the Jira filter", error, cx);
+        }
+        self.load_jira(project_id, window, cx);
     }
 
     /// A click on an issue row: the linked task's edit dialog, else a new task from the ticket.
@@ -277,9 +307,10 @@ impl Shell {
         if !self.jira_on {
             return None;
         }
-        let view = self.jira.get(&project_id);
-        let source = view.map_or(Source::Tasks, |v| v.source);
-        let mine = view.is_some_and(|v| v.mine);
+        let source = self
+            .jira
+            .get(&project_id)
+            .map_or(Source::Tasks, |v| v.source);
         let keys = self.jira_keys_of(project_id);
         let toggle = self.mode_toggle(
             "board-source",
@@ -316,13 +347,12 @@ impl Shell {
                 )
                 .child(self.mode_toggle(
                     "jira-assignee",
-                    mine,
+                    self.jira_mine,
                     [(false, "All"), (true, "Mine")],
                     "All issues / assigned to me",
                     SharedString::default(),
                     move |shell, mine, window, cx| {
-                        shell.jira.entry(project_id).or_default().mine = mine;
-                        shell.load_jira(project_id, window, cx);
+                        shell.set_jira_mine(project_id, mine, window, cx);
                     },
                     theme,
                     cx,
@@ -425,7 +455,7 @@ impl Shell {
             Load::Loaded(issues) if issues.is_empty() => message(
                 theme,
                 None,
-                if view.is_some_and(|v| v.mine) {
+                if self.jira_mine {
                     format!("No open issues assigned to you in {}", keys.join(", "))
                 } else {
                     format!("No open issues in {}", keys.join(", "))

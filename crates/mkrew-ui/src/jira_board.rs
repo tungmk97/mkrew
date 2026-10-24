@@ -30,8 +30,6 @@ pub enum Load {
 pub struct JiraView {
     pub source: Source,
     pub load: Load,
-    /// Only the issues assigned to the user (`Mine`); default `All`.
-    pub mine: bool,
     /// Bumped per search; an answer with an older serial is dropped.
     serial: u64,
     /// `Some` while the keys field shows (no keys yet, or Edit).
@@ -63,6 +61,12 @@ impl JiraView {
             Err(reason) => Load::Failed(reason),
         };
         true
+    }
+
+    /// Drops the list (and any search in flight), e.g. after the `All | Mine` filter changed.
+    pub fn forget(&mut self) {
+        self.serial += 1;
+        self.load = Load::NotLoaded;
     }
 
     /// Something is in flight (the status tick keeps the dots moving).
@@ -181,6 +185,12 @@ mod tests {
         let third = view.start_load();
         assert!(view.finish_load(third, Ok(vec![issue("PROJ-1")])));
         assert_eq!(view.load, Load::Loaded(vec![issue("PROJ-1")]));
+        assert!(!view.busy());
+        // A filter change mid-search: the old answer never lands.
+        let fourth = view.start_load();
+        view.forget();
+        assert!(!view.finish_load(fourth, Ok(vec![issue("ALL-1")])));
+        assert_eq!(view.load, Load::NotLoaded);
         assert!(!view.busy());
     }
 

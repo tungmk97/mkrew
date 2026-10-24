@@ -471,6 +471,8 @@ struct Shell {
     jira: HashMap<Ulid, JiraView>,
     /// `[jira] site` is set: the Board shows the `Tasks | Jira` switch.
     jira_on: bool,
+    /// `[jira] mine`: the `All | Mine` filter, every workspace.
+    jira_mine: bool,
     /// The Jira keys field.
     jira_keys_focus: FocusHandle,
     /// The card Ctrl+Enter runs (clicked last).
@@ -540,6 +542,8 @@ struct Shell {
     file_code_drag: scrollbar::Drag,
     /// The Files editor (ADR 0028): typing goes there while it has focus.
     file_editor_focus: FocusHandle,
+    /// The block edit field of the Files Markdown preview (ADR 0072).
+    file_block_focus: FocusHandle,
     /// Where the editor's text starts on screen (set while painting), for clicks.
     file_text_left: Rc<Cell<Pixels>>,
     /// The Docs list filter field.

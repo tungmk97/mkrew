@@ -31,7 +31,9 @@ know TOML, the key names and the GPUI keystroke syntax, and a new shortcut neede
 - A new `settings.toml` key needs a `Setting` row or the table test fails.
 - Dialog writes apply without waiting for the settings mtime poll.
 - A shifted digit or punctuation key is captured the way Windows reports it (`ctrl-@` for
-  Ctrl+Shift+2 on a US layout), so the duplicate check does not see it against a default written
-  with `shift` (`ctrl-shift-2`): the new binding wins in GPUI and the default is shadowed without
-  a message.
+  Ctrl+Shift+2 on a US layout). `Keymap::parse` cannot see that it clashes with a default written
+  with `shift` (`ctrl-shift-2`), so the dialog also checks `keymap::folded_clash` (folded by the
+  platform keyboard mapper) and refuses such a key with the other command's name.
+- A global command needs Ctrl, Alt or Win, or a function key; commands of one view (Git, Files,
+  Board, Docs) may use plain keys.
 - This ADR is 0073: master took 0072 (Files preview) while the branch was open.

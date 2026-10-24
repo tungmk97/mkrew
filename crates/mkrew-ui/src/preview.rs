@@ -5,14 +5,16 @@
 //! the rest maps the model onto theme tokens.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::prelude::*;
 use gpui::{
-    AnyElement, App, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla, ListAlignment,
-    ListState, MouseButton, MouseDownEvent, Pixels, SharedString, StrikethroughStyle, StyledText,
-    UnderlineStyle, UniformList, Window, canvas, div, img, list, px, relative, rgb, uniform_list,
+    AnyElement, App, Bounds, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla,
+    ListAlignment, ListState, MouseButton, MouseDownEvent, Pixels, SharedString,
+    StrikethroughStyle, StyledText, TextLayout, UnderlineStyle, UniformList, Window, canvas, div,
+    img, list, point, px, relative, rgb, uniform_list,
 };
 
 use crate::comments::Selection;
@@ -20,6 +22,7 @@ use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
+use crate::preview_select;
 use crate::scrollbar::{self, Source};
 use crate::theme::{self, ActiveTheme, Theme, font_size, radius, space, weight};
 
@@ -40,9 +43,18 @@ pub fn inline(runs: &[Run]) -> (String, Vec<(Range<usize>, Style, bool)>) {
 
 /// The rendered preview of `blocks`, top to bottom.
 pub fn blocks(blocks: &[Block], shown: &Shown, theme: &Theme) -> Vec<AnyElement> {
+    blocks_in(blocks, shown, None, theme)
+}
+
+fn blocks_in(
+    blocks: &[Block],
+    shown: &Shown,
+    pick: Option<&Pick>,
+    theme: &Theme,
+) -> Vec<AnyElement> {
     blocks
         .iter()
-        .filter_map(|block| self::block(block, shown, theme))
+        .filter_map(|block| block_in(block, shown, pick, theme))
         .collect()
 }
 
@@ -57,6 +69,8 @@ pub struct Page {
     /// The fonts the blocks were measured with: their heights follow the rem size and the
     /// terminal font (code blocks).
     fonts: RefCell<Option<theme::Fonts>>,
+    /// Where the selectable pieces were painted last frame.
+    hits: Hits,
 }
 
 impl Default for Page {
@@ -68,6 +82,7 @@ impl Default for Page {
             drag: scrollbar::Drag::default(),
             shown: RefCell::default(),
             fonts: RefCell::default(),
+            hits: Hits::default(),
         }
     }
 }
@@ -107,10 +122,192 @@ impl Page {
         }
         changed
     }
+
+    /// The text point under window position `at`, or the nearest painted one; `None` when no
+    /// text is painted.
+    pub fn hit(&self, at: gpui::Point<Pixels>) -> Option<preview_select::Point> {
+        let hits = self.hits.0.borrow();
+        let key = nearest(hits.iter().map(|(key, layout)| (*key, layout.bounds())), at)?;
+        let byte = closest_byte(hits.get(&key)?, at);
+        Some(preview_select::Point {
+            block: key.0,
+            piece: key.1,
+            byte,
+        })
+    }
+
+    /// Measures every block again: one block changed height (the block edit field).
+    pub fn remeasure(&self) {
+        self.state.remeasure();
+    }
 }
 
 /// Wraps the element of top-level block `index` (the Docs view makes blocks pickable).
 pub type Wrap = Rc<dyn Fn(usize, &Block, AnyElement) -> AnyElement>;
+
+/// Makes `page`'s text selectable, with this selection drawn (Files preview).
+#[derive(Debug, Clone, Copy)]
+pub struct Selecting(pub Option<preview_select::Selection>);
+
+/// The layouts of the pieces painted last frame, by (top-level block, piece); filled from
+/// `canvas` paint callbacks, so every layout in it is prepainted (its methods panic before).
+#[derive(Clone, Default)]
+pub struct Hits(Rc<RefCell<HashMap<(usize, usize), TextLayout>>>);
+
+impl std::fmt::Debug for Hits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Hits({})", self.0.borrow().len())
+    }
+}
+
+/// Drawing one top-level block of a selectable page: the next piece's number, the selection,
+/// where painted pieces are recorded, the selection color.
+struct Pick {
+    block: usize,
+    next: Cell<usize>,
+    selection: Option<preview_select::Selection>,
+    hits: Hits,
+    bg: Hsla,
+}
+
+/// A piece of text: `build` gets its selected bytes (end may be `usize::MAX`) and the selection
+/// color. On a selectable page it is numbered, shows an I-beam, and its layout is recorded once
+/// painted (a size-0 canvas after it, so it takes no room).
+fn selectable(
+    pick: Option<&Pick>,
+    build: impl FnOnce(Option<Range<usize>>, Hsla) -> StyledText,
+) -> AnyElement {
+    let Some(pick) = pick else {
+        return build(None, Hsla::default()).into_any_element();
+    };
+    let piece = pick.next.get();
+    pick.next.set(piece + 1);
+    let selected = pick.selection.and_then(|s| s.range_in(pick.block, piece));
+    let styled = build(selected, pick.bg);
+    let layout = styled.layout().clone();
+    let (hits, key) = (pick.hits.clone(), (pick.block, piece));
+    div()
+        .cursor(CursorStyle::IBeam)
+        .child(styled)
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |_, (), _, _| {
+                    hits.0.borrow_mut().insert(key, layout.clone());
+                },
+            )
+            .absolute()
+            .size_0(),
+        )
+        .into_any_element()
+}
+
+/// `highlights` (sorted, not overlapping) with the selection `sel` drawn on `bg`, in `text`:
+/// highlights are cut at the selection's ends, their selected parts get `bg` (over a code
+/// span's own background), selected plain text gets `bg` alone. `sel` may end past the text
+/// or inside a character (a stale page): both ends snap down to a character boundary.
+/// Hand-made because `gpui::combine_highlights` folds overlaps in `HashSet` order.
+pub fn with_selection(
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    sel: Option<Range<usize>>,
+    text: &str,
+    bg: Hsla,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let snap = |mut at: usize| {
+        at = at.min(text.len());
+        while !text.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    };
+    let Some(sel) = sel
+        .map(|sel| snap(sel.start)..snap(sel.end))
+        .filter(|sel| !sel.is_empty())
+    else {
+        return highlights;
+    };
+    let lit = |style: HighlightStyle| HighlightStyle {
+        background_color: Some(bg),
+        ..style
+    };
+    let mut out = Vec::with_capacity(highlights.len() + 3);
+    let mut at = 0;
+    for (range, style) in highlights {
+        let gap = at.max(sel.start)..range.start.min(sel.end);
+        if gap.start < gap.end {
+            out.push((gap, lit(HighlightStyle::default())));
+        }
+        let cuts = [
+            range.start,
+            sel.start.clamp(range.start, range.end),
+            sel.end.clamp(range.start, range.end),
+            range.end,
+        ];
+        for pair in cuts.windows(2).filter(|pair| pair[0] < pair[1]) {
+            let inside = pair[0] >= sel.start && pair[1] <= sel.end;
+            out.push((pair[0]..pair[1], if inside { lit(style) } else { style }));
+        }
+        at = range.end;
+    }
+    let tail = at.max(sel.start)..sel.end;
+    if tail.start < tail.end {
+        out.push((tail, lit(HighlightStyle::default())));
+    }
+    out
+}
+
+/// The key of the rectangle nearest to `at`: by vertical distance (0 inside its rows), then
+/// horizontal, then key order.
+pub fn nearest<K: Copy + Ord>(
+    rects: impl IntoIterator<Item = (K, Bounds<Pixels>)>,
+    at: gpui::Point<Pixels>,
+) -> Option<K> {
+    let gap = |from: Pixels, to: Pixels, x: Pixels| {
+        let (from, to, x) = (f32::from(from), f32::from(to), f32::from(x));
+        (from - x).max(x - to).max(0.0)
+    };
+    rects
+        .into_iter()
+        .map(|(key, b)| {
+            (
+                (
+                    gap(b.top(), b.bottom(), at.y),
+                    gap(b.left(), b.right(), at.x),
+                ),
+                key,
+            )
+        })
+        .min_by(|(a, ka), (b, kb)| {
+            a.0.total_cmp(&b.0)
+                .then(a.1.total_cmp(&b.1))
+                .then(ka.cmp(kb))
+        })
+        .map(|(_, key)| key)
+}
+
+/// The byte of `layout`'s text nearest to window point `position`: the line under it (the
+/// first / last above / below the text), the char boundary closest along it.
+pub fn closest_byte(layout: &TextLayout, position: gpui::Point<Pixels>) -> usize {
+    let (bounds, line_height) = (layout.bounds(), layout.line_height());
+    let lines = layout.line_layouts();
+    let (mut top, mut start) = (bounds.top(), 0);
+    for (i, line) in lines.iter().enumerate() {
+        let height = line.size(line_height).height;
+        if position.y < top + height || i + 1 == lines.len() {
+            // Inside the line's rows: a y past its last row would find no row at all.
+            let last_row = (height - px(theme::BORDER_WIDTH)).max(Pixels::ZERO);
+            let y = (position.y - top).clamp(Pixels::ZERO, last_row);
+            let within = point(position.x - bounds.left(), y);
+            return start
+                + line
+                    .closest_index_for_position(within, line_height)
+                    .unwrap_or_else(|i| i);
+        }
+        top += height;
+        start += line.len() + 1;
+    }
+    0
+}
 
 /// The preview's page (ADR 0021): `shown`'s blocks in a centered column of at most
 /// `DOC_PREVIEW_MAX_WIDTH`, in a virtual list (only the blocks on screen are laid out), with a
@@ -121,11 +318,19 @@ pub fn page(
     opening: u64,
     shown: &Rc<Shown>,
     wrap: Option<Wrap>,
+    select: Option<Selecting>,
     fonts: &theme::Fonts,
     theme: &Theme,
 ) -> Div {
     page.show(opening, shown);
     page.fit(fonts);
+    if select.is_some() {
+        page.hits.0.borrow_mut().clear();
+    }
+    let (hits, bg) = (
+        page.hits.clone(),
+        Hsla::from(rgb(theme.terminal_selection_bg)),
+    );
     let shown = Rc::clone(shown);
     let last = shown.blocks.len().saturating_sub(1);
     let blocks = list(page.state.clone(), move |index, _, cx| {
@@ -133,8 +338,22 @@ pub fn page(
         let Some(block) = shown.blocks.get(index) else {
             return div().into_any_element();
         };
-        // `self::block`: the local `block` shadows the module's fn.
-        let Some(element) = self::block(block, &shown, item_theme) else {
+        let pick = select.map(|Selecting(selection)| Pick {
+            block: index,
+            next: Cell::new(0),
+            selection,
+            hits: hits.clone(),
+            bg,
+        });
+        let element = block_in(block, &shown, pick.as_ref(), item_theme);
+        if let Some(pick) = &pick {
+            debug_assert_eq!(
+                pick.next.get(),
+                preview_select::piece_count(block, &shown),
+                "preview_select::flat and preview::block disagree on block {index}'s pieces"
+            );
+        }
+        let Some(element) = element else {
             return div().into_any_element();
         };
         let element = match &wrap {
@@ -172,6 +391,15 @@ pub fn page(
 
 /// `None` for blocks without anything to show (a text-less task item's paragraph).
 pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> {
+    block_in(block, shown, None, theme)
+}
+
+fn block_in(
+    block: &Block,
+    shown: &Shown,
+    pick: Option<&Pick>,
+    theme: &Theme,
+) -> Option<AnyElement> {
     let element = match &block.kind {
         BlockKind::Heading { level, runs } => {
             let size = (theme::doc::HEADINGS.get(usize::from(*level).saturating_sub(1)))
@@ -189,13 +417,13 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
                         .border_b_1()
                         .border_color(rgb(theme.border))
                 })
-                .child(text(runs, theme))
+                .child(selectable(pick, |sel, bg| text(runs, theme, sel, bg)))
                 .into_any_element()
         }
         BlockKind::Paragraph(runs) if runs.is_empty() => return None,
         BlockKind::Paragraph(runs) => div()
             .text_color(rgb(theme.text))
-            .child(text(runs, theme))
+            .child(selectable(pick, |sel, bg| text(runs, theme, sel, bg)))
             .into_any_element(),
         BlockKind::List { start, items } => div()
             .flex()
@@ -203,7 +431,7 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
             .gap(px(space::XS))
             .children(items.iter().enumerate().map(|(index, item)| {
                 let number = start.map(|first| first + index as u64);
-                list_item(item, number, shown, theme)
+                list_item(item, number, shown, pick, theme)
             }))
             .into_any_element(),
         BlockKind::Quote(inner) => div()
@@ -224,13 +452,13 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
                     .flex_col()
                     .gap(px(space::S))
                     .text_color(rgb(theme.text))
-                    .children(blocks(inner, shown, theme)),
+                    .children(blocks_in(inner, shown, pick, theme)),
             )
             .into_any_element(),
         BlockKind::Code { lang, text } => {
             let start = block.lines.start;
             let source = || match shown.code.get(&start) {
-                Some(highlighted) => code_block(lang.as_deref(), highlighted, theme),
+                Some(highlighted) => code_block(lang.as_deref(), highlighted, pick, theme),
                 None => code(text, theme.text, theme),
             };
             match shown.diagrams.get(&start) {
@@ -259,12 +487,12 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
             .border_color(rgb(theme.border))
             .overflow_hidden()
             .child(
-                table_row(head, aligns, theme)
+                table_row(head, aligns, pick, theme)
                     .bg(rgb(theme.surface_raised))
                     .font_weight(FontWeight(weight::SEMIBOLD)),
             )
             .children(rows.iter().map(|row| {
-                table_row(row, aligns, theme)
+                table_row(row, aligns, pick, theme)
                     .border_t_1()
                     .border_color(rgb(theme.border))
             }))
@@ -279,7 +507,13 @@ pub fn block(block: &Block, shown: &Shown, theme: &Theme) -> Option<AnyElement> 
 }
 
 /// A bullet, number or check box, then the item's blocks.
-fn list_item(item: &Item, number: Option<u64>, shown: &Shown, theme: &Theme) -> gpui::Div {
+fn list_item(
+    item: &Item,
+    number: Option<u64>,
+    shown: &Shown,
+    pick: Option<&Pick>,
+    theme: &Theme,
+) -> gpui::Div {
     let marker = match (item.checked, number) {
         (Some(checked), _) => div()
             .mt(px(space::XS))
@@ -324,11 +558,11 @@ fn list_item(item: &Item, number: Option<u64>, shown: &Shown, theme: &Theme) -> 
                 .when(item.checked == Some(true), |el| {
                     el.text_color(rgb(theme.text_muted))
                 })
-                .children(blocks(&item.blocks, shown, theme)),
+                .children(blocks_in(&item.blocks, shown, pick, theme)),
         )
 }
 
-fn table_row(row: &Row, aligns: &[Align], theme: &Theme) -> gpui::Div {
+fn table_row(row: &Row, aligns: &[Align], pick: Option<&Pick>, theme: &Theme) -> gpui::Div {
     div()
         .flex()
         .children(row.cells.iter().enumerate().map(|(column, cell)| {
@@ -344,7 +578,7 @@ fn table_row(row: &Row, aligns: &[Align], theme: &Theme) -> gpui::Div {
                     Align::Right => el.text_right(),
                     Align::Default | Align::Left => el,
                 })
-                .child(text(cell, theme))
+                .child(selectable(pick, |sel, bg| text(cell, theme, sel, bg)))
         }))
 }
 
@@ -362,7 +596,7 @@ fn code(text: &str, color: u32, theme: &Theme) -> gpui::Div {
 
 /// A fenced code block: its language muted above, then its lines with syntax colors in the
 /// monospaced font on a raised surface (long lines wrap).
-fn code_block(lang: Option<&str>, code: &Code, theme: &Theme) -> gpui::Div {
+fn code_block(lang: Option<&str>, code: &Code, pick: Option<&Pick>, theme: &Theme) -> gpui::Div {
     div()
         .flex()
         .flex_col()
@@ -391,7 +625,11 @@ fn code_block(lang: Option<&str>, code: &Code, theme: &Theme) -> gpui::Div {
                     } else {
                         line.clone()
                     };
-                    div().child(code_line(line, spans, &[], theme))
+                    div().child(selectable(pick, |sel, bg| {
+                        let highlights =
+                            with_selection(code_highlights(spans, &[], theme), sel, &line, bg);
+                        StyledText::new(line).with_highlights(highlights)
+                    }))
                 })),
         )
 }
@@ -421,7 +659,7 @@ fn diagram_view(diagram: &Diagram, theme: &Theme) -> gpui::Div {
 
 /// Inline runs as one text element: bold, italic, struck through, code spans on a raised
 /// background, links in the accent color and underlined.
-fn text(runs: &[Run], theme: &Theme) -> StyledText {
+fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -> StyledText {
     let (text, styled) = inline(runs);
     let mono: Vec<(Range<usize>, SharedString)> = styled
         .iter()
@@ -449,6 +687,7 @@ fn text(runs: &[Run], theme: &Theme) -> StyledText {
         };
         (range, highlight)
     });
+    let highlights = with_selection(highlights.collect(), selected, &text, bg);
     StyledText::new(text)
         .with_highlights(highlights)
         .with_font_family_overrides(mono)
@@ -579,15 +818,14 @@ pub fn paint(
         .collect()
 }
 
-/// One line of code with its syntax `spans` colored and its find matches (`found`, with "is
-/// current") on the match backgrounds in the text color; other text keeps the parent's color.
-pub fn code_line(
-    text: String,
+/// The highlights of one code line: syntax colors, with find matches (`found`, with "is
+/// current") on the match backgrounds in the text color.
+fn code_highlights(
     spans: &[(Range<usize>, Token)],
     found: &[(Range<usize>, bool)],
     theme: &Theme,
-) -> StyledText {
-    let highlights: Vec<_> = paint(spans, found)
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    paint(spans, found)
         .into_iter()
         .map(|(range, paint)| {
             let style = match paint {
@@ -607,8 +845,18 @@ pub fn code_line(
             };
             (range, style)
         })
-        .collect();
-    StyledText::new(text).with_highlights(highlights)
+        .collect()
+}
+
+/// One line of code with its syntax `spans` colored and its find matches (`found`, with "is
+/// current") on the match backgrounds in the text color; other text keeps the parent's color.
+pub fn code_line(
+    text: String,
+    spans: &[(Range<usize>, Token)],
+    found: &[(Range<usize>, bool)],
+    theme: &Theme,
+) -> StyledText {
+    StyledText::new(text).with_highlights(code_highlights(spans, found, theme))
 }
 
 /// What one row of the Files editor shows besides its text. Caret and selection are in screen
@@ -864,5 +1112,118 @@ mod tests {
             ..larger
         };
         assert!(page.fit(&code));
+    }
+
+    fn bold() -> HighlightStyle {
+        HighlightStyle {
+            font_weight: Some(FontWeight(weight::SEMIBOLD)),
+            ..HighlightStyle::default()
+        }
+    }
+
+    fn lit() -> Hsla {
+        Hsla::from(rgb(0x334455))
+    }
+
+    #[test]
+    fn selection_cuts_highlights_and_fills_plain_text() {
+        let merged = with_selection(vec![(0..5, bold())], Some(3..8), "0123456789", lit());
+        let on = |style: HighlightStyle| HighlightStyle {
+            background_color: Some(lit()),
+            ..style
+        };
+        assert_eq!(
+            merged,
+            vec![
+                (0..3, bold()),
+                (3..5, on(bold())),
+                (5..8, on(HighlightStyle::default()))
+            ]
+        );
+    }
+
+    #[test]
+    fn selection_covers_a_code_span_background_and_clamps_to_the_text() {
+        let code = HighlightStyle {
+            background_color: Some(Hsla::from(rgb(0x111111))),
+            ..HighlightStyle::default()
+        };
+        let merged = with_selection(vec![(2..4, code)], Some(0..usize::MAX), "abcdef", lit());
+        let backgrounds: Vec<_> = merged
+            .iter()
+            .map(|(r, s)| (r.clone(), s.background_color))
+            .collect();
+        assert_eq!(
+            backgrounds,
+            vec![
+                (0..2, Some(lit())),
+                (2..4, Some(lit())),
+                (4..6, Some(lit()))
+            ]
+        );
+    }
+
+    #[test]
+    fn no_selection_keeps_the_highlights() {
+        assert_eq!(
+            with_selection(vec![(0..5, bold())], None, "hello", lit()),
+            vec![(0..5, bold())]
+        );
+        assert_eq!(
+            with_selection(vec![(0..5, bold())], Some(9..12), "hello", lit()),
+            vec![(0..5, bold())]
+        );
+    }
+
+    #[test]
+    fn selection_ends_inside_a_character_snap_down_to_a_boundary() {
+        // "Việt": ệ is bytes 2..5.
+        let ranges = |sel| {
+            with_selection(vec![], Some(sel), "Việt", lit())
+                .into_iter()
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ranges(0..4), vec![0..2], "end inside ệ");
+        assert_eq!(ranges(3..6), vec![2..6], "start inside ệ");
+        assert_eq!(
+            ranges(3..4),
+            Vec::<Range<usize>>::new(),
+            "empty once snapped"
+        );
+    }
+
+    #[test]
+    fn nearest_prefers_the_text_under_then_beside_the_pointer() {
+        let rect =
+            |y: f32| gpui::bounds(gpui::point(px(10.), px(y)), gpui::size(px(100.), px(20.)));
+        let rects = [((0, 0), rect(0.)), ((1, 0), rect(40.)), ((2, 0), rect(80.))];
+        assert_eq!(
+            nearest(rects, gpui::point(px(50.), px(45.))),
+            Some((1, 0)),
+            "inside"
+        );
+        assert_eq!(
+            nearest(rects, gpui::point(px(500.), px(85.))),
+            Some((2, 0)),
+            "right of it"
+        );
+        assert_eq!(
+            nearest(rects, gpui::point(px(50.), px(28.))),
+            Some((0, 0)),
+            "gap: closer above"
+        );
+        assert_eq!(
+            nearest(rects, gpui::point(px(50.), px(-30.))),
+            Some((0, 0)),
+            "above the page"
+        );
+        assert_eq!(
+            nearest(
+                Vec::<((usize, usize), _)>::new(),
+                gpui::point(px(0.), px(0.))
+            ),
+            None
+        );
     }
 }

@@ -298,6 +298,14 @@ pub const SETTINGS: &[Setting] = &[
         "The environment variable holding the token.",
     ),
     row(
+        Jira,
+        "jira",
+        "mine",
+        Bool,
+        "Only my issues",
+        "The Board lists only issues assigned to you (its All | Mine filter writes it).",
+    ),
+    row(
         Phone,
         "web",
         "enabled",

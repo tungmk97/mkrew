@@ -610,7 +610,7 @@ impl Shell {
                 .into_any_element()
             }
             Content::Shown(_) if view.previewing() => {
-                self.render_md_preview(view, cx.global::<theme::Fonts>(), theme)
+                self.render_md_preview(project_id, view, window, theme, cx)
             }
             Content::Shown(shown) => self.render_editor(project_id, shown, window, theme, cx),
         };

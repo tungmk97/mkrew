@@ -179,6 +179,8 @@ pub struct JiraSettings {
     /// Name of the environment variable holding the API token; the token is never read
     /// from this file.
     pub api_token_env: String,
+    /// The Board's `All | Mine` filter: only issues assigned to the user. The filter writes it.
+    pub mine: bool,
 }
 
 impl Default for JiraSettings {
@@ -187,6 +189,7 @@ impl Default for JiraSettings {
             site: String::new(),
             email: String::new(),
             api_token_env: "JIRA_API_TOKEN".into(),
+            mine: false,
         }
     }
 }
@@ -392,6 +395,11 @@ pub fn write_web_push(path: &Path, enabled: bool) -> Result<(), SettingsError> {
     write_value(path, "web", "push", &enabled.to_string())
 }
 
+/// Saves `[jira] mine` (the Board's `All | Mine` filter); see [`write_value`].
+pub fn write_jira_mine(path: &Path, mine: bool) -> Result<(), SettingsError> {
+    write_value(path, "jira", "mine", &mine.to_string())
+}
+
 /// A font size in px, 8–32 (checked when parsed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(try_from = "u16", into = "u16")]
@@ -491,11 +499,13 @@ pub fn template() -> &'static str {
      \n\
      # Jira issues on the Board (Tasks | Jira): the Jira Cloud site to read from. The API token\n\
      # comes from the environment variable named by api_token_env, never from this file.\n\
-     # site: like acme.atlassian.net; empty turns Jira off.\n\
+     # site: like acme.atlassian.net; empty turns Jira off. mine: list only the issues assigned to\n\
+     # you (the Board's All | Mine filter writes it).\n\
      [jira]\n\
      # site = \"\"\n\
      # email = \"\"\n\
-     # api_token_env = \"JIRA_API_TOKEN\"\n"
+     # api_token_env = \"JIRA_API_TOKEN\"\n\
+     # mine = false\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -740,7 +750,7 @@ push = true
     fn jira_section_parses_and_rejects_a_token() {
         let jira = parse(
             Path::new("settings.toml"),
-            "[jira]\nsite = \"acme.atlassian.net\"\nemail = \"an@acme.com\"\napi_token_env = \"ACME_JIRA\"\n",
+            "[jira]\nsite = \"acme.atlassian.net\"\nemail = \"an@acme.com\"\napi_token_env = \"ACME_JIRA\"\nmine = true\n",
         )
         .unwrap()
         .jira;
@@ -750,6 +760,7 @@ push = true
                 site: "acme.atlassian.net".into(),
                 email: "an@acme.com".into(),
                 api_token_env: "ACME_JIRA".into(),
+                mine: true,
             }
         );
         // The token itself never lives in the file (SPEC §20I).
