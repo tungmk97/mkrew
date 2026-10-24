@@ -388,7 +388,7 @@ struct Shell {
     phone: Phone,
     /// The "Phone access" dialog is open (modal).
     phone_open: bool,
-    /// The open Settings dialog (modal, ADR 0072).
+    /// The open Settings dialog (modal, ADR 0073).
     settings_dialog: Option<SettingsDialog>,
     /// Scrolls its rows.
     settings_scroll: ScrollHandle,

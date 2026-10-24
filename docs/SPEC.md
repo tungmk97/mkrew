@@ -1218,7 +1218,8 @@ Windows (tens of ms, worse with antivirus), so:
 
 ## §13 UI: keyboard shortcuts
 
-All shortcuts live in `<config>/mkrew/keymap.toml`; below are defaults. While a terminal has focus,
+All shortcuts live in `<config>/mkrew/keymap.toml`, which the Settings dialog's Keyboard page writes
+(applied at once, ADR 0073); below are defaults. While a terminal has focus,
 only combinations bound in the keymap are intercepted; everything else goes to the agent. Defaults
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
 Files-only commands may use plain `Ctrl+<letter>` (no terminal has focus there, ADR 0028); the
@@ -1245,7 +1246,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | --- | --- | --- |
 | Global | Command palette | Ctrl+Shift+P |
 | Global | Quick open a file of the active workspace | Ctrl+Shift+O |
-| Global | Open keymap settings | Ctrl+, |
+| Global | Open settings | Ctrl+, |
 | Global | Toggle theme (System → Light → Dark) | Ctrl+Shift+J |
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
@@ -1302,7 +1303,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
-keymap.toml if needed.
+Settings → Keyboard if needed.
 
 Invalid or duplicate bindings: report the error and fall back to defaults for that entry. The
 command palette shows each command's shortcut; tooltips show shortcuts too.
@@ -1406,6 +1407,15 @@ The terminal is the hero; everything else steps back.
   and Tailscale about once a second while open (off the UI thread); the title bar icon reads
   `daemon.status` every 5 s. A failed Start / Stop shows in the dialog. The link carries the
   access token: it is never logged and never in a tooltip.
+- Settings (Ctrl+,, palette "Global: Open settings", ADR 0073): a modal dialog (`SETTINGS_DIALOG_WIDTH` ×
+  `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin); page list on the left
+  (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard), rows on the right
+  (label, help, control: switch, segmented choice, text field, font pick); Number and Text rows are
+  written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
+  chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
+  cancels. A refused value or duplicate keystroke shows under its row, never as a toast. A file that
+  does not parse shows a banner with "Fix in Zed" and the settings controls do nothing. The footer
+  opens `settings.toml` and `keymap.toml` in Zed.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
@@ -1720,7 +1730,9 @@ at start and re-read after it changes (the daemon watches its own config dir, de
 Missing file = all defaults. A parse error keeps the last good settings and is reported in
 `daemon.status` (`settings_error`) and by the palette like keymap errors. The UI reads it the
 same way and re-reads it within 500 ms of a change (fonts apply live, ADR 0024). Palette
-`Global: Open settings` creates the commented file if missing and opens it in Zed. Unknown keys
+`Global: Open settings` (Ctrl+,) opens the Settings dialog (§14, ADR 0073), which writes this file one
+key at a time; the UI applies a dialog change at once. Its "Edit settings.toml in Zed" creates the
+commented file if missing and opens it in Zed. Unknown keys
 are errors (same rule as profiles). Full shape with defaults:
 
 ```toml

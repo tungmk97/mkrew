@@ -21,6 +21,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-24 Settings dialog (ADR 0073, plan docs/superpowers/plans/2026-10-24-settings-dialog.md)
+
+- [ ] **Look (dark + light, 100 / 150 / 200 % DPI):** Ctrl+, → page list left, rows right, footer links; focus ring on the focused row; switch, segments, text field and font pick readable; a small window shrinks the dialog and the rows scroll. (The agent saw dark and light at one DPI scale only, and not the font pick list.)
+- [ ] **Every page:** change one value per page; the file gets the line, comments stay; fonts / theme / diff / tray apply at once.
+- [ ] **Broken file:** delete a `]` in settings.toml → the dialog shows the error and "Fix in Zed", the controls do nothing; fix it → the rows become editable within a second.
+- [ ] **Read-only file:** make settings.toml read-only → a change shows the error under its row, no toast.
+- [ ] **Keyboard:** rebind, press the new key without restarting; a duplicate is refused with the other command's name; Reset brings the default back; switch the keyboard layout (US ↔ Vietnamese) → the new binding still works.
+- [ ] **Shift + digit / punctuation:** rebind to Ctrl+Shift+2 and to Ctrl+Shift+/ → both work. The key is written the way Windows reports it (`ctrl-@`), so the duplicate check does not warn when it shadows a default such as `show_terminals` (`ctrl-shift-2`): known, noted in ADR 0073.
+- [ ] **Old keymap:** a keymap.toml with `open_keymap_settings = "…"` lists "unknown command" in the palette; Ctrl+, still opens the dialog.
+- [ ] **Numbers and merge notes:** 2026-10-24 `feat/settings-ui`: ADR 0073 (master took 0072), no protocol/migration. Merging with master: every key master added to `settings.rs`'s `template()` since `7fe269e` (e.g. `[jira] mine`, perf `[features] turn_snapshots` / `conflict_detection`) needs a row in `mkrew_core::settings_fields::SETTINGS`, or `every_template_key_has_exactly_one_setting` fails. Also drop master's `Extra::OpenSettings` if it came back (the palette entry is the `open_settings` command now).
+
 ### To verify — 2026-10-21 In-app update (ADR 0071, SPEC §20K)
 
 - [ ] **Release run:** the tag's Release workflow builds 3 jobs; the release is published (not a

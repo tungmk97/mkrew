@@ -1,4 +1,4 @@
-//! The Settings dialog (ADR 0072): every `settings.toml` key and every shortcut, applied at
+//! The Settings dialog (ADR 0073): every `settings.toml` key and every shortcut, applied at
 //! once. The model is `mkrew_ui::settings_dialog`; this file writes the files and draws it.
 
 use crate::*;

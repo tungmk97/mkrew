@@ -118,7 +118,7 @@ pub enum Command {
     RunTask,
     /// Open the command palette (every command, plus "Go to" workspace / session / task).
     CommandPalette,
-    /// Open the Settings dialog (ADR 0072).
+    /// Open the Settings dialog (ADR 0073).
     OpenSettings,
     /// Cycle the theme System → Light → Dark (ADR 0027), saved as `[ui] theme`.
     ToggleTheme,

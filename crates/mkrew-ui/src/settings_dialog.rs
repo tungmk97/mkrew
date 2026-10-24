@@ -1,4 +1,4 @@
-//! The Settings dialog (SPEC §20.0, §13, ADR 0072): pages of `settings.toml` rows built from
+//! The Settings dialog (SPEC §20.0, §13, ADR 0073): pages of `settings.toml` rows built from
 //! `mkrew_core::settings_fields::SETTINGS`, and a Keyboard page of every command. Pure: the
 //! shell turns an [`Effect`] into a file write and feeds the result back.
 

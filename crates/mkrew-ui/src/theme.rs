@@ -231,7 +231,7 @@ pub const DROP_INDICATOR_HEIGHT: f32 = 2.0;
 /// Width of a modal dialog (the task dialog).
 pub const DIALOG_WIDTH: f32 = 520.0;
 
-/// The Settings dialog (ADR 0072): its size, the page list width and the value column.
+/// The Settings dialog (ADR 0073): its size, the page list width and the value column.
 pub const SETTINGS_DIALOG_WIDTH: f32 = 760.0;
 pub const SETTINGS_DIALOG_HEIGHT: f32 = 560.0;
 pub const SETTINGS_NAV_WIDTH: f32 = 180.0;

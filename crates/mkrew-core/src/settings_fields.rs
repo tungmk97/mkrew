@@ -1,4 +1,4 @@
-//! The settings dialog's table (SPEC §20.0, ADR 0072): one [`Setting`] per `settings.toml`
+//! The settings dialog's table (SPEC §20.0, ADR 0073): one [`Setting`] per `settings.toml`
 //! key, so the UI builds its rows from data and a test keeps the table and the template in step.
 
 use std::path::Path;
