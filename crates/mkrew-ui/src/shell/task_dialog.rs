@@ -205,7 +205,8 @@ impl Shell {
         .detach();
     }
 
-    /// "New task" with its shortcut: the primary action of the empty board, else quiet.
+    /// "New task": the primary action of the empty board (with its shortcut beside it), else
+    /// quiet with the shortcut in its tooltip only (it fits the Todo column header).
     pub(crate) fn new_task_button(
         &self,
         project_id: Ulid,
@@ -222,12 +223,14 @@ impl Shell {
         )
         .flex_none()
         .tooltip(tooltip(theme, "New task", keys.clone()))
-        .child(
-            div()
-                .text_size(font_size::META)
-                .opacity(opacity::SECONDARY)
-                .child(keys),
-        )
+        .when(primary, |el| {
+            el.child(
+                div()
+                    .text_size(font_size::META)
+                    .opacity(opacity::SECONDARY)
+                    .child(keys),
+            )
+        })
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.open_task_dialog(TaskDialog::new(project_id), window, cx);
         }))

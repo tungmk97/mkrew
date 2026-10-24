@@ -3,7 +3,7 @@
 use crate::*;
 
 impl Shell {
-    /// The tab strip: the tabs (agent chip, status dot, pin, title, ×) and `+`; on the right
+    /// The tab strip: the tabs (kind icon, title, status dot, pin, ×) and `+`; on the right
     /// the notices, then for a single pane its status, Reading width and Share (a split shows
     /// them in the pane headers), the split / layout button and the ⋯ menu.
     pub(crate) fn render_tab_bar(
@@ -30,7 +30,7 @@ impl Shell {
             .items_center()
             .gap(px(space::XS))
             .px(px(space::S))
-            .bg(rgb(theme.chrome))
+            .bg(rgb(theme.surface))
             .border_b(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
@@ -64,13 +64,15 @@ impl Shell {
                 let dot = self.tab_dot(tab, urgent, theme);
                 let group = SharedString::from(format!("tab-{tab_id}"));
                 let icon = match tab_kind(tab, self.sidebar.sessions()) {
-                    TabKind::Agent(profile) => {
-                        Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
-                    }
-                    TabKind::Shell => Some(agent_chip(
-                        sidebar::Badge::Text(">_".to_owned()),
-                        theme.text,
-                        theme,
+                    TabKind::Agent(_) => Some(icon_svg(
+                        Icon::Sparkles,
+                        theme::ICON_SIZE_SMALL,
+                        theme.accent,
+                    )),
+                    TabKind::Shell => Some(icon_svg(
+                        Icon::Terminal,
+                        theme::ICON_SIZE_SMALL,
+                        theme.text_muted,
                     )),
                     TabKind::Empty => None,
                 };
@@ -81,9 +83,9 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .pl(px(space::S))
-                    .pr(px(space::XS))
-                    .py(px(space::XS))
+                    .h(theme::rems_px(theme::CONTROL_HEIGHT))
+                    .pl(px(space::M))
+                    .pr(px(space::S))
                     .rounded(px(radius::MEDIUM))
                     // Same box as the rename field, so the bar does not shift while renaming.
                     .border(px(theme::BORDER_WIDTH))
@@ -92,21 +94,10 @@ impl Shell {
                     .whitespace_nowrap()
                     .text_size(font_size::BODY)
                     .when(is_active, |el| {
-                        el.bg(rgb(theme.surface_raised))
-                            .border_color(rgb(theme.border))
+                        el.bg(rgb(theme.card))
+                            .border_color(rgb(theme.selected))
                             .font_weight(FontWeight(weight::MEDIUM))
                             .text_color(rgb(theme.text))
-                            // Accent line along the bottom, inset by the corner radius.
-                            .child(
-                                div()
-                                    .absolute()
-                                    .bottom_0()
-                                    .left(px(radius::MEDIUM))
-                                    .right(px(radius::MEDIUM))
-                                    .h(px(theme::PANE_ACCENT_WIDTH))
-                                    .rounded_full()
-                                    .bg(rgb(theme.accent)),
-                            )
                     })
                     .when(!is_active, |el| {
                         el.text_color(rgb(theme.text_muted))
@@ -146,6 +137,13 @@ impl Shell {
                     .when_some(label.filter(|_| urgent.is_none()), |el, label| {
                         el.tooltip(tooltip(theme, label, ""))
                     })
+                    .when(tab.pinned, |el| el.child(pin_mark()))
+                    .child(
+                        div()
+                            .max_w(px(theme::TAB_TITLE_MAX_WIDTH))
+                            .truncate()
+                            .child(label.unwrap_or(&tab.title).to_owned()),
+                    )
                     .children(dot.map(|(color, hollow, pulse)| {
                         status_dot(
                             SharedString::from(format!("tab-dot-{tab_id}")),
@@ -154,13 +152,6 @@ impl Shell {
                             pulse,
                         )
                     }))
-                    .when(tab.pinned, |el| el.child(pin_mark()))
-                    .child(
-                        div()
-                            .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
-                            .truncate()
-                            .child(label.unwrap_or(&tab.title).to_owned()),
-                    )
                     .child(
                         row_action(
                             SharedString::from(format!("tab-close-{tab_id}")),
@@ -283,9 +274,9 @@ impl Shell {
             .flex()
             .items_center()
             .min_w(px(theme::TAB_RENAME_MIN_WIDTH))
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
             .px(px(space::S))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
+            .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.pane_focus_border))
             .bg(rgb(theme.surface_raised))
@@ -462,7 +453,7 @@ impl Shell {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(theme.bg))
+            .bg(rgb(theme.terminal_bg))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -520,7 +511,7 @@ impl Shell {
                     div()
                         .absolute()
                         .inset_0()
-                        .bg(rgb(theme.bg))
+                        .bg(rgb(theme.terminal_bg))
                         .opacity(theme.unfocused_pane_dim),
                 )
             })
@@ -682,12 +673,12 @@ impl Shell {
             ),
         )
         .flex_none()
-        .px(px(space::XS))
+        .px(px(space::S))
         .py_0()
         .text_size(font_size::META)
         .active(|style| style.opacity(opacity::ACTIVE))
         .when(following, |el| {
-            el.bg(rgb(theme.surface_raised))
+            el.bg(rgb(theme.card))
                 .font_weight(FontWeight(weight::MEDIUM))
                 .text_color(rgb(theme.text))
         })
@@ -876,7 +867,7 @@ pub(crate) fn starting_button(
         SessionKind::Shell => "Starting shell",
     };
     let color = if primary {
-        theme.on_accent
+        theme.text_disabled
     } else {
         theme.text_muted
     };
@@ -949,10 +940,11 @@ pub(crate) fn status_pill(
         .flex()
         .items_center()
         .gap(px(space::XS))
+        .h(theme::rems_px(theme::STATUS_PILL_HEIGHT))
         .px(px(space::S))
         .rounded_full()
         .whitespace_nowrap()
-        .bg(rgb(theme.surface_raised))
+        .bg(rgb(theme.card))
         .text_color(rgb(theme.text_muted))
         .tooltip(status_tooltip(
             theme,

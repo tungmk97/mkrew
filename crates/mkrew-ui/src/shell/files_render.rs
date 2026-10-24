@@ -31,51 +31,39 @@ impl Shell {
         } else {
             "Show git-ignored files"
         };
-        let search_hover = theme.surface_raised;
         let search_keys = self.keymap.label(Command::QuickOpen);
-        let search = div()
-            .id("files-search")
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(space::XS))
-            .px(px(space::S))
-            .py(px(space::XS))
-            .rounded(px(radius::MEDIUM))
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
-            .bg(rgb(theme.surface))
-            .cursor_pointer()
-            .text_size(font_size::BODY)
-            .text_color(rgb(theme.text_muted))
-            .hover(move |style| style.bg(rgb(search_hover)))
-            .active(|style| style.opacity(opacity::ACTIVE))
-            .child(icon_svg(
-                Icon::Search,
-                theme::ICON_SIZE_SMALL,
-                theme.text_muted,
-            ))
-            .child(div().flex_1().min_w_0().truncate().child("Search files…"))
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .child(search_keys.clone()),
-            )
-            .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
-            .on_click(cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)));
+        // A button that opens quick open, framed like a text input. The shortcut is in the
+        // tooltip: the 280 px tree has no room to show it beside "Ignored".
+        let search = search_box(
+            div()
+                .id("files-search-label")
+                .truncate()
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text_subtle))
+                .child("Search files…"),
+            None,
+            false,
+            theme,
+        )
+        .id("files-search")
+        .flex_1()
+        .min_w_0()
+        .cursor_pointer()
+        .active(|style| style.opacity(opacity::ACTIVE))
+        .tooltip(tooltip(theme, "Find a file of this workspace", search_keys))
+        .on_click(cx.listener(|shell, _, window, cx| shell.open_quick_open(window, cx)));
         let ignored = button_frame("files-ignored", "Ignored")
             .flex_none()
+            .h(theme::rems_px(theme::INPUT_HEIGHT))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
             .text_size(font_size::META)
             .active(|style| style.opacity(opacity::ACTIVE))
             .when(showing_ignored, |el| {
-                el.bg(rgb(theme.surface_raised))
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text))
+                el.bg(rgb(theme.selected)).text_color(rgb(theme.text))
             })
             .when(!showing_ignored, |el| {
-                let hover = theme.surface_raised;
+                let hover = theme.hover;
                 el.text_color(rgb(theme.text_muted))
                     .hover(move |style| style.bg(rgb(hover)))
             })
@@ -167,7 +155,10 @@ impl Shell {
                     .h_full()
                     .flex()
                     .flex_col()
-                    .pb(px(space::S))
+                    .py(px(space::S))
+                    .bg(rgb(theme.surface))
+                    .border_l(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(theme.divider))
                     .track_focus(&self.files_focus)
                     .on_key_down(cx.listener(Self::files_key_down))
                     // Right click on the header or the blank part of the tree = the folder
@@ -267,17 +258,62 @@ impl Shell {
             .overflow_hidden()
             .bg(rgb(theme.surface));
         let Some(path) = view.file.clone() else {
+            let hint = |keys: String, what: &'static str| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .child(kbd(keys, theme, false))
+                    .child(what)
+            };
+            let find_keys = self.keymap.label(Command::QuickOpen);
             return panel.child(
-                message(
-                    theme,
-                    None,
-                    "Select a file to view it.".into(),
-                    Some(format!(
-                        "Use ↑ ↓ to move, → to open a folder, Enter to open a file · {} to find a file.",
-                        self.keymap.label(Command::QuickOpen)
-                    ).into()),
-                )
-                .flex_1(),
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(space::S))
+                    .p(px(space::XL))
+                    .child(
+                        div()
+                            .size(theme::rems_px(theme::EMPTY_TILE_LARGE))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(radius::LARGE))
+                            .bg(rgb(theme.card))
+                            .border(px(theme::BORDER_WIDTH))
+                            .border_color(rgb(theme.border))
+                            .child(icon_svg(Icon::File, theme::ICON_SIZE, theme.text_muted)),
+                    )
+                    .child(
+                        div()
+                            .text_size(font_size::CARD_TITLE)
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .text_color(rgb(theme.text))
+                            .child("No file open"),
+                    )
+                    .child(
+                        div()
+                            .text_size(font_size::BODY)
+                            .text_color(rgb(theme.text_muted))
+                            .child("Pick a file from the tree, or jump straight to one."),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(space::M))
+                            .pt(px(space::XS))
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child(hint("↑↓".to_owned(), "Move"))
+                            .child(hint("←→".to_owned(), "Expand"))
+                            .child(hint("Enter".to_owned(), "Open"))
+                            .child(hint(find_keys, "Find file")),
+                    ),
             );
         };
         let dirty = view.unsaved().is_some();
@@ -844,8 +880,10 @@ pub(crate) fn file_row(
         files_view::Row::Note { depth, text } => {
             return div()
                 .w_full()
+                .h(theme::rems_px(theme::TREE_ROW_HEIGHT))
+                .flex()
+                .items_center()
                 .pl(px(space::S + theme::FILE_TREE_INDENT * *depth as f32))
-                .py(px(space::XS))
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
@@ -862,45 +900,41 @@ pub(crate) fn file_row(
     };
     let at_cursor = state.cursor == Some(entry.path.as_str());
     let opened = state.opened == Some(entry.path.as_str());
-    let hover = theme.surface_raised;
-    let fill = if at_cursor || opened {
-        theme.surface_raised
-    } else {
-        theme.bg
-    };
+    let hover = theme.card;
     let chevron = match (entry.is_dir, expanded) {
         (false, _) => None,
         (true, false) => Some(Icon::ChevronRight),
         (true, true) => Some(Icon::ChevronDown),
     };
     let marker = entry.marker.map(|marker| match marker {
-        GitMarker::Modified => ("M", theme.accent, "Modified"),
+        GitMarker::Modified => ("M", theme.git_modified, "Modified"),
         GitMarker::Added => ("A", theme.diff_add_text, "Added"),
         GitMarker::Deleted => ("D", theme.diff_del_text, "Deleted"),
         GitMarker::Untracked => ("?", theme.diff_add_text, "Untracked"),
     });
     let path = entry.path.clone();
     let (menu_path, is_dir) = (entry.path.clone(), entry.is_dir);
+    // The border is always there (so rows never shift); it only shows as the focus ring.
+    let ring: gpui::Hsla = if at_cursor && state.focused {
+        rgb(theme.pane_focus_border).into()
+    } else {
+        gpui::transparent_black()
+    };
     div()
         .id(SharedString::from(format!("file-{}", entry.path)))
         .w_full()
+        .h(theme::rems_px(theme::TREE_ROW_HEIGHT))
         .flex()
         .items_center()
         .gap(px(space::XS))
         .pl(px(space::S + theme::FILE_TREE_INDENT * depth as f32))
         .pr(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::SMALL))
+        .rounded(px(radius::CHIP))
         .border(px(theme::BORDER_WIDTH))
-        // The border is always there (so rows never shift); it only shows as the focus ring.
-        .border_color(rgb(if at_cursor && state.focused {
-            theme.pane_focus_border
-        } else {
-            fill
-        }))
+        .border_color(ring)
         .cursor_pointer()
         .text_size(font_size::BODY)
-        .when(at_cursor || opened, |el| el.bg(rgb(fill)))
+        .when(at_cursor || opened, |el| el.bg(rgb(theme.selected)))
         .when(!at_cursor && !opened, |el| {
             el.hover(move |style| style.bg(rgb(hover)))
         })
@@ -908,11 +942,16 @@ pub(crate) fn file_row(
         .child(
             div()
                 .flex_none()
-                .w(theme::rems_px(theme::ICON_SIZE_SMALL))
+                .w(theme::rems_px(theme::TREE_CHEVRON_SIZE))
                 .children(
-                    chevron.map(|icon| icon_svg(icon, theme::ICON_SIZE_SMALL, theme.text_muted)),
+                    chevron.map(|icon| icon_svg(icon, theme::TREE_CHEVRON_SIZE, theme.text_subtle)),
                 ),
         )
+        .child(if entry.is_dir {
+            icon_svg(Icon::Folder, theme::TREE_ICON_SIZE, theme.folder)
+        } else {
+            icon_svg(Icon::File, theme::TREE_ICON_SIZE, theme.text_subtle)
+        })
         .child(
             div()
                 .flex_1()
@@ -920,8 +959,8 @@ pub(crate) fn file_row(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .text_color(rgb(if entry.ignored {
-                    theme.text_muted
+                .text_color(rgb(if entry.ignored || entry.name.starts_with('.') {
+                    theme.text_disabled
                 } else {
                     theme.text
                 }))
@@ -932,8 +971,8 @@ pub(crate) fn file_row(
             div()
                 .id(SharedString::from(format!("file-marker-{}", entry.path)))
                 .flex_none()
-                .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
+                .text_size(font_size::OVERLINE)
+                .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
                 .tooltip(tooltip(theme, what, ""))
                 .child(letter)
@@ -945,7 +984,7 @@ pub(crate) fn file_row(
                     .flex_none()
                     .size(px(theme::FILE_CHANGES_DOT_SIZE))
                     .rounded_full()
-                    .bg(rgb(theme.accent))
+                    .bg(rgb(theme.git_modified))
                     .tooltip(tooltip(theme, "Contains changes", "")),
             )
         })

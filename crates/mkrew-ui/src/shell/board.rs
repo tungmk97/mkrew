@@ -498,7 +498,7 @@ impl Shell {
             .flex_1()
             .into_any_element()
         };
-        let header = self.render_board_header(project_id, theme, cx);
+        let header = self.render_board_header(project_id, theme, window, cx);
         let source = self
             .jira
             .get(&project_id)

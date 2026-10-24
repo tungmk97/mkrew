@@ -22,14 +22,24 @@ pub mod space {
     pub const XXL: f32 = 32.0;
 }
 
-/// Corner radius in px.
+/// Corner radius in px (redesign: 6 chips · 8 buttons, inputs, rows · 10 cards · 999 pills).
 pub mod radius {
     /// Badges, small buttons.
     pub const SMALL: f32 = 4.0;
-    /// Cards, panes, inputs.
+    /// Area chips and key hints.
+    pub const TAG: f32 = 5.0;
+    /// Chips, segments, tree rows.
+    pub const CHIP: f32 = 6.0;
+    /// Cards, panes, inputs, buttons, rows.
     pub const MEDIUM: f32 = 8.0;
-    /// Dialogs, palette.
+    /// The segmented control's container.
+    pub const SEGMENTED: f32 = 9.0;
+    /// Cards and framed panels (the Git diff, the branch card).
+    pub const CARD: f32 = 10.0;
+    /// Dialogs, palette, empty-state tile.
     pub const LARGE: f32 = 12.0;
+    /// Pills: fully round ends.
+    pub const PILL: f32 = 999.0;
 }
 
 /// UI font sizes relative to body text (1 rem = `[ui] font_size`, default 13 px, set per
@@ -38,6 +48,8 @@ pub mod radius {
 pub mod font_size {
     use gpui::{Rems, rems};
 
+    /// Small caps overlines (STAGED, CHANGES) and area chips / key hints.
+    pub const OVERLINE: Rems = rems(11.0 / 13.0);
     pub const META: Rems = rems(12.0 / 13.0);
     pub const BODY: Rems = rems(1.0);
     pub const CARD_TITLE: Rems = rems(15.0 / 13.0);
@@ -102,19 +114,43 @@ pub const SESSION_TIME_WIDTH: f32 = space::XXL;
 
 /// A square icon-only button (theme toggle, sidebar +).
 pub const ICON_BUTTON_SIZE: f32 = 26.0;
+/// The redesign's controls: icon buttons and buttons are this tall (and icon buttons square).
+pub const CONTROL_HEIGHT: f32 = 30.0;
+/// A text input (search fields), and the bordered sidebar icon buttons beside one.
+pub const INPUT_HEIGHT: f32 = 32.0;
+/// One segment of a segmented control.
+pub const SEGMENT_HEIGHT: f32 = 26.0;
+/// A status pill (Idle, In Progress) and an area chip / Git `M` badge.
+pub const PILL_HEIGHT: f32 = 22.0;
+pub const CHIP_HEIGHT: f32 = 20.0;
 /// A Lucide icon in an icon-only button ([`ICON_BUTTON_SIZE`] square).
 pub const ICON_SIZE: f32 = 16.0;
 /// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
 /// controls.
 pub const ICON_SIZE_SMALL: f32 = 14.0;
-/// Inset of the title bar's segmented control around its segments.
-pub const SEGMENT_PADDING: f32 = 2.0;
+/// Inset of a segmented control around its segments.
+pub const SEGMENT_PADDING: f32 = 3.0;
+/// The thin vertical rule before the window controls.
+pub const TITLE_RULE_HEIGHT: f32 = 18.0;
+/// The app logo tile at the left of the title bar.
+pub const APP_LOGO_TILE: f32 = 22.0;
+/// The bottom edge of a key hint (a key cap look).
+pub const KBD_BOTTOM_BORDER: f32 = 2.0;
+/// The Jira list (Board): a row's height, the key column, the toolbar's filter input and the
+/// leading type icon (px at the default 13 px body, [`rems_px`]).
+pub const BOARD_ROW_HEIGHT: f32 = 38.0;
+pub const BOARD_KEY_WIDTH: f32 = 62.0;
+pub const BOARD_FILTER_WIDTH: f32 = 240.0;
+pub const BOARD_TYPE_ICON: f32 = 15.0;
 
 /// Borders are 1 px and faint.
 pub const BORDER_WIDTH: f32 = 1.0;
 
 /// The OS UI font (Segoe UI Variable / SF / …); GPUI resolves this name per platform.
 pub const UI_FONT: &str = ".SystemUIFont";
+/// The design's UI font, used when installed and `[ui] font_family` is unset (not bundled:
+/// a machine without it gets [`UI_FONT`]).
+pub const PREFERRED_UI_FONT: &str = "Inter";
 
 /// Font family list of Mermaid diagram text (an SVG font-family value; the first installed
 /// one is used).
@@ -322,6 +358,18 @@ pub const FILE_TREE_INDENT: f32 = space::M;
 /// Side of the dot on a Files tree folder holding changes.
 pub const FILE_CHANGES_DOT_SIZE: f32 = 6.0;
 
+/// Height of a Files tree row (the tree is a uniform list: every row is this high).
+pub const TREE_ROW_HEIGHT: f32 = 28.0;
+
+/// Folder / file icon in a Files tree row.
+pub const TREE_ICON_SIZE: f32 = 15.0;
+
+/// Chevron (and the spacer that aligns file rows with it) in a Files tree row.
+pub const TREE_CHEVRON_SIZE: f32 = 12.0;
+
+/// The large empty-state tile (Files "No file open").
+pub const EMPTY_TILE_LARGE: f32 = 48.0;
+
 /// Side of an agent badge chip (ADR 0025), like the design's workspace avatar.
 pub const AGENT_CHIP_SIZE: f32 = 18.0;
 /// Side of an agent logo inside its chip (ADR 0058): a little under [`ICON_SIZE_SMALL`], so the
@@ -330,9 +378,6 @@ pub const AGENT_LOGO_SIZE: f32 = 12.0;
 /// The fold chevron of a sidebar group label (TERMINAL / RUN): under the row
 /// chevrons, so the small caps label leads.
 pub const GROUP_CHEVRON_SIZE: f32 = 12.0;
-
-/// Side of the Mkrew logo glyph in the sidebar header.
-pub const LOGO_SIZE: f32 = 18.0;
 
 /// A color choice in the workspace menu.
 pub const WORKSPACE_SWATCH_SIZE: f32 = space::L;
@@ -350,7 +395,9 @@ pub const GIT_FILE_LIST_WIDTH: f32 = 320.0;
 pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
 /// One row of the Git changed-file list (uniform list: every row has this box).
-pub const GIT_FILE_ROW_HEIGHT: f32 = 30.0;
+pub const GIT_FILE_ROW_HEIGHT: f32 = 34.0;
+/// The change-letter badge (M, A, D …) of a Git file row.
+pub const GIT_BADGE_SIZE: f32 = 18.0;
 
 /// The History's lane graph (SPEC §12B): one lane's width, a commit's dot, a line's width.
 pub const GIT_GRAPH_LANE_WIDTH: f32 = 12.0;
@@ -370,11 +417,20 @@ pub const GIT_DIFF_OVERDRAW: f32 = 200.0;
 
 /// Git diff lines: monospace size and line height, px (a wrapped line is a multiple of it).
 pub const DIFF_FONT_SIZE: f32 = 12.5;
-pub const DIFF_LINE_HEIGHT: f32 = 20.0;
+pub const DIFF_LINE_HEIGHT: f32 = 24.0;
+/// The line-number gutter of a diff half: its width in px (it grows for 5+ digit numbers at
+/// [`DIFF_DIGIT_WIDTH`] per digit) and the sign column after it.
+pub const DIFF_GUTTER_WIDTH: f32 = 40.0;
+pub const DIFF_DIGIT_WIDTH: f32 = 8.0;
+pub const DIFF_SIGN_WIDTH: f32 = space::L;
+/// A diff hunk header bar's height.
+pub const GIT_HUNK_HEADER_HEIGHT: f32 = 34.0;
 
 /// Rough width of one char of a Git repository tab label, px: the repo strip shows every tab
 /// only when their labels fit.
-pub const GIT_REPO_TAB_CHAR_WIDTH: f32 = 7.0;
+pub const GIT_REPO_TAB_CHAR_WIDTH: f32 = 7.5;
+/// The text size of a Git repository tab (12.5 px at the default 13 px body).
+pub const GIT_REPO_TAB_TEXT: Rems = rems(12.5 / 13.0);
 
 /// Widest the Git filter row's "By: … ▾" button gets before its session name is cut.
 pub const GIT_CHANGED_BY_MAX_WIDTH: f32 = 140.0;
@@ -413,11 +469,16 @@ pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 
-/// Terminal font families by preference; the first one installed is used (SPEC §14).
+/// Terminal and code font families by preference; the first one installed is used (SPEC §14).
 #[cfg(windows)]
-pub const TERMINAL_FONTS: &[&str] = &["Cascadia Code", "Cascadia Mono", "Consolas"];
+pub const TERMINAL_FONTS: &[&str] = &[
+    "JetBrains Mono",
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Consolas",
+];
 #[cfg(target_os = "macos")]
-pub const TERMINAL_FONTS: &[&str] = &["SF Mono", "Menlo"];
+pub const TERMINAL_FONTS: &[&str] = &["JetBrains Mono", "SF Mono", "Menlo"];
 #[cfg(not(any(windows, target_os = "macos")))]
 pub const TERMINAL_FONTS: &[&str] = &["JetBrains Mono", "DejaVu Sans Mono"];
 
@@ -467,7 +528,11 @@ impl Fonts {
             pick_family(TERMINAL_FONTS, installed).into()
         };
         let ui_family = if settings.ui.font_family.is_empty() {
-            UI_FONT.into()
+            if installed.iter().any(|name| name == PREFERRED_UI_FONT) {
+                PREFERRED_UI_FONT.into()
+            } else {
+                UI_FONT.into()
+            }
         } else {
             settings.ui.font_family.clone().into()
         };
@@ -591,6 +656,35 @@ pub struct Theme {
     pub syntax_number: u32,
     pub syntax_type: u32,
     pub syntax_function: u32,
+    /// Redesign tokens (2026-10 restyle). Meta text that is still read: timestamps, counts,
+    /// placeholders (never dimmer than this).
+    pub text_subtle: u32,
+    /// In Progress: the status pill and section icon; `info_text` is its label on the tint,
+    /// `info_soft` the BE area chip and JSON keys.
+    pub info: u32,
+    pub info_text: u32,
+    pub info_soft: u32,
+    /// The FE area chip, and ANSI cyan's hue.
+    pub teal: u32,
+    /// Behind the terminal grid.
+    pub terminal_bg: u32,
+    /// The border of a secondary button.
+    pub control_border: u32,
+    /// A hovered Board row; the fill of a key hint.
+    pub row_hover: u32,
+    /// A recessed strip: Git hunk headers, the title bar's repo pill.
+    pub well: u32,
+    /// Destructive button text; removed-line numbers.
+    pub danger_text: u32,
+    /// Added-line numbers.
+    pub success_text: u32,
+    /// Folder icons in the Files tree.
+    pub folder: u32,
+    /// Dotfiles in the Files tree; a primary button's text while it cannot be used.
+    pub text_disabled: u32,
+    /// The changed token inside a removed / added diff line.
+    pub diff_del_word_bg: u32,
+    pub diff_add_word_bg: u32,
     /// ANSI 0–15, harmonized with the tokens above.
     pub ansi: [u32; 16],
     /// Workspace colors, in [`WORKSPACE_COLORS`] order (≥ 3:1 on every surface, ADR 0020).
@@ -602,10 +696,14 @@ pub struct Theme {
     pub ui_font_family: SharedString,
     pub terminal_font_family: SharedString,
     pub terminal_font_size: f32,
-    /// Line height as a multiple of the font size.
+    /// Line height of the terminal grid, as a multiple of the font size.
     pub terminal_line_height: f32,
-    /// Padding around the terminal grid (spacing scale).
-    pub terminal_padding: f32,
+    /// Line height of code rows in the Files editor and preview (tighter than the terminal's).
+    pub code_line_height: f32,
+    /// Padding left and right of the terminal grid.
+    pub terminal_padding_x: f32,
+    /// Padding above and below the terminal grid.
+    pub terminal_padding_y: f32,
     pub terminal_underline_thickness: f32,
     /// Width of the bar (beam) cursor.
     pub terminal_cursor_width: f32,
@@ -613,6 +711,9 @@ pub struct Theme {
     pub dim_blend: f32,
     /// Opacity of the overlay that dims unfocused panes (~5%).
     pub unfocused_pane_dim: f32,
+    /// The palette from before the restyle, kept for the sidebar's session list (projects,
+    /// session rows, RUN), which the restyle leaves as it was. `None` on that palette itself.
+    pub classic: Option<std::sync::Arc<Theme>>,
 }
 
 impl gpui::Global for Theme {}
@@ -656,10 +757,202 @@ impl Theme {
         self.ui_font_family = fonts.ui_family.clone();
         self.terminal_font_family = fonts.terminal_family.clone();
         self.terminal_font_size = fonts.terminal_size;
+        if let Some(classic) = self.classic.take() {
+            let classic = Theme::clone(&classic).with_fonts(fonts);
+            self.classic = Some(std::sync::Arc::new(classic));
+        }
         self
     }
 
+    /// The pre-restyle palette for the sidebar's session list (see [`Theme::classic`]).
+    pub fn classic(&self) -> &Theme {
+        self.classic.as_deref().unwrap_or(self)
+    }
+
     pub fn dark() -> Self {
+        let theme = Self {
+            bg: 0x15171B,
+            surface: 0x121418,
+            surface_raised: 0x2A2E35,
+            sidebar: 0x0F1013,
+            chrome: 0x0F1013,
+            card: 0x1C1F24,
+            hover: 0x1F2227,
+            selected: 0x2A2E35,
+            selected_ring: 0x3D4380,
+            border: 0x23262C,
+            divider: 0x1E2126,
+            text: 0xECEDEF,
+            text_dim: 0xD5D8DD,
+            text_muted: 0xA3A8B0,
+            subtle: 0x5D616C,
+            accent: 0x8E8CF5,
+            accent_text: 0xC2C1FA,
+            accent_bg: 0x26273A,
+            on_accent: 0x0F1013,
+            on_accent_divider: 0x0000_0040,
+            warning_bg: 0x322B23,
+            success_bg: 0x1E302B,
+            danger_bg: 0x342526,
+            run_pill_bg: 0x18241D,
+            run_pill_border: 0x2A4434,
+            run_pill_text: 0xC9EED8,
+            // ~14 %: chip and pill fills.
+            tint_alpha: 0x24,
+            pane_focus_border: 0x4A528E,
+            terminal_selection_bg: 0x353B60,
+            terminal_match_bg: 0x3F3524,
+            terminal_match_current_bg: 0x7A5A1F,
+            status_working: 0x8E8CF5,
+            status_needs_input: 0xE4A452,
+            status_done: 0x57C78A,
+            status_exited: 0xEF7B6C,
+            status_idle: 0x7D838C,
+            // Removed / added lines: danger / success at 9 % over the diff card (`surface`).
+            diff_add_bg: 0x182422,
+            diff_add_text: 0x6FD39B,
+            diff_del_bg: 0x261D20,
+            diff_del_text: 0xEF8F82,
+            diff_mod_bg: 0x25211D,
+            diff_mod_text: 0xE4A452,
+            diff_hunk_header: 0x17191D,
+            diff_add_gutter: 0x1E302B,
+            diff_del_gutter: 0x342526,
+            diff_mod_gutter: 0x322B23,
+            git_modified: 0xE4A452,
+            git_untracked: 0xE4A452,
+            syntax_keyword: 0xC2C1FA,
+            syntax_string: 0x9FD6AE,
+            syntax_number: 0xE8B87A,
+            syntax_type: 0x8FD8CC,
+            syntax_function: 0x93BCF6,
+            text_subtle: 0x7D838C,
+            info: 0x6AA6F2,
+            info_text: 0x8DB9F5,
+            info_soft: 0x93BCF6,
+            teal: 0x74D6C4,
+            terminal_bg: 0x0B0C0E,
+            control_border: 0x262A31,
+            row_hover: 0x1A1D21,
+            well: 0x17191D,
+            danger_text: 0xEF8F82,
+            success_text: 0x6FD39B,
+            folder: 0x8FA3C0,
+            text_disabled: 0x8A9099,
+            // Danger at 30 % / success at 28 % over the diff card.
+            diff_del_word_bg: 0x543331,
+            diff_add_word_bg: 0x254638,
+            // red → danger, green → success, yellow → attention, blue → info, magenta →
+            // accent, white → text, bright black → text_subtle.
+            ansi: [
+                0x1C1F24, 0xEF7B6C, 0x57C78A, 0xE4A452, 0x6AA6F2, 0x8E8CF5, 0x8FD8CC, 0xECEDEF,
+                0x7D838C, 0xF29A8E, 0x7DD3A0, 0xEDBB78, 0x93BCF6, 0xC2C1FA, 0xB0E5DC, 0xF5F6F8,
+            ],
+            workspace_colors: [
+                0xF87171, 0xFB923C, 0xFACC15, 0xA3E635, 0x4ADE80, 0x2DD4BF, 0x60A5FA, 0xC084FC,
+                0xF472B6,
+            ],
+            dark: true,
+            ..Self::shared()
+        };
+        Self {
+            classic: Some(std::sync::Arc::new(Self::classic_dark(&theme))),
+            ..theme
+        }
+    }
+
+    pub fn light() -> Self {
+        let theme = Self {
+            bg: 0xFFFFFF,
+            surface: 0xFAFAFB,
+            surface_raised: 0xE6E8EC,
+            sidebar: 0xF7F7F8,
+            chrome: 0xF7F7F8,
+            card: 0xF7F8FA,
+            hover: 0xEEF0F3,
+            selected: 0xE6E8EC,
+            selected_ring: 0xA7ADEA,
+            border: 0xDFE1E6,
+            divider: 0xE9EBEE,
+            text: 0x1B1D22,
+            text_dim: 0x3A3E46,
+            text_muted: 0x5A606B,
+            subtle: 0xA0A4AF,
+            accent: 0x5452D0,
+            accent_text: 0x4A48C4,
+            accent_bg: 0xEBEBFA,
+            on_accent: 0xFFFFFF,
+            on_accent_divider: 0xFFFF_FF59,
+            warning_bg: 0xF4EDE2,
+            success_bg: 0xE5F0EA,
+            danger_bg: 0xF8E8E6,
+            run_pill_bg: 0xE1F5EC,
+            run_pill_border: 0xB4DEC8,
+            run_pill_text: 0x1E6B3A,
+            // ~12 %: chip and pill fills.
+            tint_alpha: 0x1F,
+            pane_focus_border: 0xA7ADEA,
+            terminal_selection_bg: 0xCACEF2,
+            terminal_match_bg: 0xF6EBCF,
+            terminal_match_current_bg: 0xE9C46A,
+            status_working: 0x5452D0,
+            status_needs_input: 0xA4660F,
+            status_done: 0x23854F,
+            status_exited: 0xC2412F,
+            status_idle: 0x8A8F99,
+            diff_add_bg: 0xE7EFEC,
+            diff_add_text: 0x1E6B3A,
+            diff_del_bg: 0xF5E9E9,
+            diff_del_text: 0xA61B1B,
+            diff_mod_bg: 0xFFF6DB,
+            diff_mod_text: 0x7A5200,
+            diff_hunk_header: 0xF1F2F4,
+            diff_add_gutter: 0xC9E8D2,
+            diff_del_gutter: 0xF7D4D4,
+            diff_mod_gutter: 0xF8E6AE,
+            git_modified: 0x975A16,
+            git_untracked: 0x975A16,
+            // Darker than the ANSI entries so code stays ≥ 4.5:1 on white.
+            syntax_keyword: 0x8A3FB8,
+            syntax_string: 0x276749,
+            syntax_number: 0x975A16,
+            syntax_type: 0x17707F,
+            syntax_function: 0x3B47B8,
+            text_subtle: 0x6B717C,
+            info: 0x2F6FC4,
+            info_text: 0x2A62AD,
+            info_soft: 0x2F6FC4,
+            teal: 0x1A7F70,
+            terminal_bg: 0xFCFCFD,
+            control_border: 0xD9DCE1,
+            row_hover: 0xF4F5F7,
+            well: 0xF1F2F4,
+            danger_text: 0xB4382A,
+            success_text: 0x1E6B3A,
+            folder: 0x5F7590,
+            text_disabled: 0x6B717C,
+            diff_del_word_bg: 0xECCCC8,
+            diff_add_word_bg: 0xC4DDD0,
+            ansi: [
+                // "White" stays readable on the light background (≥ 3:1).
+                0x1D1E22, 0xC2412F, 0x23854F, 0xA4660F, 0x2F6FC4, 0x5B59D6, 0x1A7F70, 0x8A8C94,
+                0x6B717C, 0xE5676B, 0x38A169, 0xD69E2E, 0x3B47B8, 0xB37FEB, 0x31A3B8, 0x55575F,
+            ],
+            workspace_colors: [
+                0xDC2626, 0xD9560B, 0xA16207, 0x4D7C0F, 0x15803D, 0x0F766E, 0x2563EB, 0x9333EA,
+                0xDB2777,
+            ],
+            dark: false,
+            ..Self::shared()
+        };
+        Self {
+            classic: Some(std::sync::Arc::new(Self::classic_light(&theme))),
+            ..theme
+        }
+    }
+
+    /// The pre-restyle dark palette over `base` (it keeps `base`'s fonts and new tokens).
+    fn classic_dark(base: &Self) -> Self {
         Self {
             bg: 0x141519,
             surface: 0x1F2127,
@@ -724,11 +1017,13 @@ impl Theme {
                 0xF472B6,
             ],
             dark: true,
-            ..Self::shared()
+            classic: None,
+            ..base.clone()
         }
     }
 
-    pub fn light() -> Self {
+    /// The pre-restyle light palette over `base`.
+    fn classic_light(base: &Self) -> Self {
         Self {
             bg: 0xFFFFFF,
             surface: 0xF6F7F9,
@@ -794,7 +1089,8 @@ impl Theme {
                 0xDB2777,
             ],
             dark: false,
-            ..Self::shared()
+            classic: None,
+            ..base.clone()
         }
     }
 
@@ -858,6 +1154,21 @@ impl Theme {
             syntax_number: 0,
             syntax_type: 0,
             syntax_function: 0,
+            text_subtle: 0,
+            info: 0,
+            info_text: 0,
+            info_soft: 0,
+            teal: 0,
+            terminal_bg: 0,
+            control_border: 0,
+            row_hover: 0,
+            well: 0,
+            danger_text: 0,
+            success_text: 0,
+            folder: 0,
+            text_disabled: 0,
+            diff_del_word_bg: 0,
+            diff_add_word_bg: 0,
             ansi: [0; 16],
             workspace_colors: [0; WORKSPACE_COLORS.len()],
             dark: false,
@@ -865,12 +1176,15 @@ impl Theme {
             ui_font_family: UI_FONT.into(),
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
-            terminal_line_height: 1.35,
-            terminal_padding: space::L,
+            terminal_line_height: 1.75,
+            code_line_height: 1.35,
+            terminal_padding_x: space::XXL + space::XS,
+            terminal_padding_y: space::XXL,
             terminal_underline_thickness: 1.0,
             terminal_cursor_width: 2.0,
             dim_blend: 0.6,
             unfocused_pane_dim: 0.05,
+            classic: None,
         }
     }
 
@@ -935,10 +1249,10 @@ pub fn rems_px(px: f32) -> Rems {
 
 /// Layout heights from the redesign (ADR 0027), in px at the default font size.
 /// The custom title bar (ADR 0034; was the 44 px toolbar of ADR 0027).
-pub const TITLE_BAR_HEIGHT: f32 = 44.0;
-pub const TAB_STRIP_HEIGHT: f32 = 38.0;
+pub const TITLE_BAR_HEIGHT: f32 = 48.0;
+pub const TAB_STRIP_HEIGHT: f32 = 44.0;
 /// The Git view's repository tabs (multi-repo workspaces): a tab strip.
-pub const GIT_REPO_STRIP_HEIGHT: f32 = TAB_STRIP_HEIGHT;
+pub const GIT_REPO_STRIP_HEIGHT: f32 = 42.0;
 pub const WORKSPACE_ROW_HEIGHT: f32 = 30.0;
 pub const SESSION_ROW_HEIGHT: f32 = 30.0;
 /// Height of the Plan card's progress bar, and of the thin one under the selected sidebar row
@@ -958,6 +1272,10 @@ pub const STATUS_DOT_LARGE: f32 = 6.0;
 /// One breath of a pulsing status dot (working, running); its lowest opacity.
 pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 pub const PULSE_MIN_OPACITY: f32 = 0.35;
+/// A pane's status pill ("Idle · 2m") in the tab strip and the pane header.
+pub const STATUS_PILL_HEIGHT: f32 = 24.0;
+/// Longest tab title before it truncates.
+pub const TAB_TITLE_MAX_WIDTH: f32 = 220.0;
 /// Reading width of an agent pane: the terminal is at most this wide (≈ 120–140 columns at
 /// the default font) and centered, so the program wraps there (the PTY gets fewer columns).
 pub const READING_WIDTH: f32 = 960.0;
@@ -1147,7 +1465,7 @@ mod tests {
     fn layout_heights_scale_with_the_ui_font() {
         // 44 px at the default 13 px body; at 20 px the title bar is 44 × 20 / 13.
         assert_eq!(rems_px(44.0), gpui::rems(44.0 / 13.0));
-        assert_eq!(rems_px(TITLE_BAR_HEIGHT).0 * 20.0, 44.0 * 20.0 / 13.0);
+        assert_eq!(rems_px(TITLE_BAR_HEIGHT).0 * 20.0, 48.0 * 20.0 / 13.0);
     }
 
     /// ✕ on the red hover of the Close button must stay readable in both themes.

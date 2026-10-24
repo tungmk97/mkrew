@@ -8,6 +8,7 @@
 //! Pure and tested headlessly; `main.rs` does the requests and renders it.
 
 use std::collections::HashSet;
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::Keystroke;
@@ -275,8 +276,9 @@ pub struct Shown {
     pub rows: Vec<DiffRow>,
     /// The Split layout of `rows` ([`split_rows`]); never longer than `rows`.
     pub split: Vec<SplitRow>,
-    /// Per row, the line is half of a removed + added pair (see [`SplitRow::Change`]).
-    pub modified: Vec<bool>,
+    /// Per row, the bytes of its (tab-expanded) text that differ from its partner when the line
+    /// is half of a removed + added pair (see [`SplitRow::Change`], [`changed_ranges`]).
+    pub words: Vec<Option<Range<usize>>>,
     /// Per row, the syntax spans of its line (tabs expanded; empty for other rows).
     pub spans: Vec<Spans>,
     /// Some line has syntax spans (its other text is then drawn as plain text).
@@ -310,21 +312,26 @@ impl Shown {
             .max()
             .unwrap_or(1);
         let split = split_rows(&rows);
-        // Rows of a removed + added pair: a line changed in place (amber in both modes).
-        let mut modified = vec![false; rows.len()];
+        // Rows of a removed + added pair: the changed token of each gets an inline highlight.
+        let mut words = vec![None; rows.len()];
         for row in &split {
             if let SplitRow::Change {
                 old: Some(old),
                 new: Some(new),
             } = *row
+                && let (DiffRow::Line(removed), DiffRow::Line(added)) = (&rows[old], &rows[new])
+                && let Some((gone, came)) = changed_ranges(
+                    &removed.text.replace('\t', highlight::TAB),
+                    &added.text.replace('\t', highlight::TAB),
+                )
             {
-                modified[old] = true;
-                modified[new] = true;
+                words[old] = Some(gone).filter(|range| !range.is_empty());
+                words[new] = Some(came).filter(|range| !range.is_empty());
             }
         }
         Shown {
             split,
-            modified,
+            words,
             number_width: largest.to_string().len(),
             diff,
             rows,
@@ -1763,13 +1770,37 @@ pub fn rows(diff: &FileDiff) -> Vec<DiffRow> {
     rows
 }
 
+/// The bytes that differ between a removed line and the added line paired with it: what is
+/// left of each after their common prefix and suffix (on char boundaries). `None` when they
+/// share neither, so the whole line would light up. A range is empty when that side only lost
+/// (or gained) text.
+pub fn changed_ranges(old: &str, new: &str) -> Option<(Range<usize>, Range<usize>)> {
+    let common = |a: &str, b: &str, from_end: bool| -> usize {
+        let same = |(a, b): &(char, char)| a == b;
+        let len = |(a, _): (char, char)| a.len_utf8();
+        if from_end {
+            a.chars()
+                .rev()
+                .zip(b.chars().rev())
+                .take_while(same)
+                .map(len)
+                .sum()
+        } else {
+            a.chars().zip(b.chars()).take_while(same).map(len).sum()
+        }
+    };
+    let prefix = common(old, new, false);
+    let suffix = common(&old[prefix..], &new[prefix..], true);
+    (prefix + suffix > 0).then(|| (prefix..old.len() - suffix, prefix..new.len() - suffix))
+}
+
 /// "+3 −1" style counts of a changed file; `None` = binary or not counted.
 pub fn counts(file: &ChangedFile) -> Option<(u32, u32)> {
     Some((file.added?, file.removed?))
 }
 
-/// The branch header's upstream line: "Tracking origin/main · 2 commits ahead", "… · up to
-/// date", "… · 2 ahead, 1 behind", or "No upstream".
+/// The branch card's upstream line: "origin/main · 2 commits ahead", "… · up to date",
+/// "… · 2 ahead, 1 behind", or "No upstream".
 pub fn tracking(status: &GitStatus) -> String {
     let Some(upstream) = &status.upstream else {
         return "No upstream".to_owned();
@@ -1781,7 +1812,7 @@ pub fn tracking(status: &GitStatus) -> String {
         (0, behind) => format!("{behind} {} behind", commits(behind)),
         (ahead, behind) => format!("{ahead} ahead, {behind} behind"),
     };
-    format!("Tracking {upstream} · {state}")
+    format!("{upstream} · {state}")
 }
 
 /// The file-moving key `keystroke` stands for (unmodified arrows, j / k). The other Git keys

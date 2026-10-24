@@ -120,7 +120,7 @@ fn push_text(segment: &mut Segment, cell: &GridCell, style: CellStyle) {
 }
 
 fn push_background(backgrounds: &mut Vec<Background>, col: usize, color: u32, theme: &Theme) {
-    if color == theme.bg {
+    if color == theme.terminal_bg {
         return;
     }
     match backgrounds.last_mut() {
@@ -164,8 +164,8 @@ pub fn cell_style(cell: &GridCell, is_cursor: bool, theme: &Theme) -> CellStyle 
         Found::No => {}
     }
     if is_cursor {
-        fg = theme.bg;
-        bg = theme.accent;
+        fg = theme.terminal_bg;
+        bg = theme.text;
     }
     CellStyle {
         fg,
@@ -184,9 +184,9 @@ pub fn resolve_color(color: Color, theme: &Theme) -> u32 {
         Color::Indexed(index) => indexed_color(index, theme),
         Color::Named(named) => match named {
             NamedColor::Foreground | NamedColor::BrightForeground => theme.text,
-            NamedColor::Background => theme.bg,
-            NamedColor::Cursor => theme.accent,
-            NamedColor::DimForeground => blend(theme.text, theme.bg, theme.dim_blend),
+            NamedColor::Background => theme.terminal_bg,
+            NamedColor::Cursor => theme.text,
+            NamedColor::DimForeground => blend(theme.text, theme.terminal_bg, theme.dim_blend),
             NamedColor::DimBlack
             | NamedColor::DimRed
             | NamedColor::DimGreen
@@ -196,7 +196,7 @@ pub fn resolve_color(color: Color, theme: &Theme) -> u32 {
             | NamedColor::DimCyan
             | NamedColor::DimWhite => {
                 let index = named as usize - NamedColor::DimBlack as usize;
-                blend(theme.ansi[index], theme.bg, theme.dim_blend)
+                blend(theme.ansi[index], theme.terminal_bg, theme.dim_blend)
             }
             // Black..=BrightWhite have discriminants 0..=15.
             ansi => theme.ansi[(ansi as usize) % 16],
@@ -242,22 +242,24 @@ fn blend(color: u32, towards: u32, weight: f32) -> u32 {
 pub const MIN_COLS: u16 = 2;
 pub const MIN_ROWS: u16 = 1;
 
-/// Grid size (cols, rows) that fits `width` x `height` pixels after `padding` on every side.
+/// Grid size (cols, rows) that fits `width` x `height` pixels after `padding_x` on the left and
+/// right and `padding_y` on the top and bottom.
 pub fn grid_size(
     width: f32,
     height: f32,
-    padding: f32,
+    padding_x: f32,
+    padding_y: f32,
     cell_width: f32,
     line_height: f32,
 ) -> (u16, u16) {
-    let fit = |space: f32, cell: f32, min: u16| {
+    let fit = |space: f32, padding: f32, cell: f32, min: u16| {
         let count = ((space - 2.0 * padding) / cell).floor();
         // `as` saturates for out-of-range and NaN floats; then clamp to the minimum.
         (count as u16).max(min)
     };
     (
-        fit(width, cell_width, MIN_COLS),
-        fit(height, line_height, MIN_ROWS),
+        fit(width, padding_x, cell_width, MIN_COLS),
+        fit(height, padding_y, line_height, MIN_ROWS),
     )
 }
 
@@ -379,7 +381,7 @@ mod tests {
     fn style(fg: u32) -> CellStyle {
         CellStyle {
             fg,
-            bg: Theme::dark().bg,
+            bg: Theme::dark().terminal_bg,
             bold: false,
             italic: false,
             underline: false,
@@ -463,13 +465,13 @@ mod tests {
             vec![Background {
                 start_col: 1,
                 cols: 2,
-                color: theme.accent
+                color: theme.text
             }]
         );
     }
 
     #[test]
-    fn cursor_cell_is_drawn_as_accent_block() {
+    fn cursor_cell_is_drawn_as_text_block() {
         let theme = Theme::dark();
         let layout = layout_row(&row(b"ab", 10), Some(5), &theme);
         assert_eq!(
@@ -477,11 +479,11 @@ mod tests {
             vec![Background {
                 start_col: 5,
                 cols: 1,
-                color: theme.accent
+                color: theme.text
             }]
         );
         let on_text = cell_style(&row(b"ab", 10)[1], true, &theme);
-        assert_eq!((on_text.fg, on_text.bg), (theme.bg, theme.accent));
+        assert_eq!((on_text.fg, on_text.bg), (theme.terminal_bg, theme.text));
     }
 
     #[test]
@@ -491,11 +493,11 @@ mod tests {
         let a = cell_style(&cells[0], false, &theme);
         assert!(a.bold && a.italic && a.underline);
         let b = cell_style(&cells[1], false, &theme);
-        assert_eq!((b.fg, b.bg), (theme.bg, theme.text));
+        assert_eq!((b.fg, b.bg), (theme.terminal_bg, theme.text));
         let c = cell_style(&cells[2], false, &theme);
-        assert_eq!(c.fg, theme.bg);
+        assert_eq!(c.fg, theme.terminal_bg);
         let d = cell_style(&cells[3], false, &theme);
-        assert_eq!(d.fg, blend(theme.text, theme.bg, theme.dim_blend));
+        assert_eq!(d.fg, blend(theme.text, theme.terminal_bg, theme.dim_blend));
     }
 
     #[test]
@@ -513,7 +515,7 @@ mod tests {
         assert_eq!(resolve_color(Color::Indexed(255), &theme), 0xEEEEEE);
         assert_eq!(
             resolve_color(Color::Named(NamedColor::Background), &theme),
-            theme.bg
+            theme.terminal_bg
         );
     }
 
@@ -589,7 +591,7 @@ mod tests {
         assert_eq!(layout.segments[0].runs[1].len, 2);
         assert_eq!(layout.segments[0].runs[1].style.fg, theme.text);
         // The cursor block wins over the selection.
-        assert_eq!(cell_style(&cells[1], true, &theme).bg, theme.accent);
+        assert_eq!(cell_style(&cells[1], true, &theme).bg, theme.text);
     }
 
     #[test]
@@ -642,13 +644,16 @@ mod tests {
 
     #[test]
     fn grid_size_fits_cells_inside_padding() {
-        // 8 px padding each side; 10 x 20 px cells.
-        assert_eq!(grid_size(816.0, 496.0, 8.0, 10.0, 20.0), (80, 24));
+        // 8 px padding left and right, 4 px top and bottom; 10 x 20 px cells.
+        assert_eq!(grid_size(816.0, 488.0, 8.0, 4.0, 10.0, 20.0), (80, 24));
         assert_eq!(
-            grid_size(825.0, 515.0, 8.0, 10.0, 20.0),
-            (80, 24),
+            grid_size(825.0, 515.0, 8.0, 4.0, 10.0, 20.0),
+            (80, 25),
             "partial cells drop"
         );
-        assert_eq!(grid_size(10.0, 10.0, 8.0, 10.0, 20.0), (MIN_COLS, MIN_ROWS));
+        assert_eq!(
+            grid_size(10.0, 10.0, 8.0, 4.0, 10.0, 20.0),
+            (MIN_COLS, MIN_ROWS)
+        );
     }
 }

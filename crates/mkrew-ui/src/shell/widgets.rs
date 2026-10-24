@@ -82,18 +82,21 @@ pub(crate) fn notice(color: u32, text: String) -> gpui::Div {
         .child(text)
 }
 
-/// The shared frame of [`button`], [`quiet_button`] and [`danger_button`]: no colors, no hover
-/// (gpui allows one `hover` per element). `label` is text or an [`icon_svg`].
+/// The shared frame of [`button`], [`quiet_button`] and [`danger_button`]: a control-height
+/// row, no colors, no hover (gpui allows one `hover` per element). `label` is text or an
+/// [`icon_svg`].
 pub(crate) fn button_frame(id: &'static str, label: impl IntoElement) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex()
+        .flex_none()
         .items_center()
         .gap(px(space::S))
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::SMALL))
+        .h(theme::rems_px(theme::CONTROL_HEIGHT))
+        .px(px(space::M))
+        .rounded(px(radius::MEDIUM))
         .cursor_pointer()
+        .whitespace_nowrap()
         .text_size(font_size::BODY)
         .child(label)
 }
@@ -109,7 +112,7 @@ pub(crate) fn button(
         button_frame(id, label)
             .bg(rgb(theme.accent))
             .text_color(rgb(button_fg(theme, true)))
-            .font_weight(FontWeight(weight::MEDIUM))
+            .font_weight(FontWeight(weight::SEMIBOLD))
             .hover(|style| style.opacity(opacity::HOVER))
             .active(|style| style.opacity(opacity::ACTIVE))
     } else {
@@ -137,7 +140,7 @@ pub(crate) fn icon_text(glyph: Icon, text: impl IntoElement, color: u32) -> gpui
         .child(text)
 }
 
-/// A secondary button: surface background with a faint border (the empty state's New shell).
+/// A secondary button: transparent with a 1 px border, soft text.
 pub(crate) fn secondary_button(
     id: &'static str,
     label: impl IntoElement,
@@ -145,24 +148,25 @@ pub(crate) fn secondary_button(
 ) -> gpui::Stateful<gpui::Div> {
     let hover = theme.hover;
     button_frame(id, label)
-        .bg(rgb(theme.surface))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.border))
-        .text_color(rgb(theme.text))
+        .border_color(rgb(theme.control_border))
+        .text_color(rgb(theme.text_dim))
         .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
-/// A quiet [`button`] whose hover shows `hover` (e.g. one step above a raised card).
+/// A ghost [`button`] whose hover shows `hover` (e.g. one step above a raised card) and the
+/// full text color.
 pub(crate) fn quiet_button(
     id: &'static str,
     label: impl IntoElement,
     theme: &Theme,
     hover: u32,
 ) -> gpui::Stateful<gpui::Div> {
+    let text = theme.text;
     button_frame(id, label)
         .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.bg(rgb(hover)))
+        .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
@@ -176,53 +180,58 @@ pub(crate) fn disabled_button(
     let base = div()
         .id(id)
         .flex()
+        .flex_none()
         .items_center()
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .opacity(opacity::DISABLED)
+        .gap(px(space::S))
+        .h(theme::rems_px(theme::CONTROL_HEIGHT))
+        .px(px(space::M))
+        .rounded(px(radius::MEDIUM))
+        .whitespace_nowrap()
         .text_size(font_size::BODY)
         .child(label);
     if primary {
-        base.bg(rgb(theme.accent)).text_color(rgb(theme.on_accent))
+        // A muted fill, not a faded accent: it must not read as the next step.
+        base.bg(rgb(theme.border))
+            .text_color(rgb(theme.text_disabled))
+            .font_weight(FontWeight(weight::SEMIBOLD))
     } else {
-        base.text_color(rgb(theme.text_muted))
+        base.opacity(opacity::DISABLED)
+            .text_color(rgb(theme.text_muted))
     }
 }
 
-/// A [`button`] that discards work (Undo's confirm): drawn in the diff "deleted" colors, so
-/// it never reads as the accent's safe default.
+/// A ghost [`button`] that discards work (Discard, Undo's confirm): danger text, so it never
+/// reads as the accent's safe default.
 pub(crate) fn danger_button(
     id: &'static str,
     label: impl IntoElement,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let text = theme.text;
+    let hover = theme.danger_bg;
     button_frame(id, label)
-        .bg(rgb(theme.diff_del_bg))
-        .text_color(rgb(theme.diff_del_text))
-        .font_weight(FontWeight(weight::MEDIUM))
-        // Stronger than an opacity change on the faint background.
-        .hover(move |style| style.text_color(rgb(text)))
+        .text_color(rgb(theme.danger_text))
+        .hover(move |style| style.bg(rgb(hover)))
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
-/// A keyboard shortcut chip (`Keymap::label` text). On an accent button it is drawn in
-/// `on_accent` at reduced opacity.
+/// A keyboard shortcut hint (`Keymap::label` text): a small mono key cap. On an accent
+/// button it is drawn in `on_accent` at reduced opacity.
 pub(crate) fn kbd(text: String, theme: &Theme, on_accent: bool) -> gpui::Div {
-    let base = div()
-        .flex_none()
-        .px(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .text_size(font_size::META);
+    let base = div().flex_none().text_size(font_size::META);
     if on_accent {
-        base.text_color(rgb(theme.on_accent))
+        base.px(px(space::XS))
+            .text_color(rgb(theme.on_accent))
             .opacity(opacity::SECONDARY)
             .child(text)
     } else {
-        base.bg(rgb(theme.surface_raised))
+        base.px(px(space::XS))
+            .rounded(px(radius::TAG))
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.border))
+            .border_b(px(theme::KBD_BOTTOM_BORDER))
+            .border_color(rgb(theme.selected))
+            .bg(rgb(theme.row_hover))
+            .font_family(theme.terminal_font_family.clone())
+            .text_size(font_size::OVERLINE)
             .text_color(rgb(theme.text_muted))
             .child(text)
     }
@@ -259,7 +268,7 @@ pub(crate) fn window_control(
         .justify_center()
         .hover(move |style| style.bg(rgb(if close { red } else { hover })))
         .child(
-            icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted).when(close, |icon| {
+            icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_subtle).when(close, |icon| {
                 icon.group_hover(id, move |style| style.text_color(rgb(on_hover)))
             }),
         )
@@ -282,19 +291,156 @@ pub(crate) fn icon_button_in(
     color: u32,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let hover = theme.hover;
+    let (hover, text) = (theme.hover, theme.text);
     div()
         .id(id)
         .flex_none()
-        .size(theme::rems_px(theme::ICON_BUTTON_SIZE))
+        .size(theme::rems_px(theme::CONTROL_HEIGHT))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(radius::SMALL))
+        .rounded(px(radius::MEDIUM))
         .cursor_pointer()
-        .hover(move |style| style.bg(rgb(hover)))
+        .text_color(rgb(theme.text_muted))
+        .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
         .active(|style| style.opacity(opacity::ACTIVE))
         .child(icon_svg(glyph, theme::ICON_SIZE, color))
+}
+
+/// A segmented control's container (title bar views, sidebar filter, Board, Git): `chrome` with
+/// a divider ring. Children are [`segment`]s.
+pub(crate) fn segmented(theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .p(px(theme::SEGMENT_PADDING))
+        .rounded(px(radius::SEGMENTED))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(theme.divider))
+        .bg(rgb(theme.chrome))
+}
+
+/// One segment of a [`segmented`] control: selected = `selected` fill and full text, else
+/// transparent and muted with a hover.
+pub(crate) fn segment(
+    id: impl Into<gpui::ElementId>,
+    active: bool,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    let (hover, text) = (theme.hover, theme.text);
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(space::XS))
+        .h(theme::rems_px(theme::SEGMENT_HEIGHT))
+        .px(px(space::M))
+        .rounded(px(radius::CHIP))
+        .cursor_pointer()
+        .whitespace_nowrap()
+        .text_size(font_size::BODY)
+        .when(active, |el| {
+            el.bg(rgb(theme.selected)).text_color(rgb(text))
+        })
+        .when(!active, |el| {
+            el.text_color(rgb(theme.text_muted))
+                .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
+                .active(|style| style.opacity(opacity::ACTIVE))
+        })
+}
+
+/// A status pill: a 6 px dot in `color` (hollow = a ring) and `label` in `fg` on `bg`.
+pub(crate) fn status_pill(
+    label: impl IntoElement,
+    color: u32,
+    hollow: bool,
+    fg: u32,
+    bg: impl Into<gpui::Fill>,
+) -> gpui::Div {
+    let dot = div()
+        .flex_none()
+        .size(theme::rems_px(theme::STATUS_DOT_LARGE))
+        .rounded_full();
+    let dot = if hollow {
+        dot.border(px(theme::BORDER_WIDTH)).border_color(rgb(color))
+    } else {
+        dot.bg(rgb(color))
+    };
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(space::XS))
+        .h(theme::rems_px(theme::PILL_HEIGHT))
+        .px(px(space::S))
+        .rounded(px(radius::PILL))
+        .bg(bg)
+        .whitespace_nowrap()
+        .text_size(font_size::META)
+        .text_color(rgb(fg))
+        .child(dot)
+        .child(label)
+}
+
+/// A small tinted chip (`[BE]` area, Git count): `text` in `fg` on `fg`'s tint.
+pub(crate) fn tinted_chip(text: impl Into<SharedString>, fg: u32, theme: &Theme) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .h(theme::rems_px(theme::CHIP_HEIGHT))
+        .px(px(space::XS))
+        .rounded(px(radius::TAG))
+        .bg(theme.tint(fg))
+        .text_size(font_size::OVERLINE)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .text_color(rgb(fg))
+        .child(text.into())
+}
+
+/// A section overline: 11/600 upper case in `text_subtle` (STAGED, CHANGES).
+pub(crate) fn overline(text: &str, theme: &Theme) -> gpui::Div {
+    div()
+        .text_size(font_size::OVERLINE)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .text_color(rgb(theme.text_subtle))
+        .child(text.to_uppercase())
+}
+
+/// A search box: a 32 px framed row with a search icon, `field` (its own frame removed) and an
+/// optional trailing hint (a [`kbd`]). The frame turns accent while `focused`.
+pub(crate) fn search_box(
+    field: gpui::Stateful<gpui::Div>,
+    trailing: Option<gpui::AnyElement>,
+    focused: bool,
+    theme: &Theme,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .h(theme::rems_px(theme::INPUT_HEIGHT))
+        .px(px(space::S))
+        .rounded(px(radius::MEDIUM))
+        .border(px(theme::BORDER_WIDTH))
+        .border_color(rgb(if focused { theme.accent } else { theme.border }))
+        .bg(rgb(theme.chrome))
+        .child(icon_svg(
+            Icon::Search,
+            theme::ICON_SIZE_SMALL,
+            theme.text_subtle,
+        ))
+        .child(
+            field
+                .flex_1()
+                .min_w_0()
+                .p_0()
+                .border_0()
+                .bg(gpui::transparent_black()),
+        )
+        .children(trailing)
 }
 
 /// What a key does to a one-line field of the Files find bar.
@@ -507,12 +653,9 @@ fn field_frame(
         .py(px(space::S))
         .rounded(px(radius::MEDIUM))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(if focused {
-            theme.pane_focus_border
-        } else {
-            theme.border
-        }))
-        .bg(rgb(theme.surface_raised))
+        // The focus ring: the accent.
+        .border_color(rgb(if focused { theme.accent } else { theme.border }))
+        .bg(rgb(theme.chrome))
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
         .cursor(CursorStyle::IBeam);
@@ -527,7 +670,7 @@ fn field_frame(
                 .flex()
                 .items_center()
                 .when(focused, |row| row.child(caret))
-                .child(div().text_color(rgb(theme.text_muted)).child(placeholder)),
+                .child(div().text_color(rgb(theme.text_subtle)).child(placeholder)),
         );
         return (frame, None);
     }
@@ -856,25 +999,20 @@ pub(crate) fn voice_meter(level: f32, color: gpui::Rgba) -> gpui::Div {
         }))
 }
 
-/// The Mkrew logo glyph for the current appearance (`icon/mkrew-1-lanes/glyph-*.svg`): the dark
-/// accent on dark, the light accent on light.
-pub(crate) fn logo(theme: &Theme) -> gpui::Img {
-    static DARK: LazyLock<Arc<gpui::Image>> = LazyLock::new(|| {
-        Arc::new(gpui::Image::from_bytes(
-            gpui::ImageFormat::Svg,
-            include_bytes!("../../../../icon/mkrew-1-lanes/glyph-dark.svg").to_vec(),
-        ))
-    });
-    static LIGHT: LazyLock<Arc<gpui::Image>> = LazyLock::new(|| {
-        Arc::new(gpui::Image::from_bytes(
-            gpui::ImageFormat::Svg,
-            include_bytes!("../../../../icon/mkrew-1-lanes/glyph-light.svg").to_vec(),
-        ))
-    });
-    let image = if theme.dark { &DARK } else { &LIGHT };
-    gpui::img(Arc::clone(image))
+/// The app mark at the left of the title bar: a small accent tile with a dark "m".
+pub(crate) fn app_logo(theme: &Theme) -> gpui::Div {
+    div()
         .flex_none()
-        .size(theme::rems_px(theme::LOGO_SIZE))
+        .size(theme::rems_px(theme::APP_LOGO_TILE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::CHIP))
+        .bg(rgb(theme.accent))
+        .text_size(font_size::BODY)
+        .font_weight(FontWeight(weight::SEMIBOLD))
+        .text_color(rgb(theme.on_accent))
+        .child("m")
 }
 
 /// An agent badge (ADR 0025) as a small square chip, so logos, glyphs and letters line up and

@@ -1,6 +1,8 @@
 //! Git diff rendering: the toolbar, unified and split rows (wrapped or not), hunk headers and
 //! the bar under picked lines.
 
+use std::ops::Range;
+
 use crate::*;
 
 impl Shell {
@@ -14,15 +16,17 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
+        // A framed card (`surface`, 1 px border) inset `space::M` from the view's edges; its
+        // height is what the row gives it minus the margins.
         let panel = div()
             .flex_1()
             .min_w_0()
-            .h_full()
             .flex()
             .flex_col()
-            .ml(px(space::S))
-            .mb(px(space::S))
-            .rounded(px(radius::MEDIUM))
+            .m(px(space::M))
+            .rounded(px(radius::CARD))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
             .overflow_hidden()
             .bg(rgb(theme.surface));
         let Some(selected) = view.selected.clone() else {
@@ -188,9 +192,9 @@ impl Shell {
         }))
     }
 
-    /// The diff toolbar (wraps when narrow): previous / next file with "1 / 6", the status
-    /// badge, `folder / name`, +/− counts and the current hunk; then Unified | Split and Wrap,
-    /// Open in Zed, Discard…, Stage file and "⋯" (comment, send to agent).
+    /// The diff toolbar (wraps when narrow): previous / next file with "1 / 6", `folder / name`,
+    /// +/− counts and the current hunk; then [Unified | Split], Wrap, Viewed, Open in Zed,
+    /// Discard, Stage file and "⋯" (comment, send to agent).
     fn git_diff_toolbar(
         &self,
         project_id: Ulid,
@@ -234,27 +238,31 @@ impl Shell {
                 div()
                     .pl(px(space::XS))
                     .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
+                    .text_color(rgb(theme.text_subtle))
                     .child(format!("{at} / {count}"))
             }));
+        let (folder, name) = match selected.path.rsplit_once('/') {
+            Some((folder, name)) => (Some(folder), name),
+            None => (None, selected.path.as_str()),
+        };
+        // The file's status letter, like its row in the list (kept from before the restyle).
         let badge = position.map(|(_, _, kind)| {
             let (letter, color, meaning) = change_letter(kind, theme);
             div()
                 .id("git-diff-status")
                 .flex_none()
-                .px(px(space::XS))
-                .rounded(px(radius::SMALL))
-                .bg(rgb(theme.surface_raised))
-                .text_size(font_size::META)
+                .size(theme::rems_px(theme::GIT_BADGE_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(radius::TAG))
+                .bg(theme.tint(color))
+                .text_size(font_size::OVERLINE)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
                 .tooltip(tooltip(theme, meaning, ""))
                 .child(letter)
         });
-        let (folder, name) = match selected.path.rsplit_once('/') {
-            Some((folder, name)) => (Some(folder), name),
-            None => (None, selected.path.as_str()),
-        };
         let path = div()
             .id("git-diff-path")
             .min_w_0()
@@ -267,8 +275,8 @@ impl Shell {
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_color(rgb(theme.text_muted))
-                    .child(format!("{folder} /"))
+                    .text_color(rgb(theme.text_subtle))
+                    .child(format!("{} /", folder.replace('/', " / ")))
             }))
             .child(
                 div()
@@ -302,7 +310,7 @@ impl Shell {
                     .id("git-hunks")
                     .flex_none()
                     .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
+                    .text_color(rgb(theme.text_subtle))
                     .tooltip(tooltip(theme, "Next / previous hunk", keys))
                     .child(label),
             )
@@ -314,44 +322,38 @@ impl Shell {
             });
         let layout = has_lines.then(|| {
             let wrap = self.diff_wrap;
-            let hover = theme.surface_raised;
+            let mode_keys = SharedString::from(self.keymap.label(Command::GitToggleDiffMode));
+            let mode = |index: usize, target: DiffMode, label: &'static str| {
+                segment(("git-diff-mode", index), self.diff_mode == target, theme)
+                    .tooltip(tooltip(
+                        theme,
+                        "Unified (one column) or Split (old | new) diff",
+                        mode_keys.clone(),
+                    ))
+                    .when(self.diff_mode != target, |el| {
+                        el.on_click(cx.listener(move |shell, _, window, cx| {
+                            window.focus(&shell.git_focus, cx);
+                            shell.set_diff_mode(target, cx);
+                        }))
+                    })
+                    .child(label)
+            };
             div()
                 .flex_none()
                 .flex()
                 .items_center()
-                .gap(px(space::XS))
-                .child(self.mode_toggle(
-                    "git-diff-mode",
-                    self.diff_mode,
-                    [(DiffMode::Unified, "Unified"), (DiffMode::Split, "Split")],
-                    "Unified (one column) or Split (old | new) diff",
-                    self.keymap.label(Command::GitToggleDiffMode).into(),
-                    |shell, mode, window, cx| {
-                        window.focus(&shell.git_focus, cx);
-                        shell.set_diff_mode(mode, cx);
-                    },
-                    theme,
-                    cx,
-                ))
+                .gap(px(space::S))
                 .child(
-                    div()
-                        .id("git-diff-wrap")
-                        .px(px(space::S))
-                        .py(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .cursor_pointer()
-                        .text_size(font_size::BODY)
-                        .map(|el| {
-                            if wrap {
-                                el.bg(rgb(theme.surface_raised))
-                                    .font_weight(FontWeight(weight::MEDIUM))
-                                    .text_color(rgb(theme.text))
-                            } else {
-                                el.text_color(rgb(theme.text_muted))
-                                    .hover(move |style| style.bg(rgb(hover)))
-                            }
+                    segmented(theme)
+                        .child(mode(0, DiffMode::Unified, "Unified"))
+                        .child(mode(1, DiffMode::Split, "Split")),
+                )
+                // A toggle: lit (the segmented control's selected fill) while lines wrap.
+                .child(
+                    quiet_button("git-diff-wrap", "Wrap", theme, theme.hover)
+                        .when(wrap, |el| {
+                            el.bg(rgb(theme.selected)).text_color(rgb(theme.text))
                         })
-                        .active(|style| style.opacity(opacity::ACTIVE))
                         .tooltip(tooltip(
                             theme,
                             if wrap {
@@ -363,21 +365,17 @@ impl Shell {
                         ))
                         .on_click(cx.listener(move |shell, _, _, cx| {
                             shell.set_diff_wrap(!wrap, cx);
-                        }))
-                        .child("Wrap"),
+                        })),
                 )
         });
         let discard = view.discard(selected).map(|_| {
             let target = selected.clone();
-            let red = theme.diff_del_text;
-            quiet_button(
+            danger_button(
                 "git-discard",
-                icon_text(Icon::Undo2, "Discard…", red),
+                icon_text(Icon::Undo2, "Discard", theme.danger_text),
                 theme,
-                theme.hover,
             )
             .flex_none()
-            .text_color(rgb(red))
             .tooltip(tooltip(
                 theme,
                 "Discard this file's changes (asks first)",
@@ -453,13 +451,6 @@ impl Shell {
             .children(hunk_label)
             .child(div().flex_1())
             .children(layout)
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(theme::BORDER_WIDTH))
-                    .h(px(space::L))
-                    .bg(rgb(theme.divider)),
-            )
             .children(viewed)
             .child(self.zed_button("git-zed", false, project_id, theme, cx))
             .children(discard)
@@ -757,7 +748,7 @@ impl Shell {
 }
 
 /// The width the diff rows take with Wrap off: the longest line (tabs expanded) in the diff
-/// font, plus the gutters (twice in Split).
+/// font, plus the gutters, sign and padding of a half (two halves in Split).
 fn unwrapped_width(
     shown: &git_view::Shown,
     mode: DiffMode,
@@ -784,13 +775,14 @@ fn unwrapped_width(
         })
         .max()
         .unwrap_or(0);
-    // Numbers, sign and their gaps / paddings, in chars.
-    let gutter = shown.number_width * 2 + 6;
-    let chars = match mode {
-        DiffMode::Unified => longest + gutter,
-        DiffMode::Split => (longest + gutter) * 2,
+    let gutters = gutter_width(shown.number_width);
+    let chrome = px(theme::DIFF_SIGN_WIDTH + theme::DIFF_PICK_BAR_WIDTH + space::S * 2.0);
+    let half = |numbers: f32| gutters * numbers + chrome + char_width * longest as f32;
+    let width = match mode {
+        DiffMode::Unified => half(2.0),
+        DiffMode::Split => half(1.0) * 2.0 + px(theme::BORDER_WIDTH),
     };
-    char_width * chars as f32 + px(space::XL)
+    width + px(space::XL)
 }
 
 /// "Stage hunk" / "Unstage hunk" at the right end of a hunk header.
@@ -805,11 +797,17 @@ pub(crate) fn hunk_stage_button(
         git_view::Stage::Stage => ("Stage hunk", "Stage this hunk"),
         git_view::Stage::Unstage => ("Unstage hunk", "Unstage this hunk"),
     };
+    // A small ghost button, a little taller than a list row's action.
     row_action(
         SharedString::from(format!("git-hunk-stage-{hunk}")),
         label,
         theme,
     )
+    .h(px(space::XL))
+    .flex()
+    .items_center()
+    .px(px(space::S))
+    .rounded(px(radius::CHIP))
     .ml_auto()
     // No key: `s` / `u` act on the current hunk (n / p), not the hovered one.
     .tooltip(tooltip(theme, tip, ""))
@@ -848,8 +846,8 @@ fn diff_frame(wrap: bool, theme: &Theme) -> gpui::Div {
 }
 
 /// A row spanning the whole width (both Split halves): a collapsed gap of unchanged lines the
-/// diff does not include, or a hunk header (`@@ … @@` in the accent, ▸ on the current hunk,
-/// its section muted, Stage hunk on the right).
+/// diff does not include, or a hunk header (a 34 px `well` bar: `@@ … @@` and its section in
+/// mono muted text, ▸ on the current hunk, a small Stage hunk button on the right).
 fn span_row(
     shown: &git_view::Shown,
     index: usize,
@@ -869,9 +867,9 @@ fn span_row(
             frame
                 .justify_center()
                 .py(px(space::XS))
-                .bg(rgb(theme.surface_raised))
+                .bg(rgb(theme.well))
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.text_subtle))
                 .child(format!("⋯ {count} unchanged {lines}"))
         }
         Some(git_view::DiffRow::Hunk(at)) => {
@@ -880,11 +878,12 @@ fn span_row(
             };
             let is_current = current == Some(*at);
             frame
-                .bg(rgb(theme.diff_hunk_header))
+                .h(px(theme::GIT_HUNK_HEADER_HEIGHT))
+                .bg(rgb(theme.well))
                 .child(
                     div()
                         .flex_none()
-                        .text_color(rgb(theme.accent_text))
+                        .text_color(rgb(theme.text_muted))
                         .when(is_current, |el| {
                             el.font_weight(FontWeight(weight::SEMIBOLD))
                         })
@@ -915,39 +914,13 @@ fn span_row(
     }
 }
 
-/// A changed line's row fill, gutter fill, sign color and sign. `modified` = a line changed
-/// in place (a removed and an added line paired): amber instead of red / green.
-fn line_colors(
-    kind: DiffLineKind,
-    modified: bool,
-    theme: &Theme,
-) -> (Option<u32>, Option<u32>, u32, &'static str) {
-    match (kind, modified) {
-        (DiffLineKind::Add, false) => (
-            Some(theme.diff_add_bg),
-            Some(theme.diff_add_gutter),
-            theme.diff_add_text,
-            "+",
-        ),
-        (DiffLineKind::Del, false) => (
-            Some(theme.diff_del_bg),
-            Some(theme.diff_del_gutter),
-            theme.diff_del_text,
-            "−",
-        ),
-        (DiffLineKind::Add, true) => (
-            Some(theme.diff_mod_bg),
-            Some(theme.diff_mod_gutter),
-            theme.diff_mod_text,
-            "+",
-        ),
-        (DiffLineKind::Del, true) => (
-            Some(theme.diff_mod_bg),
-            Some(theme.diff_mod_gutter),
-            theme.diff_mod_text,
-            "−",
-        ),
-        (DiffLineKind::Context, _) => (None, None, theme.text, " "),
+/// A line's row fill, line-number and sign color, and sign: removed lines red and added lines
+/// green (a paired change too: its changed token has its own fill), context plain.
+fn line_colors(kind: DiffLineKind, theme: &Theme) -> (Option<u32>, u32, &'static str) {
+    match kind {
+        DiffLineKind::Add => (Some(theme.diff_add_bg), theme.success_text, "+"),
+        DiffLineKind::Del => (Some(theme.diff_del_bg), theme.danger_text, "−"),
+        DiffLineKind::Context => (None, theme.text_subtle, " "),
     }
 }
 
@@ -958,33 +931,40 @@ fn is_picked(number: Option<u32>, picked: Option<Selection>) -> bool {
         .is_some_and(|(n, picked)| picked.contains(n, n))
 }
 
-/// A line's number (right-aligned to `width` digits; blanks when the side has none).
-fn line_number(number: Option<u32>, width: usize) -> String {
-    match number {
-        Some(n) => format!("{n:>width$}"),
-        None => " ".repeat(width),
-    }
+/// The width of a diff half's line-number gutter for numbers of `digits` digits: 40 px, wider
+/// for 5+ digits.
+fn gutter_width(digits: usize) -> Pixels {
+    px(theme::DIFF_GUTTER_WIDTH.max(digits as f32 * theme::DIFF_DIGIT_WIDTH + space::S))
 }
 
-/// The gutter of a line: its own fill (the accent while picked), numbers and sign.
-fn gutter(fill: Option<u32>, picked: bool, theme: &Theme) -> gpui::Div {
+/// One line-number column: `number` right-aligned in `width` (blank when the side has none).
+fn line_number(number: Option<u32>, color: u32, width: Pixels) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(width)
+        .pr(px(space::S))
+        .text_right()
+        .text_color(rgb(color))
+        .children(number.map(|n| n.to_string()))
+}
+
+/// The column of a line's `+` / `−` sign.
+fn sign_cell(sign: &'static str, color: u32) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(px(theme::DIFF_SIGN_WIDTH))
+        .flex()
+        .justify_center()
+        .text_color(rgb(color))
+        .child(sign)
+}
+
+/// The gutter of a line (numbers and sign): the accent fill while picked.
+fn gutter(picked: bool, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
         .flex()
-        .gap(px(space::S))
-        .px(px(space::S))
-        .text_color(rgb(if picked {
-            theme.accent_text
-        } else if fill.is_some() {
-            theme.text_dim
-        } else {
-            theme.text_muted
-        }))
-        .map(|el| match (picked, fill) {
-            (true, _) => el.bg(rgb(theme.accent_bg)),
-            (false, Some(fill)) => el.bg(rgb(fill)),
-            (false, None) => el,
-        })
+        .when(picked, |el| el.bg(rgb(theme.accent_bg)))
 }
 
 /// One Unified line: old and new numbers and the sign in the gutter, then the text. Picked
@@ -997,10 +977,10 @@ fn unified_line(
     wrap: bool,
     theme: &Theme,
 ) -> gpui::Div {
-    let modified = shown.modified.get(index).copied().unwrap_or(false);
-    let (bg, fill, fg, sign) = line_colors(line.kind, modified, theme);
+    let (bg, fg, sign) = line_colors(line.kind, theme);
     let is_picked = is_picked(line.new_line, picked);
-    let width = shown.number_width;
+    let number = if is_picked { theme.accent_text } else { fg };
+    let width = gutter_width(shown.number_width);
     diff_frame(wrap, theme)
         .border_l(px(theme::DIFF_PICK_BAR_WIDTH))
         .border_color(if is_picked {
@@ -1010,27 +990,82 @@ fn unified_line(
         })
         .when_some(bg, |el, bg| el.bg(rgb(bg)))
         .child(
-            gutter(fill, is_picked, theme)
-                .child(line_number(line.old_line, width))
-                .child(line_number(line.new_line, width))
-                .child(div().text_color(rgb(fg)).child(sign)),
+            gutter(is_picked, theme)
+                .child(line_number(line.old_line, number, width))
+                .child(line_number(line.new_line, number, width))
+                .child(sign_cell(sign, fg)),
         )
-        .child(diff_text(shown, index, line, fg, theme))
+        .child(diff_text(shown, index, line, theme))
 }
 
-/// A diff line's text (tabs expanded, syntax colors of `shown.spans[index]`), then the "no
-/// newline at end of file" pill when it has none. In a highlighted diff, text outside tokens
-/// is plain text (the sign and fills still tell added from removed); unhighlighted diffs keep
-/// the diff text color `fg`.
+/// The highlights of a diff line of `len` bytes: its syntax colors, and the changed token
+/// `word` (bytes and fill) lit behind them.
+fn diff_highlights(
+    len: usize,
+    spans: &[(Range<usize>, highlight::Token)],
+    word: Option<(Range<usize>, u32)>,
+    theme: &Theme,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    // The line as consecutive pieces: syntax tokens and, around the changed token, plain text.
+    let mut pieces: Vec<(Range<usize>, Option<u32>)> = Vec::with_capacity(spans.len() + 2);
+    let mut next = 0;
+    for (range, token) in spans {
+        if word.is_some() && next < range.start {
+            pieces.push((next..range.start, None));
+        }
+        pieces.push((range.clone(), Some(preview::token_color(*token, theme))));
+        next = range.end;
+    }
+    if word.is_some() && next < len {
+        pieces.push((next..len, None));
+    }
+    let fill = word.as_ref().map(|(_, bg)| Hsla::from(rgb(*bg)));
+    let mut out = Vec::with_capacity(pieces.len() + 2);
+    for (range, color) in pieces {
+        // Cut at the changed token's edges: only the part inside gets the fill.
+        let parts = match &word {
+            Some((word, _)) => [
+                (range.start..range.end.min(word.start), false),
+                (range.start.max(word.start)..range.end.min(word.end), true),
+                (range.start.max(word.end)..range.end, false),
+            ],
+            None => [(range, false), (0..0, false), (0..0, false)],
+        };
+        for (part, lit) in parts {
+            if part.is_empty() || (color.is_none() && !lit) {
+                continue;
+            }
+            out.push((
+                part,
+                HighlightStyle {
+                    color: color.map(|color| Hsla::from(rgb(color))),
+                    background_color: fill.filter(|_| lit),
+                    ..HighlightStyle::default()
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// A diff line's text (tabs expanded) in `text_dim`, the syntax colors of `shown.spans[index]`
+/// and, on a paired change, the changed token on its removed / added fill; then the "no
+/// newline at end of file" pill when it has none. The sign and numbers tell added from removed.
 fn diff_text(
     shown: &git_view::Shown,
     index: usize,
     line: &mkrew_protocol::DiffLine,
-    fg: u32,
     theme: &Theme,
 ) -> gpui::Div {
     let spans = shown.spans.get(index).map(Vec::as_slice).unwrap_or(&[]);
-    let text_color = if shown.highlighted { theme.text } else { fg };
+    let fill = match line.kind {
+        DiffLineKind::Del => Some(theme.diff_del_word_bg),
+        DiffLineKind::Add => Some(theme.diff_add_word_bg),
+        DiffLineKind::Context => None,
+    };
+    let word = shown.words.get(index).cloned().flatten().zip(fill);
+    let text = line.text.replace('\t', highlight::TAB);
+    let highlights = diff_highlights(text.len(), spans, word, theme);
     div()
         .flex_1()
         .min_w_0()
@@ -1042,13 +1077,8 @@ fn diff_text(
         .child(
             div()
                 .min_w_0()
-                .text_color(rgb(text_color))
-                .child(preview::code_line(
-                    line.text.replace('\t', highlight::TAB),
-                    spans,
-                    &[],
-                    theme,
-                )),
+                .text_color(rgb(theme.text_dim))
+                .child(StyledText::new(text).with_highlights(highlights)),
         )
         .when(line.no_newline, |el| {
             el.child(
@@ -1056,7 +1086,7 @@ fn diff_text(
                     .flex_none()
                     .px(px(space::XS))
                     .rounded(px(radius::SMALL))
-                    .bg(rgb(theme.surface_raised))
+                    .bg(rgb(theme.selected))
                     .font_family(theme.ui_font_family.clone())
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
@@ -1073,13 +1103,12 @@ pub(crate) enum DiffSide {
 }
 
 /// One half of a Split row: the old (left) or new (right) line `index` of `shown.rows`, or a
-/// hatched cell where that side has no line. `modified` = the row pairs a removed with an
-/// added line (amber on both halves). Only the new side shows the picked bar.
+/// hatched cell where that side has no line. Removed lines are red on the old side, added
+/// ones green on the new side. Only the new side shows the picked bar.
 fn split_half(
     shown: &git_view::Shown,
     index: Option<usize>,
     side: DiffSide,
-    modified: bool,
     picked: Option<Selection>,
     theme: &Theme,
 ) -> gpui::Div {
@@ -1098,20 +1127,25 @@ fn split_half(
             theme::DIFF_HATCH_INTERVAL,
         ));
     };
-    let (bg, fill, fg, sign) = line_colors(line.kind, modified, theme);
+    let (bg, fg, sign) = line_colors(line.kind, theme);
     let number = match side {
         DiffSide::Old => line.old_line,
         DiffSide::New => line.new_line,
     };
     let is_picked = side == DiffSide::New && is_picked(line.new_line, picked);
+    let number_color = if is_picked { theme.accent_text } else { fg };
     half.when_some(bg, |el, bg| el.bg(rgb(bg)))
         .when(is_picked, |el| el.border_color(rgb(theme.accent)))
         .child(
-            gutter(fill, is_picked, theme)
-                .child(line_number(number, shown.number_width))
-                .child(div().text_color(rgb(fg)).child(sign)),
+            gutter(is_picked, theme)
+                .child(line_number(
+                    number,
+                    number_color,
+                    gutter_width(shown.number_width),
+                ))
+                .child(sign_cell(sign, fg)),
         )
-        .child(diff_text(shown, at, line, fg, theme))
+        .child(diff_text(shown, at, line, theme))
 }
 
 /// A Split row that pairs lines (`Same` / `Change`; spans are [`span_row`]s): old half, a
@@ -1126,24 +1160,17 @@ pub(crate) fn git_split_row(
     theme: &Theme,
     on_new_half: impl FnOnce(gpui::Div, Option<u32>) -> gpui::Div,
 ) -> gpui::Div {
-    let (old, new, modified) = match row {
-        git_view::SplitRow::Same(at) => (Some(*at), Some(*at), false),
-        git_view::SplitRow::Change { old, new } => (*old, *new, old.is_some() && new.is_some()),
-        git_view::SplitRow::Span(_) => (None, None, false),
+    let (old, new) = match row {
+        git_view::SplitRow::Same(at) => (Some(*at), Some(*at)),
+        git_view::SplitRow::Change { old, new } => (*old, *new),
+        git_view::SplitRow::Span(_) => (None, None),
     };
     let new_number = new.and_then(|at| match shown.rows.get(at) {
         Some(git_view::DiffRow::Line(line)) => line.new_line,
         _ => None,
     });
     diff_frame(wrap, theme)
-        .child(split_half(
-            shown,
-            old,
-            DiffSide::Old,
-            modified,
-            picked,
-            theme,
-        ))
+        .child(split_half(shown, old, DiffSide::Old, picked, theme))
         .child(
             div()
                 .flex_none()
@@ -1151,7 +1178,7 @@ pub(crate) fn git_split_row(
                 .bg(rgb(theme.border)),
         )
         .child(on_new_half(
-            split_half(shown, new, DiffSide::New, modified, picked, theme),
+            split_half(shown, new, DiffSide::New, picked, theme),
             new_number,
         ))
 }

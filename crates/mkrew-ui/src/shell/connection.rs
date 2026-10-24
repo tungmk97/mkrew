@@ -358,6 +358,7 @@ impl Shell {
             jira_on,
             jira_mine,
             jira_keys_focus: cx.focus_handle(),
+            jira_filter_focus: cx.focus_handle(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,

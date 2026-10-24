@@ -241,7 +241,8 @@ impl Shell {
             )
     }
 
-    /// The branch name with Fetch and Push, and under it the upstream it tracks.
+    /// The branch card (`card` fill, 1 px border): a branch icon, the branch name over the
+    /// upstream it tracks, Fetch as an icon button and Push.
     fn git_branch_header(
         &self,
         project_id: Ulid,
@@ -258,32 +259,45 @@ impl Shell {
             None => "Git".to_owned(),
         };
         div()
+            .mx(px(space::M))
             .flex()
-            .flex_col()
-            .gap(px(space::XS))
+            .items_center()
+            .gap(px(space::S))
             .px(px(space::M))
-            .pt(px(space::S))
+            .py(px(space::S))
+            .rounded(px(radius::CARD))
+            .bg(rgb(theme.card))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .child(icon_svg(
+                Icon::GitBranch,
+                theme::ICON_SIZE,
+                theme.text_muted,
+            ))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .items_center()
-                    .gap(px(space::XS))
+                    .flex_col()
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
                             .truncate()
-                            .text_size(font_size::CARD_TITLE)
+                            .text_size(font_size::BODY)
                             .font_weight(FontWeight(weight::SEMIBOLD))
                             .text_color(rgb(theme.text))
                             .child(branch),
                     )
-                    .child(self.git_fetch_button(project_id, view, theme, cx))
-                    .child(self.git_push_button(project_id, view, status, theme, cx)),
+                    .children(status.map(|status| {
+                        div()
+                            .truncate()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_subtle))
+                            .child(git_view::tracking(status))
+                    })),
             )
-            .children(
-                status.map(|status| meta_line(theme, git_view::tracking(status).into()).truncate()),
-            )
+            .child(self.git_fetch_button(project_id, view, theme, cx))
+            .child(self.git_push_button(project_id, view, status, theme, cx))
     }
 
     /// Fetch as an icon: "⋯" while it runs, faded while Push runs.
@@ -300,11 +314,11 @@ impl Shell {
             Some(Remote::Fetch) => icon_button("git-fetch", Icon::Ellipsis, theme)
                 .tooltip(tooltip(theme, Remote::Fetch.running_label(), ""))
                 .into_any_element(),
-            Some(Remote::Push) => icon_button("git-fetch", Icon::ArrowDownToLine, theme)
+            Some(Remote::Push) => icon_button("git-fetch", Icon::Download, theme)
                 .opacity(opacity::DISABLED)
                 .tooltip(tooltip(theme, tip, ""))
                 .into_any_element(),
-            None => icon_button("git-fetch", Icon::ArrowDownToLine, theme)
+            None => icon_button("git-fetch", Icon::Download, theme)
                 .tooltip(tooltip(theme, tip, ""))
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     shell.run_git_remote(project_id, Remote::Fetch, window, cx);
@@ -337,31 +351,27 @@ impl Shell {
             "Push this branch to its upstream (never forced)"
         };
         if running.is_some() || no_upstream {
-            return button_frame(
-                "git-push",
-                icon_text(Icon::ArrowUpFromLine, label, theme.text_muted),
-            )
-            .flex_none()
-            .cursor_default()
-            .opacity(opacity::DISABLED)
-            .text_color(rgb(theme.text_muted))
-            .tooltip(tooltip(theme, tip, ""))
-            .into_any_element();
+            return button_frame("git-push", icon_text(Icon::Upload, label, theme.text_muted))
+                .flex_none()
+                .cursor_default()
+                .opacity(opacity::DISABLED)
+                .text_color(rgb(theme.text_muted))
+                .tooltip(tooltip(theme, tip, ""))
+                .into_any_element();
         }
-        let push = if ahead > 0 {
-            secondary_button(
-                "git-push",
-                icon_text(Icon::ArrowUpFromLine, label, theme.text),
-                theme,
-            )
-        } else {
-            quiet_button(
-                "git-push",
-                icon_text(Icon::ArrowUpFromLine, label, theme.text_muted),
-                theme,
-                theme.hover,
-            )
-        };
+        let push = secondary_button(
+            "git-push",
+            icon_text(
+                Icon::Upload,
+                label,
+                if ahead > 0 {
+                    theme.text
+                } else {
+                    theme.text_muted
+                },
+            ),
+            theme,
+        );
         push.flex_none()
             .tooltip(tooltip(theme, tip, ""))
             .on_click(cx.listener(move |shell, _, window, cx| {
@@ -381,13 +391,12 @@ impl Shell {
     ) -> gpui::Div {
         let toggle_keys = SharedString::from(self.keymap.label(Command::GitToggleMode));
         let history_keys = SharedString::from(self.keymap.label(Command::GitToggleHistory));
-        let hover = theme.hover;
         let shown = view.section();
         let working = match self.git_working_count(view, status) {
             Some(count) => format!("Working {count}"),
             None => "Working".to_owned(),
         };
-        let segment =
+        let tab =
             |section: git_view::Section, id: &'static str, label: String, tip: &'static str| {
                 let active = shown == section;
                 let keys = if section == git_view::Section::History {
@@ -395,53 +404,34 @@ impl Shell {
                 } else {
                     toggle_keys.clone()
                 };
-                div()
-                    .id(id)
+                segment(id, active, theme)
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .flex()
-                    .justify_center()
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .when(active, |el| {
-                        el.bg(rgb(theme.surface_raised))
-                            .font_weight(FontWeight(weight::MEDIUM))
-                            .text_color(rgb(theme.text))
-                    })
+                    .px(px(space::S))
                     .when(!active, |el| {
-                        el.cursor_pointer()
-                            .text_color(rgb(theme.text_muted))
-                            .hover(move |style| style.bg(rgb(hover)))
-                            .active(|style| style.opacity(opacity::ACTIVE))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                shell.show_git_section(project_id, section, window, cx);
-                            }))
+                        el.on_click(cx.listener(move |shell, _, window, cx| {
+                            shell.show_git_section(project_id, section, window, cx);
+                        }))
                     })
                     .tooltip(tooltip(theme, tip, keys))
                     .child(label)
             };
-        div()
+        segmented(theme)
             .mx(px(space::M))
-            .flex()
-            .p(px(theme::SEGMENT_PADDING))
-            .gap(px(theme::SEGMENT_PADDING))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface))
-            .child(segment(
+            .child(tab(
                 git_view::Section::Working,
                 "git-mode-working",
                 working,
                 "Uncommitted changes: staged, unstaged, untracked",
             ))
-            .child(segment(
+            .child(tab(
                 git_view::Section::Base,
                 "git-mode-base",
                 "Vs. base".to_owned(),
                 "Everything on this branch since it left the base",
             ))
-            .child(segment(
+            .child(tab(
                 git_view::Section::History,
                 "git-mode-history",
                 "History".to_owned(),
@@ -813,8 +803,8 @@ impl Shell {
     }
 
     /// The commit box pinned under the list (Working changes): the message (Enter breaks a
-    /// line, Ctrl+Enter or Commit commits the staged changes), its summary line's length, then
-    /// what is staged, ✦ Generate and Commit.
+    /// line, Ctrl+Enter or Commit commits the staged changes); under it the summary line's
+    /// length over what is staged, ✦ Generate (accent) and Commit (muted while it cannot go).
     pub(crate) fn git_commit_box(
         &self,
         project_id: Ulid,
@@ -843,12 +833,7 @@ impl Shell {
             "Commit the staged changes"
         };
         let commit = if draft.busy || generating || staged == 0 {
-            // Readable while it cannot be used: a faint accent fill, muted text.
-            button_frame("git-commit", label)
-                .cursor_default()
-                .bg(rgb(theme.accent_bg))
-                .text_color(rgb(theme.text_muted))
-                .font_weight(FontWeight(weight::MEDIUM))
+            disabled_button("git-commit", label, theme, true)
         } else {
             button("git-commit", label, theme, true).on_click(
                 cx.listener(move |shell, _, window, cx| shell.commit_git(project_id, window, cx)),
@@ -865,10 +850,11 @@ impl Shell {
         } else {
             quiet_button(
                 "git-commit-generate",
-                icon_text(Icon::Sparkles, "Generate", theme.text_muted),
+                icon_text(Icon::Sparkles, "Generate", theme.accent_text),
                 theme,
                 theme.hover,
             )
+            .text_color(rgb(theme.accent_text))
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.generate_commit_message(project_id, window, cx)
             }))
@@ -922,23 +908,29 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::S))
-                    .child(meta_line(theme, summary.into()).flex_1().min_w_0().truncate())
                     .child(
                         div()
-                            .id("git-commit-length")
-                            .flex_none()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
                             .text_size(font_size::META)
-                            .text_color(rgb(if too_long {
-                                theme.diff_del_text
-                            } else {
-                                theme.text_muted
-                            }))
-                            .tooltip(tooltip(
-                                theme,
-                                "Length of the summary line (keep it under 72)",
-                                "",
-                            ))
-                            .child(format!("{summary_len} / {}", git_actions::SUMMARY_LIMIT)),
+                            .text_color(rgb(theme.text_subtle))
+                            .child(
+                                div()
+                                    .id("git-commit-length")
+                                    .when(too_long, |el| el.text_color(rgb(theme.danger_text)))
+                                    .tooltip(tooltip(
+                                        theme,
+                                        "Length of the summary line (keep it under 72)",
+                                        "",
+                                    ))
+                                    .child(format!(
+                                        "{summary_len} / {}",
+                                        git_actions::SUMMARY_LIMIT
+                                    )),
+                            )
+                            .child(div().truncate().child(summary)),
                     )
                     .child(write.flex_none().tooltip(tooltip(
                         theme,

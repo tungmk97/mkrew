@@ -4,20 +4,19 @@ expression: "dump(&emulator, &Theme::dark())"
 ---
 row 0
   @0 "✔ build ok"
-    4 bytes fg=4CB782 bg=141519 bold
-    8 bytes fg=E4E5E9 bg=141519
+    4 bytes fg=57C78A bg=0B0C0E bold
+    8 bytes fg=ECEDEF bg=0B0C0E
 row 1
   @0 "日" (free)
-    3 bytes fg=E4E5E9 bg=141519
+    3 bytes fg=ECEDEF bg=0B0C0E
   @2 "本" (free)
-    3 bytes fg=E4E5E9 bg=141519
+    3 bytes fg=ECEDEF bg=0B0C0E
   @4 " warn"
-    1 bytes fg=E4E5E9 bg=141519
-    4 bytes fg=010203 bg=E3A63E underline
-  bg @5+4 E3A63E
+    1 bytes fg=ECEDEF bg=0B0C0E
+    4 bytes fg=010203 bg=E4A452 underline
+  bg @5+4 E4A452
 row 2
   @0 "> ls"
-    2 bytes fg=919296 bg=141519
-    2 bytes fg=141519 bg=E4E5E9
-  bg @2+2 E4E5E9
-  bg @4+1 8B91FF
+    2 bytes fg=929395 bg=0B0C0E
+    2 bytes fg=0B0C0E bg=ECEDEF
+  bg @2+3 ECEDEF

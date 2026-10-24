@@ -298,7 +298,7 @@ impl Shell {
         let fg = if live {
             theme.run_pill_text
         } else {
-            theme.text_muted
+            theme.text_dim
         };
         let dot = if summary.warning() {
             theme.status_needs_input
@@ -311,13 +311,13 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
-            .h(theme::rems_px(theme::ICON_BUTTON_SIZE))
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
             .px(px(space::M))
-            .rounded_full()
+            .rounded(px(radius::MEDIUM))
             .border(px(theme::BORDER_WIDTH))
             .cursor_pointer()
             .whitespace_nowrap()
-            .text_size(font_size::META)
+            .text_size(font_size::BODY)
             .text_color(rgb(fg))
             .when(live, |el| {
                 el.bg(rgb(theme.run_pill_bg))
@@ -326,7 +326,7 @@ impl Shell {
                     .hover(|style| style.opacity(opacity::HOVER))
             })
             .when(!live, |el| {
-                el.border_color(rgb(theme.border))
+                el.border_color(rgb(theme.control_border))
                     .hover(move |style| style.bg(rgb(hover)))
             })
             .active(|style| style.opacity(opacity::ACTIVE))
@@ -340,6 +340,13 @@ impl Shell {
             // a dev server runs (hours), against the idle CPU budget (SPEC §15).
             .when(live, |el| {
                 el.child(status_dot("run-pill-dot", dot, false, false))
+            })
+            .when(!live, |el| {
+                el.child(icon_svg(
+                    Icon::Play,
+                    theme::ICON_SIZE_SMALL,
+                    theme.status_done,
+                ))
             })
             .child(summary.label())
             .children(summary.ports_text().map(|ports| {

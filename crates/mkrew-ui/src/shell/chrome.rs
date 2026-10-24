@@ -86,31 +86,32 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
-            .child(div().flex_none().child(logo(theme)))
+            .child(app_logo(theme))
             .child(self.sidebar_toggle(theme, cx));
         if let Some(project_id) = workspace {
-            left = left
-                .child(self.render_workspace_switcher(project_id, theme, cx))
-                .child(self.render_view_tabs(shown, theme, cx));
+            left = left.child(self.render_workspace_switcher(project_id, theme, cx));
         }
-        // A sibling of the controls, never their parent: the first area a hit test finds wins.
-        let drag = div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .window_control_area(WindowControlArea::Drag)
-            .when(cfg!(target_os = "macos"), |el| {
-                el.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, event: &MouseDownEvent, window, _| {
-                        if event.click_count == 2 {
-                            window.titlebar_double_click();
-                        } else {
-                            window.start_window_move();
-                        }
-                    }),
-                )
-            });
+        // Siblings of the controls, never their parent: the first area a hit test finds wins.
+        // Two of them, so the views sit centered between the left and right groups.
+        let drag = |cx: &mut Context<'_, Self>| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .window_control_area(WindowControlArea::Drag)
+                .when(cfg!(target_os = "macos"), |el| {
+                    el.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, event: &MouseDownEvent, window, _| {
+                            if event.click_count == 2 {
+                                window.titlebar_double_click();
+                            } else {
+                                window.start_window_move();
+                            }
+                        }),
+                    )
+                })
+        };
         let mut bar = div()
             .flex_none()
             .h(theme::rems_px(theme::TITLE_BAR_HEIGHT))
@@ -127,7 +128,17 @@ impl Shell {
             .border_color(rgb(theme.divider))
             .font_family(theme.ui_font_family.clone())
             .child(left.when(modal, |el| el.relative().child(inert_layer())))
-            .child(drag);
+            .child(drag(cx));
+        if workspace.is_some() {
+            bar = bar
+                .child(
+                    div()
+                        .flex_none()
+                        .child(self.render_view_tabs(shown, theme, cx))
+                        .when(modal, |el| el.relative().child(inert_layer())),
+                )
+                .child(drag(cx));
+        }
         let controls = DRAWN_CONTROLS && !window.is_fullscreen();
         let mut right = div()
             .flex_none()
@@ -142,11 +153,7 @@ impl Shell {
             });
         if let Some(project_id) = workspace {
             right = right
-                .child(
-                    div()
-                        .pr(px(space::S))
-                        .child(self.render_run_button(project_id, theme, cx)),
-                )
+                .child(self.render_run_button(project_id, theme, cx))
                 .child(
                     icon_button("history", Icon::History, theme)
                         .tooltip(tooltip(
@@ -176,7 +183,7 @@ impl Shell {
         if workspace.is_some() {
             right = right.child(self.inspector_toggle(theme, cx)).child(
                 div()
-                    .pl(px(space::S))
+                    .pl(px(space::XS))
                     .child(self.render_new_button(now, theme, cx)),
             );
         }
@@ -195,6 +202,15 @@ impl Shell {
                     .flex_none()
                     .h_full()
                     .flex()
+                    .items_center()
+                    // A thin rule sets the window's own controls apart from the app's.
+                    .child(
+                        div()
+                            .w(px(theme::BORDER_WIDTH))
+                            .h(theme::rems_px(theme::TITLE_RULE_HEIGHT))
+                            .mr(px(space::XS))
+                            .bg(rgb(theme.divider)),
+                    )
                     .child(window_control(
                         "win-min",
                         Icon::Minus,
@@ -226,67 +242,31 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let hover = theme.hover;
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .p(px(theme::SEGMENT_PADDING))
-            .rounded(px(radius::MEDIUM))
-            .bg(rgb(theme.surface))
-            .children(
-                View::ALL
-                    .into_iter()
-                    .filter(|&view| view != View::Docs || self.features.docs)
-                    .map(|view| {
-                        let active = view == shown;
-                        div()
-                            .id(SharedString::from(format!("view-{}", view.title())))
-                            .flex()
-                            .items_center()
-                            .gap(px(space::XS))
-                            .px(px(space::M))
-                            .py(px(space::XS))
-                            .rounded(px(radius::SMALL))
-                            .border(px(theme::BORDER_WIDTH))
-                            .cursor_pointer()
-                            .whitespace_nowrap()
-                            .text_size(font_size::BODY)
-                            .when(active, |el| {
-                                el.bg(rgb(theme.surface_raised))
-                                    .border_color(rgb(theme.border))
-                                    .font_weight(FontWeight(weight::MEDIUM))
-                                    .text_color(rgb(theme.text))
-                            })
-                            .when(!active, |el| {
-                                el.border_color(gpui::transparent_black())
-                                    .text_color(rgb(theme.text_muted))
-                                    .hover(move |style| style.bg(rgb(hover)))
-                                    .active(|style| style.opacity(opacity::ACTIVE))
-                            })
-                            .tooltip(tooltip(
-                                theme,
-                                view.title(),
-                                self.keymap.label(view.command()),
-                            ))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                shell.show_view(view, window, cx);
-                            }))
-                            .child(view.title())
-                            .when(view == View::Git && changed > 0, |el| {
-                                el.child(
-                                    div()
-                                        .px(px(space::XS))
-                                        .rounded(px(radius::SMALL))
-                                        .bg(rgb(theme.surface_raised))
-                                        .text_size(font_size::META)
-                                        .text_color(rgb(theme.text_muted))
-                                        .child(changed.to_string()),
-                                )
-                            })
-                    }),
-            )
+        segmented(theme).children(
+            View::ALL
+                .into_iter()
+                .filter(|&view| view != View::Docs || self.features.docs)
+                .map(|view| {
+                    segment(
+                        SharedString::from(format!("view-{}", view.title())),
+                        view == shown,
+                        theme,
+                    )
+                    .tooltip(tooltip(
+                        theme,
+                        view.title(),
+                        self.keymap.label(view.command()),
+                    ))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.show_view(view, window, cx);
+                    }))
+                    .child(view.title())
+                    .when(view == View::Git && changed > 0, |el| {
+                        el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
+                    })
+                }),
+        )
     }
 
     /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and
@@ -313,12 +293,12 @@ impl Shell {
             .flex()
             .items_center()
             .gap(px(space::S))
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
             .px(px(space::S))
-            .py(px(space::XS))
-            .rounded(px(radius::SMALL))
+            .rounded(px(radius::MEDIUM))
             .cursor_pointer()
             .text_size(font_size::BODY)
-            .font_weight(FontWeight(weight::MEDIUM))
+            .font_weight(FontWeight(weight::SEMIBOLD))
             .text_color(rgb(theme.text))
             .hover(move |style| style.bg(rgb(hover)))
             .active(|style| style.opacity(opacity::ACTIVE))
@@ -354,12 +334,15 @@ impl Shell {
                     .id("title-branch")
                     .min_w_0()
                     .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .whitespace_nowrap()
-                    .px(px(space::XS))
-                    .rounded(px(radius::SMALL))
+                    .flex()
+                    .items_center()
+                    .gap(px(space::XS))
+                    .h(theme::rems_px(theme::PILL_HEIGHT))
+                    .px(px(space::S))
+                    .rounded(px(radius::PILL))
+                    .bg(rgb(theme.well))
                     .cursor_pointer()
+                    .whitespace_nowrap()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .hover(move |style| style.bg(rgb(hover)))
@@ -367,7 +350,18 @@ impl Shell {
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.show_view(View::Git, window, cx);
                     }))
-                    .child(label),
+                    .child(icon_svg(
+                        Icon::GitBranch,
+                        theme::ICON_SIZE_SMALL,
+                        theme.text_muted,
+                    ))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(label),
+                    ),
             )
         });
         let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
@@ -433,6 +427,7 @@ impl Shell {
             .min_w_0()
             .flex()
             .items_center()
+            .gap(px(space::XS))
             .child(div().child(button).children(menu))
             .children(repos)
             .into_any_element()
@@ -448,18 +443,18 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         if let Some(kind) = self.starting_pane {
-            return starting_button("new-pane", kind, now, theme, false);
+            return starting_button("new-pane", kind, now, theme, true);
         }
-        let button = secondary_button(
+        let button = button(
             "new-pane",
-            icon_text(Icon::Plus, "New", theme.text).child(icon_svg(
+            icon_text(Icon::Plus, "New", theme.on_accent).child(icon_svg(
                 Icon::ChevronDown,
                 theme::ICON_SIZE_SMALL,
-                theme.text_muted,
+                theme.on_accent,
             )),
             theme,
+            true,
         )
-        .bg(rgb(theme.chrome))
         .flex_none()
         .tooltip(tooltip(theme, "New agent or shell pane", ""))
         // An open menu already closed on this mouse down (outside it): the click reopens it.

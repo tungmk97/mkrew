@@ -733,7 +733,7 @@ impl Shell {
     /// Lines the editor shows at once (PageUp / PageDown).
     pub(crate) fn file_page_lines(&self, cx: &App) -> usize {
         let theme = cx.theme();
-        let row = px(theme.terminal_font_size * theme.terminal_line_height);
+        let row = px(theme.terminal_font_size * theme.code_line_height);
         let shown = self.file_code_scroll.0.borrow().last_item_size;
         shown
             .map_or(1, |size| (size.item.height / row).floor() as usize)

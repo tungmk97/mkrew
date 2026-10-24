@@ -1,6 +1,10 @@
 //! The Board's Jira side (SPEC §20I, ADR 0066): the `Tasks | Jira` switch, the workspace's
 //! Jira keys field, the issue list, and opening an issue as a task draft.
 
+use mkrew_ui::jira_board::{Section, is_in_progress, linked_task, sections, split_area};
+
+use super::widgets::status_pill;
+
 use crate::*;
 
 impl Shell {
@@ -296,28 +300,103 @@ impl Shell {
         cx.notify();
     }
 
-    /// The `Tasks | Jira` switch (only when `[jira] site` is set); in Jira mode with keys, the
-    /// keys, Edit, the `All | Mine` filter and Refresh.
+    /// The "Filter issues" field: typing edits, Esc clears (then leaves the field).
+    pub(crate) fn jira_filter_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let (Some(project_id), Some(key)) = (self.workspace, quick_open::key(&event.keystroke))
+        else {
+            return;
+        };
+        let paste = (key == quick_open::Key::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let field = &mut self.jira.entry(project_id).or_default().filter;
+        match key {
+            quick_open::Key::Close if !field.is_empty() => field.clear(),
+            quick_open::Key::Close => self.focus_pane(window, cx),
+            quick_open::Key::Open | quick_open::Key::Move(_) => {}
+            quick_open::Key::Backspace => {
+                field.backspace();
+            }
+            quick_open::Key::DeleteWord => {
+                field.delete_word();
+            }
+            quick_open::Key::SelectAll => field.select_all(),
+            quick_open::Key::Paste => {
+                field.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
+            }
+            quick_open::Key::Insert(text) => {
+                field.insert(&text);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Shows the keys field (Edit and the project button), filled with the saved keys.
+    fn edit_jira_keys(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let keys = self.jira_keys_of(project_id).to_vec();
+        self.jira.entry(project_id).or_default().edit_keys(&keys);
+        window.focus(&self.jira_keys_focus, cx);
+        cx.notify();
+    }
+
+    /// A two-option segmented control; the inactive segment runs `switch` with its option.
+    /// `id` prefixes the segments' element ids (`(id, index)`).
+    fn board_toggle<M: Copy + PartialEq + 'static>(
+        id: &'static str,
+        mode: M,
+        options: [(M, &'static str); 2],
+        tip: &'static str,
+        switch: impl Fn(&mut Self, M, &mut Window, &mut Context<'_, Self>) + Clone + 'static,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Div {
+        segmented(theme).children(options.into_iter().enumerate().map(
+            |(index, (target, label))| {
+                let switch = switch.clone();
+                segment((id, index), target == mode, theme)
+                    .tooltip(tooltip(theme, tip, SharedString::default()))
+                    .when(target != mode, |el| {
+                        el.on_click(cx.listener(move |shell, _, window, cx| {
+                            switch(shell, target, window, cx);
+                        }))
+                    })
+                    .child(label)
+            },
+        ))
+    }
+
+    /// The toolbar: the `Tasks | Jira` switch (only when `[jira] site` is set); in Jira mode
+    /// with keys also the project button, Edit, the `All | Mine` filter, the "Filter issues"
+    /// field and Refresh.
     pub(crate) fn render_board_header(
         &self,
         project_id: Ulid,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::Div> {
         if !self.jira_on {
             return None;
         }
-        let source = self
-            .jira
-            .get(&project_id)
-            .map_or(Source::Tasks, |v| v.source);
+        let view = self.jira.get(&project_id);
+        let source = view.map_or(Source::Tasks, |v| v.source);
         let keys = self.jira_keys_of(project_id);
-        let toggle = self.mode_toggle(
+        let toggle = Self::board_toggle(
             "board-source",
             source,
             [(Source::Tasks, "Tasks"), (Source::Jira, "Jira")],
             "Tasks / Jira",
-            SharedString::default(),
             move |shell, source, window, cx| shell.set_board_source(project_id, source, window, cx),
             theme,
             cx,
@@ -327,36 +406,70 @@ impl Shell {
             .items_center()
             .gap(px(space::S))
             .px(px(space::L))
-            .pt(px(space::S))
+            .py(px(space::S))
+            .border_b(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.divider))
             .child(toggle);
         if source != Source::Jira || keys.is_empty() {
             return Some(header);
         }
+        let focused = self.jira_filter_focus.is_focused(window);
+        let filter = view.map(|v| &v.filter);
+        let field = text_field(
+            "jira-filter",
+            filter.map_or("", Input::as_str),
+            "Filter issues",
+            focused,
+            filter.is_some_and(Input::all_selected),
+            theme,
+        )
+        .track_focus(&self.jira_filter_focus)
+        .on_key_down(cx.listener(Self::jira_filter_key_down))
+        .relative()
+        .child(self.typing(&self.jira_filter_focus, Self::jira_filter_key_down, cx))
+        .on_click(cx.listener(|shell, _, window, cx| {
+            window.focus(&shell.jira_filter_focus, cx);
+            cx.notify();
+        }));
+        let project = div()
+            .flex()
+            .items_center()
+            .gap(px(space::XS))
+            .child(format!("Project {}", keys.join(", ")))
+            .child(icon_svg(
+                Icon::ChevronDown,
+                theme::ICON_SIZE_SMALL,
+                theme.text_subtle,
+            ));
         Some(
             header
-                .child(notice(theme.text_muted, keys.join(", ")))
                 .child(
-                    button("jira-edit", "Edit", theme, false).on_click(cx.listener(
-                        move |shell, _, window, cx| {
-                            let keys = shell.jira_keys_of(project_id).to_vec();
-                            shell.jira.entry(project_id).or_default().edit_keys(&keys);
-                            window.focus(&shell.jira_keys_focus, cx);
-                            cx.notify();
-                        },
+                    secondary_button("jira-project", project, theme).on_click(cx.listener(
+                        move |shell, _, window, cx| shell.edit_jira_keys(project_id, window, cx),
                     )),
                 )
-                .child(self.mode_toggle(
+                .child(
+                    button("jira-edit", "Edit", theme, false).on_click(cx.listener(
+                        move |shell, _, window, cx| shell.edit_jira_keys(project_id, window, cx),
+                    )),
+                )
+                .child(Self::board_toggle(
                     "jira-assignee",
                     self.jira_mine,
                     [(false, "All"), (true, "Mine")],
                     "All issues / assigned to me",
-                    SharedString::default(),
                     move |shell, mine, window, cx| {
                         shell.set_jira_mine(project_id, mine, window, cx);
                     },
                     theme,
                     cx,
                 ))
+                .child(div().flex_1())
+                .child(
+                    search_box(field, None, focused, theme)
+                        .flex_none()
+                        .w(theme::rems_px(theme::BOARD_FILTER_WIDTH)),
+                )
                 .child(
                     button(
                         "jira-refresh",
@@ -468,6 +581,43 @@ impl Shell {
             Load::Loaded(issues) => {
                 let opening = view.and_then(|v| v.opening.as_deref());
                 let row_error = view.and_then(|v| v.row_error.as_ref());
+                let filter = view.map_or("", |v| v.filter.as_str());
+                let groups = sections(issues, filter);
+                if groups.is_empty() {
+                    return message(
+                        theme,
+                        None,
+                        format!("No issues match \"{}\"", filter.trim()).into(),
+                        None,
+                    )
+                    .flex_1()
+                    .into_any_element();
+                }
+                // One flat run of header and issue rows, in the order shown.
+                // ponytail: headers scroll with the list (GPUI has no sticky positioning).
+                let mut rows: Vec<gpui::AnyElement> = Vec::new();
+                let mut index = 0;
+                for group in groups {
+                    rows.push(section_header(&group, theme).into_any_element());
+                    for issue in group.issues {
+                        let row = self
+                            .issue_row(project_id, index, issue, theme, cx)
+                            .when(opening == Some(issue.key.as_str()), |el| {
+                                el.child(working_dots(now, rgb(theme.text_muted)))
+                            });
+                        rows.push(
+                            div()
+                                .child(row)
+                                .children(row_error.filter(|(failed, _)| *failed == issue.key).map(
+                                    |(_, reason)| {
+                                        notice(theme.text, format!("✕ {reason}")).px(px(space::S))
+                                    },
+                                ))
+                                .into_any_element(),
+                        );
+                        index += 1;
+                    }
+                }
                 div()
                     .id("jira-issues")
                     .flex_1()
@@ -475,77 +625,7 @@ impl Shell {
                     .overflow_y_scroll()
                     .px(px(space::L))
                     .pb(px(space::L))
-                    .children(issues.iter().enumerate().map(|(index, issue)| {
-                        let linked = mkrew_ui::jira_board::linked_task(
-                            self.board.tasks(),
-                            project_id,
-                            &issue.key,
-                        );
-                        let key = issue.key.clone();
-                        div()
-                            .child(
-                                div()
-                                    .id(("jira-issue", index))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(space::S))
-                                    .px(px(space::S))
-                                    .py(px(space::XS))
-                                    .rounded(px(radius::SMALL))
-                                    .cursor_pointer()
-                                    .text_color(rgb(theme.text))
-                                    .hover(|style| style.bg(rgb(theme.hover)))
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
-                                        shell.open_issue(project_id, key.clone(), window, cx);
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .text_size(font_size::META)
-                                            .text_color(rgb(theme.text_muted))
-                                            .child(issue.kind.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .font_weight(FontWeight(weight::MEDIUM))
-                                            .child(issue.key.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .overflow_hidden()
-                                            .text_ellipsis()
-                                            .whitespace_nowrap()
-                                            .child(issue.summary.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_none()
-                                            .text_size(font_size::META)
-                                            .text_color(rgb(theme.text_muted))
-                                            .child(issue.status.clone()),
-                                    )
-                                    .children(linked.map(|task| {
-                                        div()
-                                            .flex_none()
-                                            .px(px(space::S))
-                                            .rounded(px(radius::SMALL))
-                                            .bg(rgb(theme.surface_raised))
-                                            .text_size(font_size::META)
-                                            .child(board::column_title(task.status))
-                                    }))
-                                    .when(opening == Some(issue.key.as_str()), |el| {
-                                        el.child(working_dots(now, rgb(theme.text_muted)))
-                                    }),
-                            )
-                            .children(row_error.filter(|(failed, _)| *failed == issue.key).map(
-                                |(_, reason)| {
-                                    notice(theme.text, format!("✕ {reason}")).px(px(space::S))
-                                },
-                            ))
-                    }))
+                    .children(rows)
                     .into_any_element()
             }
             Load::NotLoaded => message(
@@ -558,4 +638,130 @@ impl Shell {
             .into_any_element(),
         }
     }
+
+    /// One issue row: type icon, key, area chip, title, type label, linked-task badge and the
+    /// status pill. A click opens the issue (`open_issue`).
+    fn issue_row(
+        &self,
+        project_id: Ulid,
+        index: usize,
+        issue: &mkrew_ui::jira::Issue,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let linked = linked_task(self.board.tasks(), project_id, &issue.key);
+        let key = issue.key.clone();
+        let (area, title) = split_area(&issue.summary);
+        let (glyph, glyph_color) = if issue.kind.eq_ignore_ascii_case("workstream") {
+            (Icon::Layers, theme.accent)
+        } else {
+            (Icon::SquareCheck, theme.text_subtle)
+        };
+        let area_color = match area {
+            Some(area) if area.eq_ignore_ascii_case("be") => theme.info_soft,
+            Some(area) if area.eq_ignore_ascii_case("fe") => theme.teal,
+            _ => theme.accent_text,
+        };
+        let pill = if is_in_progress(&issue.status) {
+            status_pill(
+                issue.status.clone(),
+                theme.info,
+                false,
+                theme.info_text,
+                theme.tint(theme.info),
+            )
+        } else {
+            status_pill(
+                issue.status.clone(),
+                theme.text_muted,
+                true,
+                theme.text_muted,
+                rgb(theme.hover),
+            )
+        };
+        let row_hover = theme.row_hover;
+        div()
+            .id(("jira-issue", index))
+            .flex()
+            .items_center()
+            .gap(px(space::S))
+            .h(theme::rems_px(theme::BOARD_ROW_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(radius::MEDIUM))
+            .cursor_pointer()
+            .text_color(rgb(theme.text))
+            .hover(move |style| style.bg(rgb(row_hover)))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.open_issue(project_id, key.clone(), window, cx);
+            }))
+            .child(icon_svg(glyph, theme::BOARD_TYPE_ICON, glyph_color).flex_none())
+            .child(
+                div()
+                    .flex_none()
+                    .w(theme::rems_px(theme::BOARD_KEY_WIDTH))
+                    .font_family(theme.terminal_font_family.clone())
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .child(issue.key.clone()),
+            )
+            .children(area.map(|area| tinted_chip(area.to_owned(), area_color, theme)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text))
+                    .child(title.to_owned()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_subtle))
+                    .child(issue.kind.clone()),
+            )
+            .children(linked.map(|task| {
+                div()
+                    .flex_none()
+                    .px(px(space::S))
+                    .rounded(px(radius::SMALL))
+                    .bg(rgb(theme.surface_raised))
+                    .text_size(font_size::META)
+                    .child(board::column_title(task.status))
+            }))
+            .child(pill)
+    }
+}
+
+/// A status group's header: its status icon (half circle in `info` for In Progress, else an
+/// empty circle), the name and the count.
+fn section_header(section: &Section<'_>, theme: &Theme) -> gpui::Div {
+    let (glyph, color) = if is_in_progress(section.status) {
+        (Icon::CircleHalf, theme.info)
+    } else {
+        (Icon::Circle, theme.text_muted)
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(px(space::S))
+        .px(px(space::S))
+        .pt(px(space::M))
+        .pb(px(space::XS))
+        .text_size(font_size::BODY)
+        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
+        .child(
+            div()
+                .font_weight(FontWeight(weight::SEMIBOLD))
+                .text_color(rgb(theme.text))
+                .child(section.status.to_owned()),
+        )
+        .child(
+            div()
+                .text_color(rgb(theme.text_subtle))
+                .child(section.issues.len().to_string()),
+        )
 }

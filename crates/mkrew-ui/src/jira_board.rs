@@ -41,6 +41,8 @@ pub struct JiraView {
     pub opening: Option<String>,
     /// `(issue key, reason)` of the last failed draft fetch, shown under that row.
     pub row_error: Option<(String, String)>,
+    /// The toolbar's "Filter issues" text (matches key or summary, ignoring case).
+    pub filter: Input,
 }
 
 impl JiraView {
@@ -104,6 +106,67 @@ pub fn linked_task<'a>(tasks: &'a [Task], project_id: Ulid, key: &str) -> Option
                 .strip_prefix(key)
                 .is_some_and(|rest| rest.starts_with(' '))
     })
+}
+
+/// Whether a Jira status is the In Progress one (its own icon, pill and place in the list).
+pub fn is_in_progress(status: &str) -> bool {
+    status.eq_ignore_ascii_case("in progress")
+}
+
+/// The leading `[xxx]` area tag of an issue title and the title without it: `[BE] Fix x` is
+/// `(Some("BE"), "Fix x")`. No tag, an empty `[]` or an unclosed `[` leave the title as is.
+pub fn split_area(title: &str) -> (Option<&str>, &str) {
+    let Some(rest) = title.strip_prefix('[') else {
+        return (None, title);
+    };
+    match rest.split_once(']') {
+        Some((area, after)) if !area.trim().is_empty() => (Some(area.trim()), after.trim_start()),
+        _ => (None, title),
+    }
+}
+
+/// One status group of the list (`In Progress`, `To Do`, ...), items in list order.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Section<'a> {
+    pub status: &'a str,
+    pub issues: Vec<&'a Issue>,
+}
+
+/// Whether `issue` matches the filter text (key or summary, ignoring case); empty matches all.
+pub fn matches_filter(issue: &Issue, filter: &str) -> bool {
+    let needle = filter.trim().to_lowercase();
+    needle.is_empty()
+        || issue.key.to_lowercase().contains(&needle)
+        || issue.summary.to_lowercase().contains(&needle)
+}
+
+/// The issues that match `filter`, grouped by status: `In Progress` first, `To Do` second, any
+/// other status after in first-seen order; order inside a section is the list's.
+pub fn sections<'a>(issues: &'a [Issue], filter: &str) -> Vec<Section<'a>> {
+    let mut out: Vec<Section<'a>> = Vec::new();
+    for issue in issues.iter().filter(|issue| matches_filter(issue, filter)) {
+        match out
+            .iter_mut()
+            .find(|section| section.status.eq_ignore_ascii_case(&issue.status))
+        {
+            Some(section) => section.issues.push(issue),
+            None => out.push(Section {
+                status: &issue.status,
+                issues: vec![issue],
+            }),
+        }
+    }
+    // Stable: the other statuses keep their first-seen order.
+    out.sort_by_key(|section| {
+        if is_in_progress(section.status) {
+            0
+        } else if section.status.eq_ignore_ascii_case("to do") {
+            1
+        } else {
+            2
+        }
+    });
+    out
 }
 
 #[cfg(test)]
@@ -204,5 +267,62 @@ mod tests {
         );
         view.keys_field = Some(Input::from(" proj ,, bill "));
         assert_eq!(view.typed_keys(), ["proj", "bill"]);
+    }
+
+    fn issue_in(key: &str, status: &str) -> Issue {
+        Issue {
+            status: status.into(),
+            ..issue(key)
+        }
+    }
+
+    #[test]
+    fn the_area_tag_is_split_off_the_title() {
+        assert_eq!(split_area("[BE] Fix x"), (Some("BE"), "Fix x"));
+        assert_eq!(split_area("[FE]Fix x"), (Some("FE"), "Fix x"));
+        assert_eq!(split_area("Fix x"), (None, "Fix x"));
+        assert_eq!(split_area("Fix [BE] x"), (None, "Fix [BE] x"));
+        assert_eq!(split_area("[] Fix x"), (None, "[] Fix x"));
+        assert_eq!(split_area("[ ] Fix x"), (None, "[ ] Fix x"));
+        assert_eq!(split_area("[BE Fix x"), (None, "[BE Fix x"));
+        assert_eq!(split_area("[BE]"), (Some("BE"), ""));
+    }
+
+    #[test]
+    fn sections_put_in_progress_first_then_to_do_then_others_first_seen() {
+        let issues = vec![
+            issue_in("A-1", "To Do"),
+            issue_in("A-2", "Blocked"),
+            issue_in("A-3", "In Progress"),
+            issue_in("A-4", "In Review"),
+            issue_in("A-5", "To Do"),
+            issue_in("A-6", "in progress"),
+        ];
+        let sections = sections(&issues, "");
+        let shown: Vec<(&str, Vec<&str>)> = sections
+            .iter()
+            .map(|s| (s.status, s.issues.iter().map(|i| i.key.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("In Progress", vec!["A-3", "A-6"]),
+                ("To Do", vec!["A-1", "A-5"]),
+                ("Blocked", vec!["A-2"]),
+                ("In Review", vec!["A-4"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_filter_matches_key_or_summary_and_drops_empty_sections() {
+        let mut a = issue_in("EIS-1", "To Do");
+        a.summary = "Fix Login".into();
+        let b = issue_in("EIS-2", "In Progress");
+        let issues = vec![a, b];
+        assert_eq!(sections(&issues, "login").len(), 1);
+        assert_eq!(sections(&issues, " eis-2 ")[0].status, "In Progress");
+        assert!(sections(&issues, "nope").is_empty());
+        assert_eq!(sections(&issues, "").len(), 2);
     }
 }

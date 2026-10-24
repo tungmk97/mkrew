@@ -65,21 +65,22 @@ impl Shell {
     }
 }
 
-/// "+3 −1" in the diff colors.
+/// "+3 −1" in the diff colors, in the mono font.
 pub(crate) fn change_counts(added: u32, removed: u32, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
         .flex()
         .gap(px(space::XS))
+        .font_family(theme.terminal_font_family.clone())
         .text_size(font_size::META)
         .child(
             div()
-                .text_color(rgb(theme.diff_add_text))
+                .text_color(rgb(theme.success_text))
                 .child(format!("+{added}")),
         )
         .child(
             div()
-                .text_color(rgb(theme.diff_del_text))
+                .text_color(rgb(theme.danger_text))
                 .child(format!("−{removed}")),
         )
 }
@@ -109,17 +110,17 @@ fn list_row(id: SharedString) -> gpui::Stateful<gpui::Div> {
         .items_center()
         .gap(px(space::S))
         .px(px(space::S))
-        .rounded(px(radius::SMALL))
+        .rounded(px(radius::MEDIUM))
         .border(px(theme::BORDER_WIDTH))
         .border_color(gpui::transparent_black())
 }
 
-/// One row of the Git changed-file list: a group header (uppercase title, count, folds on
-/// click; "Stage all" / "Unstage all" on hover), the empty Staged hint, a file (change
-/// letter, name, folder muted, +/− counts; indented under its History commit), a History
-/// commit ([`git_commit_row`], ages at `now`) or a note under it. The selected file has the
-/// selection fill and an accent ring (stronger while the list has the keyboard); in the
-/// History, `graph` is the row's column of the lane graph.
+/// One row of the Git changed-file list: a group header (overline title, count, folds on
+/// click; "Stage all" / "Unstage all" on hover), the empty Staged hint (a dashed box), a file
+/// (change-letter badge, name, folder muted, +/− counts; indented under its History commit),
+/// a History commit ([`git_commit_row`], ages at `now`) or a note under it. The selected file
+/// has the `hover` fill and an accent ring while the list has the keyboard; in the History,
+/// `graph` is the row's column of the lane graph.
 /// A viewed file is dimmed and its box is checked.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn git_file_row(
@@ -139,11 +140,23 @@ pub(crate) fn git_file_row(
             return group_header(project_id, *group, *count, folded, theme, cx);
         }
         git_view::ListRow::Hint(hint) => {
+            // A dashed box filling the row, the message centered in it.
             return list_row(SharedString::from("git-staged-hint"))
-                .child(under_commit())
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .child(div().min_w_0().truncate().child(*hint))
+                .child(
+                    div()
+                        .size_full()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(radius::MEDIUM))
+                        .border(px(theme::BORDER_WIDTH))
+                        .border_dashed()
+                        .border_color(rgb(theme.selected))
+                        .text_size(font_size::META)
+                        .text_color(rgb(theme.text_subtle))
+                        .child(div().min_w_0().truncate().child(*hint)),
+                )
                 .into_any_element();
         }
         git_view::ListRow::Note(note) => {
@@ -193,11 +206,8 @@ pub(crate) fn git_file_row(
         .cursor_pointer()
         .text_size(font_size::BODY)
         .when(picked, |el| {
-            el.bg(rgb(theme.selected)).border_color(rgb(if focused {
-                theme.accent
-            } else {
-                theme.pane_focus_border
-            }))
+            el.bg(rgb(theme.hover))
+                .when(focused, |el| el.border_color(rgb(theme.accent)))
         })
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
         .active(|style| style.opacity(opacity::ACTIVE))
@@ -205,8 +215,13 @@ pub(crate) fn git_file_row(
             div()
                 .id(SharedString::from(format!("{id}-kind")))
                 .flex_none()
-                .w(theme::rems_px(theme::ICON_SIZE_SMALL))
-                .text_size(font_size::META)
+                .size(theme::rems_px(theme::GIT_BADGE_SIZE))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(radius::TAG))
+                .bg(theme.tint(color))
+                .text_size(font_size::OVERLINE)
                 .font_weight(FontWeight(weight::SEMIBOLD))
                 .text_color(rgb(color))
                 // A viewed row steps back (its content, not the ✓ box); the selected one stays readable.
@@ -228,7 +243,7 @@ pub(crate) fn git_file_row(
                         .min_w_0()
                         .truncate()
                         .text_color(rgb(theme.text))
-                        .when(picked, |el| el.font_weight(FontWeight(weight::MEDIUM)))
+                        .font_weight(FontWeight(weight::MEDIUM))
                         .child(name),
                 )
                 .children(dir.map(|dir| {
@@ -236,7 +251,7 @@ pub(crate) fn git_file_row(
                         .flex_none()
                         .whitespace_nowrap()
                         .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
+                        .text_color(rgb(theme.text_subtle))
                         .child(dir)
                 })),
         )
@@ -270,9 +285,12 @@ pub(crate) fn git_file_row(
         // Shown on hover and on the selected file (SPEC §14 progressive disclosure).
         .children(git_view::Stage::of(group).map(|stage| {
             let target = target.clone();
-            row_action(
+            icon_button(
                 SharedString::from(format!("{id}-stage")),
-                stage.label(),
+                match stage {
+                    git_view::Stage::Stage => Icon::Plus,
+                    git_view::Stage::Unstage => Icon::Minus,
+                },
                 theme,
             )
             .when(!picked, |el| {
@@ -302,8 +320,9 @@ pub(crate) fn git_file_row(
         .into_any_element()
 }
 
-/// A Working group header: chevron, uppercase title and count; a click folds or unfolds the
-/// group. "Stage all" / "Unstage all" shows on hover while the group lists files.
+/// A Working group header: chevron, overline title and count (11/600 upper case); a click
+/// folds or unfolds the group. "Stage all" / "Unstage all" shows on hover while the group
+/// lists files.
 fn group_header(
     project_id: Ulid,
     group: git_view::Group,
@@ -313,14 +332,11 @@ fn group_header(
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let id = SharedString::from(format!("git-group-{group:?}"));
-    let hover = theme.text;
+    let hover = theme.hover;
     list_row(id.clone())
         .group(id.clone())
         .cursor_pointer()
-        .text_size(font_size::META)
-        .font_weight(FontWeight(weight::MEDIUM))
-        .text_color(rgb(theme.text_muted))
-        .hover(move |style| style.text_color(rgb(hover)))
+        .hover(move |style| style.bg(rgb(hover)))
         .tooltip(tooltip(
             theme,
             if folded {
@@ -343,8 +359,8 @@ fn group_header(
             theme::ICON_SIZE_SMALL,
             theme.chevron_color(),
         ))
-        .child(group.title().to_uppercase())
-        .child(count.to_string())
+        .child(overline(group.title(), theme))
+        .child(overline(&count.to_string(), theme))
         .child(div().flex_1())
         .children(
             git_view::Stage::of(group)
@@ -405,11 +421,8 @@ pub(crate) fn git_commit_row(
         .cursor_pointer()
         .text_size(font_size::BODY)
         .when(picked, |el| {
-            el.bg(rgb(theme.selected)).border_color(rgb(if focused {
-                theme.accent
-            } else {
-                theme.pane_focus_border
-            }))
+            el.bg(rgb(theme.hover))
+                .when(focused, |el| el.border_color(rgb(theme.accent)))
         })
         .when(!picked, |el| el.hover(move |style| style.bg(rgb(hover))))
         .active(|style| style.opacity(opacity::ACTIVE))
@@ -440,7 +453,7 @@ pub(crate) fn git_commit_row(
                 .flex_none()
                 .whitespace_nowrap()
                 .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
+                .text_color(rgb(theme.text_subtle))
                 .child(meta),
         )
         .on_click(cx.listener(move |shell, _, window, cx| {
@@ -540,21 +553,26 @@ fn graph_column(cell: GraphCell, lanes: usize, theme: &Theme) -> gpui::Div {
         )
 }
 
-/// The "viewed" box of a file: a small square, ✓ in the accent color while viewed (the look of
-/// the broadcast dialog's checkboxes).
+/// The "viewed" checkbox of a file: a 16 px square, filled with the accent and a ✓ while viewed.
 pub(crate) fn viewed_box(on: bool, theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
-        .size(px(space::M))
+        .size(px(space::L))
         .flex()
         .items_center()
         .justify_center()
         .rounded(px(radius::SMALL))
         .border(px(theme::BORDER_WIDTH))
-        .border_color(rgb(theme.text_muted))
-        .text_size(font_size::META)
-        .text_color(rgb(theme.accent))
-        .child(if on { "✓" } else { "" })
+        .when(on, |el| {
+            el.bg(rgb(theme.accent))
+                .border_color(rgb(theme.accent))
+                .child(icon_svg(
+                    Icon::Check,
+                    theme::ICON_SIZE_SMALL,
+                    theme.on_accent,
+                ))
+        })
+        .when(!on, |el| el.border_color(rgb(theme.text_subtle)))
 }
 
 /// `Viewed 3/10` in the side panel header (✓ once every file is viewed); none in the History
@@ -573,7 +591,12 @@ pub(crate) fn git_viewed_line(view: &GitView, theme: &Theme) -> Option<gpui::Sta
                 "Files you marked as viewed; a mark clears when the file's diff changes",
                 "",
             ))
-            .child(meta_line(theme, format!("Viewed {viewed}/{listed}").into()))
+            .child(
+                div()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_subtle))
+                    .child(format!("Viewed {viewed}/{listed}")),
+            )
             .when(viewed == listed, |el| {
                 el.child(
                     div()

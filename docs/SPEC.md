@@ -1342,57 +1342,78 @@ The terminal is the hero; everything else steps back.
 
 **Design tokens** — all in `crates/mkrew-ui/src/theme.rs`. No hard-coded values in components.
 
+Restyle of 2026-10-24 (ADR 0074). The sidebar session list and compact rail keep the palette from
+before it (`Theme::classic`).
+
 | Token | Dark | Light |
 | --- | --- | --- |
-| `bg` | #17181C | #FFFFFF |
-| `surface` | #1F2127 | #F6F7F9 |
-| `surface-raised` | #2C2E37 | #EEF0F3 |
-| `sidebar` | #131418 | #F4F5F7 |
-| `card` | #1A1B20 | #FFFFFF |
-| `hover` | #22242B | #EEF0F3 |
-| `selected` | #262938 | #E9EAFF |
-| `border` | #2A2C33 | #E3E5EA |
-| `divider` | #24262D | #ECEEF1 |
-| `text` | #E6E7EB | #1B1D22 |
-| `text-dim` | #B4B7C0 | #474B55 |
-| `text-muted` | #9A9CA6 | #5F6473 |
+| `bg` (content) | #15171B | #FFFFFF |
+| `surface` (panel) | #121418 | #FAFAFB |
+| `surface-raised` | #2A2E35 | #E6E8EC |
+| `chrome` / `sidebar` | #0F1013 | #F7F7F8 |
+| `card` (raised) | #1C1F24 | #F7F8FA |
+| `hover` | #1F2227 | #EEF0F3 |
+| `row-hover` | #1A1D21 | #F4F5F7 |
+| `well` | #17191D | #F1F2F4 |
+| `selected` | #2A2E35 | #E6E8EC |
+| `border` | #23262C | #DFE1E6 |
+| `control-border` | #262A31 | #D9DCE1 |
+| `divider` | #1E2126 | #E9EBEE |
+| `terminal-bg` | #0B0C0E | #FCFCFD |
+| `text` | #ECEDEF | #1B1D22 |
+| `text-dim` | #D5D8DD | #3A3E46 |
+| `text-muted` | #A3A8B0 | #5A606B |
+| `text-subtle` (dimmest text) | #7D838C | #6B717C |
+| `text-disabled` | #8A9099 | #6B717C |
 | `subtle` (graphics only) | #5D616C | #A0A4AF |
-| `accent` | #7C8CFF | #4F5BD5 |
-| `accent-text` | #9A9FFF | #4A52D9 |
-| `accent-bg` | #25264A | #ECEEFF |
-| `on-accent` | #17181C | #FFFFFF |
-| `warning-bg` / `success-bg` | #3A3020 / #1D3A31 | #FDF3E1 / #E1F5EC |
-| `danger-bg` | #3A2327 | #FDECEC |
-| `status-working` | #7C8CFF | #4F5BD5 |
-| `status-needs-input` | #E3A63E | #B7791F |
-| `status-done` | #4CB782 | #2F855A |
-| `status-exited` | #E5676B | #C53030 |
-| `status-idle` | #6E7079 | #9A9CA6 |
-| `diff-add-bg` | #1E3A2B | #E6F4EA |
-| `diff-add-text` | #7DD3A0 | #1E6B3A |
-| `diff-del-bg` | #3D2226 | #FDEEEE |
-| `diff-del-text` | #F2A0A4 | #A61B1B |
-| `diff-hunk-header` | #2C2E37 | #F6F7F9 |
+| `accent` | #8E8CF5 | #5452D0 |
+| `accent-text` | #C2C1FA | #4A48C4 |
+| `accent-bg` | #26273A | #EBEBFA |
+| `on-accent` | #0F1013 | #FFFFFF |
+| `info` / `info-text` / `info-soft` | #6AA6F2 / #8DB9F5 / #93BCF6 | #2F6FC4 / #2A62AD / #2F6FC4 |
+| `teal` | #74D6C4 | #1A7F70 |
+| `folder` | #8FA3C0 | #5F7590 |
+| `warning-bg` / `success-bg` | #322B23 / #1E302B | #F4EDE2 / #E5F0EA |
+| `danger-bg` | #342526 | #F8E8E6 |
+| `danger-text` / `success-text` | #EF8F82 / #6FD39B | #B4382A / #1E6B3A |
+| `status-working` | #8E8CF5 | #5452D0 |
+| `status-needs-input` (attention) | #E4A452 | #A4660F |
+| `status-done` (success) | #57C78A | #23854F |
+| `status-exited` (danger) | #EF7B6C | #C2412F |
+| `status-idle` | #7D838C | #8A8F99 |
+| `diff-add-bg` / `diff-del-bg` | #182422 / #261D20 | #E7EFEC / #F5E9E9 |
+| `diff-add-word-bg` / `diff-del-word-bg` | #254638 / #543331 | #C4DDD0 / #ECCCC8 |
+| `diff-add-text` / `diff-del-text` | #6FD39B / #EF8F82 | #1E6B3A / #A61B1B |
+| `diff-hunk-header` | #17191D | #F1F2F4 |
 | `qr-dark` | #101114 | #101114 |
 | `qr-light` | #FFFFFF | #FFFFFF |
 
+Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
+
 - Spacing scale 4 · 8 · 12 · 16 · 24 · 32 px. Card padding 12, gap between cards 8, main padding 16–24.
-- Radius 4 (badges, small buttons), 8 (cards, panes, inputs), 12 (dialogs, palette).
-- UI font = system font (Segoe UI Variable / SF / Inter) unless `[ui] font_family` is set. Sizes
-  12 meta, 13 body, 15 card title, 20 view title at the default `[ui] font_size = 13`; other sizes
-  keep their ratio to body (ADR 0024). Weights 400/500/600. No all-caps text.
+- Radius 5 (area chips, key hints), 6 (chips, segments, tree rows), 8 (buttons, inputs, rows),
+  9 (segmented container), 10 (cards), 12 (dialogs, palette), 999 (pills); 4 for old badges.
+- Heights: controls 30, inputs 32, title bar 48, tab strip 44, Git repo strip 42 (px at 13 px body).
+- Shared controls (`shell/widgets.rs`): segmented control, primary / secondary / ghost / destructive
+  buttons, 30 px icon button, search box, status pill, tinted chip, overline, key hint.
+- UI font = Inter when installed, else the system font (Segoe UI Variable / SF), unless
+  `[ui] font_family` is set (Inter is not bundled). Sizes 11 overline, 12 meta, 13 body, 15 card
+  title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
+  (ADR 0024). Weights 400/500/600. All-caps only for 11/600 overlines.
 - Docs preview (ADR 0021): body 14 px, line height 1.6, headings 24/20/17/15/14/14 px, code 13 px,
   a centered column of at most 720 px.
-- Terminal font defaults: Cascadia Code → Cascadia Mono → Consolas (Windows), SF Mono → Menlo
+- Terminal font defaults: JetBrains Mono → Cascadia Code → Cascadia Mono → Consolas (Windows),
+  JetBrains Mono → SF Mono → Menlo
   (macOS), JetBrains Mono → DejaVu Sans Mono (Linux): the first installed one, 13 px;
   `[terminal] font_family` / `font_size` override them (a family that is not installed is
   ignored). Icons of
   Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
   family (`theme::TERMINAL_GLYPH_FALLBACKS`), then the system fallback. ANSI palette
   harmonized with the theme.
-- Terminal: 16 px padding; bar cursor in the accent color (hollow block when the pane is
-  unfocused; a program's DECSCUSR shape wins); a lone pane has no border, borders mark the
-  focused split pane and needs-input.
+- Terminal: `terminal-bg` fill, 32 px top/bottom and 36 px left/right padding, line height 1.75;
+  bar cursor in the text color (hollow block when the pane is unfocused; a program's DECSCUSR
+  shape wins); a lone pane has no border, borders mark the focused split pane and needs-input.
+  Files code rows keep line height 1.35 (`code_line_height`).
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
   draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color,
   16 px in icon buttons and 14 px among text (`ICON_SIZE`, `ICON_SIZE_SMALL`). The glyphs this

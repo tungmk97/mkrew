@@ -9,7 +9,6 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use gpui::prelude::*;
@@ -475,6 +474,8 @@ struct Shell {
     jira_mine: bool,
     /// The Jira keys field.
     jira_keys_focus: FocusHandle,
+    /// The Jira list's "Filter issues" field.
+    jira_filter_focus: FocusHandle,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).

@@ -407,7 +407,7 @@ impl Shell {
         let filter_focused = self.filter_focus.is_focused(window);
         let controls = (connected && !self.sidebar.is_empty()).then(|| {
             let filter = self.sidebar.filter();
-            let hover = theme.hover;
+            let bordered = theme.border;
             // Inside the field's right padding: × while it holds text, else the `/` hint.
             let trailing = if !filter.is_empty() {
                 Some(
@@ -437,6 +437,10 @@ impl Shell {
             )
             .flex_1()
             .min_w_0()
+            .h(theme::rems_px(theme::INPUT_HEIGHT))
+            .flex()
+            .items_center()
+            .py_0()
             // The search mark sits in the padding before the text, the trailing slot after it.
             .relative()
             .pl(px(space::XL))
@@ -452,7 +456,7 @@ impl Shell {
                     .child(icon_svg(
                         Icon::Search,
                         theme::ICON_SIZE_SMALL,
-                        theme.text_muted,
+                        theme.text_subtle,
                     )),
             )
             .children(trailing.map(|trailing| {
@@ -471,13 +475,21 @@ impl Shell {
             .when(filter_focused, |el| {
                 el.child(self.typing(&self.filter_focus, Self::filter_key_down, cx))
             });
+            // Square, bordered, as tall as the field beside them.
+            let framed = move |button: gpui::Stateful<gpui::Div>| {
+                button
+                    .size(theme::rems_px(theme::INPUT_HEIGHT))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(rgb(bordered))
+            };
             let actions = div()
                 .flex_none()
                 .flex()
                 .items_center()
+                .gap(px(space::XS))
                 .when(removable > 0, |el| {
                     el.child(
-                        icon_button("remove-idle-agents", Icon::Delete, theme)
+                        framed(icon_button("remove-idle-agents", Icon::Delete, theme))
                             .tooltip(tooltip(
                                 theme,
                                 &format!("Remove idle agents and terminals ({removable})"),
@@ -489,7 +501,7 @@ impl Shell {
                     )
                 })
                 .child(
-                    icon_button(
+                    framed(icon_button(
                         "collapse-workspaces",
                         if any_open {
                             Icon::ChevronDown
@@ -497,7 +509,7 @@ impl Shell {
                             Icon::ChevronRight
                         },
                         theme,
-                    )
+                    ))
                     .tooltip(tooltip(
                         theme,
                         if any_open {
@@ -513,44 +525,22 @@ impl Shell {
                     })),
                 )
                 .child(
-                    icon_button("add-workspace", Icon::Plus, theme)
+                    framed(icon_button("add-workspace", Icon::Plus, theme))
                         .tooltip(tooltip(theme, "Add workspace", add_workspace_keys.clone()))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.add_workspace(window, cx);
                         })),
                 );
             // All / Working / Needs you as a segmented control; a waiting count is amber.
-            let segment =
+            let chip =
                 |id: &'static str, label: &'static str, count: usize, which: sidebar::Chip| {
-                    let active = self.sidebar.chip() == which;
                     let count_color = if which == sidebar::Chip::NeedsYou && count > 0 {
                         theme.status_needs_input
                     } else {
-                        theme.text_muted
+                        theme.text_subtle
                     };
-                    div()
-                        .id(id)
+                    segment(id, self.sidebar.chip() == which, theme)
                         .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(space::XS))
-                        .py(px(theme::SEGMENT_PADDING))
-                        .rounded(px(radius::SMALL))
-                        .border(px(theme::BORDER_WIDTH))
-                        .cursor_pointer()
-                        .whitespace_nowrap()
-                        .text_size(font_size::META)
-                        .when(active, |el| {
-                            el.bg(rgb(theme.surface_raised))
-                                .border_color(rgb(theme.border))
-                                .text_color(rgb(theme.text))
-                        })
-                        .when(!active, |el| {
-                            el.border_color(gpui::transparent_black())
-                                .text_color(rgb(theme.text_muted))
-                                .hover(move |style| style.bg(rgb(hover)))
-                        })
                         .child(label)
                         .child(div().text_color(rgb(count_color)).child(count.to_string()))
                         .on_click(cx.listener(move |shell, _, _, cx| {
@@ -578,27 +568,17 @@ impl Shell {
                         .child(actions),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
+                    segmented(theme)
                         .mx(px(space::M))
                         .my(px(space::S))
-                        .p(px(theme::SEGMENT_PADDING))
-                        .rounded(px(radius::MEDIUM))
-                        .bg(rgb(theme.surface))
-                        .child(segment(
-                            "chip-all",
-                            "All",
-                            view.counts.all,
-                            sidebar::Chip::All,
-                        ))
-                        .child(segment(
+                        .child(chip("chip-all", "All", view.counts.all, sidebar::Chip::All))
+                        .child(chip(
                             "chip-working",
                             "Working",
                             view.counts.working,
                             sidebar::Chip::Working,
                         ))
-                        .child(segment(
+                        .child(chip(
                             "chip-needs-you",
                             "Needs you",
                             view.counts.needs_you,
@@ -633,6 +613,8 @@ impl Shell {
                 )
                 .into_any_element()
         } else {
+            // The session list keeps its pre-restyle look (out of the restyle's scope).
+            let theme = theme.classic();
             let filtering = self.sidebar.filtering();
             let mut list = Vec::new();
             let mut agents = Vec::new();
@@ -871,6 +853,8 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
+        // The rail is the session list folded: it keeps the pre-restyle look too.
+        let theme = theme.classic();
         let shown = self.focused_session();
         let header = div()
             .flex_none()
@@ -982,9 +966,10 @@ impl Shell {
             .min_w_0()
             .flex()
             .items_center()
-            .gap(px(space::XS))
-            .px(px(space::XS))
-            .rounded(px(radius::SMALL))
+            .gap(px(space::S))
+            .h(theme::rems_px(theme::CONTROL_HEIGHT))
+            .px(px(space::S))
+            .rounded(px(radius::MEDIUM))
             .text_color(rgb(inbox_color))
             .child(icon_svg(Icon::Inbox, theme::ICON_SIZE_SMALL, inbox_color))
             .when(!compact, |el| {
@@ -1040,6 +1025,7 @@ impl Shell {
                 el.min_h(theme::rems_px(theme::SIDEBAR_FOOTER_HEIGHT))
                     .gap(px(space::S))
                     .px(px(space::S))
+                    .py(px(space::XS))
             })
             .items_center()
             .overflow_hidden()

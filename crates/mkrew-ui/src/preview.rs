@@ -707,7 +707,7 @@ pub fn source(
 ) -> UniformList {
     let total = shown.lines.len();
     let (text, muted, selection_bg) = (theme.text, theme.text_muted, theme.terminal_selection_bg);
-    let line_height = theme.terminal_font_size * theme.terminal_line_height;
+    let line_height = theme.terminal_font_size * theme.code_line_height;
     uniform_list(id, total, move |range, _, _| {
         range
             .map(|index| {
@@ -885,7 +885,7 @@ pub fn code_row(
     text_left: &Rc<Cell<Pixels>>,
     theme: &Theme,
 ) -> Div {
-    let line_height = theme.terminal_font_size * theme.terminal_line_height;
+    let line_height = theme.terminal_font_size * theme.code_line_height;
     let cells = move |n: usize| cell_width * n as f32;
     let current = marks.caret.is_some();
     let text_left = Rc::clone(text_left);

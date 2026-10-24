@@ -900,25 +900,24 @@ impl Element for TerminalElement {
     ) -> Prepainted {
         let (cell_width, line_height) = cell_size(window, &self.theme);
         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let (padding_x, padding_y) = (self.theme.terminal_padding_x, self.theme.terminal_padding_y);
         let geometry = Geometry {
-            origin: bounds.origin
-                + point(
-                    px(self.theme.terminal_padding),
-                    px(self.theme.terminal_padding),
-                ),
+            origin: bounds.origin + point(px(padding_x), px(padding_y)),
             cell_width,
             line_height,
         };
         self.pane
             .update(cx, |pane, _| pane.geometry = Some(geometry));
-        let padding = 2.0 * self.theme.terminal_padding;
         // No room for even one cell (minimized window, collapsed layout): keep the session's
         // size instead of shrinking a live agent to the minimum grid.
-        if width >= padding + f32::from(cell_width) && height >= padding + f32::from(line_height) {
+        if width >= 2.0 * padding_x + f32::from(cell_width)
+            && height >= 2.0 * padding_y + f32::from(line_height)
+        {
             let (cols, rows) = grid_size(
                 width,
                 height,
-                self.theme.terminal_padding,
+                padding_x,
+                padding_y,
                 f32::from(cell_width),
                 f32::from(line_height),
             );
@@ -942,7 +941,7 @@ impl Element for TerminalElement {
         cx: &mut App,
     ) {
         let theme = &self.theme;
-        window.paint_quad(fill(bounds, hsla(theme.bg)));
+        window.paint_quad(fill(bounds, hsla(theme.terminal_bg)));
 
         let text_system = window.text_system().clone();
         let base_font = terminal_font(theme);
@@ -953,8 +952,8 @@ impl Element for TerminalElement {
             line_height,
         } = prepainted;
         let (cell_width, line_height) = (*cell_width, *line_height);
-        let padding = px(theme.terminal_padding);
-        let origin = bounds.origin + point(padding, padding);
+        let origin =
+            bounds.origin + point(px(theme.terminal_padding_x), px(theme.terminal_padding_y));
 
         let mut rows = self.rows.borrow_mut();
         rows.start_frame(grid.rows.len());
@@ -1025,21 +1024,21 @@ impl Element for TerminalElement {
             size(cell_width, line_height),
         );
         if cursor.row < grid.rows.len() {
-            let (accent, width) = (hsla(theme.accent), px(theme.terminal_cursor_width));
+            let (color, width) = (hsla(theme.text), px(theme.terminal_cursor_width));
             match shape {
                 Some(CursorShape::Beam) => window.paint_quad(fill(
                     Bounds::new(caret.origin, size(width, line_height)),
-                    accent,
+                    color,
                 )),
                 Some(CursorShape::Underline) => window.paint_quad(fill(
                     Bounds::new(
                         point(caret.origin.x, caret.origin.y + line_height - width),
                         size(cell_width, width),
                     ),
-                    accent,
+                    color,
                 )),
                 Some(CursorShape::HollowBlock) => {
-                    window.paint_quad(outline(caret, accent, BorderStyle::Solid))
+                    window.paint_quad(outline(caret, color, BorderStyle::Solid))
                 }
                 _ => {}
             }

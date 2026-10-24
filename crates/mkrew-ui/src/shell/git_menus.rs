@@ -76,19 +76,17 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap(px(space::XS))
-                    .px(px(space::S))
+                    .px(px(space::M))
                     .border_b(px(theme::PANE_ACCENT_WIDTH))
                     .border_color(if active {
                         rgb(theme.accent).into()
                     } else {
                         gpui::transparent_black()
                     })
-                    .text_size(font_size::BODY)
+                    .text_size(theme::GIT_REPO_TAB_TEXT)
+                    .font_weight(FontWeight(weight::SEMIBOLD))
                     .tooltip(tooltip(theme, &tip, ""))
-                    .when(active, |el| {
-                        el.text_color(rgb(theme.text))
-                            .font_weight(FontWeight(weight::MEDIUM))
-                    })
+                    .when(active, |el| el.text_color(rgb(theme.text)))
                     .when(!active, |el| {
                         el.cursor_pointer()
                             .text_color(rgb(theme.text_muted))
@@ -314,7 +312,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// The "Filter files" field and, while sessions changed files, "By: All ▾".
+    /// The "Filter files" field (30 px) and, while sessions changed files, the ghost "All ▾".
     pub(crate) fn git_filter_row(
         &self,
         project_id: Ulid,
@@ -342,7 +340,10 @@ impl Shell {
                 )
                 .flex_1()
                 .min_w_0()
-                .py(px(space::XS))
+                .h(theme::rems_px(theme::CONTROL_HEIGHT))
+                .py_0()
+                .flex()
+                .items_center()
                 .track_focus(&self.git_filter_focus)
                 .on_key_down(cx.listener(Self::git_filter_key_down))
                 .relative()
@@ -408,7 +409,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// "By: All ▾" (SPEC §20C.4): keeps only the files a session changed in the last 24 h;
+    /// "All ▾" (SPEC §20C.4): keeps only the files a session changed in the last 24 h;
     /// hidden while no session changed any (and in the History).
     fn git_changed_by(
         &self,
@@ -437,7 +438,7 @@ impl Shell {
                             .items_center()
                             .gap(px(space::XS))
                             .min_w_0()
-                            .child(div().min_w_0().truncate().child(format!("By: {shown}")))
+                            .child(div().min_w_0().truncate().child(shown))
                             .child(icon_svg(
                                 Icon::ChevronDown,
                                 theme::ICON_SIZE_SMALL,
@@ -555,11 +556,11 @@ impl Shell {
     }
 }
 
-/// The amber dot of a repository with uncommitted changes.
+/// The attention-colored dot of a repository with uncommitted changes.
 pub(crate) fn changes_dot(theme: &Theme) -> gpui::Div {
     div()
         .flex_none()
         .size(px(theme::FILE_CHANGES_DOT_SIZE))
         .rounded_full()
-        .bg(rgb(theme.git_untracked))
+        .bg(rgb(theme.status_needs_input))
 }

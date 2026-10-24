@@ -660,16 +660,20 @@ fn split_pairs_a_change_in_order_and_pads_the_shorter_side() {
     );
 }
 
-/// Unified colors a changed-in-place line amber: only rows of a removed + added pair.
+/// Only a removed + added pair gets a changed token (tabs count as `TAB`, like the drawn text).
 #[test]
-fn only_paired_rows_are_modified() {
-    // rows: 0 hunk, 1 ctx, 2 del, 3 del, 4 add, 5 ctx, 6 add (lone), 7 ctx, 8 del (lone).
+fn only_paired_rows_have_a_changed_token() {
+    let with = |line: DiffLine, text: &str| DiffLine {
+        text: text.into(),
+        ..line
+    };
+    // rows: 0 hunk, 1 ctx, 2 del, 3 del (lone), 4 add, 5 ctx, 6 add (lone), 7 ctx, 8 del (lone).
     let shown = Shown::new(diff(vec![hunk_of(
         vec![
             ctx(1, 1),
-            del(2),
-            del(3),
-            add(2),
+            with(del(2), "\tport: 8080,"),
+            with(del(3), "gone"),
+            with(add(2), "\tport: 8082,"),
             ctx(4, 3),
             add(4),
             ctx(5, 5),
@@ -677,9 +681,45 @@ fn only_paired_rows_are_modified() {
         ],
         hunk(1, 1, 1, 1),
     )]));
+    let at = highlight::TAB.len() + 9;
     assert_eq!(
-        shown.modified,
-        [false, false, true, false, true, false, false, false, false]
+        shown.words,
+        [
+            None,
+            None,
+            Some(at..at + 1),
+            None,
+            Some(at..at + 1),
+            None,
+            None,
+            None,
+            None
+        ]
+    );
+}
+
+#[test]
+fn changed_ranges_keep_the_common_prefix_and_suffix() {
+    assert_eq!(
+        changed_ranges("port: 8080,", "port: 8082,"),
+        Some((9..10, 9..10))
+    );
+    // Text only added or only removed: the other side's range is empty.
+    assert_eq!(changed_ranges("foo()", "foo(x)"), Some((4..4, 4..5)));
+    assert_eq!(changed_ranges("aa", "aaa"), Some((2..2, 2..3)));
+    assert_eq!(changed_ranges("abc", "abc"), Some((3..3, 3..3)));
+    // Nothing shared: the whole line would light up, so nothing does.
+    assert_eq!(changed_ranges("abc", "xyz"), None);
+    assert_eq!(changed_ranges("", "x"), None);
+}
+
+#[test]
+fn changed_ranges_cut_on_char_boundaries() {
+    // "é" and "è" share their first UTF-8 byte but not a char.
+    assert_eq!(changed_ranges("é", "è"), None);
+    assert_eq!(
+        changed_ranges("héllo wörld", "héllo wxrld"),
+        Some((8..10, 8..9))
     );
 }
 
@@ -883,16 +923,13 @@ fn labels() {
     let mut status = GitStatus::default();
     assert_eq!(tracking(&status), "No upstream");
     status.upstream = Some("origin/main".into());
-    assert_eq!(tracking(&status), "Tracking origin/main · up to date");
+    assert_eq!(tracking(&status), "origin/main · up to date");
     status.ahead = 1;
-    assert_eq!(tracking(&status), "Tracking origin/main · 1 commit ahead");
+    assert_eq!(tracking(&status), "origin/main · 1 commit ahead");
     status.behind = 2;
-    assert_eq!(
-        tracking(&status),
-        "Tracking origin/main · 1 ahead, 2 behind"
-    );
+    assert_eq!(tracking(&status), "origin/main · 1 ahead, 2 behind");
     status.ahead = 0;
-    assert_eq!(tracking(&status), "Tracking origin/main · 2 commits behind");
+    assert_eq!(tracking(&status), "origin/main · 2 commits behind");
     let mut binary = file("x", ChangeKind::Modified);
     assert_eq!(counts(&binary), Some((1, 0)));
     binary.added = None;
