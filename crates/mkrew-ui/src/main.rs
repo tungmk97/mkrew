@@ -174,11 +174,14 @@ fn main() {
         .run(move |cx: &mut App| {
             let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
             cx.bind_keys(bindings);
+            cx.set_global(ActiveKeymap(keymap.clone()));
             // Which char a shifted digit reports depends on the layout: bind again after a switch
             // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
-            let rebind = keymap.clone();
-            cx.on_keyboard_layout_change(move |cx| {
-                let bindings = rebind.key_bindings(cx.keyboard_mapper().as_ref());
+            cx.on_keyboard_layout_change(|cx| {
+                let bindings = cx
+                    .global::<ActiveKeymap>()
+                    .0
+                    .key_bindings(cx.keyboard_mapper().as_ref());
                 cx.clear_key_bindings();
                 cx.bind_keys(bindings);
             })
@@ -307,6 +310,12 @@ enum GitMenu {
     /// The diff toolbar's "⋯": Send to agent and the actions that do not fit.
     More,
 }
+
+/// The bindings in force; the keyboard layout observer rebinds from it, so keys set in the
+/// Settings dialog survive a layout switch.
+pub(crate) struct ActiveKeymap(pub Keymap);
+
+impl gpui::Global for ActiveKeymap {}
 
 struct Shell {
     status: Status,
