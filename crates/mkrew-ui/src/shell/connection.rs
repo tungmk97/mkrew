@@ -333,15 +333,7 @@ impl Shell {
             rename_focus,
             _rename_blur: rename_blur,
             keymap,
-            keymap_error: keymap_errors
-                .first()
-                .map(|first| match keymap_errors.len() {
-                    1 => format!("{first}; using the default. Fix keymap.toml and restart."),
-                    n => format!(
-                        "{first} (+{} more); using the defaults. Fix keymap.toml and restart.",
-                        n - 1
-                    ),
-                }),
+            keymap_error: keymap::notice(keymap_errors),
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,

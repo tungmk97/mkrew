@@ -111,7 +111,7 @@ impl Extra {
             Self::RunStop => "Run: Stop all",
             Self::RunSetup => "Run: Setup…",
             Self::RunShowTab => "Run: Show Run tab",
-            Self::OpenSettings => "Global: Open settings",
+            Self::OpenSettings => "Global: Edit settings.toml",
             Self::PhoneAccess => "Global: Phone access…",
             Self::CheckUpdates => "Global: Check for updates",
             Self::MarkUnread => "Agent: Mark unread",
@@ -248,7 +248,7 @@ pub fn title(command: Command) -> String {
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
         Command::CommandPalette => "Global: Command palette".into(),
-        Command::OpenKeymapSettings => "Global: Open keymap settings".into(),
+        Command::OpenSettings => "Global: Open settings".into(),
         Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
         Command::ToggleFullScreen => "Global: Toggle full screen".into(),
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
@@ -269,7 +269,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::AddWorkspace
         | Command::NextInbox
         | Command::Peek
-        | Command::OpenKeymapSettings
+        | Command::OpenSettings
         | Command::ToggleTheme
         | Command::ToggleFullScreen
         | Command::ToggleSidebar
@@ -339,9 +339,9 @@ pub fn keymap_errors(keymap: &Keymap, errors: &[KeymapError]) -> Vec<Entry> {
     errors
         .iter()
         .map(|error| Entry {
-            action: Action::Run(Command::OpenKeymapSettings),
+            action: Action::Run(Command::OpenSettings),
             title: format!("Keymap error: {error}"),
-            shortcut: keymap.label(Command::OpenKeymapSettings),
+            shortcut: keymap.label(Command::OpenSettings),
         })
         .collect()
 }

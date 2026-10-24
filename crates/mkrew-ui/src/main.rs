@@ -360,7 +360,7 @@ struct Shell {
     keymap_error: Option<String>,
     /// The same problems, one palette entry each.
     keymap_errors: Vec<KeymapError>,
-    /// `<config>/mkrew/keymap.toml` (Ctrl+, creates and opens it).
+    /// `<config>/mkrew/keymap.toml` (the Settings dialog writes it).
     keymap_file: PathBuf,
     /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed and polled for
     /// font changes (§20.0).

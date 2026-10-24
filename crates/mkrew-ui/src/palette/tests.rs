@@ -129,7 +129,7 @@ fn keymap_errors_open_the_keymap_settings() {
     let listed = keymap_errors(&keymap, &errors);
     assert_eq!(listed.len(), 3);
     for entry in &listed {
-        assert_eq!(entry.action, Action::Run(Command::OpenKeymapSettings));
+        assert_eq!(entry.action, Action::Run(Command::OpenSettings));
         assert_eq!(entry.shortcut, "Ctrl+,");
     }
     let titles: Vec<&str> = listed.iter().map(|entry| entry.title.as_str()).collect();
@@ -138,12 +138,12 @@ fn keymap_errors_open_the_keymap_settings() {
     ));
     assert!(titles.contains(&"Keymap error: unknown command `nope` in keymap.toml"));
     assert!(titles.contains(&"Keymap error: `find = \"\"` is not a valid keystroke"));
-    // Typing "keymap" finds them and the settings command.
+    // Typing "keymap" finds them (the settings command's title no longer has the word).
     let mut all = listed;
     all.extend(entries(&keymap, &context(View::Terminals), &[], &[], &[]));
     let mut palette = Palette::new(all);
     palette.insert("keymap");
-    assert_eq!(palette.rows().len(), 4);
+    assert_eq!(palette.rows().len(), 3);
 }
 
 #[test]
@@ -285,7 +285,7 @@ fn availability_follows_the_view() {
             Command::AddWorkspace,
             Command::NextInbox,
             Command::Peek,
-            Command::OpenKeymapSettings,
+            Command::OpenSettings,
             Command::ToggleTheme,
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
@@ -436,7 +436,7 @@ fn palette_only_actions_follow_the_view_and_state() {
         assert!(!titles[..i].contains(title), "{title}");
         assert!(!commands.iter().any(|command| command == title), "{title}");
     }
-    assert!(titles.contains(&"Global: Open settings"));
+    assert!(titles.contains(&"Global: Edit settings.toml"));
     // Palette-only actions come after the commands, before "Go to".
     let all = entries(
         &Keymap::defaults(),
