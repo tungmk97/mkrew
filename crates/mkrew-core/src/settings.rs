@@ -6,12 +6,12 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::profile::line_col;
 
 /// Contents of `settings.toml` (SPEC §20.0).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub notify: NotifySettings,
@@ -33,7 +33,7 @@ pub struct Settings {
 }
 
 /// `[features]` (ADR 0046): modules that are off unless switched on.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FeatureSettings {
     /// The Docs view (SPEC §12) and "Review in Docs".
@@ -45,7 +45,7 @@ pub struct FeatureSettings {
 /// `[web]` (ADR 0053, ADR 0067): the daemon runs `mk web` while `enabled` is true; `mk web`
 /// sends phone notifications while `push` is true. The Phone access dialog writes both; the
 /// port is fixed (`mkrew_core::tailscale::WEB_PORT`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct WebSettings {
     pub enabled: bool,
@@ -53,7 +53,7 @@ pub struct WebSettings {
     pub push: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NotifySettings {
     /// OS notification on `needs_input`.
@@ -78,7 +78,7 @@ impl Default for NotifySettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AwakeSettings {
     /// §20A.5.
@@ -91,7 +91,7 @@ impl Default for AwakeSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ComposerSettings {
     /// §20B.1: how a picked file is typed; `{path}` is replaced by the path.
@@ -106,7 +106,7 @@ impl Default for ComposerSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ZedSettings {
     /// §20C.4.
@@ -126,7 +126,7 @@ impl Default for ZedSettings {
 pub const VOICE_PROMPT_DEFAULT: &str = "Mkrew, Claude Code, Codex, commit, branch, merge, refactor, test, bug. Sửa lỗi này rồi chạy test lại nhé.";
 
 /// `[voice]` (SPEC §20G): an OpenAI-compatible speech-to-text endpoint.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct VoiceSettings {
     /// API root; the request goes to `{base_url}/audio/transcriptions`.
@@ -169,7 +169,7 @@ impl Default for VoiceSettings {
 }
 
 /// `[jira]` (SPEC §20I, ADR 0066): the Jira Cloud site the Board reads issues from.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct JiraSettings {
     /// `acme.atlassian.net` (with or without `https://`); empty = Jira off.
@@ -192,7 +192,7 @@ impl Default for JiraSettings {
 }
 
 /// `[ui]` / `[terminal]` font. An empty family is the built-in default (SPEC §14).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FontSettings {
     pub font_family: String,
@@ -209,7 +209,7 @@ impl Default for FontSettings {
 }
 
 /// `[ui] theme` (SPEC §14, ADR 0027): `system` follows the OS live.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
     #[default]
@@ -230,7 +230,7 @@ impl ThemeMode {
 
 /// `[ui] diff_mode` (SPEC §12B): how the Git diff viewer lays out a file's changes. The
 /// diff header toggle writes it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DiffMode {
     /// One column: removed lines, then the added ones.
@@ -264,7 +264,7 @@ pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
 pub const SIDEBAR_WIDTH_DEFAULT: u16 = 280;
 
 /// `[ui]`: the app font, theme, diff layout (and panel widths) (SPEC §14, §12B, §20.0).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiSettings {
     pub font_family: String,
@@ -352,7 +352,12 @@ fn set_value(src: &str, section: &str, key: &str, value: &str) -> String {
 /// Saves `[<section>] <key> = <value>` in `path` (the template when it is missing) with
 /// [`set_value`]. Writes nothing when the file does not parse or the edit would not parse
 /// (an unusual section form, a value of the wrong type), so a good file never turns bad.
-fn write_value(path: &Path, section: &str, key: &str, value: &str) -> Result<(), SettingsError> {
+pub(crate) fn write_value(
+    path: &Path,
+    section: &str,
+    key: &str,
+    value: &str,
+) -> Result<(), SettingsError> {
     let io_error = |e: io::Error| SettingsError {
         file: path.to_path_buf(),
         line_col: None,
@@ -388,9 +393,15 @@ pub fn write_web_push(path: &Path, enabled: bool) -> Result<(), SettingsError> {
 }
 
 /// A font size in px, 8–32 (checked when parsed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "u16")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(try_from = "u16", into = "u16")]
 pub struct FontSize(pub u16);
+
+impl From<FontSize> for u16 {
+    fn from(size: FontSize) -> u16 {
+        size.0
+    }
+}
 
 impl TryFrom<u16> for FontSize {
     type Error = String;
