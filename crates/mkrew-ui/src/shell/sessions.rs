@@ -350,7 +350,7 @@ impl Shell {
             Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
             Command::CommandPalette => self.open_palette(window, cx),
-            Command::OpenKeymapSettings => self.open_keymap_settings(cx),
+            Command::OpenSettings => self.open_settings_dialog(window, cx),
             Command::ToggleTheme => self.toggle_theme(window, cx),
             Command::ToggleFullScreen => window.toggle_fullscreen(),
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),

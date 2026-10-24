@@ -118,8 +118,8 @@ pub enum Command {
     RunTask,
     /// Open the command palette (every command, plus "Go to" workspace / session / task).
     CommandPalette,
-    /// Create `keymap.toml` from the template if missing and open it in Zed.
-    OpenKeymapSettings,
+    /// Open the Settings dialog (ADR 0073).
+    OpenSettings,
     /// Cycle the theme System → Light → Dark (ADR 0027), saved as `[ui] theme`.
     ToggleTheme,
     /// Toggle the window filling the whole screen (not remembered across restarts).
@@ -240,7 +240,7 @@ impl Command {
             Command::NewTask,
             Command::RunTask,
             Command::CommandPalette,
-            Command::OpenKeymapSettings,
+            Command::OpenSettings,
             Command::ToggleTheme,
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
@@ -318,7 +318,7 @@ impl Command {
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
             Command::CommandPalette => "command_palette".into(),
-            Command::OpenKeymapSettings => "open_keymap_settings".into(),
+            Command::OpenSettings => "open_settings".into(),
             Command::ToggleTheme => "toggle_theme".into(),
             Command::ToggleFullScreen => "toggle_full_screen".into(),
             Command::ToggleSidebar => "toggle_sidebar".into(),
@@ -408,7 +408,7 @@ impl Command {
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
             Command::CommandPalette => "ctrl-shift-p".into(),
-            Command::OpenKeymapSettings => "ctrl-,".into(),
+            Command::OpenSettings => "ctrl-,".into(),
             Command::ToggleTheme => "ctrl-shift-j".into(),
             Command::ToggleFullScreen => "f11".into(),
             Command::ToggleSidebar => "ctrl-shift-b".into(),
@@ -451,7 +451,8 @@ impl Command {
 /// order, so uncommenting a line and changing its keys is all it takes.
 pub fn template() -> String {
     let mut text = String::from(
-        "# Mkrew keyboard shortcuts. Uncomment a line, change its keys, then restart Mkrew.\n\
+        "# Mkrew keyboard shortcuts. The Settings dialog (Ctrl+,) writes this file; a hand edit\n\
+         # applies after a restart. Uncomment a line and change its keys.\n\
          # Keys use GPUI syntax: modifiers ctrl, alt, shift joined by `-`, e.g. \"ctrl-shift-k\".\n\
          # A keystroke bound twice, an unknown command or an invalid keystroke is listed in the\n\
          # command palette (Ctrl+Shift+P) and that entry keeps its default.\n\n",
@@ -489,6 +490,117 @@ pub fn ensure_file(path: &Path, contents: &str) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error),
     }
+}
+
+/// `src` with the line of `name` replaced by `line`: its uncommented line, else its commented
+/// template line, else appended. Everything else is kept byte for byte (CRLF too).
+fn set_binding(src: &str, name: &str, line: &str) -> String {
+    let eol = if src.contains("\r\n") { "\r\n" } else { "\n" };
+    let is_entry = |l: &str| {
+        l.trim_start()
+            .strip_prefix(name)
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    };
+    let mut lines: Vec<&str> = src.lines().collect();
+    let at = lines.iter().position(|l| is_entry(l)).or_else(|| {
+        lines
+            .iter()
+            .position(|l| l.trim_start().strip_prefix('#').is_some_and(is_entry))
+    });
+    match at {
+        Some(i) => lines[i] = line,
+        None => lines.push(line),
+    }
+    let mut out = lines.join(eol);
+    if src.is_empty() || src.ends_with('\n') || at.is_none() {
+        out.push_str(eol);
+    }
+    out
+}
+
+/// Saves `command`'s keystroke (`None`: back to its default, the template's commented line)
+/// in `path` (the template when missing). Writes nothing when the result has a problem the
+/// file did not have already (a duplicate, an invalid keystroke), or the file is not TOML.
+/// Returns the new keymap and the problems the file still has.
+pub fn write_binding(
+    path: &Path,
+    command: Command,
+    keys: Option<&str>,
+) -> Result<(Keymap, Vec<KeymapError>), KeymapError> {
+    let read_error = |error: std::io::Error| KeymapError::Read {
+        path: path.display().to_string(),
+        message: error.to_string(),
+    };
+    let src = match std::fs::read_to_string(path) {
+        Ok(src) => src,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => template(),
+        Err(error) => return Err(read_error(error)),
+    };
+    let (_, before) = Keymap::parse(&src);
+    if let Some(syntax) = before.iter().find(|e| matches!(e, KeymapError::Syntax(_))) {
+        return Err(syntax.clone());
+    }
+    let name = command.name();
+    let line = match keys {
+        Some(keys) => format!("{name} = {}", toml::Value::String(keys.to_owned())),
+        None => format!("# {name} = \"{}\"", command.default_keys()),
+    };
+    let out = set_binding(&src, &name, &line);
+    let (keymap, after) = Keymap::parse(&out);
+    if let Some(new) = after.iter().find(|e| !before.contains(e)) {
+        return Err(new.clone());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(read_error)?;
+    }
+    std::fs::write(path, out).map_err(read_error)?;
+    Ok((keymap, after))
+}
+
+/// The command, other than `command`, bound to the same key as `keys` once both are folded by
+/// `mapper` the way the platform reports typed keys. On Windows Ctrl+Shift+2 arrives as `ctrl-@`
+/// (US layout), so a captured `ctrl-@` clashes with the default `ctrl-shift-2`; the plain
+/// [`Keymap::parse`] duplicate check cannot see that, and GPUI would pick one of the two by
+/// command order.
+pub fn folded_clash(
+    keymap: &Keymap,
+    command: Command,
+    keys: &str,
+    mapper: &dyn gpui::PlatformKeyboardMapper,
+) -> Option<Command> {
+    let fold = |command: Command, keys: &str| {
+        let binding =
+            gpui::KeyBinding::load(keys, Box::new(Run(command)), None, true, None, mapper).ok()?;
+        binding
+            .keystrokes()
+            .first()
+            .map(|keystroke| keystroke.inner().clone())
+    };
+    let wanted = fold(command, keys)?;
+    keymap
+        .bindings()
+        .iter()
+        .filter(|(other, _)| *other != command)
+        .find(|(other, bound)| {
+            fold(*other, &bound.unparse()).is_some_and(|folded| same_keys(&folded, &wanted))
+        })
+        .map(|(other, _)| *other)
+}
+
+/// `keys` as shortcut text ("Ctrl+Shift+K"); the raw text when it is not a keystroke.
+pub fn keys_label(keys: &str) -> String {
+    parse_keys(keys).map_or_else(|| keys.to_owned(), |keystroke| label(&keystroke))
+}
+
+/// The sidebar's one-line summary of `keymap.toml` problems.
+pub fn notice(errors: &[KeymapError]) -> Option<String> {
+    errors.first().map(|first| match errors.len() {
+        1 => format!("{first}; using the default. Fix it in Settings (Ctrl+,)."),
+        n => format!(
+            "{first} (+{} more); using the defaults. Fix them in Settings (Ctrl+,).",
+            n - 1
+        ),
+    })
 }
 
 /// A `keymap.toml` problem; the affected entry (or the whole file) uses the defaults.
@@ -662,6 +774,15 @@ impl Keymap {
             .map(|(_, keystroke)| label(keystroke))
             .unwrap_or_default()
     }
+
+    /// Whether `command`'s binding differs from its SPEC §13 default.
+    pub fn changed(&self, command: Command) -> bool {
+        let default = Keystroke::parse(&command.default_keys()).ok();
+        match (self.keystroke(command), default) {
+            (Some(bound), Some(default)) => !same_keys(bound, &default),
+            (bound, default) => bound.is_some() != default.is_some(),
+        }
+    }
 }
 
 /// One keystroke (no chords). `Keystroke::parse` accepts an empty key, spaces and a lone
@@ -797,8 +918,8 @@ mod tests {
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(bound("ctrl-shift-p"), Some(Command::CommandPalette));
-        assert_eq!(bound("ctrl-,"), Some(Command::OpenKeymapSettings));
-        assert_eq!(keymap.label(Command::OpenKeymapSettings), "Ctrl+,");
+        assert_eq!(bound("ctrl-,"), Some(Command::OpenSettings));
+        assert_eq!(keymap.label(Command::OpenSettings), "Ctrl+,");
         assert_eq!(bound("f11"), Some(Command::ToggleFullScreen));
         assert_eq!(keymap.label(Command::ToggleFullScreen), "F11");
         // Global: also while a terminal has focus (it no longer gets ESC[23~).
@@ -821,7 +942,7 @@ mod tests {
         assert_eq!(Command::VoiceInput.context(), None);
         assert_eq!(bound("ctrl-shift-g"), Some(Command::AskAi));
         assert_eq!(Command::AskAi.context(), None);
-        assert_eq!(Command::OpenKeymapSettings.context(), None);
+        assert_eq!(Command::OpenSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),
             Some(Command::Resize(Direction::Left))
@@ -1085,5 +1206,143 @@ mod tests {
         assert_eq!(keymap.label(Command::NextTab), "Ctrl+Tab");
         assert_eq!(keymap.label(Command::SplitRight), "Alt+Shift+=");
         assert_eq!(keymap.label(Command::PageUp), "Shift+PgUp");
+    }
+
+    fn temp_keymap(text: Option<&str>) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keymap.toml");
+        if let Some(text) = text {
+            std::fs::write(&path, text).unwrap();
+        }
+        (dir, path)
+    }
+
+    #[test]
+    fn write_binding_sets_replaces_and_resets() {
+        let (_dir, path) = temp_keymap(None);
+        let (keymap, _) = write_binding(&path, Command::ClosePane, Some("ctrl-shift-q")).unwrap();
+        assert_eq!(keymap.label(Command::ClosePane), "Ctrl+Shift+Q");
+        assert!(keymap.changed(Command::ClosePane));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.starts_with("# Mkrew keyboard shortcuts"),
+            "template written first"
+        );
+        assert!(
+            text.contains("\nclose_pane = \"ctrl-shift-q\"\n"),
+            "replaces the commented line"
+        );
+        assert!(!text.contains("# close_pane ="));
+        write_binding(&path, Command::ClosePane, Some("ctrl-alt-shift-y")).unwrap();
+        let (loaded, errors) = Keymap::load(&path);
+        assert!(errors.is_empty());
+        assert_eq!(loaded.label(Command::ClosePane), "Ctrl+Alt+Shift+Y");
+        let (keymap, _) = write_binding(&path, Command::ClosePane, None).unwrap();
+        assert!(!keymap.changed(Command::ClosePane));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            template(),
+            "back to the template"
+        );
+    }
+
+    #[test]
+    fn write_binding_keeps_comments_and_crlf() {
+        let (_dir, path) = temp_keymap(Some("# mine\r\n"));
+        write_binding(&path, Command::ClosePane, Some("ctrl-shift-q")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# mine\r\nclose_pane = \"ctrl-shift-q\"\r\n"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_or_invalid_binding_is_refused_and_nothing_written() {
+        let (_dir, path) = temp_keymap(Some("# mine\n"));
+        let taken = Command::AddWorkspace.default_keys();
+        match write_binding(&path, Command::ClosePane, Some(&taken)) {
+            Err(KeymapError::Duplicate { other, .. }) => assert_eq!(other, "add_workspace"),
+            other => panic!("expected a duplicate, got {other:?}"),
+        }
+        assert!(matches!(
+            write_binding(&path, Command::ClosePane, Some("ctrl-")),
+            Err(KeymapError::InvalidKeys { .. })
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# mine\n");
+    }
+
+    #[test]
+    fn an_old_problem_does_not_block_a_new_binding() {
+        let (_dir, path) = temp_keymap(Some("open_keymap_settings = \"ctrl-,\"\n"));
+        let (keymap, errors) =
+            write_binding(&path, Command::ClosePane, Some("ctrl-shift-q")).unwrap();
+        assert_eq!(keymap.label(Command::ClosePane), "Ctrl+Shift+Q");
+        assert_eq!(
+            errors,
+            vec![KeymapError::UnknownCommand("open_keymap_settings".into())]
+        );
+        // A file that is not TOML at all is not edited.
+        std::fs::write(&path, "close_pane = \n").unwrap();
+        assert!(matches!(
+            write_binding(&path, Command::Find, Some("ctrl-alt-shift-y")),
+            Err(KeymapError::Syntax(_))
+        ));
+    }
+
+    #[test]
+    fn keys_label_matches_the_shortcut_text() {
+        assert_eq!(keys_label("ctrl-shift-k"), "Ctrl+Shift+K");
+        assert_eq!(keys_label("nonsense key"), "nonsense key");
+    }
+
+    #[test]
+    fn a_clash_is_found_among_the_other_commands_only() {
+        let keymap = Keymap::defaults();
+        let mapper = gpui::DummyKeyboardMapper;
+        let taken = Command::AddWorkspace.default_keys();
+        assert_eq!(
+            folded_clash(&keymap, Command::ClosePane, &taken, &mapper),
+            Some(Command::AddWorkspace)
+        );
+        assert_eq!(
+            folded_clash(&keymap, Command::AddWorkspace, &taken, &mapper),
+            None
+        );
+        assert_eq!(
+            folded_clash(&keymap, Command::ClosePane, "ctrl-alt-shift-y", &mapper),
+            None
+        );
+    }
+
+    /// Review finding: a key captured as Windows reports it (`ctrl-@`) must clash with the
+    /// default written with Shift (`ctrl-shift-2`), or the dialog accepts a binding that GPUI
+    /// resolves against the default by command order.
+    #[cfg(windows)]
+    #[test]
+    fn a_captured_folded_key_clashes_with_the_shifted_default_it_shadows() {
+        let platform = gpui_platform::current_platform(true);
+        let mapper = platform.keyboard_mapper();
+        let keymap = Keymap::defaults();
+        let reported = gpui::KeyBinding::load(
+            "ctrl-shift-2",
+            Box::new(Run(Command::ShowTerminals)),
+            None,
+            true,
+            None,
+            mapper.as_ref(),
+        )
+        .unwrap()
+        .keystrokes()[0]
+            .inner()
+            .unparse();
+        assert_ne!(reported, "ctrl-shift-2", "Windows folds the shifted digit");
+        assert_eq!(
+            folded_clash(&keymap, Command::AddWorkspace, &reported, mapper.as_ref()),
+            Some(Command::ShowTerminals)
+        );
+        assert_eq!(
+            folded_clash(&keymap, Command::ShowTerminals, &reported, mapper.as_ref()),
+            None
+        );
     }
 }

@@ -18,6 +18,7 @@ pub mod prompt;
 pub mod review;
 pub mod run;
 pub mod settings;
+pub mod settings_fields;
 pub mod state;
 pub mod tailscale;
 pub mod task;

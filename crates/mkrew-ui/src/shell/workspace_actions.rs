@@ -361,9 +361,9 @@ impl Shell {
         cx.notify();
     }
 
-    /// Ctrl+,: writes the commented `keymap.toml` template if the file is missing and opens it
-    /// in Zed; a failure shows in the sidebar. Changes apply after a restart.
-    pub(crate) fn open_keymap_settings(&mut self, cx: &mut Context<'_, Self>) {
+    /// Settings dialog "Edit keymap.toml in Zed": creates the commented template if missing and
+    /// opens it in Zed; a failure shows in the sidebar.
+    pub(crate) fn edit_keymap_file(&mut self, cx: &mut Context<'_, Self>) {
         let opened = keymap::ensure_file(&self.keymap_file, &keymap::template())
             .map_err(|error| format!("Cannot create keymap.toml: {error}"))
             .and_then(|()| zed::open(&self.keymap_file, None).map_err(|error| error.to_string()));
@@ -377,9 +377,27 @@ impl Shell {
         cx.notify();
     }
 
-    /// Palette "Global: Open settings": writes the commented `settings.toml` template if the
-    /// file is missing and opens it in Zed; fonts apply on save (ADR 0024).
-    pub(crate) fn open_settings(&mut self, cx: &mut Context<'_, Self>) {
+    /// Makes `keymap` the bound shortcuts at once (the Settings dialog wrote it): GPUI's key
+    /// bindings, tooltips, the palette and the sidebar notice.
+    pub(crate) fn set_keymap(
+        &mut self,
+        keymap: Keymap,
+        errors: Vec<KeymapError>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
+        cx.clear_key_bindings();
+        cx.bind_keys(bindings);
+        cx.set_global(ActiveKeymap(keymap.clone()));
+        self.keymap_error = keymap::notice(&errors);
+        self.keymap_errors = errors;
+        self.keymap = keymap;
+        cx.notify();
+    }
+
+    /// Settings dialog "Edit settings.toml in Zed": creates the commented template if missing
+    /// and opens it in Zed; a failure shows in the sidebar.
+    pub(crate) fn edit_settings_file(&mut self, cx: &mut Context<'_, Self>) {
         let opened = keymap::ensure_file(&self.settings_file, mkrew_core::settings::template())
             .map_err(|error| format!("Cannot create settings.toml: {error}"))
             .and_then(|()| zed::open(&self.settings_file, None).map_err(|error| error.to_string()));

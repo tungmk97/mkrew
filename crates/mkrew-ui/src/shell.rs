@@ -41,6 +41,7 @@ mod peek;
 mod phone_access;
 mod run;
 mod sessions;
+mod settings;
 mod tabs;
 mod task_dialog;
 pub(crate) mod thread_panel;

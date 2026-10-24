@@ -82,50 +82,7 @@ impl Shell {
                         .ok();
                     if modified != shell.settings_modified {
                         shell.settings_modified = modified;
-                        let installed = cx.text_system().all_font_names();
-                        let last = cx.global::<theme::Fonts>().clone();
-                        let mode = cx.theme().mode;
-                        match theme::reload(&shell.settings_file, &installed, &last, mode) {
-                            Ok(changed) => {
-                                shell.settings_error = None;
-                                if let Some((fonts, mode)) = changed {
-                                    cx.set_global(fonts);
-                                    theme::refresh(mode, window, cx);
-                                    cx.refresh_windows();
-                                }
-                                // `theme::reload` only returns fonts and theme; a hand edit of
-                                // `diff_mode` / `diff_wrap` / `[features]` applies too (the file
-                                // just parsed, so this second read only happens when it changed).
-                                if let Ok(settings) =
-                                    mkrew_core::settings::load(&shell.settings_file)
-                                {
-                                    shell.close_to_tray = settings.ui.close_to_tray;
-                                    shell.flash_taskbar = settings.notify.flash_taskbar;
-                                    if !shell.flash_taskbar {
-                                        shell.desktop.flash(false);
-                                    }
-                                    shell.apply_diff_mode(settings.ui.diff_mode);
-                                    shell.diff_wrap = settings.ui.diff_wrap;
-                                    shell.jira_on = !settings.jira.site.trim().is_empty();
-                                    // A hand edit of `[jira] mine` searches the shown list again.
-                                    if shell.apply_jira_mine(settings.jira.mine)
-                                        && shell.jira_side_shown()
-                                        && let Some(project_id) = shell.workspace
-                                    {
-                                        shell.load_jira(project_id, window, cx);
-                                    }
-                                    shell.reading_default = settings.ui.reading_width;
-                                    if shell.features != settings.features {
-                                        // `view()` may now map Docs to Terminals.
-                                        shell.features = settings.features;
-                                        shell.sync_panes(window, cx);
-                                    }
-                                }
-                            }
-                            // The last good settings stay; the palette lists why (§20.0).
-                            Err(error) => shell.settings_error = Some(error),
-                        }
-                        cx.notify();
+                        shell.apply_settings_file(window, cx);
                     }
                     // Toasts hide here, within one tick of their time (SPEC §14).
                     if shell.toasts.expire(Instant::now()) {
@@ -341,15 +298,7 @@ impl Shell {
             rename_focus,
             _rename_blur: rename_blur,
             keymap,
-            keymap_error: keymap_errors
-                .first()
-                .map(|first| match keymap_errors.len() {
-                    1 => format!("{first}; using the default. Fix keymap.toml and restart."),
-                    n => format!(
-                        "{first} (+{} more); using the defaults. Fix keymap.toml and restart.",
-                        n - 1
-                    ),
-                }),
+            keymap_error: keymap::notice(keymap_errors),
             keymap_errors: keymap_errors.to_vec(),
             keymap_file,
             settings_modified: None,
@@ -359,6 +308,8 @@ impl Shell {
             config_dir,
             phone: Phone::default(),
             phone_open: false,
+            settings_dialog: None,
+            settings_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
             tab_menu: None,
@@ -584,6 +535,59 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Re-reads `settings.toml` and applies what the UI reads from it: fonts, theme, diff
+    /// layout and wrap, tray, taskbar flash, Jira, reading width, features (§20.0). A file that
+    /// does not parse keeps the last good settings; the palette lists why.
+    pub(crate) fn apply_settings_file(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let installed = cx.text_system().all_font_names();
+        let last = cx.global::<theme::Fonts>().clone();
+        let mode = cx.theme().mode;
+        match theme::reload(&self.settings_file, &installed, &last, mode) {
+            Ok(changed) => {
+                self.settings_error = None;
+                if let Some((fonts, mode)) = changed {
+                    cx.set_global(fonts);
+                    theme::refresh(mode, window, cx);
+                    cx.refresh_windows();
+                }
+                // `theme::reload` only returns fonts and theme; a hand edit of
+                // `diff_mode` / `diff_wrap` / `[features]` applies too (the file
+                // just parsed, so this second read only happens when it changed).
+                if let Ok(settings) = mkrew_core::settings::load(&self.settings_file) {
+                    self.close_to_tray = settings.ui.close_to_tray;
+                    self.flash_taskbar = settings.notify.flash_taskbar;
+                    if !self.flash_taskbar {
+                        self.desktop.flash(false);
+                    }
+                    self.apply_diff_mode(settings.ui.diff_mode);
+                    self.diff_wrap = settings.ui.diff_wrap;
+                    self.jira_on = !settings.jira.site.trim().is_empty();
+                    // A hand edit of `[jira] mine` searches the shown list again.
+                    if self.apply_jira_mine(settings.jira.mine)
+                        && self.jira_side_shown()
+                        && let Some(project_id) = self.workspace
+                    {
+                        self.load_jira(project_id, window, cx);
+                    }
+                    self.reading_default = settings.ui.reading_width;
+                    if self.features != settings.features {
+                        // `view()` may now map Docs to Terminals.
+                        self.features = settings.features;
+                        self.sync_panes(window, cx);
+                    }
+                }
+            }
+            // The last good settings stay; the palette lists why (§20.0).
+            Err(error) => self.settings_error = Some(error),
+        }
+        if let Some(dialog) = &mut self.settings_dialog {
+            dialog.reload(
+                mkrew_core::settings::load(&self.settings_file).map_err(|error| error.to_string()),
+            );
+        }
+        cx.notify();
     }
 
     /// The badge before `agent`'s name (ADR 0025).
