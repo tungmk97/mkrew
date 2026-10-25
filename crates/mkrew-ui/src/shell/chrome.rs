@@ -73,11 +73,15 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let workspace = self.workspace.filter(|_| self.connection.is_some());
-        let mode = match theme.mode {
-            theme::ThemeMode::System => "Theme: System",
-            theme::ThemeMode::Light => "Theme: Light",
-            theme::ThemeMode::Dark => "Theme: Dark",
-        };
+        let mode = format!(
+            "Theme: {} · {}",
+            match theme.mode {
+                theme::ThemeMode::System => "System",
+                theme::ThemeMode::Light => "Light",
+                theme::ThemeMode::Dark => "Dark",
+            },
+            theme.name
+        );
         // An open dialog keeps the mouse too: the bar's controls are inert, only the drag area
         // and the window controls stay live (they never touch the app's state).
         let modal = self.modal_open();
@@ -171,7 +175,7 @@ impl Shell {
                 icon_button("toggle-theme", theme::mode_icon(theme.mode), theme)
                     .tooltip(tooltip(
                         theme,
-                        mode,
+                        &mode,
                         self.keymap.label(Command::ToggleTheme),
                     ))
                     .on_click(cx.listener(|shell, _, window, cx| {

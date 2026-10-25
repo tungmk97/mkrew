@@ -193,6 +193,7 @@ fn main() {
                 &settings,
                 &cx.text_system().all_font_names(),
             ));
+            cx.set_global(theme::ThemeNames::from_settings(&settings));
             // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
             cx.set_prompt_builder(shell::confirm_prompt::build);
             let options = WindowOptions {

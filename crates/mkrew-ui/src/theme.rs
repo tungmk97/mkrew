@@ -545,19 +545,61 @@ impl Fonts {
     }
 }
 
-/// The fonts and theme mode of `path` when either differs from `last` / `mode` (`Ok(None)`
-/// when unchanged). A broken file is an `Err` with `file:line:col` (§20.0); the caller keeps
-/// the last good settings.
+/// `[ui] light_theme` / `dark_theme` (ADR 0075), as a GPUI global read by [`refresh`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeNames {
+    pub light: String,
+    pub dark: String,
+}
+
+impl gpui::Global for ThemeNames {}
+
+impl ThemeNames {
+    pub fn from_settings(settings: &Settings) -> Self {
+        Self {
+            light: settings.ui.light_theme.clone(),
+            dark: settings.ui.dark_theme.clone(),
+        }
+    }
+
+    /// The name in the dark (`true`) or light slot.
+    pub fn slot(&self, dark: bool) -> &str {
+        if dark { &self.dark } else { &self.light }
+    }
+}
+
+/// Which slot `mode` shows: `System` follows the OS.
+pub fn slot_is_dark(mode: ThemeMode, os_dark: bool) -> bool {
+    match mode {
+        ThemeMode::System => os_dark,
+        ThemeMode::Light => false,
+        ThemeMode::Dark => true,
+    }
+}
+
+/// Whether the OS shows `window` dark.
+pub fn os_dark(window: &Window) -> bool {
+    matches!(
+        window.appearance(),
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    )
+}
+
+/// The fonts, theme mode and theme names of `path` when any differs from `last` / `mode` /
+/// `names` (`Ok(None)` when unchanged). A broken file is an `Err` with `file:line:col`
+/// (§20.0); the caller keeps the last good settings.
 pub fn reload(
     path: &Path,
     installed: &[String],
     last: &Fonts,
     mode: ThemeMode,
-) -> Result<Option<(Fonts, ThemeMode)>, String> {
+    names: &ThemeNames,
+) -> Result<Option<(Fonts, ThemeMode, ThemeNames)>, String> {
     let settings = mkrew_core::settings::load(path).map_err(|error| error.to_string())?;
     let fonts = Fonts::from_settings(&settings, installed);
-    let changed = fonts != *last || settings.ui.theme != mode;
-    Ok(changed.then_some((fonts, settings.ui.theme)))
+    let new_names = ThemeNames::from_settings(&settings);
+    let changed = fonts != *last || settings.ui.theme != mode || new_names != *names;
+    Ok(changed.then_some((fonts, settings.ui.theme, new_names)))
 }
 
 /// Color tokens for one appearance (dark or light), plus the terminal settings. A GPUI global
@@ -721,14 +763,13 @@ pub struct Theme {
 impl gpui::Global for Theme {}
 
 impl Theme {
-    /// `mode` resolved against the OS appearance: `System` follows `os_dark` (SPEC §14).
-    pub fn resolve(mode: ThemeMode, os_dark: bool) -> Self {
-        let dark = match mode {
-            ThemeMode::System => os_dark,
-            ThemeMode::Light => false,
-            ThemeMode::Dark => true,
-        };
-        let theme = if dark { Self::dark() } else { Self::light() };
+    /// The theme of `mode`'s slot (SPEC §14, ADR 0075); an unknown name is that slot's Mkrew theme.
+    pub fn resolve(mode: ThemeMode, os_dark: bool, names: &ThemeNames) -> Self {
+        let dark = slot_is_dark(mode, os_dark);
+        let theme = find_theme(names.slot(dark)).map_or_else(
+            || if dark { Self::dark() } else { Self::light() },
+            ThemeEntry::build,
+        );
         Self { mode, ..theme }
     }
 
@@ -1638,15 +1679,13 @@ impl ActiveTheme for App {
     }
 }
 
-/// Rebuilds the theme global from `mode`, the window's OS appearance and the `Fonts` global.
-/// Called at startup, on OS appearance changes, on a settings reload and by the toggle.
+/// Rebuilds the theme global from `mode`, the window's OS appearance, the `ThemeNames` and
+/// `Fonts` globals. Called at startup, on OS appearance changes, on a settings reload and by
+/// the toggle.
 pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
-    let os_dark = matches!(
-        window.appearance(),
-        WindowAppearance::Dark | WindowAppearance::VibrantDark
-    );
     let fonts = cx.global::<Fonts>().clone();
-    cx.set_global(Theme::resolve(mode, os_dark).with_fonts(&fonts));
+    let names = cx.global::<ThemeNames>().clone();
+    cx.set_global(Theme::resolve(mode, os_dark(window), &names).with_fonts(&fonts));
 }
 
 /// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
@@ -1869,17 +1908,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         let last = Fonts::from_settings(&Settings::default(), &[]);
+        let n = ThemeNames::from_settings(&Settings::default());
         let system = ThemeMode::System;
         std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
-        let (grown, mode) = reload(&path, &[], &last, system).unwrap().expect("changed");
+        let (grown, mode, _) = reload(&path, &[], &last, system, &n)
+            .unwrap()
+            .expect("changed");
         assert_eq!((grown.terminal_size, mode), (18.0, system));
         std::fs::write(&path, "[terminal]\nfont_size = 4\n").unwrap();
-        let error = reload(&path, &[], &grown, system).expect_err("out of range");
+        let error = reload(&path, &[], &grown, system, &n).expect_err("out of range");
         assert!(error.contains("settings.toml:2:"), "{error}");
         assert!(error.contains("8–32"), "{error}");
         std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
         assert_eq!(
-            reload(&path, &[], &grown, system),
+            reload(&path, &[], &grown, system, &n),
             Ok(None),
             "unchanged: no redraw"
         );
@@ -1890,8 +1932,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reload(&path, &[], &grown, system),
-            Ok(Some((grown.clone(), ThemeMode::Dark)))
+            reload(&path, &[], &grown, system, &n),
+            Ok(Some((grown.clone(), ThemeMode::Dark, n.clone())))
+        );
+        // A new theme name alone is a change.
+        std::fs::write(
+            &path,
+            "[ui]\ntheme = \"dark\"\ndark_theme = \"Dracula\"\n[terminal]\nfont_size = 18\n",
+        )
+        .unwrap();
+        let dark = ThemeMode::Dark;
+        assert_eq!(
+            reload(&path, &[], &grown, dark, &n),
+            Ok(Some((grown.clone(), dark, names("Mkrew Light", "Dracula"))))
         );
     }
 
@@ -1967,13 +2020,56 @@ mod tests {
         assert_eq!(next_mode(ThemeMode::Dark), ThemeMode::System);
     }
 
+    fn names(light: &str, dark: &str) -> ThemeNames {
+        ThemeNames {
+            light: light.into(),
+            dark: dark.into(),
+        }
+    }
+
     #[test]
     fn mode_resolves_against_the_os() {
-        assert!(Theme::resolve(ThemeMode::System, true).dark);
-        assert!(!Theme::resolve(ThemeMode::System, false).dark);
-        assert!(!Theme::resolve(ThemeMode::Light, true).dark);
-        assert!(Theme::resolve(ThemeMode::Dark, false).dark);
-        assert_eq!(Theme::resolve(ThemeMode::Dark, false).mode, ThemeMode::Dark);
+        let n = ThemeNames::from_settings(&Settings::default());
+        assert!(Theme::resolve(ThemeMode::System, true, &n).dark);
+        assert!(!Theme::resolve(ThemeMode::System, false, &n).dark);
+        assert!(!Theme::resolve(ThemeMode::Light, true, &n).dark);
+        assert!(Theme::resolve(ThemeMode::Dark, false, &n).dark);
+        assert_eq!(
+            Theme::resolve(ThemeMode::Dark, false, &n).mode,
+            ThemeMode::Dark
+        );
+    }
+
+    #[test]
+    fn default_names_resolve_to_exactly_today() {
+        let n = ThemeNames::from_settings(&Settings::default());
+        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
+        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+    }
+
+    #[test]
+    fn unknown_names_fall_back_to_mkrew() {
+        let n = names("nope", "dracula");
+        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
+        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+    }
+
+    #[test]
+    fn each_slot_picks_its_name() {
+        let n = names("Solarized Light", "Dracula");
+        assert_eq!(Theme::resolve(ThemeMode::Dark, false, &n).name, "Dracula");
+        assert_eq!(
+            Theme::resolve(ThemeMode::Light, true, &n).name,
+            "Solarized Light"
+        );
+        assert_eq!(Theme::resolve(ThemeMode::System, true, &n).name, "Dracula");
+    }
+
+    #[test]
+    fn a_slot_may_hold_the_other_appearance() {
+        let n = names("Mkrew Light", "GitHub Light");
+        let theme = Theme::resolve(ThemeMode::Dark, false, &n);
+        assert_eq!((theme.name, theme.dark), ("GitHub Light", false));
     }
 
     #[test]
