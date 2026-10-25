@@ -1815,6 +1815,7 @@ push = false                # ADR 0067; mk web notifies phones that opted in (se
 site = ""                   # "acme.atlassian.net"
 email = ""
 api_token_env = "JIRA_API_TOKEN"  # env var holding the API token; never the token itself
+layout = "list"                   # the Board's List | Kanban switch (it writes this)
 mine = false                      # the Board's All | Mine filter (it writes this)
 ```
 
@@ -2163,12 +2164,14 @@ speech to text, this is the second user-configured use of the network, and only 
    and Save; Enter also saves, Esc clears the text. A daemon error shows under the field as
    `✕ <message>` (e.g. a key that is not letters, digits and `_`). Save sends `project.update`
    `jira_keys` (the daemon trims and upper-cases, so `proj` becomes `PROJ`) and then loads the
-   issues. With keys the header reads `PROJ, BILL · Edit · All | Mine · Refresh`: Edit shows the
+   issues. With keys the header reads `PROJ, BILL · Edit · All | Mine · List | Kanban · Refresh`: Edit shows the
    same field pre-filled (Esc on an empty field leaves it), `All | Mine` picks every open issue
    or only the user's and searches again; the choice is `[jira] mine` (default `false` = `All`),
    one for every workspace, saved at once and kept across restarts (other workspaces' lists are
-   dropped and load again on Refresh or the next switch to Jira). Refresh searches again.
-3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype`,
+   dropped and load again on Refresh or the next switch to Jira). `List | Kanban` picks the
+   layout below; the choice is `[jira] layout` (default `list`), one for every workspace, saved
+   at once, and keeps the loaded issues (ADR 0077). Refresh searches again.
+3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype,parent`,
    `maxResults` 50 per page; while an answer has `nextPageToken` and not `isLast: true`, the next
    page is asked with that token, up to 10 pages (the first 500 issues; an empty page also
    stops; no polling). The list shows once every page arrived. JQL `project in (PROJ, BILL) AND
@@ -2177,7 +2180,20 @@ speech to text, this is the second user-configured use of the network, and only 
    "Loading Jira issues…" with working dots. A row: issue type, key, summary (one line, cut with
    `…`), status and, when a task is linked, that task's column (`Todo`, `Running`, `Review`,
    `Done`) as a chip. Nothing found: "No open issues in PROJ, BILL" (`Mine`: "No open issues
-   assigned to you in PROJ, BILL").
+   assigned to you in PROJ, BILL"). The "Filter issues" field keeps the issues whose key or
+   summary contains its text (ignoring case); none left: `No issues match "<text>"`.
+   - **List layout:** a tree, depth first: each issue under its parent (epic > task >
+     sub-task), indented one step per level. Roots come in the order their first issue appears
+     in the search, children in search order. A parent outside the results (done, or not the
+     user's) shows as a header row from the `parent` field: type, key and summary in muted text,
+     no status; a click opens it like any row. A row with children has a chevron that folds
+     them (kept per workspace in memory until the app restarts). With a filter, a row shows when
+     it or a row under it matches, and folded rows open.
+   - **Kanban layout:** one column per status: `In Progress` first, `To Do` second, other
+     statuses after in first-seen order; each column heads with its status icon, name and
+     count and scrolls on its own; the board scrolls sideways below the column width. A card:
+     summary (two lines at most), type icon, key, area chip, the linked task's chip and, when
+     the issue has a parent, the parent's key and summary. Read only: cards do not drag.
 4. **Open.** A task belongs to issue `PROJ-123` when it is in the workspace and its title starts
    with `PROJ-123 ` (the key and one space; `PROJ-12` does not match `PROJ-123 x`; no column,
    ADR 0066). Click a row with a linked task: the Board switches to `Tasks` and the task's edit

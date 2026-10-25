@@ -2,6 +2,8 @@
 //! loaded, the keys field, and the link from an issue to its task. Pure; `shell/jira.rs`
 //! renders it.
 
+use std::collections::{HashMap, HashSet};
+
 use mkrew_protocol::Task;
 use ulid::Ulid;
 
@@ -43,6 +45,8 @@ pub struct JiraView {
     pub row_error: Option<(String, String)>,
     /// The toolbar's "Filter issues" text (matches key or summary, ignoring case).
     pub filter: Input,
+    /// Keys of the List rows whose children are folded away.
+    pub collapsed: HashSet<String>,
 }
 
 impl JiraView {
@@ -95,6 +99,13 @@ impl JiraView {
             .map(str::to_owned)
             .collect()
     }
+
+    /// Folds or unfolds the children of the List row `key`.
+    pub fn toggle_collapsed(&mut self, key: &str) {
+        if !self.collapsed.remove(key) {
+            self.collapsed.insert(key.to_owned());
+        }
+    }
 }
 
 /// The task of `project_id` whose title is `key` followed by a space (SPEC §20I).
@@ -134,10 +145,14 @@ pub struct Section<'a> {
 
 /// Whether `issue` matches the filter text (key or summary, ignoring case); empty matches all.
 pub fn matches_filter(issue: &Issue, filter: &str) -> bool {
-    let needle = filter.trim().to_lowercase();
+    text_matches(&issue.key, &issue.summary, &filter.trim().to_lowercase())
+}
+
+/// `needle` is trimmed and lower-cased already.
+fn text_matches(key: &str, summary: &str, needle: &str) -> bool {
     needle.is_empty()
-        || issue.key.to_lowercase().contains(&needle)
-        || issue.summary.to_lowercase().contains(&needle)
+        || key.to_lowercase().contains(needle)
+        || summary.to_lowercase().contains(needle)
 }
 
 /// The issues that match `filter`, grouped by status: `In Progress` first, `To Do` second, any
@@ -166,6 +181,129 @@ pub fn sections<'a>(issues: &'a [Issue], filter: &str) -> Vec<Section<'a>> {
             2
         }
     });
+    out
+}
+
+/// One row of the List layout: an issue, or a parent that is not in the results (`issue` is
+/// `None`: shown as a quiet header).
+#[derive(Debug, PartialEq, Eq)]
+pub struct TreeRow<'a> {
+    pub key: &'a str,
+    pub summary: &'a str,
+    pub kind: &'a str,
+    pub issue: Option<&'a Issue>,
+    /// 0 for a root, +1 per parent above.
+    pub depth: usize,
+    /// Has children to show (it gets a chevron).
+    pub has_children: bool,
+    pub collapsed: bool,
+}
+
+/// The issues as a tree (epic > task > sub-task), depth first. Roots come in the order their
+/// first issue appears in the list, children in list order. A parent outside the results
+/// becomes a header row. With a filter, a row shows when it or any row under it matches, and
+/// folded rows open (so every match shows).
+pub fn tree<'a>(
+    issues: &'a [Issue],
+    filter: &str,
+    collapsed: &HashSet<String>,
+) -> Vec<TreeRow<'a>> {
+    struct Node<'a> {
+        summary: &'a str,
+        kind: &'a str,
+        issue: Option<&'a Issue>,
+        parent: Option<&'a str>,
+        children: Vec<&'a str>,
+    }
+    let mut nodes: HashMap<&'a str, Node<'a>> = HashMap::new();
+    for issue in issues {
+        nodes.entry(issue.key.as_str()).or_insert(Node {
+            summary: &issue.summary,
+            kind: &issue.kind,
+            issue: Some(issue),
+            parent: issue.parent.as_ref().map(|p| p.key.as_str()),
+            children: Vec::new(),
+        });
+    }
+    for issue in issues {
+        if let Some(parent) = &issue.parent {
+            nodes
+                .entry(parent.key.as_str())
+                .or_insert(Node {
+                    summary: &parent.summary,
+                    kind: &parent.kind,
+                    issue: None,
+                    parent: None,
+                    children: Vec::new(),
+                })
+                .children
+                .push(issue.key.as_str());
+        }
+    }
+    let mut roots: Vec<&str> = Vec::new();
+    for issue in issues {
+        let mut key = issue.key.as_str();
+        // Bounded, so a parent loop (never sent by Jira) cannot spin.
+        for _ in 0..nodes.len() {
+            match nodes.get(key).and_then(|node| node.parent) {
+                Some(parent) => key = parent,
+                None => break,
+            }
+        }
+        if !roots.contains(&key) {
+            roots.push(key);
+        }
+    }
+
+    struct Walk<'n, 'a> {
+        nodes: &'n HashMap<&'a str, Node<'a>>,
+        needle: String,
+        collapsed: &'n HashSet<String>,
+        seen: HashSet<&'a str>,
+    }
+    impl<'a> Walk<'_, 'a> {
+        /// Pushes `key`'s rows; false when nothing under it shows.
+        fn visit(&mut self, key: &'a str, depth: usize, out: &mut Vec<TreeRow<'a>>) -> bool {
+            let Some(node) = self.nodes.get(key) else {
+                return false;
+            };
+            if !self.seen.insert(key) {
+                return false;
+            }
+            let mut below = Vec::new();
+            let mut has_children = false;
+            for &child in &node.children {
+                has_children |= self.visit(child, depth + 1, &mut below);
+            }
+            if !has_children && !text_matches(key, node.summary, &self.needle) {
+                return false;
+            }
+            let collapsed = has_children && self.needle.is_empty() && self.collapsed.contains(key);
+            out.push(TreeRow {
+                key,
+                summary: node.summary,
+                kind: node.kind,
+                issue: node.issue,
+                depth,
+                has_children,
+                collapsed,
+            });
+            if !collapsed {
+                out.extend(below);
+            }
+            true
+        }
+    }
+    let mut walk = Walk {
+        nodes: &nodes,
+        needle: filter.trim().to_lowercase(),
+        collapsed,
+        seen: HashSet::new(),
+    };
+    let mut out = Vec::new();
+    for root in roots {
+        walk.visit(root, 0, &mut out);
+    }
     out
 }
 
@@ -201,6 +339,7 @@ mod tests {
             summary: "s".into(),
             status: "To Do".into(),
             kind: "Bug".into(),
+            parent: None,
         }
     }
 
@@ -324,5 +463,86 @@ mod tests {
         assert_eq!(sections(&issues, " eis-2 ")[0].status, "In Progress");
         assert!(sections(&issues, "nope").is_empty());
         assert_eq!(sections(&issues, "").len(), 2);
+    }
+
+    fn child(key: &str, parent: &str) -> Issue {
+        Issue {
+            parent: Some(crate::jira::Parent {
+                key: parent.into(),
+                summary: format!("{parent} title"),
+                kind: "Epic".into(),
+            }),
+            ..issue(key)
+        }
+    }
+
+    fn shown(rows: &[TreeRow<'_>]) -> Vec<(String, bool)> {
+        rows.iter()
+            .map(|r| {
+                (
+                    format!("{}{}", "  ".repeat(r.depth), r.key),
+                    r.issue.is_some(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn children_nest_under_their_parent_and_missing_parents_become_headers() {
+        let issues = vec![
+            child("A-3", "A-1"),  // task under epic A-1 (in results)
+            issue("A-9"),         // a root of its own
+            child("A-4", "A-3"),  // sub-task under A-3
+            issue("A-1"),         // the epic, listed after its child
+            child("A-5", "EP-7"), // epic outside the results
+            child("A-6", "A-1"),
+        ];
+        let rows = tree(&issues, "", &HashSet::new());
+        assert_eq!(
+            shown(&rows),
+            [
+                ("A-1".into(), true),
+                ("  A-3".into(), true),
+                ("    A-4".into(), true),
+                ("  A-6".into(), true),
+                ("A-9".into(), true),
+                ("EP-7".into(), false),
+                ("  A-5".into(), true),
+            ]
+        );
+        assert_eq!(rows[5].summary, "EP-7 title");
+        assert!(rows[0].has_children && rows[1].has_children && !rows[2].has_children);
+    }
+
+    #[test]
+    fn a_folded_row_hides_its_children_unless_a_filter_is_typed() {
+        let issues = vec![issue("A-1"), child("A-2", "A-1"), child("A-3", "A-2")];
+        let mut view = JiraView::default();
+        view.toggle_collapsed("A-1");
+        let rows = tree(&issues, "", &view.collapsed);
+        assert_eq!(shown(&rows), [("A-1".into(), true)]);
+        assert!(rows[0].collapsed && rows[0].has_children);
+        // The filter opens folded rows and keeps the parents of a match.
+        let mut b = child("A-3", "A-2");
+        b.summary = "Fix login".into();
+        let issues = vec![issue("A-1"), child("A-2", "A-1"), b, issue("A-9")];
+        let rows = tree(&issues, "login", &view.collapsed);
+        assert_eq!(
+            shown(&rows),
+            [
+                ("A-1".into(), true),
+                ("  A-2".into(), true),
+                ("    A-3".into(), true)
+            ]
+        );
+        view.toggle_collapsed("A-1");
+        assert!(view.collapsed.is_empty());
+        assert!(tree(&issues, "nope", &view.collapsed).is_empty());
+    }
+
+    #[test]
+    fn a_parent_loop_still_ends() {
+        let issues = vec![child("A-1", "A-2"), child("A-2", "A-1")];
+        assert_eq!(tree(&issues, "", &HashSet::new()).len(), 2);
     }
 }

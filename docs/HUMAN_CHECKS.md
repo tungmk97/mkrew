@@ -21,6 +21,18 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-25 Jira List tree and Kanban (ADR 0077)
+
+- [ ] **List (dark + light):** Board → Jira, `List | Kanban` sits after `All | Mine`. List shows
+  each task under its epic and each sub-task under its task, indented; an epic outside the
+  results (or under `Mine`) is a muted header row without a status pill. The chevron folds and
+  unfolds without opening the issue; a typed filter shows the matches with their parents.
+- [ ] **Kanban (dark + light):** one column per status (In Progress, To Do, …) with count;
+  cards show title (2 lines at most), type icon, key, area chip, linked-task chip and the
+  parent line; a narrow window scrolls the columns sideways; a click opens the issue as before.
+- [ ] **Saved:** the choice writes `[jira] layout` and survives a restart; the Settings → Jira
+  page shows the same value.
+
 ### To verify — 2026-10-25 Add workspace by cloning (ADR 0076, protocol 48)
 
 - [ ] Rebuild and restart the daemon (protocol 48), then Add workspace (`+`, Ctrl+Shift+K, title-bar menu) opens the dialog; **Open a folder…** adds a folder as before.

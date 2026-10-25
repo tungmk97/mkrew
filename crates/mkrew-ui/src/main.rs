@@ -474,6 +474,8 @@ struct Shell {
     jira_on: bool,
     /// `[jira] mine`: the `All | Mine` filter, every workspace.
     jira_mine: bool,
+    /// `[jira] layout`: the `List | Kanban` switch, every workspace.
+    jira_layout: mkrew_core::settings::JiraLayout,
     /// The Jira keys field.
     jira_keys_focus: FocusHandle,
     /// The Jira list's "Filter issues" field.

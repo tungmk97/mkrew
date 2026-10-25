@@ -306,6 +306,14 @@ pub const SETTINGS: &[Setting] = &[
         "The Board lists only issues assigned to you (its All | Mine filter writes it).",
     ),
     row(
+        Jira,
+        "jira",
+        "layout",
+        Choice(&["list", "kanban"]),
+        "Layout",
+        "List shows issues under their parent; Kanban one column per status.",
+    ),
+    row(
         Phone,
         "web",
         "enabled",

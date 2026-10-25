@@ -27,6 +27,17 @@ pub struct Issue {
     pub status: String,
     /// The issue type (Bug, Story, Task…).
     pub kind: String,
+    /// The parent (an epic over a task, a task over a sub-task), as Jira sends it with the
+    /// issue; it may be outside the search (done, or not the user's).
+    pub parent: Option<Parent>,
+}
+
+/// An issue's parent: enough to show it as a header in the List layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parent {
+    pub key: String,
+    pub summary: String,
+    pub kind: String,
 }
 
 /// What the task dialog opens with.
@@ -165,7 +176,7 @@ pub fn jql(keys: &[String], mine: bool) -> String {
 pub fn search_body(keys: &[String], mine: bool, page: Option<&str>) -> String {
     let mut body = json!({
         "jql": jql(keys, mine),
-        "fields": ["summary", "status", "issuetype"],
+        "fields": ["summary", "status", "issuetype", "parent"],
         "maxResults": MAX_RESULTS,
     });
     if let Some(page) = page {
@@ -194,6 +205,14 @@ pub fn parse_search(status: u16, body: &str) -> Result<(Vec<Issue>, Option<Strin
             summary: text(issue, "/fields/summary"),
             status: text(issue, "/fields/status/name"),
             kind: text(issue, "/fields/issuetype/name"),
+            parent: issue
+                .pointer("/fields/parent")
+                .map(|parent| Parent {
+                    key: text(parent, "/key"),
+                    summary: text(parent, "/fields/summary"),
+                    kind: text(parent, "/fields/issuetype/name"),
+                })
+                .filter(|parent| !parent.key.is_empty()),
         })
         .collect();
     Ok((issues, next))
@@ -408,7 +427,7 @@ mod tests {
             body,
             json!({
                 "jql": "project in (PROJ) AND assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
-                "fields": ["summary", "status", "issuetype"],
+                "fields": ["summary", "status", "issuetype", "parent"],
                 "maxResults": 50
             })
         );
@@ -417,8 +436,8 @@ mod tests {
     #[test]
     fn search_answer_becomes_rows() {
         let body = r#"{"issues":[
-            {"id":"1","key":"PROJ-7","fields":{"summary":"Fix login","status":{"name":"In Progress"},"issuetype":{"name":"Bug"}}},
-            {"id":"2","key":"BILL-2","fields":{"summary":"Invoice PDF","status":{"name":"To Do"},"issuetype":{"name":"Story"}}}
+            {"id":"1","key":"PROJ-7","fields":{"summary":"Fix login","status":{"name":"In Progress"},"issuetype":{"name":"Bug"},"parent":{"id":"9","key":"PROJ-1","fields":{"summary":"Auth","issuetype":{"name":"Epic"}}}}},
+            {"id":"2","key":"BILL-2","fields":{"summary":"Invoice PDF","status":{"name":"To Do"},"issuetype":{"name":"Story"},"parent":null}}
         ],"isLast":true}"#;
         assert_eq!(
             parse_search(200, body).unwrap().0,
@@ -427,13 +446,19 @@ mod tests {
                     key: "PROJ-7".into(),
                     summary: "Fix login".into(),
                     status: "In Progress".into(),
-                    kind: "Bug".into()
+                    kind: "Bug".into(),
+                    parent: Some(Parent {
+                        key: "PROJ-1".into(),
+                        summary: "Auth".into(),
+                        kind: "Epic".into(),
+                    }),
                 },
                 Issue {
                     key: "BILL-2".into(),
                     summary: "Invoice PDF".into(),
                     status: "To Do".into(),
-                    kind: "Story".into()
+                    kind: "Story".into(),
+                    parent: None,
                 },
             ]
         );

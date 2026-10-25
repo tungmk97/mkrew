@@ -19,6 +19,7 @@ impl Shell {
         let features = settings.features;
         let jira_on = !settings.jira.site.trim().is_empty();
         let jira_mine = settings.jira.mine;
+        let jira_layout = settings.jira.layout;
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
@@ -358,6 +359,7 @@ impl Shell {
             jira: HashMap::new(),
             jira_on,
             jira_mine,
+            jira_layout,
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
             selected_card: None,
@@ -567,6 +569,7 @@ impl Shell {
                     self.apply_diff_mode(settings.ui.diff_mode);
                     self.diff_wrap = settings.ui.diff_wrap;
                     self.jira_on = !settings.jira.site.trim().is_empty();
+                    self.jira_layout = settings.jira.layout;
                     // A hand edit of `[jira] mine` searches the shown list again.
                     if self.apply_jira_mine(settings.jira.mine)
                         && self.jira_side_shown()
