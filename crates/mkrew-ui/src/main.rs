@@ -165,10 +165,14 @@ fn main() {
     for error in &keymap_errors {
         tracing::warn!("{error}; using the default for it");
     }
+    // Started by a toast click (`mkrew://` link, ADR 0078): show that session's pane.
+    let jump = std::env::args()
+        .nth(1)
+        .and_then(|arg| mkrew_core::link::parse_session_link(&arg));
     // A second launch of the same exe on the same daemon shows the running window (it may be
     // hidden in the tray) instead of opening another one; a dev build at another path, or on
     // another `MKREW_SOCKET`, starts on its own.
-    if mkrew_ui::desktop::raise_running_instance(&paths.socket) {
+    if mkrew_ui::desktop::raise_running_instance(&paths.socket, jump) {
         return;
     }
     gpui_platform::application()

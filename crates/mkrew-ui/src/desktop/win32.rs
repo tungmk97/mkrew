@@ -12,8 +12,10 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ulid::Ulid;
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
+use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateIconIndirect, DestroyIcon, FLASHW_STOP, FLASHW_TIMERNOFG, FLASHW_TRAY, FLASHWINFO,
@@ -29,12 +31,13 @@ use windows::Win32::UI::Shell::{
     NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-    FindWindowW, GetCursorPos, GetMessageW, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MF_GRAYED,
-    MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, RegisterWindowMessageW,
-    SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
-    WNDCLASSW,
+    AllowSetForegroundWindow, AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
+    DestroyMenu, DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW,
+    GetWindowThreadProcessId, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, MF_GRAYED, MF_SEPARATOR,
+    MF_STRING, MSG, PostMessageW, RegisterClassW, RegisterWindowMessageW, SMTO_ABORTIFHUNG,
+    SendMessageTimeoutW, SetForegroundWindow, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenu, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_COPYDATA,
+    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
 };
 use windows::core::{PCWSTR, w};
 
@@ -110,6 +113,10 @@ const WM_TRAY: u32 = WM_APP + 1;
 const WM_TRAY_STATE: u32 = WM_APP + 2;
 /// A second launch asks the first to show its window.
 const WM_OPEN: u32 = WM_APP + 3;
+/// `dwData` of the `WM_COPYDATA` a link launch sends ("MKJP"); `lpData` is [`encode_jump`].
+const COPYDATA_JUMP: usize = 0x4D4B_4A50;
+/// How long a link launch waits for the running UI before giving up (a hung UI).
+const COPYDATA_TIMEOUT_MS: u32 = 2000;
 const ICON_ID: u32 = 1;
 const CMD_OPEN: i32 = 1;
 const CMD_QUIT: i32 = 2;
@@ -135,6 +142,23 @@ fn class_name(key: &str) -> Vec<u16> {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect()
+}
+
+/// Session then project ULID, 16 bytes each.
+fn encode_jump((session, project): (Ulid, Ulid)) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[..16].copy_from_slice(&session.to_bytes());
+    out[16..].copy_from_slice(&project.to_bytes());
+    out
+}
+
+fn decode_jump(bytes: &[u8]) -> Option<(Ulid, Ulid)> {
+    let bytes: &[u8; 32] = bytes.try_into().ok()?;
+    let (session, project) = bytes.split_at(16);
+    Some((
+        Ulid::from_bytes(session.try_into().ok()?),
+        Ulid::from_bytes(project.try_into().ok()?),
+    ))
 }
 
 fn icon_index(icon: Icon) -> usize {
@@ -383,6 +407,23 @@ unsafe extern "system" fn window_proc(
         },
         WM_TRAY_STATE => state.apply(hwnd, NIM_MODIFY, icon_of(wparam.0), lparam.0 as u32),
         WM_OPEN => state.send(TrayEvent::Open),
+        WM_COPYDATA => {
+            // SAFETY: for WM_COPYDATA `lParam` points to a COPYDATASTRUCT, and `lpData` to its
+            // `cbData` bytes, both valid for this call.
+            let jump = unsafe {
+                let data = &*(lparam.0 as *const COPYDATASTRUCT);
+                (data.dwData == COPYDATA_JUMP && !data.lpData.is_null())
+                    .then(|| {
+                        std::slice::from_raw_parts(data.lpData.cast::<u8>(), data.cbData as usize)
+                    })
+                    .and_then(decode_jump)
+            };
+            let Some((session, project)) = jump else {
+                return LRESULT(0);
+            };
+            state.send(TrayEvent::Notification { session, project });
+            return LRESULT(1);
+        }
         other if other == state.taskbar_created => {
             let (icon, rgb) = state.kind.get();
             state.apply(hwnd, NIM_ADD, icon, rgb);
@@ -454,15 +495,41 @@ fn run(class: &[u16], shared: &Arc<Shared>, ready: &SyncSender<()>) {
     }
 }
 
-/// Another running Mkrew of the same exe was asked to show its window.
-pub fn raise(key: &str) -> bool {
+/// Another running Mkrew of the same exe was asked to show its window, on `jump`'s session
+/// when given.
+pub fn raise(key: &str, jump: Option<(Ulid, Ulid)>) -> bool {
     let class = class_name(key);
-    // SAFETY: `class` is NUL-terminated and outlives both calls.
+    // SAFETY: `class` is NUL-terminated and outlives `FindWindowW`; `bytes` and `data` outlive
+    // the synchronous `SendMessageTimeoutW`, which copies them into the other process.
     unsafe {
         let Ok(hwnd) = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) else {
             return false;
         };
-        PostMessageW(Some(hwnd), WM_OPEN, WPARAM(0), LPARAM(0)).is_ok()
+        let Some(jump) = jump else {
+            return PostMessageW(Some(hwnd), WM_OPEN, WPARAM(0), LPARAM(0)).is_ok();
+        };
+        // The toast click let this launch come to the front; pass that right to the running UI.
+        let mut pid = 0u32;
+        if GetWindowThreadProcessId(hwnd, Some(&mut pid)) != 0 {
+            let _ = AllowSetForegroundWindow(pid);
+        }
+        let bytes = encode_jump(jump);
+        let data = COPYDATASTRUCT {
+            dwData: COPYDATA_JUMP,
+            cbData: bytes.len() as u32,
+            lpData: bytes.as_ptr() as *mut c_void,
+        };
+        let mut result = 0usize;
+        let sent = SendMessageTimeoutW(
+            hwnd,
+            WM_COPYDATA,
+            WPARAM(0),
+            LPARAM(&raw const data as isize),
+            SMTO_ABORTIFHUNG,
+            COPYDATA_TIMEOUT_MS,
+            Some(&mut result),
+        );
+        sent.0 != 0 && result == 1
     }
 }
 
@@ -609,9 +676,9 @@ mod tests {
     #[test]
     fn a_second_launch_reaches_the_tray_window() {
         let key = format!("test-{}", std::process::id());
-        assert!(!raise(&key), "nobody listens yet");
+        assert!(!raise(&key, None), "nobody listens yet");
         let (tray, events) = Tray::start(&key).expect("the tray window");
-        assert!(raise(&key));
+        assert!(raise(&key, None));
         let started = std::time::Instant::now();
         let event = loop {
             if let Ok(event) = events.try_recv() {
@@ -623,6 +690,32 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
         assert_eq!(event, Some(TrayEvent::Open));
+        tray.remove();
+    }
+
+    #[test]
+    fn a_jump_survives_the_copy() {
+        let jump = (Ulid::new(), Ulid::new());
+        assert_eq!(decode_jump(&encode_jump(jump)), Some(jump));
+        assert_eq!(decode_jump(&encode_jump(jump)[..31]), None);
+        assert_eq!(decode_jump(&[0u8; 33]), None);
+    }
+
+    #[test]
+    fn a_link_launch_reaches_the_tray_window_with_its_session() {
+        let key = format!("test-jump-{}", std::process::id());
+        let jump = (Ulid::new(), Ulid::new());
+        assert!(!raise(&key, Some(jump)), "nobody listens yet");
+        let (tray, events) = Tray::start(&key).expect("the tray window");
+        // `SendMessageTimeoutW` returns once the tray thread handled it: no polling needed.
+        assert!(raise(&key, Some(jump)));
+        assert_eq!(
+            events.try_recv().ok(),
+            Some(TrayEvent::Notification {
+                session: jump.0,
+                project: jump.1
+            })
+        );
         tray.remove();
     }
 

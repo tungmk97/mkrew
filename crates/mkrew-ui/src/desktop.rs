@@ -24,6 +24,9 @@ pub enum TrayEvent {
     Open,
     /// Show the window on this session's pane.
     Session(Ulid),
+    /// Show the window on this session's pane, else its workspace: a toast's `mkrew://` link
+    /// (ADR 0078).
+    Notification { session: Ulid, project: Ulid },
     /// Quit the UI (the daemon and the agents keep running).
     Quit,
     /// Explorer restarted and made the taskbar buttons again: set the badge again.
@@ -51,10 +54,10 @@ pub(crate) fn current_key(socket: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Asks another running Mkrew of the same exe and daemon to show its window. `true`: it was
-/// asked, this launch should end.
-pub fn raise_running_instance(socket: &str) -> bool {
-    let raised = os::raise(&current_key(socket));
+/// Asks another running Mkrew of the same exe and daemon to show its window, on `jump`'s
+/// session when a toast link started this launch. `true`: it was asked, this launch should end.
+pub fn raise_running_instance(socket: &str, jump: Option<(Ulid, Ulid)>) -> bool {
+    let raised = os::raise(&current_key(socket), jump);
     if raised {
         tracing::info!(
             "Mkrew is already running on {socket}: asked it to show its window, exiting"

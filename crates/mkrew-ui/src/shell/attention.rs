@@ -59,6 +59,9 @@ impl Shell {
                 self.restore_window(window, cx);
                 self.open_session(session, window, cx);
             }
+            TrayEvent::Notification { session, project } => {
+                self.notification_clicked(session, project, window, cx);
+            }
             TrayEvent::Quit => self.quit_ui(window, cx),
             TrayEvent::TaskbarRestarted => self.desktop.reapply_badge(),
         }

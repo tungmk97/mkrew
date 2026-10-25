@@ -1,6 +1,8 @@
 //! Everything but Windows: nothing to show or hide, and no tray, so `has_tray` is false and the
 //! window's ✕ quits as before (macOS dock badge: gpui-pre 0.3.7 has no call, ADR 0064).
 
+use ulid::Ulid;
+
 use super::TrayEvent;
 use crate::attention::{Icon, TrayMenu};
 
@@ -34,6 +36,6 @@ impl Os {
     pub fn show_window(&mut self) {}
 }
 
-pub fn raise(_key: &str) -> bool {
+pub fn raise(_key: &str, _jump: Option<(Ulid, Ulid)>) -> bool {
     false
 }
