@@ -635,7 +635,7 @@ impl Shell {
                         let pick = shell
                             .settings_dialog
                             .as_mut()
-                            .and_then(|d| d.font_pick.as_mut());
+                            .and_then(|d| d.list_pick.as_mut());
                         if let Some(pick) = pick {
                             pick.query.click(caret.at, caret.extend, caret.clicks);
                         }

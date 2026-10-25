@@ -487,7 +487,7 @@ impl SettingsDialog {
     pub fn typing(&self) -> Option<&Input> {
         if self.capture.is_some() {
             None
-        } else if let Some(pick) = &self.font_pick {
+        } else if let Some(pick) = &self.list_pick {
             Some(&pick.query)
         } else if self.focus == Focus::Search {
             Some(&self.search)
