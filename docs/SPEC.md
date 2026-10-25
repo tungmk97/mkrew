@@ -1258,6 +1258,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Quick open a file of the active workspace | Ctrl+Shift+O |
 | Global | Open settings | Ctrl+, |
 | Global | Toggle theme (System → Light → Dark) | Ctrl+Shift+J |
+| Global | Select theme | Ctrl+Alt+J |
 | Global | Toggle full screen | F11 |
 | Global | Toggle sidebar | Ctrl+Shift+B |
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
@@ -1443,7 +1444,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Settings (Ctrl+,, palette "Global: Open settings", ADR 0073): a modal dialog (`SETTINGS_DIALOG_WIDTH` ×
   `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin); page list on the left
   (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard), rows on the right
-  (label, help, control: switch, segmented choice, text field, font pick); Number and Text rows are
+  (label, help, control: switch, segmented choice, text field, list pick (fonts, themes)); Number and Text rows are
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
   cancels. A refused value or duplicate keystroke shows under its row, never as a toast. A file that
@@ -1478,7 +1479,14 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Enter/Space = the ringed button (default: the first answer), Tab/←/→ move the ring. A click
   on the shade does nothing. OS file/folder pickers stay native.
 - Theme: System (follows the OS live), Light or Dark — `[ui] theme`, cycled by the title bar toggle
-  (ADR 0027).
+  (ADR 0027). Each slot shows a built-in theme (ADR 0078): `[ui] light_theme` (default Mkrew Light;
+  One Light, GitHub Light, Catppuccin Latte, Solarized Light, Gruvbox Light) and `[ui] dark_theme`
+  (default Mkrew Dark; One Dark, Dracula, Catppuccin Mocha, Tokyo Night, Gruvbox Dark); an unknown
+  name shows the Mkrew theme. "Theme: Select theme…" (Ctrl+Alt+J) previews while moving, Enter or a
+  click on a row saves to the slot shown, Esc restores (an outside click does not close it).
+  Settings → Appearance has "Light mode theme" / "Dark mode theme" rows. In terminals the default
+  fg/bg and ANSI 0–15 follow the theme; 256-color 16–255 and 24-bit colors are drawn as the program
+  sends them.
 
 **Design check (every milestone with UI):** capture screenshots of new views in light and dark
 into `docs/screenshots/` (if automatic capture is not possible, list them in `docs/HUMAN_CHECKS.md`)
@@ -1788,6 +1796,8 @@ follow_debounce_ms = 1500   # §20C.4
 font_family = ""            # §14; "" = system UI font; other UI sizes keep their ratio to it
 font_size = 13              # px, 8–32
 theme = "system"            # §14; "system" | "light" | "dark"; the title bar toggle writes it
+light_theme = "Mkrew Light" # §14; a built-in theme name, shown in Light mode / a light OS
+dark_theme = "Mkrew Dark"   # §14; shown in Dark mode / a dark OS
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the session panel's width (dragging its edge writes it; kept 240–560)
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)

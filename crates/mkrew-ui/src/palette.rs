@@ -160,6 +160,8 @@ pub enum Action {
     Run(Command),
     Extra(Extra),
     GoTo(Target),
+    /// The theme picker's row for `theme::THEMES[i]` (ADR 0078).
+    Theme(usize),
 }
 
 /// One palette line.
@@ -247,6 +249,7 @@ pub fn title(command: Command) -> String {
         Command::CommandPalette => "Global: Command palette".into(),
         Command::OpenSettings => "Global: Open settings".into(),
         Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
+        Command::SelectTheme => "Theme: Select theme…".into(),
         Command::ToggleFullScreen => "Global: Toggle full screen".into(),
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
@@ -268,6 +271,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::Peek
         | Command::OpenSettings
         | Command::ToggleTheme
+        | Command::SelectTheme
         | Command::ToggleFullScreen
         | Command::ToggleSidebar
         | Command::ToggleCompactSidebar
@@ -353,6 +357,27 @@ pub fn settings_error(keymap: &Keymap, error: Option<&str>) -> Vec<Entry> {
             shortcut: keymap.label(Command::OpenSettings),
         })
         .into_iter()
+        .collect()
+}
+
+/// The theme picker's rows (ADR 0078): every built-in theme, its appearance on the right, the
+/// shown one marked.
+pub fn theme_entries(current: &str) -> Vec<Entry> {
+    crate::theme::THEMES
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let look = if entry.dark { "Dark" } else { "Light" };
+            Entry {
+                action: Action::Theme(index),
+                title: entry.name.into(),
+                shortcut: if entry.name == current {
+                    format!("✓ {look}")
+                } else {
+                    look.into()
+                },
+            }
+        })
         .collect()
 }
 
@@ -511,6 +536,17 @@ impl Palette {
         };
         palette.filter();
         palette
+    }
+
+    /// Picks the row showing entry `entry_index` (the theme picker opens on the current theme).
+    pub fn pick_entry(&mut self, entry_index: usize) {
+        if let Some(row) = self
+            .shown
+            .iter()
+            .position(|(index, _)| *index == entry_index)
+        {
+            self.selected = row;
+        }
     }
 
     /// The typed query with its caret and selection.

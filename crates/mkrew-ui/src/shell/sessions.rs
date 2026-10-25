@@ -352,6 +352,7 @@ impl Shell {
             Command::CommandPalette => self.open_palette(window, cx),
             Command::OpenSettings => self.open_settings_dialog(window, cx),
             Command::ToggleTheme => self.toggle_theme(window, cx),
+            Command::SelectTheme => self.open_theme_picker(window, cx),
             Command::ToggleFullScreen => window.toggle_fullscreen(),
             Command::ToggleSidebar => self.toggle_sidebar(window, cx),
             Command::ToggleCompactSidebar => self.toggle_compact_sidebar(window, cx),

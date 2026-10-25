@@ -257,6 +257,7 @@ impl Shell {
                 shell.history_pane = None;
                 shell.doc_dialog = None;
                 shell.quick_open = None;
+                shell.restore_theme_pick(window, cx);
                 shell.palette = None;
                 shell.prompt_picker = None;
                 shell.palette_return = None;
@@ -430,6 +431,7 @@ impl Shell {
             palette: None,
             palette_scroll: ScrollHandle::new(),
             palette_return: None,
+            theme_pick: None,
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
             peek: None,
@@ -549,15 +551,17 @@ impl Shell {
         let installed = cx.text_system().all_font_names();
         let last = cx.global::<theme::Fonts>().clone();
         let mode = cx.theme().mode;
-        match theme::reload(&self.settings_file, &installed, &last, mode) {
+        let names = cx.global::<theme::ThemeNames>().clone();
+        match theme::reload(&self.settings_file, &installed, &last, mode, &names) {
             Ok(changed) => {
                 self.settings_error = None;
-                if let Some((fonts, mode)) = changed {
+                if let Some((fonts, mode, names)) = changed {
                     cx.set_global(fonts);
+                    cx.set_global(names);
                     theme::refresh(mode, window, cx);
                     cx.refresh_windows();
                 }
-                // `theme::reload` only returns fonts and theme; a hand edit of
+                // `theme::reload` only returns fonts, theme mode and names; a hand edit of
                 // `diff_mode` / `diff_wrap` / `[features]` applies too (the file
                 // just parsed, so this second read only happens when it changed).
                 if let Ok(settings) = mkrew_core::settings::load(&self.settings_file) {

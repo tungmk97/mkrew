@@ -90,7 +90,7 @@ pub enum Focus {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FontPick {
+pub struct ListPick {
     pub setting: &'static Setting,
     pub query: Input,
     pub selected: usize,
@@ -127,7 +127,7 @@ pub struct SettingsDialog {
     pub search: Input,
     /// The command waiting for its new keystroke.
     pub capture: Option<Command>,
-    pub font_pick: Option<FontPick>,
+    pub list_pick: Option<ListPick>,
 }
 
 impl SettingsDialog {
@@ -141,7 +141,7 @@ impl SettingsDialog {
             errors: HashMap::new(),
             search: Input::default(),
             capture: None,
-            font_pick: None,
+            list_pick: None,
         }
     }
 
@@ -208,7 +208,7 @@ impl SettingsDialog {
     fn move_focus(&mut self, focus: Focus, keymap: &Keymap) -> Effect {
         let effect = self.commit_draft();
         self.capture = None;
-        self.font_pick = None;
+        self.list_pick = None;
         self.focus = focus;
         if let Focus::Row(i) = focus
             && let Some(Row::Setting(setting)) = self.rows(keymap).get(i).copied()
@@ -224,7 +224,7 @@ impl SettingsDialog {
         self.tab = tab;
         self.focus = Focus::Tabs;
         self.capture = None;
-        self.font_pick = None;
+        self.list_pick = None;
         effect
     }
 
@@ -248,15 +248,15 @@ impl SettingsDialog {
                     let at = choices.iter().position(|c| *c == now).unwrap_or(0);
                     self.write(setting, choices[(at + 1) % choices.len()].to_owned())
                 }
-                Kind::Font if !self.read_only() => {
-                    self.font_pick = Some(FontPick {
+                Kind::Font | Kind::List(_) if !self.read_only() => {
+                    self.list_pick = Some(ListPick {
                         setting,
                         query: Input::default(),
                         selected: 0,
                     });
                     Effect::None
                 }
-                Kind::Font => Effect::None,
+                Kind::Font | Kind::List(_) => Effect::None,
                 // Enter in a text row: write it and keep editing.
                 Kind::Text | Kind::Number => {
                     let effect = self.commit_draft();
@@ -293,7 +293,7 @@ impl SettingsDialog {
     }
 
     pub fn choose(&mut self, setting: &'static Setting, text: &str) -> Effect {
-        self.font_pick = None;
+        self.list_pick = None;
         self.write(setting, text.to_owned())
     }
 
@@ -305,23 +305,26 @@ impl SettingsDialog {
         }
     }
 
-    /// `""` (Default) first, then the installed fonts matching the pick's query.
-    pub fn font_choices(&self) -> Vec<String> {
-        let query = self
-            .font_pick
-            .as_ref()
-            .map(|pick| pick.query.trim().to_lowercase())
-            .unwrap_or_default();
+    /// The pick's choices matching its query: for a font `""` (Default) first, then the
+    /// installed fonts; for a list its names.
+    pub fn list_choices(&self) -> Vec<String> {
+        let Some(pick) = self.list_pick.as_ref() else {
+            return Vec::new();
+        };
+        let query = pick.query.trim().to_lowercase();
+        let matches = |name: &str| name.to_lowercase().contains(&query);
+        if let Kind::List(names) = pick.setting.kind {
+            return names
+                .iter()
+                .filter(|name| matches(name))
+                .map(|name| (*name).to_owned())
+                .collect();
+        }
         let mut choices = Vec::new();
         if query.is_empty() {
             choices.push(String::new());
         }
-        choices.extend(
-            self.fonts
-                .iter()
-                .filter(|font| font.to_lowercase().contains(&query))
-                .cloned(),
-        );
+        choices.extend(self.fonts.iter().filter(|font| matches(font)).cloned());
         choices
     }
 
@@ -340,14 +343,14 @@ impl SettingsDialog {
         self.move_focus(order[next], keymap)
     }
 
-    fn font_key(&mut self, key: DialogKey) -> Effect {
-        let choices = self.font_choices();
+    fn list_key(&mut self, key: DialogKey) -> Effect {
+        let choices = self.list_choices();
         let last = choices.len().saturating_sub(1);
-        let Some(pick) = self.font_pick.as_mut() else {
+        let Some(pick) = self.list_pick.as_mut() else {
             return Effect::None;
         };
         match key {
-            DialogKey::Cancel => self.font_pick = None,
+            DialogKey::Cancel => self.list_pick = None,
             DialogKey::Move {
                 motion: Motion::Up, ..
             } => pick.selected = pick.selected.saturating_sub(1),
@@ -358,7 +361,7 @@ impl SettingsDialog {
             DialogKey::Enter | DialogKey::Save => {
                 let setting = pick.setting;
                 let choice = choices.get(pick.selected).cloned();
-                self.font_pick = None;
+                self.list_pick = None;
                 return choice.map_or(Effect::None, |font| self.write(setting, font));
             }
             DialogKey::Insert(text) => {
@@ -394,8 +397,8 @@ impl SettingsDialog {
         let Some(key) = dialog_key(keystroke) else {
             return Effect::None;
         };
-        if self.font_pick.is_some() {
-            return self.font_key(key);
+        if self.list_pick.is_some() {
+            return self.list_key(key);
         }
         match key {
             DialogKey::Cancel => {
@@ -484,7 +487,7 @@ impl SettingsDialog {
     pub fn typing(&self) -> Option<&Input> {
         if self.capture.is_some() {
             None
-        } else if let Some(pick) = &self.font_pick {
+        } else if let Some(pick) = &self.list_pick {
             Some(&pick.query)
         } else if self.focus == Focus::Search {
             Some(&self.search)
@@ -694,7 +697,13 @@ mod tests {
         for c in ["t", "h", "e", "m", "e"] {
             d.key(&typed(c), None, &keymap);
         }
-        assert_eq!(d.rows(&keymap), vec![Row::Binding(Command::ToggleTheme)]);
+        assert_eq!(
+            d.rows(&keymap),
+            vec![
+                Row::Binding(Command::ToggleTheme),
+                Row::Binding(Command::SelectTheme)
+            ]
+        );
         d.search = Input::from("ctrl+,");
         assert_eq!(d.rows(&keymap), vec![Row::Binding(Command::OpenSettings)]);
     }
@@ -705,11 +714,11 @@ mod tests {
         let mut d = dialog();
         focus_on(&mut d, "ui.font_family", &keymap);
         d.key(&key("enter"), None, &keymap);
-        assert_eq!(d.font_choices(), vec!["", "Inter", "JetBrains Mono"]);
+        assert_eq!(d.list_choices(), vec!["", "Inter", "JetBrains Mono"]);
         for c in ["m", "o", "n"] {
             d.key(&typed(c), None, &keymap);
         }
-        assert_eq!(d.font_choices(), vec!["JetBrains Mono"]);
+        assert_eq!(d.list_choices(), vec!["JetBrains Mono"]);
         assert_eq!(
             d.key(&key("enter"), None, &keymap),
             Effect::Write {
@@ -717,7 +726,32 @@ mod tests {
                 text: "JetBrains Mono".into()
             }
         );
-        assert!(d.font_pick.is_none());
+        assert!(d.list_pick.is_none());
+    }
+
+    #[test]
+    fn the_theme_pick_lists_the_names_and_filters() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        focus_on(&mut d, "ui.dark_theme", &keymap);
+        d.key(&key("enter"), None, &keymap);
+        assert_eq!(
+            d.list_choices().len(),
+            mkrew_core::settings::THEME_NAMES.len(),
+            "every name, no Default row"
+        );
+        for c in ["d", "r", "a", "c"] {
+            d.key(&typed(c), None, &keymap);
+        }
+        assert_eq!(d.list_choices(), vec!["Dracula"]);
+        assert_eq!(
+            d.key(&key("enter"), None, &keymap),
+            Effect::Write {
+                setting: setting("ui.dark_theme"),
+                text: "Dracula".into()
+            }
+        );
+        assert!(d.list_pick.is_none());
     }
 
     /// Review finding: a click on a choice row (its label, or the selected segment) moved it

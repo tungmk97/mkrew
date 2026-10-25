@@ -545,19 +545,66 @@ impl Fonts {
     }
 }
 
-/// The fonts and theme mode of `path` when either differs from `last` / `mode` (`Ok(None)`
-/// when unchanged). A broken file is an `Err` with `file:line:col` (§20.0); the caller keeps
-/// the last good settings.
+/// `[ui] light_theme` / `dark_theme` (ADR 0078), as a GPUI global read by [`refresh`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ThemeNames {
+    pub light: String,
+    pub dark: String,
+}
+
+impl gpui::Global for ThemeNames {}
+
+impl ThemeNames {
+    pub fn from_settings(settings: &Settings) -> Self {
+        Self {
+            light: settings.ui.light_theme.clone(),
+            dark: settings.ui.dark_theme.clone(),
+        }
+    }
+
+    /// The name in the dark (`true`) or light slot.
+    pub fn slot(&self, dark: bool) -> &str {
+        if dark { &self.dark } else { &self.light }
+    }
+}
+
+/// Which slot `mode` shows: `System` follows the OS.
+pub fn slot_is_dark(mode: ThemeMode, os_dark: bool) -> bool {
+    match mode {
+        ThemeMode::System => os_dark,
+        ThemeMode::Light => false,
+        ThemeMode::Dark => true,
+    }
+}
+
+/// The `[ui]` key of a theme slot.
+pub fn slot_key(dark: bool) -> &'static str {
+    if dark { "dark_theme" } else { "light_theme" }
+}
+
+/// Whether the OS shows `window` dark.
+pub fn os_dark(window: &Window) -> bool {
+    matches!(
+        window.appearance(),
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    )
+}
+
+/// The fonts, theme mode and theme names of `path` when any differs from `last` / `mode` /
+/// `names` (`Ok(None)` when unchanged). A broken file is an `Err` with `file:line:col`
+/// (§20.0); the caller keeps the last good settings.
 pub fn reload(
     path: &Path,
     installed: &[String],
     last: &Fonts,
     mode: ThemeMode,
-) -> Result<Option<(Fonts, ThemeMode)>, String> {
+    names: &ThemeNames,
+) -> Result<Option<(Fonts, ThemeMode, ThemeNames)>, String> {
     let settings = mkrew_core::settings::load(path).map_err(|error| error.to_string())?;
     let fonts = Fonts::from_settings(&settings, installed);
-    let changed = fonts != *last || settings.ui.theme != mode;
-    Ok(changed.then_some((fonts, settings.ui.theme)))
+    let new_names = ThemeNames::from_settings(&settings);
+    let changed = fonts != *last || settings.ui.theme != mode || new_names != *names;
+    Ok(changed.then_some((fonts, settings.ui.theme, new_names)))
 }
 
 /// Color tokens for one appearance (dark or light), plus the terminal settings. A GPUI global
@@ -693,6 +740,8 @@ pub struct Theme {
     pub dark: bool,
     /// The chosen mode (`[ui] theme`); `dark` is what it resolved to.
     pub mode: ThemeMode,
+    /// The built-in theme this is (ADR 0078), e.g. "Mkrew Dark".
+    pub name: &'static str,
     pub ui_font_family: SharedString,
     pub terminal_font_family: SharedString,
     pub terminal_font_size: f32,
@@ -719,14 +768,13 @@ pub struct Theme {
 impl gpui::Global for Theme {}
 
 impl Theme {
-    /// `mode` resolved against the OS appearance: `System` follows `os_dark` (SPEC §14).
-    pub fn resolve(mode: ThemeMode, os_dark: bool) -> Self {
-        let dark = match mode {
-            ThemeMode::System => os_dark,
-            ThemeMode::Light => false,
-            ThemeMode::Dark => true,
-        };
-        let theme = if dark { Self::dark() } else { Self::light() };
+    /// The theme of `mode`'s slot (SPEC §14, ADR 0078); an unknown name is that slot's Mkrew theme.
+    pub fn resolve(mode: ThemeMode, os_dark: bool, names: &ThemeNames) -> Self {
+        let dark = slot_is_dark(mode, os_dark);
+        let theme = find_theme(names.slot(dark)).map_or_else(
+            || if dark { Self::dark() } else { Self::light() },
+            ThemeEntry::build,
+        );
         Self { mode, ..theme }
     }
 
@@ -853,6 +901,7 @@ impl Theme {
                 0xF472B6,
             ],
             dark: true,
+            name: "Mkrew Dark",
             ..Self::shared()
         };
         Self {
@@ -943,6 +992,7 @@ impl Theme {
                 0xDB2777,
             ],
             dark: false,
+            name: "Mkrew Light",
             ..Self::shared()
         };
         Self {
@@ -1173,6 +1223,7 @@ impl Theme {
             workspace_colors: [0; WORKSPACE_COLORS.len()],
             dark: false,
             mode: ThemeMode::System,
+            name: "",
             ui_font_family: UI_FONT.into(),
             terminal_font_family: pick_family(TERMINAL_FONTS, &[]).into(),
             terminal_font_size: 13.0,
@@ -1195,6 +1246,433 @@ impl Theme {
     }
 }
 
+/// The colors a built-in theme is made of (ADR 0078); [`Theme::from_palette`] derives the rest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Palette {
+    pub dark: bool,
+    /// The main area and the terminal.
+    pub bg: u32,
+    /// Sidebar, title bar, tab strip.
+    pub chrome: u32,
+    /// Panels, popovers, inputs, cards.
+    pub surface: u32,
+    pub fg: u32,
+    pub muted: u32,
+    pub accent: u32,
+    /// Hues for UI text roles (diff, syntax, git letters); made readable by `readable`.
+    pub red: u32,
+    pub green: u32,
+    pub yellow: u32,
+    pub blue: u32,
+    pub magenta: u32,
+    pub cyan: u32,
+    /// The terminal's ANSI 0–15 as the theme publishes them.
+    pub ansi: [u32; 16],
+}
+
+/// `a` blended toward `b` by `t` (0 = `a`, 1 = `b`), per RGB channel.
+pub fn mix(a: u32, b: u32, t: f32) -> u32 {
+    [16, 8, 0].into_iter().fold(0, |out, shift| {
+        let (x, y) = (((a >> shift) & 0xFF) as f32, ((b >> shift) & 0xFF) as f32);
+        out | (((x + (y - x) * t).round() as u32) << shift)
+    })
+}
+
+/// `color` blended toward `toward` in 5 % steps until it reads at `min` on every ground.
+fn readable(color: u32, toward: u32, grounds: &[u32], min: f32) -> u32 {
+    (0..=20)
+        .map(|step| mix(color, toward, step as f32 * 0.05))
+        .find(|c| grounds.iter().all(|g| contrast(*c, *g) >= min))
+        .unwrap_or(toward)
+}
+
+/// `bg` tinted with `hue` by at most `t`, less (0.05 steps) until `fg` reads ≥ 4.5:1 on it.
+fn fill(bg: u32, hue: u32, t: f32, fg: u32) -> u32 {
+    let steps = (t / 0.05).round() as i32;
+    (0..=steps)
+        .rev()
+        .map(|step| mix(bg, hue, step as f32 * 0.05))
+        .find(|c| contrast(fg, *c) >= 4.5)
+        .unwrap_or(bg)
+}
+
+impl Theme {
+    /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
+    /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
+    pub fn from_palette(name: &'static str, p: &Palette) -> Self {
+        let base = if p.dark { Self::dark() } else { Self::light() };
+        let tint = |hue, t| mix(p.bg, hue, t);
+        let surface_raised = mix(p.surface, p.fg, 0.10);
+        let hover = mix(p.bg, p.fg, 0.06);
+        let diff = |hue| (tint(hue, 0.14), tint(hue, 0.24), tint(hue, 0.30));
+        let (add_bg, add_gutter, add_word) = diff(p.green);
+        let (del_bg, del_gutter, del_word) = diff(p.red);
+        let (mod_bg, mod_gutter, _) = diff(p.yellow);
+        let grounds = [
+            p.bg,
+            p.chrome,
+            p.surface,
+            surface_raised,
+            hover,
+            add_bg,
+            del_bg,
+            mod_bg,
+            add_gutter,
+            del_gutter,
+            mod_gutter,
+            add_word,
+            del_word,
+        ];
+        let text = |color| readable(color, p.fg, &grounds, 4.5);
+        let on_accent = if contrast(p.bg, p.accent) >= contrast(p.fg, p.accent) {
+            p.bg
+        } else {
+            p.fg
+        };
+        Self {
+            name,
+            bg: p.bg,
+            terminal_bg: p.bg,
+            sidebar: p.chrome,
+            chrome: p.chrome,
+            surface: p.surface,
+            card: p.surface,
+            surface_raised,
+            selected: surface_raised,
+            hover,
+            row_hover: hover,
+            well: hover,
+            diff_hunk_header: hover,
+            border: mix(p.bg, p.fg, 0.14),
+            control_border: mix(p.bg, p.fg, 0.14),
+            divider: mix(p.bg, p.fg, 0.09),
+            selected_ring: mix(p.accent, p.bg, 0.50),
+            text: p.fg,
+            text_dim: text(mix(p.fg, p.bg, 0.20)),
+            text_muted: text(p.muted),
+            text_subtle: text(p.muted),
+            text_disabled: text(p.muted),
+            subtle: mix(p.muted, p.bg, 0.35),
+            accent: p.accent,
+            accent_text: text(p.accent),
+            info: p.blue,
+            info_soft: p.blue,
+            info_text: text(p.blue),
+            accent_bg: tint(p.accent, 0.14),
+            pane_focus_border: mix(p.accent, p.bg, 0.50),
+            on_accent,
+            terminal_selection_bg: fill(p.bg, p.accent, 0.30, p.fg),
+            terminal_match_bg: fill(p.bg, p.yellow, 0.20, p.fg),
+            terminal_match_current_bg: fill(p.bg, p.yellow, 0.50, p.fg),
+            warning_bg: tint(p.yellow, 0.14),
+            success_bg: tint(p.green, 0.14),
+            danger_bg: tint(p.red, 0.14),
+            run_pill_bg: tint(p.green, 0.12),
+            run_pill_border: tint(p.green, 0.35),
+            run_pill_text: text(p.green),
+            diff_add_bg: add_bg,
+            diff_del_bg: del_bg,
+            diff_mod_bg: mod_bg,
+            diff_add_gutter: add_gutter,
+            diff_del_gutter: del_gutter,
+            diff_mod_gutter: mod_gutter,
+            diff_add_word_bg: add_word,
+            diff_del_word_bg: del_word,
+            diff_add_text: text(p.green),
+            success_text: text(p.green),
+            diff_del_text: text(p.red),
+            danger_text: text(p.red),
+            diff_mod_text: text(p.yellow),
+            git_modified: text(p.yellow),
+            git_untracked: text(p.yellow),
+            syntax_number: text(p.yellow),
+            syntax_keyword: text(p.magenta),
+            syntax_string: text(p.green),
+            syntax_type: text(p.cyan),
+            syntax_function: text(p.blue),
+            teal: text(p.cyan),
+            folder: text(p.blue),
+            ansi: p.ansi,
+            dark: p.dark,
+            ..base
+        }
+    }
+}
+
+/// One built-in theme (ADR 0078). The Mkrew ones have no palette: they are `Theme::dark()` /
+/// `Theme::light()` exactly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThemeEntry {
+    pub name: &'static str,
+    pub dark: bool,
+    palette: Option<Palette>,
+}
+
+impl ThemeEntry {
+    pub fn build(&self) -> Theme {
+        match (&self.palette, self.dark) {
+            (Some(palette), _) => Theme::from_palette(self.name, palette),
+            (None, true) => Theme::dark(),
+            (None, false) => Theme::light(),
+        }
+    }
+}
+
+/// The theme named `name` (exact match).
+pub fn find_theme(name: &str) -> Option<&'static ThemeEntry> {
+    THEMES.iter().find(|entry| entry.name == name)
+}
+
+const fn dark_entry(name: &'static str, palette: Palette) -> ThemeEntry {
+    ThemeEntry {
+        name,
+        dark: true,
+        palette: Some(palette),
+    }
+}
+
+const fn light_entry(name: &'static str, palette: Palette) -> ThemeEntry {
+    ThemeEntry {
+        name,
+        dark: false,
+        palette: Some(palette),
+    }
+}
+
+/// Every built-in theme, in [`mkrew_core::settings::THEME_NAMES`] order.
+pub const THEMES: &[ThemeEntry] = &[
+    ThemeEntry {
+        name: "Mkrew Dark",
+        dark: true,
+        palette: None,
+    },
+    dark_entry(
+        "One Dark",
+        Palette {
+            dark: true,
+            bg: 0x282C34,
+            chrome: 0x21252B,
+            surface: 0x292D35,
+            fg: 0xBDC3CD,
+            muted: 0x9DA5B4,
+            accent: 0x61AFEF,
+            red: 0xE06C75,
+            green: 0x98C379,
+            yellow: 0xE5C07B,
+            blue: 0x61AFEF,
+            magenta: 0xC678DD,
+            cyan: 0x56B6C2,
+            ansi: [
+                0x3F4451, 0xE06C75, 0x98C379, 0xD19A66, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
+                0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
+            ],
+        },
+    ),
+    dark_entry(
+        "Dracula",
+        Palette {
+            dark: true,
+            bg: 0x282A36,
+            chrome: 0x21222C,
+            surface: 0x242631,
+            fg: 0xF8F8F2,
+            muted: 0xA0A8CD,
+            accent: 0xBD93F9,
+            red: 0xFF5555,
+            green: 0x50FA7B,
+            yellow: 0xF1FA8C,
+            blue: 0xBD93F9,
+            magenta: 0xFF79C6,
+            cyan: 0x8BE9FD,
+            ansi: [
+                0x21222C, 0xFF5555, 0x50FA7B, 0xF1FA8C, 0xBD93F9, 0xFF79C6, 0x8BE9FD, 0xF8F8F2,
+                0x6272A4, 0xFF6E6E, 0x69FF94, 0xFFFFA5, 0xD6ACFF, 0xFF92DF, 0xA4FFFF, 0xFFFFFF,
+            ],
+        },
+    ),
+    dark_entry(
+        "Catppuccin Mocha",
+        Palette {
+            dark: true,
+            bg: 0x1E1E2E,
+            chrome: 0x181825,
+            surface: 0x313244,
+            fg: 0xCDD6F4,
+            muted: 0xA6ADC8,
+            accent: 0x89B4FA,
+            red: 0xF38BA8,
+            green: 0xA6E3A1,
+            yellow: 0xF9E2AF,
+            blue: 0x89B4FA,
+            magenta: 0xCBA6F7,
+            cyan: 0x94E2D5,
+            ansi: [
+                0x45475A, 0xF38BA8, 0xA6E3A1, 0xF9E2AF, 0x89B4FA, 0xF5C2E7, 0x94E2D5, 0xBAC2DE,
+                0x585B70, 0xF38BA8, 0xA6E3A1, 0xF9E2AF, 0x89B4FA, 0xF5C2E7, 0x94E2D5, 0xA6ADC8,
+            ],
+        },
+    ),
+    dark_entry(
+        "Tokyo Night",
+        Palette {
+            dark: true,
+            bg: 0x1A1B26,
+            chrome: 0x16161E,
+            surface: 0x24283B,
+            fg: 0xC0CAF5,
+            muted: 0x9AA5CE,
+            accent: 0x7AA2F7,
+            red: 0xF7768E,
+            green: 0x9ECE6A,
+            yellow: 0xE0AF68,
+            blue: 0x7AA2F7,
+            magenta: 0xBB9AF7,
+            cyan: 0x7DCFFF,
+            ansi: [
+                0x15161E, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xA9B1D6,
+                0x414868, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xC0CAF5,
+            ],
+        },
+    ),
+    dark_entry(
+        "Gruvbox Dark",
+        Palette {
+            dark: true,
+            bg: 0x282828,
+            chrome: 0x1D2021,
+            surface: 0x222222,
+            fg: 0xEBDBB2,
+            muted: 0xBDAE93,
+            accent: 0x83A598,
+            red: 0xFB4934,
+            green: 0xB8BB26,
+            yellow: 0xFABD2F,
+            blue: 0x83A598,
+            magenta: 0xD3869B,
+            cyan: 0x8EC07C,
+            ansi: [
+                0x282828, 0xCC241D, 0x98971A, 0xD79921, 0x458588, 0xB16286, 0x689D6A, 0xA89984,
+                0x928374, 0xFB4934, 0xB8BB26, 0xFABD2F, 0x83A598, 0xD3869B, 0x8EC07C, 0xEBDBB2,
+            ],
+        },
+    ),
+    ThemeEntry {
+        name: "Mkrew Light",
+        dark: false,
+        palette: None,
+    },
+    light_entry(
+        "One Light",
+        Palette {
+            dark: false,
+            bg: 0xFAFAFA,
+            chrome: 0xEAEAEB,
+            surface: 0xFCFCFC,
+            fg: 0x383A42,
+            muted: 0x696C77,
+            accent: 0x3564C9,
+            red: 0xE45649,
+            green: 0x50A14F,
+            yellow: 0xC18401,
+            blue: 0x4078F2,
+            magenta: 0xA626A4,
+            cyan: 0x0184BC,
+            ansi: [
+                0x383A42, 0xE45649, 0x50A14F, 0xC18401, 0x4078F2, 0xA626A4, 0x0184BC, 0xA0A1A7,
+                0x4F525E, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF,
+            ],
+        },
+    ),
+    light_entry(
+        "GitHub Light",
+        Palette {
+            dark: false,
+            bg: 0xFFFFFF,
+            chrome: 0xF6F8FA,
+            surface: 0xFDFEFE,
+            fg: 0x1F2328,
+            muted: 0x59636E,
+            accent: 0x0965D1,
+            red: 0xCF222E,
+            green: 0x1A7F37,
+            yellow: 0x9A6700,
+            blue: 0x0969DA,
+            magenta: 0x8250DF,
+            cyan: 0x1B7C83,
+            ansi: [
+                0x24292F, 0xCF222E, 0x116329, 0x4D2D00, 0x0969DA, 0x8250DF, 0x1B7C83, 0x6E7781,
+                0x57606A, 0xA40E26, 0x1A7F37, 0x633C01, 0x218BFF, 0xA475F9, 0x3192AA, 0x8C959F,
+            ],
+        },
+    ),
+    light_entry(
+        "Catppuccin Latte",
+        Palette {
+            dark: false,
+            bg: 0xEFF1F5,
+            chrome: 0xDDE1E9,
+            surface: 0xF7F8FA,
+            fg: 0x4C4F69,
+            muted: 0x5C5F77,
+            accent: 0x1C5EE1,
+            red: 0xD20F39,
+            green: 0x40A02B,
+            yellow: 0xDF8E1D,
+            blue: 0x1E66F5,
+            magenta: 0x8839EF,
+            cyan: 0x179299,
+            ansi: [
+                0x5C5F77, 0xD20F39, 0x40A02B, 0xDF8E1D, 0x1E66F5, 0xEA76CB, 0x179299, 0xACB0BE,
+                0x6C6F85, 0xD20F39, 0x40A02B, 0xDF8E1D, 0x1E66F5, 0xEA76CB, 0x179299, 0xBCC0CC,
+            ],
+        },
+    ),
+    light_entry(
+        "Solarized Light",
+        Palette {
+            dark: false,
+            bg: 0xFDF6E3,
+            chrome: 0xEEE8D5,
+            surface: 0xFEFBF1,
+            fg: 0x4A5C62,
+            muted: 0x657B83,
+            accent: 0x1E6FA8,
+            red: 0xDC322F,
+            green: 0x859900,
+            yellow: 0xB58900,
+            blue: 0x268BD2,
+            magenta: 0xD33682,
+            cyan: 0x2AA198,
+            ansi: [
+                0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,
+                0x002B36, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3,
+            ],
+        },
+    ),
+    light_entry(
+        "Gruvbox Light",
+        Palette {
+            dark: false,
+            bg: 0xFBF1C7,
+            chrome: 0xEFE0B7,
+            surface: 0xFCF3CF,
+            fg: 0x3C3836,
+            muted: 0x665C54,
+            accent: 0x076678,
+            red: 0x9D0006,
+            green: 0x79740E,
+            yellow: 0xB57614,
+            blue: 0x076678,
+            magenta: 0x8F3F71,
+            cyan: 0x427B58,
+            ansi: [
+                0xFBF1C7, 0xCC241D, 0x98971A, 0xD79921, 0x458588, 0xB16286, 0x689D6A, 0x7C6F64,
+                0x928374, 0x9D0006, 0x79740E, 0xB57614, 0x076678, 0x8F3F71, 0x427B58, 0x3C3836,
+            ],
+        },
+    ),
+];
+
 /// Views read the theme with `cx.theme()` (ADR 0027).
 pub trait ActiveTheme {
     fn theme(&self) -> &Theme;
@@ -1206,15 +1684,13 @@ impl ActiveTheme for App {
     }
 }
 
-/// Rebuilds the theme global from `mode`, the window's OS appearance and the `Fonts` global.
-/// Called at startup, on OS appearance changes, on a settings reload and by the toggle.
+/// Rebuilds the theme global from `mode`, the window's OS appearance, the `ThemeNames` and
+/// `Fonts` globals. Called at startup, on OS appearance changes, on a settings reload and by
+/// the toggle.
 pub fn refresh(mode: ThemeMode, window: &Window, cx: &mut App) {
-    let os_dark = matches!(
-        window.appearance(),
-        WindowAppearance::Dark | WindowAppearance::VibrantDark
-    );
     let fonts = cx.global::<Fonts>().clone();
-    cx.set_global(Theme::resolve(mode, os_dark).with_fonts(&fonts));
+    let names = cx.global::<ThemeNames>().clone();
+    cx.set_global(Theme::resolve(mode, os_dark(window), &names).with_fonts(&fonts));
 }
 
 /// System → Light → Dark → System (the title bar toggle, `ToggleTheme`).
@@ -1312,6 +1788,113 @@ mod tests {
 
     use super::*;
 
+    fn all_themes() -> Vec<Theme> {
+        THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    #[test]
+    fn the_pick_goes_to_the_slot_shown() {
+        assert_eq!(
+            slot_key(slot_is_dark(ThemeMode::System, true)),
+            "dark_theme"
+        );
+        assert_eq!(
+            slot_key(slot_is_dark(ThemeMode::System, false)),
+            "light_theme"
+        );
+        assert_eq!(
+            slot_key(slot_is_dark(ThemeMode::Light, true)),
+            "light_theme"
+        );
+        assert_eq!(slot_key(slot_is_dark(ThemeMode::Dark, false)), "dark_theme");
+    }
+
+    #[test]
+    fn the_theme_table_matches_the_settings_names() {
+        let names: Vec<&str> = THEMES.iter().map(|e| e.name).collect();
+        assert_eq!(names, mkrew_core::settings::THEME_NAMES);
+        for entry in THEMES {
+            let theme = entry.build();
+            assert_eq!(theme.dark, entry.dark, "{}", entry.name);
+            assert_eq!(theme.name, entry.name);
+        }
+        assert_eq!(
+            find_theme("Mkrew Dark").map(ThemeEntry::build),
+            Some(Theme::dark())
+        );
+        assert_eq!(
+            find_theme("Mkrew Light").map(ThemeEntry::build),
+            Some(Theme::light())
+        );
+        assert!(find_theme("dracula").is_none(), "exact names only");
+    }
+
+    #[test]
+    fn mix_blends_per_channel() {
+        assert_eq!(mix(0x000000, 0xFFFFFF, 0.5), 0x808080);
+        assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
+        assert_eq!(mix(0xFF0000, 0x0000FF, 0.0), 0xFF0000);
+        assert_eq!(mix(0xFF0000, 0x0000FF, 1.0), 0x0000FF);
+    }
+
+    #[test]
+    fn the_classic_sidebar_text_reads_on_every_sidebar() {
+        for theme in all_themes() {
+            let classic = theme.classic();
+            for (what, color) in [("text", classic.text), ("text_muted", classic.text_muted)] {
+                let ratio = contrast(color, theme.sidebar);
+                assert!(ratio >= 4.5, "{} {what}: {ratio:.2}", theme.name);
+            }
+        }
+    }
+
+    #[test]
+    fn derived_themes_keep_the_fixed_tokens() {
+        for entry in THEMES.iter().filter(|e| e.palette.is_some()) {
+            let theme = entry.build();
+            let base = if entry.dark {
+                Theme::dark()
+            } else {
+                Theme::light()
+            };
+            let fixed = |t: &Theme| {
+                (
+                    t.status_working,
+                    t.status_needs_input,
+                    t.status_done,
+                    t.status_exited,
+                    t.status_idle,
+                    t.workspace_colors,
+                    t.qr_dark,
+                    t.qr_light,
+                )
+            };
+            assert_eq!(fixed(&theme), fixed(&base), "{}", entry.name);
+            assert_eq!(theme.classic(), base.classic(), "{}", entry.name);
+        }
+    }
+
+    /// Debug dump of every token, minus fields that are not colors and may differ by platform or
+    /// be added later (`name`, font families). Guards "the default look never changes" (ADR 0078).
+    fn golden(theme: &Theme) -> String {
+        format!("{theme:#?}")
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                !(line.starts_with("name:")
+                    || line.starts_with("ui_font_family:")
+                    || line.starts_with("terminal_font_family:"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_mkrew_themes_never_change() {
+        insta::assert_snapshot!("mkrew_dark", golden(&Theme::dark()));
+        insta::assert_snapshot!("mkrew_light", golden(&Theme::light()));
+    }
+
     #[test]
     fn a_configured_family_is_used_only_when_installed() {
         let mut settings = Settings::default();
@@ -1358,17 +1941,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
         let last = Fonts::from_settings(&Settings::default(), &[]);
+        let n = ThemeNames::from_settings(&Settings::default());
         let system = ThemeMode::System;
         std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
-        let (grown, mode) = reload(&path, &[], &last, system).unwrap().expect("changed");
+        let (grown, mode, _) = reload(&path, &[], &last, system, &n)
+            .unwrap()
+            .expect("changed");
         assert_eq!((grown.terminal_size, mode), (18.0, system));
         std::fs::write(&path, "[terminal]\nfont_size = 4\n").unwrap();
-        let error = reload(&path, &[], &grown, system).expect_err("out of range");
+        let error = reload(&path, &[], &grown, system, &n).expect_err("out of range");
         assert!(error.contains("settings.toml:2:"), "{error}");
         assert!(error.contains("8–32"), "{error}");
         std::fs::write(&path, "[terminal]\nfont_size = 18\n").unwrap();
         assert_eq!(
-            reload(&path, &[], &grown, system),
+            reload(&path, &[], &grown, system, &n),
             Ok(None),
             "unchanged: no redraw"
         );
@@ -1379,8 +1965,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            reload(&path, &[], &grown, system),
-            Ok(Some((grown.clone(), ThemeMode::Dark)))
+            reload(&path, &[], &grown, system, &n),
+            Ok(Some((grown.clone(), ThemeMode::Dark, n.clone())))
+        );
+        // A new theme name alone is a change.
+        std::fs::write(
+            &path,
+            "[ui]\ntheme = \"dark\"\ndark_theme = \"Dracula\"\n[terminal]\nfont_size = 18\n",
+        )
+        .unwrap();
+        let dark = ThemeMode::Dark;
+        assert_eq!(
+            reload(&path, &[], &grown, dark, &n),
+            Ok(Some((grown.clone(), dark, names("Mkrew Light", "Dracula"))))
         );
     }
 
@@ -1402,7 +1999,7 @@ mod tests {
 
     #[test]
     fn body_text_contrast_is_at_least_4_5() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for bg in [
                 theme.bg,
                 theme.surface,
@@ -1414,7 +2011,11 @@ mod tests {
             ] {
                 for fg in [theme.text, theme.text_muted] {
                     let ratio = contrast(fg, bg);
-                    assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                    assert!(
+                        ratio >= 4.5,
+                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
+                        theme.name
+                    );
                 }
             }
         }
@@ -1452,13 +2053,56 @@ mod tests {
         assert_eq!(next_mode(ThemeMode::Dark), ThemeMode::System);
     }
 
+    fn names(light: &str, dark: &str) -> ThemeNames {
+        ThemeNames {
+            light: light.into(),
+            dark: dark.into(),
+        }
+    }
+
     #[test]
     fn mode_resolves_against_the_os() {
-        assert!(Theme::resolve(ThemeMode::System, true).dark);
-        assert!(!Theme::resolve(ThemeMode::System, false).dark);
-        assert!(!Theme::resolve(ThemeMode::Light, true).dark);
-        assert!(Theme::resolve(ThemeMode::Dark, false).dark);
-        assert_eq!(Theme::resolve(ThemeMode::Dark, false).mode, ThemeMode::Dark);
+        let n = ThemeNames::from_settings(&Settings::default());
+        assert!(Theme::resolve(ThemeMode::System, true, &n).dark);
+        assert!(!Theme::resolve(ThemeMode::System, false, &n).dark);
+        assert!(!Theme::resolve(ThemeMode::Light, true, &n).dark);
+        assert!(Theme::resolve(ThemeMode::Dark, false, &n).dark);
+        assert_eq!(
+            Theme::resolve(ThemeMode::Dark, false, &n).mode,
+            ThemeMode::Dark
+        );
+    }
+
+    #[test]
+    fn default_names_resolve_to_exactly_today() {
+        let n = ThemeNames::from_settings(&Settings::default());
+        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
+        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+    }
+
+    #[test]
+    fn unknown_names_fall_back_to_mkrew() {
+        let n = names("nope", "dracula");
+        assert_eq!(Theme::resolve(ThemeMode::System, true, &n), Theme::dark());
+        assert_eq!(Theme::resolve(ThemeMode::System, false, &n), Theme::light());
+    }
+
+    #[test]
+    fn each_slot_picks_its_name() {
+        let n = names("Solarized Light", "Dracula");
+        assert_eq!(Theme::resolve(ThemeMode::Dark, false, &n).name, "Dracula");
+        assert_eq!(
+            Theme::resolve(ThemeMode::Light, true, &n).name,
+            "Solarized Light"
+        );
+        assert_eq!(Theme::resolve(ThemeMode::System, true, &n).name, "Dracula");
+    }
+
+    #[test]
+    fn a_slot_may_hold_the_other_appearance() {
+        let n = names("Mkrew Light", "GitHub Light");
+        let theme = Theme::resolve(ThemeMode::Dark, false, &n);
+        assert_eq!((theme.name, theme.dark), ("GitHub Light", false));
     }
 
     #[test]
@@ -1471,36 +2115,41 @@ mod tests {
     /// ✕ on the red hover of the Close button must stay readable in both themes.
     #[test]
     fn window_close_hover_is_readable() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             let ratio = contrast(theme.on_accent, theme.status_exited);
-            assert!(ratio >= 3.0, "{ratio:.2}");
+            assert!(ratio >= 3.0, "{}: {ratio:.2}", theme.name);
         }
     }
 
     #[test]
     fn on_accent_text_is_readable_on_the_accent() {
-        for t in [Theme::dark(), Theme::light()] {
-            assert!(contrast(t.on_accent, t.accent) >= 3.0, "{:06X}", t.accent);
+        for t in all_themes() {
+            assert!(
+                contrast(t.on_accent, t.accent) >= 3.0,
+                "{}: {:06X}",
+                t.name,
+                t.accent
+            );
         }
     }
 
     #[test]
     fn selected_text_stays_readable() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for bg in [
                 theme.terminal_selection_bg,
                 theme.terminal_match_bg,
                 theme.terminal_match_current_bg,
             ] {
                 let ratio = contrast(theme.text, bg);
-                assert!(ratio >= 4.5, "{bg:06X}: {ratio:.2}");
+                assert!(ratio >= 4.5, "{}: {bg:06X}: {ratio:.2}", theme.name);
             }
         }
     }
 
     #[test]
     fn code_stays_readable() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for fg in [
                 theme.syntax_keyword,
                 theme.syntax_string,
@@ -1512,7 +2161,11 @@ mod tests {
                 // `surface_raised` = the Files viewer's selected line.
                 for bg in [theme.bg, theme.surface, theme.surface_raised] {
                     let ratio = contrast(fg, bg);
-                    assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                    assert!(
+                        ratio >= 4.5,
+                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
+                        theme.name
+                    );
                 }
             }
         }
@@ -1522,23 +2175,23 @@ mod tests {
     /// the ✕ must read on it in both appearances.
     #[test]
     fn toast_text_and_marks_read_on_the_card() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             let ratio = contrast(theme.text, theme.surface_raised);
-            assert!(ratio >= 4.5, "text: {ratio:.2}");
+            assert!(ratio >= 4.5, "{}: text: {ratio:.2}", theme.name);
             for (name, mark) in [
                 ("info", theme.accent_text),
                 ("error", theme.status_exited),
                 ("close", theme.text_muted),
             ] {
                 let ratio = contrast(mark, theme.surface_raised);
-                assert!(ratio >= 3.0, "{name}: {ratio:.2}");
+                assert!(ratio >= 3.0, "{}: {name}: {ratio:.2}", theme.name);
             }
         }
     }
 
     #[test]
     fn highlighted_diff_lines_stay_readable() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for fg in [
                 theme.syntax_keyword,
                 theme.syntax_string,
@@ -1551,7 +2204,11 @@ mod tests {
             ] {
                 for bg in [theme.diff_add_bg, theme.diff_del_bg, theme.diff_mod_bg] {
                     let ratio = contrast(fg, bg);
-                    assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                    assert!(
+                        ratio >= 4.5,
+                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
+                        theme.name
+                    );
                 }
             }
         }
@@ -1561,7 +2218,7 @@ mod tests {
     /// (WCAG 1.4.11: graphical objects ≥ 3:1).
     #[test]
     fn change_bars_stand_out_from_the_editor() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for fg in [
                 theme.diff_add_text,
                 theme.diff_mod_text,
@@ -1569,7 +2226,11 @@ mod tests {
             ] {
                 for bg in [theme.bg, theme.surface, theme.surface_raised] {
                     let ratio = contrast(fg, bg);
-                    assert!(ratio >= 3.0, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                    assert!(
+                        ratio >= 3.0,
+                        "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
+                        theme.name
+                    );
                 }
             }
         }
@@ -1579,7 +2240,7 @@ mod tests {
     /// their own backgrounds, in both appearances.
     #[test]
     fn diff_line_colors_read_on_their_backgrounds() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for (fg, bg) in [
                 (theme.diff_add_text, theme.diff_add_bg),
                 (theme.diff_del_text, theme.diff_del_bg),
@@ -1595,7 +2256,11 @@ mod tests {
                 (theme.git_untracked, theme.selected),
             ] {
                 let ratio = contrast(fg, bg);
-                assert!(ratio >= 4.5, "{fg:06X} on {bg:06X}: {ratio:.2}");
+                assert!(
+                    ratio >= 4.5,
+                    "{}: {fg:06X} on {bg:06X}: {ratio:.2}",
+                    theme.name
+                );
             }
         }
     }
@@ -1647,7 +2312,7 @@ mod tests {
 
     #[test]
     fn workspace_colors_stand_out_from_every_surface_and_from_each_other() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             // Where a swatch or avatar sits: the dialogs, the menu, the sidebar and its row fills.
             let surfaces = [
                 theme.bg,
@@ -1664,8 +2329,8 @@ mod tests {
                     let ratio = contrast(color, bg);
                     assert!(
                         ratio >= 3.0,
-                        "{name} {color:06X} on {bg:06X} (dark: {}): {ratio:.2}",
-                        theme.dark
+                        "{}: {name} {color:06X} on {bg:06X}: {ratio:.2}",
+                        theme.name
                     );
                 }
             }
@@ -1702,16 +2367,24 @@ mod tests {
 
     #[test]
     fn avatar_letters_and_chevrons_stay_readable() {
-        for theme in [Theme::dark(), Theme::light()] {
+        for theme in all_themes() {
             for bg in [theme.sidebar, theme.hover, theme.selected] {
                 for color in theme.workspace_colors {
                     let (letter, fill) = theme.avatar_colors(color, bg);
                     let ratio = contrast(letter, fill);
-                    assert!(ratio >= 4.5, "{letter:06X} on {fill:06X}: {ratio:.2}");
+                    assert!(
+                        ratio >= 4.5,
+                        "{}: {letter:06X} on {fill:06X}: {ratio:.2}",
+                        theme.name
+                    );
                 }
                 // The chevron is the only sign of expanded / collapsed (WCAG 1.4.11).
                 let ratio = contrast(theme.chevron_color(), bg);
-                assert!(ratio >= 3.0, "chevron on {bg:06X}: {ratio:.2}");
+                assert!(
+                    ratio >= 3.0,
+                    "{}: chevron on {bg:06X}: {ratio:.2}",
+                    theme.name
+                );
             }
         }
     }

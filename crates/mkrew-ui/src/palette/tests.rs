@@ -44,7 +44,7 @@ fn commands(context: &Context) -> Vec<Command> {
         .into_iter()
         .filter_map(|entry| match entry.action {
             Action::Run(command) => Some(command),
-            Action::Extra(_) | Action::GoTo(_) => None,
+            Action::Extra(_) | Action::GoTo(_) | Action::Theme(_) => None,
         })
         .collect()
 }
@@ -290,6 +290,7 @@ fn availability_follows_the_view() {
             Command::Peek,
             Command::OpenSettings,
             Command::ToggleTheme,
+            Command::SelectTheme,
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
@@ -451,6 +452,7 @@ fn palette_only_actions_follow_the_view_and_state() {
             Action::Run(_) => 0,
             Action::Extra(_) => 1,
             Action::GoTo(_) => 2,
+            Action::Theme(_) => 3,
         })
         .collect();
     assert!(kinds.is_sorted(), "{kinds:?}");
@@ -609,4 +611,27 @@ fn mark_unread_is_listed_only_for_a_session_that_can_be_marked() {
         .expect("listed");
     assert_eq!(entry.title, "Agent: Mark unread");
     assert_eq!(entry.shortcut, "", "palette-only: no key is bound");
+}
+
+#[test]
+fn theme_entries_list_every_theme_with_its_appearance_and_mark_the_current() {
+    let entries = theme_entries("Dracula");
+    assert_eq!(entries.len(), crate::theme::THEMES.len());
+    assert_eq!(entries[0].action, Action::Theme(0));
+    assert_eq!(entries[0].title, "Mkrew Dark");
+    assert_eq!(entries[0].shortcut, "Dark");
+    assert_eq!(entries[2].title, "Dracula");
+    assert_eq!(entries[2].shortcut, "✓ Dark");
+    assert_eq!(entries[7].shortcut, "Light");
+}
+
+#[test]
+fn the_picker_starts_on_the_current_theme_and_moves_from_there() {
+    let mut palette = Palette::new(theme_entries("Dracula"));
+    palette.pick_entry(2);
+    assert_eq!(palette.picked(), Some(Action::Theme(2)));
+    palette.step(1);
+    assert_eq!(palette.picked(), Some(Action::Theme(3)));
+    palette.insert("solar");
+    assert_eq!(palette.picked(), Some(Action::Theme(10)));
 }

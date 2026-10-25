@@ -122,6 +122,9 @@ pub enum Command {
     OpenSettings,
     /// Cycle the theme System → Light → Dark (ADR 0027), saved as `[ui] theme`.
     ToggleTheme,
+    /// Pick a built-in theme for the slot shown (ADR 0078), saved as `[ui] dark_theme` /
+    /// `light_theme`.
+    SelectTheme,
     /// Toggle the window filling the whole screen (not remembered across restarts).
     ToggleFullScreen,
     /// Hide or show the workspace sidebar (not remembered across restarts).
@@ -242,6 +245,7 @@ impl Command {
             Command::CommandPalette,
             Command::OpenSettings,
             Command::ToggleTheme,
+            Command::SelectTheme,
             Command::ToggleFullScreen,
             Command::ToggleSidebar,
             Command::ToggleCompactSidebar,
@@ -320,6 +324,7 @@ impl Command {
             Command::CommandPalette => "command_palette".into(),
             Command::OpenSettings => "open_settings".into(),
             Command::ToggleTheme => "toggle_theme".into(),
+            Command::SelectTheme => "select_theme".into(),
             Command::ToggleFullScreen => "toggle_full_screen".into(),
             Command::ToggleSidebar => "toggle_sidebar".into(),
             Command::ToggleCompactSidebar => "toggle_compact_sidebar".into(),
@@ -410,6 +415,7 @@ impl Command {
             Command::CommandPalette => "ctrl-shift-p".into(),
             Command::OpenSettings => "ctrl-,".into(),
             Command::ToggleTheme => "ctrl-shift-j".into(),
+            Command::SelectTheme => "ctrl-alt-j".into(),
             Command::ToggleFullScreen => "f11".into(),
             Command::ToggleSidebar => "ctrl-shift-b".into(),
             Command::ToggleCompactSidebar => "ctrl-alt-b".into(),
@@ -919,6 +925,8 @@ mod tests {
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
         assert_eq!(bound("ctrl-shift-p"), Some(Command::CommandPalette));
         assert_eq!(bound("ctrl-,"), Some(Command::OpenSettings));
+        assert_eq!(bound("ctrl-alt-j"), Some(Command::SelectTheme));
+        assert_eq!(Command::SelectTheme.context(), None);
         assert_eq!(keymap.label(Command::OpenSettings), "Ctrl+,");
         assert_eq!(bound("f11"), Some(Command::ToggleFullScreen));
         assert_eq!(keymap.label(Command::ToggleFullScreen), "F11");

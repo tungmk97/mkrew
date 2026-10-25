@@ -194,6 +194,7 @@ fn main() {
                 &settings,
                 &cx.text_system().all_font_names(),
             ));
+            cx.set_global(theme::ThemeNames::from_settings(&settings));
             // Confirmations are drawn in the window in Mkrew's style, never the OS dialog (§14).
             cx.set_prompt_builder(shell::confirm_prompt::build);
             let options = WindowOptions {
@@ -631,6 +632,9 @@ struct Shell {
     palette_scroll: ScrollHandle,
     /// What had the keyboard when the palette opened; a picked command acts on it.
     palette_return: Option<(FocusHandle, Option<Ulid>)>,
+    /// The theme mode while the palette is the theme picker (ADR 0078); Esc rebuilds the theme
+    /// for it from the current settings. `Some` while the palette is the theme picker.
+    theme_pick: Option<mkrew_core::settings::ThemeMode>,
     /// The open prompt picker (modal; over the task dialog when it types into it).
     prompt_picker: Option<PromptPicker>,
     /// Keeps the prompt picker's pick in view.
