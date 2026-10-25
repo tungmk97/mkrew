@@ -67,11 +67,20 @@ impl Shell {
                     TabKind::Agent(profile) => {
                         Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
                     }
-                    TabKind::Shell => Some(agent_chip(
-                        sidebar::Badge::Text(">_".to_owned()),
-                        theme.text,
-                        theme,
-                    )),
+                    // The `>_` icon in a chip-sized box, so shell and agent tabs line up.
+                    TabKind::Shell => Some(
+                        div()
+                            .flex_none()
+                            .size(theme::rems_px(theme::AGENT_CHIP_SIZE))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon_svg(
+                                Icon::Terminal,
+                                theme::ICON_SIZE_SMALL,
+                                theme.text_muted,
+                            )),
+                    ),
                     TabKind::Empty => None,
                 };
                 let element = div()
