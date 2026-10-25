@@ -30,6 +30,8 @@ mod undo;
 mod usage;
 mod watch;
 mod web;
+#[cfg(windows)]
+mod wintoast;
 mod worktree;
 
 use anyhow::Context;

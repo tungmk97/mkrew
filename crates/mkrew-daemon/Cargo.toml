@@ -23,8 +23,6 @@ mkrew-protocol = { version = "0.1.0", path = "../mkrew-protocol" }
 mkrew-store = { version = "0.1.0", path = "../mkrew-store" }
 # Project file watcher (SPEC §4, §8); the crate's own `notify` module means `::notify` in code.
 notify = "8.2.0"
-# OS notifications on needs_input/done (SPEC §8); default `z` = pure-Rust zbus on Linux.
-notify-rust = "4.18.1"
 # Quick open ranking for `fs.find` (SPEC §12A).
 nucleo-matcher = "0.3.1"
 portable-pty = "0.9"
@@ -41,6 +39,9 @@ ulid = "1"
 [target.'cfg(windows)'.dependencies]
 # SDDL string for the named pipe's security descriptor (`interprocess` takes a `U16CStr`).
 widestring = "1"
+# WinRT toasts whose click opens a `mkrew://` link (ADR 0078); same 0.62 and features
+# tauri-winrt-notification already builds, so the tree gains no package.
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
 # `SetHandleInformation`: keep a detached daemon from inheriting the client's stdio pipes;
 # `SetThreadExecutionState` for keep awake (SPEC §20A.5); a kill-on-close job object ties
 # `mk web` to the daemon (ADR 0053); `CoIncrementMTAUsage` keeps toasts' WinRT factories valid.
@@ -49,6 +50,11 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(unix)'.dependencies]
 # Safe `kill(pid, SIGKILL)` for forced session kills; 1.x is already in the tree.
 rustix = { version = "1", features = ["process"] }
+
+[target.'cfg(not(windows))'.dependencies]
+# OS notifications on needs_input/done (SPEC §8); default `z` = pure-Rust zbus on Linux.
+# Windows shows WinRT toasts itself (ADR 0078).
+notify-rust = "4.18.1"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,6 +1,7 @@
 //! OS notifications (SPEC §8, §20A.2): one when a session enters needs_input or done, unless
 //! `notify.needs_input` / `notify.done` turns that kind off, at most one per session per
-//! [`THROTTLE`], with the OS default sound when `notify.sound`; a click becomes a
+//! [`THROTTLE`], with the OS default sound when `notify.sound`. A click shows the session: on
+//! Windows the toast opens its `mkrew://` link (ADR 0078), elsewhere it becomes a
 //! `notification.clicked` event.
 //!
 //! The policy is `decide`; [`start`] applies it and is tested with a fake [`Notifier`].
@@ -169,10 +170,30 @@ impl Throttle {
     }
 }
 
-/// `notify-rust`. `show` and waiting for the click both block, so each notice gets its own
-/// short-lived thread (it ends on click or dismissal; the throttle bounds how many exist).
+/// The OS notifier. Windows: a WinRT toast whose click opens the session's `mkrew://` link
+/// (ADR 0078), so `clicked` is not used there. Elsewhere `notify-rust`: `show` and waiting for
+/// the click both block, so each notice gets its own short-lived thread (it ends on click or
+/// dismissal; the throttle bounds how many exist).
 struct OsNotifier;
 
+#[cfg(windows)]
+impl Notifier for OsNotifier {
+    fn show(&self, notice: Notice, _clicked: Clicked) {
+        // WinRT calls block and the notify task is async; the thread ends right after `Show`.
+        let spawned = std::thread::Builder::new()
+            .name("notification".into())
+            .spawn(move || {
+                if let Err(e) = crate::wintoast::show(&notice) {
+                    tracing::warn!("showing a notification failed: {e}");
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::warn!("starting a notification thread failed: {e}");
+        }
+    }
+}
+
+#[cfg(not(windows))]
 impl Notifier for OsNotifier {
     fn show(&self, notice: Notice, clicked: Clicked) {
         let spawned = std::thread::Builder::new()
@@ -185,7 +206,7 @@ impl Notifier for OsNotifier {
                     .body(&notice.body);
                 set_sound(&mut notification, notice.sound);
                 // Linux servers only report a body click for a "default" action.
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(not(target_os = "macos"))]
                 notification.action("default", "Open");
                 let handle = match notification.show() {
                     Ok(handle) => handle,
@@ -229,14 +250,6 @@ fn keep_mta_alive() {
     let hr = unsafe { CoIncrementMTAUsage(&mut cookie) };
     if hr < 0 {
         tracing::warn!(hr, "keeping the COM MTA alive failed");
-    }
-}
-
-/// The OS default sound, or silence: Windows toasts are silent without a sound name.
-#[cfg(target_os = "windows")]
-fn set_sound(notification: &mut notify_rust::Notification, sound: bool) {
-    if sound {
-        notification.sound_name("Default");
     }
 }
 
