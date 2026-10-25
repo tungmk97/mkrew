@@ -226,7 +226,7 @@ fn main() {
             let mode = settings.ui.theme;
             let opened = cx.open_window(options, |window, cx| {
                 theme::refresh(mode, window, cx);
-                cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, window, cx))
+                cx.new(|cx| Shell::new(launched, paths, keymap, &keymap_errors, jump, window, cx))
             });
             if let Err(error) = opened {
                 eprintln!("mkrew: cannot open window: {error:#}");
@@ -350,6 +350,9 @@ struct Shell {
     early_tab_events: Vec<Event>,
     /// Session to show once its workspace's tabs are loaded (clicked in the sidebar).
     reveal: Option<Ulid>,
+    /// The session a `mkrew://` link asked for when it started this UI (ADR 0078); shown
+    /// after the first session list.
+    pending_jump: Option<(Ulid, Ulid)>,
     /// Last failure of a tab action (new tab), shown in the tab bar.
     tab_error: Option<String>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a

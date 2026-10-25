@@ -8,6 +8,7 @@ impl Shell {
         paths: Paths,
         keymap: Keymap,
         keymap_errors: &[KeymapError],
+        jump: Option<(Ulid, Ulid)>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
@@ -446,6 +447,7 @@ impl Shell {
             first_frame_logged: false,
             sidebar_view: None,
             toasts: Toasts::default(),
+            pending_jump: jump,
         }
     }
 
@@ -520,6 +522,10 @@ impl Shell {
                                 shell.workspace = None;
                                 shell.sync_panes(window, cx);
                             }
+                        }
+                        // After the default workspace, so the pane a toast asked for wins.
+                        if let Some((session, project)) = shell.pending_jump.take() {
+                            shell.notification_clicked(session, project, window, cx);
                         }
                     }
                     Err(error) => {
