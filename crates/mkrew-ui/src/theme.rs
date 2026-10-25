@@ -1312,6 +1312,27 @@ mod tests {
 
     use super::*;
 
+    /// Debug dump of every token, minus fields that are not colors and may differ by platform or
+    /// be added later (`name`, font families). Guards "the default look never changes" (ADR 0075).
+    fn golden(theme: &Theme) -> String {
+        format!("{theme:#?}")
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                !(line.starts_with("name:")
+                    || line.starts_with("ui_font_family:")
+                    || line.starts_with("terminal_font_family:"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_mkrew_themes_never_change() {
+        insta::assert_snapshot!("mkrew_dark", golden(&Theme::dark()));
+        insta::assert_snapshot!("mkrew_light", golden(&Theme::light()));
+    }
+
     #[test]
     fn a_configured_family_is_used_only_when_installed() {
         let mut settings = Settings::default();
