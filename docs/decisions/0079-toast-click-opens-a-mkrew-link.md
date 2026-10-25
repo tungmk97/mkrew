@@ -17,12 +17,14 @@ at the banner's timeout.
 - Windows toasts are built by the daemon (WinRT through `windows` 0.62) with
   `activationType="protocol"` and `launch="mkrew://session/<session>?project=<project>"`, still
   under PowerShell's AUMID. Nothing waits for a click; `notify-rust` stays for Linux and macOS.
-- At start, the user's daemon (OS notifier on, no `MKREW_SOCKET`, `mkrew.exe` beside it) writes
+- At start, the user's daemon (OS notifier on, on the default pipe — `MKREW_SOCKET` unset or
+  equal to it, as the UI sets it — and `mkrew.exe` beside it) writes
   `HKCU\Software\Classes\mkrew` → `"<dir>\mkrew.exe" "%1"`.
 - `mkrew.exe <link>`: when a UI of the same exe and daemon runs, it grants it the foreground
   (`AllowSetForegroundWindow`) and sends both ids by `WM_COPYDATA` to its tray window, which
-  calls the existing `notification_clicked`; otherwise the new UI opens the pane after its first
-  session list.
+  calls the existing `notification_clicked`; a running UI that does not take them (an older
+  build, hung) is only asked to show its window. Otherwise the new UI opens the pane after its
+  first session list.
 
 ## Consequences
 

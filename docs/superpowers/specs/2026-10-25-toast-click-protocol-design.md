@@ -73,8 +73,9 @@ toast XML and shows it with the `windows` crate (0.62, already in the tree throu
 
 ### Daemon: registering `mkrew://`
 
-At startup, when the OS notifier is chosen (`MKREW_NOTIFY` unset) and `MKREW_SOCKET` is unset
-(the user's own daemon, not a test or a dev daemon on its own pipe), and `mkrew.exe` exists next
+At startup, when the OS notifier is chosen (`MKREW_NOTIFY` unset) and the daemon is on the
+user's default pipe (`MKREW_SOCKET` unset or equal to it — the UI sets it when it starts the
+daemon; a test or dev daemon on its own pipe skips this), and `mkrew.exe` exists next
 to `mkrew-daemon.exe`, the daemon writes under `HKCU\Software\Classes\mkrew`:
 
 - `(default)` = `URL:Mkrew`, `URL Protocol` = `""`;

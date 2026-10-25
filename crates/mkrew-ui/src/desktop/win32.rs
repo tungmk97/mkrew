@@ -496,7 +496,8 @@ fn run(class: &[u16], shared: &Arc<Shared>, ready: &SyncSender<()>) {
 }
 
 /// Another running Mkrew of the same exe was asked to show its window, on `jump`'s session
-/// when given.
+/// when given. A running UI that does not take the jump (an older build, or hung) is still
+/// asked to show its window: this launch ends either way, never a second UI.
 pub fn raise(key: &str, jump: Option<(Ulid, Ulid)>) -> bool {
     let class = class_name(key);
     // SAFETY: `class` is NUL-terminated and outlives `FindWindowW`; `bytes` and `data` outlive
@@ -505,8 +506,9 @@ pub fn raise(key: &str, jump: Option<(Ulid, Ulid)>) -> bool {
         let Ok(hwnd) = FindWindowW(PCWSTR(class.as_ptr()), PCWSTR::null()) else {
             return false;
         };
+        let open = || PostMessageW(Some(hwnd), WM_OPEN, WPARAM(0), LPARAM(0)).is_ok();
         let Some(jump) = jump else {
-            return PostMessageW(Some(hwnd), WM_OPEN, WPARAM(0), LPARAM(0)).is_ok();
+            return open();
         };
         // The toast click let this launch come to the front; pass that right to the running UI.
         let mut pid = 0u32;
@@ -529,7 +531,11 @@ pub fn raise(key: &str, jump: Option<(Ulid, Ulid)>) -> bool {
             COPYDATA_TIMEOUT_MS,
             Some(&mut result),
         );
-        sent.0 != 0 && result == 1
+        if sent.0 != 0 && result == 1 {
+            return true;
+        }
+        tracing::warn!("the running Mkrew did not take the session; showing its window only");
+        open()
     }
 }
 
@@ -717,6 +723,77 @@ mod tests {
             })
         );
         tray.remove();
+    }
+
+    /// Set by [`older_ui_proc`] when the "show the window" message arrives.
+    static OLDER_UI_OPENED: AtomicBool = AtomicBool::new(false);
+
+    /// A tray window of a Mkrew without links: `WM_COPYDATA` goes to `DefWindowProcW` (0).
+    unsafe extern "system" fn older_ui_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        if message == WM_OPEN {
+            OLDER_UI_OPENED.store(true, Ordering::SeqCst);
+        }
+        // SAFETY: forwarding the unchanged message.
+        unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
+
+    /// After an update the running UI may be an older build: the link launch must still raise
+    /// it and end, not start a second UI on the same daemon.
+    #[test]
+    fn an_older_ui_that_ignores_the_jump_is_still_raised() {
+        let key = format!("test-older-{}", std::process::id());
+        let class = class_name(&key);
+        let (ready, created) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // SAFETY: Win32 window creation and a message loop on this thread; `class` lives
+            // as long as the thread.
+            unsafe {
+                let module = GetModuleHandleW(PCWSTR::null()).unwrap();
+                let hinstance = HINSTANCE(module.0);
+                let window_class = WNDCLASSW {
+                    lpfnWndProc: Some(older_ui_proc),
+                    hInstance: hinstance,
+                    lpszClassName: PCWSTR(class.as_ptr()),
+                    ..Default::default()
+                };
+                assert_ne!(RegisterClassW(&window_class), 0);
+                CreateWindowExW(
+                    WINDOW_EX_STYLE::default(),
+                    PCWSTR(class.as_ptr()),
+                    w!("older Mkrew tray"),
+                    WINDOW_STYLE::default(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    Some(hinstance),
+                    None,
+                )
+                .unwrap();
+                ready.send(()).unwrap();
+                let mut message = MSG::default();
+                while GetMessageW(&mut message, None, 0, 0).0 > 0 {
+                    DispatchMessageW(&message);
+                }
+            }
+        });
+        created.recv().unwrap();
+        assert!(raise(&key, Some((Ulid::new(), Ulid::new()))));
+        let started = std::time::Instant::now();
+        while !OLDER_UI_OPENED.load(Ordering::SeqCst) {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(2),
+                "never asked to show its window"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[test]
