@@ -26,6 +26,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **New themes:** check the 10 new themes visually (Terminals, Git, Files, dialogs) via Ctrl+Alt+J; Mkrew Dark / Light must look unchanged (ADR 0078).
 - [ ] **Theme picker:** ↓ previews, Esc restores the previous colors exactly, Enter saves only `dark_theme` / `light_theme` in settings.toml.
 - [ ] **New themes: panels vs main area contrast** (some derived surfaces are close to bg).
+- [ ] **Sidebar keeps the classic palette:** the sidebar session list and compact rail keep the classic Mkrew palette in every theme; check they read well on each theme's sidebar.
 
 ### To verify — 2026-10-25 Every text field edits like a text box (ADR 0075)
 

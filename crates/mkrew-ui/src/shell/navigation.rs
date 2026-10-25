@@ -397,7 +397,7 @@ impl Shell {
             self.sidebar.sessions(),
             self.board.tasks(),
         ));
-        self.restore_theme_pick(cx);
+        self.restore_theme_pick(window, cx);
         self.workspace_menu = None;
         self.palette = Some(Palette::new(entries));
         self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
@@ -409,7 +409,7 @@ impl Shell {
 
     /// The theme picker (ADR 0078): the palette listing `theme::THEMES`, on the current one.
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.restore_theme_pick(cx);
+        self.restore_theme_pick(window, cx);
         let current = cx.theme().clone();
         let mut palette = Palette::new(palette::theme_entries(current.name));
         if let Some(index) = theme::THEMES.iter().position(|e| e.name == current.name) {
@@ -418,24 +418,30 @@ impl Shell {
         self.workspace_menu = None;
         self.palette_scroll.scroll_to_item(palette.selected);
         self.palette = Some(palette);
-        self.palette_return = window.focused(cx).map(|focus| (focus, None));
-        self.theme_pick = Some(current);
+        let terminal = self.focused_session().filter(|session| {
+            self.panes
+                .get(session)
+                .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
+        });
+        self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
+        self.theme_pick = Some(current.mode);
         self.dialog_serial += 1;
         window.focus(&self.dialog_focus, cx);
         cx.notify();
     }
 
-    /// Back to the theme the picker opened on (Esc, click outside, or anything replacing it).
-    pub(crate) fn restore_theme_pick(&mut self, cx: &mut Context<'_, Self>) {
-        if let Some(from) = self.theme_pick.take() {
-            cx.set_global(from);
+    /// Back to the current theme for the mode the picker opened on (Esc, or anything replacing
+    /// it); rebuilt, so an OS appearance or settings change meanwhile is kept.
+    pub(crate) fn restore_theme_pick(&mut self, window: &Window, cx: &mut Context<'_, Self>) {
+        if let Some(mode) = self.theme_pick.take() {
+            theme::refresh(mode, window, cx);
             cx.refresh_windows();
         }
     }
 
     /// Shows the picked theme without saving it.
     fn preview_theme_pick(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(mode) = self.theme_pick.as_ref().map(|from| from.mode) else {
+        let Some(mode) = self.theme_pick else {
             return;
         };
         let Some(palette::Action::Theme(index)) = self.palette.as_ref().and_then(Palette::picked)
@@ -477,8 +483,8 @@ impl Shell {
     /// Closes the palette; the keyboard goes back to where it was (unless that pane went away
     /// meanwhile).
     pub(crate) fn close_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        // Esc / click outside the theme picker: back to the theme it opened on.
-        self.restore_theme_pick(cx);
+        // Esc from the theme picker: back to the theme it opened on.
+        self.restore_theme_pick(window, cx);
         self.palette = None;
         match self.palette_return.take() {
             Some((focus, session))
@@ -960,7 +966,11 @@ impl Shell {
                 div()
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
-                    .child("↑ ↓ to pick · Enter runs it · Esc closes"),
+                    .child(if picking_theme {
+                        "↑ ↓ to preview · Enter saves it · Esc restores"
+                    } else {
+                        "↑ ↓ to pick · Enter runs it · Esc closes"
+                    }),
             );
         Self::modal_shade("palette-shade", panel, cx)
     }

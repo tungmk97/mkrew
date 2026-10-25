@@ -1610,7 +1610,7 @@ pub const THEMES: &[ThemeEntry] = &[
         Palette {
             dark: false,
             bg: 0xEFF1F5,
-            chrome: 0xDCE0E8,
+            chrome: 0xDDE1E9,
             surface: 0xF7F8FA,
             fg: 0x4C4F69,
             muted: 0x5C5F77,
@@ -1654,7 +1654,7 @@ pub const THEMES: &[ThemeEntry] = &[
         Palette {
             dark: false,
             bg: 0xFBF1C7,
-            chrome: 0xEEDFB6,
+            chrome: 0xEFE0B7,
             surface: 0xFCF3CF,
             fg: 0x3C3836,
             muted: 0x665C54,
@@ -1835,6 +1835,17 @@ mod tests {
         assert_eq!(mix(0x102030, 0x102030, 0.7), 0x102030);
         assert_eq!(mix(0xFF0000, 0x0000FF, 0.0), 0xFF0000);
         assert_eq!(mix(0xFF0000, 0x0000FF, 1.0), 0x0000FF);
+    }
+
+    #[test]
+    fn the_classic_sidebar_text_reads_on_every_sidebar() {
+        for theme in all_themes() {
+            let classic = theme.classic();
+            for (what, color) in [("text", classic.text), ("text_muted", classic.text_muted)] {
+                let ratio = contrast(color, theme.sidebar);
+                assert!(ratio >= 4.5, "{} {what}: {ratio:.2}", theme.name);
+            }
+        }
     }
 
     #[test]

@@ -1443,7 +1443,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Settings (Ctrl+,, palette "Global: Open settings", ADR 0073): a modal dialog (`SETTINGS_DIALOG_WIDTH` ×
   `SETTINGS_DIALOG_HEIGHT`, never larger than the window minus a margin); page list on the left
   (General, Appearance, Notifications, Voice, Jira, Phone, Features, Keyboard), rows on the right
-  (label, help, control: switch, segmented choice, text field, font pick); Number and Text rows are
+  (label, help, control: switch, segmented choice, text field, list pick (fonts, themes)); Number and Text rows are
   written on Enter or when the row loses the keyboard, Esc drops the draft. Keyboard rows show a
   chip, an accent dot when changed and Reset; a click or Enter captures the next keystroke, Esc
   cancels. A refused value or duplicate keystroke shows under its row, never as a toast. A file that

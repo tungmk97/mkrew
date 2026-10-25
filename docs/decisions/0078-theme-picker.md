@@ -45,9 +45,10 @@ System / Light / Dark mode.
   | One Dark | surface | 2C313A → 292D35 |
   | Dracula | surface | 343746 → 242631 |
   | Gruvbox Dark | surface | 32302F → 222222 |
-  | Gruvbox Light | chrome | EBDBB2 → EEDFB6 |
+  | Gruvbox Light | chrome | EBDBB2 → EFE0B7 |
   | Gruvbox Light | surface | F2E5BC → FCF3CF |
   | Catppuccin Latte | surface | E6E9EF → F7F8FA |
+  | Catppuccin Latte | chrome | DCE0E8 → DDE1E9 |
   | Solarized Light | fg | 586E75 → 4A5C62 |
   | Solarized Light | surface | F5EFDC → FEFBF1 |
   | One Light | surface | F2F2F2 → FCFCFC |

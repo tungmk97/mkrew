@@ -255,7 +255,7 @@ impl Shell {
                 shell.history_pane = None;
                 shell.doc_dialog = None;
                 shell.quick_open = None;
-                shell.restore_theme_pick(cx);
+                shell.restore_theme_pick(window, cx);
                 shell.palette = None;
                 shell.prompt_picker = None;
                 shell.palette_return = None;
