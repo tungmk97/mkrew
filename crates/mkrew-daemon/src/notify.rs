@@ -50,9 +50,12 @@ pub trait Notifier: Send + Sync + 'static {
 pub fn from_env() -> Option<Arc<dyn Notifier>> {
     match std::env::var(ENV_NOTIFY).ok().filter(|v| !v.is_empty()) {
         None => {
-            // Before any WinRT call, see `keep_mta_alive`.
             #[cfg(windows)]
-            keep_mta_alive();
+            {
+                // Before any WinRT call, see `keep_mta_alive`.
+                keep_mta_alive();
+                crate::wintoast::register_link_handler();
+            }
             Some(Arc::new(OsNotifier))
         }
         Some(v) if v == "off" => None,
