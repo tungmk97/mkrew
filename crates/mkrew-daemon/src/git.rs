@@ -811,6 +811,13 @@ fn network_git(dir: &Path) -> Command {
     command
 }
 
+/// `git clone <url> <name>` inside `parent`; on failure git removes the folder it created.
+pub fn clone(parent: &Path, url: &str, name: &str) -> io::Result<()> {
+    let mut command = network_git(parent);
+    command.args(["clone", "--quiet", "--", url, name]);
+    run(command).map(drop)
+}
+
 /// Runs `command` with `paths` passed NUL-separated on stdin (no command-line length limit).
 fn run_with_paths(mut command: Command, paths: &[String]) -> io::Result<()> {
     command.args(["--pathspec-from-file=-", "--pathspec-file-nul"]);

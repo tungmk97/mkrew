@@ -190,7 +190,7 @@ pub fn title(command: Command) -> String {
         Direction::Down => "down",
     };
     match command {
-        Command::AddWorkspace => "Workspace: Add workspace".into(),
+        Command::AddWorkspace => "Workspace: Add workspace (folder or clone repository)".into(),
         Command::Workspace(n) => format!("Workspace: Jump to workspace {n}"),
         Command::NextWorkspace => "Workspace: Next workspace".into(),
         Command::PreviousWorkspace => "Workspace: Previous workspace".into(),

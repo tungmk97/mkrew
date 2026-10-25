@@ -9,11 +9,11 @@ fn each_view_maps_to_its_own_show_command() {
     assert_eq!(
         commands,
         [
-            Command::ShowBoard,
             Command::ShowTerminals,
-            Command::ShowDocs,
+            Command::ShowBoard,
             Command::ShowFiles,
-            Command::ShowGit
+            Command::ShowGit,
+            Command::ShowDocs
         ]
     );
 }

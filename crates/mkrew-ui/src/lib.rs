@@ -21,6 +21,7 @@ pub mod base_dialog;
 pub mod board;
 pub mod broadcast;
 pub mod client;
+pub mod clone_dialog;
 pub mod comments;
 pub mod composer;
 pub mod confirm;

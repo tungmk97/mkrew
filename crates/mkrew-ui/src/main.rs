@@ -31,8 +31,8 @@ use mkrew_protocol::{
     DiffLineKind, DocComment, DocContent, DocFile, DocListParams, DocReadParams, Event, FileDiff,
     FsContent, FsEntry, FsListParams, FsMatch, FsReadParams, FsWriteParams, FsWritten,
     GitCommitResult, GitMarker, GitMode, GitStatus, GitStatusParams, Outcome, Project,
-    ProjectAddParams, ProjectRef, ProjectUpdateParams, RemoveWorktreeResult, Request,
-    RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
+    ProjectAddParams, ProjectClonedEvent, ProjectRef, ProjectUpdateParams, RemoveWorktreeResult,
+    Request, RunStartParams, RunStarted, RunStopParams, Session, SessionAttachResult, SessionFiles,
     SessionHistory, SessionKillParams, SessionKind, SessionLinkPlanParams, SessionListParams,
     SessionMoveParams, SessionPinParams, SessionPlanEvent, SessionPortsEvent, SessionReadResult,
     SessionRef, SessionResumeParams, SessionSendParams, SessionSendResult, SessionSpawnResult,
@@ -47,6 +47,7 @@ use mkrew_ui::base_dialog::{self, BaseDialog};
 use mkrew_ui::board::{self, Board, Card, CardAction, DraggedCard, View};
 use mkrew_ui::broadcast::{self, Broadcast, Delivery as BroadcastDelivery};
 use mkrew_ui::client::{Connection, Incoming};
+use mkrew_ui::clone_dialog::CloneDialog;
 use mkrew_ui::comments::{self, Comments, Selection, Thread};
 use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
@@ -474,6 +475,8 @@ struct Shell {
     jira_on: bool,
     /// `[jira] mine`: the `All | Mine` filter, every workspace.
     jira_mine: bool,
+    /// `[jira] layout`: the `List | Kanban` switch, every workspace.
+    jira_layout: mkrew_core::settings::JiraLayout,
     /// The Jira keys field.
     jira_keys_focus: FocusHandle,
     /// The Jira list's "Filter issues" field.
@@ -596,6 +599,8 @@ struct Shell {
     git_discard: Option<git_view::Discard>,
     /// The open base menu of a Git view (modal).
     git_base: Option<BaseDialog>,
+    /// The open "Add workspace" dialog: a local folder or a clone (modal, ADR 0076).
+    add_workspace: Option<CloneDialog>,
     /// The open new / edit task dialog (modal).
     task_dialog: Option<TaskDialog>,
     /// The open "Undo task" / "Restore before turn" confirmation (modal; never open together
@@ -785,6 +790,11 @@ impl Render for Shell {
                         self.git_base
                             .as_ref()
                             .map(|dialog| self.render_git_base(dialog, &theme, cx)),
+                    )
+                    .children(
+                        self.add_workspace
+                            .as_ref()
+                            .map(|dialog| self.render_add_workspace(dialog, &theme, cx)),
                     )
                     .children(
                         self.phone_open

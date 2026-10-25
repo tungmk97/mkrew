@@ -28,6 +28,26 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **New themes: panels vs main area contrast** (some derived surfaces are close to bg).
 - [ ] **Sidebar keeps the classic palette:** the sidebar session list and compact rail keep the classic Mkrew palette in every theme; check they read well on each theme's sidebar.
 
+### To verify — 2026-10-25 Jira List tree and Kanban (ADR 0077)
+
+- [ ] **List (dark + light):** Board → Jira, `List | Kanban` sits after `All | Mine`. List shows
+  each task under its epic and each sub-task under its task, indented; an epic outside the
+  results (or under `Mine`) is a muted header row without a status pill. The chevron folds and
+  unfolds without opening the issue; a typed filter shows the matches with their parents.
+- [ ] **Kanban (dark + light):** one column per status (In Progress, To Do, …) with count;
+  cards show title (2 lines at most), type icon, key, area chip, linked-task chip and the
+  parent line; a narrow window scrolls the columns sideways; a click opens the issue as before.
+- [ ] **Saved:** the choice writes `[jira] layout` and survives a restart; the Settings → Jira
+  page shows the same value.
+
+### To verify — 2026-10-25 Add workspace by cloning (ADR 0076, protocol 48)
+
+- [ ] Rebuild and restart the daemon (protocol 48), then Add workspace (`+`, Ctrl+Shift+K, title-bar menu) opens the dialog; **Open a folder…** adds a folder as before.
+- [ ] Clone a public GitHub HTTPS URL: preview shows `<folder>\<repo>`, "Cloning…" while it runs, then the dialog closes and the new workspace is active.
+- [ ] Clone a private GitLab/GitHub repo over HTTPS: Git Credential Manager's sign-in window appears; over SSH (`git@…`) the key is used; a wrong URL shows git's error in the dialog.
+- [ ] Esc during a clone: the clone finishes and appears in the sidebar; a failing one shows a toast.
+- [ ] **Look (dark + light):** the dialog, its long target path (truncated), Browse…, the disabled "Cloning…" button.
+
 ### To verify — 2026-10-25 Every text field edits like a text box (ADR 0075)
 
 - [ ] **Composer, card follow-up, Git commit box:** click in the middle puts the caret there; ←/→, Home/End, Shift+arrows, drag and double-click select; Ctrl+C / Ctrl+X copy (paste elsewhere to check); Ctrl+Z / Ctrl+Y undo / redo a word at a time; the scroll stays at the bottom while typing at the end.
@@ -59,7 +79,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Broken file:** delete a `]` in settings.toml → the dialog shows the error and "Fix in Zed", the controls do nothing; fix it → the rows become editable within a second.
 - [ ] **Read-only file:** make settings.toml read-only → a change shows the error under its row, no toast.
 - [ ] **Keyboard:** rebind, press the new key without restarting; a duplicate is refused with the other command's name; Reset brings the default back; switch the keyboard layout (US ↔ Vietnamese) → the new binding still works.
-- [ ] **Shift + digit / punctuation:** rebind a command to Ctrl+Shift+7 and to Ctrl+Shift+/ → both work (the key is written the way Windows reports it, e.g. `ctrl-&`). Ctrl+Shift+2 (the default of `show_terminals`) is refused with that command's name.
+- [ ] **Shift + digit / punctuation:** rebind a command to Ctrl+Shift+7 and to Ctrl+Shift+/ → both work (the key is written the way Windows reports it, e.g. `ctrl-&`). Ctrl+Shift+2 (the default of `show_board`) is refused with that command's name.
 - [ ] **Old keymap:** a keymap.toml with `open_keymap_settings = "…"` lists "unknown command" in the palette; Ctrl+, still opens the dialog.
 - [ ] **Merge note:** 2026-10-24 `feat/settings-ui`: ADR 0073 (master took 0072), no protocol/migration. A new `settings.toml` template key needs a row in `mkrew_core::settings_fields::SETTINGS`, or `every_template_key_has_exactly_one_setting` fails (`[jira] mine` was added at the merge).
 

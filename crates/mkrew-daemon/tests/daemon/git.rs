@@ -479,6 +479,61 @@ fn git_log_show_push_and_fetch_with_a_local_remote() {
     client.stop();
 }
 
+/// ADR 0076: `project.clone` answers at once, clones in the background and adds the clone as a
+/// workspace; a taken folder is refused up front; a failed clone leaves no folder behind.
+#[test]
+fn project_clone_adds_the_clone_and_reports_failures() {
+    let env = Env::new();
+    let source = env.repo();
+    git(&source, &["init", "-q", "-b", "main"]);
+    std::fs::write(source.join("a.txt"), "a\n").unwrap();
+    git(&source, &["add", "."]);
+    git(&source, &["commit", "-q", "-m", "one"]);
+    let parent = env.dir.path().join("clones");
+    std::fs::create_dir(&parent).unwrap();
+    let (_daemon, mut client) = env.start();
+    let clone = |url: &str| {
+        let clone_id = Ulid::new();
+        let request = Request::ProjectClone(ProjectCloneParams {
+            clone_id,
+            url: url.into(),
+            parent: parent.to_string_lossy().into_owned(),
+        });
+        (clone_id, request)
+    };
+    let cloned = |client: &mut Client, clone_id: Ulid| match client
+        .wait_event_where(|e| matches!(e, Event::ProjectCloned(done) if done.clone_id == clone_id))
+    {
+        Event::ProjectCloned(done) => done,
+        _ => unreachable!(),
+    };
+
+    let (_, no_name) = clone("git@github.com:");
+    assert_eq!(error_code(client.call(no_name)), ErrorCode::InvalidRequest);
+
+    let (clone_id, request) = clone(source.to_str().unwrap());
+    let _: () = client.call(request).into_result().unwrap();
+    let ProjectClonedEvent { project, error, .. } = cloned(&mut client, clone_id);
+    assert_eq!(error, None);
+    let project = project.unwrap();
+    assert_eq!(Path::new(&project.path), parent.join("repo"));
+    assert_eq!(project.name, "repo");
+    assert!(parent.join("repo").join("a.txt").is_file());
+
+    // The folder is taken now.
+    let (_, again) = clone(source.to_str().unwrap());
+    assert_eq!(error_code(client.call(again)), ErrorCode::InvalidState);
+
+    let missing = env.dir.path().join("missing.git");
+    let (clone_id, request) = clone(missing.to_str().unwrap());
+    let _: () = client.call(request).into_result().unwrap();
+    let failed = cloned(&mut client, clone_id);
+    assert_eq!(failed.project, None);
+    assert!(failed.error.is_some_and(|e| !e.is_empty()));
+    assert!(!parent.join("missing").exists());
+    client.stop();
+}
+
 /// ADR 0029: a workspace folder that is no repository holds `fe/` and `be/` repositories.
 /// `git.repos` finds them; `repo` routes each request; paths stay project-relative; a commit in
 /// one leaves the other alone; the watcher follows a child's `.git`; fs.list marks both.

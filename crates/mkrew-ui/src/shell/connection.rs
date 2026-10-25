@@ -19,6 +19,7 @@ impl Shell {
         let features = settings.features;
         let jira_on = !settings.jira.site.trim().is_empty();
         let jira_mine = settings.jira.mine;
+        let jira_layout = settings.jira.layout;
         let ui = settings.ui;
         let diff_mode = ui.diff_mode;
         let diff_wrap = ui.diff_wrap;
@@ -249,6 +250,7 @@ impl Shell {
                 shell.turns_return = None;
                 shell.git_discard = None;
                 shell.git_base = None;
+                shell.add_workspace = None;
                 shell.phone_open = false;
                 shell.phone = Phone::default();
                 shell.history = None;
@@ -358,6 +360,7 @@ impl Shell {
             jira: HashMap::new(),
             jira_on,
             jira_mine,
+            jira_layout,
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
             selected_card: None,
@@ -412,6 +415,7 @@ impl Shell {
             features,
             git_discard: None,
             git_base: None,
+            add_workspace: None,
             task_dialog: None,
             undo_dialog: None,
             worktree_dialog: None,
@@ -569,6 +573,7 @@ impl Shell {
                     self.apply_diff_mode(settings.ui.diff_mode);
                     self.diff_wrap = settings.ui.diff_wrap;
                     self.jira_on = !settings.jira.site.trim().is_empty();
+                    self.jira_layout = settings.jira.layout;
                     // A hand edit of `[jira] mine` searches the shown list again.
                     if self.apply_jira_mine(settings.jira.mine)
                         && self.jira_side_shown()
@@ -799,6 +804,9 @@ impl Shell {
                     }
                     self.composers.enhanced(done.generation_id, result);
                     cx.notify();
+                }
+                if let Event::ProjectCloned(done) = event {
+                    self.workspace_cloned(done, window, cx);
                 }
             }
             let Some(delivery) = self.router.route(incoming) else {

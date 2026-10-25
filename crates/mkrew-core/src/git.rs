@@ -190,6 +190,16 @@ pub fn auto_base(output: &str) -> Option<(String, String)> {
     })
 }
 
+/// The folder `git clone <url>` creates: the URL's last path segment without `.git`
+/// (`https://github.com/o/repo.git`, `git@gitlab.com:o/repo`, `C:\repos\repo` → `repo`).
+/// `None` when nothing usable is left.
+pub fn repo_dir_name(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches(['/', '\\']);
+    let last = trimmed.rsplit(['/', '\\', ':']).next()?;
+    let name = last.strip_suffix(".git").unwrap_or(last);
+    (!name.is_empty() && name != "." && name != "..").then(|| name.to_owned())
+}
+
 /// The `git log --format` that [`parse_log`] reads (with `-z`): fields split by `0x1f`, the raw
 /// message last so it may hold anything but NUL.
 pub const LOG_FORMAT: &str = "%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%B";
@@ -571,6 +581,23 @@ mod tests {
             authored_at: 0,
             summary: String::new(),
             body: String::new(),
+        }
+    }
+
+    #[test]
+    fn repo_dir_name_is_the_last_segment_without_git() {
+        for (url, name) in [
+            ("https://github.com/o/repo.git", Some("repo")),
+            ("https://gitlab.com/group/sub/repo/", Some("repo")),
+            ("git@github.com:o/repo.git", Some("repo")),
+            ("ssh://git@host:2222/o/repo", Some("repo")),
+            (r"C:\repos\repo.git\", Some("repo")),
+            ("  https://x/o/my.repo  ", Some("my.repo")),
+            ("git@github.com:", None),
+            (".git", None),
+            ("", None),
+        ] {
+            assert_eq!(repo_dir_name(url).as_deref(), name, "{url}");
         }
     }
 

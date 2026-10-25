@@ -12,6 +12,7 @@ impl Shell {
             || self.turns_dialog.is_some()
             || self.git_discard.is_some()
             || self.git_base.is_some()
+            || self.add_workspace.is_some()
             || self.phone_open
             || self.broadcast.is_some()
             || self.ask.is_some()

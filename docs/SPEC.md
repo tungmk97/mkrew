@@ -530,6 +530,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | --- | --- | --- |
 | `hello` | `client` (ui/cli/hook), `protocol_version` | `daemon_version` |
 | `project.list/add/update/archive` | `path`, `name`, `run_commands`, `run_autostart`, `color`, `pinned` (update only), `position` (update only), `review_globs`, `default_agent?`, `default_shell?`, `jira_keys?` | Project (`update`: absent field = unchanged, `null` = cleared; `pinned` is a bool; `position` is an integer, the sidebar order inside the pinned or unpinned group (ascending, 0 = never moved, then by age); `run_commands` replaces the list; each command is trimmed and checked (name 1–20 chars without `/` `:`, unique; one-line command; relative `dir`/`env_file` inside the project; env keys `[A-Za-z_][A-Za-z0-9_]*`; max 8); `default_agent` must be an agent profile; `default_shell` must be a shell profile (same absent / `null` rules); `jira_keys` (string list) replaces the list, `[]` clears it, `null` = unchanged; each key is trimmed, upper-cased and de-duplicated (first-seen order), and must match `^[A-Z][A-Z0-9_]+$` (`invalid_request` naming the key; ADR 0066); `color` must be one of red, orange, yellow, lime, green, teal, blue, purple, pink (`null` = none)); `archive`: `project_id` → Project (`archived: true`, also `project.updated`): its live sessions are asked to stop, clients leave archived projects out, `add` of an archived project's folder un-archives it (same id, tasks and history) — ADR 0019 |
+| `project.clone` | `clone_id` (client-chosen), `url`, `parent` (absolute folder) | `null` at once (ADR 0076); refused when the URL names no folder (`invalid_request`), `parent` is no folder (`invalid_request`) or `<parent>/<repository name>` exists and is not empty (`invalid_state`); then `git clone --quiet -- <url> <name>` runs in `parent` in the background (no terminal prompt, no console) and the clone is added like `project.add`; the end in `project.cloned` |
 | `project.run_start` | `project_id`, `name?`, `cols`/`rows` (default 120×30) | `RunStarted { tab_id?, sessions: [{name, session_id, started}] }` — a run command (ADR 0018) runs as the project's live `shell`-kind session titled `run:<name>` (always the `shell` profile, not `default_shell`; ADR 0032): without `name` every command not already running starts; a running one is reported with `started: false`. cwd = `<project>/<dir>`; env = the shell profile's, then the env file (relative to the project folder), then `env`; the command is typed into the shell followed by an exit for that shell family. Every command is validated before anything spawns (missing folder, unreadable env file → `invalid_request` naming the command). The live run sessions lie side by side in the project's `run` tab (created when missing; layout rebuilt on every start, config order). No commands: `invalid_state`; unknown `name`: `not_found` |
 | `project.run_restart` | `project_id`, `name?`, `cols`/`rows` | `RunStarted` — stops the targets like `run_stop` (5 s grace, then forced kill), waits until they exited (max 10 s, else `timeout`, nothing started), then starts them like `run_start`; the new session (a new id: a run is one session with its own log and History entry) takes the old pane's place in the `run` tab and keeps its color and pin |
 | `project.run_stop` | `project_id`, `name?` | ok — asks the run sessions to terminate (without `name`: every live run session of the project, also one whose name left the config); ok when nothing runs. Each one leaves the `run` tab when it exits (§10) |
@@ -607,6 +608,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `notification.clicked` | user clicked an OS notification (UI focuses that pane) |
 | `git.changed` | workspace git state changed (debounced, ≤ once per 300 ms) |
 | `ai.generated` | answer to an `ai.generate` (`generation_id`, `project_id?` = the request's, `text?` trimmed and, except for `ask`, unfenced, `error?`) |
+| `project.cloned` | end of a `project.clone` (`clone_id`, `project?` the added workspace, `error?` git's message) |
 
 **Framing.** Every frame = `u32` big-endian length + `u8` kind + payload. Kind `0x01` = JSON
 (requests, responses, events). Kind `0x02` = terminal output: 16-byte binary ULID of the session
@@ -813,7 +815,7 @@ The session panel (below) is a third column right of Terminals while open.
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Board, Terminals, Docs, Files, Git.
+- **Views per workspace:** Terminals, Board, Files, Git, Docs.
 - **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; the
   sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
   switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
@@ -1265,8 +1267,8 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
-| Workspace | Add workspace | Ctrl+Shift+K |
-| View | Board / Terminals / Docs | Ctrl+Shift+1 / 2 / 3 |
+| Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
+| View | Terminals / Board / Files / Git / Docs | Ctrl+Shift+1 / 2 / 3 / 4 / 5 |
 | Inbox | Jump to next item needing attention | Ctrl+Shift+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
@@ -1289,7 +1291,6 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Docs | Send comments to agent | Ctrl+Shift+S |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
-| View | Files / Git | Ctrl+Shift+4 / Ctrl+Shift+5 |
 | Files | Expand/collapse, move | ← → ↑ ↓ |
 | Files | Toggle ignored files | Ctrl+Shift+H |
 | Files | Save the opened file | Ctrl+S |
@@ -1592,7 +1593,7 @@ Temporary binary `spike-term`: a GPUI window with one terminal running a shell v
 ### M2 — UI: workspaces & terminals
 
 - [ ] UI spawns the daemon if needed.
-- [ ] Workspace sidebar; add workspace via folder picker.
+- [ ] Workspace sidebar; add workspace via folder picker or by cloning a Git URL (ADR 0076).
 - [ ] Many terminal tabs per workspace; split panes vertically/horizontally; agent or shell panes.
 - [ ] Tabs and split layout persist across UI restarts and daemon restarts.
 - [ ] Workspace/tab/pane/copy/paste/search shortcuts from §13 work; unbound keys reach the agent
@@ -1824,6 +1825,7 @@ site = ""                   # "acme.atlassian.net"
 email = ""
 api_token_env = "JIRA_API_TOKEN"  # env var holding the API token; never the token itself
 mine = false                      # the Board's All | Mine filter (it writes this)
+layout = "list"                   # the Board's List | Kanban switch (it writes this)
 ```
 
 **Phone access** (ADR 0053). While `[web] enabled = true` the daemon supervises `mk web` as a
@@ -2171,12 +2173,14 @@ speech to text, this is the second user-configured use of the network, and only 
    and Save; Enter also saves, Esc clears the text. A daemon error shows under the field as
    `✕ <message>` (e.g. a key that is not letters, digits and `_`). Save sends `project.update`
    `jira_keys` (the daemon trims and upper-cases, so `proj` becomes `PROJ`) and then loads the
-   issues. With keys the header reads `PROJ, BILL · Edit · All | Mine · Refresh`: Edit shows the
+   issues. With keys the header reads `PROJ, BILL · Edit · All | Mine · List | Kanban · Refresh`: Edit shows the
    same field pre-filled (Esc on an empty field leaves it), `All | Mine` picks every open issue
    or only the user's and searches again; the choice is `[jira] mine` (default `false` = `All`),
    one for every workspace, saved at once and kept across restarts (other workspaces' lists are
-   dropped and load again on Refresh or the next switch to Jira). Refresh searches again.
-3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype`,
+   dropped and load again on Refresh or the next switch to Jira). `List | Kanban` picks the
+   layout below; the choice is `[jira] layout` (default `list`), one for every workspace, saved
+   at once, and keeps the loaded issues (ADR 0077). Refresh searches again.
+3. **List.** One search, `POST /rest/api/3/search/jql`, fields `summary,status,issuetype,parent`,
    `maxResults` 50 per page; while an answer has `nextPageToken` and not `isLast: true`, the next
    page is asked with that token, up to 10 pages (the first 500 issues; an empty page also
    stops; no polling). The list shows once every page arrived. JQL `project in (PROJ, BILL) AND
@@ -2185,7 +2189,20 @@ speech to text, this is the second user-configured use of the network, and only 
    "Loading Jira issues…" with working dots. A row: issue type, key, summary (one line, cut with
    `…`), status and, when a task is linked, that task's column (`Todo`, `Running`, `Review`,
    `Done`) as a chip. Nothing found: "No open issues in PROJ, BILL" (`Mine`: "No open issues
-   assigned to you in PROJ, BILL").
+   assigned to you in PROJ, BILL"). The "Filter issues" field keeps the issues whose key or
+   summary contains its text (ignoring case); none left: `No issues match "<text>"`.
+   - **List layout:** a tree, depth first: each issue under its parent (epic > task >
+     sub-task), indented one step per level. Roots come in the order their first issue appears
+     in the search, children in search order. A parent outside the results (done, or not the
+     user's) shows as a header row from the `parent` field: type, key and summary in muted text,
+     no status; a click opens it like any row. A row with children has a chevron that folds
+     them (kept per workspace in memory until the app restarts). With a filter, a row shows when
+     it or a row under it matches, and folded rows open.
+   - **Kanban layout:** one column per status: `In Progress` first, `To Do` second, other
+     statuses after in first-seen order; each column heads with its status icon, name and
+     count and scrolls on its own; the board scrolls sideways below the column width. A card:
+     summary (two lines at most), type icon, key, area chip, the linked task's chip and, when
+     the issue has a parent, the parent's key and summary. Read only: cards do not drag.
 4. **Open.** A task belongs to issue `PROJ-123` when it is in the workspace and its title starts
    with `PROJ-123 ` (the key and one space; `PROJ-12` does not match `PROJ-123 x`; no column,
    ADR 0066). Click a row with a linked task: the Board switches to `Tasks` and the task's edit

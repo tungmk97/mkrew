@@ -181,6 +181,8 @@ pub struct JiraSettings {
     pub api_token_env: String,
     /// The Board's `All | Mine` filter: only issues assigned to the user. The filter writes it.
     pub mine: bool,
+    /// The Board's `List | Kanban` switch. The switch writes it.
+    pub layout: JiraLayout,
 }
 
 impl Default for JiraSettings {
@@ -190,6 +192,27 @@ impl Default for JiraSettings {
             email: String::new(),
             api_token_env: "JIRA_API_TOKEN".into(),
             mine: false,
+            layout: JiraLayout::List,
+        }
+    }
+}
+
+/// `[jira] layout` (SPEC §20I): how the Board shows the issues.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JiraLayout {
+    /// Rows under their parent (epic > task > sub-task).
+    #[default]
+    List,
+    /// One column per status.
+    Kanban,
+}
+
+impl JiraLayout {
+    pub fn name(self) -> &'static str {
+        match self {
+            JiraLayout::List => "list",
+            JiraLayout::Kanban => "kanban",
         }
     }
 }
@@ -426,6 +449,11 @@ pub fn write_jira_mine(path: &Path, mine: bool) -> Result<(), SettingsError> {
     write_value(path, "jira", "mine", &mine.to_string())
 }
 
+/// Saves `[jira] layout` (the Board's `List | Kanban` switch); see [`write_value`].
+pub fn write_jira_layout(path: &Path, layout: JiraLayout) -> Result<(), SettingsError> {
+    write_value(path, "jira", "layout", &format!("\"{}\"", layout.name()))
+}
+
 /// A font size in px, 8–32 (checked when parsed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(try_from = "u16", into = "u16")]
@@ -529,12 +557,14 @@ pub fn template() -> &'static str {
      # Jira issues on the Board (Tasks | Jira): the Jira Cloud site to read from. The API token\n\
      # comes from the environment variable named by api_token_env, never from this file.\n\
      # site: like acme.atlassian.net; empty turns Jira off. mine: list only the issues assigned to\n\
-     # you (the Board's All | Mine filter writes it).\n\
+     # you (the Board's All | Mine filter writes it). layout: list (under their parent) or kanban\n\
+     # (one column per status); the Board's List | Kanban switch writes it.\n\
      [jira]\n\
      # site = \"\"\n\
      # email = \"\"\n\
      # api_token_env = \"JIRA_API_TOKEN\"\n\
-     # mine = false\n"
+     # mine = false\n\
+     # layout = \"list\"\n"
 }
 
 /// A settings file that could not be loaded. Displays as `file[:line:column]: message`.
@@ -806,7 +836,7 @@ push = true
     fn jira_section_parses_and_rejects_a_token() {
         let jira = parse(
             Path::new("settings.toml"),
-            "[jira]\nsite = \"acme.atlassian.net\"\nemail = \"an@acme.com\"\napi_token_env = \"ACME_JIRA\"\nmine = true\n",
+            "[jira]\nsite = \"acme.atlassian.net\"\nemail = \"an@acme.com\"\napi_token_env = \"ACME_JIRA\"\nmine = true\nlayout = \"kanban\"\n",
         )
         .unwrap()
         .jira;
@@ -817,6 +847,7 @@ push = true
                 email: "an@acme.com".into(),
                 api_token_env: "ACME_JIRA".into(),
                 mine: true,
+                layout: JiraLayout::Kanban,
             }
         );
         // The token itself never lives in the file (SPEC §20I).

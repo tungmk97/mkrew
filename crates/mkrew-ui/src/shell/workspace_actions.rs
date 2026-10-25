@@ -3,18 +3,89 @@
 use crate::*;
 
 impl Shell {
-    /// Picks a folder and adds it as a workspace (`project.add`).
+    /// Opens the "Add workspace" dialog (ADR 0076): a local folder, or a clone of a repository.
     pub(crate) fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        if self.connection.is_none() {
+            return;
+        }
+        self.sidebar_error = None;
+        self.add_workspace = Some(CloneDialog::new(self.clone_parent()));
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    /// Where a clone goes by default: next to the active workspace, else the home folder.
+    fn clone_parent(&self) -> String {
+        let active = self
+            .workspace
+            .and_then(|id| self.sidebar.projects().iter().find(|p| p.id == id));
+        active
+            .and_then(|p| Path::new(&p.path).parent().map(|d| d.display().to_string()))
+            .or_else(|| std::env::home_dir().map(|d| d.display().to_string()))
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn close_add_workspace(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.add_workspace = None;
+        self.focus_pane(window, cx);
+        cx.notify();
+    }
+
+    /// Typing edits the URL, Enter clones, Esc closes (a running clone goes on).
+    pub(crate) fn add_workspace_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.stop_propagation();
+        let Some(key) = base_dialog::key(&event.keystroke) else {
             return;
         };
-        self.sidebar_error = None;
+        let paste = (key == base_dialog::Key::Paste)
+            .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
+            .flatten();
+        let Some(dialog) = self.add_workspace.as_mut() else {
+            return;
+        };
+        match key {
+            base_dialog::Key::Close => return self.close_add_workspace(window, cx),
+            base_dialog::Key::Save => return self.clone_workspace(window, cx),
+            base_dialog::Key::Paste => {
+                if let Some(text) = paste {
+                    dialog.insert(&text);
+                }
+            }
+            base_dialog::Key::Edit(_) | base_dialog::Key::Insert(_) => {
+                if let base_dialog::Key::Edit(edit) = &key {
+                    copy_selection(edit, &dialog.url, cx);
+                }
+                dialog.key(&key);
+            }
+        }
         cx.notify();
+    }
+
+    /// Picks a folder for the dialog: the workspace to add (`clone_into: false`), or where the
+    /// clone goes.
+    pub(crate) fn pick_workspace_folder(
+        &mut self,
+        clone_into: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Add workspace".into()),
+            prompt: Some(
+                if clone_into {
+                    "Clone into"
+                } else {
+                    "Add workspace"
+                }
+                .into(),
+            ),
         });
         cx.spawn_in(window, async move |this, cx| {
             let path = match picked.await {
@@ -22,8 +93,10 @@ impl Shell {
                 Ok(Ok(None)) | Err(_) => None,
                 Ok(Err(error)) => {
                     let _ = this.update(cx, |shell, cx| {
-                        shell.sidebar_error =
-                            Some(format!("Cannot open the folder picker: {error:#}"));
+                        if let Some(dialog) = shell.add_workspace.as_mut() {
+                            dialog.error =
+                                Some(format!("Cannot open the folder picker: {error:#}"));
+                        }
                         cx.notify();
                     });
                     None
@@ -32,11 +105,35 @@ impl Shell {
             let Some(path) = path else {
                 return;
             };
+            let _ = this.update_in(cx, |shell, window, cx| {
+                let path = path.to_string_lossy().into_owned();
+                if clone_into {
+                    if let Some(dialog) = shell.add_workspace.as_mut() {
+                        dialog.parent = path;
+                    }
+                    cx.notify();
+                } else {
+                    shell.add_folder_workspace(path, window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Adds `path` as a workspace (`project.add`) and shows it.
+    fn add_folder_workspace(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.close_add_workspace(window, cx);
+        cx.spawn_in(window, async move |this, cx| {
             let added = connection
-                .call::<Project>(Request::ProjectAdd(ProjectAddParams {
-                    path: path.to_string_lossy().into_owned(),
-                    name: None,
-                }))
+                .call::<Project>(Request::ProjectAdd(ProjectAddParams { path, name: None }))
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 match added {
@@ -54,6 +151,65 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// `project.clone` with the typed URL; the dialog shows "Cloning…" until `project.cloned`.
+    pub(crate) fn clone_workspace(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let Some(params) = self.add_workspace.as_mut().and_then(CloneDialog::begin) else {
+            cx.notify();
+            return;
+        };
+        let clone_id = params.clone_id;
+        let sent = connection.request(Request::ProjectClone(params));
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let refused = match sent.await {
+                Ok(Outcome::Result(_)) => return,
+                Ok(Outcome::Error(body)) => body.message,
+                Err(error) => format!("{error:#}"),
+            };
+            let _ = this.update(cx, |shell, cx| {
+                match shell.add_workspace.as_mut() {
+                    Some(dialog) if dialog.cloning == Some(clone_id) => dialog.failed(refused),
+                    _ => shell.toast_error(format!("Cannot clone: {refused}"), cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A `project.clone` ended: its dialog closes on the new workspace, or shows git's error.
+    /// A clone whose dialog was closed is shown in the sidebar anyway (`project.updated`).
+    pub(crate) fn workspace_cloned(
+        &mut self,
+        done: &ProjectClonedEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let mine = self
+            .add_workspace
+            .as_ref()
+            .is_some_and(|dialog| dialog.is_mine(done));
+        match (&done.project, &done.error) {
+            (Some(project), _) if mine => {
+                self.close_add_workspace(window, cx);
+                self.sidebar.add_project(project.clone());
+                self.activate_workspace(project.id, window, cx);
+            }
+            (Some(_), _) => {}
+            (None, error) => {
+                let error = error.clone().unwrap_or_else(|| "git clone failed".into());
+                match self.add_workspace.as_mut().filter(|_| mine) {
+                    Some(dialog) => dialog.failed(error),
+                    None => self.toast_error(format!("Cannot clone: {error}"), cx),
+                }
+            }
+        }
+        cx.notify();
     }
 
     /// Picks a Markdown file and links it as `session_id`'s plan (`session.link_plan`).
@@ -637,5 +793,129 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// "Add workspace": "Open a folder…", or a repository URL, where the clone goes
+    /// (Browse…), then Cancel and "Clone" (Enter).
+    pub(crate) fn render_add_workspace(
+        &self,
+        dialog: &CloneDialog,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let busy = dialog.cloning.is_some();
+        let error_row = |error: String| {
+            div()
+                .flex()
+                .gap(px(space::XS))
+                .text_size(font_size::META)
+                .child(div().text_color(rgb(theme.status_exited)).child("✕"))
+                .child(div().text_color(rgb(theme.text)).child(error))
+        };
+        let target = match dialog.target() {
+            Some(target) => format!("Clones into {target}"),
+            None => format!("Clones into a new folder in {}", dialog.parent),
+        };
+        let panel = div()
+            .id("add-workspace-dialog")
+            .w(px(theme::DIALOG_WIDTH))
+            .flex()
+            .flex_col()
+            .gap(px(space::M))
+            .p(px(space::XL))
+            .rounded(px(radius::LARGE))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface))
+            .shadow_md()
+            .font_family(theme.ui_font_family.clone())
+            .track_focus(&self.dialog_focus)
+            .on_key_down(cx.listener(Self::add_workspace_key_down))
+            .relative()
+            .child(self.typing(&self.dialog_focus, Self::add_workspace_key_down, cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(font_size::CARD_TITLE)
+                            .font_weight(FontWeight(weight::SEMIBOLD))
+                            .text_color(rgb(theme.text))
+                            .child("Add workspace"),
+                    )
+                    .child(
+                        secondary_button(
+                            "add-workspace-folder",
+                            icon_text(Icon::FolderPlus, "Open a folder…", theme.text_dim),
+                            theme,
+                        )
+                        .tooltip(tooltip(theme, "Add a folder on this computer", ""))
+                        .on_click(cx.listener(|shell, _, window, cx| {
+                            shell.pick_workspace_folder(false, window, cx);
+                        })),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(font_size::BODY)
+                    .text_color(rgb(theme.text))
+                    .child("Or clone a Git repository (GitHub, GitLab, …):"),
+            )
+            .child(caret_field(
+                "add-workspace-url",
+                &dialog.url,
+                "https://github.com/owner/repo.git or git@host:owner/repo.git",
+                true,
+                theme,
+                cx,
+                |shell, caret| {
+                    if let Some(dialog) = shell.add_workspace.as_mut() {
+                        dialog.url.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(space::S))
+                    .child(meta_line(theme, target.into()).min_w_0().truncate())
+                    .child(
+                        quiet_button("add-workspace-browse", "Browse…", theme, theme.hover)
+                            .tooltip(tooltip(theme, "Choose where the clone goes", ""))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.pick_workspace_folder(true, window, cx);
+                            })),
+                    ),
+            )
+            .children(dialog.error.clone().map(error_row))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(space::S))
+                    .pt(px(space::S))
+                    .child(
+                        button("add-workspace-cancel", "Cancel", theme, false)
+                            .tooltip(tooltip(theme, "Close (a running clone goes on)", "Esc"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.close_add_workspace(window, cx);
+                            })),
+                    )
+                    .child(if busy {
+                        disabled_button("add-workspace-clone", "Cloning…", theme, true)
+                    } else {
+                        button("add-workspace-clone", "Clone", theme, true)
+                            .tooltip(tooltip(theme, "Clone and add as a workspace", "Enter"))
+                            .on_click(cx.listener(|shell, _, window, cx| {
+                                shell.clone_workspace(window, cx);
+                            }))
+                    }),
+            );
+        Self::modal_shade("add-workspace-shade", panel, cx)
     }
 }
