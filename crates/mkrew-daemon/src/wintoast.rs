@@ -62,7 +62,13 @@ fn escape(text: &str) -> String {
 
 /// At daemon start (OS notifier on): points `mkrew://` at the UI next to this daemon.
 pub(crate) fn register_link_handler() {
-    let socket_override = std::env::var_os(mkrew_core::paths::ENV_SOCKET).is_some();
+    use mkrew_core::paths::{ENV_SOCKET, Paths};
+    let var = |key: &str| std::env::var(key).ok().filter(|v| !v.is_empty());
+    // The user's default pipe: the paths as they would be without `MKREW_SOCKET`.
+    let Ok(default) = Paths::resolve(|key| (key != ENV_SOCKET).then(|| var(key)).flatten()) else {
+        return;
+    };
+    let socket_override = on_another_pipe(var(ENV_SOCKET).as_deref(), &default.socket);
     let Some(ui) = std::env::current_exe()
         .ok()
         .and_then(|exe| link_target(&exe, socket_override))
@@ -76,7 +82,7 @@ pub(crate) fn register_link_handler() {
 }
 
 /// `mkrew.exe` next to `daemon_exe` when this daemon owns the link: the user's own daemon on
-/// the default pipe (tests and dev daemons on their own `MKREW_SOCKET` never take it), with
+/// the default pipe (tests and dev daemons on another pipe never take it), with
 /// the UI beside it.
 fn link_target(daemon_exe: &Path, socket_override: bool) -> Option<PathBuf> {
     if socket_override {
@@ -84,6 +90,13 @@ fn link_target(daemon_exe: &Path, socket_override: bool) -> Option<PathBuf> {
     }
     let ui = daemon_exe.parent()?.join("mkrew.exe");
     ui.is_file().then_some(ui)
+}
+
+/// Whether `socket` (`MKREW_SOCKET`, if set) is another pipe than the user's `default` one.
+/// The UI sets `MKREW_SOCKET` to the default pipe when it starts the daemon, so being set is
+/// not enough.
+fn on_another_pipe(socket: Option<&str>, default: &str) -> bool {
+    socket.is_some_and(|socket| !socket.eq_ignore_ascii_case(default))
 }
 
 /// The handler command line: both parts quoted (install paths may hold spaces).
@@ -178,6 +191,16 @@ mod tests {
         );
         let doc = XmlDocument::new().unwrap();
         doc.LoadXml(&HSTRING::from(xml)).unwrap();
+    }
+
+    /// The daemon the UI starts gets `MKREW_SOCKET` = the default pipe: still the user's own.
+    #[test]
+    fn only_a_pipe_other_than_the_default_is_an_override() {
+        let default = r"\\.\pipe\mkrew-Jane";
+        assert!(!on_another_pipe(None, default));
+        assert!(!on_another_pipe(Some(default), default));
+        assert!(!on_another_pipe(Some(r"\\.\PIPE\MKREW-JANE"), default));
+        assert!(on_another_pipe(Some(r"\\.\pipe\mkrew-test-1"), default));
     }
 
     #[test]
