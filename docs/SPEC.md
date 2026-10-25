@@ -1410,7 +1410,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   Nerd Font prompts/TUIs (private-use code points) come from an installed Nerd Font "Mono"
   family (`theme::TERMINAL_GLYPH_FALLBACKS`), then the system fallback. ANSI palette
   harmonized with the theme.
-- Terminal: `terminal-bg` fill, 32 px top/bottom and 36 px left/right padding, line height 1.75;
+- Terminal: `terminal-bg` fill, 16 px padding on every side, line height 1.75;
   bar cursor in the text color (hollow block when the pane is unfocused; a program's DECSCUSR
   shape wins); a lone pane has no border, borders mark the focused split pane and needs-input.
   Files code rows keep line height 1.35 (`code_line_height`).

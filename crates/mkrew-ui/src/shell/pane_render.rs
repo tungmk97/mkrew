@@ -64,15 +64,13 @@ impl Shell {
                 let dot = self.tab_dot(tab, urgent, theme);
                 let group = SharedString::from(format!("tab-{tab_id}"));
                 let icon = match tab_kind(tab, self.sidebar.sessions()) {
-                    TabKind::Agent(_) => Some(icon_svg(
-                        Icon::Sparkles,
-                        theme::ICON_SIZE_SMALL,
-                        theme.accent,
-                    )),
-                    TabKind::Shell => Some(icon_svg(
-                        Icon::Terminal,
-                        theme::ICON_SIZE_SMALL,
-                        theme.text_muted,
+                    TabKind::Agent(profile) => {
+                        Some(agent_chip(self.agent_badge(&profile), theme.text, theme))
+                    }
+                    TabKind::Shell => Some(agent_chip(
+                        sidebar::Badge::Text(">_".to_owned()),
+                        theme.text,
+                        theme,
                     )),
                     TabKind::Empty => None,
                 };

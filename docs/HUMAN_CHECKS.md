@@ -26,7 +26,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] Title bar, sidebar top, Board, Terminals, Files, Git in **dark** match the restyle tables; the sidebar session list (workspace cards, rows, RUN) looks exactly as before.
 - [ ] Same six screens in **light** (palette picked by the agent): readable, nothing invisible.
 - [ ] Board → Jira on a workspace with Jira keys: In Progress / To Do sections, `[BE]` area chips, status pills, Filter issues box (new: filters by key or title, Esc clears).
-- [ ] Terminals: 36/32 px padding and 1.75 line height do not cut the last row; cursor is the text color.
+- [ ] Terminals: 16 px padding and 1.75 line height do not cut the last row; cursor is the text color.
 - [ ] Inter: installed only as `Inter_18pt-SemiBold.ttf` on this PC, so the system font still shows; install Inter (Regular + SemiBold) to see it.
 
 ### To verify — 2026-10-24 terminal seamless look
