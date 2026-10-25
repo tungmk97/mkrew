@@ -660,6 +660,7 @@ impl Shell {
         if let Some(text) = paste {
             draft.insert(&text);
         }
+        copy_selection(&key, draft.text.input(), cx);
         match draft.key(key) {
             git_actions::Outcome::Edited => cx.notify(),
             git_actions::Outcome::Leave => {

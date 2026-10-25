@@ -28,6 +28,7 @@ use ulid::Ulid;
 
 use crate::client::Connection;
 use crate::composer::{attachment, attachment_refusal, typed_paths};
+use crate::field::{caret_mouse, caret_text, copy_selection};
 use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::emulator::{Emulator, Grid};
@@ -549,6 +550,9 @@ impl TerminalPane {
         let Some(find) = self.find.as_mut() else {
             return;
         };
+        if let FindKey::Edit(edit) = &key {
+            copy_selection(edit, find.input(), cx);
+        }
         if find.key(key, &mut self.emulator) {
             cx.notify();
         } else {
@@ -580,33 +584,15 @@ impl TerminalPane {
         let find = self.find.as_ref()?;
         let theme = &self.theme;
         let focused = self.find_focus.is_focused(window);
-        let (text, color) = if find.query().is_empty() {
-            ("Find (regex)".to_owned(), theme.text_muted)
-        } else {
-            (find.query().to_owned(), theme.text)
-        };
-        let caret = div()
-            .flex_none()
-            .w(px(theme::BORDER_WIDTH))
-            .h(font_size::BODY)
-            .bg(rgb(theme.text));
-        // While typing, the caret sits after the query; the placeholder comes after the caret.
-        // Ctrl+A highlights the query instead of showing the caret.
-        let selected = find.selected();
-        let mut shown = div().text_color(rgb(color));
-        if selected {
-            shown = shown.bg(rgb(theme.terminal_selection_bg));
-        }
-        let query = div().flex().items_center().child(shown.child(text));
-        let query = if !focused {
-            query
-        } else if find.query().is_empty() {
-            div().flex().items_center().child(caret).child(query)
-        } else if selected {
-            query
-        } else {
-            query.child(caret)
-        };
+        let input = find.input();
+        let (query, layout) = caret_text(
+            input.as_str(),
+            input.cursor(),
+            input.selection(),
+            "Find (regex)",
+            focused,
+            theme,
+        );
         let status = match find.status() {
             FindStatus::Invalid => format!("✕ {}", find.status().label()),
             status => status.label().to_owned(),
@@ -650,13 +636,20 @@ impl TerminalPane {
                 .track_focus(&self.find_focus)
                 .on_key_down(cx.listener(Self::find_key_down))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::find_mouse_down))
-                .child(
+                .child(caret_mouse(
                     div()
                         .w(px(theme::FIND_INPUT_WIDTH))
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .child(query),
-                )
+                    &cx.entity(),
+                    layout,
+                    |pane: &mut Self, caret| {
+                        if let Some(find) = pane.find.as_mut() {
+                            find.click(caret.at, caret.extend, caret.clicks);
+                        }
+                    },
+                ))
                 .child(
                     div()
                         .text_size(font_size::META)

@@ -172,10 +172,10 @@ impl Shell {
                     self.find_files(window, cx);
                 }
             }
-            quick_open::Key::Backspace
-            | quick_open::Key::DeleteWord
-            | quick_open::Key::SelectAll
-            | quick_open::Key::Insert(_) => {
+            quick_open::Key::Edit(_) | quick_open::Key::Insert(_) => {
+                if let quick_open::Key::Edit(edit) = &key {
+                    copy_selection(edit, &open.query, cx);
+                }
                 if open.key(key) {
                     self.find_files(window, cx);
                 }
@@ -446,11 +446,10 @@ impl Shell {
                     palette.insert(&text);
                 }
             }
-            quick_open::Key::Move(_)
-            | quick_open::Key::Backspace
-            | quick_open::Key::DeleteWord
-            | quick_open::Key::SelectAll
-            | quick_open::Key::Insert(_) => {
+            quick_open::Key::Move(_) | quick_open::Key::Edit(_) | quick_open::Key::Insert(_) => {
+                if let quick_open::Key::Edit(edit) = &key {
+                    copy_selection(edit, palette.query(), cx);
+                }
                 palette.key(key);
             }
         }
@@ -680,13 +679,18 @@ impl Shell {
                         format!("Open file{workspace}")
                     }),
             )
-            .child(text_field(
+            .child(caret_field(
                 "quick-open-query",
                 &open.query,
                 "Type part of a file name or path",
                 true,
-                open.query.all_selected(),
                 theme,
+                cx,
+                |shell, caret| {
+                    if let Some(open) = shell.quick_open.as_mut() {
+                        open.query.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
             ))
             .when(!rows.is_empty(), |el| {
                 el.child(
@@ -830,13 +834,18 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child("Command palette"),
             )
-            .child(text_field(
+            .child(caret_field(
                 "palette-query",
                 palette.query(),
                 "Type a command, workspace, session or task",
                 true,
-                palette.query_selected(),
                 theme,
+                cx,
+                |shell, caret| {
+                    if let Some(palette) = shell.palette.as_mut() {
+                        palette.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
             ))
             .when(!empty, |el| {
                 el.child(

@@ -482,6 +482,20 @@ impl SettingsDialog {
         }
     }
 
+    /// The text a typed key edits: the font search, the search box or the draft (`None` while
+    /// a shortcut is being recorded). The shell copies its selection on Ctrl+C / Ctrl+X.
+    pub fn typing(&self) -> Option<&Input> {
+        if self.capture.is_some() {
+            None
+        } else if let Some(pick) = &self.font_pick {
+            Some(&pick.query)
+        } else if self.focus == Focus::Search {
+            Some(&self.search)
+        } else {
+            self.draft.as_ref().map(|(_, input)| input)
+        }
+    }
+
     /// The file changed (a write, a hand edit): new values; the open draft stays.
     pub fn reload(&mut self, settings: Result<Settings, String>) {
         self.settings = settings;

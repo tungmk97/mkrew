@@ -513,31 +513,26 @@ impl Palette {
         palette
     }
 
-    pub fn query(&self) -> &str {
-        self.query.as_str()
+    /// The typed query with its caret and selection.
+    pub fn query(&self) -> &Input {
+        &self.query
     }
 
-    /// Whether Ctrl+A selected the whole query (drawn highlighted).
-    pub fn query_selected(&self) -> bool {
-        self.query.all_selected()
+    /// A press or drag in the query (see [`Input::click`]).
+    pub fn click(&mut self, at: usize, extend: bool, clicks: usize) {
+        self.query.click(at, extend, clicks);
     }
 
     /// Applies a key; Esc, Enter and Ctrl+V are the caller's (close, [`Self::picked`],
-    /// [`Self::insert`] the clipboard).
+    /// [`Self::insert`] the clipboard), and so is copying the selection before Copy / Cut.
     pub fn key(&mut self, key: Key) {
         match key {
             Key::Move(by) => self.step(by),
-            Key::Backspace => {
-                if self.query.backspace() {
+            Key::Edit(key) => {
+                if self.query.edit(&key) {
                     self.filter();
                 }
             }
-            Key::DeleteWord => {
-                if self.query.delete_word() {
-                    self.filter();
-                }
-            }
-            Key::SelectAll => self.query.select_all(),
             Key::Insert(text) => self.insert(&text),
             Key::Close | Key::Open | Key::Paste => {}
         }

@@ -104,24 +104,18 @@ impl Peek {
             Some(DialogKey::Cancel) => Outcome::Close,
             Some(DialogKey::Enter | DialogKey::Save) => Outcome::Send,
             Some(DialogKey::Paste) => Outcome::Paste,
-            Some(key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll)) => {
+            Some(DialogKey::Insert(text)) => {
+                self.insert(&text);
+                Outcome::Edited
+            }
+            Some(DialogKey::SwitchField | DialogKey::Copy) | None => Outcome::Edited,
+            // The caller copies the selection before Cut.
+            Some(key) => {
                 if !self.busy {
                     self.text.edit(&key);
                 }
                 Outcome::Edited
             }
-            Some(DialogKey::Insert(text)) => {
-                self.insert(&text);
-                Outcome::Edited
-            }
-            Some(
-                DialogKey::SwitchField
-                | DialogKey::Delete { .. }
-                | DialogKey::Move { .. }
-                | DialogKey::Copy
-                | DialogKey::Cut,
-            )
-            | None => Outcome::Edited,
         }
     }
 

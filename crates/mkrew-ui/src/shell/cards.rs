@@ -816,15 +816,20 @@ pub(crate) fn follow_up_field(
     let draft = cards
         .follow_up
         .filter(|draft| draft.task_id == task_id && draft.session_id == session_id);
-    let text = draft.map_or("", |draft| draft.text.text());
     let focused = draft.is_some() && cards.follow_up_focused;
-    let field = text_field(
+    let empty = Input::default();
+    let field = caret_field(
         "card-follow-up",
-        text,
+        draft.map_or(&empty, |draft| draft.text.input()),
         "Follow up… (Ctrl+Enter sends)",
         focused,
-        draft.is_some_and(|draft| draft.text.all_selected()),
         theme,
+        cx,
+        |shell, caret| {
+            if let Some(draft) = shell.follow_up.as_mut() {
+                draft.text.click(caret.at, caret.extend, caret.clicks);
+            }
+        },
     )
     .bg(rgb(theme.surface))
     .max_h(px(theme::PROMPT_FIELD_HEIGHT))

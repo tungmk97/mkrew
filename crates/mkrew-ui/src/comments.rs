@@ -160,23 +160,19 @@ impl Draft {
         }
     }
 
+    /// Applies a key; the caller inserts the clipboard text on Paste and copies the selection
+    /// before Copy / Cut.
     pub fn key(&mut self, key: DialogKey) -> Outcome {
         match key {
             DialogKey::Cancel => return Outcome::Cancel,
             DialogKey::Enter | DialogKey::Save => return Outcome::Submit,
-            // The caller inserts the clipboard text.
-            DialogKey::SwitchField
-            | DialogKey::Paste
-            | DialogKey::Delete { .. }
-            | DialogKey::Move { .. }
-            | DialogKey::Copy
-            | DialogKey::Cut => {}
-            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
+            DialogKey::SwitchField | DialogKey::Paste | DialogKey::Copy => {}
+            DialogKey::Insert(text) => self.insert(&text),
+            key => {
                 if !self.busy {
                     self.text.edit(&key);
                 }
             }
-            DialogKey::Insert(text) => self.insert(&text),
         }
         Outcome::Edited
     }

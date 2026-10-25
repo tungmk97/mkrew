@@ -283,13 +283,10 @@ impl Shell {
             }
             quick_open::Key::Open => return self.save_jira_keys(project_id, window, cx),
             quick_open::Key::Move(_) => {}
-            quick_open::Key::Backspace => {
-                field.backspace();
+            quick_open::Key::Edit(key) => {
+                copy_selection(&key, field, cx);
+                field.edit(&key);
             }
-            quick_open::Key::DeleteWord => {
-                field.delete_word();
-            }
-            quick_open::Key::SelectAll => field.select_all(),
             quick_open::Key::Paste => {
                 field.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
@@ -320,13 +317,10 @@ impl Shell {
             quick_open::Key::Close if !field.is_empty() => field.clear(),
             quick_open::Key::Close => self.focus_pane(window, cx),
             quick_open::Key::Open | quick_open::Key::Move(_) => {}
-            quick_open::Key::Backspace => {
-                field.backspace();
+            quick_open::Key::Edit(key) => {
+                copy_selection(&key, field, cx);
+                field.edit(&key);
             }
-            quick_open::Key::DeleteWord => {
-                field.delete_word();
-            }
-            quick_open::Key::SelectAll => field.select_all(),
             quick_open::Key::Paste => {
                 field.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
@@ -414,14 +408,20 @@ impl Shell {
             return Some(header);
         }
         let focused = self.jira_filter_focus.is_focused(window);
-        let filter = view.map(|v| &v.filter);
-        let field = text_field(
+        let empty = Input::default();
+        let filter = view.map_or(&empty, |v| &v.filter);
+        let field = caret_field(
             "jira-filter",
-            filter.map_or("", Input::as_str),
+            filter,
             "Filter issues",
             focused,
-            filter.is_some_and(Input::all_selected),
             theme,
+            cx,
+            move |shell, caret| {
+                if let Some(view) = shell.jira.get_mut(&project_id) {
+                    view.filter.click(caret.at, caret.extend, caret.clicks);
+                }
+            },
         )
         .track_focus(&self.jira_filter_focus)
         .on_key_down(cx.listener(Self::jira_filter_key_down))
@@ -513,13 +513,22 @@ impl Shell {
                         .child("Link this workspace to Jira projects"),
                 )
                 .child(
-                    text_field(
+                    caret_field(
                         "jira-keys",
-                        field.map_or("", Input::as_str),
+                        field.unwrap_or(&Input::default()),
                         "PROJ, BILL",
                         self.jira_keys_focus.is_focused(window),
-                        field.is_some_and(Input::all_selected),
                         theme,
+                        cx,
+                        move |shell, caret| {
+                            if let Some(field) = shell
+                                .jira
+                                .get_mut(&project_id)
+                                .and_then(|view| view.keys_field.as_mut())
+                            {
+                                field.click(caret.at, caret.extend, caret.clicks);
+                            }
+                        },
                     )
                     .track_focus(&self.jira_keys_focus)
                     .on_key_down(cx.listener(Self::jira_keys_key_down))

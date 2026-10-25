@@ -1,6 +1,5 @@
 //! Shared widgets: buttons, text fields, menus, status marks, tooltips.
 
-use crate::preview::closest_byte;
 use crate::*;
 use gpui::{Animation, AnimationExt, pulsating_between};
 
@@ -445,16 +444,18 @@ pub(crate) fn search_box(
 
 /// What a key does to a one-line field of the Files find bar.
 pub(crate) enum FieldEdit {
-    /// Backspace, Ctrl+Backspace or Ctrl+A.
-    Key(FindKey),
+    /// An editing or caret key ([`Input::edit`]).
+    Key(DialogKey),
     Insert(String),
 }
 
 impl FieldEdit {
-    pub(crate) fn apply(self, input: &mut Input) {
+    /// Applies it to `input`; Ctrl+C / Ctrl+X first put the selection on the clipboard.
+    pub(crate) fn apply(self, input: &mut Input, cx: &mut App) {
         match self {
             FieldEdit::Key(key) => {
-                key.edit(input);
+                copy_selection(&key, input, cx);
+                input.edit(&key);
             }
             FieldEdit::Insert(text) => {
                 input.insert(&text);
@@ -464,8 +465,7 @@ impl FieldEdit {
 }
 
 /// The edit `keystroke` makes to a find / replace field: Ctrl+V (a clipboard without text
-/// pastes nothing; line breaks become spaces), Backspace, Ctrl+Backspace, Ctrl+A, or typed
-/// text.
+/// pastes nothing; line breaks become spaces), typed text, or an editing / caret key.
 pub(crate) fn field_edit(keystroke: &gpui::Keystroke, cx: &App) -> Option<FieldEdit> {
     match find_key(keystroke)? {
         FindKey::Paste => {
@@ -475,9 +475,7 @@ pub(crate) fn field_edit(keystroke: &gpui::Keystroke, cx: &App) -> Option<FieldE
             ))
         }
         FindKey::Insert(text) => Some(FieldEdit::Insert(text)),
-        key @ (FindKey::Backspace | FindKey::DeleteWord | FindKey::SelectAll) => {
-            Some(FieldEdit::Key(key))
-        }
+        FindKey::Edit(key) => Some(FieldEdit::Key(key)),
         FindKey::Close | FindKey::Older | FindKey::Newer => None,
     }
 }
@@ -524,34 +522,22 @@ pub(crate) fn typing_input_for(
     .size_full()
 }
 
-/// A text input (task dialog, follow-up, composer): its lines with a caret at the end while
-/// `focused`, the lines highlighted while `selected` (Ctrl+A), or a muted placeholder when
-/// empty. Callers make clicks focus it.
+/// A text that looks like a field but is not edited here (a setting's value before it is
+/// clicked): the text, or a muted placeholder when empty.
 pub(crate) fn text_field(
     id: &'static str,
     text: &str,
     placeholder: &'static str,
-    focused: bool,
-    selected: bool,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
-    let selection = (selected && !text.is_empty()).then_some(0..text.len());
-    field_frame(id, text, text.len(), selection, placeholder, focused, theme).0
-}
-
-/// A press or drag in a [`caret_field`]: the byte under the pointer, whether it extends the
-/// selection (Shift, a drag) and the click count (2 = word, 3 = line).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Caret {
-    pub at: usize,
-    pub extend: bool,
-    pub clicks: usize,
+    let (text, _) = caret_text(text, text.len(), None, placeholder, false, theme);
+    field_frame(id, false, theme).child(text)
 }
 
 /// A field that edits `input` like a normal text box: the caret and selection drawn where
 /// they are, a click puts the caret under the pointer, a drag or Shift+click selects, a
-/// double / triple click selects the word / line. `on_caret` focuses the field and applies
-/// the [`Caret`] (`Input::click`).
+/// double / triple click selects the word / line. `on_caret` applies the [`Caret`]
+/// (`Input::click`); callers make clicks focus the field.
 pub(crate) fn caret_field(
     id: &'static str,
     input: &Input,
@@ -582,8 +568,7 @@ pub(crate) fn caret_field_for(
     theme: &Theme,
     on_caret: impl Fn(&mut Shell, Caret) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    let (field, layout) = field_frame(
-        id,
+    let (text, layout) = caret_text(
         input.as_str(),
         input.cursor(),
         input.selection(),
@@ -591,62 +576,17 @@ pub(crate) fn caret_field_for(
         focused,
         theme,
     );
-    let on_caret = Rc::new(on_caret);
-    let at = move |position: Point<Pixels>| {
-        layout
-            .as_ref()
-            .map_or(0, |layout| closest_byte(layout, position))
-    };
-    let at = Rc::new(at);
-    let (down, down_at) = (Rc::clone(&on_caret), Rc::clone(&at));
-    field
-        .on_mouse_down(MouseButton::Left, {
-            let view = view.clone();
-            move |event: &MouseDownEvent, _, cx: &mut App| {
-                view.update(cx, |shell, cx| {
-                    down(
-                        shell,
-                        Caret {
-                            at: down_at(event.position),
-                            extend: event.modifiers.shift,
-                            clicks: event.click_count,
-                        },
-                    );
-                    cx.notify();
-                });
-            }
-        })
-        .on_mouse_move({
-            let view = view.clone();
-            move |event: &MouseMoveEvent, _, cx: &mut App| {
-                if event.dragging() {
-                    view.update(cx, |shell, cx| {
-                        let caret = Caret {
-                            at: at(event.position),
-                            extend: true,
-                            clicks: 1,
-                        };
-                        on_caret(shell, caret);
-                        cx.notify();
-                    });
-                }
-            }
-        })
+    caret_mouse(
+        field_frame(id, focused, theme).child(text),
+        view,
+        layout,
+        on_caret,
+    )
 }
 
-/// The field's frame and text: the caret at byte `cursor` while `focused` (none while
-/// something is selected), the bytes of `selection` highlighted, a muted placeholder when
-/// empty. The text's layout maps pointer positions to bytes once painted (`None` when empty).
-fn field_frame(
-    id: &'static str,
-    text: &str,
-    cursor: usize,
-    selection: Option<std::ops::Range<usize>>,
-    placeholder: &'static str,
-    focused: bool,
-    theme: &Theme,
-) -> (gpui::Stateful<gpui::Div>, Option<gpui::TextLayout>) {
-    let frame = div()
+/// A field's frame: the accent border while `focused`, an I-beam pointer.
+fn field_frame(id: &'static str, focused: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
         .id(id)
         .relative()
         .px(px(space::S))
@@ -658,56 +598,7 @@ fn field_frame(
         .bg(rgb(theme.chrome))
         .text_size(font_size::BODY)
         .text_color(rgb(theme.text))
-        .cursor(CursorStyle::IBeam);
-    if text.is_empty() {
-        let caret = div()
-            .flex_none()
-            .w(px(theme::BORDER_WIDTH))
-            .h(font_size::BODY)
-            .bg(rgb(theme.text));
-        let frame = frame.child(
-            div()
-                .flex()
-                .items_center()
-                .when(focused, |row| row.child(caret))
-                .child(div().text_color(rgb(theme.text_subtle)).child(placeholder)),
-        );
-        return (frame, None);
-    }
-    let lit = HighlightStyle {
-        background_color: Some(rgb(theme.terminal_selection_bg).into()),
-        ..HighlightStyle::default()
-    };
-    let styled = StyledText::new(text.to_owned()).with_highlights(
-        selection
-            .clone()
-            .filter(|s| !s.is_empty())
-            .map(|s| (s, lit)),
-    );
-    let layout = styled.layout().clone();
-    let show_caret = focused && selection.is_none();
-    let (caret_layout, caret_color) = (layout.clone(), rgb(theme.text));
-    let cursor = cursor.min(text.len());
-    let frame = frame.child(styled).when(show_caret, |el| {
-        // Painted after the text's prepaint, so its layout knows where the caret byte sits. It
-        // paints at the layout's window position, so it takes no room: a full-size layer would
-        // sit below the text and add its height to a scrolling field's content, scrolling the
-        // text out of view (the task dialog's prompt).
-        el.child(
-            canvas(
-                |_, _, _| (),
-                move |_, (), window, _| {
-                    if let Some(at) = caret_layout.position_for_index(cursor) {
-                        let size = size(px(theme::BORDER_WIDTH), caret_layout.line_height());
-                        window.paint_quad(fill(Bounds::new(at, size), caret_color));
-                    }
-                },
-            )
-            .absolute()
-            .size_0(),
-        )
-    });
-    (frame, Some(layout))
+        .cursor(CursorStyle::IBeam)
 }
 
 /// One row of a unified diff (undo preview, Docs "View changes").

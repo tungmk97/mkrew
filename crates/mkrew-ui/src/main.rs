@@ -56,6 +56,7 @@ use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
+use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
 use mkrew_ui::file_ops;
 use mkrew_ui::files_view::{self, Content, FilesView, Requests};
 use mkrew_ui::follow::{self, Follow};

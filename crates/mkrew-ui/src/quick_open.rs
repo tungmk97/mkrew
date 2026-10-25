@@ -21,14 +21,12 @@ pub enum Key {
     Move(i32),
     /// Enter (or Ctrl+Enter).
     Open,
-    Backspace,
-    /// Ctrl+Backspace: delete the word before the end.
-    DeleteWord,
-    /// Ctrl+A: the next edit replaces the whole query.
-    SelectAll,
     /// Ctrl+V: the caller inserts the clipboard text.
     Paste,
     Insert(String),
+    /// An editing or caret key for [`Input::edit`] (Backspace, Ctrl+A, ← →, Ctrl+Z…). On
+    /// Copy / Cut the caller puts the selection on the clipboard first.
+    Edit(DialogKey),
 }
 
 /// The finder meaning of `keystroke`; `None` = ignored.
@@ -43,16 +41,10 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
     match dialog_key(keystroke)? {
         DialogKey::Cancel => Some(Key::Close),
         DialogKey::Enter | DialogKey::Save => Some(Key::Open),
-        DialogKey::Backspace => Some(Key::Backspace),
-        DialogKey::DeleteWord => Some(Key::DeleteWord),
-        DialogKey::SelectAll => Some(Key::SelectAll),
         DialogKey::Paste => Some(Key::Paste),
         DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField
-        | DialogKey::Delete { .. }
-        | DialogKey::Move { .. }
-        | DialogKey::Copy
-        | DialogKey::Cut => None,
+        DialogKey::SwitchField => None,
+        key => Some(Key::Edit(key)),
     }
 }
 
@@ -128,12 +120,7 @@ impl QuickOpen {
                 self.step(by);
                 false
             }
-            Key::Backspace => self.query.backspace(),
-            Key::DeleteWord => self.query.delete_word(),
-            Key::SelectAll => {
-                self.query.select_all();
-                false
-            }
+            Key::Edit(key) => self.query.edit(&key),
             Key::Insert(text) => self.insert(&text),
             Key::Close | Key::Open | Key::Paste => false,
         }
@@ -233,7 +220,7 @@ mod tests {
         assert_eq!(open.matches().len(), 2);
         assert_eq!(open.picked(), Some("Makefile"));
 
-        assert!(open.key(Key::Backspace));
+        assert!(open.key(Key::Edit(DialogKey::Backspace)));
         let (third, _) = open.search();
         open.found(third, Err("no such workspace".into()));
         assert_eq!(open.results, Results::Failed("no such workspace".into()));
@@ -264,7 +251,10 @@ mod tests {
     #[test]
     fn editing_the_query() {
         let mut open = QuickOpen::new(Ulid::new(), None);
-        assert!(!open.key(Key::Backspace), "nothing to delete");
+        assert!(
+            !open.key(Key::Edit(DialogKey::Backspace)),
+            "nothing to delete"
+        );
         assert!(open.insert("src/\r\nmain"));
         assert_eq!(open.query, "src/main");
         assert!(!open.insert("\n"), "only a line break");
@@ -278,15 +268,26 @@ mod tests {
     fn select_all_and_ctrl_backspace_edit_the_query() {
         let mut open = QuickOpen::new(Ulid::new(), None);
         open.insert("src/main.rs");
-        assert!(open.key(Key::DeleteWord), "the query changed: search again");
+        assert!(
+            open.key(Key::Edit(DialogKey::DeleteWord)),
+            "the query changed: search again"
+        );
         assert_eq!(open.query, "src/main.");
-        assert!(!open.key(Key::SelectAll), "only the highlight changes");
+        assert!(
+            !open.key(Key::Edit(DialogKey::SelectAll)),
+            "only the highlight changes"
+        );
         assert!(open.query.all_selected());
         assert!(open.insert("lib"));
         assert_eq!(open.query, "lib", "typing replaces the selection");
-        open.key(Key::SelectAll);
-        assert!(open.key(Key::Backspace));
+        open.key(Key::Edit(DialogKey::SelectAll));
+        assert!(open.key(Key::Edit(DialogKey::Backspace)));
         assert_eq!(open.query, "");
+        assert!(
+            open.key(Key::Edit(DialogKey::Undo)),
+            "Ctrl+Z brings it back"
+        );
+        assert_eq!(open.query, "lib");
     }
 
     #[test]
@@ -297,13 +298,16 @@ mod tests {
         assert_eq!(parse("escape"), Some(Key::Close));
         assert_eq!(parse("enter"), Some(Key::Open));
         assert_eq!(parse("ctrl-enter"), Some(Key::Open));
-        assert_eq!(parse("backspace"), Some(Key::Backspace));
+        assert_eq!(parse("backspace"), Some(Key::Edit(DialogKey::Backspace)));
         assert_eq!(parse("ctrl-v"), Some(Key::Paste));
-        assert_eq!(parse("ctrl-backspace"), Some(Key::DeleteWord));
-        assert_eq!(parse("ctrl-a"), Some(Key::SelectAll));
+        assert_eq!(
+            parse("ctrl-backspace"),
+            Some(Key::Edit(DialogKey::DeleteWord))
+        );
+        assert_eq!(parse("ctrl-a"), Some(Key::Edit(DialogKey::SelectAll)));
         assert_eq!(parse("tab"), None);
         assert_eq!(parse("ctrl-up"), None);
-        assert_eq!(parse("ctrl-x"), None);
+        assert_eq!(parse("ctrl-x"), Some(Key::Edit(DialogKey::Cut)));
     }
 
     #[test]
