@@ -1,9 +1,9 @@
 //! The text inputs (SPEC §20B.1, §13): [`Input`] is one line, [`TextBox`] many (Enter types a
-//! new line, Ctrl+Enter submits, Esc cancels). Text is typed and deleted at the caret, which
-//! stays at the end unless the field forwards caret keys ([`Input::edit`]: arrows, Home/End,
-//! Delete, Shift to select); Ctrl+A selects all (the next edit replaces it) and Ctrl+Backspace
-//! deletes the word before the caret. Pure and tested headlessly; keys come from
-//! [`crate::task_dialog::dialog_key`], `main.rs` renders the text.
+//! new line, Ctrl+Enter submits, Esc cancels). Both edit like a normal text box
+//! ([`Input::edit`]): typing and deleting at the caret, arrows / Home / End (Ctrl: by word,
+//! Shift: select), Ctrl+A, Ctrl+Backspace / Ctrl+Delete by word, Ctrl+Z / Ctrl+Y undo and
+//! redo; the shell does the clipboard. Pure and tested headlessly; keys come from
+//! [`crate::task_dialog::dialog_key`], [`crate::field`] renders the text.
 
 use std::ops::{Deref, Range};
 
@@ -66,14 +66,42 @@ pub fn delete_word(text: &mut String) -> bool {
 
 /// One field's text, with a caret and an optional selection (Ctrl+A, Shift+arrows). The next
 /// edit replaces the selection.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct Input {
     text: String,
     /// Byte offset of the caret, always on a char boundary.
     cursor: usize,
     /// The other end of the selection; the caret is one end.
     anchor: Option<usize>,
+    /// The states before each undo step (Ctrl+Z), oldest first.
+    undo: Vec<Snapshot>,
+    /// The states undone (Ctrl+Y), most recent last; cleared by a new edit.
+    redo: Vec<Snapshot>,
+    /// The last edit typed or erased one char: the next one joins its undo step (a word,
+    /// or an IME's erase-and-retype of a composing letter).
+    typing: bool,
 }
+
+/// The text, caret and selection one undo step goes back to.
+#[derive(Debug, Clone)]
+struct Snapshot {
+    text: String,
+    cursor: usize,
+    anchor: Option<usize>,
+}
+
+/// Undo steps kept per field; the oldest go first.
+const UNDO_LIMIT: usize = 100;
+
+/// Two inputs are equal when they show the same text, caret and selection (the undo history
+/// is not part of the value).
+impl PartialEq for Input {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.text, self.cursor, self.anchor) == (&other.text, other.cursor, other.anchor)
+    }
+}
+
+impl Eq for Input {}
 
 impl Input {
     pub fn as_str(&self) -> &str {
@@ -104,23 +132,50 @@ impl Input {
     pub fn select_all(&mut self) {
         self.anchor = Some(0);
         self.cursor = self.text.len();
+        self.typing = false;
     }
 
+    /// Empties the field and forgets its undo history (a fresh field).
     pub fn clear(&mut self) {
-        self.text.clear();
-        self.cursor = 0;
-        self.anchor = None;
+        *self = Self::default();
     }
 
-    /// Removes the selection (the caret goes to its start). `true` when there was one.
-    fn take_selection(&mut self) -> bool {
-        let selection = self.selection();
-        self.anchor = None;
-        let Some(range) = selection else {
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            text: self.text.clone(),
+            cursor: self.cursor,
+            anchor: self.anchor,
+        }
+    }
+
+    /// Puts `to` back and returns the state it replaced.
+    fn restore(&mut self, to: Snapshot) -> Snapshot {
+        let now = self.snapshot();
+        (self.text, self.cursor, self.anchor) = (to.text, to.cursor, to.anchor);
+        self.typing = false;
+        now
+    }
+
+    /// Puts `text` in place of `range` as one edit (the caret goes after it), saving the state
+    /// before it as an undo step. `typed`: one char typed or erased, which joins the undo step
+    /// of the chars typed just before (a blank typed starts a new one). `false`, and nothing
+    /// changes, when it would change nothing.
+    fn splice(&mut self, range: Range<usize>, text: &str, typed: bool) -> bool {
+        if range.is_empty() && text.is_empty() {
             return false;
-        };
-        self.cursor = range.start;
-        self.text.replace_range(range, "");
+        }
+        let join = typed && self.typing && !text.starts_with(char::is_whitespace);
+        if !join {
+            if self.undo.len() == UNDO_LIMIT {
+                self.undo.remove(0);
+            }
+            self.undo.push(self.snapshot());
+        }
+        self.redo.clear();
+        self.typing = typed;
+        self.cursor = range.start + text.len();
+        self.text.replace_range(range, text);
+        self.anchor = None;
         true
     }
 
@@ -130,60 +185,77 @@ impl Input {
         if text.is_empty() {
             return false;
         }
-        self.take_selection();
-        self.text.insert_str(self.cursor, text);
-        self.cursor += text.len();
-        true
+        let selection = self.selection();
+        let typed = selection.is_none() && text.chars().nth(1).is_none();
+        self.splice(selection.unwrap_or(self.cursor..self.cursor), text, typed)
     }
 
     /// Backspace: the selection, else the char before the caret. `true` when the text changed.
     pub fn backspace(&mut self) -> bool {
-        if self.take_selection() {
-            return true;
+        if let Some(range) = self.selection() {
+            return self.splice(range, "", false);
         }
         let Some(c) = self.text[..self.cursor].chars().next_back() else {
             return false;
         };
-        self.cursor -= c.len_utf8();
-        self.text.remove(self.cursor);
-        true
+        self.splice(self.cursor - c.len_utf8()..self.cursor, "", true)
     }
 
     /// Delete: the selection, else the char after the caret. `true` when the text changed.
     pub fn delete(&mut self) -> bool {
-        if self.take_selection() {
-            return true;
+        if let Some(range) = self.selection() {
+            return self.splice(range, "", false);
         }
-        if self.cursor == self.text.len() {
-            return false;
-        }
-        self.text.remove(self.cursor);
-        true
+        let end = self.target(Motion::Right);
+        self.splice(self.cursor..end, "", false)
     }
 
     /// Ctrl+Backspace: the selection, else the word before the caret. `true` when the text
     /// changed.
     pub fn delete_word(&mut self) -> bool {
-        if self.take_selection() {
-            return true;
+        if let Some(range) = self.selection() {
+            return self.splice(range, "", false);
         }
         let mut before = self.text[..self.cursor].to_owned();
-        if !delete_word(&mut before) {
-            return false;
-        }
-        self.text.replace_range(before.len()..self.cursor, "");
-        self.cursor = before.len();
-        true
+        delete_word(&mut before);
+        self.splice(before.len()..self.cursor, "", false)
     }
 
     /// Ctrl+Delete: the selection, else the blanks and the word after the caret.
     pub fn delete_word_after(&mut self) -> bool {
-        if self.take_selection() {
-            return true;
+        if let Some(range) = self.selection() {
+            return self.splice(range, "", false);
         }
         let end = self.target(Motion::WordRight);
-        self.text.replace_range(self.cursor..end, "");
-        end != self.cursor
+        self.splice(self.cursor..end, "", false)
+    }
+
+    /// Ctrl+X after the caller copied the selection: removes it. `true` when there was one.
+    pub fn cut(&mut self) -> bool {
+        match self.selection() {
+            Some(range) => self.splice(range, "", false),
+            None => false,
+        }
+    }
+
+    /// Ctrl+Z: back to the state before the last undo step. `true` when there was one.
+    pub fn undo(&mut self) -> bool {
+        let Some(before) = self.undo.pop() else {
+            return false;
+        };
+        let now = self.restore(before);
+        self.redo.push(now);
+        true
+    }
+
+    /// Ctrl+Y: re-applies the last undone step. `true` when there was one.
+    pub fn redo(&mut self) -> bool {
+        let Some(after) = self.redo.pop() else {
+            return false;
+        };
+        let now = self.restore(after);
+        self.undo.push(now);
+        true
     }
 
     /// Moves the caret; `extend` (Shift) keeps or starts a selection. Without it, ← / → on a
@@ -196,12 +268,14 @@ impl Input {
         };
         self.anchor = extend.then(|| self.anchor.unwrap_or(self.cursor));
         self.cursor = to;
+        self.typing = false;
     }
 
     /// A press (or drag, `extend`) at byte `at`: one click puts the caret there, `extend`
     /// (Shift, a drag) selects from the anchor; two select the word (or run of blanks or
     /// punctuation) under it, three its line.
     pub fn click(&mut self, at: usize, extend: bool, clicks: usize) {
+        self.typing = false;
         let mut at = at.min(self.text.len());
         while !self.text.is_char_boundary(at) {
             at -= 1;
@@ -292,15 +366,17 @@ impl Input {
     }
 
     /// Applies an editing or caret key (Backspace, Delete, their word forms, Ctrl+A, arrows,
-    /// Home/End, Cut after the caller copied); every other key does nothing. `true` when the
-    /// text changed.
+    /// Home/End, Ctrl+Z / Ctrl+Y, Cut after the caller copied); every other key does nothing.
+    /// `true` when the text changed.
     pub fn edit(&mut self, key: &DialogKey) -> bool {
         match key {
             DialogKey::Backspace => self.backspace(),
             DialogKey::DeleteWord => self.delete_word(),
             DialogKey::Delete { word: false } => self.delete(),
             DialogKey::Delete { word: true } => self.delete_word_after(),
-            DialogKey::Cut => self.take_selection(),
+            DialogKey::Cut => self.cut(),
+            DialogKey::Undo => self.undo(),
+            DialogKey::Redo => self.redo(),
             DialogKey::SelectAll => {
                 self.select_all();
                 false
@@ -333,7 +409,7 @@ impl From<String> for Input {
         Self {
             cursor: text.len(),
             text,
-            anchor: None,
+            ..Self::default()
         }
     }
 }
@@ -380,24 +456,18 @@ impl TextBox {
         self.input.clear();
     }
 
-    /// Applies `key`; the caller inserts the clipboard text on [`DialogKey::Paste`]. Caret
-    /// keys are ignored here (the caret stays at the end); fields that show the caret use
-    /// [`Self::edit`].
+    /// Applies `key`; the caller inserts the clipboard text on [`DialogKey::Paste`] and copies
+    /// the selection before Copy / Cut.
     pub fn key(&mut self, key: DialogKey) -> Outcome {
         match key {
             DialogKey::Cancel => return Outcome::Cancel,
             DialogKey::Save => return Outcome::Submit,
             DialogKey::Enter => self.insert("\n"),
             DialogKey::Insert(text) => self.insert(&text),
-            key @ (DialogKey::Backspace | DialogKey::DeleteWord | DialogKey::SelectAll) => {
+            DialogKey::SwitchField | DialogKey::Paste | DialogKey::Copy => {}
+            key => {
                 self.input.edit(&key);
             }
-            DialogKey::SwitchField
-            | DialogKey::Paste
-            | DialogKey::Copy
-            | DialogKey::Cut
-            | DialogKey::Delete { .. }
-            | DialogKey::Move { .. } => {}
         }
         Outcome::Edited
     }
@@ -604,5 +674,68 @@ mod tests {
         text.key(DialogKey::SelectAll);
         text.key(DialogKey::DeleteWord);
         assert_eq!(text.text(), "");
+    }
+
+    /// Typing one char at a time (or an IME erasing and retyping a composing letter) is one
+    /// undo step per word; a paste, a deletion by word or a cut is its own step.
+    #[test]
+    fn undo_and_redo_go_back_a_word_or_an_edit_at_a_time() {
+        let mut input = Input::default();
+        for c in ["h", "i", " ", "t", "e"] {
+            input.insert(c);
+        }
+        input.backspace();
+        input.insert("ê");
+        assert_eq!(input, "hi tê");
+        assert!(input.undo());
+        assert_eq!(input, "hi", "the word and its retyped letter go together");
+        assert!(input.undo());
+        assert_eq!(input, "");
+        assert!(!input.undo(), "nothing left to undo");
+        assert!(input.redo());
+        assert!(input.redo());
+        assert_eq!((input.as_str(), input.cursor()), ("hi tê", "hi tê".len()));
+        assert!(!input.redo());
+
+        input.insert(" copied");
+        input.click(0, false, 2);
+        assert_eq!(input.selected_text(), Some("hi"));
+        assert!(input.edit(&DialogKey::Cut));
+        assert_eq!(input, " tê copied");
+        assert!(input.edit(&DialogKey::Undo));
+        assert_eq!(
+            input.selected_text(),
+            Some("hi"),
+            "the cut text comes back selected"
+        );
+        assert!(input.edit(&DialogKey::Undo));
+        assert_eq!(input, "hi tê", "the paste was its own step");
+
+        input.insert("!");
+        assert!(!input.redo(), "a new edit drops what was undone");
+        input.clear();
+        assert!(!input.undo(), "a cleared field starts a fresh history");
+    }
+
+    #[test]
+    fn a_text_box_moves_its_caret_and_cuts_and_undoes_through_keys() {
+        let mut text = TextBox::default();
+        text.insert("fix bug");
+        let word_left = DialogKey::Move {
+            motion: Motion::WordLeft,
+            extend: false,
+        };
+        text.key(word_left);
+        text.key(DialogKey::Insert("the ".into()));
+        assert_eq!(text.text(), "fix the bug", "typing goes to the caret");
+        text.key(DialogKey::Move {
+            motion: Motion::End,
+            extend: true,
+        });
+        assert_eq!(text.input().selected_text(), Some("bug"));
+        text.key(DialogKey::Cut);
+        assert_eq!(text.text(), "fix the ");
+        text.key(DialogKey::Undo);
+        assert_eq!(text.text(), "fix the bug");
     }
 }

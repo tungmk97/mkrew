@@ -332,7 +332,7 @@ impl Shell {
             _ => {}
         }
         if let Some(edit) = field_edit(keystroke, cx) {
-            self.edit_file_find(project_id, |query| edit.apply(query), cx);
+            self.edit_file_find(project_id, |query, cx| edit.apply(query, cx), cx);
             return;
         }
         match find_key(keystroke) {
@@ -347,14 +347,14 @@ impl Shell {
     pub(crate) fn edit_file_find(
         &mut self,
         project_id: Ulid,
-        edit: impl FnOnce(&mut Input),
+        edit: impl FnOnce(&mut Input, &mut gpui::App),
         cx: &mut Context<'_, Self>,
     ) {
         let view = self.files_view(project_id);
         let Some(find) = &mut view.find else {
             return;
         };
-        edit(&mut find.query);
+        edit(&mut find.query, cx);
         view.search();
         self.reveal_file_match(project_id, cx);
     }
@@ -428,7 +428,7 @@ impl Shell {
             _ => {}
         }
         if let Some(edit) = field_edit(keystroke, cx) {
-            self.edit_file_replace(project_id, |with| edit.apply(with), cx);
+            self.edit_file_replace(project_id, |with, cx| edit.apply(with, cx), cx);
         } else if find_key(keystroke) == Some(FindKey::Close) {
             self.close_file_find(project_id, window, cx);
         }
@@ -437,12 +437,12 @@ impl Shell {
     pub(crate) fn edit_file_replace(
         &mut self,
         project_id: Ulid,
-        edit: impl FnOnce(&mut Input),
+        edit: impl FnOnce(&mut Input, &mut gpui::App),
         cx: &mut Context<'_, Self>,
     ) {
         let find = self.files_view(project_id).find.as_mut();
         if let Some(with) = find.and_then(|find| find.replace.as_mut()) {
-            edit(with);
+            edit(with, cx);
             cx.notify();
         }
     }

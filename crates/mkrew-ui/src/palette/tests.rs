@@ -2,6 +2,7 @@ use mkrew_protocol::{SessionKind, StateSource, TaskStatus};
 
 use super::*;
 use crate::split::Preset;
+use crate::task_dialog::DialogKey;
 
 fn context(view: View) -> Context {
     Context {
@@ -562,7 +563,7 @@ fn typing_filters_ranks_and_resets_the_pick() {
     assert_eq!(palette.selected, 0);
 
     for _ in 0..3 {
-        palette.key(Key::Backspace);
+        palette.key(Key::Edit(DialogKey::Backspace));
     }
     assert_eq!(palette.query(), "vg");
     palette.key(Key::Move(1));
@@ -583,12 +584,15 @@ fn typing_filters_ranks_and_resets_the_pick() {
 fn the_query_takes_select_all_and_ctrl_backspace() {
     let mut palette = Palette::new(Vec::new());
     palette.insert("git push");
-    palette.key(Key::DeleteWord);
+    palette.key(Key::Edit(DialogKey::DeleteWord));
     assert_eq!(palette.query(), "git ");
-    palette.key(Key::SelectAll);
-    assert!(palette.query_selected());
+    palette.key(Key::Edit(DialogKey::SelectAll));
+    assert!(palette.query().all_selected());
     palette.key(Key::Insert("view".into()));
-    assert_eq!((palette.query(), palette.query_selected()), ("view", false));
+    assert_eq!(palette.query(), "view");
+    assert!(!palette.query().all_selected());
+    palette.key(Key::Edit(DialogKey::Undo));
+    assert_eq!(palette.query(), "git ", "Ctrl+Z filters again");
 }
 
 #[test]

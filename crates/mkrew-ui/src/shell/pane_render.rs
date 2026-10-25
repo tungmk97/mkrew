@@ -268,15 +268,23 @@ impl Shell {
             })
     }
 
-    /// The title being renamed inline: the draft with a caret, in the active tab's place.
+    /// The title being renamed inline: the draft with its caret and selection, in the active
+    /// tab's place; a click puts the caret under the pointer, a drag selects.
     pub(crate) fn render_rename(
         &self,
         draft: &Input,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let selected = draft.all_selected();
-        div()
+        let (text, layout) = caret_text(
+            draft.as_str(),
+            draft.cursor(),
+            draft.selection(),
+            "",
+            true,
+            theme,
+        );
+        let field = div()
             .id("tab-rename")
             .flex()
             .items_center()
@@ -296,21 +304,13 @@ impl Shell {
             .on_key_down(cx.listener(Self::rename_key_down))
             .relative()
             .child(self.typing(&self.rename_focus, Self::rename_key_down, cx))
-            .child(
-                div()
-                    .when(selected, |el| el.bg(rgb(theme.terminal_selection_bg)))
-                    .child(draft.as_str().to_owned()),
-            )
-            .when(!selected, |el| {
-                el.child(
-                    div()
-                        .flex_none()
-                        .w(px(theme::BORDER_WIDTH))
-                        .h(font_size::BODY)
-                        .bg(rgb(theme.text)),
-                )
-            })
-            .into_any_element()
+            .child(text);
+        caret_mouse(field, &cx.entity(), layout, |shell, caret| {
+            if let Some(renaming) = shell.renaming.as_mut() {
+                renaming.draft.click(caret.at, caret.extend, caret.clicks);
+            }
+        })
+        .into_any_element()
     }
 
     /// The active tab's split tree: each pane placed at its fraction of the area.

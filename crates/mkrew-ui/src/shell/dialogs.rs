@@ -35,6 +35,9 @@ impl Shell {
         let Some(dialog) = self.broadcast.as_mut() else {
             return;
         };
+        if let Some(key) = task_dialog::dialog_key(&event.keystroke) {
+            copy_selection(&key, &dialog.text, cx);
+        }
         match dialog.key(&event.keystroke) {
             broadcast::Outcome::Close => return self.close_broadcast(window, cx),
             broadcast::Outcome::Send => return self.send_broadcast(window, cx),
@@ -615,13 +618,18 @@ impl Shell {
                         .text_color(rgb(theme.text_muted))
                         .child("↑↓ move · Tab check · Enter send"),
                 )
-                .child(text_field(
+                .child(caret_field(
                     "broadcast-text",
                     &dialog.text,
                     "e.g. run the tests",
                     true,
-                    dialog.text.all_selected(),
                     theme,
+                    cx,
+                    |shell, caret| {
+                        if let Some(dialog) = shell.broadcast.as_mut() {
+                            dialog.text.click(caret.at, caret.extend, caret.clicks);
+                        }
+                    },
                 ))
             })
             .child(footer);

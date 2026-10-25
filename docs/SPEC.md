@@ -1237,16 +1237,15 @@ One exception: plain Ctrl+C copies while terminal text is selected (ADR 0022); w
 it reaches the agent as ^C. Anything sent to the agent clears the selection.
 Plain Ctrl+V pastes in a terminal pane; ^V reaches the program only when the clipboard holds no
 text, image or files (ADR 0026).
-Every text field of the app (task title and prompt, composer, commit box, run setup, comments,
-broadcast, peek reply, quick open, command palette, Docs filter, the find bars and the inline
-rename) takes Ctrl+A (select all: the next key replaces it), Ctrl+Backspace (delete the word
-before the caret: blanks, then a run of letters / digits / `_` or of punctuation, like the Files
-editor) and Ctrl+V. The run setup fields also move the caret (←/→, Ctrl+←/→ by word, Home / End,
-Ctrl+Home / End, ↑/↓ in Env), select with Shift, and take Delete, Ctrl+Delete, Ctrl+C and
-Ctrl+X (ADR 0048); a click puts their caret under the pointer, Shift+click or a drag selects, a
-double / triple click selects the word / line (ADR 0063). The other fields edit at the end of
-their text. Ctrl+Z works only in the Files
-editor (§12A).
+Every text field of the app (task title and prompt, composer, follow-up, commit box, run setup,
+comments, broadcast, peek reply, quick open, command palette, Ask AI, Settings, the filters and
+find bars, the inline rename) edits like a normal text box (ADR 0075): ←/→, Ctrl+←/→ by word,
+Home / End, Ctrl+Home / End, ↑/↓ between lines of a multi-line field, Shift to select; Ctrl+A
+(select all: the next key replaces it), Backspace / Delete, Ctrl+Backspace / Ctrl+Delete (the
+word before / after the caret: blanks, then a run of letters / digits / `_` or of punctuation,
+like the Files editor), Ctrl+C / Ctrl+X / Ctrl+V, and Ctrl+Z / Ctrl+Y (a typed word is one undo
+step). A click puts the caret under the pointer, Shift+click or a drag selects, a double / triple
+click selects the word / line. Where a field sits over a list, ↑/↓ move in the list.
 Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line; Mkrew has no
 kitty / win32-input keyboard mode, so this is the one form every agent gets through ConPTY.
 On macOS, `Ctrl` becomes `Cmd` for global and tab commands.

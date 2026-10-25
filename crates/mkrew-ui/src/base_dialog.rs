@@ -15,27 +15,21 @@ pub enum Key {
     Close,
     /// Enter: use the typed ref (empty = auto-detect).
     Save,
-    Backspace,
-    DeleteWord,
-    SelectAll,
     Paste,
     Insert(String),
+    /// An editing or caret key for [`Input::edit`]. On Copy / Cut the caller puts the
+    /// selection on the clipboard first.
+    Edit(DialogKey),
 }
 
 pub fn key(keystroke: &Keystroke) -> Option<Key> {
     match dialog_key(keystroke)? {
         DialogKey::Cancel => Some(Key::Close),
         DialogKey::Enter | DialogKey::Save => Some(Key::Save),
-        DialogKey::Backspace => Some(Key::Backspace),
-        DialogKey::DeleteWord => Some(Key::DeleteWord),
-        DialogKey::SelectAll => Some(Key::SelectAll),
         DialogKey::Paste => Some(Key::Paste),
         DialogKey::Insert(text) => Some(Key::Insert(text)),
-        DialogKey::SwitchField
-        | DialogKey::Delete { .. }
-        | DialogKey::Move { .. }
-        | DialogKey::Copy
-        | DialogKey::Cut => None,
+        DialogKey::SwitchField => None,
+        key => Some(Key::Edit(key)),
     }
 }
 
@@ -78,12 +72,7 @@ impl BaseDialog {
     /// Edits the typed ref; `true` when it changed.
     pub fn key(&mut self, key: &Key) -> bool {
         match key {
-            Key::Backspace => self.text.backspace(),
-            Key::DeleteWord => self.text.delete_word(),
-            Key::SelectAll => {
-                self.text.select_all();
-                false
-            }
+            Key::Edit(key) => self.text.edit(key),
             Key::Insert(text) => self.insert(text),
             Key::Close | Key::Save | Key::Paste => false,
         }
@@ -148,7 +137,7 @@ mod tests {
         let id = Ulid::new();
         let mut dialog = BaseDialog::new(id, Some(&status(None, true)));
         assert!(dialog.key(&Key::Insert("origin/dev".into())));
-        assert!(dialog.key(&Key::Backspace));
+        assert!(dialog.key(&Key::Edit(DialogKey::Backspace)));
         assert!(dialog.insert(" x\r\n"));
         assert!(!dialog.insert("\n"));
         assert_eq!(dialog.text, "origin/de x");
@@ -172,9 +161,9 @@ mod tests {
     fn the_ref_takes_select_all_and_ctrl_backspace() {
         let mut dialog = BaseDialog::new(Ulid::new(), Some(&status(None, true)));
         dialog.insert("origin/release");
-        assert!(dialog.key(&Key::DeleteWord));
+        assert!(dialog.key(&Key::Edit(DialogKey::DeleteWord)));
         assert_eq!(dialog.text, "origin/");
-        dialog.key(&Key::SelectAll);
+        dialog.key(&Key::Edit(DialogKey::SelectAll));
         assert!(dialog.insert("main"));
         assert_eq!(dialog.text, "main");
     }
@@ -194,11 +183,14 @@ mod tests {
         let parse = |keys: &str| key(&Keystroke::parse(keys).unwrap());
         assert_eq!(parse("escape"), Some(Key::Close));
         assert_eq!(parse("enter"), Some(Key::Save));
-        assert_eq!(parse("backspace"), Some(Key::Backspace));
+        assert_eq!(parse("backspace"), Some(Key::Edit(DialogKey::Backspace)));
         assert_eq!(parse("ctrl-v"), Some(Key::Paste));
-        assert_eq!(parse("ctrl-backspace"), Some(Key::DeleteWord));
-        assert_eq!(parse("ctrl-a"), Some(Key::SelectAll));
+        assert_eq!(
+            parse("ctrl-backspace"),
+            Some(Key::Edit(DialogKey::DeleteWord))
+        );
+        assert_eq!(parse("ctrl-a"), Some(Key::Edit(DialogKey::SelectAll)));
         assert_eq!(parse("tab"), None);
-        assert_eq!(parse("ctrl-x"), None);
+        assert_eq!(parse("ctrl-x"), Some(Key::Edit(DialogKey::Cut)));
     }
 }

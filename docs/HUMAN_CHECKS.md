@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-25 Every text field edits like a text box (ADR 0075)
+
+- [ ] **Composer, card follow-up, Git commit box:** click in the middle puts the caret there; ←/→, Home/End, Shift+arrows, drag and double-click select; Ctrl+C / Ctrl+X copy (paste elsewhere to check); Ctrl+Z / Ctrl+Y undo / redo a word at a time; the scroll stays at the bottom while typing at the end.
+- [ ] **Single-line boxes:** sidebar filter, Docs filter, quick open, palette, Git repos search / filter / base ref, Files find / replace, Jira filter / keys, comment draft, peek reply, broadcast, tab / pane rename, terminal find bar: same checks; ↑/↓ still move in their lists.
+- [ ] **Settings:** Ctrl+X in a text value / font search copies before removing; the Keyboard page search shows its caret where the arrows put it.
+- [ ] **Vietnamese IME (Telex and Unikey):** typing "việt nam" then Ctrl+Z removes "nam" (the word), not one letter.
+- [ ] **Look (dark + light):** caret and selection highlight in every field; empty fields still show the placeholder.
+
 ### To verify — 2026-10-24 UI restyle (ADR 0074)
 
 - [ ] Title bar, sidebar top, Board, Terminals, Files, Git in **dark** match the restyle tables; the sidebar session list (workspace cards, rows, RUN) looks exactly as before.

@@ -427,13 +427,19 @@ impl Shell {
             } else {
                 (!filter_focused).then(|| kbd("/".to_owned(), theme, false).into_any_element())
             };
-            let field = text_field(
+            let field = caret_field(
                 "sidebar-filter",
-                filter.as_str(),
+                filter,
                 "Filter sessions…",
                 filter_focused,
-                filter.all_selected(),
                 theme,
+                cx,
+                |shell, caret| {
+                    shell
+                        .sidebar
+                        .filter_mut()
+                        .click(caret.at, caret.extend, caret.clicks);
+                },
             )
             .flex_1()
             .min_w_0()

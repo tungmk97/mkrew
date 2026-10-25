@@ -218,13 +218,18 @@ impl Shell {
                 cx.notify();
             }))
             .child(
-                text_field(
+                caret_field(
                     "git-repos-search",
                     query,
                     "Search repositories",
                     focused,
-                    query.all_selected(),
                     theme,
+                    cx,
+                    |shell, caret| {
+                        shell
+                            .git_repo_query
+                            .click(caret.at, caret.extend, caret.clicks);
+                    },
                 )
                 .track_focus(&self.git_repo_query_focus)
                 .on_key_down(cx.listener(Self::git_repo_query_key_down))
@@ -295,13 +300,10 @@ impl Shell {
                 return;
             }
             quick_open::Key::Move(_) => {}
-            quick_open::Key::Backspace => {
-                query.backspace();
+            quick_open::Key::Edit(edit) => {
+                copy_selection(&edit, query, cx);
+                query.edit(&edit);
             }
-            quick_open::Key::DeleteWord => {
-                query.delete_word();
-            }
-            quick_open::Key::SelectAll => query.select_all(),
             quick_open::Key::Paste => {
                 query.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
@@ -330,13 +332,20 @@ impl Shell {
             .px(px(space::M))
             .pb(px(space::S))
             .child(
-                text_field(
+                caret_field(
                     "git-filter",
                     &view.filter,
                     "Filter files",
                     focused,
-                    view.filter.all_selected(),
                     theme,
+                    cx,
+                    move |shell, caret| {
+                        shell.git_view(project_id).filter.click(
+                            caret.at,
+                            caret.extend,
+                            caret.clicks,
+                        );
+                    },
                 )
                 .flex_1()
                 .min_w_0()
@@ -391,13 +400,12 @@ impl Shell {
                 };
                 return self.git_key(key, window, cx);
             }
-            quick_open::Key::Backspace => {
-                filter.backspace();
+            quick_open::Key::Edit(edit) => {
+                copy_selection(&edit, filter, cx);
+                if !filter.edit(&edit) {
+                    return cx.notify();
+                }
             }
-            quick_open::Key::DeleteWord => {
-                filter.delete_word();
-            }
-            quick_open::Key::SelectAll => filter.select_all(),
             quick_open::Key::Paste => {
                 filter.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }

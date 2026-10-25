@@ -136,10 +136,10 @@ impl Shell {
                     dialog.insert(&text);
                 }
             }
-            base_dialog::Key::Backspace
-            | base_dialog::Key::DeleteWord
-            | base_dialog::Key::SelectAll
-            | base_dialog::Key::Insert(_) => {
+            base_dialog::Key::Edit(_) | base_dialog::Key::Insert(_) => {
+                if let base_dialog::Key::Edit(edit) = &key {
+                    copy_selection(edit, &dialog.text, cx);
+                }
                 dialog.key(&key);
             }
         }
@@ -427,13 +427,18 @@ impl Shell {
             .when(!dialog.current.is_empty(), |el| {
                 el.child(meta_line(theme, dialog.current.clone().into()))
             })
-            .child(text_field(
+            .child(caret_field(
                 "git-base-ref",
                 &dialog.text,
                 "A branch or ref, e.g. develop or origin/main",
                 true,
-                dialog.text.all_selected(),
                 theme,
+                cx,
+                |shell, caret| {
+                    if let Some(dialog) = shell.git_base.as_mut() {
+                        dialog.text.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
             ))
             .children(dialog.error.clone().map(error_row))
             .child(

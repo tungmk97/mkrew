@@ -422,9 +422,15 @@ impl Shell {
         if let Some(text) = paste {
             draft.insert(&text);
         }
+        copy_selection(&key, draft.text.input(), cx);
         match draft.key(key) {
             follow_up::Outcome::Edited => {
-                self.follow_up_scroll.scroll_to_bottom();
+                // ponytail: follows the caret only at the end; a caret moved above the
+                // visible lines is not scrolled into view (needs line-height maths).
+                let input = draft.text.input();
+                if input.cursor() == input.len() {
+                    self.follow_up_scroll.scroll_to_bottom();
+                }
                 cx.notify();
             }
             follow_up::Outcome::Cancel => self.close_follow_up(window, cx),

@@ -88,6 +88,13 @@ impl Composers {
         }
     }
 
+    /// A click or drag in `session`'s draft: the caret (or selection) goes under the pointer.
+    pub fn click(&mut self, session: Ulid, at: usize, extend: bool, clicks: usize) {
+        if let Some(draft) = self.drafts.get_mut(&session) {
+            draft.text.click(at, extend, clicks);
+        }
+    }
+
     /// Marks `session`'s draft as sending and returns its `session.send` (text + Enter);
     /// `None` while one is in flight or when nothing but blanks was typed.
     pub fn begin_send(&mut self, session: Ulid) -> Option<SessionSendParams> {

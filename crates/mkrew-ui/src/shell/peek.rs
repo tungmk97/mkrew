@@ -275,6 +275,9 @@ impl Shell {
         let Some(peek) = self.peek.as_mut() else {
             return;
         };
+        if let Some(key) = task_dialog::dialog_key(&event.keystroke) {
+            copy_selection(&key, &peek.text, cx);
+        }
         match peek.key(&event.keystroke) {
             peek::Outcome::Edited => cx.notify(),
             peek::Outcome::Close => self.close_peek(window, cx),
@@ -459,13 +462,18 @@ impl Shell {
             .gap(px(space::S))
             .child(
                 div().flex_1().min_w_0().child(
-                    text_field(
+                    caret_field(
                         "peek-reply",
                         &peek.text,
                         "Reply to the agent",
                         peek.focused,
-                        peek.text.all_selected(),
                         theme,
+                        cx,
+                        |shell, caret| {
+                            if let Some(peek) = shell.peek.as_mut() {
+                                peek.text.click(caret.at, caret.extend, caret.clicks);
+                            }
+                        },
                     )
                     .when(peek.busy, |el| el.opacity(opacity::DISABLED))
                     .on_click(cx.listener(|shell, _, window, cx| {

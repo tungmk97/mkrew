@@ -56,6 +56,9 @@ pub enum DialogKey {
     Paste,
     /// Ctrl+A (Cmd+A): the next edit replaces the whole text.
     SelectAll,
+    /// Ctrl+Z / Ctrl+Y (Cmd): undo / redo the field's last edit (Ctrl+Shift+Z is Open in Zed).
+    Undo,
+    Redo,
     Insert(String),
 }
 
@@ -88,6 +91,8 @@ pub fn dialog_key(keystroke: &Keystroke) -> Option<DialogKey> {
         "x" if plain_command => return Some(DialogKey::Cut),
         "v" if plain_command => return Some(DialogKey::Paste),
         "a" if plain_command => return Some(DialogKey::SelectAll),
+        "z" if plain_command => return Some(DialogKey::Undo),
+        "y" if plain_command => return Some(DialogKey::Redo),
         _ => {}
     }
     // AltGr arrives as Ctrl+Alt with the composed char; plain Ctrl+key types nothing.

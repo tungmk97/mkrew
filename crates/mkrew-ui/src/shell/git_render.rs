@@ -871,13 +871,17 @@ impl Shell {
             .border_t(px(theme::BORDER_WIDTH))
             .border_color(rgb(theme.border))
             .child(
-                text_field(
+                caret_field(
                     "git-commit-message",
-                    text,
+                    draft.text.input(),
                     "Summary, then a blank line and details",
                     focused,
-                    draft.text.all_selected(),
                     theme,
+                    cx,
+                    move |shell, caret| {
+                        let text = &mut shell.git_view(project_id).commit.text;
+                        text.click(caret.at, caret.extend, caret.clicks);
+                    },
                 )
                 .max_h(px(theme::GIT_COMMIT_BOX_MAX_HEIGHT))
                 .overflow_y_scroll()

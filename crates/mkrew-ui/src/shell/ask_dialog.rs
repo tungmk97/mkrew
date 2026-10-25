@@ -196,7 +196,7 @@ impl Shell {
             )
             .into_any_element()
         });
-        // Its keys edit at the end of the text (SPEC §13): a click does nothing more.
+        // A click puts the caret under the pointer, a drag selects (SPEC §13).
         let field = caret_field(
             "ask-question",
             dialog.question.input(),
@@ -204,7 +204,11 @@ impl Shell {
             true,
             theme,
             cx,
-            |_, _| {},
+            |shell, caret| {
+                if let Some(dialog) = shell.ask.as_mut() {
+                    dialog.question.click(caret.at, caret.extend, caret.clicks);
+                }
+            },
         )
         .h(px(theme::PROMPT_FIELD_HEIGHT))
         .overflow_y_scroll()

@@ -192,6 +192,7 @@ impl Shell {
         else {
             return;
         };
+        copy_selection(&key, &draft.text, cx);
         if let Some(text) = paste {
             draft.insert(&text);
         }
@@ -199,6 +200,19 @@ impl Shell {
             comments::Outcome::Edited => cx.notify(),
             comments::Outcome::Cancel => self.close_comment_draft(window, cx),
             comments::Outcome::Submit => self.submit_comment(project_id, context, window, cx),
+        }
+    }
+
+    /// A press or drag in the comment draft: the caret goes there.
+    fn click_comment_draft(&mut self, caret: Caret) {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+            return;
+        };
+        if let Some(draft) = self
+            .comments_mut(project_id, context)
+            .and_then(|comments| comments.draft.as_mut())
+        {
+            draft.text.click(caret.at, caret.extend, caret.clicks);
         }
     }
 
@@ -657,13 +671,14 @@ impl Shell {
             .flex_col()
             .gap(px(space::XS))
             .child(
-                text_field(
+                caret_field(
                     "comment-draft",
                     &draft.text,
                     placeholder,
                     focused,
-                    draft.text.all_selected(),
                     theme,
+                    cx,
+                    Shell::click_comment_draft,
                 )
                 .bg(rgb(theme.surface))
                 .track_focus(&self.comment_focus)

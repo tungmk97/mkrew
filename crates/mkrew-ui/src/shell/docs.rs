@@ -92,13 +92,10 @@ impl Shell {
                     self.select_doc(project_id, &path, window, cx);
                 }
             }
-            quick_open::Key::Backspace => {
-                docs.filter.backspace();
+            quick_open::Key::Edit(key) => {
+                copy_selection(&key, &docs.filter, cx);
+                docs.filter.edit(&key);
             }
-            quick_open::Key::DeleteWord => {
-                docs.filter.delete_word();
-            }
-            quick_open::Key::SelectAll => docs.filter.select_all(),
             quick_open::Key::Paste => {
                 docs.filter
                     .insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
@@ -268,13 +265,20 @@ impl Shell {
             .flex_col()
             .child(
                 div().px(px(space::S)).pb(px(space::XS)).child(
-                    text_field(
+                    caret_field(
                         "docs-filter",
                         &docs.filter,
                         "Filter files…",
                         filter_focused,
-                        docs.filter.all_selected(),
                         theme,
+                        cx,
+                        |shell, caret| {
+                            if let Some(docs) =
+                                shell.workspace.and_then(|id| shell.docs.get_mut(&id))
+                            {
+                                docs.filter.click(caret.at, caret.extend, caret.clicks);
+                            }
+                        },
                     )
                     .track_focus(&self.docs_filter_focus)
                     .on_key_down(cx.listener(Self::docs_filter_key_down))

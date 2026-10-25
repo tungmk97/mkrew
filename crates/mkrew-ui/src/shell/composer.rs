@@ -57,9 +57,20 @@ impl Shell {
                 None => self.composer_paste_image(session, item, window, cx),
             }
         }
+        if let Some(draft) = self.composers.shown(session) {
+            copy_selection(&key, draft.text.input(), cx);
+        }
         match self.composers.key(session, key) {
             text_box::Outcome::Edited => {
-                self.composer_scroll.scroll_to_bottom();
+                // ponytail: follows the caret only at the end; a caret moved above the
+                // visible lines is not scrolled into view (needs line-height maths).
+                let at_end = self
+                    .composers
+                    .shown(session)
+                    .is_none_or(|d| d.text.input().cursor() == d.text.input().len());
+                if at_end {
+                    self.composer_scroll.scroll_to_bottom();
+                }
                 cx.notify();
             }
             text_box::Outcome::Cancel => {
@@ -369,11 +380,7 @@ impl Shell {
                 self.prompt_picker_scroll.scroll_to_item(picker.selected);
                 cx.notify();
             }
-            quick_open::Key::Backspace
-            | quick_open::Key::DeleteWord
-            | quick_open::Key::SelectAll
-            | quick_open::Key::Paste
-            | quick_open::Key::Insert(_) => {}
+            quick_open::Key::Paste | quick_open::Key::Insert(_) | quick_open::Key::Edit(_) => {}
         }
     }
 
@@ -609,13 +616,18 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let field = text_field(
+        let field = caret_field(
             "composer",
-            draft.text.text(),
+            draft.text.input(),
             "Message the agent…",
             focused && !draft.busy && draft.enhancing.is_none(),
-            draft.text.all_selected(),
             theme,
+            cx,
+            move |shell, caret| {
+                shell
+                    .composers
+                    .click(session, caret.at, caret.extend, caret.clicks);
+            },
         )
         .max_h(px(theme::COMPOSER_MAX_HEIGHT))
         .overflow_y_scroll()

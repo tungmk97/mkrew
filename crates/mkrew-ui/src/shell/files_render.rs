@@ -497,13 +497,18 @@ impl Shell {
                         )),
                     )
                     .child(
-                        text_field(
+                        caret_field(
                             "file-find-field",
                             &find.query,
                             "Find in file",
                             focused,
-                            find.query.all_selected(),
                             theme,
+                            cx,
+                            move |shell, caret| {
+                                if let Some(find) = &mut shell.files_view(project_id).find {
+                                    find.query.click(caret.at, caret.extend, caret.clicks);
+                                }
+                            },
                         )
                         .w(px(theme::FIND_INPUT_WIDTH))
                         .track_focus(&self.file_find_focus)
@@ -554,13 +559,20 @@ impl Shell {
                         .px(px(space::L))
                         .pb(px(space::S))
                         .child(
-                            text_field(
+                            caret_field(
                                 "file-replace-field",
                                 with,
                                 "Replace",
                                 replacing,
-                                with.all_selected(),
                                 theme,
+                                cx,
+                                move |shell, caret| {
+                                    let find = shell.files_view(project_id).find.as_mut();
+                                    if let Some(with) = find.and_then(|find| find.replace.as_mut())
+                                    {
+                                        with.click(caret.at, caret.extend, caret.clicks);
+                                    }
+                                },
                             )
                             .w(px(theme::FIND_INPUT_WIDTH))
                             .track_focus(&self.file_replace_focus)

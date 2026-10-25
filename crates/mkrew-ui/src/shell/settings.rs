@@ -37,13 +37,17 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        let paste = (task_dialog::dialog_key(&event.keystroke) == Some(DialogKey::Paste))
+        let key = task_dialog::dialog_key(&event.keystroke);
+        let paste = (key == Some(DialogKey::Paste))
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
         let keymap = self.keymap.clone();
         let Some(dialog) = self.settings_dialog.as_mut() else {
             return;
         };
+        if let (Some(key), Some(input)) = (&key, dialog.typing()) {
+            copy_selection(key, input, cx);
+        }
         let effect = dialog.key(&event.keystroke, paste.as_deref(), &keymap);
         self.apply_settings_effect(effect, window, cx);
         // Keep the focused row on screen: the banner and the search box come before the rows.
@@ -180,13 +184,18 @@ impl Shell {
             _ => None,
         };
         let search = (dialog.tab == Tab::Keyboard).then(|| {
-            text_field(
+            caret_field(
                 "settings-search",
-                dialog.search.as_str(),
+                &dialog.search,
                 "Search shortcuts",
                 dialog.focus == Focus::Search,
-                false,
                 theme,
+                cx,
+                |shell, caret| {
+                    if let Some(d) = shell.settings_dialog.as_mut() {
+                        d.search.click(caret.at, caret.extend, caret.clicks);
+                    }
+                },
             )
             .on_click(cx.listener(|shell, _, window, cx| {
                 shell.settings_do(|d, keymap| d.click(Focus::Search, keymap), window, cx);
@@ -494,10 +503,24 @@ impl Shell {
                     .as_ref()
                     .filter(|(s, _)| s.id() == setting.id());
                 let field = match editing {
-                    Some((_, input)) => {
-                        caret_field("settings-value", input, "", true, theme, cx, |_, _| {})
-                    }
-                    None => text_field("settings-value", &shown, "", false, false, theme),
+                    Some((_, input)) => caret_field(
+                        "settings-value",
+                        input,
+                        "",
+                        true,
+                        theme,
+                        cx,
+                        |shell, caret| {
+                            let draft = shell
+                                .settings_dialog
+                                .as_mut()
+                                .and_then(|d| d.draft.as_mut());
+                            if let Some((_, input)) = draft {
+                                input.click(caret.at, caret.extend, caret.clicks);
+                            }
+                        },
+                    ),
+                    None => text_field("settings-value", &shown, "", theme),
                 };
                 field
                     .w_full()
@@ -604,7 +627,15 @@ impl Shell {
                     true,
                     theme,
                     cx,
-                    |_, _| {},
+                    |shell, caret| {
+                        let pick = shell
+                            .settings_dialog
+                            .as_mut()
+                            .and_then(|d| d.font_pick.as_mut());
+                        if let Some(pick) = pick {
+                            pick.query.click(caret.at, caret.extend, caret.clicks);
+                        }
+                    },
                 ))
                 .child(
                     div()

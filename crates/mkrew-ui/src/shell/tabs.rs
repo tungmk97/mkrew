@@ -493,9 +493,10 @@ impl Shell {
                 renaming.draft.insert(&text);
                 cx.notify();
             }
-            // Backspace, Ctrl+Backspace, Ctrl+A.
-            key => {
-                key.edit(&mut renaming.draft);
+            // Editing and caret keys; Ctrl+C / Ctrl+X copy the selection first.
+            FindKey::Edit(key) => {
+                copy_selection(&key, &renaming.draft, cx);
+                renaming.draft.edit(&key);
                 cx.notify();
             }
         }
@@ -529,9 +530,9 @@ impl Shell {
             FindKey::Insert(text) => {
                 self.sidebar.filter_mut().insert(&text);
             }
-            // Backspace, Ctrl+Backspace, Ctrl+A.
-            key => {
-                key.edit(self.sidebar.filter_mut());
+            FindKey::Edit(key) => {
+                copy_selection(&key, self.sidebar.filter(), cx);
+                self.sidebar.filter_mut().edit(&key);
             }
         }
         cx.notify();
