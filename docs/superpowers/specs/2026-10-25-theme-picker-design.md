@@ -49,8 +49,8 @@ Out (YAGNI; may come later):
 | Tokyo Night | Solarized Light |
 | Gruvbox Dark | Gruvbox Light |
 
-Palettes come from each theme's official published colors (all MIT or similar). A value may be
-nudged darker/lighter only when a contrast test below fails; the ADR lists every nudge.
+Palettes come from each theme's official published colors (all MIT or similar). UI text colors
+are made readable by `readable()` (see Theme construction); the terminal `ansi` stays as published.
 
 ## What a theme changes in the terminal
 
@@ -100,19 +100,28 @@ pub struct Palette {
     pub fg: u32,        // text
     pub muted: u32,     // text_muted / comments
     pub accent: u32,
-    pub ansi: [u32; 16],
+    // Readable hues for UI text roles (diff, syntax, git letters, status-like text).
+    pub red: u32, pub green: u32, pub yellow: u32, pub blue: u32, pub magenta: u32, pub cyan: u32,
+    pub ansi: [u32; 16], // the terminal palette, as published by the theme
 }
 
-pub struct ThemeEntry { pub name: &'static str, pub dark: bool, build: fn() -> Theme }
+pub struct ThemeEntry { pub name: &'static str, pub dark: bool, palette: Option<Palette> }
 pub const THEMES: &[ThemeEntry];   // order = THEME_NAMES
-impl Theme { pub fn from_palette(p: &Palette) -> Theme }
+impl ThemeEntry { pub fn build(&self) -> Theme }
+impl Theme { pub fn from_palette(name: &'static str, p: &Palette) -> Theme }
+pub fn find_theme(name: &str) -> Option<&'static ThemeEntry>
 ```
 
-- `THEMES[Mkrew Dark].build = Theme::dark`, `THEMES[Mkrew Light].build = Theme::light`.
+- The two Mkrew entries have `palette: None`; `build` returns `Theme::dark()` / `Theme::light()`.
 - `from_palette` starts from `Theme::dark()` or `Theme::light()` (by `p.dark`) and overwrites the
   color tokens; everything not listed below stays the base's value (`status_*`,
   `workspace_colors`, `qr_*`, `tint_alpha`, `scrim`, `classic`, fonts, sizes). `mix(a, b, t)` is
-  linear RGB blend of `a` toward `b` by `t`.
+  a linear RGB blend of `a` toward `b` by `t`.
+- **Readable by construction:** every token used as text (marked *R*) goes through
+  `readable(color, toward = fg, grounds, 4.5)`: blended toward `fg` in 5 % steps until it reads
+  ≥ 4.5:1 on every ground (`bg`, `chrome`, `surface`, `surface_raised`, `hover`, every diff fill).
+  Fills that carry `fg` text (selection, find matches) lower their mix in 0.05 steps until `fg`
+  reads ≥ 4.5:1 on them. So a published color may come out slightly lighter/darker; the ADR says so.
 
 | Tokens | From |
 | --- | --- |
@@ -123,37 +132,43 @@ impl Theme { pub fn from_palette(p: &Palette) -> Theme }
 | `hover`, `row_hover`, `well`, `diff_hunk_header` | `mix(bg, fg, 0.06)` |
 | `border`, `control_border` | `mix(bg, fg, 0.14)` |
 | `divider` | `mix(bg, fg, 0.09)` |
+| `selected_ring` | `mix(accent, bg, 0.50)` |
 | `text` | `fg` |
-| `text_dim` | `mix(fg, bg, 0.20)` |
-| `text_muted`, `text_subtle`, `text_disabled` | `muted` |
+| `text_dim` *R* | `mix(fg, bg, 0.20)` |
+| `text_muted`, `text_subtle`, `text_disabled` *R* | `muted` |
 | `subtle` | `mix(muted, bg, 0.35)` |
-| `accent`, `accent_text` | `accent` |
-| `info`, `info_text`, `info_soft` | `ansi[4]` |
+| `accent` | `accent` |
+| `accent_text` *R* | `accent` |
+| `info`, `info_soft` / `info_text` *R* | `blue` |
 | `accent_bg` | `mix(bg, accent, 0.14)` |
-| `selected_ring`, `pane_focus_border` | `mix(accent, bg, 0.50)` |
+| `pane_focus_border` | `mix(accent, bg, 0.50)` |
 | `on_accent` | `bg` or `fg`, whichever has the higher contrast on `accent` |
-| `terminal_selection_bg` | `mix(bg, accent, 0.30)` |
-| `terminal_match_bg` / `_current_bg` | `mix(bg, ansi[3], 0.20)` / `mix(bg, ansi[3], 0.50)` |
-| `warning_bg` / `success_bg` / `danger_bg` | `mix(bg, ansi[3] / ansi[2] / ansi[1], 0.14)` |
-| `run_pill_bg` / `_border` / `_text` | `mix(bg, ansi[2], 0.12)` / `mix(bg, ansi[2], 0.35)` / `ansi[2]` |
-| `diff_add_bg` / `diff_del_bg` / `diff_mod_bg` | `mix(bg, ansi[2] / ansi[1] / ansi[3], 0.14)` |
+| `terminal_selection_bg` | `mix(bg, accent, ≤ 0.30)` (fg-readable) |
+| `terminal_match_bg` / `_current_bg` | `mix(bg, yellow, ≤ 0.20)` / `mix(bg, yellow, ≤ 0.50)` (fg-readable) |
+| `warning_bg` / `success_bg` / `danger_bg` | `mix(bg, yellow / green / red, 0.14)` |
+| `run_pill_bg` / `_border` / `_text` *R* | `mix(bg, green, 0.12)` / `mix(bg, green, 0.35)` / `green` |
+| `diff_add_bg` / `diff_del_bg` / `diff_mod_bg` | `mix(bg, green / red / yellow, 0.14)` |
 | `diff_*_gutter` | same hue at 0.24 |
 | `diff_*_word_bg` | same hue at 0.30 |
-| `diff_add_text`, `success_text` / `diff_del_text`, `danger_text` / `diff_mod_text` | `ansi[2]` / `ansi[1]` / `ansi[3]` |
-| `git_modified`, `git_untracked`, `syntax_number` | `ansi[3]` |
-| `syntax_keyword` / `string` / `type` / `function` | `ansi[5]` / `ansi[2]` / `ansi[6]` / `ansi[4]` |
-| `teal` / `folder` | `ansi[6]` / `ansi[4]` |
+| `diff_add_text`, `success_text` / `diff_del_text`, `danger_text` / `diff_mod_text` *R* | `green` / `red` / `yellow` |
+| `git_modified`, `git_untracked`, `syntax_number` *R* | `yellow` |
+| `syntax_keyword` / `string` / `type` / `function` *R* | `magenta` / `green` / `cyan` / `blue` |
+| `teal` / `folder` *R* | `cyan` / `blue` |
 | `ansi` | `ansi` |
 | `dark` | `p.dark` |
 
-- `Theme::resolve(mode, os_dark)` becomes `Theme::resolve(mode, os_dark, light: &str, dark: &str)`:
-  pick the slot (`System` → `os_dark`, `Light` → light slot, `Dark` → dark slot), look the name up
-  in `THEMES`, fall back to `Theme::light()` / `Theme::dark()` of that slot, set `mode`.
-  A slot may hold a theme of the other appearance (Zed allows it); `Theme.dark` follows the
-  theme, so Mermaid images pick the right variant.
-- `theme::reload` returns the two names with fonts and mode (its "changed?" test includes them);
-  `theme::refresh` takes them. Every caller of `resolve` / `refresh` / `reload` is updated
-  (`shell/connection.rs`, startup, the toggle, tests).
+- A fixed token (`status_*`, workspace colors) that fails a contrast test on a new theme's
+  grounds is fixed by adjusting that theme's `Palette` grounds, never the fixed token.
+- Names: `ThemeNames { light: String, dark: String }`, a GPUI global like `Fonts`, built from
+  `[ui] light_theme` / `dark_theme`. `slot_is_dark(mode, os_dark)`: `System` → `os_dark`,
+  `Light` → false, `Dark` → true.
+- `Theme::resolve(mode, os_dark)` becomes `Theme::resolve(mode, os_dark, &ThemeNames)`: look up
+  the slot's name with `find_theme`, fall back to `Theme::light()` / `Theme::dark()` of that slot,
+  set `mode`. A slot may hold a theme of the other appearance (Zed allows it); `Theme.dark`
+  follows the theme, so Mermaid images pick the right variant.
+- `theme::refresh(mode, window, cx)` keeps its signature and reads the `ThemeNames` global.
+  `theme::reload` takes and returns `ThemeNames` too (its "changed?" test includes them).
+  Startup (`main.rs`) sets the global; `apply_settings_file` updates it.
 - `Theme` gains `name: &'static str` (for the ✓ in the picker and the tooltip).
 
 ## Picker (command palette)
@@ -163,14 +178,15 @@ impl Theme { pub fn from_palette(p: &Palette) -> Theme }
 - Reuses `palette::Palette` (fuzzy filter, Up/Down, click). New `palette::Action::Theme(usize)`
   (index into `THEMES`). Entries: 12 rows "`<name>`" with a meta label `Dark` / `Light`; the
   current theme is the initial pick and shows ✓.
-- The picker state remembers the theme shown when it opened.
-- Moving the pick (keys, click on another row, filtering changes the pick): apply that theme to
-  the `Theme` global (no file write) and refresh windows.
-- Enter: write the picked name to the slot shown now (`dark_theme` if the current `Theme`
-  resolved from the dark slot, else `light_theme`) via `write_ui_value`; close.
-  A write error shows like other settings write errors (the palette lists it) and the original
-  theme is restored.
-- Esc / click outside: restore the theme from when it opened; close.
+- The shell keeps the `Theme` shown when the picker opened (`theme_pick: Option<Theme>`).
+- Moving the pick (Up/Down, typing that changes the best match): apply that theme to the `Theme`
+  global (no file write) and refresh windows.
+- Enter, or a click on a row: write the picked name to the slot shown now
+  (`slot_is_dark(mode, os_dark)` → `dark_theme`, else `light_theme`) via `write_ui_value`, set the
+  `ThemeNames` global, close. A write error keeps the theme for this session and shows the
+  existing "not saved" toast (`settings_write_failed`), like the title bar toggle.
+- Esc / click outside: restore the `Theme` from when it opened; close.
+- The title reads "Select theme", the query placeholder "Type a theme name".
 - The settings reload after the write is a no-op (names already applied).
 
 ## Settings dialog
