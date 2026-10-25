@@ -697,7 +697,13 @@ mod tests {
         for c in ["t", "h", "e", "m", "e"] {
             d.key(&typed(c), None, &keymap);
         }
-        assert_eq!(d.rows(&keymap), vec![Row::Binding(Command::ToggleTheme)]);
+        assert_eq!(
+            d.rows(&keymap),
+            vec![
+                Row::Binding(Command::ToggleTheme),
+                Row::Binding(Command::SelectTheme)
+            ]
+        );
         d.search = Input::from("ctrl+,");
         assert_eq!(d.rows(&keymap), vec![Row::Binding(Command::OpenSettings)]);
     }

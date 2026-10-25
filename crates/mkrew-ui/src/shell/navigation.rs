@@ -397,6 +397,7 @@ impl Shell {
             self.sidebar.sessions(),
             self.board.tasks(),
         ));
+        self.restore_theme_pick(cx);
         self.workspace_menu = None;
         self.palette = Some(Palette::new(entries));
         self.palette_return = window.focused(cx).map(|focus| (focus, terminal));
@@ -406,9 +407,78 @@ impl Shell {
         cx.notify();
     }
 
+    /// The theme picker (ADR 0075): the palette listing `theme::THEMES`, on the current one.
+    pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.restore_theme_pick(cx);
+        let current = cx.theme().clone();
+        let mut palette = Palette::new(palette::theme_entries(current.name));
+        if let Some(index) = theme::THEMES.iter().position(|e| e.name == current.name) {
+            palette.pick_entry(index);
+        }
+        self.workspace_menu = None;
+        self.palette_scroll.scroll_to_item(palette.selected);
+        self.palette = Some(palette);
+        self.palette_return = window.focused(cx).map(|focus| (focus, None));
+        self.theme_pick = Some(current);
+        self.dialog_serial += 1;
+        window.focus(&self.dialog_focus, cx);
+        cx.notify();
+    }
+
+    /// Back to the theme the picker opened on (Esc, click outside, or anything replacing it).
+    pub(crate) fn restore_theme_pick(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(from) = self.theme_pick.take() {
+            cx.set_global(from);
+            cx.refresh_windows();
+        }
+    }
+
+    /// Shows the picked theme without saving it.
+    fn preview_theme_pick(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(mode) = self.theme_pick.as_ref().map(|from| from.mode) else {
+            return;
+        };
+        let Some(palette::Action::Theme(index)) = self.palette.as_ref().and_then(Palette::picked)
+        else {
+            return;
+        };
+        let fonts = cx.global::<theme::Fonts>().clone();
+        let shown = Theme {
+            mode,
+            ..theme::THEMES[index].build()
+        };
+        cx.set_global(shown.with_fonts(&fonts));
+        cx.refresh_windows();
+    }
+
+    /// Saves theme `index` to the slot shown and shows it (Enter or a click in the picker). A
+    /// failed write keeps it for this session and says so, like the title bar toggle.
+    fn choose_theme(&mut self, index: usize, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let name = theme::THEMES[index].name;
+        let mode = cx.theme().mode;
+        let dark = theme::slot_is_dark(mode, theme::os_dark(window));
+        let mut names = cx.global::<theme::ThemeNames>().clone();
+        if dark {
+            names.dark = name.into();
+        } else {
+            names.light = name.into();
+        }
+        cx.set_global(names);
+        theme::refresh(mode, window, cx);
+        cx.refresh_windows();
+        let value = format!("\"{name}\"");
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, theme::slot_key(dark), &value)
+        {
+            self.settings_write_failed("the theme", error, cx);
+        }
+    }
+
     /// Closes the palette; the keyboard goes back to where it was (unless that pane went away
     /// meanwhile).
     pub(crate) fn close_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // Esc / click outside the theme picker: back to the theme it opened on.
+        self.restore_theme_pick(cx);
         self.palette = None;
         match self.palette_return.take() {
             Some((focus, session))
@@ -454,6 +524,7 @@ impl Shell {
             }
         }
         self.palette_scroll.scroll_to_item(palette.selected);
+        self.preview_theme_pick(cx);
         cx.notify();
     }
 
@@ -463,6 +534,13 @@ impl Shell {
         let Some(action) = self.palette.as_ref().and_then(Palette::picked) else {
             return;
         };
+        if let palette::Action::Theme(index) = action {
+            // Chosen: closing must not restore the old theme.
+            self.theme_pick = None;
+            self.close_palette(window, cx);
+            self.choose_theme(index, window, cx);
+            return;
+        }
         self.close_palette(window, cx);
         let workspace = self.workspace;
         match action {
@@ -478,6 +556,7 @@ impl Shell {
                 // the last rendered frame (root if gone), so terminal commands reach the pane.
                 window.dispatch_action(Box::new(Run(command)), cx);
             }
+            palette::Action::Theme(_) => {}
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(extra) => {
@@ -810,6 +889,7 @@ impl Shell {
             })
             .collect();
         let empty = rows.is_empty();
+        let picking_theme = self.theme_pick.is_some();
         let panel = div()
             .id("palette")
             .w(px(theme::DIALOG_WIDTH))
@@ -832,12 +912,20 @@ impl Shell {
                     .text_size(font_size::CARD_TITLE)
                     .font_weight(FontWeight(weight::SEMIBOLD))
                     .text_color(rgb(theme.text))
-                    .child("Command palette"),
+                    .child(if picking_theme {
+                        "Select theme"
+                    } else {
+                        "Command palette"
+                    }),
             )
             .child(caret_field(
                 "palette-query",
                 palette.query(),
-                "Type a command, workspace, session or task",
+                if picking_theme {
+                    "Type a theme name"
+                } else {
+                    "Type a command, workspace, session or task"
+                },
                 true,
                 theme,
                 cx,

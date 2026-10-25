@@ -577,6 +577,11 @@ pub fn slot_is_dark(mode: ThemeMode, os_dark: bool) -> bool {
     }
 }
 
+/// The `[ui]` key of a theme slot.
+pub fn slot_key(dark: bool) -> &'static str {
+    if dark { "dark_theme" } else { "light_theme" }
+}
+
 /// Whether the OS shows `window` dark.
 pub fn os_dark(window: &Window) -> bool {
     matches!(
@@ -1785,6 +1790,23 @@ mod tests {
 
     fn all_themes() -> Vec<Theme> {
         THEMES.iter().map(ThemeEntry::build).collect()
+    }
+
+    #[test]
+    fn the_pick_goes_to_the_slot_shown() {
+        assert_eq!(
+            slot_key(slot_is_dark(ThemeMode::System, true)),
+            "dark_theme"
+        );
+        assert_eq!(
+            slot_key(slot_is_dark(ThemeMode::System, false)),
+            "light_theme"
+        );
+        assert_eq!(
+            slot_key(slot_is_dark(ThemeMode::Light, true)),
+            "light_theme"
+        );
+        assert_eq!(slot_key(slot_is_dark(ThemeMode::Dark, false)), "dark_theme");
     }
 
     #[test]

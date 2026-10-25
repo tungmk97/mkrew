@@ -255,6 +255,7 @@ impl Shell {
                 shell.history_pane = None;
                 shell.doc_dialog = None;
                 shell.quick_open = None;
+                shell.restore_theme_pick(cx);
                 shell.palette = None;
                 shell.prompt_picker = None;
                 shell.palette_return = None;
@@ -426,6 +427,7 @@ impl Shell {
             palette: None,
             palette_scroll: ScrollHandle::new(),
             palette_return: None,
+            theme_pick: None,
             prompt_picker: None,
             prompt_picker_scroll: ScrollHandle::new(),
             peek: None,
