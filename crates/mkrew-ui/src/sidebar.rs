@@ -514,6 +514,7 @@ impl Sidebar {
                     | Event::ConflictDetected(_)
                     | Event::CommentUpdated(_)
                     | Event::AiGenerated(_)
+                    | Event::ProjectCloned(_)
             )
         {
             since_load.push(event.clone());
@@ -555,7 +556,8 @@ impl Sidebar {
             | Event::SessionUsage(_)
             | Event::SessionPorts(_)
             | Event::SessionPlan(_)
-            | Event::AiGenerated(_) => Change::None,
+            | Event::AiGenerated(_)
+            | Event::ProjectCloned(_) => Change::None,
         }
     }
 

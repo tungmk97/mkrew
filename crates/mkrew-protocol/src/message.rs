@@ -52,6 +52,10 @@ pub enum Request {
     DaemonStop,
     #[serde(rename = "project.add")]
     ProjectAdd(ProjectAddParams),
+    /// Validates, then answers `ok` at once; `git clone` runs in the background and ends with
+    /// `project.cloned` (and `project.updated` on success; SPEC §7, ADR 0076).
+    #[serde(rename = "project.clone")]
+    ProjectClone(ProjectCloneParams),
     #[serde(rename = "project.list")]
     ProjectList,
     #[serde(rename = "project.update")]
@@ -388,6 +392,9 @@ pub enum Event {
     /// The answer to the `ai.generate` with this `generation_id`.
     #[serde(rename = "ai.generated")]
     AiGenerated(AiGeneratedEvent),
+    /// The end of the `project.clone` with this `clone_id`.
+    #[serde(rename = "project.cloned")]
+    ProjectCloned(ProjectClonedEvent),
     /// A turn of an agent session ended (SPEC §20A.3). A turn resumed after `needs_input` ends
     /// again with the same `n`; the later event replaces the earlier one.
     #[serde(rename = "session.turn")]
@@ -753,6 +760,25 @@ pub struct ProjectAddParams {
     /// Defaults to the directory name.
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// `project.clone`: `git clone <url>` into `<parent>/<folder named after the repository>`,
+/// which is then added as a workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectCloneParams {
+    /// Chosen by the client to match the `project.cloned` event.
+    pub clone_id: Ulid,
+    pub url: String,
+    pub parent: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProjectClonedEvent {
+    pub clone_id: Ulid,
+    /// The added workspace; `None` on failure.
+    pub project: Option<Project>,
+    /// Why there is no project (git's message).
+    pub error: Option<String>,
 }
 
 /// `project.update`: fields left out stay unchanged.

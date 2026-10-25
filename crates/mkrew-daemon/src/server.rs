@@ -36,6 +36,7 @@ use crate::{awake, backup, plan, session_log, undo, web, worktree};
 
 mod ai;
 mod attachment;
+mod clone;
 mod comment;
 mod doc;
 mod fanout;
@@ -260,6 +261,7 @@ impl Daemon {
             Request::DaemonStatus => (self.status(), After::Continue),
             Request::DaemonStop => (ok(&()), After::Shutdown),
             Request::ProjectAdd(params) => (self.project_add(params), After::Continue),
+            Request::ProjectClone(params) => (self.project_clone(params), After::Continue),
             Request::ProjectList => {
                 let projects = self.store().list_projects();
                 (store_outcome(projects), After::Continue)

@@ -249,6 +249,7 @@ impl Shell {
                 shell.turns_return = None;
                 shell.git_discard = None;
                 shell.git_base = None;
+                shell.add_workspace = None;
                 shell.phone_open = false;
                 shell.phone = Phone::default();
                 shell.history = None;
@@ -411,6 +412,7 @@ impl Shell {
             features,
             git_discard: None,
             git_base: None,
+            add_workspace: None,
             task_dialog: None,
             undo_dialog: None,
             worktree_dialog: None,
@@ -795,6 +797,9 @@ impl Shell {
                     }
                     self.composers.enhanced(done.generation_id, result);
                     cx.notify();
+                }
+                if let Event::ProjectCloned(done) = event {
+                    self.workspace_cloned(done, window, cx);
                 }
             }
             let Some(delivery) = self.router.route(incoming) else {

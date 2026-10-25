@@ -88,6 +88,11 @@ fn every_m1_request_round_trips() {
             path: r"C:\work\demo".into(),
             name: None,
         }),
+        Request::ProjectClone(ProjectCloneParams {
+            clone_id: sid(),
+            url: "https://github.com/o/r.git".into(),
+            parent: r"C:\work".into(),
+        }),
         Request::ProjectList,
         Request::SessionSpawn(SessionSpawnParams {
             project_id: sid(),

@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-25 Add workspace by cloning (ADR 0076, protocol 48)
+
+- [ ] Rebuild and restart the daemon (protocol 48), then Add workspace (`+`, Ctrl+Shift+K, title-bar menu) opens the dialog; **Open a folder…** adds a folder as before.
+- [ ] Clone a public GitHub HTTPS URL: preview shows `<folder>\<repo>`, "Cloning…" while it runs, then the dialog closes and the new workspace is active.
+- [ ] Clone a private GitLab/GitHub repo over HTTPS: Git Credential Manager's sign-in window appears; over SSH (`git@…`) the key is used; a wrong URL shows git's error in the dialog.
+- [ ] Esc during a clone: the clone finishes and appears in the sidebar; a failing one shows a toast.
+- [ ] **Look (dark + light):** the dialog, its long target path (truncated), Browse…, the disabled "Cloning…" button.
+
 ### To verify — 2026-10-25 Every text field edits like a text box (ADR 0075)
 
 - [ ] **Composer, card follow-up, Git commit box:** click in the middle puts the caret there; ←/→, Home/End, Shift+arrows, drag and double-click select; Ctrl+C / Ctrl+X copy (paste elsewhere to check); Ctrl+Z / Ctrl+Y undo / redo a word at a time; the scroll stays at the bottom while typing at the end.
