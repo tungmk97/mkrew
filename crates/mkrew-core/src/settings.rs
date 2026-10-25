@@ -221,7 +221,7 @@ pub enum ThemeMode {
     Dark,
 }
 
-/// Built-in theme names (ADR 0075), in picker order: dark ones, then light ones. The UI's
+/// Built-in theme names (ADR 0078), in picker order: dark ones, then light ones. The UI's
 /// `theme::THEMES` lists the same names (tested there).
 pub const THEME_NAMES: &[&str] = &[
     "Mkrew Dark",
@@ -292,7 +292,7 @@ pub struct UiSettings {
     pub font_family: String,
     pub font_size: FontSize,
     pub theme: ThemeMode,
-    /// `[ui] light_theme` (ADR 0075): the theme in Light mode and in System mode while the OS is
+    /// `[ui] light_theme` (ADR 0078): the theme in Light mode and in System mode while the OS is
     /// light. Any string; an unknown name shows Mkrew Light.
     pub light_theme: String,
     /// `[ui] dark_theme`: the same for Dark mode / a dark OS; unknown shows Mkrew Dark.
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(ui("").light_theme, DEFAULT_LIGHT_THEME);
         assert_eq!(ui("").dark_theme, DEFAULT_DARK_THEME);
         assert_eq!(ui("[ui]\ndark_theme = \"Dracula\"").dark_theme, "Dracula");
-        // Unknown names parse; the UI falls back (ADR 0075).
+        // Unknown names parse; the UI falls back (ADR 0078).
         assert_eq!(ui("[ui]\nlight_theme = \"nope\"").light_theme, "nope");
         assert_eq!(THEME_NAMES[0], DEFAULT_DARK_THEME);
         assert_eq!(THEME_NAMES[6], DEFAULT_LIGHT_THEME);

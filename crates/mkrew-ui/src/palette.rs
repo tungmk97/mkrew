@@ -160,7 +160,7 @@ pub enum Action {
     Run(Command),
     Extra(Extra),
     GoTo(Target),
-    /// The theme picker's row for `theme::THEMES[i]` (ADR 0075).
+    /// The theme picker's row for `theme::THEMES[i]` (ADR 0078).
     Theme(usize),
 }
 
@@ -360,7 +360,7 @@ pub fn settings_error(keymap: &Keymap, error: Option<&str>) -> Vec<Entry> {
         .collect()
 }
 
-/// The theme picker's rows (ADR 0075): every built-in theme, its appearance on the right, the
+/// The theme picker's rows (ADR 0078): every built-in theme, its appearance on the right, the
 /// shown one marked.
 pub fn theme_entries(current: &str) -> Vec<Entry> {
     crate::theme::THEMES

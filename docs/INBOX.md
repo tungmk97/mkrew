@@ -143,3 +143,5 @@ Markers: `[ ]` new · `[~]` planned (skill adds `→ plan: <file>`) · `[x]` don
 - [~] **15. Remote machine: the window connects to one other computer over SSH** [feature] (Windows/Linux/macOS remote; switch back to this computer) → plan: docs/superpowers/plans/2026-10-10-remote-machine.md Task 1, 2, 3, 4, 5
   - Remote needs Mkrew (`mk proxy`), an SSH server and the user's key; no TCP port on the daemon.
   - Title bar machine chip: This computer / added machines / Add machine…; a switch rebuilds the window.
+
+- [ ] **Answer OSC 10/11 color queries** [enh] — the daemon's emulator answers background / foreground queries with the UI theme's colors, so omp / Claude Code can detect a light background (the theme colors must reach the daemon; out of scope of ADR 0078).

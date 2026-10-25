@@ -122,7 +122,7 @@ pub enum Command {
     OpenSettings,
     /// Cycle the theme System → Light → Dark (ADR 0027), saved as `[ui] theme`.
     ToggleTheme,
-    /// Pick a built-in theme for the slot shown (ADR 0075), saved as `[ui] dark_theme` /
+    /// Pick a built-in theme for the slot shown (ADR 0078), saved as `[ui] dark_theme` /
     /// `light_theme`.
     SelectTheme,
     /// Toggle the window filling the whole screen (not remembered across restarts).

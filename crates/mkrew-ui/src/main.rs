@@ -627,7 +627,7 @@ struct Shell {
     palette_scroll: ScrollHandle,
     /// What had the keyboard when the palette opened; a picked command acts on it.
     palette_return: Option<(FocusHandle, Option<Ulid>)>,
-    /// The theme shown when the theme picker opened, restored on Esc (ADR 0075). `Some` while the
+    /// The theme shown when the theme picker opened, restored on Esc (ADR 0078). `Some` while the
     /// palette is the theme picker.
     theme_pick: Option<Theme>,
     /// The open prompt picker (modal; over the task dialog when it types into it).

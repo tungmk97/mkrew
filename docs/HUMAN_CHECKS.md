@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-25 Theme picker and built-in themes (ADR 0078)
+
+- [ ] **New themes:** check the 10 new themes visually (Terminals, Git, Files, dialogs) via Ctrl+Alt+J; Mkrew Dark / Light must look unchanged (ADR 0078).
+- [ ] **Theme picker:** ↓ previews, Esc restores the previous colors exactly, Enter saves only `dark_theme` / `light_theme` in settings.toml.
+- [ ] **New themes: panels vs main area contrast** (some derived surfaces are close to bg).
+
 ### To verify — 2026-10-25 Every text field edits like a text box (ADR 0075)
 
 - [ ] **Composer, card follow-up, Git commit box:** click in the middle puts the caret there; ←/→, Home/End, Shift+arrows, drag and double-click select; Ctrl+C / Ctrl+X copy (paste elsewhere to check); Ctrl+Z / Ctrl+Y undo / redo a word at a time; the scroll stays at the bottom while typing at the end.

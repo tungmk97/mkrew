@@ -407,7 +407,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// The theme picker (ADR 0075): the palette listing `theme::THEMES`, on the current one.
+    /// The theme picker (ADR 0078): the palette listing `theme::THEMES`, on the current one.
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.restore_theme_pick(cx);
         let current = cx.theme().clone();

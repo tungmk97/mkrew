@@ -545,7 +545,7 @@ impl Fonts {
     }
 }
 
-/// `[ui] light_theme` / `dark_theme` (ADR 0075), as a GPUI global read by [`refresh`].
+/// `[ui] light_theme` / `dark_theme` (ADR 0078), as a GPUI global read by [`refresh`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ThemeNames {
     pub light: String,
@@ -740,7 +740,7 @@ pub struct Theme {
     pub dark: bool,
     /// The chosen mode (`[ui] theme`); `dark` is what it resolved to.
     pub mode: ThemeMode,
-    /// The built-in theme this is (ADR 0075), e.g. "Mkrew Dark".
+    /// The built-in theme this is (ADR 0078), e.g. "Mkrew Dark".
     pub name: &'static str,
     pub ui_font_family: SharedString,
     pub terminal_font_family: SharedString,
@@ -768,7 +768,7 @@ pub struct Theme {
 impl gpui::Global for Theme {}
 
 impl Theme {
-    /// The theme of `mode`'s slot (SPEC §14, ADR 0075); an unknown name is that slot's Mkrew theme.
+    /// The theme of `mode`'s slot (SPEC §14, ADR 0078); an unknown name is that slot's Mkrew theme.
     pub fn resolve(mode: ThemeMode, os_dark: bool, names: &ThemeNames) -> Self {
         let dark = slot_is_dark(mode, os_dark);
         let theme = find_theme(names.slot(dark)).map_or_else(
@@ -1246,7 +1246,7 @@ impl Theme {
     }
 }
 
-/// The colors a built-in theme is made of (ADR 0075); [`Theme::from_palette`] derives the rest.
+/// The colors a built-in theme is made of (ADR 0078); [`Theme::from_palette`] derives the rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
     pub dark: bool,
@@ -1297,7 +1297,7 @@ fn fill(bg: u32, hue: u32, t: f32, fg: u32) -> u32 {
 }
 
 impl Theme {
-    /// A built-in theme from its palette (ADR 0075; token table in the spec). Status, workspace
+    /// A built-in theme from its palette (ADR 0078; token table in the spec). Status, workspace
     /// and QR colors, the classic sidebar palette, fonts and sizes stay the Mkrew base's.
     pub fn from_palette(name: &'static str, p: &Palette) -> Self {
         let base = if p.dark { Self::dark() } else { Self::light() };
@@ -1399,7 +1399,7 @@ impl Theme {
     }
 }
 
-/// One built-in theme (ADR 0075). The Mkrew ones have no palette: they are `Theme::dark()` /
+/// One built-in theme (ADR 0078). The Mkrew ones have no palette: they are `Theme::dark()` /
 /// `Theme::light()` exactly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeEntry {
@@ -1864,7 +1864,7 @@ mod tests {
     }
 
     /// Debug dump of every token, minus fields that are not colors and may differ by platform or
-    /// be added later (`name`, font families). Guards "the default look never changes" (ADR 0075).
+    /// be added later (`name`, font families). Guards "the default look never changes" (ADR 0078).
     fn golden(theme: &Theme) -> String {
         format!("{theme:#?}")
             .lines()
