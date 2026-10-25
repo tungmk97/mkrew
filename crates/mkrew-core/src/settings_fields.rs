@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::settings::{Settings, SettingsError, write_value};
+use crate::settings::{Settings, SettingsError, THEME_NAMES, write_value};
 
 /// A page of the dialog (Keyboard is the UI's own).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,6 +52,8 @@ pub enum Kind {
     Text,
     /// An installed font family; empty = the built-in default.
     Font,
+    /// One of these names, picked from a searchable list (too many for `Choice`).
+    List(&'static [&'static str]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +99,7 @@ const fn hidden(section: &'static str, key: &'static str) -> Setting {
     }
 }
 
-use Kind::{Bool, Choice, Font, Number, Text};
+use Kind::{Bool, Choice, Font, List, Number, Text};
 use Page::{Appearance, Features, General, Jira, Notifications, Phone, Voice};
 
 /// Every `settings.toml` key, in page order.
@@ -149,6 +151,22 @@ pub const SETTINGS: &[Setting] = &[
         Choice(&["system", "light", "dark"]),
         "Theme",
         "System follows the OS.",
+    ),
+    row(
+        Appearance,
+        "ui",
+        "light_theme",
+        List(THEME_NAMES),
+        "Light mode theme",
+        "Used in Light mode and when the OS is light.",
+    ),
+    row(
+        Appearance,
+        "ui",
+        "dark_theme",
+        List(THEME_NAMES),
+        "Dark mode theme",
+        "Used in Dark mode and when the OS is dark.",
     ),
     row(
         Appearance,

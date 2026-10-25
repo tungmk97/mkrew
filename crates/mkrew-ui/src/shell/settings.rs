@@ -416,7 +416,7 @@ impl Shell {
                     .text_color(rgb(theme.status_exited))
                     .child(error)
             }))
-            .children(self.font_list(dialog, row, theme, cx))
+            .children(self.list_pick_view(dialog, row, theme, cx))
             .into_any_element()
     }
 
@@ -504,7 +504,7 @@ impl Shell {
                     .when(read_only, |el| el.opacity(opacity::DISABLED))
                     .into_any_element()
             }
-            Kind::Font => div()
+            Kind::Font | Kind::List(_) => div()
                 .w_full()
                 .flex()
                 .justify_between()
@@ -578,15 +578,15 @@ impl Shell {
             .into_any_element()
     }
 
-    /// The font pick under its row: the query, then the matching fonts (Default first).
-    fn font_list(
+    /// The pick under its row: the query, then the matching fonts (Default first) or names.
+    fn list_pick_view(
         &self,
         dialog: &SettingsDialog,
         row: Row,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::AnyElement> {
-        let pick = dialog.font_pick.as_ref()?;
+        let pick = dialog.list_pick.as_ref()?;
         if row != Row::Setting(pick.setting) {
             return None;
         }
@@ -598,9 +598,13 @@ impl Shell {
                 .flex_col()
                 .gap(px(space::XS))
                 .child(caret_field(
-                    "settings-font-query",
+                    "settings-list-query",
                     &pick.query,
-                    "Search fonts",
+                    if matches!(setting.kind, Kind::List(_)) {
+                        "Search themes"
+                    } else {
+                        "Search fonts"
+                    },
                     true,
                     theme,
                     cx,
@@ -608,17 +612,17 @@ impl Shell {
                 ))
                 .child(
                     div()
-                        .id("settings-font-list")
+                        .id("settings-list")
                         .max_h(px(theme::SETTINGS_FONT_LIST_HEIGHT))
                         .overflow_y_scroll()
-                        .children(dialog.font_choices().into_iter().enumerate().map(
+                        .children(dialog.list_choices().into_iter().enumerate().map(
                             |(i, font)| {
                                 let label = if font.is_empty() {
                                     "Default".to_owned()
                                 } else {
                                     font.clone()
                                 };
-                                menu_item(SharedString::from(format!("font-choice-{i}")), theme)
+                                menu_item(SharedString::from(format!("list-choice-{i}")), theme)
                                     .when(i == selected, |el| el.bg(rgb(theme.surface_raised)))
                                     .on_click(cx.listener(move |shell, _, window, cx| {
                                         cx.stop_propagation();

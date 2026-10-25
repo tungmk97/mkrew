@@ -221,6 +221,25 @@ pub enum ThemeMode {
     Dark,
 }
 
+/// Built-in theme names (ADR 0075), in picker order: dark ones, then light ones. The UI's
+/// `theme::THEMES` lists the same names (tested there).
+pub const THEME_NAMES: &[&str] = &[
+    "Mkrew Dark",
+    "One Dark",
+    "Dracula",
+    "Catppuccin Mocha",
+    "Tokyo Night",
+    "Gruvbox Dark",
+    "Mkrew Light",
+    "One Light",
+    "GitHub Light",
+    "Catppuccin Latte",
+    "Solarized Light",
+    "Gruvbox Light",
+];
+pub const DEFAULT_DARK_THEME: &str = "Mkrew Dark";
+pub const DEFAULT_LIGHT_THEME: &str = "Mkrew Light";
+
 impl ThemeMode {
     pub fn name(self) -> &'static str {
         match self {
@@ -273,6 +292,11 @@ pub struct UiSettings {
     pub font_family: String,
     pub font_size: FontSize,
     pub theme: ThemeMode,
+    /// `[ui] light_theme` (ADR 0075): the theme in Light mode and in System mode while the OS is
+    /// light. Any string; an unknown name shows Mkrew Light.
+    pub light_theme: String,
+    /// `[ui] dark_theme`: the same for Dark mode / a dark OS; unknown shows Mkrew Dark.
+    pub dark_theme: String,
     pub diff_mode: DiffMode,
     /// `[ui] diff_wrap` (SPEC §12B): long diff lines wrap at the pane edge (else they are cut).
     /// The Git diff toolbar's Wrap toggle writes it.
@@ -296,6 +320,8 @@ impl Default for UiSettings {
             font_family: font.font_family,
             font_size: font.font_size,
             theme: ThemeMode::System,
+            light_theme: DEFAULT_LIGHT_THEME.into(),
+            dark_theme: DEFAULT_DARK_THEME.into(),
             diff_mode: DiffMode::Unified,
             diff_wrap: true,
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
@@ -446,6 +472,7 @@ pub fn template() -> &'static str {
      \n\
      # App font: an installed family name (empty: the system UI font); size 8–32 px.\n\
      # Theme: system (follows the OS), light or dark; the title bar toggle writes it.\n\
+     # Light / dark theme: a built-in name (Settings or \"Theme: Select theme…\" lists them).\n\
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
@@ -455,6 +482,8 @@ pub fn template() -> &'static str {
      # font_family = \"\"\n\
      # font_size = 13\n\
      # theme = \"system\"\n\
+     # light_theme = \"Mkrew Light\"\n\
+     # dark_theme = \"Mkrew Dark\"\n\
      # diff_mode = \"unified\"\n\
      # diff_wrap = true\n\
      # inspector_width = 300\n\
@@ -558,6 +587,31 @@ mod tests {
 
     fn set_ui_value(src: &str, key: &str, value: &str) -> String {
         set_value(src, "ui", key, value)
+    }
+
+    #[test]
+    fn theme_names_default_to_mkrew_and_accept_any_string() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!(ui("").light_theme, DEFAULT_LIGHT_THEME);
+        assert_eq!(ui("").dark_theme, DEFAULT_DARK_THEME);
+        assert_eq!(ui("[ui]\ndark_theme = \"Dracula\"").dark_theme, "Dracula");
+        // Unknown names parse; the UI falls back (ADR 0075).
+        assert_eq!(ui("[ui]\nlight_theme = \"nope\"").light_theme, "nope");
+        assert_eq!(THEME_NAMES[0], DEFAULT_DARK_THEME);
+        assert_eq!(THEME_NAMES[6], DEFAULT_LIGHT_THEME);
+    }
+
+    #[test]
+    fn writing_a_theme_name_keeps_the_rest() {
+        let src = "# mine\n[ui]\ntheme = \"dark\"\n";
+        let out = set_ui_value(src, "dark_theme", "\"One Dark\"");
+        assert!(out.starts_with("# mine\n[ui]\n"), "{out}");
+        assert!(out.contains("theme = \"dark\"\n"), "{out}");
+        let ui = parse(Path::new("s.toml"), &out).unwrap().ui;
+        assert_eq!(
+            (ui.dark_theme.as_str(), ui.theme),
+            ("One Dark", ThemeMode::Dark)
+        );
     }
 
     fn parse_err(src: &str) -> String {
@@ -677,6 +731,8 @@ push = true
                     font_family: "Inter".into(),
                     font_size: FontSize(14),
                     theme: ThemeMode::System,
+                    light_theme: DEFAULT_LIGHT_THEME.into(),
+                    dark_theme: DEFAULT_DARK_THEME.into(),
                     diff_mode: DiffMode::Unified,
                     diff_wrap: true,
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
