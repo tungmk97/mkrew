@@ -36,11 +36,11 @@ pub enum View {
 
 impl View {
     pub const ALL: [View; 5] = [
-        View::Board,
         View::Terminals,
-        View::Docs,
+        View::Board,
         View::Files,
         View::Git,
+        View::Docs,
     ];
 
     pub fn title(self) -> &'static str {

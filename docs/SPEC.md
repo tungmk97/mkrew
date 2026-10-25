@@ -815,7 +815,7 @@ The session panel (below) is a third column right of Terminals while open.
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Board, Terminals, Docs, Files, Git.
+- **Views per workspace:** Terminals, Board, Files, Git, Docs.
 - **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; the
   sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
   switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
@@ -1267,7 +1267,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
-| View | Board / Terminals / Docs | Ctrl+Shift+1 / 2 / 3 |
+| View | Terminals / Board / Files / Git / Docs | Ctrl+Shift+1 / 2 / 3 / 4 / 5 |
 | Inbox | Jump to next item needing attention | Ctrl+Shift+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
@@ -1290,7 +1290,6 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Docs | Send comments to agent | Ctrl+Shift+S |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
-| View | Files / Git | Ctrl+Shift+4 / Ctrl+Shift+5 |
 | Files | Expand/collapse, move | ← → ↑ ↓ |
 | Files | Toggle ignored files | Ctrl+Shift+H |
 | Files | Save the opened file | Ctrl+S |
@@ -1815,8 +1814,8 @@ push = false                # ADR 0067; mk web notifies phones that opted in (se
 site = ""                   # "acme.atlassian.net"
 email = ""
 api_token_env = "JIRA_API_TOKEN"  # env var holding the API token; never the token itself
-layout = "list"                   # the Board's List | Kanban switch (it writes this)
 mine = false                      # the Board's All | Mine filter (it writes this)
+layout = "list"                   # the Board's List | Kanban switch (it writes this)
 ```
 
 **Phone access** (ADR 0053). While `[web] enabled = true` the daemon supervises `mk web` as a

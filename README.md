@@ -164,14 +164,14 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 
 - **Sidebar**: workspaces with each session's status; `Ctrl+Shift+I` jumps to the next session
   that needs you.
-- **Terminals** (`Ctrl+Shift+2`): tabs split into panes, each an agent or a shell. New agent tab
+- **Terminals** (`Ctrl+Shift+1`): tabs split into panes, each an agent or a shell. New agent tab
   `Ctrl+Shift+A`, shell tab `Ctrl+Shift+T`, split `Alt+Shift+=` / `Alt+Shift+-`.
-- **Task board** (`Ctrl+Shift+1`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
-- **Docs** (`Ctrl+Shift+3`): review Markdown plans, comment on passages and send the comments
-  back to the agent session that wrote them.
-- **Files** (`Ctrl+Shift+4`) and **Git** (`Ctrl+Shift+5`): browse files, diff against the base
+- **Task board** (`Ctrl+Shift+2`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
+- **Files** (`Ctrl+Shift+3`) and **Git** (`Ctrl+Shift+4`): browse files, diff against the base
   branch, stage, commit, comment on diff lines. Quick open `Ctrl+Shift+O`; "Open in Zed"
   `Ctrl+Shift+Z`.
+- **Docs** (`Ctrl+Shift+5`): review Markdown plans, comment on passages and send the comments
+  back to the agent session that wrote them.
 - **Command palette** `Ctrl+Shift+P`: every command, plus actions without a shortcut.
 - **Shortcuts**: `Ctrl+,` creates `keymap.toml` in the config directory (every command listed,
   commented out, at its default) and opens it in Zed. Edits apply after restarting Mkrew;

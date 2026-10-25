@@ -553,7 +553,7 @@ fn typing_filters_ranks_and_resets_the_pick() {
     let rows = palette.rows();
     assert_eq!(rows[0].entry.title, "View: Git");
     assert_eq!(rows[0].ranges, [0..1, 6..7]);
-    assert_eq!(rows[0].entry.shortcut, "Ctrl+Shift+5");
+    assert_eq!(rows[0].entry.shortcut, "Ctrl+Shift+4");
 
     palette.key(Key::Insert("zzz".into()));
     assert!(palette.rows().is_empty());

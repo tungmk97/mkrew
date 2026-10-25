@@ -383,18 +383,18 @@ impl Command {
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
             Command::SendSelection => "ctrl-shift-l".into(),
-            Command::ShowBoard => "ctrl-shift-1".into(),
-            Command::ShowTerminals => "ctrl-shift-2".into(),
-            Command::ShowDocs => "ctrl-shift-3".into(),
+            Command::ShowBoard => "ctrl-shift-2".into(),
+            Command::ShowTerminals => "ctrl-shift-1".into(),
+            Command::ShowDocs => "ctrl-shift-5".into(),
             Command::ToggleDocSource => "ctrl-shift-e".into(),
             Command::AddComment => "ctrl-alt-m".into(),
             Command::SendComments => "ctrl-shift-s".into(),
-            Command::ShowFiles => "ctrl-shift-4".into(),
+            Command::ShowFiles => "ctrl-shift-3".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::SaveFile => "ctrl-s".into(),
             Command::FindInFile => "ctrl-f".into(),
             Command::ReplaceInFile => "ctrl-h".into(),
-            Command::ShowGit => "ctrl-shift-5".into(),
+            Command::ShowGit => "ctrl-shift-4".into(),
             Command::GitToggleMode => "b".into(),
             Command::GitToggleHistory => "h".into(),
             Command::GitNextHunk => "n".into(),
@@ -897,13 +897,13 @@ mod tests {
         assert_eq!(keymap.label(Command::Peek), "Ctrl+Shift+Space");
         assert_eq!(bound("ctrl-shift-enter"), Some(Command::OpenComposer));
         assert_eq!(bound("ctrl-shift-l"), Some(Command::SendSelection));
-        assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowBoard));
-        assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowTerminals));
-        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowDocs));
+        assert_eq!(bound("ctrl-shift-1"), Some(Command::ShowTerminals));
+        assert_eq!(bound("ctrl-shift-2"), Some(Command::ShowBoard));
+        assert_eq!(bound("ctrl-shift-5"), Some(Command::ShowDocs));
         assert_eq!(bound("ctrl-shift-e"), Some(Command::ToggleDocSource));
         assert_eq!(bound("ctrl-alt-m"), Some(Command::AddComment));
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
-        assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowFiles));
+        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowFiles));
         assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
         // Files only: plain Ctrl+S saves the opened file (the terminal never has focus there).
         assert_eq!(bound("ctrl-s"), Some(Command::SaveFile));
@@ -913,7 +913,7 @@ mod tests {
         for command in [Command::FindInFile, Command::ReplaceInFile] {
             assert_eq!(command.context(), Some(FILES_CONTEXT), "{command:?}");
         }
-        assert_eq!(bound("ctrl-shift-5"), Some(Command::ShowGit));
+        assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowGit));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));
@@ -1325,7 +1325,7 @@ mod tests {
         let keymap = Keymap::defaults();
         let reported = gpui::KeyBinding::load(
             "ctrl-shift-2",
-            Box::new(Run(Command::ShowTerminals)),
+            Box::new(Run(Command::ShowBoard)),
             None,
             true,
             None,
@@ -1338,10 +1338,10 @@ mod tests {
         assert_ne!(reported, "ctrl-shift-2", "Windows folds the shifted digit");
         assert_eq!(
             folded_clash(&keymap, Command::AddWorkspace, &reported, mapper.as_ref()),
-            Some(Command::ShowTerminals)
+            Some(Command::ShowBoard)
         );
         assert_eq!(
-            folded_clash(&keymap, Command::ShowTerminals, &reported, mapper.as_ref()),
+            folded_clash(&keymap, Command::ShowBoard, &reported, mapper.as_ref()),
             None
         );
     }
