@@ -25,7 +25,7 @@ pub enum TrayEvent {
     /// Show the window on this session's pane.
     Session(Ulid),
     /// Show the window on this session's pane, else its workspace: a toast's `mkrew://` link
-    /// (ADR 0078).
+    /// (ADR 0079).
     Notification { session: Ulid, project: Ulid },
     /// Quit the UI (the daemon and the agents keep running).
     Quit,

@@ -1,4 +1,4 @@
-//! `mkrew://` links (ADR 0078). A Windows toast opens `mkrew://session/<session>?project=<project>`;
+//! `mkrew://` links (ADR 0079). A Windows toast opens `mkrew://session/<session>?project=<project>`;
 //! `mkrew.exe` started with it shows that session's pane (in the running UI, or a new one).
 
 use ulid::Ulid;

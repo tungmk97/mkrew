@@ -1,4 +1,4 @@
-//! Windows toasts (ADR 0078): shown through WinRT with `activationType="protocol"`, so a click
+//! Windows toasts (ADR 0079): shown through WinRT with `activationType="protocol"`, so a click
 //! on the banner, or later in the Notification Center, opens the session's `mkrew://` link
 //! even after this process forgot the toast.
 

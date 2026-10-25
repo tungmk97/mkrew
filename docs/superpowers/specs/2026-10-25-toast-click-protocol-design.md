@@ -1,8 +1,8 @@
 # Toast click through a `mkrew://` link (Windows)
 
 - Date: 2026-10-25
-- Status: design, waiting for review
-- ADR: 0078 (written with the implementation, together with the SPEC update)
+- Status: implemented
+- ADR: 0079 (0078 was taken by the theme picker meanwhile)
 
 ## Problem
 
@@ -129,6 +129,6 @@ is not a session link is ignored, as today).
 
 ## Docs
 
-ADR 0078; SPEC §8 "Notifications" (click = `mkrew://` link on Windows, `notification.clicked`
+ADR 0079; SPEC §8 "Notifications" (click = `mkrew://` link on Windows, `notification.clicked`
 elsewhere), §20J item 4 wording, §3 table row "OS notifications" (`notify-rust`, Windows toast via
 `windows`).

@@ -167,7 +167,7 @@ Rust stable, one Cargo workspace. When adding a crate, check its latest version 
 | IDs | `ulid` | time-sortable |
 | CLI | `clap` (derive) | |
 | File watching | `notify` | conflicts (M5), docs (M6) |
-| OS notifications | `notify-rust` | |
+| OS notifications | `notify-rust` (Linux, macOS); WinRT toasts through `windows` (Windows, ADR 0079) | |
 | Paths | `directories`, `dunce` | |
 | Markdown | `pulldown-cmark` | docs review (M6) |
 | Syntax highlighting | `syntect` (pure-Rust regex feature, lazy-loaded) | files & diffs (M7) |
@@ -605,7 +605,7 @@ has `id`), `response` (same `id`), `event` (daemon push, no `id`). All types liv
 | `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |
 | `doc.changed` | a watched md file changed (`project_id`, `file_path`, new `hash`, `null` = deleted); its comments are re-anchored right after (`comment.updated`) |
 | `comment.updated` | comment created/replied/state changed (incl. agent replies via CLI) |
-| `notification.clicked` | user clicked an OS notification (UI focuses that pane) |
+| `notification.clicked` | user clicked an OS notification on Linux (UI focuses that pane; Windows uses a `mkrew://` link, §8) |
 | `git.changed` | workspace git state changed (debounced, ≤ once per 300 ms) |
 | `ai.generated` | answer to an `ai.generate` (`generation_id`, `project_id?` = the request's, `text?` trimmed and, except for `ask`, unfenced, `error?`) |
 | `project.cloned` | end of a `project.clone` (`clone_id`, `project?` the added workspace, `error?` git's message) |
@@ -685,7 +685,10 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
 - **Run commands:** after resume, `project.run_start` (all) for every non-archived project with
   `run_autostart` and at least one command (ADR 0018).
 - **Notifications:** OS notification when a session enters needs_input or done; at most one per
-  session per 30 s. Clicking it emits `notification.clicked`. While `[web] push` is on, `mk web` also
+  session per 30 s. Clicking it shows that session's pane: on Windows the toast opens
+  `mkrew://session/<id>?project=<id>`, which the user's daemon registers under HKCU for the
+  `mkrew.exe` beside it (the running UI shows the pane, or a new UI starts on it, ADR 0079); on
+  Linux it emits `notification.clicked`. While `[web] push` is on, `mk web` also
   sends a Web Push notification to each phone that opted in, under the same `[notify]` switches and
   the same 30 s limit (ADR 0067; §20.0).
 - **Session logs:** `<data>/mkrew/sessions/<session_id>.log`, rotated at 5 MB; deleted 7 days after the session ended unless a tab still shows it (ADR 0060).
@@ -1868,7 +1871,7 @@ context_window = 200000        # tokens, for the % shown
    buttons `y` and `n` that send that letter with submit. Focus returns where it was. Data comes
    from the new request `session.read` (below), never from attaching.
 2. **Sound.** OS notifications (§8) play the OS default sound when `notify.sound` (notify-rust
-   `sound_name`, Windows/macOS; Linux hint). `notify.needs_input` / `notify.done` switch each kind
+   `sound_name` on macOS, a hint on Linux; the toast's `<audio>` on Windows). `notify.needs_input` / `notify.done` switch each kind
    off. The 30 s per-session limit stays.
 3. **Turn summary.** When a turn ends the daemon broadcasts `session.turn` with `n`, `started_at`,
    `ended_at` and `files` = paths attributed to the session during the turn (the hook-reported

@@ -1,7 +1,7 @@
 //! OS notifications (SPEC §8, §20A.2): one when a session enters needs_input or done, unless
 //! `notify.needs_input` / `notify.done` turns that kind off, at most one per session per
 //! [`THROTTLE`], with the OS default sound when `notify.sound`. A click shows the session: on
-//! Windows the toast opens its `mkrew://` link (ADR 0078), elsewhere it becomes a
+//! Windows the toast opens its `mkrew://` link (ADR 0079), elsewhere it becomes a
 //! `notification.clicked` event.
 //!
 //! The policy is `decide`; [`start`] applies it and is tested with a fake [`Notifier`].
@@ -174,7 +174,7 @@ impl Throttle {
 }
 
 /// The OS notifier. Windows: a WinRT toast whose click opens the session's `mkrew://` link
-/// (ADR 0078), so `clicked` is not used there. Elsewhere `notify-rust`: `show` and waiting for
+/// (ADR 0079), so `clicked` is not used there. Elsewhere `notify-rust`: `show` and waiting for
 /// the click both block, so each notice gets its own short-lived thread (it ends on click or
 /// dismissal; the throttle bounds how many exist).
 struct OsNotifier;

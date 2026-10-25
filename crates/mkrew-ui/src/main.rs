@@ -165,7 +165,7 @@ fn main() {
     for error in &keymap_errors {
         tracing::warn!("{error}; using the default for it");
     }
-    // Started by a toast click (`mkrew://` link, ADR 0078): show that session's pane.
+    // Started by a toast click (`mkrew://` link, ADR 0079): show that session's pane.
     let jump = std::env::args()
         .nth(1)
         .and_then(|arg| mkrew_core::link::parse_session_link(&arg));
@@ -350,7 +350,7 @@ struct Shell {
     early_tab_events: Vec<Event>,
     /// Session to show once its workspace's tabs are loaded (clicked in the sidebar).
     reveal: Option<Ulid>,
-    /// The session a `mkrew://` link asked for when it started this UI (ADR 0078); shown
+    /// The session a `mkrew://` link asked for when it started this UI (ADR 0079); shown
     /// after the first session list.
     pending_jump: Option<(Ulid, Ulid)>,
     /// Last failure of a tab action (new tab), shown in the tab bar.
