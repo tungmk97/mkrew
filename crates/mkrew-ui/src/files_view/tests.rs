@@ -1413,3 +1413,45 @@ fn unsaved_paths_lists_every_dirty_tab() {
     }
     assert_eq!(view.unsaved_paths(), ["README.md", "src/main.rs"]);
 }
+
+/// Leaving several tabs asks about the first one still unsaved, so text typed while its save
+/// was in flight is asked about again.
+#[test]
+fn the_next_tab_to_ask_about_is_the_first_still_unsaved() {
+    let mut view = three();
+    for path in ["README.md", "src/main.rs"] {
+        view.open(path, Open::Kept);
+        read_ok(&mut view, path, "a\n");
+        view.editor_mut().unwrap().insert("x");
+    }
+    let paths = ["README.md".to_owned(), "src/main.rs".to_owned()];
+    assert_eq!(view.first_unsaved(&paths).as_deref(), Some("README.md"));
+    let save = view.begin_save("README.md").unwrap();
+    view.activate(0);
+    view.editor_mut().unwrap().insert("y"); // typed while saving
+    let written = FsWritten {
+        saved: true,
+        hash: "#xa\n".into(),
+    };
+    view.saved("README.md", save.point, Ok(written));
+    assert_eq!(
+        view.first_unsaved(&paths).as_deref(),
+        Some("README.md"),
+        "asked again"
+    );
+    view.drop_changes("README.md");
+    assert_eq!(view.first_unsaved(&paths).as_deref(), Some("src/main.rs"));
+}
+
+/// "Don't save" drops the changes and reads the file again, so the tab shows what is on disk.
+#[test]
+fn dropping_changes_rereads_the_file() {
+    let mut view = opened("a\n");
+    view.editor_mut().unwrap().insert("x");
+    assert_eq!(view.drop_changes("README.md").as_deref(), Some("README.md"));
+    assert_eq!(unsaved(&view), None);
+    view.begin_read("README.md");
+    view.read("README.md", file_text("a\n"));
+    assert_eq!(text(&view), "a\n", "the disk's text, not the dropped edit");
+    assert_eq!(view.drop_changes("gone.rs"), None);
+}

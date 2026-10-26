@@ -525,17 +525,16 @@ impl Shell {
     pub(crate) fn leave_files(
         &mut self,
         project_id: Ulid,
-        mut paths: Vec<String>,
+        paths: Vec<String>,
         then: AfterSave,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let unsaved = (self.files.get(&project_id)).map_or_else(Vec::new, FilesView::unsaved_paths);
-        paths.retain(|path| unsaved.contains(path));
-        if paths.is_empty() {
+        // A tab saved meanwhile is skipped; one typed into during its save is asked again.
+        let next = (self.files.get(&project_id)).and_then(|view| view.first_unsaved(&paths));
+        let Some(path) = next else {
             return then(self, window, cx);
-        }
-        let path = paths.remove(0);
+        };
         // Its tab exists (it is unsaved): `open` only shows it.
         self.open_file_tab(project_id, &path, Open::Transient, window, cx);
         let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
@@ -561,9 +560,10 @@ impl Shell {
                         shell.save_file(project_id, path, Some(rest), window, cx);
                     }
                     Some(files_view::Leave::DontSave) => {
-                        if let Some(tab) = shell.files_view(project_id).tab_for_mut(&path) {
-                            tab.discard();
-                        }
+                        // The tab shows the file on disk again (it may stay open on Cancel).
+                        let read = shell.files_view(project_id).drop_changes(&path);
+                        let requests = Requests { list: vec![], read };
+                        shell.files_requests(project_id, requests, window, cx);
                         rest(shell, window, cx);
                     }
                     None => {}

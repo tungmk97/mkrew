@@ -695,10 +695,9 @@ impl Shell {
                                 "",
                             ))
                             .on_click(cx.listener(move |shell, _, window, cx| {
-                                let read = (shell.active_file_tab(project_id)).map(|tab| {
-                                    tab.discard();
-                                    tab.path.clone()
-                                });
+                                let view = shell.files_view(project_id);
+                                let read = (view.file().map(str::to_owned))
+                                    .and_then(|path| view.drop_changes(&path));
                                 let requests = files_view::Requests { list: vec![], read };
                                 shell.files_requests(project_id, requests, window, cx);
                             })),

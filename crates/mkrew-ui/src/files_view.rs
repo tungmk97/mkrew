@@ -454,6 +454,22 @@ impl FilesView {
             .collect()
     }
 
+    /// The first of `paths` whose tab is still unsaved (asked again after a save that text
+    /// typed meanwhile made unsaved again).
+    pub fn first_unsaved(&self, paths: &[String]) -> Option<String> {
+        (paths.iter())
+            .find(|path| self.tab_for(path).is_some_and(FileTab::is_dirty))
+            .cloned()
+    }
+
+    /// "Don't save" / "Reload": drops `path`'s unsaved changes; returns the file to read
+    /// again, so the tab shows what is on disk.
+    pub fn drop_changes(&mut self, path: &str) -> Option<String> {
+        let tab = self.tab_for_mut(path)?;
+        tab.discard();
+        Some(tab.path.clone())
+    }
+
     /// The active tab becomes permanent (an edit).
     pub fn keep(&mut self) {
         if let Some(tab) = self.tab_mut() {
