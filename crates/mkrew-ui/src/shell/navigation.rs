@@ -364,9 +364,11 @@ impl Shell {
             workspace: workspace.is_some(),
             view: self.view(),
             workspaces: self.sidebar.projects().len(),
-            tabs: workspace
-                .and_then(|id| self.tabs.get(&id))
-                .map_or(0, |tabs| tabs.tabs().len()),
+            tabs: match (workspace, self.view()) {
+                (Some(id), View::Files) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
+                (Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
+                (None, _) => 0,
+            },
             terminal: terminal.is_some(),
             discard,
             task_changes,

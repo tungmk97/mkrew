@@ -146,7 +146,10 @@ impl Shell {
                     });
             let files_command = matches!(
                 command,
-                Command::SaveFile | Command::FindInFile | Command::ReplaceInFile
+                Command::SaveFile
+                    | Command::FindInFile
+                    | Command::ReplaceInFile
+                    | Command::CloseFileTab
             );
             if open && !files_command {
                 cx.propagate();
@@ -192,6 +195,20 @@ impl Shell {
         // typed in the peek still runs); its own shortcut toggles it below.
         if *command != Command::Peek {
             self.close_peek(window, cx);
+        }
+        // Tab keys act on the Files tabs while the Files view is shown (SPEC §12A, §13).
+        if self.view() == View::Files
+            && let Some(project_id) = self.workspace
+        {
+            match *command {
+                Command::NextTab => return self.cycle_file_tab(project_id, true, window, cx),
+                Command::PreviousTab => return self.cycle_file_tab(project_id, false, window, cx),
+                Command::Tab(n) => return self.nth_file_tab(project_id, n, window, cx),
+                Command::CloseTab | Command::CloseFileTab => {
+                    return self.close_active_file_tab(project_id, window, cx);
+                }
+                _ => {}
+            }
         }
         if self.view() != View::Terminals {
             match *command {
@@ -449,6 +466,8 @@ impl Shell {
             },
             Command::FindInFile => self.open_file_find(false, window, cx),
             Command::ReplaceInFile => self.open_file_find(true, window, cx),
+            // Bound in the Files view only; handled above.
+            Command::CloseFileTab => {}
         }
     }
 }

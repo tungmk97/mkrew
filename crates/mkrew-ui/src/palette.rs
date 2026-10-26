@@ -234,6 +234,7 @@ pub fn title(command: Command) -> String {
         Command::SaveFile => "Files: Save file".into(),
         Command::FindInFile => "Files: Find in file".into(),
         Command::ReplaceInFile => "Files: Replace in file".into(),
+        Command::CloseFileTab => "Files: Close tab".into(),
         Command::QuickOpen => "Files: Quick open file".into(),
         Command::GitToggleMode => "Git: Toggle Working changes / Against base".into(),
         Command::GitToggleHistory => "Git: Toggle History".into(),
@@ -321,7 +322,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::ToggleIgnored
         | Command::SaveFile
         | Command::FindInFile
-        | Command::ReplaceInFile => in_view(View::Files),
+        | Command::ReplaceInFile
+        | Command::CloseFileTab => in_view(View::Files),
         Command::GitToggleMode
         | Command::GitToggleHistory
         | Command::GitNextHunk

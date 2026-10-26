@@ -32,7 +32,7 @@ impl Shell {
         let active = view.active_index();
         let pinned_count = tabs.iter().filter(|tab| tab.pinned).count();
         let hover = theme.hover;
-        let close_keys = self.keymap.label(Command::CloseTab);
+        let close_keys = self.keymap.label(Command::CloseFileTab);
         div()
             .id("file-tabs")
             .flex_none()
@@ -225,7 +225,7 @@ impl Shell {
                 "file-tab-close",
                 "Close",
                 Close::One,
-                self.keymap.label(Command::CloseTab),
+                self.keymap.label(Command::CloseFileTab),
             ))
             .child(close(
                 "file-tab-close-others",
