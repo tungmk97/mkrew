@@ -719,6 +719,7 @@ impl Shell {
                     )
             });
         panel
+            .child(self.render_file_tabs(project_id, view, theme, cx))
             .child(header)
             .children(find_bar)
             .children(disk_banner)

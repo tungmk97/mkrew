@@ -316,6 +316,7 @@ impl Shell {
             settings_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
+            file_tab_menu: None,
             tab_menu: None,
             reorder: None,
             layout_menu: None,

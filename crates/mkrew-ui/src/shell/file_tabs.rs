@@ -79,6 +79,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.file_tab_menu = None;
         let paths = self.files_view(project_id).close_targets(path, which);
         if paths.is_empty() {
             return;
@@ -113,6 +114,7 @@ impl Shell {
         pinned: bool,
         cx: &mut Context<'_, Self>,
     ) {
+        self.file_tab_menu = None;
         self.files_view(project_id).pin(path, pinned);
         cx.notify();
     }

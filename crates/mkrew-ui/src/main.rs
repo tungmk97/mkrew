@@ -307,6 +307,15 @@ struct FileMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
+/// The right-click menu of a Files tab (SPEC §12A): Close, Close others, Close to the right,
+/// Close all, Pin / Unpin, Copy path.
+struct FileTabMenu {
+    project_id: Ulid,
+    path: String,
+    /// Window position of the click.
+    position: gpui::Point<gpui::Pixels>,
+}
+
 /// The open popover of the Git view's side panel or diff toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GitMenu {
@@ -405,6 +414,8 @@ struct Shell {
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
     file_menu: Option<FileMenu>,
+    /// The open right-click menu of a Files tab.
+    file_tab_menu: Option<FileTabMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
     /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
@@ -888,6 +899,15 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        (self.file_tab_menu.as_ref())
+                            .filter(|menu| {
+                                self.workspace == Some(menu.project_id)
+                                    && self.view() == View::Files
+                                    && !self.modal_open()
+                            })
+                            .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),
                     )
                     .children(self.render_toasts(&theme, cx)),
             )
