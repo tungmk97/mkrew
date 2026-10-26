@@ -114,7 +114,7 @@ impl Shell {
             files_view::Listing::Loaded(_) => {
                 let rows = view.rows();
                 let cursor = view.cursor.clone();
-                let opened = view.file.clone();
+                let opened = view.file().map(str::to_owned);
                 let focused = self.files_focus.is_focused(window);
                 let row_theme = theme.clone();
                 uniform_list(
@@ -257,7 +257,7 @@ impl Shell {
             .rounded(px(radius::MEDIUM))
             .overflow_hidden()
             .bg(rgb(theme.surface));
-        let Some(path) = view.file.clone() else {
+        let Some(tab) = view.tab() else {
             let hint = |keys: String, what: &'static str| {
                 div()
                     .flex()
@@ -316,27 +316,32 @@ impl Shell {
                     ),
             );
         };
-        let dirty = view.unsaved().is_some();
-        let editable = view
+        let path = tab.path.clone();
+        let dirty = tab.is_dirty();
+        let editable = tab
             .shown()
             .is_some_and(|shown| !shown.code.binary && !shown.code.too_large);
         let zed_keys = self.keymap.label(Command::OpenInZed);
-        let zed_tip = match view.line() {
+        let zed_tip = match tab.line() {
             Some(line) => format!("Open this file in Zed at line {line}"),
             None => "Open this file in Zed".to_owned(),
         };
-        let mode_toggle = (view.is_markdown() && editable).then(|| {
+        let mode_toggle = (tab.is_markdown() && editable).then(|| {
             self.mode_toggle(
                 "file-mode",
-                view.mode,
+                tab.mode,
                 [(Mode::Preview, "Preview"), (Mode::Source, "Source")],
                 "Toggle preview / source",
                 "".into(),
                 move |shell, _, window, cx| {
-                    shell.files_view(project_id).toggle_mode();
+                    if let Some(tab) = shell.active_file_tab(project_id) {
+                        tab.toggle_mode();
+                    }
                     shell.build_preview(project_id, window, cx);
                     // The find fields are not drawn in Preview: give the keyboard back.
-                    if shell.files_view(project_id).previewing()
+                    if (shell.files.get(&project_id))
+                        .and_then(FilesView::tab)
+                        .is_some_and(FileTab::previewing)
                         && (shell.file_find_focus.is_focused(window)
                             || shell.file_replace_focus.is_focused(window))
                     {
@@ -361,7 +366,7 @@ impl Shell {
                 shell.open_file_in_zed(project_id, cx);
             }))
         };
-        let markdown = view.is_markdown();
+        let markdown = tab.is_markdown();
         let review_path = path.clone();
         let header = div()
             .flex_none()
@@ -382,7 +387,7 @@ impl Shell {
                     .text_color(rgb(theme.text))
                     .child(format!("{}{path}", if dirty { "● " } else { "" })),
             )
-            .children(view.shown().filter(|_| editable).and_then(|shown| {
+            .children(tab.shown().filter(|_| editable).and_then(|shown| {
                 let at = shown.editor.cursor();
                 // The caret is always inside the text (the editor clamps it).
                 let line = shown.editor.lines().get(at.line)?;
@@ -431,9 +436,12 @@ impl Shell {
                         "Save this file",
                         self.keymap.label(Command::SaveFile),
                     ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.save_file(project_id, None, window, cx);
-                    })),
+                    .on_click({
+                        let path = path.clone();
+                        cx.listener(move |shell, _, window, cx| {
+                            shell.save_file(project_id, path.clone(), None, window, cx);
+                        })
+                    }),
                 )
             })
             .child(
@@ -457,7 +465,7 @@ impl Shell {
         let find_bar = view
             .find
             .as_ref()
-            .filter(|_| !view.previewing())
+            .filter(|_| !tab.previewing())
             .map(|find| {
                 let focused = self.file_find_focus.is_focused(window);
                 let find_row = div()
@@ -618,8 +626,8 @@ impl Shell {
                     .child(find_row)
                     .children(replace_row)
             });
-        let body = match &view.content {
-            Content::None | Content::Loading => message(theme, None, "Loading…".into(), None)
+        let body = match &tab.content {
+            Content::Loading => message(theme, None, "Loading…".into(), None)
                 .flex_1()
                 .into_any_element(),
             Content::Failed(error) => message(
@@ -632,9 +640,7 @@ impl Shell {
             .child(
                 button("file-retry", "Retry", theme, true).on_click(cx.listener(
                     move |shell, _, window, cx| {
-                        let read = shell.files_view(project_id).open(&path);
-                        let requests = Requests { list: vec![], read };
-                        shell.files_requests(project_id, requests, window, cx);
+                        shell.open_file_tab(project_id, &path, Open::Transient, window, cx);
                     },
                 )),
             )
@@ -657,12 +663,12 @@ impl Shell {
                 .child(zed_button("file-zed-notice", true))
                 .into_any_element()
             }
-            Content::Shown(_) if view.previewing() => {
-                self.render_md_preview(project_id, view, window, theme, cx)
+            Content::Shown(_) if tab.previewing() => {
+                self.render_md_preview(project_id, tab, window, theme, cx)
             }
             Content::Shown(shown) => self.render_editor(project_id, shown, window, theme, cx),
         };
-        let disk_banner = view
+        let disk_banner = tab
             .shown()
             .filter(|shown| shown.disk_changed.is_some())
             .map(|_| {
@@ -689,7 +695,10 @@ impl Shell {
                                 "",
                             ))
                             .on_click(cx.listener(move |shell, _, window, cx| {
-                                let read = shell.files_view(project_id).reload();
+                                let read = (shell.active_file_tab(project_id)).map(|tab| {
+                                    tab.discard();
+                                    tab.path.clone()
+                                });
                                 let requests = files_view::Requests { list: vec![], read };
                                 shell.files_requests(project_id, requests, window, cx);
                             })),
@@ -702,7 +711,9 @@ impl Shell {
                                 "",
                             ))
                             .on_click(cx.listener(move |shell, _, _, cx| {
-                                shell.files_view(project_id).keep_mine();
+                                if let Some(tab) = shell.active_file_tab(project_id) {
+                                    tab.keep_mine();
+                                }
                                 cx.notify();
                             })),
                     )
@@ -717,7 +728,7 @@ impl Shell {
                     .pb(px(space::S))
             }))
             .children(
-                view.shown()
+                tab.shown()
                     .and_then(|shown| shown.save_error.clone())
                     .map(|error| {
                         notice(theme.text, format!("✕ {error}"))
@@ -1000,9 +1011,16 @@ pub(crate) fn file_row(
                     .tooltip(tooltip(theme, "Contains changes", "")),
             )
         })
-        .on_click(cx.listener(move |shell, _, window, cx| {
-            shell.click_file(project_id, &path, window, cx);
-        }))
+        .on_click(
+            cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+                let how = if event.click_count() == 2 {
+                    Open::Kept
+                } else {
+                    Open::Transient
+                };
+                shell.click_file(project_id, &path, how, window, cx);
+            }),
+        )
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {

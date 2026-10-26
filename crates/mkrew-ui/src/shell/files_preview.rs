@@ -10,12 +10,12 @@ impl Shell {
     pub(crate) fn render_md_preview(
         &self,
         project_id: Ulid,
-        view: &FilesView,
+        tab: &FileTab,
         window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let shown = match view.preview() {
+        let shown = match tab.preview() {
             None => {
                 return message(theme, None, "Rendering the preview…".into(), None)
                     .flex_1()
@@ -29,12 +29,12 @@ impl Shell {
             Some(shown) => shown,
         };
         let fonts = cx.global::<theme::Fonts>().clone();
-        let select = Some(preview::Selecting(view.preview_selection));
+        let select = Some(preview::Selecting(tab.preview_selection));
         preview::page(
             &self.file_page,
-            view.opening,
+            tab.opening,
             shown,
-            Some(self.file_block_wrap(project_id, view, window, theme, cx)),
+            Some(self.file_block_wrap(project_id, tab, window, theme, cx)),
             select,
             &fonts,
             theme,
@@ -66,11 +66,13 @@ impl Shell {
     ) {
         window.focus(&self.file_editor_focus, cx);
         let at = self.file_page.hit(event.position);
-        let view = self.files_view(project_id);
+        let Some(tab) = self.active_file_tab(project_id) else {
+            return;
+        };
         match at {
-            Some(at) => view.preview_click(at, event.modifiers.shift, event.click_count),
+            Some(at) => tab.preview_click(at, event.modifiers.shift, event.click_count),
             None => {
-                view.clear_preview_selection();
+                tab.clear_preview_selection();
             }
         }
         cx.notify();
@@ -82,8 +84,10 @@ impl Shell {
         position: Point<Pixels>,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(at) = self.file_page.hit(position) {
-            self.files_view(project_id).preview_drag(at);
+        if let Some(at) = self.file_page.hit(position)
+            && let Some(tab) = self.active_file_tab(project_id)
+        {
+            tab.preview_drag(at);
             cx.notify();
         }
     }
@@ -101,7 +105,7 @@ impl Shell {
         };
         let plain = !event.keystroke.modifiers.modified();
         if plain && event.keystroke.key == "escape" {
-            if self.files_view(project_id).clear_preview_selection() {
+            if (self.active_file_tab(project_id)).is_some_and(FileTab::clear_preview_selection) {
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -110,13 +114,18 @@ impl Shell {
         match editor::edit_key(&event.keystroke) {
             Some(EditKey::Copy) => {
                 cx.stop_propagation();
-                if let Some(text) = self.files_view(project_id).preview_copy() {
+                if let Some(text) = self
+                    .active_file_tab(project_id)
+                    .and_then(|tab| tab.preview_copy())
+                {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                 }
             }
             Some(EditKey::SelectAll) => {
                 cx.stop_propagation();
-                self.files_view(project_id).preview_select_all();
+                if let Some(tab) = self.active_file_tab(project_id) {
+                    tab.preview_select_all();
+                }
                 cx.notify();
             }
             _ => {}
@@ -127,14 +136,14 @@ impl Shell {
     fn file_block_wrap(
         &self,
         project_id: Ulid,
-        view: &FilesView,
+        tab: &FileTab,
         window: &Window,
         theme: &Theme,
         cx: &Context<'_, Self>,
     ) -> preview::Wrap {
         let this = cx.entity();
         let theme = theme.clone();
-        let edit = view
+        let edit = tab
             .block_edit
             .as_ref()
             .map(|edit| (edit.block, edit.text.input().clone()));
@@ -186,7 +195,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.files_view(project_id).open_block_edit(block) {
+        if (self.active_file_tab(project_id)).is_some_and(|tab| tab.open_block_edit(block)) {
             self.file_page.remeasure();
             window.focus(&self.file_block_focus, cx);
         }
@@ -199,7 +208,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.files_view(project_id).block_edit.take().is_some() {
+        let closed = (self.active_file_tab(project_id)).and_then(|tab| tab.block_edit.take());
+        if closed.is_some() {
             self.file_page.remeasure();
             window.focus(&self.file_editor_focus, cx);
         }
@@ -212,7 +222,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        match self.files_view(project_id).apply_block_edit() {
+        let applied = (self.active_file_tab(project_id)).map(FileTab::apply_block_edit);
+        match applied.unwrap_or(Ok(())) {
             Ok(()) => {
                 self.file_page.remeasure();
                 window.focus(&self.file_editor_focus, cx);
@@ -225,7 +236,9 @@ impl Shell {
     }
 
     fn click_block_edit(&mut self, project_id: Ulid, caret: Caret) {
-        if let Some(edit) = &mut self.files_view(project_id).block_edit {
+        if let Some(edit) =
+            (self.active_file_tab(project_id)).and_then(|tab| tab.block_edit.as_mut())
+        {
             edit.text.click(caret.at, caret.extend, caret.clicks);
         }
     }
@@ -247,19 +260,21 @@ impl Shell {
         let pasted = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
-        let view = self.files_view(project_id);
+        let Some(tab) = self.active_file_tab(project_id) else {
+            return;
+        };
         if matches!(key, DialogKey::Copy | DialogKey::Cut)
-            && let Some(text) = view
+            && let Some(text) = tab
                 .block_edit
                 .as_ref()
                 .and_then(|edit| edit.text.input().selected_text().map(str::to_owned))
         {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
-        if let (Some(text), Some(edit)) = (pasted, &mut view.block_edit) {
+        if let (Some(text), Some(edit)) = (pasted, &mut tab.block_edit) {
             edit.text.insert(&text);
         }
-        match view.block_edit_key(key) {
+        match tab.block_edit_key(key) {
             BlockEditOutcome::Edited => cx.notify(),
             BlockEditOutcome::Cancel => self.close_block_edit(project_id, window, cx),
             BlockEditOutcome::Apply => self.apply_block_edit(project_id, window, cx),

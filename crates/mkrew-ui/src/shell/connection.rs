@@ -385,6 +385,7 @@ impl Shell {
             files: HashMap::new(),
             files_focus: cx.focus_handle(),
             files_scroll: UniformListScrollHandle::new(),
+            file_tabs_scroll: ScrollHandle::new(),
             file_find_focus: cx.focus_handle(),
             file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),

@@ -466,7 +466,7 @@ impl Shell {
                 self.files_requests(project_id, requests, window, cx);
             }
         } else {
-            self.open_revealed(project_id, target, path, None, window, cx);
+            self.reveal_file(project_id, target, path, None, Open::Kept, window, cx);
         }
     }
 

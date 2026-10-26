@@ -15,6 +15,7 @@ pub(crate) mod widgets;
 mod comments;
 pub(crate) mod confirm_prompt;
 pub(crate) mod docs;
+mod file_tabs;
 mod files;
 mod files_preview;
 pub(crate) mod files_render;

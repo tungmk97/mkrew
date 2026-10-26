@@ -141,7 +141,9 @@ impl Shell {
             let open = self.view() == View::Files
                 && (self.workspace)
                     .and_then(|id| self.files.get(&id))
-                    .is_some_and(|view| view.find.is_some() && !view.previewing());
+                    .is_some_and(|view| {
+                        view.find.is_some() && !view.tab().is_some_and(FileTab::previewing)
+                    });
             let files_command = matches!(
                 command,
                 Command::SaveFile | Command::FindInFile | Command::ReplaceInFile
@@ -315,7 +317,7 @@ impl Shell {
                         && self
                             .files
                             .get(&project_id)
-                            .is_some_and(|view| view.file.is_some()) =>
+                            .is_some_and(|view| view.file().is_some()) =>
                 {
                     self.open_file_in_zed(project_id, cx);
                 }
@@ -381,8 +383,12 @@ impl Shell {
             Command::GitToggleViewed => self.toggle_selected_viewed(window, cx),
             Command::SaveFile => {
                 // Only bound while Files are shown.
-                if let Some(project_id) = self.workspace {
-                    self.save_file(project_id, None, window, cx);
+                let active = (self.workspace).and_then(|project_id| {
+                    let path = self.files.get(&project_id)?.file()?.to_owned();
+                    Some((project_id, path))
+                });
+                if let Some((project_id, path)) = active {
+                    self.save_file(project_id, path, None, window, cx);
                 }
             }
             Command::ToggleIgnored => {

@@ -59,7 +59,7 @@ use mkrew_ui::editor::{self, EditKey, Pos};
 use mkrew_ui::fanout::{self, Compare, FanOutPicker};
 use mkrew_ui::field::{Caret, caret_mouse, caret_text, copy_selection};
 use mkrew_ui::file_ops;
-use mkrew_ui::files_view::{self, Content, FilesView, Requests};
+use mkrew_ui::files_view::{self, Close, Content, FileTab, FilesView, Open, Requests};
 use mkrew_ui::follow::{self, Follow};
 use mkrew_ui::follow_up::{self, FollowUp};
 use mkrew_ui::git_actions::{self, Remote};
@@ -545,6 +545,8 @@ struct Shell {
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
+    /// Keeps the active Files tab in view in the tab strip.
+    file_tabs_scroll: ScrollHandle,
     /// The Files viewer's find field (outside `FILES_CONTEXT`'s arrow keys).
     file_find_focus: FocusHandle,
     /// The Files find bar's replace field.
