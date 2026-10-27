@@ -193,6 +193,7 @@ impl Shell {
                     | Command::FindInFile
                     | Command::ReplaceInFile
                     | Command::CloseFileTab
+                    | Command::ToggleFilePreview
             );
             if open && !files_command {
                 cx.propagate();
@@ -481,6 +482,12 @@ impl Shell {
                 if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
                     docs.toggle_mode();
                     cx.notify();
+                }
+            }
+            Command::ToggleFilePreview => {
+                // Only bound while the Editor is shown.
+                if let Some(project_id) = self.workspace {
+                    self.toggle_file_preview(project_id, window, cx);
                 }
             }
             Command::AddComment => {

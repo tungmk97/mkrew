@@ -75,6 +75,7 @@ icons! {
         Library => "library",
         Layers => "layers",
         Link => "link",
+        Maximize2 => "maximize-2",
         MessageSquarePlus => "message-square-plus",
         Minimize2 => "minimize-2",
         Minus => "minus",

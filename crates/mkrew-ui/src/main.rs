@@ -53,6 +53,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
+use mkrew_ui::diagram::Diagram;
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
@@ -656,6 +657,8 @@ struct Shell {
     history_pane: Option<Entity<TerminalPane>>,
     /// The open Docs "Send to agent" / "View changes" dialog (modal).
     doc_dialog: Option<DocDialog>,
+    /// The Mermaid diagram of a Markdown preview shown large (modal).
+    diagram_dialog: Option<Diagram>,
     /// The open quick open finder (modal).
     quick_open: Option<QuickOpen>,
     /// Keeps the quick open pick in view.
@@ -750,6 +753,7 @@ impl Render for Shell {
                 el.key_context(EDITOR_CONTEXT)
             })
             .on_action(cx.listener(Self::run))
+            .on_action(cx.listener(Self::expand_diagram))
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
@@ -868,6 +872,11 @@ impl Render for Shell {
                         DocDialog::Send(dialog) => self.render_send_dialog(dialog, now, &theme, cx),
                         DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
                     }))
+                    .children(
+                        self.diagram_dialog
+                            .as_ref()
+                            .map(|diagram| self.render_diagram_dialog(diagram, &theme, cx)),
+                    )
                     .children(
                         self.quick_open
                             .as_ref()

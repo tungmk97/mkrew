@@ -1146,7 +1146,7 @@ Only edit this file. When done, for EACH comment run:
 - **Markdown preview:** a `.md` file opens as a rendered preview, by the Docs renderer (§12,
   §14: the same typography tokens for light and dark, highlighted code blocks, ```` ```mermaid ````
   blocks drawn as diagrams, built off the UI thread). The header has a `Preview | Source`
-  toggle; Source is the editor above. In Preview (ADR 0072) the text can be selected with the
+  toggle (Ctrl+Shift+V, ADR 0083); Source is the editor above. In Preview (ADR 0072) the text can be selected with the
   mouse across blocks (Shift+click extends, double-click takes a word, Ctrl+A selects the page,
   Esc clears) and Ctrl+C copies it as shown (blocks and lines on their own lines, table cells
   tab-separated, list markers `- ` / `N. ` / `[x] `, drawn diagrams copy nothing; a drag or
@@ -1336,6 +1336,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Docs | Comment on selection | Ctrl+Alt+M |
 | Docs | Send comments to agent | Ctrl+Shift+S |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
+| Editor | Toggle preview / source of a Markdown file (no terminal has focus there, so Paste keeps the keys in terminals) | Ctrl+Shift+V |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
 | File tree | Expand/collapse, move | ← → ↑ ↓ |
 | File tree | Toggle ignored files (while the tree has the keyboard; the palette entry works anywhere in a workspace) | Ctrl+Shift+H |
@@ -1452,7 +1453,9 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   title, 20 view title at the default `[ui] font_size = 13`; other sizes keep their ratio to body
   (ADR 0024). Weights 400/500/600. All-caps only for 11/600 overlines.
 - Docs preview (ADR 0021): body 14 px, line height 1.6, headings 24/20/17/15/14/14 px, code 13 px,
-  a centered column of at most 720 px.
+  a centered column of at most 960 px (ADR 0083). A drawn Mermaid diagram shows "Expand" at
+  its bottom-right on hover: a dialog of 90% of the window shows it as wide as fits, up to 2x
+  its natural size (a tall one scrolls); Esc or Close closes it.
 - Terminal font defaults: JetBrains Mono → Cascadia Code → Cascadia Mono → Consolas (Windows),
   JetBrains Mono → SF Mono → Menlo
   (macOS), JetBrains Mono → DejaVu Sans Mono (Linux): the first installed one, 13 px;

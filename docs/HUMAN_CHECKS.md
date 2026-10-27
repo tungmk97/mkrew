@@ -28,6 +28,12 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Drag:** dragging a file / folder onto a Claude pane types `@path ` / `@folder/ `; onto a shell the bare path; the pane shows an accent ring while hovered; a plain click still opens.
 - [ ] **Restart:** the panel comes back on the tab it was left on, or hidden.
 
+### To verify - 2026-10-27 Files Markdown preview: Ctrl+Shift+V, wider page, expand diagrams (ADR 0083)
+
+- [ ] **Toggle:** Files → a `.md` tab: Ctrl+Shift+V switches Preview ↔ Source (also with the find bar open, and from Source with the caret in the text); the Preview / Source tooltip shows Ctrl+Shift+V; the palette lists "Editor: Toggle preview / source". In a terminal pane Ctrl+Shift+V still pastes.
+- [ ] **Width (dark + light):** the preview column is up to 960 px (Files and Docs); at a narrow window it still fits with 24 px sides.
+- [ ] **Expand (dark + light):** hover a drawn Mermaid diagram → "⤢ Expand" at its bottom-right (clear of ✎ at the top-right); click → a dialog of 90% of the window with the diagram as wide as fits (at most 2x), sharp; a tall one scrolls; Esc or Close closes it. The click neither moves the text selection (Files) nor picks the block (Docs).
+
 ### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
 
 - [ ] **Pill (dark + light):** press Ctrl+Shift+D. A pill fades and slides up at the bottom center of the window. It shows a breathing dot, 7 bars, `0:03`, and the `Ctrl+Shift+D stops` key. Speak: the bars jump up with your voice and sink slowly, with a wave running across them. Stay silent: the bars stay low but keep breathing. Press again: the pill shows the dots and `Transcribing`, then disappears.

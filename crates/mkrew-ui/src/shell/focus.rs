@@ -18,6 +18,7 @@ impl Shell {
             || self.ask.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
+            || self.diagram_dialog.is_some()
             || self.quick_open.is_some()
             || self.palette.is_some()
             || self.prompt_picker.is_some()

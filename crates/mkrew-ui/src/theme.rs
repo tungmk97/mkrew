@@ -348,8 +348,14 @@ pub const PANE_CONFLICT_MAX_FRACTION: f32 = 0.5;
 /// Width of the Docs view's file list.
 pub const DOC_LIST_WIDTH: f32 = 240.0;
 
-/// Max width of the rendered Markdown preview, so lines stay readable.
-pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
+/// Max width of the rendered Markdown preview: wide enough for tables and diagrams, still a
+/// readable line (≈ 120 characters of body text).
+pub const DOC_PREVIEW_MAX_WIDTH: f32 = 960.0;
+
+/// An expanded Mermaid diagram (its dialog takes `HISTORY_DIALOG_FRACTION` of the window) is
+/// drawn at most this many times its natural size: gpui rasterizes SVGs at 2x, so it stays
+/// sharp up to there.
+pub const DIAGRAM_ZOOM_MAX: f32 = 2.0;
 
 /// Width of the bar left of a Markdown quote.
 pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;

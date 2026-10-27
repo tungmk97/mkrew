@@ -99,6 +99,8 @@ pub enum Command {
     ReplaceInFile,
     /// Editor only: close the active tab, asking about unsaved text (Ctrl+W).
     CloseFileTab,
+    /// Editor only: switch a Markdown file between its rendered preview and its source.
+    ToggleFilePreview,
     /// Show the active workspace's Git view.
     ShowGit,
     /// Git only: switch between Working changes and Against base.
@@ -262,6 +264,7 @@ impl Command {
             Command::FindInFile,
             Command::ReplaceInFile,
             Command::CloseFileTab,
+            Command::ToggleFilePreview,
             Command::ShowGit,
             Command::GitToggleMode,
             Command::GitToggleHistory,
@@ -353,6 +356,7 @@ impl Command {
             Command::FindInFile => "find_in_file".into(),
             Command::ReplaceInFile => "replace_in_file".into(),
             Command::CloseFileTab => "close_file_tab".into(),
+            Command::ToggleFilePreview => "toggle_file_preview".into(),
             Command::ShowGit => "show_git".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
             Command::GitToggleHistory => "git_toggle_history".into(),
@@ -456,6 +460,8 @@ impl Command {
             Command::FindInFile => "ctrl-f".into(),
             Command::ReplaceInFile => "ctrl-h".into(),
             Command::CloseFileTab => "ctrl-w".into(),
+            // Shares Ctrl+Shift+V with the terminal's Paste: no terminal has focus in the Editor.
+            Command::ToggleFilePreview => "ctrl-shift-v".into(),
             Command::ShowGit => "ctrl-shift-4".into(),
             Command::GitToggleMode => "b".into(),
             Command::GitToggleHistory => "h".into(),
@@ -516,7 +522,8 @@ impl Command {
             Command::SaveFile
             | Command::FindInFile
             | Command::ReplaceInFile
-            | Command::CloseFileTab => Some(EDITOR_CONTEXT),
+            | Command::CloseFileTab
+            | Command::ToggleFilePreview => Some(EDITOR_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -533,6 +540,16 @@ impl Command {
             | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
+    }
+
+    /// Whether `self` and `other` can both be live at once, so they must not share keys. Only
+    /// a terminal and the Editor view are known apart: no terminal has focus in the Editor.
+    fn shares_context(self, other: Command) -> bool {
+        !matches!(
+            (self.context(), other.context()),
+            (Some(TERMINAL_CONTEXT), Some(EDITOR_CONTEXT))
+                | (Some(EDITOR_CONTEXT), Some(TERMINAL_CONTEXT))
+        )
     }
 }
 
@@ -669,7 +686,7 @@ pub fn folded_clash(
     keymap
         .bindings()
         .iter()
-        .filter(|(other, _)| *other != command)
+        .filter(|(other, _)| *other != command && command.shares_context(*other))
         .find(|(other, bound)| {
             fold(*other, &bound.unparse()).is_some_and(|folded| same_keys(&folded, &wanted))
         })
@@ -782,7 +799,7 @@ impl Keymap {
             let other = keymap
                 .bindings
                 .iter()
-                .find(|(o, k)| o != c && same_keys(k, keystroke))?;
+                .find(|(o, k)| o != c && same_keys(k, keystroke) && c.shares_context(*o))?;
             Some((i, other.0))
         }) {
             let (command, keys) = overrides.remove(index);
@@ -939,8 +956,28 @@ mod tests {
         let keymap = Keymap::defaults();
         assert_eq!(keymap.bindings().len(), Command::all().len());
         for (command, keys) in keymap.bindings() {
-            assert_eq!(keymap.command_for(keys), Some(*command), "{command:?}");
+            for (other, bound) in keymap.bindings() {
+                assert!(
+                    other == command || !same_keys(keys, bound) || !command.shares_context(*other),
+                    "{command:?} and {other:?} share {keys:?}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn ctrl_shift_v_pastes_in_a_terminal_and_toggles_the_preview_in_the_editor() {
+        let keymap = Keymap::defaults();
+        assert_eq!(keymap.label(Command::Paste), "Ctrl+Shift+V");
+        assert_eq!(keymap.label(Command::ToggleFilePreview), "Ctrl+Shift+V");
+        assert_eq!(Command::ToggleFilePreview.context(), Some(EDITOR_CONTEXT));
+        // The terminal keys stay one-of-a-kind everywhere else.
+        let (keymap, errors) = Keymap::parse("close_pane = \"ctrl-shift-v\"\n");
+        assert_eq!(keymap.label(Command::ClosePane), "Ctrl+Shift+X");
+        assert!(
+            matches!(&errors[..], [KeymapError::Duplicate { .. }]),
+            "{errors:?}"
+        );
     }
 
     #[test]

@@ -339,23 +339,8 @@ impl Shell {
                 tab.mode,
                 [(Mode::Preview, "Preview"), (Mode::Source, "Source")],
                 "Toggle preview / source",
-                "".into(),
-                move |shell, _, window, cx| {
-                    if let Some(tab) = shell.active_file_tab(project_id) {
-                        tab.toggle_mode();
-                    }
-                    shell.build_preview(project_id, window, cx);
-                    // The find fields are not drawn in Preview: give the keyboard back.
-                    if (shell.files.get(&project_id))
-                        .and_then(FilesView::tab)
-                        .is_some_and(FileTab::previewing)
-                        && (shell.file_find_focus.is_focused(window)
-                            || shell.file_replace_focus.is_focused(window))
-                    {
-                        window.focus(&shell.focus_handle, cx);
-                    }
-                    cx.notify();
-                },
+                self.keymap.label(Command::ToggleFilePreview).into(),
+                move |shell, _, window, cx| shell.toggle_file_preview(project_id, window, cx),
                 theme,
                 cx,
             )

@@ -327,6 +327,7 @@ impl Shell {
             history: None,
             history_pane: None,
             doc_dialog: None,
+            diagram_dialog: None,
             quick_open: None,
             quick_open_scroll: ScrollHandle::new(),
             palette: None,
@@ -497,6 +498,7 @@ impl Shell {
                 shell.history = None;
                 shell.history_pane = None;
                 shell.doc_dialog = None;
+                shell.diagram_dialog = None;
                 shell.quick_open = None;
                 shell.restore_theme_pick(window, cx);
                 shell.palette = None;

@@ -14,6 +14,7 @@ pub(crate) mod widgets;
 
 mod comments;
 pub(crate) mod confirm_prompt;
+mod diagram_dialog;
 pub(crate) mod docs;
 mod file_tabs;
 mod file_tabs_render;
