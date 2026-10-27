@@ -373,7 +373,7 @@ pub struct UiSettings {
     /// `[ui] diff_wrap` (SPEC §12B): long diff lines wrap at the pane edge (else they are cut).
     /// The Git diff toolbar's Wrap toggle writes it.
     pub diff_wrap: bool,
-    /// Width of the right panel (Files / Session tabs), px (SPEC §10); dragging its edge saves it.
+    /// Width of the right panel (Files / Session / Git tabs), px (SPEC §10); dragging its edge saves it.
     pub inspector_width: u16,
     /// Width of the workspace sidebar, px (SPEC §10); dragging its edge saves it.
     pub sidebar_width: u16,

@@ -27,7 +27,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Diff view:** a click shows `Diff` in the view bar and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
 - [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act.
 - [ ] **Restart:** the panel comes back on the Git tab when left there.
-- [ ] **Filter with no match:** typing a filter that matches no file closes the Diff view (Terminals shows); confirm that is acceptable.
+- [ ] **Filter with no match:** the diff closes on the next status refresh when the filter matches no file (Terminals shows); the keyboard stays in the filter / list.
+- [ ] **Repo chip / worktree with the diff open:** switching either keeps the Diff view open on the other repository's first file.
+- [ ] **Commit everything or discard the last file with the diff open:** the diff closes, Terminals shows live panes, the keyboard stays in the Git list so Shift+P pushes.
+- [ ] **`git.changed` with only the Git tab on screen (Terminals view):** the list updates.
+- [ ] **Entry points:** the Session Changes card "Review diff", the Review card "View changes", "Diff since", the worktree dialog "Open in Git" and the title-bar branch chip each open the Git tab and the diff.
+- [ ] **History:** clicking a commit shows its first file's diff; pick lines, comment, Send to agent work.
+- [ ] **Stage with `s`:** the diff stays on the file that moved.
+- [ ] **Palette:** "View: Git panel" always; "View: Diff" only with a diff open.
 
 ### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
 

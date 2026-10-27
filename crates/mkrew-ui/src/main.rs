@@ -540,8 +540,8 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The right panel (Files / Session tabs) next to Terminals and the Editor; from
-    /// `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081).
+    /// The right panel (Files / Session / Git tabs) next to Terminals, the Editor and the Diff;
+    /// from `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081, ADR 0084).
     right_panel: inspector::RightPanel,
     /// The session panel's Thread section (ADR 0057): the shown session's reading. `None`
     /// while the panel is closed or shows no agent with a native id.

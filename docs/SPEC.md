@@ -831,7 +831,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Terminals, Board, Docs, Editor (only while a file tab is open) and Diff (only while a diff is open; Docs only with `[features] docs`).
+- **Views per workspace:** Terminals, Board, Docs (only with `[features] docs`), Editor (only while a file tab is open), Diff (only while a diff is open).
 - **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; the
   sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
   switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
@@ -908,10 +908,10 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   tabs `Files │ Session │ Git` (a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
   and show it and keep the tab; from the Board or Docs view the key shows Terminals with the
   panel open. `[ui] right_panel` (`"files"`, `"session"`, `"git"` or `"hidden"`, default hidden) remembers
-  it across restarts. Drag its left edge to resize (240–560 px, one width for both tabs, saved as
+  it across restarts. Drag its left edge to resize (240–560 px, one width for all three tabs, saved as
   `[ui] inspector_width` when the button is released); the terminals lose that width, so an agent
   redraws once. **Files tab:** the file tree of §12A. **Session tab:** the session of the active
-  tab's focused pane, also while the Editor is shown.
+  tab's focused pane, also while the Editor is shown. **Git tab:** the Git list (header, Working / Vs. base / History, filter, Changed by, changes, commit box); a file's diff shows in the Diff view (§12B).
   **Session card:** agent, title, state + time, the usage of §20E.3 (context
   share, tokens, cache, model; rows without data are left out), **Open transcript** (the agent's
   `.jsonl` in Zed; disabled until the daemon located it) and **Stop** (`session.kill`; a running
@@ -1255,8 +1255,8 @@ Windows (tens of ms, worse with antivirus), so:
   parents (merges fork into a lane that ends at the fork point; lanes to commits past the 50
   run off the bottom), at most 8 lanes, colored from the workspace palette (no red or yellow);
   the expanded commit's files show its lanes running straight through.
-- **Task changes:** from a Review-column task card, "View changes" opens the Git tab and the diff with the diff
-  from `task.checkpoint` to now (ties into M5).
+- **Task changes:** from a Review-column task card, "View changes" opens the Git tab and the diff from
+  `task.checkpoint` to now (ties into M5).
 - **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in
   ADR 0006) → comment, reusing the M6 comment system (`context = 'diff'`, anchored to new-side
   lines + quote = the picked lines shown; not in History). Threads are listed in a margin beside
@@ -1309,7 +1309,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
-| View | Toggle the right panel (Files / Session tabs; keeps the tab) | Ctrl+Shift+Y |
+| View | Toggle the right panel (Files / Session / Git tabs; keeps the tab) | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
