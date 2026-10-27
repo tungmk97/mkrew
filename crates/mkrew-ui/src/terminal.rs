@@ -5,6 +5,7 @@
 pub mod copy_mode;
 pub mod emulator;
 pub mod find;
+pub mod hints;
 pub mod input;
 pub mod layout;
 pub mod links;

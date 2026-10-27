@@ -51,6 +51,22 @@ pub fn link_at(cells: &[char], col: usize) -> Option<Link> {
     (link.start <= col && col < link.end).then_some(link)
 }
 
+/// Every link of `cells` (one char per cell, as for [`link_at`]), left to right.
+pub fn links_in(cells: &[char]) -> Vec<Link> {
+    let mut found = Vec::new();
+    let mut col = 0;
+    while col < cells.len() {
+        match link_at(cells, col) {
+            Some(link) => {
+                col = link.end.max(col + 1);
+                found.push(link);
+            }
+            None => col += 1,
+        }
+    }
+    found
+}
+
 fn text(cells: &[char]) -> String {
     cells.iter().filter(|c| **c != SPACER).collect()
 }
@@ -378,5 +394,29 @@ mod tests {
         assert_eq!(resolve(&base, "../outside.txt"), None);
         let outside = dir.path().join("outside.txt");
         assert_eq!(resolve(&base, outside.to_str().unwrap()), None);
+    }
+
+    #[test]
+    fn every_link_of_a_row_in_order() {
+        let row = chars("see src/a.rs:3 and https://x.dev/a, then Cargo.toml.");
+        let found: Vec<Target> = links_in(&row).into_iter().map(|link| link.target).collect();
+        assert_eq!(
+            found,
+            [
+                path("src/a.rs", Some(3)),
+                url("https://x.dev/a"),
+                path("Cargo.toml", None)
+            ]
+        );
+        assert!(links_in(&chars("no links here")).is_empty());
+        assert!(links_in(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_row_with_wide_chars_keeps_columns() {
+        let row = ['日', SPACER, ' ', 's', 'r', 'c', '/', 'a', '.', 'r', 's'];
+        let found = links_in(&row);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].start, found[0].end), (3, 11));
     }
 }
