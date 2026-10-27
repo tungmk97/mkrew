@@ -20,6 +20,13 @@ fn context(view: View) -> Context {
         markable: false,
         run_stopped: false,
         run_live: false,
+        tab_others: false,
+        tab_right: false,
+        pane: false,
+        live_session: false,
+        transcript: false,
+        plan_linked: false,
+        composer_open: false,
         approve_card: false,
         features: FeatureSettings {
             docs: true,
@@ -381,27 +388,152 @@ fn workspace_extras_need_an_active_workspace() {
 }
 
 fn extras(context: &Context) -> Vec<Extra> {
+    // Listed by the "workspace extras" test and the single-action test below.
+    const SEPARATE: [Extra; 8] = [
+        Extra::RunSetup,
+        Extra::PhoneAccess,
+        Extra::CheckUpdates,
+        Extra::WorkspacePin,
+        Extra::WorkspaceExplorer,
+        Extra::WorkspaceDefaultAgent,
+        Extra::WorkspaceRemove,
+        Extra::WorkspaceMenu,
+    ];
+    const ALWAYS: [Extra; 4] = [
+        Extra::TabPin,
+        Extra::WorkspaceDefaultShell,
+        Extra::WorkspaceMoveUp,
+        Extra::WorkspaceMoveDown,
+    ];
     entries(&Keymap::defaults(), context, &[], &[], &[])
         .into_iter()
         .filter_map(|entry| match entry.action {
-            Action::Extra(extra)
-                if !matches!(
-                    extra,
-                    Extra::RunSetup
-                        | Extra::PhoneAccess
-                        | Extra::CheckUpdates
-                        | Extra::WorkspacePin
-                        | Extra::WorkspaceExplorer
-                        | Extra::WorkspaceDefaultAgent
-                        | Extra::WorkspaceRemove
-                        | Extra::WorkspaceMenu
-                ) =>
-            {
+            Action::Extra(extra) if !SEPARATE.contains(&extra) && !ALWAYS.contains(&extra) => {
                 Some(extra)
             }
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn tab_pane_workspace_and_agent_extras_follow_their_state() {
+    let always = [
+        Extra::TabPin,
+        Extra::WorkspaceDefaultShell,
+        Extra::WorkspaceMoveUp,
+        Extra::WorkspaceMoveDown,
+    ];
+    let terminals = context(View::Terminals);
+    for extra in always {
+        assert!(extra.available(&terminals), "{extra:?}");
+    }
+    let none = Context {
+        workspace: false,
+        ..context(View::Terminals)
+    };
+    let no_tabs = Context {
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    for extra in always {
+        assert!(!extra.available(&none), "{extra:?}");
+    }
+    assert!(!Extra::TabPin.available(&no_tabs), "no tab to pin");
+    assert!(
+        !Extra::TabPin.available(&context(View::Board)),
+        "the strip is not on screen"
+    );
+    assert!(
+        Extra::WorkspaceMoveUp.available(&context(View::Board)),
+        "any view"
+    );
+
+    let gated = [
+        (
+            Extra::TabCloseOthers,
+            Context {
+                tab_others: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::TabCloseRight,
+            Context {
+                tab_right: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::PanePin,
+            Context {
+                pane: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::PaneReading,
+            Context {
+                agent_pane: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentStop,
+            Context {
+                live_session: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentTranscript,
+            Context {
+                transcript: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentLinkPlan,
+            Context {
+                agent_pane: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentUnlinkPlan,
+            Context {
+                agent_pane: true,
+                plan_linked: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentImprove,
+            Context {
+                composer_open: true,
+                ..terminals
+            },
+        ),
+    ];
+    for (extra, on) in gated {
+        assert!(extra.available(&on), "{extra:?} when its state holds");
+        assert!(!extra.available(&terminals), "{extra:?} without it");
+        assert!(
+            !extra.available(&Context {
+                view: View::Board,
+                ..on
+            }),
+            "{extra:?} on the Board"
+        );
+    }
+    let linked_shell = Context {
+        plan_linked: true,
+        ..terminals
+    };
+    assert!(
+        !Extra::AgentUnlinkPlan.available(&linked_shell),
+        "no agent pane"
+    );
 }
 
 #[test]
@@ -448,7 +580,13 @@ fn palette_only_actions_follow_the_view_and_state() {
     };
     assert_eq!(
         extras(&agent_pane),
-        [Extra::InsertPrompt, Extra::Turns, Extra::FollowInZed]
+        [
+            Extra::InsertPrompt,
+            Extra::Turns,
+            Extra::FollowInZed,
+            Extra::PaneReading,
+            Extra::AgentLinkPlan
+        ]
     );
     let elsewhere = Context {
         agent_pane: true,

@@ -252,6 +252,30 @@ impl Shell {
             }
         }
     }
+
+    /// Workspace: Move up / down (`by` -1 / 1): the active workspace one place along its pinned
+    /// or unpinned group, the same reorder as the drag.
+    pub(crate) fn move_workspace(
+        &mut self,
+        project_id: Ulid,
+        by: isize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(pinned) = (self.sidebar.projects().iter())
+            .find(|p| p.id == project_id)
+            .map(|p| p.pinned)
+        else {
+            return;
+        };
+        let order = self.sidebar.workspace_order(pinned);
+        let Some(from) = order.iter().position(|id| *id == project_id) else {
+            return;
+        };
+        if let Some(to) = sidebar::step_index(order.len(), from, by) {
+            self.drop_workspace(pinned, from, to, window, cx);
+        }
+    }
 }
 
 /// What follows the pointer during a reorder drag: the item's title on a raised chip, starting

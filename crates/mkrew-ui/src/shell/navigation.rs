@@ -361,6 +361,14 @@ impl Shell {
                 && self.board.can_fan_out(id, self.sidebar.sessions())
                 && !self.starting.contains(&id)
         });
+        let focused = self.focused_session();
+        let focused_info = focused
+            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))
+            .cloned();
+        let active_tab = workspace
+            .filter(|_| self.view() == View::Terminals)
+            .and_then(|id| self.tabs.get(&id))
+            .and_then(|tabs| Some((tabs, tabs.active()?.id)));
         let run_state = workspace.map(|id| self.run_summary(id)).unwrap_or_default();
         let context = palette::Context {
             workspace: workspace.is_some(),
@@ -384,6 +392,24 @@ impl Shell {
             run_stopped: workspace.is_some()
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
             run_live: run_state.any_live(),
+            tab_others: active_tab
+                .is_some_and(|(tabs, id)| !tabs.close_targets(id, false).is_empty()),
+            tab_right: active_tab
+                .is_some_and(|(tabs, id)| !tabs.close_targets(id, true).is_empty()),
+            pane: focused.is_some(),
+            live_session: focused_info.as_ref().is_some_and(|session| {
+                inspector::stop_action(Some(session)) != inspector::StopAction::Nothing
+            }),
+            transcript: self.focused_agent().is_some_and(|id| {
+                self.usages
+                    .get(id)
+                    .and_then(|usage| usage.transcript.as_ref())
+                    .is_some()
+            }),
+            plan_linked: self.focused_agent().is_some_and(|id| {
+                (self.sidebar.sessions().iter()).any(|s| s.id == id && s.plan_path.is_some())
+            }),
+            composer_open: focused.is_some_and(|id| self.composers.shown(id).is_some()),
             approve_card: workspace.is_some_and(|id| {
                 !self.jira_side_shown()
                     && self.board.approve_target(self.selected_card, id).is_some()
@@ -652,6 +678,69 @@ impl Shell {
                         self.open_workspace_menu_at_switcher(project_id, window, cx);
                     }
                     Extra::WorkspaceRemove => self.archive_workspace(project_id, window, cx),
+                    Extra::TabPin => {
+                        let active = (self.tabs.get(&project_id))
+                            .and_then(Tabs::active)
+                            .map(|tab| (tab.id, tab.pinned));
+                        if let Some((tab_id, pinned)) = active {
+                            self.pin_tab(tab_id, !pinned, window, cx);
+                        }
+                    }
+                    Extra::TabCloseOthers | Extra::TabCloseRight => {
+                        let active = (self.tabs.get(&project_id))
+                            .and_then(Tabs::active)
+                            .map(|tab| tab.id);
+                        if let Some(tab_id) = active {
+                            let right_only = extra == Extra::TabCloseRight;
+                            self.close_other_tabs(tab_id, right_only, window, cx);
+                        }
+                    }
+                    Extra::PanePin => {
+                        let pane = self.focused_session().and_then(|id| {
+                            let session = self.sidebar.sessions().iter().find(|s| s.id == id)?;
+                            Some((id, session.pinned))
+                        });
+                        if let Some((session, pinned)) = pane {
+                            self.pin_session(session, !pinned, window, cx);
+                        }
+                    }
+                    Extra::PaneReading => {
+                        if let Some(session) = self.focused_agent() {
+                            self.toggle_reading_width(session, cx);
+                        }
+                    }
+                    // Opens the workspace menu at the switcher with the shell list selected.
+                    Extra::WorkspaceDefaultShell => {
+                        self.open_workspace_menu_at_switcher(project_id, window, cx);
+                        self.menu_select_after(DEFAULT_SHELL_HEADING);
+                    }
+                    Extra::WorkspaceMoveUp => self.move_workspace(project_id, -1, window, cx),
+                    Extra::WorkspaceMoveDown => self.move_workspace(project_id, 1, window, cx),
+                    Extra::AgentStop => {
+                        if let Some(session) = self.focused_session() {
+                            self.stop_session(session, window, cx);
+                        }
+                    }
+                    Extra::AgentTranscript => {
+                        if let Some(session) = self.focused_agent() {
+                            self.open_transcript(session, cx);
+                        }
+                    }
+                    Extra::AgentLinkPlan => {
+                        if let Some(session) = self.focused_agent() {
+                            self.pick_plan(session, window, cx);
+                        }
+                    }
+                    Extra::AgentUnlinkPlan => {
+                        if let Some(session) = self.focused_agent() {
+                            self.link_plan(session, None, window, cx);
+                        }
+                    }
+                    Extra::AgentImprove => {
+                        if let Some(session) = self.composer_session() {
+                            self.enhance_composer(session, window, cx);
+                        }
+                    }
                     Extra::MarkUnread => {
                         if let Some(session) = self.focused_session() {
                             self.mark_unread(session, cx);

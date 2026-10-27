@@ -578,6 +578,15 @@ impl Shell {
                 .unwrap_or(&self.reading_default)
     }
 
+    /// Reading width on / off for `session`'s pane (its header button, and the palette).
+    pub(crate) fn toggle_reading_width(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
+        let on = (self.sidebar.sessions().iter())
+            .find(|s| s.id == session)
+            .is_some_and(|info| self.reading_on(info));
+        self.reading_width.insert(session, !on);
+        cx.notify();
+    }
+
     /// The status of `info`'s pane, each part only when it has something to say: the task
     /// folder, the status pill, the conflict warning, `⧗ N queued` sends and the context share.
     /// The tab bar shows them for a single pane, the compact header among several.
@@ -719,16 +728,7 @@ impl Shell {
             },
             "",
         ))
-        .on_click(cx.listener(move |shell, _, _, cx| {
-            let on = shell
-                .sidebar
-                .sessions()
-                .iter()
-                .find(|s| s.id == session)
-                .is_some_and(|info| shell.reading_on(info));
-            shell.reading_width.insert(session, !on);
-            cx.notify();
-        }));
+        .on_click(cx.listener(move |shell, _, _, cx| shell.toggle_reading_width(session, cx)));
         let share = button_frame(
             "pane-share",
             icon_text(

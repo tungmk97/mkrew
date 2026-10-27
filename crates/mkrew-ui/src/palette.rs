@@ -49,6 +49,20 @@ pub struct Context {
     pub run_stopped: bool,
     /// A run session of the active workspace lives.
     pub run_live: bool,
+    /// The active terminal tab has other unpinned tabs ("Close others").
+    pub tab_others: bool,
+    /// The active terminal tab has unpinned tabs to its right.
+    pub tab_right: bool,
+    /// A terminal pane is focused.
+    pub pane: bool,
+    /// The focused pane's session can be stopped (`inspector::stop_action`).
+    pub live_session: bool,
+    /// The focused agent pane's session has a transcript file.
+    pub transcript: bool,
+    /// The focused agent pane's session has a linked plan.
+    pub plan_linked: bool,
+    /// The focused pane's prompt composer is open.
+    pub composer_open: bool,
     /// The selected board card is in Review (`a` approves it).
     pub approve_card: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
@@ -76,10 +90,23 @@ pub enum Extra {
     WorkspaceDefaultAgent,
     WorkspaceRemove,
     WorkspaceMenu,
+    TabPin,
+    TabCloseOthers,
+    TabCloseRight,
+    PanePin,
+    PaneReading,
+    WorkspaceDefaultShell,
+    WorkspaceMoveUp,
+    WorkspaceMoveDown,
+    AgentStop,
+    AgentTranscript,
+    AgentLinkPlan,
+    AgentUnlinkPlan,
+    AgentImprove,
 }
 
 impl Extra {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 31] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -98,6 +125,19 @@ impl Extra {
         Self::WorkspaceDefaultAgent,
         Self::WorkspaceRemove,
         Self::WorkspaceMenu,
+        Self::TabPin,
+        Self::TabCloseOthers,
+        Self::TabCloseRight,
+        Self::PanePin,
+        Self::PaneReading,
+        Self::WorkspaceDefaultShell,
+        Self::WorkspaceMoveUp,
+        Self::WorkspaceMoveDown,
+        Self::AgentStop,
+        Self::AgentTranscript,
+        Self::AgentLinkPlan,
+        Self::AgentUnlinkPlan,
+        Self::AgentImprove,
     ];
 
     pub fn title(self) -> &'static str {
@@ -120,6 +160,19 @@ impl Extra {
             Self::WorkspaceDefaultAgent => "Workspace: Set default agent…",
             Self::WorkspaceRemove => "Workspace: Remove…",
             Self::WorkspaceMenu => "Workspace: Open workspace menu",
+            Self::TabPin => "Tab: Pin / Unpin",
+            Self::TabCloseOthers => "Tab: Close others",
+            Self::TabCloseRight => "Tab: Close tabs to the right",
+            Self::PanePin => "Pane: Pin / Unpin",
+            Self::PaneReading => "Pane: Reading width (on / off)",
+            Self::WorkspaceDefaultShell => "Workspace: Set default shell…",
+            Self::WorkspaceMoveUp => "Workspace: Move up",
+            Self::WorkspaceMoveDown => "Workspace: Move down",
+            Self::AgentStop => "Agent: Stop session…",
+            Self::AgentTranscript => "Agent: Open transcript",
+            Self::AgentLinkPlan => "Agent: Link plan…",
+            Self::AgentUnlinkPlan => "Agent: Unlink plan",
+            Self::AgentImprove => "Agent: Improve prompt",
         }
     }
 
@@ -150,6 +203,22 @@ impl Extra {
             | Self::WorkspaceRemove
             | Self::WorkspaceMenu => context.workspace,
             Self::MarkUnread => context.markable,
+            Self::TabPin => in_view(View::Terminals) && context.tabs > 0,
+            Self::TabCloseOthers => in_view(View::Terminals) && context.tab_others,
+            Self::TabCloseRight => in_view(View::Terminals) && context.tab_right,
+            Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
+            Self::PaneReading | Self::AgentLinkPlan => {
+                in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
+            }
+            Self::WorkspaceDefaultShell | Self::WorkspaceMoveUp | Self::WorkspaceMoveDown => {
+                context.workspace
+            }
+            Self::AgentStop => in_view(View::Terminals) && context.live_session,
+            Self::AgentTranscript => in_view(View::Terminals) && context.transcript,
+            Self::AgentUnlinkPlan => {
+                in_view(View::Terminals) && context.agent_pane && context.plan_linked
+            }
+            Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates => true,
         }
     }
