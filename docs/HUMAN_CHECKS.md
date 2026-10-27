@@ -21,6 +21,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0081)
+
+- [ ] **Alt+0 (dark + light):** from a terminal, then with the sidebar hidden, then with the compact rail: the sidebar shows (rail widens), the filter takes the keyboard, the active row is highlighted. Up / Down walk workspace and session rows, Left / Right fold / unfold, Enter opens, Alt+0 again returns to the pane. With text typed, Left / Right move the caret. Tab / Shift+Tab step All / Working / Needs you.
+- [ ] **Board:** select a Review card, `A` moves it to Done (the Approve tooltip shows `A`); `A` typed in the card follow-up, in the task dialog and in the sidebar filter types an `a`. Ctrl+Shift+2 on the Board with Jira set up switches Tasks / Jira. On the Jira list ↑ / ↓ move a ring, ← / → fold a List row or move Kanban columns, Enter opens the issue; typing in the Jira filter and keys fields is not stolen.
+- [ ] **Comments:** in Docs and in the Git diff F8 / Shift+F8 select the next / previous thread and scroll the doc and the margin to it, Ctrl+Alt+R opens its reply field (nothing on a resolved thread), Ctrl+Alt+Enter resolves / reopens. In a comment draft none of them act.
+- [ ] **Tabs:** Ctrl+Shift+PgDn / PgUp move the active terminal tab and the active file tab one place; nothing at the ends and never across the pinned border. A running agent pane is not disturbed.
+- [ ] **Git and Files:** `W` toggles Wrap in the Git list (typing `w` in the commit box types); the Wrap tooltip shows `W`. Alt+Enter on a tree row opens a kept (non-italic) tab; in the editor it does not.
+- [ ] **Tooltips:** hunk Stage shows `S` on the current hunk only, the Branch chip `Ctrl+Shift+4`, the workspace switcher `Alt+1 … Alt+9`, the card Approve `A` on the selected card.
+- [ ] **Palette:** every wave 4 entry (tab pin / close others / right, pane pin / reading width, set default shell opens the workspace menu on the shell list, workspace move up / down, agent stop / transcript / link / unlink / improve, run start / restart / stop per command, Git change base / switch repository, Jira all / mine, list / kanban, refresh, copy last error, dismiss notifications, History, install update) shows only in its state and does what the mouse control does.
+- [ ] **Not automated:** all of the above is keyboard-only GPUI input; the agent could not send key events to the app (see the smoke note in the plan).
+
 ### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0081)
 
 - Every check in this entry is done in both dark and light.

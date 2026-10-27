@@ -105,3 +105,10 @@ Compare Pick only opens Merge back, so it is a plain Tab stop and not part of th
   No link: a tab bar notice "No links on screen." that goes away after 3 seconds.
 - Consequence: `Alt+Shift+C` and `Alt+Shift+O` no longer reach a focused terminal (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
 - Out of scope: `Ctrl+Shift+L` in Docs (it sends from Files, the Git diff and terminals only, as before).
+
+## Wave 4: single actions
+
+Ten commands and about 40 palette entries cover the actions that had no key: focus sidebar (`alt-0`), approve card (`a`), next / previous comment (`f8`, `shift-f8`), reply / resolve comment (`ctrl-alt-r`, `ctrl-alt-enter`), move tab (`ctrl-shift-pageup`, `ctrl-shift-pagedown`), diff wrap (`w`), open kept (`alt-enter`).
+Each key calls the function the mouse handler calls, so a click and a key cannot diverge.
+Keys a text field also uses are bound in a view context (`Board`, `Git`, `Files`, `Docs || Git`) and `Shell::run` hands them to a focused field (`jira_*`, `comment_*`, `git_commit_*`); `OpenKept` also acts only while the tree has the keyboard.
+Decisions: Alt+0 widens the compact rail because the rail has no filter box and saves the layout like Ctrl+Alt+B; in the sidebar filter ←/→ fold rows only while the box is empty; the Board key context is on over the Jira list so the `Card` keys reach it (Kanban cards are not scrolled into view, the same known limit as Board cards); "Run: Start / Restart / Stop <command>" entries carry the command's index in the Run summary and resolve it when picked, like "Agent: New <Profile> pane"; "Agent: Unlink plan" is listed only when a plan is linked, and "Global: History…" needs an active workspace (it is the title bar button's function).

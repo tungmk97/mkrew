@@ -773,7 +773,10 @@ The session panel (below) is a third column right of Terminals while open.
   session title as you type (every word must match; client-side, not remembered; while it holds
   text ↑/↓ move a highlight over the matching session rows, no wrap, and Enter opens the
   highlighted one, the first by default, or the first workspace when no session matches; with an
-  empty box Enter gives the keyboard back to the pane); beside it the
+  empty box Enter gives the keyboard back to the pane).
+  Alt+0 (§13) focuses the box with the active row highlighted: with an empty box ↑/↓ walk every visible row, ←/→ fold / unfold the highlighted row's workspace and Enter opens it; with text ←/→ move the caret.
+  Tab / Shift+Tab in the box step the All / Working / Needs you chips.
+  Beside it the
   remove-idle-agents button (only while there are some), collapse / expand all and `+` (add
   workspace); under it a segmented control `All N`, `Working N` and `Needs you N` (N amber while
   above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
@@ -864,6 +867,7 @@ The session panel (below) is a third column right of Terminals while open.
   the keyboard back and keeps a typed draft on the card, like the composer).
   New task: the empty board's button, or `New task` in the Todo column header.
   With `[jira] site` set, a `Tasks | Jira` switch heads the Board (§20I).
+  Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
   Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
@@ -1312,6 +1316,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
+| Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
 | Global | Open the context menu of what has the keyboard (the menu a right-click opens: terminal pane, Files cursor row or tab, sidebar row, Board card; else the workspace menu under the switcher); again closes it | Shift+F10 (the Menu key: bind `context_menu` in Settings) |
 | View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
@@ -1322,11 +1327,14 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Board | Select a card (↑/↓ in the column, ←/→ the same row of the next column with cards) / move it one column (the same `task.move`s as a drag) | ↑↓←→ / Shift+← Shift+→ |
 | Board | Open the selected card (its live session, else its edit dialog) / edit it | Enter / E |
+| Board | Approve the selected Review card (also: the same ↑↓←→ and Enter move and open rows of the Jira list and Kanban; ←/→ fold a List row) | A |
+| Board | Show Board while the Board is shown and Jira is set up: switch Tasks / Jira | Ctrl+Shift+2 |
 | Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
 | Tabs | Next / previous tab (file tabs while the Files view is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
 | Tabs | Jump to tab 1–9 (file tabs while the Files view is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab (close: the active file tab while the Files view is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
+| Tabs | Move the active tab (the active file tab in Files) one place left / right inside its pinned or unpinned group | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
@@ -1344,18 +1352,22 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Docs | Send comments to agent | Ctrl+Shift+S |
 | Docs / Git | Pick lines: the first line or block in view (Git: the current hunk's first line), then grow / shrink the pick one line or block (Esc clears; a text field keeps Shift+↑/↓) | Shift+↓ / Shift+↑ |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
+| Docs / Git | Select the next / previous comment thread (scrolled into view) | F8 / Shift+F8 |
+| Docs / Git | Reply to / resolve or reopen the selected thread | Ctrl+Alt+R / Ctrl+Alt+Enter |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
 | Files | Expand/collapse, move | ← → ↑ ↓ |
 | Files | Toggle ignored files | Ctrl+Shift+H |
 | Files | Save the opened file | Ctrl+S |
 | Files | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
 | Files | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
+| Files | Open the tree's cursor file in a kept tab (Enter opens a transient one) | Alt+Enter |
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Next / previous hunk | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
 | Git | Toggle Unified / Split diff | d |
+| Git | Wrap long diff lines / cut them at the edge | W |
 | Git | Mark the selected file viewed / not viewed | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Stage all of the selected file's group (Unstaged + Untracked when a Staged file or nothing is selected) / unstage all | Shift+S / Shift+U |
@@ -1366,12 +1378,14 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace | command palette only (the menu items also by Shift+F10) |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan / improve prompt, run start / restart / stop of one command, Git change base and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History, install update | command palette only (the menu items also by Shift+F10) |
 
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
+Alt+0 and Ctrl+Shift+PgUp / PgDn no longer reach a focused terminal.
+In Board, Git and Files the single keys `a`, `w` and Alt+Enter act only while the card board, the changed-file list or the file tree has the keyboard; a text field, a comment draft or the Files editor keeps them.
 Shift+F10 does not reach a focused terminal either; rebind `context_menu` if a program needs it.
 Alt+Shift+C and Alt+Shift+O no longer reach a focused terminal either (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
 The keys of copy mode (`h j k l w b e 0 $ g G v V y`, arrows, PgUp / PgDn, Enter, Esc) and the letters of link hints are not in `keymap.toml`.
