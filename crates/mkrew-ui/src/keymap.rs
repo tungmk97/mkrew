@@ -193,6 +193,10 @@ pub enum Command {
     /// within its pinned / unpinned group.
     MoveTabLeft,
     MoveTabRight,
+    /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).
+    GitToggleWrap,
+    /// Files only: open the tree's cursor file in a kept tab (Enter opens a transient one).
+    OpenKept,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -331,6 +335,8 @@ impl Command {
             Command::ResolveComment,
             Command::MoveTabLeft,
             Command::MoveTabRight,
+            Command::GitToggleWrap,
+            Command::OpenKept,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -435,6 +441,8 @@ impl Command {
             Command::ResolveComment => "resolve_comment".into(),
             Command::MoveTabLeft => "move_tab_left".into(),
             Command::MoveTabRight => "move_tab_right".into(),
+            Command::GitToggleWrap => "git_toggle_wrap".into(),
+            Command::OpenKept => "open_kept".into(),
         }
     }
 
@@ -561,6 +569,8 @@ impl Command {
             Command::ResolveComment => "ctrl-alt-enter".into(),
             Command::MoveTabLeft => "ctrl-shift-pageup".into(),
             Command::MoveTabRight => "ctrl-shift-pagedown".into(),
+            Command::GitToggleWrap => "w".into(),
+            Command::OpenKept => "alt-enter".into(),
         }
     }
 
@@ -585,6 +595,7 @@ impl Command {
             | Command::ReplyComment
             | Command::ResolveComment => Some(COMMENTS_CONTEXT),
             Command::ToggleIgnored
+            | Command::OpenKept
             | Command::SaveFile
             | Command::FindInFile
             | Command::ReplaceInFile
@@ -596,6 +607,7 @@ impl Command {
             | Command::GitStage
             | Command::GitUnstage
             | Command::GitToggleDiffMode
+            | Command::GitToggleWrap
             | Command::GitToggleViewed
             | Command::GitStageAll
             | Command::GitUnstageAll

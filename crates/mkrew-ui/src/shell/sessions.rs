@@ -480,6 +480,7 @@ impl Shell {
                 }
             }
             Command::GitToggleDiffMode => self.set_diff_mode(self.diff_mode.other(), cx),
+            Command::GitToggleWrap => self.set_diff_wrap(!self.diff_wrap, cx),
             Command::GitToggleViewed => self.toggle_selected_viewed(window, cx),
             Command::GitStageAll => self.git_stage_all(git_view::Stage::Stage, window, cx),
             Command::GitUnstageAll => self.git_stage_all(git_view::Stage::Unstage, window, cx),
@@ -501,6 +502,19 @@ impl Shell {
                 });
                 if let Some((project_id, path)) = active {
                     self.save_file(project_id, path, None, window, cx);
+                }
+            }
+            Command::OpenKept => {
+                // Only the tree's cursor: in the editor or a find field Alt+Enter stays theirs.
+                if !self.files_focus.is_focused(window) {
+                    cx.propagate();
+                    return;
+                }
+                if let Some(project_id) = self.workspace {
+                    let cursor = self.files_view(project_id).enter_target();
+                    if let Some(cursor) = cursor {
+                        self.click_file(project_id, &cursor, Open::Kept, window, cx);
+                    }
                 }
             }
             Command::ToggleIgnored => {

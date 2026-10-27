@@ -361,7 +361,7 @@ impl Shell {
                             } else {
                                 "Long lines are cut at the edge (click to wrap them)"
                             },
-                            "",
+                            self.keymap.label(Command::GitToggleWrap),
                         ))
                         .on_click(cx.listener(move |shell, _, _, cx| {
                             shell.set_diff_wrap(!wrap, cx);
@@ -578,6 +578,12 @@ impl Shell {
         // Hunk headers get a stage / unstage action when the file can go by hunk.
         let hunk_stage = view.hunk_change(0).map(|change| change.stage);
         let row_theme = theme.clone();
+        let stage_keys = hunk_stage
+            .map(|stage| match stage {
+                git_view::Stage::Stage => self.keymap.label(Command::GitStage),
+                git_view::Stage::Unstage => self.keymap.label(Command::GitUnstage),
+            })
+            .unwrap_or_default();
         let width = (!wrap).then(|| unwrapped_width(&shown, mode, theme, window));
         let list = list(
             self.git_diff_list.clone(),
@@ -593,7 +599,16 @@ impl Shell {
                         None => el,
                     };
                 let span = |at: usize, cx: &mut Context<'_, Shell>| {
-                    span_row(&shown, at, current, hunk_stage, project_id, theme, cx)
+                    span_row(
+                        &shown,
+                        at,
+                        current,
+                        hunk_stage,
+                        &stage_keys,
+                        project_id,
+                        theme,
+                        cx,
+                    )
                 };
                 let (row, new_number) = match mode {
                     DiffMode::Unified => match shown.rows.get(index) {
@@ -754,6 +769,7 @@ pub(crate) fn hunk_stage_button(
     project_id: Ulid,
     hunk: usize,
     stage: git_view::Stage,
+    keys: SharedString,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -773,8 +789,8 @@ pub(crate) fn hunk_stage_button(
     .px(px(space::S))
     .rounded(px(radius::CHIP))
     .ml_auto()
-    // No key: `s` / `u` act on the current hunk (n / p), not the hovered one.
-    .tooltip(tooltip(theme, tip, ""))
+    // The key acts on the current hunk only (n / p), so other hunks show none.
+    .tooltip(tooltip(theme, tip, keys))
     .on_click(cx.listener(move |shell, _, window, cx| {
         window.focus(&shell.git_focus, cx);
         if let Some(change) = shell.git_view(project_id).hunk_change(hunk) {
@@ -793,7 +809,7 @@ pub(crate) fn git_diff_preview_row(
 ) -> gpui::Div {
     match shown.rows.get(index) {
         Some(git_view::DiffRow::Line(line)) => unified_line(shown, index, line, None, false, theme),
-        _ => span_row(shown, index, None, None, project_id, theme, cx),
+        _ => span_row(shown, index, None, None, "", project_id, theme, cx),
     }
 }
 
@@ -812,11 +828,13 @@ fn diff_frame(wrap: bool, theme: &Theme) -> gpui::Div {
 /// A row spanning the whole width (both Split halves): a collapsed gap of unchanged lines the
 /// diff does not include, or a hunk header (a 34 px `well` bar: `@@ … @@` and its section in
 /// mono muted text, ▸ on the current hunk, a small Stage hunk button on the right).
+#[allow(clippy::too_many_arguments)]
 fn span_row(
     shown: &git_view::Shown,
     index: usize,
     current: Option<usize>,
     hunk_stage: Option<git_view::Stage>,
+    stage_keys: &str,
     project_id: Ulid,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -870,9 +888,14 @@ fn span_row(
                         .text_color(rgb(theme.text_muted))
                         .child(hunk.header.clone()),
                 )
-                .children(
-                    hunk_stage.map(|stage| hunk_stage_button(project_id, *at, stage, theme, cx)),
-                )
+                .children(hunk_stage.map(|stage| {
+                    let keys = if is_current {
+                        stage_keys.to_owned().into()
+                    } else {
+                        SharedString::default()
+                    };
+                    hunk_stage_button(project_id, *at, stage, keys, theme, cx)
+                }))
         }
         _ => frame,
     }

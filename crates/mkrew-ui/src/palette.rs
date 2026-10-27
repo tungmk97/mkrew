@@ -254,6 +254,7 @@ pub fn title(command: Command) -> String {
         Command::MoveTabLeft => "Tabs: Move tab left".into(),
         Command::MoveTabRight => "Tabs: Move tab right".into(),
         Command::ToggleIgnored => "Files: Toggle ignored files".into(),
+        Command::OpenKept => "Files: Open file in a kept tab".into(),
         Command::SaveFile => "Files: Save file".into(),
         Command::FindInFile => "Files: Find in file".into(),
         Command::ReplaceInFile => "Files: Replace in file".into(),
@@ -267,6 +268,7 @@ pub fn title(command: Command) -> String {
         Command::GitUnstage => "Git: Unstage selected file or hunk".into(),
         Command::GitFocusCommit => "Git: Focus commit message".into(),
         Command::GitToggleDiffMode => "Git: Toggle Unified / Split diff".into(),
+        Command::GitToggleWrap => "Git: Toggle Wrap of the diff".into(),
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::GitStageAll => "Git: Stage all (selected group, else every change)".into(),
         Command::GitUnstageAll => "Git: Unstage all".into(),
@@ -383,6 +385,7 @@ pub fn available(command: Command, context: &Context) -> bool {
             on_panes || (in_view(View::Files) && context.tabs > 0)
         }
         Command::ToggleIgnored
+        | Command::OpenKept
         | Command::SaveFile
         | Command::FindInFile
         | Command::ReplaceInFile
@@ -394,6 +397,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitStage
         | Command::GitUnstage
         | Command::GitToggleDiffMode
+        | Command::GitToggleWrap
         | Command::GitToggleViewed
         | Command::GitStageAll
         | Command::GitUnstageAll

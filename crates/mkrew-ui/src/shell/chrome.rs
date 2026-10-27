@@ -427,7 +427,11 @@ impl Shell {
             .tooltip(tooltip(
                 theme,
                 "Switch workspace",
-                self.keymap.label(Command::NextWorkspace),
+                format!(
+                    "{} … {}",
+                    self.keymap.label(Command::Workspace(1)),
+                    self.keymap.label(Command::Workspace(9))
+                ),
             ))
             // An open menu already closed on this mouse down (outside it): the click reopens it.
             .on_click(cx.listener(|shell, _, window, cx| {
@@ -468,7 +472,7 @@ impl Shell {
                     .text_size(font_size::META)
                     .text_color(rgb(theme.text_muted))
                     .hover(move |style| style.bg(rgb(hover)))
-                    .tooltip(tooltip(theme, &tip, ""))
+                    .tooltip(tooltip(theme, &tip, self.keymap.label(Command::ShowGit)))
                     .on_click(cx.listener(|shell, _, window, cx| {
                         shell.show_view(View::Git, window, cx);
                     }))
