@@ -177,7 +177,7 @@ impl Shell {
         };
         let sessions = self.sidebar.sessions();
         let (file_path, prefill, task) = match self.view() {
-            view @ (View::Editor | View::Git) => {
+            view @ (View::Editor | View::Diff) => {
                 let picked = self
                     .picked_lines(project_id, view)
                     .filter(|(_, _, _, text)| !text.trim().is_empty());
@@ -187,7 +187,7 @@ impl Shell {
                 let task = self
                     .git
                     .get(&project_id)
-                    .filter(|_| view == View::Git)
+                    .filter(|_| view == View::Diff)
                     .and_then(|git| git.since_session(sessions));
                 let prefill = composer::selection_prefill(Some((&path, start, end)), &text);
                 (format!("{path}:{start}-{end}"), prefill, task)

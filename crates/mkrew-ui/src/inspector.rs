@@ -1,5 +1,5 @@
-//! The right panel next to Terminals / Editor (SPEC §10, ADR 0038, ADR 0081): its tabs, width,
-//! the Stop rule and the text of the Session card. Pure; `main.rs` draws it.
+//! The right panel next to Terminals / Editor / Diff (SPEC §10, ADR 0038, ADR 0081, ADR 0084):
+//! its tabs, width, the Stop rule and the text of the Session card. Pure; `main.rs` draws it.
 
 use mkrew_core::settings::RightPanelMode;
 use mkrew_protocol::{Session, SessionKind, SessionUsageEvent};
@@ -30,9 +30,10 @@ pub enum PanelTab {
     #[default]
     Files,
     Session,
+    Git,
 }
 
-/// The right panel next to Terminals / Editor: open or not, and its tab (kept while hidden).
+/// The right panel next to Terminals / Editor / Diff: open or not, and its tab (kept while hidden).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RightPanel {
     pub open: bool,
@@ -52,6 +53,10 @@ impl RightPanel {
                 open: true,
                 tab: PanelTab::Session,
             },
+            RightPanelMode::Git => Self {
+                open: true,
+                tab: PanelTab::Git,
+            },
         }
     }
 
@@ -61,6 +66,7 @@ impl RightPanel {
             (false, _) => RightPanelMode::Hidden,
             (true, PanelTab::Files) => RightPanelMode::Files,
             (true, PanelTab::Session) => RightPanelMode::Session,
+            (true, PanelTab::Git) => RightPanelMode::Git,
         }
     }
 
@@ -208,6 +214,7 @@ mod tests {
         for mode in [
             RightPanelMode::Files,
             RightPanelMode::Session,
+            RightPanelMode::Git,
             RightPanelMode::Hidden,
         ] {
             assert_eq!(RightPanel::from_mode(mode).mode(), mode);
@@ -223,6 +230,12 @@ mod tests {
         assert_eq!(panel.mode(), RightPanelMode::Hidden);
         panel.open = true;
         assert!(panel.shows(PanelTab::Session));
+        // The Git tab is kept while hidden, like the others.
+        panel.show(PanelTab::Git);
+        panel.open = false;
+        assert_eq!(panel.mode(), RightPanelMode::Hidden);
+        panel.open = true;
+        assert_eq!(panel.mode(), RightPanelMode::Git);
     }
 
     fn session(kind: SessionKind, state: SessionState) -> Session {

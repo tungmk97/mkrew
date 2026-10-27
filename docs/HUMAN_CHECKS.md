@@ -21,6 +21,21 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Git in the right panel (ADR 0084)
+
+- [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.
+- [ ] **Diff view:** a click shows `Diff` in the view bar and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
+- [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act.
+- [ ] **Restart:** the panel comes back on the Git tab when left there.
+- [ ] **Filter with no match:** the diff closes on the next status refresh when the filter matches no file (Terminals shows); the keyboard stays in the filter / list.
+- [ ] **Repo chip / worktree with the diff open:** switching either keeps the Diff view open on the other repository's first file.
+- [ ] **Commit everything or discard the last file with the diff open:** the diff closes, Terminals shows live panes, the keyboard stays in the Git list so Shift+P pushes.
+- [ ] **`git.changed` with only the Git tab on screen (Terminals view):** the list updates.
+- [ ] **Entry points:** the Session Changes card "Review diff", the Review card "View changes", "Diff since", the worktree dialog "Open in Git" and the title-bar branch chip each open the Git tab and the diff.
+- [ ] **History:** clicking a commit shows its first file's diff; pick lines, comment, Send to agent work.
+- [ ] **Stage with `s`:** the diff stays on the file that moved.
+- [ ] **Palette:** "View: Git panel" always; "View: Diff" only with a diff open.
+
 ### To verify - 2026-10-27 Drag a tab or pane onto a pane to split it (SPEC §10)
 
 - [ ] **Tab onto pane (dark + light):** with 2+ tabs, drag a tab off the strip onto a pane of the shown tab. The right half of the pane lights up when the pointer is right of the diagonal, the bottom half when it is below. Drop: the tab's panes (keeping their layout) sit right of / below that pane, the dragged tab is gone from the strip, and its sessions keep running (also after a UI restart).

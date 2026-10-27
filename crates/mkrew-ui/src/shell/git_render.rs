@@ -1,12 +1,13 @@
-//! Git view rendering: the side panel (header, tabs, list, commit box) and its empty states.
+//! Git rendering: the right panel's Git tab (header, tabs, list, commit box), the diff view's
+//! frame, and the empty states.
 
 use crate::*;
 
 impl Shell {
-    /// The workspace's changes (SPEC §12B): the selected file's diff, and on its right the
-    /// side panel: repository tabs, branch header, Working / Vs. base / History, the file
-    /// filter, the changed-file list and the commit box.
-    pub(crate) fn render_git(
+    /// The right panel's Git tab (SPEC §12B): the worktree chooser, repository tabs, branch
+    /// header, Working / Vs. base / History, the file filter, the changed-file list and the
+    /// commit box.
+    pub(crate) fn render_git_panel(
         &self,
         project_id: Ulid,
         theme: &Theme,
@@ -154,34 +155,54 @@ impl Shell {
             .key_context(GIT_CONTEXT)
             .on_key_down(cx.listener(Self::git_key_down))
             .child(list);
+        // The header, filter and commit box sit outside the `GIT_CONTEXT` column: typing in
+        // their fields never stages.
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font_family(theme.ui_font_family.clone())
+            .child(self.git_header(project_id, view, status, theme, window, cx))
+            .when(!clean, |el| {
+                el.child(self.git_filter_row(project_id, view, theme, window, cx))
+            })
+            .child(column)
+            .when_some(status.filter(|_| view.commit_box_shown()), |el, status| {
+                el.child(self.git_commit_box(project_id, view, status, theme, window, cx))
+            })
+            .into_any_element()
+    }
+
+    /// The center of the Git view (SPEC §12B): the selected file's diff card. While the
+    /// panel's Git tab is not drawn, the card holds the Git keyboard (`git_focus`,
+    /// `GIT_CONTEXT`) so its keys keep working; one element tracks `git_focus` per frame.
+    pub(crate) fn render_diff_view(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let Some(view) = self.git.get(&project_id) else {
+            return message(theme, None, "Loading changes…".into(), None)
+                .flex_1()
+                .into_any_element();
+        };
+        let card = self.render_git_diff(project_id, view, theme, window, cx);
+        let card = if self.git_panel_shown() {
+            card
+        } else {
+            card.track_focus(&self.git_focus)
+                .key_context(GIT_CONTEXT)
+                .on_key_down(cx.listener(Self::git_key_down))
+        };
         div()
             .flex_1()
-            .min_h_0()
+            .min_w_0()
+            .h_full()
             .flex()
-            // The side panel stays at the right edge even when no diff is shown.
-            .justify_end()
             .font_family(theme.ui_font_family.clone())
-            .when(any_files, |el| {
-                el.child(self.render_git_diff(project_id, view, theme, window, cx))
-            })
-            .child(
-                // The header, filter and commit box sit outside the `GIT_CONTEXT` column:
-                // typing in their fields never stages.
-                div()
-                    .flex_none()
-                    .w(px(theme::GIT_FILE_LIST_WIDTH))
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .child(self.git_header(project_id, view, status, theme, window, cx))
-                    .when(!clean, |el| {
-                        el.child(self.git_filter_row(project_id, view, theme, window, cx))
-                    })
-                    .child(column)
-                    .when_some(status.filter(|_| view.commit_box_shown()), |el, status| {
-                        el.child(self.git_commit_box(project_id, view, status, theme, window, cx))
-                    }),
-            )
+            .child(card)
             .into_any_element()
     }
 

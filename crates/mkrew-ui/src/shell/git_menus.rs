@@ -55,7 +55,7 @@ impl Shell {
                 label.chars().count() as f32 * theme::GIT_REPO_TAB_CHAR_WIDTH + space::L * 2.0
             })
             .sum();
-        let room = theme::GIT_FILE_LIST_WIDTH - space::M * 2.0 - theme::ICON_BUTTON_SIZE;
+        let room = self.inspector_width - space::M * 2.0 - theme::ICON_BUTTON_SIZE;
         let fits = wanted <= room;
         let hover = theme.text;
         let tabs = choices
@@ -314,7 +314,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// The "Filter files" field (30 px) and, while sessions changed files, the ghost "All ▾".
+    /// The "Filter files" field and, while sessions changed files, the ghost "All ▾"; the
+    /// button wraps under the field when both do not fit.
     pub(crate) fn git_filter_row(
         &self,
         project_id: Ulid,
@@ -327,8 +328,10 @@ impl Shell {
         div()
             .flex_none()
             .flex()
+            .flex_wrap()
             .items_center()
-            .gap(px(space::S))
+            .gap_x(px(space::S))
+            .gap_y(px(space::XS))
             .px(px(space::M))
             .pb(px(space::S))
             .child(
@@ -348,7 +351,7 @@ impl Shell {
                     },
                 )
                 .flex_1()
-                .min_w_0()
+                .min_w(px(theme::GIT_FILTER_MIN_WIDTH))
                 .h(theme::rems_px(theme::CONTROL_HEIGHT))
                 .py_0()
                 .flex()

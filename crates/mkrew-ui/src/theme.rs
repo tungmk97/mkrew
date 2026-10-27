@@ -409,9 +409,6 @@ pub const WORKSPACE_SWATCH_BORDER: f32 = 2.0;
 /// Height of the quick open match list (it scrolls past that).
 pub const QUICK_OPEN_LIST_HEIGHT: f32 = 360.0;
 
-/// Width of the Git view's side panel: header, changed-file list, commit box (right of the diff).
-pub const GIT_FILE_LIST_WIDTH: f32 = 320.0;
-
 /// Tallest the Git view's commit message box grows (it scrolls past that, ~8 lines).
 pub const GIT_COMMIT_BOX_MAX_HEIGHT: f32 = 160.0;
 
@@ -455,6 +452,9 @@ pub const GIT_REPO_TAB_TEXT: Rems = rems(12.5 / 13.0);
 
 /// Widest the Git filter row's "By: … ▾" button gets before its session name is cut.
 pub const GIT_CHANGED_BY_MAX_WIDTH: f32 = 140.0;
+
+/// Narrowest the Git tab's "Filter files" field gets before the "By:" button wraps under it.
+pub const GIT_FILTER_MIN_WIDTH: f32 = 120.0;
 
 /// Side of a task list item's check box.
 pub const DOC_TASK_BOX_SIZE: f32 = space::M;

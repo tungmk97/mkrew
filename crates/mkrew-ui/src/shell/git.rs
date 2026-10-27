@@ -49,11 +49,12 @@ impl Shell {
         }
     }
 
-    /// "Review diff" on the Changes card: the Git view of `repo` (`""` = the workspace folder),
-    /// in its working changes. `retarget_git` first, so `show_view`'s refresh already asks for
-    /// that repository (it stays: `pick_repo` keeps a listed repo). A view that already showed
-    /// the repository may sit on History / Against base: `show(Working)` brings it back (its
-    /// requests are dropped, the refresh asks status again).
+    /// "Review diff" on the Changes card: the Git tab and Diff view of `repo` (`""` = the
+    /// workspace folder), in its working changes. `retarget_git` first, so the refresh
+    /// already asks for that repository (it stays: `pick_repo` keeps a listed repo). A view
+    /// that already showed the repository may sit on History / Against base:
+    /// `show(Working)` brings it back (its requests are dropped, the refresh asks status
+    /// again).
     pub(crate) fn review_diff(
         &mut self,
         project_id: Ulid,
@@ -63,7 +64,75 @@ impl Shell {
     ) {
         self.retarget_git(project_id, None, (!repo.is_empty()).then_some(repo));
         let _ = self.git_view(project_id).show(git_view::Section::Working);
-        self.show_view(View::Git, window, cx);
+        self.open_git(project_id, window, cx);
+    }
+
+    /// A click or Enter on a file (or History commit) of the Git list: the Diff view shows
+    /// it; the keyboard stays in the list.
+    pub(crate) fn open_git_diff(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.git_view(project_id).open_diff();
+        self.show_view(View::Diff, window, cx);
+    }
+
+    /// `×` on the diff, or `Esc` in the Diff view: the diff closes and Terminals shows.
+    pub(crate) fn close_git_diff(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.git_view(project_id).close_diff();
+        self.follow_git_diff(project_id, window, cx);
+        // The Git tab is still on screen: the keyboard stays in its list.
+        if self.workspace == Some(project_id) && self.git_panel_shown() {
+            window.focus(&self.git_focus, cx);
+        }
+    }
+
+    /// The Diff view was left on screen with its diff closed (by hand, or the list
+    /// emptied): Terminals shows instead, with its panes attached again. `show_view` focuses
+    /// a pane; the keyboard stays in the Git list while its tab is on screen.
+    fn follow_git_diff(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.workspace == Some(project_id)
+            && self.views.get(&project_id) == Some(&View::Diff)
+            && !self.diff_open(project_id)
+        {
+            let in_git = self.git_focus.is_focused(window)
+                || self.git_filter_focus.is_focused(window)
+                || self.git_commit_focus.is_focused(window);
+            self.show_view(View::Terminals, window, cx);
+            if in_git && self.git_panel_shown() {
+                window.focus(&self.git_focus, cx);
+            }
+        }
+    }
+
+    /// The entry points (Review diff, View changes, Diff since, the worktree dialog, the
+    /// branch chip), after the caller retargeted the view or picked its section: the right
+    /// panel on its Git tab and the Diff view. Git coming on screen refreshes itself
+    /// (`show_view`); one on screen already is refreshed here.
+    pub(crate) fn open_git(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let git_before = self.git_shown();
+        self.open_git_diff(project_id, window, cx);
+        self.show_panel_tab(PanelTab::Git, window, cx);
+        if git_before {
+            self.refresh_git(project_id, window, cx);
+        }
     }
 
     /// Puts a fresh Git view of `target` / `repo` in place (the commit draft is kept); `false`
@@ -79,9 +148,15 @@ impl Shell {
             return false;
         }
         let draft = std::mem::take(&mut old.commit.text);
+        let open = old.diff_open();
         let mut view = GitView::new(project_id, target);
         view.repo = repo;
         view.commit.text = draft;
+        if open {
+            // Another repository or worktree: its first file shows (or the diff closes when
+            // it has none).
+            view.open_diff();
+        }
         self.git.insert(project_id, view);
         self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.scroll_diff_to(0);
@@ -222,6 +297,8 @@ impl Shell {
         if let Some(hash) = requests.show {
             self.load_git_show(project_id, hash, window, cx);
         }
+        // The list emptied (commit, discard, clean worktree): the open diff closed with it.
+        self.follow_git_diff(project_id, window, cx);
         cx.notify();
     }
 
@@ -287,7 +364,8 @@ impl Shell {
         .detach();
     }
 
-    /// A click on a History commit: lists its files (its first file's diff follows).
+    /// A click on a History commit: lists its files; the Diff view shows its first file's
+    /// diff.
     pub(crate) fn select_git_commit(
         &mut self,
         project_id: Ulid,
@@ -303,6 +381,7 @@ impl Shell {
             ..git_view::Requests::default()
         };
         self.git_requests(project_id, requests, window, cx);
+        self.open_git_diff(project_id, window, cx);
     }
 
     /// A click on a section of the Git header (Working changes / Against base / History).
@@ -451,14 +530,15 @@ impl Shell {
         .detach();
     }
 
-    /// Follows `git.changed` in the Git view on screen (hidden ones refresh when shown).
+    /// Follows `git.changed` while the active workspace's Git is on screen (the panel's tab or
+    /// the diff); hidden ones refresh when shown.
     pub(crate) fn git_event(
         &mut self,
         event: &Event,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Git) else {
+        let Some(project_id) = self.workspace.filter(|_| self.git_shown()) else {
             return;
         };
         let Some(view) = self.git.get_mut(&project_id) else {
@@ -468,7 +548,7 @@ impl Shell {
         self.git_requests(project_id, requests, window, cx);
     }
 
-    /// A click on a changed file: shows its diff.
+    /// A click on a changed file: shows its diff in the Diff view.
     pub(crate) fn select_git_file(
         &mut self,
         project_id: Ulid,
@@ -484,10 +564,12 @@ impl Shell {
             ..git_view::Requests::default()
         };
         self.git_requests(project_id, requests, window, cx);
+        self.open_git_diff(project_id, window, cx);
     }
 
-    /// ↑ ↓ / j k move between files; Esc closes an open Git menu, else unselects the picked
-    /// diff lines; the other Git keys are keymap commands ([`Self::git_key`]).
+    /// ↑ ↓ / j k move between files; Enter opens the selection's diff; Esc closes an open Git
+    /// menu, else unselects the picked diff lines, else closes the diff; the other Git keys
+    /// are keymap commands ([`Self::git_key`]).
     pub(crate) fn git_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -508,6 +590,23 @@ impl Shell {
                 cx.stop_propagation();
                 return self.clear_diff_pick(project_id, cx);
             }
+            if let Some(project_id) = self.workspace
+                && self.view() == View::Diff
+            {
+                cx.stop_propagation();
+                return self.close_git_diff(project_id, window, cx);
+            }
+        }
+        if event.keystroke.key == "enter"
+            && !event.keystroke.modifiers.modified()
+            && let Some(project_id) = self.workspace
+            && self
+                .git
+                .get(&project_id)
+                .is_some_and(|view| view.selected.is_some())
+        {
+            cx.stop_propagation();
+            return self.open_git_diff(project_id, window, cx);
         }
         let Some(key) = git_view::key(&event.keystroke) else {
             return;
@@ -699,9 +798,9 @@ impl Shell {
         }
     }
 
-    /// Whether the active workspace's Git view is shown with its commit box.
+    /// Whether the panel's Git tab is shown with its commit box.
     pub(crate) fn git_commit_shown(&self) -> bool {
-        self.view() == View::Git
+        self.git_panel_shown()
             && self
                 .workspace
                 .and_then(|id| self.git.get(&id))

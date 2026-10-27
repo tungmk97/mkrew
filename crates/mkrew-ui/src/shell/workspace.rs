@@ -45,7 +45,7 @@ impl Shell {
         if switched && self.files_on_screen() {
             self.refresh_files(project_id, window, cx);
         }
-        if switched && self.view() == View::Git {
+        if switched && self.git_shown() {
             self.refresh_git(project_id, window, cx);
         }
         self.sync_panes(window, cx);
@@ -329,13 +329,20 @@ impl Shell {
     }
 
     /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046), and the Editor while the workspace has no open file.
+    /// off (ADR 0046), the Editor while the workspace has no open file, the Diff while it has
+    /// no open diff.
     pub(crate) fn view(&self) -> View {
-        self.workspace
-            .and_then(|id| self.views.get(&id).copied())
-            .filter(|&view| view != View::Docs || self.features.docs)
-            .filter(|&view| {
-                view != View::Editor || self.workspace.is_some_and(|id| self.has_file_tabs(id))
+        let Some(id) = self.workspace else {
+            return View::default();
+        };
+        self.views
+            .get(&id)
+            .copied()
+            .filter(|&view| match view {
+                View::Docs => self.features.docs,
+                View::Editor => self.has_file_tabs(id),
+                View::Diff => self.diff_open(id),
+                View::Board | View::Terminals => true,
             })
             .unwrap_or_default()
     }
@@ -347,9 +354,15 @@ impl Shell {
             .is_some_and(|view| !view.tabs().is_empty())
     }
 
+    /// The workspace has an open diff (the Diff view exists).
+    pub(crate) fn diff_open(&self, project_id: Ulid) -> bool {
+        self.git.get(&project_id).is_some_and(GitView::diff_open)
+    }
+
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
     /// Docs re-lists its files (agents may have written new ones); showing the Editor refreshes
-    /// the tree and gives the editor the keyboard, likewise for Git and its changes.
+    /// the tree and gives the editor the keyboard; Git (the panel's tab or the diff) coming on
+    /// screen refreshes its changes.
     pub(crate) fn show_view(
         &mut self,
         view: View,
@@ -364,10 +377,11 @@ impl Shell {
         }
         self.close_menus();
         let tree_before = self.files_on_screen();
+        let git_before = self.git_shown();
         let tree_focused = self.files_focus.is_focused(window);
         let shown = self.views.insert(project_id, view).unwrap_or_default();
-        if !matches!(view, View::Terminals | View::Editor) {
-            // The panel (and its grip) leaves with Terminals and Editor: end a drag in progress.
+        if !self.panel_view() {
+            // The panel (and its grip) leaves with the views that draw it: end a drag in progress.
             self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
@@ -376,10 +390,10 @@ impl Shell {
         if self.files_on_screen() && !tree_before {
             self.refresh_files(project_id, window, cx);
         }
-        if view == View::Git {
-            if shown != View::Git {
-                self.refresh_git(project_id, window, cx);
-            }
+        if self.git_shown() && !git_before {
+            self.refresh_git(project_id, window, cx);
+        }
+        if view == View::Diff {
             window.focus(&self.git_focus, cx);
         }
         if shown != view {
