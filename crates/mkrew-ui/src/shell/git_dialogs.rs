@@ -34,6 +34,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         if undo_dialog::cancels(&event.keystroke) {
             self.close_git_discard(window, cx);
@@ -292,6 +295,7 @@ impl Shell {
                     )
                     .child(
                         button("git-discard-retry", "Retry", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Read the changes again", ""))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 let diff = shell.git_view(project_id).select(target.clone());
@@ -320,8 +324,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::git_discard_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::git_discard_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -346,6 +354,7 @@ impl Shell {
                     .pt(px(space::S))
                     .child(
                         button("git-discard-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Keep the changes", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_git_discard(window, cx);
@@ -353,6 +362,7 @@ impl Shell {
                     )
                     .child(if ready {
                         danger_button("git-discard-confirm", "Discard changes", theme)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Discard the changes shown above", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.confirm_git_discard(window, cx);

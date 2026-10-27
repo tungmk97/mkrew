@@ -279,7 +279,8 @@ impl UndoDialog {
     }
 }
 
-/// Esc closes the dialog; nothing else is bound (discarding takes an explicit click).
+/// Esc closes the dialog. Enter and Space on the dialog itself do nothing: discarding runs only
+/// from the focused "Discard changes" button, after Tab moved the keyboard onto it (ADR 0081).
 pub fn cancels(keystroke: &Keystroke) -> bool {
     keystroke.key == "escape"
 }
@@ -508,6 +509,8 @@ mod tests {
     #[test]
     fn only_escape_cancels() {
         assert!(cancels(&Keystroke::parse("escape").unwrap()));
-        assert!(!cancels(&Keystroke::parse("enter").unwrap()));
+        for keys in ["enter", "space", "ctrl-enter"] {
+            assert!(!cancels(&Keystroke::parse(keys).unwrap()), "{keys}");
+        }
     }
 }

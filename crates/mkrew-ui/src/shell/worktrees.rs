@@ -94,6 +94,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         if undo_dialog::cancels(&event.keystroke) {
             self.close_compare(window, cx);
@@ -251,6 +254,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         if undo_dialog::cancels(&event.keystroke) {
             // Esc on the discard question goes back to the list, like "Keep files".
@@ -438,6 +444,7 @@ impl Shell {
                     .child(error_row(format!("Cannot read the worktree: {error}")).flex_1())
                     .child(
                         button("worktree-retry", "Retry", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Read the worktree again", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.load_worktree_dialog(window, cx);
@@ -500,6 +507,7 @@ impl Shell {
         };
         let git_button = open_git.then(|| {
             button("worktree-git", "Open Git view", theme, false)
+                .focus_stop(theme)
                 .tooltip(tooltip(theme, "The Git view on this task's worktree", ""))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.worktree_dialog_git(window, cx);
@@ -507,6 +515,7 @@ impl Shell {
         });
         let cancel = |id: &'static str, text: &'static str| {
             button(id, text, theme, false)
+                .focus_stop(theme)
                 .tooltip(tooltip(theme, "Close", "Esc"))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.close_worktree_dialog(window, cx);
@@ -527,6 +536,7 @@ impl Shell {
                 if let Some(offer) = offer {
                     buttons.push(
                         danger_button("worktree-remove-others", offer, theme)
+                            .focus_stop(theme)
                             .tooltip(tooltip(
                                 theme,
                                 "Delete the other agents' worktree folders (unmerged branches are kept)",
@@ -543,6 +553,7 @@ impl Shell {
             Step::ConfirmDiscard(_) => {
                 buttons.push(
                     button("worktree-keep", "Keep files", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Back to the list; nothing is discarded",
@@ -558,6 +569,7 @@ impl Shell {
                 );
                 buttons.push(if confirm.is_ok() {
                     danger_button("worktree-confirm", "Discard files", theme)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Discard every file listed above", ""))
                         .on_click(confirm_listener)
                         .into_any_element()
@@ -573,6 +585,7 @@ impl Shell {
                 if !plan.discardable.is_empty() {
                     buttons.push(
                         danger_button("worktree-discard", "Discard…", theme)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Choose to discard these changes", ""))
                             .on_click(cx.listener(|shell, _, _, cx| {
                                 if let Some(dialog) = shell.worktree_dialog.as_mut() {
@@ -596,10 +609,12 @@ impl Shell {
                 let ready = confirm.is_ok() && !matches!(step, Step::Loading | Step::Failed(_));
                 buttons.push(match (ready, remove) {
                     (true, true) => danger_button("worktree-confirm", text, theme)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Delete the worktree folder", ""))
                         .on_click(confirm_listener)
                         .into_any_element(),
                     (true, false) => button("worktree-confirm", text, theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Merge the commits above into your checkout",
@@ -631,8 +646,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::worktree_dialog_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::worktree_dialog_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -690,6 +709,7 @@ impl Shell {
             let task_id = column.task_id;
             let git = if column.checkpoint.is_some() && column.has_worktree {
                 quiet_button("compare-git", "Git view", theme, theme.border)
+                    .focus_stop(theme)
                     .tooltip(tooltip(
                         theme,
                         "Its changes in the Git view, on its worktree",
@@ -710,6 +730,7 @@ impl Shell {
             // Quiet: up to five columns would otherwise show five accent buttons.
             let pick = if column.has_worktree {
                 quiet_button("compare-pick", "Pick", theme, theme.border)
+                    .focus_stop(theme)
                     .tooltip(tooltip(
                         theme,
                         "Merge this result back into your checkout",
@@ -791,8 +812,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::compare_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::compare_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -814,6 +839,7 @@ impl Shell {
             .child(
                 div().flex().justify_end().pt(px(space::S)).child(
                     button("compare-close", "Close", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Close", "Esc"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_compare(window, cx);

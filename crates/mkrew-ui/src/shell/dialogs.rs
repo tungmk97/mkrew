@@ -158,6 +158,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         if undo_dialog::cancels(&event.keystroke) {
             self.close_undo_dialog(window, cx);
@@ -373,8 +376,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::undo_dialog_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::undo_dialog_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -411,6 +418,7 @@ impl Shell {
                     .when(nothing_changed, |el| {
                         el.child(
                             button("undo-close", "Close", theme, true)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Close", "Esc"))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.close_undo_dialog(window, cx);
@@ -420,6 +428,7 @@ impl Shell {
                     .when(!nothing_changed, |el| {
                         el.child(
                             button("undo-cancel", "Cancel", theme, false)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Keep the changes", "Esc"))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.close_undo_dialog(window, cx);
@@ -427,6 +436,7 @@ impl Shell {
                         )
                         .child(match confirm {
                             Ok(_) => danger_button("undo-confirm", "Discard changes", theme)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Discard every change listed above", ""))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.confirm_undo(window, cx);
