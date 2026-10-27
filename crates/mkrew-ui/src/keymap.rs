@@ -73,6 +73,10 @@ pub enum Command {
     /// Send the picked lines (Files, Git diff) or the terminal selection to an agent's
     /// composer (§20B.4).
     SendSelection,
+    /// Terminal only: keyboard selection with vi keys (copy mode, SPEC §10).
+    CopyMode,
+    /// Terminal only: label the links on screen; typing a label opens that link (SPEC §10).
+    LinkHints,
     /// Show the active workspace's task board.
     ShowBoard,
     /// Show the active workspace's terminal tabs.
@@ -85,6 +89,10 @@ pub enum Command {
     AddComment,
     /// Docs only: send the shown file's open (or selected) comments to an agent session.
     SendComments,
+    /// Docs / Git: pick the first line (block) in view, or grow the pick one line (block) down.
+    PickDown,
+    /// Docs / Git: the same upwards; shrinks a pick that was grown down.
+    PickUp,
     /// Open the right panel on the file tree and give it the keyboard.
     ShowFileTree,
     /// Show the Editor view (the opened files) while a file is open.
@@ -171,6 +179,30 @@ pub enum Command {
     VoiceInput,
     /// Ask an agent any question, outside every project (ADR 0061).
     AskAi,
+    /// Open the menu a right-click would open on what has the keyboard (SPEC §13); pressed
+    /// while a menu is open it closes it.
+    ContextMenu,
+    /// Show the sidebar if hidden (the compact rail widens: it has no filter) and give its
+    /// filter the keyboard with the active row highlighted; again while it has the keyboard
+    /// gives it back to the pane.
+    FocusSidebar,
+    /// Board only: approve the selected Review card (its Approve button).
+    ApproveCard,
+    /// Docs / Git: select the next / previous comment thread and scroll it into view.
+    NextComment,
+    PreviousComment,
+    /// Docs / Git: open the reply field of the selected thread.
+    ReplyComment,
+    /// Docs / Git: resolve (or reopen) the selected thread.
+    ResolveComment,
+    /// Move the active terminal tab (the active file tab in the Editor) one place left / right,
+    /// within its pinned / unpinned group.
+    MoveTabLeft,
+    MoveTabRight,
+    /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).
+    GitToggleWrap,
+    /// Tree only: open the tree's cursor file in a kept tab (Enter opens a transient one).
+    OpenKept,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -194,6 +226,9 @@ pub const GIT_CONTEXT: &str = "Git";
 
 /// Comment commands work in the Docs view and with the Git keyboard (diff comments).
 pub const COMMENTS_CONTEXT: &str = "Docs || Git";
+
+/// Key context of an open popover menu (`Shell::menu_focus`).
+pub const MENU_CONTEXT: &str = "Menu";
 
 /// Find: in a terminal's scrollback, the Editor's opened file, and the Docs list filter.
 pub const FIND_CONTEXT: &str = "Terminal || Editor || Docs";
@@ -253,12 +288,16 @@ impl Command {
             Command::Peek,
             Command::OpenComposer,
             Command::SendSelection,
+            Command::CopyMode,
+            Command::LinkHints,
             Command::ShowBoard,
             Command::ShowTerminals,
             Command::ShowDocs,
             Command::ToggleDocSource,
             Command::AddComment,
             Command::SendComments,
+            Command::PickDown,
+            Command::PickUp,
             Command::ShowFileTree,
             Command::ShowEditor,
             Command::ToggleIgnored,
@@ -299,6 +338,17 @@ impl Command {
             Command::ToggleInspector,
             Command::VoiceInput,
             Command::AskAi,
+            Command::ContextMenu,
+            Command::FocusSidebar,
+            Command::ApproveCard,
+            Command::NextComment,
+            Command::PreviousComment,
+            Command::ReplyComment,
+            Command::ResolveComment,
+            Command::MoveTabLeft,
+            Command::MoveTabRight,
+            Command::GitToggleWrap,
+            Command::OpenKept,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -346,12 +396,16 @@ impl Command {
             Command::Peek => "peek".into(),
             Command::OpenComposer => "open_composer".into(),
             Command::SendSelection => "send_selection".into(),
+            Command::CopyMode => "copy_mode".into(),
+            Command::LinkHints => "link_hints".into(),
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
             Command::ShowDocs => "show_docs".into(),
             Command::ToggleDocSource => "toggle_doc_source".into(),
             Command::AddComment => "add_comment".into(),
             Command::SendComments => "send_comments".into(),
+            Command::PickDown => "pick_down".into(),
+            Command::PickUp => "pick_up".into(),
             Command::ShowFileTree => "show_file_tree".into(),
             Command::ShowEditor => "show_editor".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
@@ -393,6 +447,17 @@ impl Command {
             Command::ToggleInspector => "toggle_inspector".into(),
             Command::VoiceInput => "voice_input".into(),
             Command::AskAi => "ask_ai".into(),
+            Command::ContextMenu => "context_menu".into(),
+            Command::FocusSidebar => "focus_sidebar".into(),
+            Command::ApproveCard => "approve_card".into(),
+            Command::NextComment => "next_comment".into(),
+            Command::PreviousComment => "previous_comment".into(),
+            Command::ReplyComment => "reply_comment".into(),
+            Command::ResolveComment => "resolve_comment".into(),
+            Command::MoveTabLeft => "move_tab_left".into(),
+            Command::MoveTabRight => "move_tab_right".into(),
+            Command::GitToggleWrap => "git_toggle_wrap".into(),
+            Command::OpenKept => "open_kept".into(),
         }
     }
 
@@ -451,12 +516,16 @@ impl Command {
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
             Command::SendSelection => "ctrl-shift-l".into(),
+            Command::CopyMode => "alt-shift-c".into(),
+            Command::LinkHints => "alt-shift-o".into(),
             Command::ShowBoard => "ctrl-shift-2".into(),
             Command::ShowTerminals => "ctrl-shift-1".into(),
             Command::ShowDocs => "ctrl-shift-5".into(),
             Command::ToggleDocSource => "ctrl-shift-e".into(),
             Command::AddComment => "ctrl-alt-m".into(),
             Command::SendComments => "ctrl-shift-s".into(),
+            Command::PickDown => "shift-down".into(),
+            Command::PickUp => "shift-up".into(),
             Command::ShowFileTree => "ctrl-shift-3".into(),
             Command::ShowEditor => "ctrl-shift-6".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
@@ -510,20 +579,41 @@ impl Command {
             Command::ToggleInspector => "ctrl-shift-y".into(),
             Command::VoiceInput => "ctrl-shift-d".into(),
             Command::AskAi => "ctrl-shift-g".into(),
+            Command::ContextMenu => "shift-f10".into(),
+            Command::FocusSidebar => "alt-0".into(),
+            Command::ApproveCard => "a".into(),
+            Command::NextComment => "f8".into(),
+            Command::PreviousComment => "shift-f8".into(),
+            Command::ReplyComment => "ctrl-alt-r".into(),
+            Command::ResolveComment => "ctrl-alt-enter".into(),
+            Command::MoveTabLeft => "ctrl-shift-pageup".into(),
+            Command::MoveTabRight => "ctrl-shift-pagedown".into(),
+            Command::GitToggleWrap => "w".into(),
+            Command::OpenKept => "alt-enter".into(),
         }
     }
 
     /// Key context the binding is limited to; `None` = anywhere in the window.
     pub fn context(self) -> Option<&'static str> {
         match self {
-            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
-                Some(TERMINAL_CONTEXT)
-            }
+            Command::Copy
+            | Command::Paste
+            | Command::PageUp
+            | Command::PageDown
+            | Command::CopyMode
+            | Command::LinkHints => Some(TERMINAL_CONTEXT),
             Command::Find => Some(FIND_CONTEXT),
-            Command::RunTask | Command::Card(_) => Some(BOARD_CONTEXT),
+            Command::RunTask | Command::ApproveCard | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
-            Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
-            Command::ToggleIgnored => Some(FILE_TREE_CONTEXT),
+            Command::AddComment
+            | Command::SendComments
+            | Command::PickDown
+            | Command::PickUp
+            | Command::NextComment
+            | Command::PreviousComment
+            | Command::ReplyComment
+            | Command::ResolveComment => Some(COMMENTS_CONTEXT),
+            Command::ToggleIgnored | Command::OpenKept => Some(FILE_TREE_CONTEXT),
             Command::SaveFile
             | Command::FindInFile
             | Command::ReplaceInFile
@@ -536,6 +626,7 @@ impl Command {
             | Command::GitStage
             | Command::GitUnstage
             | Command::GitToggleDiffMode
+            | Command::GitToggleWrap
             | Command::GitToggleViewed
             | Command::GitStageAll
             | Command::GitUnstageAll
@@ -847,11 +938,25 @@ impl Keymap {
             .map(|(command, _)| *command)
     }
 
+    /// Keys an open menu keeps for itself: every context-limited binding on a plain or Shift-only
+    /// key (the Board's arrows, Enter and `e`, the Git single keys, later waves' single keys).
+    /// Ctrl / Alt / Cmd keys stay bound, so a shortcut still closes the menu and acts.
+    pub fn menu_shielded(&self) -> impl Iterator<Item = &Keystroke> {
+        self.bindings
+            .iter()
+            .filter(|(command, keys)| {
+                let m = keys.modifiers;
+                command.context().is_some() && !(m.control || m.alt || m.platform || m.function)
+            })
+            .map(|(_, keys)| keys)
+    }
+
     /// GPUI key bindings for [`Keymap::bindings`], folded by `mapper` the way the platform
     /// reports typed keys (on Windows Shift folds into digits and punctuation: Ctrl+Shift+2
     /// arrives as `ctrl-@` on a US layout). Rebuild them when the keyboard layout changes.
     pub fn key_bindings(&self, mapper: &dyn gpui::PlatformKeyboardMapper) -> Vec<gpui::KeyBinding> {
-        self.bindings
+        let mut bindings: Vec<gpui::KeyBinding> = self
+            .bindings
             .iter()
             .filter_map(|(command, keystroke)| {
                 // Never fails in practice: the keystroke was parsed and is unparsed back, the
@@ -874,7 +979,24 @@ impl Keymap {
                     .inspect_err(|error| tracing::warn!("{command:?}: cannot bind {keys}: {error}"))
                     .ok()
             })
-            .collect()
+            .collect();
+        // The deepest context wins, and `NoAction` hides the shallower binding of the same key.
+        if let Ok(predicate) = gpui::KeyBindingContextPredicate::parse(MENU_CONTEXT) {
+            let menu: std::rc::Rc<gpui::KeyBindingContextPredicate> = predicate.into();
+            bindings.extend(self.menu_shielded().filter_map(|keystroke| {
+                let keys = keystroke.unparse();
+                gpui::KeyBinding::load(
+                    &keys,
+                    Box::new(gpui::NoAction),
+                    Some(menu.clone()),
+                    true,
+                    None,
+                    mapper,
+                )
+                .ok()
+            }));
+        }
+        bindings
     }
 
     /// Shortcut text for tooltips and menus, e.g. "Ctrl+Shift+X"; empty if unbound.
@@ -1077,6 +1199,9 @@ mod tests {
         assert_eq!(Command::VoiceInput.context(), None);
         assert_eq!(bound("ctrl-shift-g"), Some(Command::AskAi));
         assert_eq!(Command::AskAi.context(), None);
+        assert_eq!(bound("shift-f10"), Some(Command::ContextMenu));
+        assert_eq!(Command::ContextMenu.context(), None);
+        assert_eq!(keymap.label(Command::ContextMenu), "Shift+F10");
         assert_eq!(Command::OpenSettings.context(), None);
         assert_eq!(
             bound("alt-shift-left"),
@@ -1101,7 +1226,14 @@ mod tests {
         // Ctrl+Shift+E only toggles while Docs are shown; terminals still get it.
         assert_eq!(Command::ToggleDocSource.context(), Some(DOCS_CONTEXT));
         // Comments: in Docs, and on diff lines while the Git list has focus.
-        for command in [Command::AddComment, Command::SendComments] {
+        for command in [
+            Command::AddComment,
+            Command::SendComments,
+            Command::NextComment,
+            Command::PreviousComment,
+            Command::ReplyComment,
+            Command::ResolveComment,
+        ] {
             assert_eq!(command.context(), Some(COMMENTS_CONTEXT), "{command:?}");
             let predicate = gpui::KeyBindingContextPredicate::parse(COMMENTS_CONTEXT).unwrap();
             for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Editor", false)]
@@ -1150,6 +1282,31 @@ mod tests {
         assert_eq!(keymap.label(Command::Card(CardKey::MoveLeft)), "Shift+←");
         assert_eq!(keymap.label(Command::Card(CardKey::Open)), "Enter");
         assert_eq!(keymap.label(Command::GitPush), "Shift+P");
+    }
+
+    #[test]
+    fn an_open_menu_keeps_the_single_keys_of_every_view_for_itself() {
+        let keymap = Keymap::defaults();
+        let shielded: Vec<String> = keymap.menu_shielded().map(Keystroke::unparse).collect();
+        let has = |keys: &str| shielded.iter().any(|shielded| shielded == keys);
+        for keys in [
+            "up",
+            "down",
+            "left",
+            "right",
+            "enter",
+            "e",
+            "shift-left",
+            "shift-right",
+            "s",
+            "b",
+        ] {
+            assert!(has(keys), "{keys} must stay with the menu");
+        }
+        // Shortcuts keep working: they close the menu, then act.
+        for keys in ["ctrl-enter", "ctrl-shift-p", "alt-1", "f2", "ctrl-alt-m"] {
+            assert!(!has(keys), "{keys} must stay bound");
+        }
     }
 
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted
@@ -1278,7 +1435,11 @@ mod tests {
     fn every_binding_becomes_a_gpui_key_binding() {
         let (keymap, _) = Keymap::parse("split_down = \"ctrl-alt--\"\n");
         let bindings = keymap.key_bindings(&gpui::DummyKeyboardMapper);
-        assert_eq!(bindings.len(), Command::all().len());
+        // One binding per command, plus one `NoAction` shield per menu-shielded key.
+        assert_eq!(
+            bindings.len(),
+            Command::all().len() + keymap.menu_shielded().count()
+        );
     }
 
     /// gpui-pre-windows reports Ctrl+Shift+2 as `ctrl-@` (Shift folded into the digit, layout

@@ -352,11 +352,8 @@ impl Shell {
                 )
             });
         let listed = open.then(|| {
-            rows.into_iter().map(|row| {
-                let project_id = row.project_id;
-                let row = workspace_row(row, false, theme, cx);
-                self.with_workspace_menu(row, project_id, theme, cx)
-            })
+            rows.into_iter()
+                .map(|row| workspace_row(row, false, theme, cx))
         });
         div()
             .flex()
@@ -378,8 +375,13 @@ impl Shell {
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let view = self.sidebar.view(&self.viewed);
         let shown_in = view.shown_in(shown);
-        // ↑/↓ in the filter box move it; Enter opens it (`filter_key_down`).
-        let highlighted = self.sidebar.highlighted(&view.rows);
+        let filter_focused = self.filter_focus.is_focused(window);
+        // ↑/↓ in the filter box move it; Enter opens it (`filter_key_down`). Browse mode
+        // (Alt+0) shows it only while the box has the keyboard.
+        let highlighted = self
+            .sidebar
+            .highlighted(&view.rows)
+            .filter(|_| filter_focused || self.sidebar.filtering());
         let any_open = self.sidebar.any_expanded();
         let removable = self.sidebar.idle_agents_and_terminals().len();
         // Without workspaces: the title and `+` (the empty state below offers it too).
@@ -406,7 +408,6 @@ impl Shell {
                         })),
                 )
         });
-        let filter_focused = self.filter_focus.is_focused(window);
         let controls = (connected && !self.sidebar.is_empty()).then(|| {
             let filter = self.sidebar.filter();
             let bordered = theme.border;
@@ -721,8 +722,7 @@ impl Shell {
                                 index,
                                 title: row.name.clone().into(),
                             });
-                        let row = workspace_row(row, highlight, theme, cx);
-                        let header = self.with_workspace_menu(row, project_id, theme, cx);
+                        let header = workspace_row(row, highlight, theme, cx);
                         card = Some((header, color, item));
                     }
                     Row::Session(row) => {
@@ -914,8 +914,7 @@ impl Shell {
                     // Its selected session row already says it is the shown one.
                     let highlight =
                         self.workspace == Some(project_id) && shown_in != Some(project_id);
-                    let row = compact_workspace_row(row, highlight, theme, cx);
-                    list.push(self.with_workspace_menu(row, project_id, theme, cx));
+                    list.push(compact_workspace_row(row, highlight, theme, cx));
                 }
                 Row::Session(row) => {
                     let session_id = row.session_id;
@@ -1200,14 +1199,18 @@ pub(crate) fn workspace_row(
         .cursor_pointer()
         .when(active, |el| el.bg(rgb(theme.selected)))
         .hover(move |style| style.bg(rgb(hover)))
+        .when(active, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
+        })
         .tooltip(tooltip(theme, &row.path, ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.click_workspace_row(project_id, window, cx);
         }))
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(move |shell, _, window, cx| {
-                shell.open_workspace_menu(project_id, window, cx);
+            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                shell.open_workspace_menu(project_id, event.position, false, window, cx);
             }),
         )
         .child(
@@ -1275,11 +1278,13 @@ pub(crate) fn workspace_row(
                 "Workspace menu (or right-click the row)",
                 "",
             ))
-            .on_click(cx.listener(move |shell, _, window, cx| {
-                // Not a click on the row (which would collapse it).
-                cx.stop_propagation();
-                shell.open_workspace_menu(project_id, window, cx);
-            })),
+            .on_click(cx.listener(
+                move |shell, event: &gpui::ClickEvent, window, cx| {
+                    // Not a click on the row (which would collapse it).
+                    cx.stop_propagation();
+                    shell.open_workspace_menu(project_id, event.position(), false, window, cx);
+                },
+            )),
         )
         .into_any_element()
 }
@@ -1389,6 +1394,10 @@ pub(crate) fn session_row(
         })
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(hover)))
+        .when(selected, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::SessionRow(session_id), cx))
+        })
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.open_session(session_id, window, cx);
         }))
@@ -1528,14 +1537,18 @@ pub(crate) fn compact_workspace_row(
         .cursor_pointer()
         .when(active, |el| el.bg(rgb(theme.selected)))
         .hover(move |style| style.bg(rgb(hover)))
+        .when(active, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::WorkspaceRow(project_id), cx))
+        })
         .tooltip(tooltip(theme, &sidebar::workspace_tip(&row), ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.click_workspace_row(project_id, window, cx);
         }))
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(move |shell, _, window, cx| {
-                shell.open_workspace_menu(project_id, window, cx);
+            cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
+                shell.open_workspace_menu(project_id, event.position, false, window, cx);
             }),
         )
         .child(workspace_avatar(&row.name, color, theme))
@@ -1586,6 +1599,10 @@ pub(crate) fn compact_session_row(
             el.bg(theme.tint(theme.status_done))
         })
         .hover(move |style| style.bg(rgb(hover)))
+        .when(selected, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::SessionRow(session_id), cx))
+        })
         .tooltip(tooltip(theme, &sidebar::session_tip(&row, now), ""))
         .on_click(cx.listener(move |shell, _, window, cx| {
             shell.open_session(session_id, window, cx);

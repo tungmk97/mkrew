@@ -30,17 +30,27 @@ impl Shell {
         cx.notify();
     }
 
-    /// Typing edits the URL, Enter clones, Esc closes (a running clone goes on).
+    /// Typing edits the URL, Enter clones, Tab reaches Open a folder, Browse and the buttons,
+    /// Esc closes (a running clone goes on).
     pub(crate) fn add_workspace_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         let Some(key) = base_dialog::key(&event.keystroke) else {
             return;
         };
+        // A control has the keyboard: the URL takes nothing but Esc / Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, base_dialog::Key::Close | base_dialog::Key::Save)
+        {
+            return;
+        }
         let paste = (key == base_dialog::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -279,20 +289,22 @@ impl Shell {
         .detach();
     }
 
-    /// Opens the menu of `project_id` (closing any other) and lists the agent profiles for it.
+    /// Opens the menu of `project_id` floating at `anchor` (closing any other) and lists the
+    /// agent profiles for it. `by_keyboard` selects its first row.
     pub(crate) fn open_workspace_menu(
         &mut self,
         project_id: Ulid,
+        anchor: Point<Pixels>,
+        by_keyboard: bool,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.sidebar_layout.show();
-        self.file_menu = None;
-        self.workspace_menu = Some(WorkspaceMenu::new(project_id));
-        cx.notify();
+        self.begin_menu(window, cx);
+        self.workspace_menu = Some(WorkspaceMenu::new(project_id, anchor));
+        self.finish_menu(by_keyboard || window.last_input_was_keyboard(), window, cx);
         let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
         cx.spawn_in(window, async move |this, cx| {
             let agents = match listed.await {
@@ -301,17 +313,31 @@ impl Shell {
             };
             let _ = this.update(cx, |shell, cx| {
                 // Unless the menu closed (or moved to another workspace) meanwhile.
-                if let Some(menu) = shell
+                let Some(menu) = shell
                     .workspace_menu
                     .as_mut()
                     .filter(|menu| menu.project_id == project_id)
-                {
-                    menu.agents = agents;
-                    cx.notify();
-                }
+                else {
+                    return;
+                };
+                menu.agents = agents;
+                shell.apply_menu_pending();
+                cx.notify();
             });
         })
         .detach();
+    }
+
+    /// The same menu under the title bar's workspace switcher: the palette, "pick a default
+    /// first" and Shift+F10 without an owner.
+    pub(crate) fn open_workspace_menu_at_switcher(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let at = self.menu_anchor(&Anchor::Switcher, window, cx);
+        self.open_workspace_menu(project_id, at, true, window, cx);
     }
 
     /// Opens the folder of `project_id` in Zed; a failure (e.g. `zed` missing) shows a toast.
@@ -340,17 +366,19 @@ impl Shell {
         cx.notify();
     }
 
-    /// Right click on a Files tree row (`path`) or on the tree itself (`""`).
+    /// Right click on a Files tree row (`path`) or on the tree itself (`""`), or Shift+F10 on
+    /// the cursor row.
     pub(crate) fn open_file_menu(
         &mut self,
         project_id: Ulid,
         path: String,
         is_dir: bool,
         position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
-        self.close_menus();
+        self.begin_menu(window, cx);
         self.file_menu = Some(FileMenu {
             project_id,
             target,
@@ -358,7 +386,7 @@ impl Shell {
             is_dir,
             position,
         });
-        cx.notify();
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// "Open in File Explorer" on a Files path: a file is shown selected in its folder, a
@@ -772,6 +800,7 @@ impl Shell {
     pub(crate) fn render_add_workspace(
         &self,
         dialog: &CloneDialog,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -801,8 +830,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::add_workspace_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::add_workspace_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::add_workspace_key_down, cx))
             .child(
@@ -823,6 +856,7 @@ impl Shell {
                             icon_text(Icon::FolderPlus, "Open a folder…", theme.text_dim),
                             theme,
                         )
+                        .focusable_bordered(theme)
                         .tooltip(tooltip(theme, "Add a folder on this computer", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.pick_workspace_folder(false, window, cx);
@@ -839,7 +873,7 @@ impl Shell {
                 "add-workspace-url",
                 &dialog.url,
                 "https://github.com/owner/repo.git or git@host:owner/repo.git",
-                true,
+                self.dialog_focus.is_focused(window),
                 theme,
                 cx,
                 |shell, caret| {
@@ -857,6 +891,7 @@ impl Shell {
                     .child(meta_line(theme, target.into()).min_w_0().truncate())
                     .child(
                         quiet_button("add-workspace-browse", "Browse…", theme, theme.hover)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Choose where the clone goes", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.pick_workspace_folder(true, window, cx);
@@ -873,6 +908,7 @@ impl Shell {
                     .pt(px(space::S))
                     .child(
                         button("add-workspace-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Close (a running clone goes on)", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_add_workspace(window, cx);
@@ -882,6 +918,7 @@ impl Shell {
                         disabled_button("add-workspace-clone", "Cloning…", theme, true)
                     } else {
                         button("add-workspace-clone", "Clone", theme, true)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Clone and add as a workspace", "Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.clone_workspace(window, cx);

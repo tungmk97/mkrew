@@ -97,6 +97,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         let key = doc_dialog::key(&event.keystroke);
         match (self.doc_dialog.as_mut(), key) {
@@ -193,10 +196,13 @@ impl Shell {
                 (format!("{path}:{start}-{end}"), prefill, task)
             }
             View::Terminals => {
-                let text = self
+                let pane = self
                     .focused_session()
                     .and_then(|session| self.panes.get(&session))
-                    .and_then(|pane| pane.read(cx).selection_text())
+                    .cloned();
+                // Sending ends copy mode (held output resumes); the text is read first.
+                let text = pane
+                    .and_then(|pane| pane.update(cx, |pane, cx| pane.take_selection_text(cx)))
                     .filter(|text| !text.trim().is_empty());
                 let Some(text) = text else {
                     return;
@@ -273,8 +279,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::doc_dialog_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::doc_dialog_key_down),
+            )
             .child(
                 div()
                     .overflow_hidden()
@@ -407,6 +417,7 @@ impl Shell {
             footer
                 .child(
                     button("send-close", "Close", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Close", "Esc"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);
@@ -414,6 +425,7 @@ impl Shell {
                 )
                 .child(
                     button("send-terminals", "Show terminals", theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Start an agent there, then send", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);
@@ -424,6 +436,7 @@ impl Shell {
             footer
                 .child(
                     button("send-cancel", "Cancel", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             if selection {
@@ -441,6 +454,7 @@ impl Shell {
                     disabled_button("send-confirm", "Sending…", theme, true)
                 } else if selection {
                     button("send-confirm", "Open composer", theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Add the selection to this session's composer",
@@ -451,6 +465,7 @@ impl Shell {
                         }))
                 } else {
                     button("send-confirm", "Send", theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Send to the selected session", "Enter"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.send_comments(window, cx);
@@ -554,6 +569,7 @@ impl Shell {
             .child(
                 div().flex().justify_end().pt(px(space::S)).child(
                     button("changes-close", "Close", theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Close", "Esc"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_doc_dialog(window, cx);

@@ -21,6 +21,175 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
+
+- Every check in this entry is done in both dark and light.
+- [ ] **Alt+0 (dark + light):** from a terminal, then with the sidebar hidden, then with the compact rail: the sidebar shows (rail widens), the filter takes the keyboard, the active row is highlighted.
+  Up / Down walk workspace and session rows, Left / Right fold / unfold, Enter opens, Alt+0 again returns to the pane.
+  With text typed, Left / Right move the caret.
+  Tab / Shift+Tab step All / Working / Needs you.
+- [ ] **Board:** select a Review card, `A` moves it to Done (the Approve tooltip shows `A`).
+  `A` typed in the card follow-up, in the task dialog and in the sidebar filter types an `a`.
+  Ctrl+Shift+2 on the Board with Jira set up switches Tasks / Jira.
+  On the Jira list ↑ / ↓ move a ring, ← / → fold a List row or move Kanban columns, Enter opens the issue.
+  Typing in the Jira filter and keys fields is not stolen.
+  After Show Board switches Jira to Tasks with a Jira field focused, `a` and the arrows act on the Board cards again without a click.
+  Type a reply in the peek while the Board is shown: letters like a and e type into the reply and no card changes.
+  Close a pane while its menu is open: the menu goes away and the keyboard returns to the pane.
+- [ ] **Comments:** in Docs and in the Git diff F8 / Shift+F8 select the next / previous thread and scroll the doc and the margin to it.
+  Ctrl+Alt+R opens its reply field (nothing on a resolved thread), Ctrl+Alt+Enter resolves / reopens.
+  In a comment draft none of them act.
+- [ ] **Keys stay in text fields:** F8, Ctrl+Alt+R and Ctrl+Alt+Enter do nothing while the Git commit box or a comment draft has the keyboard.
+  `w` types a w in the Git filter and the commit box and does not toggle Wrap.
+- [ ] **Tabs:** Ctrl+Shift+PgDn / PgUp move the active terminal tab and the active file tab one place.
+  Nothing happens at the ends and never across the pinned border.
+  A running agent pane is not disturbed.
+- [ ] **Git and Files:** `W` toggles Wrap in the Git list; the Wrap tooltip shows `W`.
+  Alt+Enter on a tree row opens a kept (non-italic) tab; in the editor it does not.
+  The palette entry "Open file in a kept tab" is listed only while the tree is painted, and gives the tree the keyboard.
+- [ ] **Tooltips:** hunk Stage shows `S` on the current hunk only, the Branch chip `Ctrl+Shift+4`, the workspace switcher `Alt+1 … Alt+9`, the card Approve `A` on the selected card.
+- [ ] **Palette, keyed commands:** the palette lists approve card, next / previous / reply / resolve comment, move tab left / right, wrap, open kept and focus sidebar, each with its key, and each only in its state.
+- [ ] **Palette, menus:** "Git: Switch repository" and "Git: Change base…" (only in Against base) open their menu anchored, with the keyboard on it after the palette closes.
+- [ ] **Palette, other entries:** tab pin / close others / right, pane pin / reading width, set default shell opens the workspace menu on the shell list, workspace move up / down, agent stop / transcript / link / unlink / improve, run start / restart / stop per command, Jira all / mine, list / kanban, refresh, copy last error, dismiss notifications, History, install update.
+  Each shows only in its state and does what the mouse control does.
+- [ ] **Not automated:** all of the above is keyboard-only GPUI input.
+  The agent could not send key events to the app (see the smoke note in the plan).
+  Smoke: not run keyboard-only by the agent (reason: no keyboard automation allowed, it once typed into the user's browser); every line above stays unticked.
+  Only the launch was checked (2026-10-27): verify.sh passes, the dev exe starts in a sandbox, connects to the sandbox daemon, and the log has no panic.
+  The one ERROR line is the Windows DXGI debug-layer message (0x887A002D), unrelated to this wave.
+  Dark and light both unseen.
+
+### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0085)
+
+- Every check in this entry is done in both dark and light.
+- [ ] **Pick lines in Docs (dark + light):** Docs → a `.md`, nothing picked.
+  Shift+↓ picks the first block in view (Preview) or line (Source), highlighted like a click.
+  More Shift+↓ grows, Shift+↑ shrinks, and the moved end scrolls into view.
+  Esc clears; Ctrl+Alt+M opens the comment draft on it.
+  Not run (2026-10-27 smoke): no keyboard automation allowed (it once typed into the browser); only the launch was checked (the app starts, connects to a sandbox daemon, no panic or error in the logs), dark and light both unseen.
+- [ ] **Pick lines in the Git diff (dark + light, Unified + Split):** Git tab → a changed file with 2+ hunks → Diff view.
+  `n` then Shift+↓ picks the first new-side line of that hunk.
+  Shift+↓ grows across the gap into the next hunk and scrolls; the pick bar sits under the last line.
+  Esc clears; Ctrl+Alt+M comments, Ctrl+Shift+L sends.
+  Not run (2026-10-27 smoke): no key may be sent to the app; the sandbox had no changed file with 2+ hunks open, dark and light both unseen.
+- [ ] **Text fields keep Shift+↑/↓:** in the Docs filter, a comment draft and the Git commit box (two lines typed), Shift+↑ / Shift+↓ select text and pick no lines.
+  Not run (2026-10-27 smoke): needs a person at the keyboard.
+- [ ] **Copy mode (dark + light):** a shell pane with a few screens of output: Alt+Shift+C shows a block cursor and a "Copy mode" chip with the key hints in the tab bar (single pane) or pane header (split).
+  `h j k l`, `w b e`, `0 $`, `g G`, PgUp / PgDn move the cursor.
+  `v` / `V` select (selection color readable); a click-selection made before is gone.
+  `y` copies (paste elsewhere to check) and leaves; Ctrl+Shift+C copies and stays in copy mode.
+  Typing `x` in copy mode types nothing in the shell.
+  While an agent keeps printing the view does not move, and leaving shows the live screen.
+  Ctrl+Shift+F finds and moves the cursor; Ctrl+Shift+L sends the selection and ends copy mode.
+  Esc with a selection drops it, Esc again leaves; Esc after a plain click (no selection) leaves at once.
+  Not run (2026-10-27 smoke): no key may be sent to the app and no shell pane was driven.
+- [ ] **Copy mode survives focus loss (dark + light):** in copy mode, click another pane and come back; the cursor and the chip are still there.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and a second pane.
+- [ ] **Voice in copy mode (dark + light):** with a selection in copy mode, the voice key puts the spoken text on the clipboard and does not type into the shell.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and the microphone.
+- [ ] **Link hints (dark + light):** a pane showing a URL, a file path of the workspace and a path that does not exist.
+  Alt+Shift+O shows accent labels over the first two only.
+  Typing a label opens the URL in the browser / the file in the Editor at its line.
+  Esc, another key, a wheel scroll, a click or moving focus to another pane ends the hints, and held output shows.
+  With 30+ links two-letter labels appear and narrow as you type.
+  With none the tab bar says "No links on screen." and clears after 3 s.
+  Not run (2026-10-27 smoke): no key may be sent to the app; the browser opening and the tab bar notice were not seen.
+- [ ] **AltGr layouts:** on a layout where Alt+Shift+C / O type a character, rebind `copy_mode` / `link_hints` in Settings → Keyboard and check the new keys.
+  Not run (2026-10-27 smoke): needs an AltGr layout and a person at the keyboard.
+
+### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0085, wave 2)
+
+- Every check in this entry is done in both dark and light.
+- [ ] **Focus ring (dark + light):** open the task dialog (palette: New task).
+  Press Tab until each control has the keyboard: the title, the prompt, From prompt, every agent chip, Run in a worktree, Cancel, Create task, then the title again.
+  Each control shows a 1 px ring in the text color; a mouse click on the same controls shows none.
+  Shift+Tab goes the other way.
+  Not run (2026-10-27 smoke): no keyboard automation allowed (it once typed into the browser); dark and light both unseen.
+- [ ] **Chips:** with an agent chip focused press ← / → (moves along the row, stops at the ends) and Enter or Space (picks it).
+  The Ask AI dialog's Agent and Web search rows do the same.
+  Not run (2026-10-27 smoke): needs a person at the keyboard.
+- [ ] **Destructive confirmations:** open the Undo dialog of a Review card.
+  No button has a ring and Enter does nothing.
+  Tab once: Cancel.
+  Tab twice: Discard changes (red text, ring).
+  Enter discards.
+  Repeat with Remove worktree, Discard files and Git Discard.
+  Open each with the Enter key held a moment: nothing is clicked.
+  Also check Tab and Esc after Discard... and after Keep files, and the confirm, busy, re-read cycle of the worktree dialog; Enter on the dialog itself does nothing.
+  Not run (2026-10-27 smoke): no Review card or worktree exists in the sandbox, and no key may be sent to the app.
+- [ ] **Broadcast:** type a message with spaces (they stay spaces); press ↓ and Space to uncheck a session; type again (Space types a space); Tab reaches Cancel and Send.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and a running session.
+- [ ] **Run setup:** Tab walks the fields, then both checkboxes, then Duplicate, Remove and Browse of the last card that had the keyboard (after the last card's fields), Add command, Cancel, Save.
+  Shift+Tab goes back.
+  Browse opens the picker: ↓ ↑ move, → opens a folder, ← goes up, Enter picks the folder or the .env file under the cursor.
+  Tab to Remove and press Enter on a card: the keyboard stays usable.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and a folder to browse.
+- [ ] **Settings and others:** Tab through Settings reaches Fix in Zed, Reset and the footer links after the rows.
+  A Reset that vanishes after the click keeps the keyboard in the dialog; Enter on Reset puts the keyboard back on the dialog, so Tab restarts at the first stop.
+  Phone access, Add workspace, Git base, Compare and the Send dialog reach all their buttons with Tab.
+  Turns: D opens the diff since the selected turn.
+  Not run (2026-10-27 smoke): needs a person at the keyboard; no Settings, Phone access, Compare or Turns view was driven.
+- [ ] **Buttons are not text fields:** Tab to a button, then paste or press an arrow: nothing happens.
+  Click a text field after a button: the keyboard returns to the field.
+  Not run (2026-10-27 smoke): needs a person at the keyboard.
+- [ ] **A button that vanishes:** in the worktree dialog focus Discard, press Enter (the step changes).
+  Esc still closes the dialog.
+  Not run (2026-10-27 smoke): no key may be sent to the app and no worktree exists in the sandbox; only the launch was checked.
+- [ ] **Diagram dialog (merge with ADR 0083):** Expand a Mermaid diagram in a Markdown preview.
+  Tab reaches Close and shows the ring, Enter closes it, Esc closes it, and the keyboard returns to the pane.
+  Not run: needs a person at the keyboard.
+- [ ] **Git keys in the right panel (merge with ADR 0084):** Ctrl+Shift+4, then j / k, s / u, b, h, n / p, d, `w` and Shift+S / Shift+U act on the Git list.
+  With a diff shown, the same keys still act, also with the panel hidden.
+  Shift+↓ / Shift+↑ pick lines in the diff, Ctrl+Alt+M comments, F8 / Shift+F8 and Ctrl+Alt+R / Ctrl+Alt+Enter work on threads.
+  `w`, F8 and the Shift keys stay in the commit box, the filter and a comment draft.
+  Esc: clears the pick, then closes the diff.
+  Git By: and Repositories open with the keyboard in the 240 px panel, and ⋯ on the diff toolbar does too.
+  "Open in Git" in the worktree dialog takes Tab.
+  Not run: needs a person at the keyboard.
+- [ ] **Tree keys in the right panel (merge with ADR 0081):** open the tree with Ctrl+Shift+3 from Terminals, then check these.
+  Shift+F10 on a tree row opens the file menu.
+  Alt+Enter opens the cursor file in a kept tab, and Ctrl+Shift+H toggles ignored files.
+  Ctrl+Shift+Y hides the panel and the keyboard goes to the pane (or the editor in the Editor view).
+  Not run: needs a person at the keyboard.
+- [ ] **Git list menus and palette (merge with ADR 0084):** Shift+F10 with the Git list focused, also in the Editor view, opens the workspace menu.
+  In the Diff view with the panel closed, the palette entry "Git: Switch repository…" opens the panel on the Git tab and the menu is visible with the keyboard in it.
+  Not run: needs a person at the keyboard.
+
+### To verify - 2026-10-27 Keyboard context menus (ADR 0085, wave 1)
+
+- Every check in this entry is done in both dark and light.
+- [ ] **Selected row:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓.
+  The selected row has the `selected` fill and stays readable, including the swatch ring (accent) on the color rows.
+- [ ] **Navigation keys:** in a menu with several rows, ↑ on the first row wraps to the last and ↓ on the last wraps to the first.
+  Home / End select the first / last enabled row; disabled rows, separators and notes are skipped.
+  On a color row ← / → move between the swatches and Enter picks the swatch.
+  Space runs a row like Enter.
+  A letter selects the next row starting with it; a repeated letter goes on to the following one.
+- [ ] **Run menu by keyboard:** open the Run menu, select a command row and press Enter: it starts, or restarts when it already ran.
+  While it runs, the "Stop <name>" row stops it.
+- [ ] **Shift+F10 per owner:** terminal pane (menu under the pane header), file tree cursor row, Editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher).
+  Each menu sits at the owner's bottom-left.
+  Esc returns typing to where you were (the terminal types again).
+- [ ] **Shift+F10 toggles:** with any menu open, Shift+F10 closes it and the keyboard goes back to where it was.
+- [ ] **Focus returns:** after Esc, after running a row, and after a click outside, typing goes to the pane / field that had the keyboard before the menu opened, with no click.
+- [ ] **Menu key:** bind `context_menu` to `menu` in Settings → Keyboard and check it opens the same menus (Windows only).
+- [ ] **Held key:** hold Enter in the palette on "Workspace: Open workspace menu".
+  The menu opens with its first row selected and nothing runs while the key repeats.
+- [ ] **Fan-out picker by keyboard:** Shift+F10 on a Todo card → "Run with several agents…".
+  Space ticks agents, ↓ reaches the Run row, Enter runs; the other rows go grey at the cap.
+- [ ] **Board keys while a menu is open:** with a card menu open, ↑/↓/Enter move the menu and never the selected card.
+- [ ] **Repositories search:** with several repositories, open the Repositories menu and type to filter (typing keeps working).
+  ↑/↓ move the selection and Enter shows the selected one.
+  Esc closes By:, ⋯ and Repositories.
+- [ ] **Sidebar row anchor:** Shift+F10 on a highlighted sidebar row opens its menu under that row, also while an agent is streaming.
+- [ ] **Visual changes to look at:** the workspace menu now floats at the click (it used to drop inside the sidebar row).
+  The workspace switcher's ✓ is in a left column.
+  Run menu commands are rows instead of inline icon buttons.
+  A menu error line shows "✕" in muted text instead of red; the Repositories rows show "N changes" muted instead of amber.
+- [ ] **Not automated:** the smoke run (2026-10-27) could not drive the real window, so no menu was driven by keyboard and every item above is unticked.
+  Synthetic input is not used any more; a human does these checks.
+  The Shift+F10 toggle is confirmed in code only: the binding is global, not in the `Menu` NoAction shield, and `Shell::run` closes the menu and does not reopen it.
+
 ### To verify - 2026-10-27 Git in the right panel (ADR 0084)
 
 - [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.

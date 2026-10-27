@@ -370,7 +370,7 @@ impl Shell {
                             } else {
                                 "Long lines are cut at the edge (click to wrap them)"
                             },
-                            "",
+                            self.keymap.label(Command::GitToggleWrap),
                         ))
                         .on_click(cx.listener(move |shell, _, _, cx| {
                             shell.set_diff_wrap(!wrap, cx);
@@ -507,17 +507,21 @@ impl Shell {
                     })),
             )
             .when(open, |el| {
-                el.child(self.render_git_more_menu(project_id, view, theme, cx))
+                el.child(render_menu(
+                    self.menu_state(),
+                    "git-diff-more-panel",
+                    self.git_more_rows(project_id, view),
+                    None,
+                    Place::Dropdown,
+                    theme,
+                    cx,
+                ))
             })
     }
 
-    fn render_git_more_menu(
-        &self,
-        project_id: Ulid,
-        view: &GitView,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
+    /// The diff toolbar's "⋯": comment on the picked lines, send the open comments. A row that
+    /// cannot act now is greyed with its reason in the label.
+    pub(crate) fn git_more_rows(&self, project_id: Ulid, view: &GitView) -> Rows {
         let can_comment =
             matches!(view.diff, git_view::Diff::Shown(_)) && view.comments.selection.is_some();
         let sendable = match &view.comments.list {
@@ -526,78 +530,35 @@ impl Shell {
             }
             _ => 0,
         };
-        let label = |text: String, keys: SharedString| {
-            [
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(rgb(theme.text))
-                    .child(text),
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(keys),
-            ]
+        let send_label = match sendable {
+            0 => "Send to agent (no open comments)".to_owned(),
+            1 => "Send 1 open comment to agent…".to_owned(),
+            n => format!("Send {n} open comments to agent…"),
         };
-        // A row that cannot act now: faded, no hover, no click (no dead buttons).
-        let disabled = |text: &'static str, keys: SharedString| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .opacity(opacity::DISABLED)
-                .text_size(font_size::BODY)
-                .children(label(text.to_owned(), keys))
-                .into_any_element()
-        };
-        let comment_keys: SharedString = self.keymap.label(Command::AddComment).into();
-        let send_keys: SharedString = self.keymap.label(Command::SendComments).into();
-        let comment = if can_comment {
-            menu_item("git-more-comment".into(), theme)
-                .children(label("Comment on selected lines".into(), comment_keys))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.close_git_menu(window, cx);
+        vec![
+            MenuItem::new(
+                if can_comment {
+                    "Comment on selected lines"
+                } else {
+                    "Comment (select lines first)"
+                },
+                act(move |shell, window, cx| {
                     shell.start_comment(project_id, CommentContext::Diff, window, cx);
-                }))
-                .into_any_element()
-        } else {
-            disabled("Comment (select lines first)", comment_keys)
-        };
-        let send = if sendable > 0 {
-            let text = if sendable == 1 {
-                "Send 1 open comment to agent…".to_owned()
-            } else {
-                format!("Send {sendable} open comments to agent…")
-            };
-            menu_item("git-more-send".into(), theme)
-                .children(label(text, send_keys))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.close_git_menu(window, cx);
+                }),
+            )
+            .keys(self.keymap.label(Command::AddComment))
+            .enabled(can_comment)
+            .row(),
+            MenuItem::new(
+                send_label,
+                act(move |shell, window, cx| {
                     shell.open_send_dialog(project_id, CommentContext::Diff, window, cx);
-                }))
-                .into_any_element()
-        } else {
-            disabled("Send to agent (no open comments)", send_keys)
-        };
-        let panel = menu_panel("git-diff-more-panel", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.git_menu = None;
-                cx.notify();
-            }))
-            .child(comment)
-            .child(send);
-        deferred(
-            anchored()
-                .snap_to_window_with_margin(px(space::S))
-                .child(div().pt(px(space::XS)).child(panel)),
-        )
-        .into_any_element()
+                }),
+            )
+            .keys(self.keymap.label(Command::SendComments))
+            .enabled(sendable > 0)
+            .row(),
+        ]
     }
 
     /// The diff rows of `shown` in a variable-height list (wrapped lines are taller): reset for
@@ -633,11 +594,20 @@ impl Shell {
                 offset_in_item: px(0.),
             });
         }
+        if let Some(row) = self.git_diff_reveal.take() {
+            self.git_diff_list.scroll_to_reveal_item(row);
+        }
         let shown = Rc::clone(shown);
         let current = view.hunk;
         // Hunk headers get a stage / unstage action when the file can go by hunk.
         let hunk_stage = view.hunk_change(0).map(|change| change.stage);
         let row_theme = theme.clone();
+        let stage_keys = hunk_stage
+            .map(|stage| match stage {
+                git_view::Stage::Stage => self.keymap.label(Command::GitStage),
+                git_view::Stage::Unstage => self.keymap.label(Command::GitUnstage),
+            })
+            .unwrap_or_default();
         let width = (!wrap).then(|| unwrapped_width(&shown, mode, theme, window));
         let list = list(
             self.git_diff_list.clone(),
@@ -653,7 +623,16 @@ impl Shell {
                         None => el,
                     };
                 let span = |at: usize, cx: &mut Context<'_, Shell>| {
-                    span_row(&shown, at, current, hunk_stage, project_id, theme, cx)
+                    span_row(
+                        &shown,
+                        at,
+                        current,
+                        hunk_stage,
+                        &stage_keys,
+                        project_id,
+                        theme,
+                        cx,
+                    )
                 };
                 let (row, new_number) = match mode {
                     DiffMode::Unified => match shown.rows.get(index) {
@@ -814,6 +793,7 @@ pub(crate) fn hunk_stage_button(
     project_id: Ulid,
     hunk: usize,
     stage: git_view::Stage,
+    keys: SharedString,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -833,8 +813,8 @@ pub(crate) fn hunk_stage_button(
     .px(px(space::S))
     .rounded(px(radius::CHIP))
     .ml_auto()
-    // No key: `s` / `u` act on the current hunk (n / p), not the hovered one.
-    .tooltip(tooltip(theme, tip, ""))
+    // The key acts on the current hunk only (n / p), so other hunks show none.
+    .tooltip(tooltip(theme, tip, keys))
     .on_click(cx.listener(move |shell, _, window, cx| {
         window.focus(&shell.git_focus, cx);
         if let Some(change) = shell.git_view(project_id).hunk_change(hunk) {
@@ -853,7 +833,7 @@ pub(crate) fn git_diff_preview_row(
 ) -> gpui::Div {
     match shown.rows.get(index) {
         Some(git_view::DiffRow::Line(line)) => unified_line(shown, index, line, None, false, theme),
-        _ => span_row(shown, index, None, None, project_id, theme, cx),
+        _ => span_row(shown, index, None, None, "", project_id, theme, cx),
     }
 }
 
@@ -872,11 +852,13 @@ fn diff_frame(wrap: bool, theme: &Theme) -> gpui::Div {
 /// A row spanning the whole width (both Split halves): a collapsed gap of unchanged lines the
 /// diff does not include, or a hunk header (a 34 px `well` bar: `@@ … @@` and its section in
 /// mono muted text, ▸ on the current hunk, a small Stage hunk button on the right).
+#[allow(clippy::too_many_arguments)]
 fn span_row(
     shown: &git_view::Shown,
     index: usize,
     current: Option<usize>,
     hunk_stage: Option<git_view::Stage>,
+    stage_keys: &str,
     project_id: Ulid,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
@@ -930,9 +912,14 @@ fn span_row(
                         .text_color(rgb(theme.text_muted))
                         .child(hunk.header.clone()),
                 )
-                .children(
-                    hunk_stage.map(|stage| hunk_stage_button(project_id, *at, stage, theme, cx)),
-                )
+                .children(hunk_stage.map(|stage| {
+                    let keys = if is_current {
+                        stage_keys.to_owned().into()
+                    } else {
+                        SharedString::default()
+                    };
+                    hunk_stage_button(project_id, *at, stage, keys, theme, cx)
+                }))
         }
         _ => frame,
     }

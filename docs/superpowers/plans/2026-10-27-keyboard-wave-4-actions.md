@@ -22,7 +22,7 @@
 - Tooltips and menus show the shortcut; the palette lists every new action.
 - Fast loop: `cargo test -p mkrew-ui <filter>`; end of wave: `"C:/Program Files/Git/bin/bash.exe" scripts/verify.sh` (plain `bash` is WSL); on OOM or linker errors add `-j 2`.
 - Commits: Conventional Commits (`feat(ui): ...`), `git -c user.email=tungnv975@gmail.com commit`, stage only the task's files, never push.
-- Docs: SPEC §13 and §10, `docs/decisions/0081-keyboard-only-operation.md` (wave 1 created it; this wave appends a section), `docs/HUMAN_CHECKS.md` "To verify" entry for dark and light. Never touch CHANGELOG.md.
+- Docs: SPEC §13 and §10, `docs/decisions/0085-keyboard-only-operation.md` (wave 1 created it; this wave appends a section), `docs/HUMAN_CHECKS.md` "To verify" entry for dark and light. Never touch CHANGELOG.md.
 - Markdown: one sentence per physical line; never the em dash character, use "-".
 - Run these waves in order 1, 2, 3, 4 on master. This plan assumes wave 1 (`Shell::open_workspace_menu_at_switcher`, `menu_select_after`, `DEFAULT_SHELL_HEADING`) and wave 3 (`Shell::reveal_pick`, new `Command` variants) are merged.
 
@@ -49,7 +49,7 @@
 | `crates/mkrew-ui/src/shell/navigation.rs` | palette `Context`, picks |
 | `crates/mkrew-ui/src/shell/tabs.rs`, `reorder.rs`, `pane_render.rs`, `comments.rs`, `jira.rs`, `board.rs`, `cards.rs`, `git_diff.rs`, `git_menus.rs`, `chrome.rs`, `toasts.rs`, `files.rs`, `sidebar.rs`, `peek.rs` | handlers and tooltips |
 | `crates/mkrew-ui/src/main.rs`, `shell/connection.rs` | Board key context in Jira, `/` handler untouched, scroll handles |
-| `docs/SPEC.md`, `docs/decisions/0081-keyboard-only-operation.md`, `docs/HUMAN_CHECKS.md` | docs |
+| `docs/SPEC.md`, `docs/decisions/0085-keyboard-only-operation.md`, `docs/HUMAN_CHECKS.md` | docs |
 
 ## Review Focus
 
@@ -2102,11 +2102,11 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): palette entries for G
 
 ---
 
-### Task 8: SPEC, ADR 0081 and HUMAN_CHECKS
+### Task 8: SPEC, ADR 0085 and HUMAN_CHECKS
 
 **Files:**
 - Modify: `docs/SPEC.md:771-777` (§10 sidebar filter), `:866` (§10 Board), `:1295-1352` (§13 table and note)
-- Modify: `docs/decisions/0081-keyboard-only-operation.md` (append a section)
+- Modify: `docs/decisions/0085-keyboard-only-operation.md` (append a section)
 - Modify: `docs/HUMAN_CHECKS.md` (new "To verify" section at the top of the list, line 24)
 
 - [ ] **Step 1: SPEC §13 table.** Insert these rows (one row per line, same column format) at the places named, and keep the table sorted by group like the neighbours:
@@ -2162,7 +2162,7 @@ In Board, Git and Files the single keys `a`, `w` and Alt+Enter act only while th
 
 - [ ] **Step 2: SPEC §10.** Sidebar filter paragraph (line 771-777): after `with an empty box Enter gives the keyboard back to the pane` add one sentence on its own line: `Alt+0 (§13) focuses the box with the active row highlighted: with an empty box ↑/↓ walk every visible row, ←/→ fold / unfold the highlighted row's workspace and Enter opens it; with text ←/→ move the caret.` Add before `beside it the remove-idle-agents button` a sentence: `Tab / Shift+Tab in the box step the All / Working / Needs you chips.` Board bullet (line 866): after the Jira switch sentence add: `Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.` Keep each sentence on its own physical line as in the neighbouring text.
 
-- [ ] **Step 3: ADR 0081.** Check the file exists (wave 1 creates it; if it does not, stop and report). Append:
+- [ ] **Step 3: ADR 0085.** Check the file exists (wave 1 creates it; if it does not, stop and report). Append:
 
 ```markdown
 
@@ -2177,7 +2177,7 @@ Decisions: Alt+0 widens the compact rail because the rail has no filter box and 
 - [ ] **Step 4: HUMAN_CHECKS.** Insert under `## To verify (non-blocking)` (before the `2026-10-27 Voice recording animation` section):
 
 ```markdown
-### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0081)
+### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
 - [ ] **Alt+0 (dark + light):** from a terminal, then with the sidebar hidden, then with the compact rail: the sidebar shows (rail widens), the filter takes the keyboard, the active row is highlighted. Up / Down walk workspace and session rows, Left / Right fold / unfold, Enter opens, Alt+0 again returns to the pane. With text typed, Left / Right move the caret. Tab / Shift+Tab step All / Working / Needs you.
 - [ ] **Board:** select a Review card, `A` moves it to Done (the Approve tooltip shows `A`); `A` typed in the card follow-up, in the task dialog and in the sidebar filter types an `a`. Ctrl+Shift+2 on the Board with Jira set up switches Tasks / Jira. On the Jira list ↑ / ↓ move a ring, ← / → fold a List row or move Kanban columns, Enter opens the issue; typing in the Jira filter and keys fields is not stolen.
@@ -2192,8 +2192,8 @@ Decisions: Alt+0 widens the compact rail because the rail has no filter box and 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/SPEC.md docs/decisions/0081-keyboard-only-operation.md docs/HUMAN_CHECKS.md
-git -c user.email=tungnv975@gmail.com commit -m "docs: keyboard wave 4 in SPEC section 10 and 13, ADR 0081 and HUMAN_CHECKS"
+git add docs/SPEC.md docs/decisions/0085-keyboard-only-operation.md docs/HUMAN_CHECKS.md
+git -c user.email=tungnv975@gmail.com commit -m "docs: keyboard wave 4 in SPEC section 10 and 13, ADR 0085 and HUMAN_CHECKS"
 ```
 
 ---
@@ -2249,7 +2249,7 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: record keyboard wave 4 sm
 | Tooltip fixes (hunk Stage, Branch chip, workspace switcher, card Approve) | 5, 2 |
 | Text-field precedence for `a`, `w`, Alt+Enter | 2 (Jira guard), 5 (`files_focus`), existing guards; Review Focus 1 |
 | Palette availability tests, keymap uniqueness by existing tests | 6, 7 and every command task |
-| ADR 0081, SPEC §13 / §10, HUMAN_CHECKS, smoke | 8, 9 |
+| ADR 0085, SPEC §13 / §10, HUMAN_CHECKS, smoke | 8, 9 |
 | "Set default shell…" via wave 1 | 6 (`open_workspace_menu_at_switcher`, `menu_select_after`, `DEFAULT_SHELL_HEADING`, confirmed with Wave1Menus) |
 
 **Placeholder scan:** no "TBD" / "later" steps. One code-level hedge remains by design where the real type could not be read: the `Parent` struct construction in the Task 2 `a_parent_outside_the_results_is_not_selectable` test (the step says to copy the module's existing parent test construction), and the `inspector` import line in Task 6. Both name exactly what to copy.

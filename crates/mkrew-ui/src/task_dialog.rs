@@ -229,6 +229,22 @@ impl TaskDialog {
         }
     }
 
+    /// Tab (`forward`) / Shift+Tab has no field left in that direction: the keyboard leaves the
+    /// text fields for the buttons ([`crate::dialog_focus::nav`]). Between the title and the
+    /// prompt [`DialogKey::SwitchField`] switches fields as before.
+    pub fn at_edge(&self, forward: bool) -> bool {
+        matches!(
+            (self.field, forward),
+            (Field::Prompt, true) | (Field::Title, false)
+        )
+    }
+
+    /// The keyboard came back to the text fields from the buttons: Tab lands on the title,
+    /// Shift+Tab on the prompt.
+    pub fn enter(&mut self, forward: bool) {
+        self.field = if forward { Field::Title } else { Field::Prompt };
+    }
+
     /// A press or drag at byte `at` of `field` (see `Input::click`): the field takes the keys
     /// and its caret goes there.
     pub fn click(&mut self, field: Field, at: usize, extend: bool, clicks: usize) {
@@ -417,6 +433,28 @@ mod tests {
             ask: false,
             ask_web: false,
         }
+    }
+
+    #[test]
+    fn tab_leaves_the_fields_from_the_prompt_and_shift_tab_from_the_title() {
+        let mut dialog = TaskDialog::new(Ulid::new());
+        assert!(!dialog.at_edge(true), "Title to Prompt stays in the fields");
+        assert!(
+            dialog.at_edge(false),
+            "Shift+Tab from the first field leaves"
+        );
+        dialog.key(DialogKey::SwitchField);
+        assert_eq!(dialog.field, Field::Prompt);
+        assert!(dialog.at_edge(true), "Tab from the last field leaves");
+        assert!(!dialog.at_edge(false));
+        dialog.enter(true);
+        assert_eq!(dialog.field, Field::Title, "Tab from the last button");
+        dialog.enter(false);
+        assert_eq!(
+            dialog.field,
+            Field::Prompt,
+            "Shift+Tab from the first button"
+        );
     }
 
     #[test]

@@ -16,6 +16,14 @@ impl Shell {
         cx.notify();
     }
 
+    /// "Global: Copy last error": the newest error toast's full text, even after it hid.
+    pub(crate) fn copy_last_error(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(text) = self.toasts.last_error().map(str::to_owned) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            self.toast_info("Copied", cx);
+        }
+    }
+
     /// A failed write of `settings.toml`: the palette lists the file's problem (§20.0) and the
     /// toast says the choice was not saved.
     pub(crate) fn settings_write_failed(
@@ -113,5 +121,25 @@ impl Shell {
                 .children(cards)
                 .into_any_element(),
         )
+    }
+
+    /// A one-line notice in the tab bar (nothing went wrong, so no toast card); it goes away
+    /// by itself.
+    pub(crate) fn show_tab_notice(&mut self, text: &str, cx: &mut Context<'_, Self>) {
+        let text = text.to_owned();
+        self.tab_notice = Some(text.clone());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(theme::TAB_NOTICE_TIMEOUT)
+                .await;
+            let _ = this.update(cx, |shell, cx| {
+                if shell.tab_notice.as_deref() == Some(text.as_str()) {
+                    shell.tab_notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 }

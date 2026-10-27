@@ -715,6 +715,29 @@ fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
     );
 }
 
+#[test]
+fn active_place_counts_inside_the_pin_group() {
+    let project = Ulid::new();
+    let mut tabs = Tabs::new(project);
+    let mut pinned = wire(project, "pin", 1.0, serde_json::Value::Null);
+    pinned.pinned = true;
+    let one = wire(project, "one", 2.0, serde_json::Value::Null);
+    let two = wire(project, "two", 3.0, serde_json::Value::Null);
+    tabs.load(vec![pinned.clone(), one.clone(), two.clone()]);
+    assert_eq!(
+        tabs.active_place(),
+        Some((true, 0, 1)),
+        "the pinned tab is first"
+    );
+    tabs.activate_nth(2);
+    assert_eq!(
+        tabs.active_place(),
+        Some((false, 1, 2)),
+        "second of the unpinned two"
+    );
+    assert_eq!(Tabs::new(project).active_place(), None, "no tab");
+}
+
 fn split(axis: &str, first: serde_json::Value, second: serde_json::Value) -> serde_json::Value {
     json!({"split": axis, "ratio": 0.5, "children": [first, second]})
 }

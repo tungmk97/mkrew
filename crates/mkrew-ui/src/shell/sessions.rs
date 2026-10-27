@@ -119,7 +119,7 @@ impl Shell {
             self.tab_error = Some(format!(
                 "Pick a default {what} for this workspace, then try again."
             ));
-            self.open_workspace_menu(project_id, window, cx);
+            self.open_workspace_menu_at_switcher(project_id, window, cx);
         }
         missing
     }
@@ -137,19 +137,40 @@ impl Shell {
         if *command == Command::VoiceInput {
             return self.toggle_voice(window, cx);
         }
-        // A shortcut ends every open popover (they never own the keyboard).
-        self.close_menus();
+        // A shortcut ends every open popover and gives the keyboard back before it acts. The
+        // context menu key pressed while a menu is open only closes it.
+        let menu_was_open = self.menu_open();
+        self.dismiss_menus(window, cx);
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
         // Its own shortcut closes the palette again.
         if *command == Command::CommandPalette && self.palette.is_some() {
             return self.close_palette(window, cx);
         }
+        // The context menu acts before the focused-field guards below: it must work from a
+        // pane, the file tree or the sidebar filter, and never takes the key from a dialog.
+        if *command == Command::ContextMenu {
+            if self.modal_open() {
+                cx.propagate();
+            } else if !menu_was_open {
+                self.context_menu(window, cx);
+            }
+            return;
+        }
         // The dialogs are modal: bound keys go on to their key handler (e.g. Ctrl+Alt+digit
         // is AltGr on many layouts) instead of acting behind them.
         if self.modal_open() {
             cx.propagate();
             return;
+        }
+        // Alt+0 acts before the field guards below: it must work from the composer, a comment
+        // draft or the commit box. While the filter has the keyboard it gives it back.
+        if *command == Command::FocusSidebar {
+            if self.filter_focus.is_focused(window) {
+                self.sidebar.end_browse();
+                return self.focus_pane(window, cx);
+            }
+            return self.focus_sidebar(window, cx);
         }
         // Same for the follow-up field while it has the keyboard, unless its card stopped
         // showing it (session exited, card moved on): then the shortcut acts as usual.
@@ -211,6 +232,14 @@ impl Shell {
             }
             window.focus(&self.focus_handle, cx);
         }
+        // Board keys while a Jira field has the keyboard: the field types them (the Board
+        // context is on over the Jira list too, for its arrow keys).
+        if (self.jira_filter_focus.is_focused(window) || self.jira_keys_focus.is_focused(window))
+            && command.context() == Some(BOARD_CONTEXT)
+        {
+            cx.propagate();
+            return;
+        }
         // Same for the sidebar filter while it has the keyboard, except the shortcuts that
         // leave it (Peek, Toggle sidebar, Toggle compact sidebar).
         if self.filter_focus.is_focused(window) {
@@ -235,6 +264,12 @@ impl Shell {
             }
             self.focus_pane(window, cx);
         }
+        // View keys (Board, Docs, ...) while the peek's reply box has the keyboard: the box types
+        // them, and nothing closes the peek or acts on the view behind it.
+        if self.peek_focus.is_focused(window) && command.context().is_some() {
+            cx.propagate();
+            return;
+        }
         // A shortcut that acts ends the peek too (it restores the keyboard first, so a shortcut
         // typed in the peek still runs); its own shortcut toggles it below.
         if *command != Command::Peek {
@@ -251,6 +286,8 @@ impl Shell {
                 Command::CloseTab | Command::CloseFileTab => {
                     return self.close_active_file_tab(project_id, window, cx);
                 }
+                Command::MoveTabLeft => return self.move_active_tab(-1, window, cx),
+                Command::MoveTabRight => return self.move_active_tab(1, window, cx),
                 _ => {}
             }
         }
@@ -275,6 +312,8 @@ impl Shell {
                 | Command::Resize(_)
                 | Command::EqualizePanes
                 | Command::ZoomPane
+                | Command::MoveTabLeft
+                | Command::MoveTabRight
                 | Command::ClosePane => return,
                 _ => {}
             }
@@ -407,6 +446,11 @@ impl Shell {
             }
             Command::OpenComposer => self.open_composer(window, cx),
             Command::SendSelection => self.open_selection_dialog(window, cx),
+            Command::ShowBoard if self.view() == View::Board && self.jira_on => {
+                if let Some(project_id) = self.workspace {
+                    self.toggle_board_source(project_id, window, cx);
+                }
+            }
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
@@ -434,7 +478,8 @@ impl Shell {
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),
-            // Only bound while the Git list has focus.
+            Command::ContextMenu | Command::FocusSidebar => {}
+            // Only bound while the Git list or diff has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
             Command::GitNextHunk => self.git_key(git_view::Key::NextHunk, window, cx),
@@ -452,6 +497,7 @@ impl Shell {
                 }
             }
             Command::GitToggleDiffMode => self.set_diff_mode(self.diff_mode.other(), cx),
+            Command::GitToggleWrap => self.set_diff_wrap(!self.diff_wrap, cx),
             Command::GitToggleViewed => self.toggle_selected_viewed(window, cx),
             Command::GitStageAll => self.git_stage_all(git_view::Stage::Stage, window, cx),
             Command::GitUnstageAll => self.git_stage_all(git_view::Stage::Unstage, window, cx),
@@ -475,6 +521,19 @@ impl Shell {
                     self.save_file(project_id, path, None, window, cx);
                 }
             }
+            Command::OpenKept => {
+                // Only the tree's cursor: in the editor or a find field Alt+Enter stays theirs.
+                if !(self.file_tree_shown() && self.files_focus.is_focused(window)) {
+                    cx.propagate();
+                    return;
+                }
+                if let Some(project_id) = self.workspace {
+                    let cursor = self.files_view(project_id).enter_target();
+                    if let Some(cursor) = cursor {
+                        self.click_file(project_id, &cursor, Open::Kept, window, cx);
+                    }
+                }
+            }
             Command::ToggleIgnored => {
                 // Only bound while the tree has the keyboard.
                 if let Some(project_id) = self.workspace {
@@ -496,18 +555,23 @@ impl Shell {
                 }
             }
             Command::AddComment => {
-                // Only bound while Docs are shown or the Git list has focus.
+                // Only bound while Docs are shown or the Git list or diff has focus.
                 if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
                 {
                     self.start_comment(project_id, context, window, cx);
                 }
             }
             Command::SendComments => {
-                // Only bound while Docs are shown or the Git list has focus.
+                // Only bound while Docs are shown or the Git list or diff has focus.
                 if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
                 {
                     self.open_send_dialog(project_id, context, window, cx);
                 }
+            }
+            Command::PickDown | Command::PickUp => {
+                // Only bound while Docs are shown or the Git list or diff has focus; a focused text
+                // field, comment draft or dialog never gets here (the guards above).
+                self.pick_step(*command == Command::PickDown, cx);
             }
             Command::NewTask => {
                 if let Some(project_id) = self.workspace {
@@ -517,8 +581,25 @@ impl Shell {
                 }
             }
             Command::RunTask if self.jira_side_shown() => {}
-            Command::Card(_) if self.jira_side_shown() => {}
+            // Only bound while Docs are shown or the Git list or diff has focus.
+            Command::NextComment => self.step_comment(true, cx),
+            Command::PreviousComment => self.step_comment(false, cx),
+            Command::ReplyComment => self.reply_selected_comment(window, cx),
+            Command::ResolveComment => self.resolve_selected_comment(window, cx),
+            Command::MoveTabLeft => self.move_active_tab(-1, window, cx),
+            Command::MoveTabRight => self.move_active_tab(1, window, cx),
+            Command::ApproveCard if self.jira_side_shown() => {}
+            Command::Card(key) if self.jira_side_shown() => self.jira_key(key, window, cx),
             Command::Card(key) => self.card_key(key, window, cx),
+            Command::ApproveCard => {
+                // Only bound while a board is shown; the selection may be another workspace's.
+                let target = self
+                    .workspace
+                    .and_then(|id| self.board.approve_target(self.selected_card, id));
+                if let Some(task_id) = target {
+                    self.approve_task(task_id, window, cx);
+                }
+            }
             Command::RunTask => {
                 // Only bound while a board is shown; the selection may be another workspace's.
                 let target = self
@@ -550,7 +631,12 @@ impl Shell {
                 }
             }
             // Handled by the focused terminal pane.
-            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {}
+            Command::Copy
+            | Command::Paste
+            | Command::PageUp
+            | Command::PageDown
+            | Command::CopyMode
+            | Command::LinkHints => {}
             // A focused terminal pane handles it itself.
             Command::Find => match self.view() {
                 View::Editor => self.open_file_find(false, window, cx),

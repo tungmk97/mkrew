@@ -20,7 +20,7 @@
 - Keys that only mean something inside a mode (copy-mode keys, hint letters) are not in `keymap.toml`.
 - A view-context key that a text field also uses (Shift+↑/↓) acts only while the view's list / diff has the keyboard; while a text field, a comment draft or the Files editor has it, the key stays with that field.
 - Commits: Conventional Commits (`feat(ui): …`), `git -c user.email=tungnv975@gmail.com commit`, stage only the task's files, never push.
-- Docs per wave: SPEC.md §12 / §12B / §10 / §13; `docs/decisions/0081-keyboard-only-operation.md` (wave 1 created it; this wave appends a section); `docs/HUMAN_CHECKS.md` "To verify" entries for visual and keyboard checks in dark + light. Never touch `CHANGELOG.md`.
+- Docs per wave: SPEC.md §12 / §12B / §10 / §13; `docs/decisions/0085-keyboard-only-operation.md` (wave 1 created it; this wave appends a section); `docs/HUMAN_CHECKS.md` "To verify" entries for visual and keyboard checks in dark + light. Never touch `CHANGELOG.md`.
 - Markdown: one sentence per physical line; never the em dash character, use "-".
 - Waves run in order 1 → 2 → 3 → 4 on master. Waves 1 and 2 edit `main.rs`, `shell/focus.rs`, `shell/widgets.rs` and `keymap.rs` before this wave runs: re-locate every edit point below by its quoted text, never by line number (line numbers are from before wave 1).
 - Cross-wave names (keep exact): `Command::PickDown` / `PickUp` / `CopyMode` / `LinkHints` in `Command::all()` right after `SendComments` (the two pick commands) and right after `SendSelection` (the two terminal ones); `Shell::reveal_pick(project_id, context, cx)` is called by wave 4's NextComment / PreviousComment after `pick_lines`.
@@ -42,7 +42,7 @@
 | `crates/mkrew-ui/src/terminal/view.rs` | copy-mode and hint key routing, hint overlay, events |
 | `crates/mkrew-ui/src/keymap.rs`, `palette.rs`, `shell/sessions.rs` | four commands |
 | `crates/mkrew-ui/src/shell/pane_render.rs`, `focus.rs`, `toasts.rs`, `main.rs`, `shell/connection.rs`, `theme.rs` | "Copy mode" chip, tab bar notice, fields, token |
-| `docs/SPEC.md`, `docs/decisions/0081-keyboard-only-operation.md`, `docs/HUMAN_CHECKS.md` | docs |
+| `docs/SPEC.md`, `docs/decisions/0085-keyboard-only-operation.md`, `docs/HUMAN_CHECKS.md` | docs |
 
 ## Review Focus
 
@@ -2132,14 +2132,14 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): open terminal links b
 
 ---
 
-### Task 8: ADR 0081, SPEC and HUMAN_CHECKS
+### Task 8: ADR 0085, SPEC and HUMAN_CHECKS
 
 **Files:**
-- Modify: `docs/decisions/0081-keyboard-only-operation.md` (append a section; wave 1 created the file, check it exists with `ls docs/decisions/0081*`)
+- Modify: `docs/decisions/0085-keyboard-only-operation.md` (append a section; wave 1 created the file, check it exists with `ls docs/decisions/0085*`)
 - Modify: `docs/SPEC.md` (§10 after the "Terminal links" bullet, §12 "Comments" bullet, §12B "Diff comments → agent" bullet, §13 table and the note after it)
 - Modify: `docs/HUMAN_CHECKS.md` (new heading under "To verify (non-blocking)")
 
-- [ ] **Step 1: ADR 0081** - append at the end of the file:
+- [ ] **Step 1: ADR 0085** - append at the end of the file:
 
 ```markdown
 
@@ -2168,7 +2168,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): open terminal links b
 Replace `- **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →` with
 
 ```markdown
-- **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0081) →
+- **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0085) →
 ```
 
 Replace `- **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in` with
@@ -2180,14 +2180,14 @@ Replace `- **Diff comments → agent:** pick diff lines (click a new-side line, 
 - [ ] **Step 3: SPEC §10** - after the "Terminal links" bullet (it ends with "or painted."), insert:
 
 ```markdown
-- **Copy mode** (`Alt+Shift+C`, ADR 0081): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
+- **Copy mode** (`Alt+Shift+C`, ADR 0085): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
   While it is on the keys go to the UI, not the program, and the pane header (the tab bar for a single pane) shows `Copy mode` with the key hints.
   `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
   `v` / `Shift+V` start, switch or drop a character / line selection.
   `y` or `Enter` copy it and leave; `Ctrl+Shift+C` copies it too; `Ctrl+Shift+L` sends it to an agent's composer; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
   `Esc` drops the selection, or leaves copy mode when there is none.
   Output that arrives meanwhile is held back (up to 1 MiB) so the view and the cursor stay on their text; leaving copy mode applies it and returns to the live screen.
-- **Link hints** (`Alt+Shift+O`, ADR 0081): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
+- **Link hints** (`Alt+Shift+O`, ADR 0085): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
   Typing a label opens that link exactly like Ctrl+Click; `Esc` or any other key cancels.
   Output is held back while the labels show.
   No link on screen: the tab bar says "No links on screen." for 3 seconds.
@@ -2215,7 +2215,7 @@ The keys of copy mode (`h j k l w b e 0 $ g G v V y`, arrows, PgUp / PgDn, Enter
 - [ ] **Step 5: HUMAN_CHECKS** - in `docs/HUMAN_CHECKS.md`, directly under the italic intro paragraph of "To verify (non-blocking)" and above the newest `### To verify - …` heading, insert:
 
 ```markdown
-### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0081)
+### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0085)
 
 - [ ] **Pick lines in Docs (dark + light):** Docs → a `.md`, nothing picked: Shift+↓ picks the first block in view (Preview) or line (Source), highlighted like a click; more Shift+↓ grows, Shift+↑ shrinks, the moved end scrolls into view; Esc clears; Ctrl+Alt+M opens the comment draft on it.
 - [ ] **Pick lines in the Git diff (dark + light, Unified + Split):** Git → a changed file with 2+ hunks: `n` then Shift+↓ picks the first new-side line of that hunk, Shift+↓ grows across the gap into the next hunk and scrolls; the pick bar sits under the last line; Esc clears; Ctrl+Alt+M comments, Ctrl+Shift+L sends.
@@ -2228,8 +2228,8 @@ The keys of copy mode (`h j k l w b e 0 $ g G v V y`, arrows, PgUp / PgDn, Enter
 - [ ] **Step 6: Commit**
 
 ```bash
-git add docs/decisions/0081-keyboard-only-operation.md docs/SPEC.md docs/HUMAN_CHECKS.md
-git -c user.email=tungnv975@gmail.com commit -m "docs(spec): keyboard wave 3, picking by keyboard (ADR 0081)"
+git add docs/decisions/0085-keyboard-only-operation.md docs/SPEC.md docs/HUMAN_CHECKS.md
+git -c user.email=tungnv975@gmail.com commit -m "docs(spec): keyboard wave 3, picking by keyboard (ADR 0085)"
 ```
 
 ---
@@ -2324,13 +2324,13 @@ git -c user.email=tungnv975@gmail.com commit -m "docs(spec): keyboard wave 3 smo
 | Output in copy mode does not move the view; leaving returns live | 4 (hold) |
 | `LinkHints` `alt-shift-o`: scan, labels, open like Ctrl+Click, Esc / other key cancels, notice | 6, 7 |
 | Tests: pick boundaries, copy-mode emulator test, label assignment and matching | 1, 2, 4, 6 |
-| SPEC §12 / §12B / §10 / §13, ADR 0081, HUMAN_CHECKS, smoke run | 8, 9 |
+| SPEC §12 / §12B / §10 / §13, ADR 0085, HUMAN_CHECKS, smoke run | 8, 9 |
 
 **Placeholder scan:** no TBD / TODO / "similar to" left; every code step has code. The only deferred lookups are the `mk` stop-daemon subcommand (Task 9 step 5: asks `--help`, it is not guessed) and line numbers after waves 1-2 (quoted anchors given).
 
 **Type consistency:** `Unit`, `Head`, `step`, `first_row`, `Comments::{step_pick, head_line}` (Task 1) are the ones Tasks 2 and 3 call; `Shown::{line_units, block_units}` and `git_view::Shown::{pick_units, hunk_unit, line_row}`, `GitView::step_pick` (Task 2) are the ones `pick_step` / `reveal_pick` call; `CopyKey`, `Select`, `CopyEnd`, `Emulator::{copy_mode, enter_copy_mode, leave_copy_mode, copy_key, set_hold}` (Task 4) are the ones `view.rs` calls in Tasks 5 and 7; `hints::{labels, typed, Typed}` and `links::links_in` (Task 6) are the ones `start_hints` / `hint_key` call.
 
 **Spec gaps and conflicts noticed while planning** (also reported to the parent):
-- The spec says `Ctrl+Shift+L` sends the picked lines "as with a mouse pick", but `open_selection_dialog` sends only from Files, Git and terminals (`_ => return` for Docs, palette `available` excludes Docs); a Docs pick can be commented but not sent as a selection. This plan leaves it as is and records it in ADR 0081.
+- The spec says `Ctrl+Shift+L` sends the picked lines "as with a mouse pick", but `open_selection_dialog` sends only from Files, Git and terminals (`_ => return` for Docs, palette `available` excludes Docs); a Docs pick can be commented but not sent as a selection. This plan leaves it as is and records it in ADR 0085.
 - The spec's copy mode says output "does not move the view" but alacritty keeps the view still only when scrolled back; at the live screen it scrolls. The plan holds output in the emulator (bounded, 1 MiB) so both cases stay put; link hints reuse the same hold so labels stay under their links.
 - The spec's Wave 4 `NextComment` needs a reveal after `pick_lines`; this wave provides `Shell::reveal_pick(project_id, context, cx)` for it.

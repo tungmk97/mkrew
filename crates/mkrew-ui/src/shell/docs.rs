@@ -471,6 +471,7 @@ impl Shell {
                         Rc::clone(shown),
                         docs.comments.selection,
                         on_line,
+                        &self.doc_source_scroll,
                         theme,
                     )
                     .flex_1()

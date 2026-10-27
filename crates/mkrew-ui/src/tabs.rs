@@ -324,6 +324,18 @@ impl Tabs {
         Some(TabMoveParams { tab_id, position })
     }
 
+    /// The active tab's pin group and place in it: (pinned, index among those tabs, how many
+    /// there are). What Move tab left / right steps from.
+    pub fn active_place(&self) -> Option<(bool, usize, usize)> {
+        let active = self.active()?;
+        let group: Vec<Ulid> = (self.tabs.iter())
+            .filter(|tab| tab.pinned == active.pinned)
+            .map(|tab| tab.id)
+            .collect();
+        let at = group.iter().position(|id| *id == active.id)?;
+        Some((active.pinned, at, group.len()))
+    }
+
     /// The tabs "Close others" (`right_only` false) or "Close tabs to the right" closes from
     /// `tab_id`'s menu: the unpinned ones besides it, or only those after it.
     pub fn close_targets(&self, tab_id: Ulid, right_only: bool) -> Vec<Ulid> {

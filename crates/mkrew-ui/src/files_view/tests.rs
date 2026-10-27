@@ -1455,3 +1455,17 @@ fn dropping_changes_rereads_the_file() {
     assert_eq!(text(&view), "a\n", "the disk's text, not the dropped edit");
     assert_eq!(view.drop_changes("gone.rs"), None);
 }
+
+#[test]
+fn a_file_tabs_place_is_counted_inside_its_pin_group() {
+    let mut view = three();
+    for path in ["README.md", "src/main.rs", "src/lib.rs"] {
+        view.open(path, Open::Kept);
+    }
+    view.pin("README.md", true);
+    // The active tab is the last opened: second of the two unpinned tabs.
+    assert_eq!(view.active_place(), Some((false, 1, 2)));
+    view.activate(0);
+    assert_eq!(view.active_place(), Some((true, 0, 1)));
+    assert_eq!(three().active_place(), None, "no tab");
+}

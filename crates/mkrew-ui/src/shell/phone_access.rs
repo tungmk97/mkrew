@@ -32,6 +32,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         if undo_dialog::cancels(&event.keystroke) {
             self.close_phone_access(window, cx);
@@ -234,6 +237,7 @@ impl Shell {
             .children(status.switch.map(|switch| {
                 match switch {
                     Switch::Start => button("phone-start", "Start", theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Turn phone access on: the daemon runs mk web",
@@ -243,6 +247,7 @@ impl Shell {
                             shell.set_phone_enabled(true, window, cx);
                         })),
                     Switch::Stop => button("phone-stop", "Stop", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Turn phone access off: the phone can no longer reach Mkrew",
@@ -264,6 +269,7 @@ impl Shell {
             .children(serve.button.map(|state| {
                 match state {
                     SetUp::Ready => button("phone-setup", "Set up", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Run tailscale serve so the phone reaches Mkrew over HTTPS",
@@ -284,6 +290,7 @@ impl Shell {
                 .child(line(row.text.to_owned()))
                 .child(match row.switch {
                     PushSwitch::TurnOn => button("phone-push-on", "Turn on", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(
                             theme,
                             "Notify the phone when an agent needs you or finishes. The message is encrypted for the phone and goes through Apple's, Google's, Mozilla's or Microsoft's push service",
@@ -293,6 +300,7 @@ impl Shell {
                             shell.set_phone_push(true, window, cx);
                         })),
                     PushSwitch::TurnOff => button("phone-push-off", "Turn off", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Stop notifying the phone", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.set_phone_push(false, window, cx);
@@ -346,6 +354,7 @@ impl Shell {
                                     theme,
                                     false,
                                 )
+                                .focus_stop(theme)
                                 .tooltip(tooltip(
                                     theme,
                                     "Copy the link (it carries the access token)",
@@ -379,8 +388,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::phone_access_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::phone_access_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -403,6 +416,7 @@ impl Shell {
                     .pt(px(space::S))
                     .child(
                         button("phone-close", "Close", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Close", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_phone_access(window, cx);

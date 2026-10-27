@@ -15,12 +15,14 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config, TermMode};
+use alacritty_terminal::vi_mode::ViMotion;
 use alacritty_terminal::vte::ansi::{
     Color, CursorShape, CursorStyle, NamedColor, Processor, StdSyncHandler,
 };
 use mkrew_protocol::ScreenSnapshot;
 use mkrew_protocol::paint::paint;
 
+use crate::terminal::copy_mode::{CopyKey, Select};
 use crate::terminal::input::InputMode;
 use crate::terminal::links::SPACER;
 
@@ -29,6 +31,12 @@ const SCROLLBACK_LINES: usize = 10_000;
 
 /// How far back a find-bar query edit looks (Enter searches the whole history).
 const INCREMENTAL_SEARCH_LINES: usize = 1_000;
+
+/// Output held back while the screen must stay as it is (copy mode, link labels) is applied at
+/// once above this size.
+// ponytail: a flood while holding moves the view instead of growing memory; page the held
+// output if a user ever copies from a pane that prints more than this.
+const HOLD_LIMIT: usize = 1 << 20;
 
 /// One cell of a [`Grid`] snapshot.
 #[derive(Clone, Debug, PartialEq)]
@@ -113,6 +121,15 @@ impl Grid {
     }
 }
 
+/// What a copy-mode key asks of the pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CopyEnd {
+    /// Still in copy mode.
+    Stay,
+    /// Left copy mode; the selected text (`y` / Enter), if any, goes to the clipboard.
+    Leave(Option<String>),
+}
+
 /// Terminal state machine fed with a session's output.
 pub struct Emulator {
     term: Term<VoidListener>,
@@ -125,6 +142,9 @@ pub struct Emulator {
     /// The last [`Emulator::shared_grid`]; every `&mut self` method drops it, so it always shows
     /// the current state. Saves rebuilding the grid on frames where this pane did not change.
     last_grid: RefCell<Option<Arc<Grid>>>,
+    /// Output waits in `held` while this is set or copy mode is on (see [`Emulator::set_hold`]).
+    hold: bool,
+    held: Vec<u8>,
 }
 
 impl Emulator {
@@ -135,6 +155,10 @@ impl Emulator {
                 shape: CursorShape::Beam,
                 blinking: false,
             },
+            vi_mode_cursor_style: Some(CursorStyle {
+                shape: CursorShape::Block,
+                blinking: false,
+            }),
             ..Config::default()
         };
         Self {
@@ -143,6 +167,8 @@ impl Emulator {
             search: None,
             current_match: None,
             last_grid: RefCell::default(),
+            hold: false,
+            held: Vec::new(),
         }
     }
 
@@ -168,9 +194,41 @@ impl Emulator {
     }
 
     pub fn advance(&mut self, bytes: &[u8]) {
+        if self.holding() {
+            if self.held.len() + bytes.len() <= HOLD_LIMIT {
+                self.held.extend_from_slice(bytes);
+                return;
+            }
+            self.apply_held();
+        }
+        self.apply(bytes);
+    }
+
+    fn apply(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.term, bytes);
         self.changed();
         self.recheck_current_match();
+    }
+
+    /// Copy mode or an explicit hold: the screen must not change under the user.
+    fn holding(&self) -> bool {
+        self.hold || self.copy_mode()
+    }
+
+    fn apply_held(&mut self) {
+        if !self.held.is_empty() {
+            let held = std::mem::take(&mut self.held);
+            self.apply(&held);
+        }
+    }
+
+    /// Holds incoming output back (link labels stay under their links) or lets it in again;
+    /// copy mode holds on its own.
+    pub fn set_hold(&mut self, hold: bool) {
+        self.hold = hold;
+        if !self.holding() {
+            self.apply_held();
+        }
     }
 
     pub fn resize(&mut self, cols: usize, rows: usize) {
@@ -233,6 +291,12 @@ impl Emulator {
             self.term.scroll_to_point(*found.start());
         }
         self.current_match = found;
+        // Copy mode: the match is where the cursor goes.
+        if self.copy_mode()
+            && let Some(found) = &self.current_match
+        {
+            self.term.vi_goto_point(*found.start());
+        }
         self.current_match.is_some()
     }
 
@@ -346,6 +410,108 @@ impl Emulator {
         self.term
             .selection_to_string()
             .filter(|text| !text.is_empty())
+    }
+
+    /// Copy mode (SPEC §10) is `alacritty_terminal`'s vi mode: a cursor that moves over the
+    /// screen and the history, and a selection that follows it.
+    pub fn copy_mode(&self) -> bool {
+        self.term.mode().contains(TermMode::VI)
+    }
+
+    /// Turns copy mode on: the vi cursor starts at the program's cursor (the top-left cell of
+    /// the view when that is scrolled out).
+    pub fn enter_copy_mode(&mut self) {
+        if !self.copy_mode() {
+            self.term.selection = None;
+            self.term.toggle_vi_mode();
+            self.changed();
+        }
+    }
+
+    /// Turns copy mode off: the selection goes, held output comes in, the view returns to the
+    /// live screen.
+    pub fn leave_copy_mode(&mut self) {
+        if self.copy_mode() {
+            self.term.toggle_vi_mode();
+        }
+        self.term.selection = None;
+        if !self.holding() {
+            self.apply_held();
+        }
+        self.term.scroll_display(Scroll::Bottom);
+        self.changed();
+    }
+
+    /// Applies one copy-mode key (see [`crate::terminal::copy_mode::copy_key`]).
+    pub fn copy_key(&mut self, key: CopyKey) -> CopyEnd {
+        match key {
+            CopyKey::Motion(motion) => self.term.vi_motion(motion),
+            CopyKey::Page { up } => self.copy_page(up),
+            CopyKey::Edge { top: true } => {
+                self.term.scroll_display(Scroll::Top);
+                self.term.vi_motion(ViMotion::High);
+            }
+            CopyKey::Edge { top: false } => {
+                self.term.scroll_display(Scroll::Bottom);
+                self.term.vi_motion(ViMotion::Low);
+            }
+            CopyKey::Select(select) => self.copy_select(select),
+            CopyKey::Copy => {
+                // A line selection ends with a line break; pasted into a shell it would run.
+                let text = (self.selection_text())
+                    .map(|text| text.trim_end_matches('\n').to_owned())
+                    .filter(|text| !text.is_empty());
+                self.leave_copy_mode();
+                return CopyEnd::Leave(text);
+            }
+            CopyKey::Cancel => {
+                if (self.term.selection.take())
+                    .filter(|selection| !selection.is_empty())
+                    .is_none()
+                {
+                    self.leave_copy_mode();
+                    return CopyEnd::Leave(None);
+                }
+            }
+        }
+        self.changed();
+        CopyEnd::Stay
+    }
+
+    /// One screen back / forward; the cursor stays on its screen row.
+    fn copy_page(&mut self, up: bool) {
+        let cursor = self.term.vi_mode_cursor.point;
+        let row = cursor.line.0 + self.display_offset() as i32;
+        self.term
+            .scroll_display(if up { Scroll::PageUp } else { Scroll::PageDown });
+        let line = Line(row - self.display_offset() as i32);
+        self.term.vi_goto_point(Point::new(line, cursor.column));
+    }
+
+    /// `v` / Shift+V: starts a selection of the cursor's cell, switches the kind of a
+    /// selection, or drops one of the same kind.
+    fn copy_select(&mut self, select: Select) {
+        let ty = match select {
+            Select::Chars => SelectionType::Simple,
+            Select::Lines => SelectionType::Lines,
+        };
+        let point = self.term.vi_mode_cursor.point;
+        let current = (self.term.selection.as_ref())
+            .filter(|selection| !selection.is_empty())
+            .map(|selection| selection.ty);
+        match current {
+            Some(current) if current == ty => self.term.selection = None,
+            Some(_) => {
+                if let Some(selection) = self.term.selection.as_mut() {
+                    selection.ty = ty;
+                }
+            }
+            None => self.term.selection = Some(Selection::new(ty, point, Side::Left)),
+        }
+        // A new selection covers the cell under the cursor (its two sides differ).
+        if let Some(selection) = self.term.selection.as_mut() {
+            selection.include_all();
+        }
     }
 
     /// Grid point of a visible cell, accounting for the scrolled-back view.
@@ -833,5 +999,211 @@ mod tests {
         emu.scroll_to_bottom();
         emu.advance(b"b.txt");
         assert_eq!(emu.grid().to_text(), "$ ls\na.txt\nb.txt\n");
+    }
+
+    fn copy_keys(emu: &mut Emulator, keys: impl IntoIterator<Item = CopyKey>) -> CopyEnd {
+        let mut end = CopyEnd::Stay;
+        for key in keys {
+            end = emu.copy_key(key);
+        }
+        end
+    }
+
+    #[test]
+    fn copy_vi_motions_select_and_yank() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello abc\r\nsecond");
+        emu.enter_copy_mode();
+        assert!(emu.copy_mode());
+        copy_keys(
+            &mut emu,
+            [
+                CopyKey::Motion(ViMotion::First),
+                CopyKey::Motion(ViMotion::Up),
+                CopyKey::Select(Select::Chars),
+                CopyKey::Motion(ViMotion::Right),
+                CopyKey::Motion(ViMotion::Right),
+                CopyKey::Motion(ViMotion::Right),
+                CopyKey::Motion(ViMotion::Right),
+            ],
+        );
+        let grid = emu.grid();
+        assert!(grid.rows[0][0].selected && grid.rows[0][4].selected && !grid.rows[0][5].selected);
+        assert_eq!((grid.cursor.row, grid.cursor.col), (0, 4));
+        let end = copy_keys(&mut emu, [CopyKey::Copy]);
+        assert_eq!(end, CopyEnd::Leave(Some("hello".into())));
+        assert!(!emu.copy_mode());
+    }
+
+    #[test]
+    fn copy_line_selection_takes_whole_lines() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello abc\r\nsecond");
+        emu.enter_copy_mode();
+        let end = copy_keys(
+            &mut emu,
+            [
+                CopyKey::Motion(ViMotion::First),
+                CopyKey::Motion(ViMotion::Up),
+                CopyKey::Select(Select::Lines),
+                CopyKey::Motion(ViMotion::Down),
+                CopyKey::Copy,
+            ],
+        );
+        let CopyEnd::Leave(Some(text)) = end else {
+            panic!("nothing copied: {end:?}");
+        };
+        assert_eq!(text, "hello abc\nsecond", "no trailing line break");
+    }
+
+    #[test]
+    fn copy_v_starts_switches_and_drops_the_selection() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello abc\r\nsecond");
+        emu.enter_copy_mode();
+        copy_keys(&mut emu, [CopyKey::Motion(ViMotion::First)]);
+        copy_keys(&mut emu, [CopyKey::Select(Select::Chars)]);
+        assert_eq!(emu.selection_text().as_deref(), Some("s"));
+        copy_keys(&mut emu, [CopyKey::Select(Select::Lines)]);
+        // alacritty ends a line selection with the line break.
+        assert_eq!(emu.selection_text().as_deref(), Some("second\n"));
+        copy_keys(&mut emu, [CopyKey::Select(Select::Lines)]);
+        assert_eq!(emu.selection_text(), None, "the same kind again drops it");
+    }
+
+    #[test]
+    fn copy_esc_drops_the_selection_then_leaves() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello abc\r\nsecond");
+        emu.enter_copy_mode();
+        copy_keys(
+            &mut emu,
+            [
+                CopyKey::Motion(ViMotion::First),
+                CopyKey::Select(Select::Chars),
+                CopyKey::Motion(ViMotion::Right),
+            ],
+        );
+        assert!(emu.selection_text().is_some());
+        assert_eq!(copy_keys(&mut emu, [CopyKey::Cancel]), CopyEnd::Stay);
+        assert_eq!(emu.selection_text(), None);
+        assert!(emu.copy_mode());
+        assert_eq!(copy_keys(&mut emu, [CopyKey::Cancel]), CopyEnd::Leave(None));
+        assert!(!emu.copy_mode());
+    }
+
+    #[test]
+    fn copy_output_in_copy_mode_waits_for_the_view_to_come_back() {
+        let mut emu = Emulator::new(10, 3);
+        numbered_lines(&mut emu, 10);
+        emu.enter_copy_mode();
+        copy_keys(&mut emu, [CopyKey::Edge { top: true }]);
+        let (offset, text) = (emu.display_offset(), emu.grid().to_text());
+        assert!(offset > 0);
+        emu.advance(b"fresh\r\nlast\r\n");
+        assert_eq!(emu.display_offset(), offset, "the view did not move");
+        assert_eq!(emu.grid().to_text(), text);
+        assert_eq!(copy_keys(&mut emu, [CopyKey::Cancel]), CopyEnd::Leave(None));
+        assert_eq!(emu.display_offset(), 0, "back on the live screen");
+        assert!(emu.grid().to_text().contains("last"), "held output applied");
+    }
+
+    #[test]
+    fn copy_output_at_the_live_screen_does_not_scroll_it_either() {
+        let mut emu = Emulator::new(10, 3);
+        emu.advance(b"a\r\nb");
+        emu.enter_copy_mode();
+        let before = emu.grid().to_text();
+        emu.advance(b"\r\nc\r\nd\r\ne");
+        assert_eq!(emu.grid().to_text(), before);
+    }
+
+    #[test]
+    fn copy_page_keeps_the_cursor_row_of_the_screen() {
+        let mut emu = Emulator::new(10, 3);
+        numbered_lines(&mut emu, 12);
+        emu.enter_copy_mode();
+        copy_keys(&mut emu, [CopyKey::Edge { top: false }]);
+        let row = emu.grid().cursor.row;
+        copy_keys(&mut emu, [CopyKey::Page { up: true }]);
+        assert!(emu.display_offset() > 0);
+        assert_eq!(emu.grid().cursor.row, row);
+    }
+
+    #[test]
+    fn copy_find_match_moves_the_cursor() {
+        let mut emu = Emulator::new(10, 3);
+        numbered_lines(&mut emu, 10);
+        emu.enter_copy_mode();
+        assert!(emu.set_search("line5"));
+        assert!(emu.search_next(true));
+        let grid = emu.grid();
+        let row = grid.to_text().lines().position(|l| l == "line5").unwrap();
+        assert_eq!((grid.cursor.row, grid.cursor.col), (row, 0));
+    }
+
+    #[test]
+    fn held_output_is_applied_when_the_hold_ends() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"a");
+        emu.set_hold(true);
+        emu.advance(b"b");
+        assert_eq!(emu.grid().to_text(), "a\n\n");
+        emu.set_hold(false);
+        assert_eq!(emu.grid().to_text(), "ab\n\n");
+    }
+
+    #[test]
+    fn a_flood_is_applied_not_held_without_limit() {
+        let mut emu = Emulator::new(10, 2);
+        emu.set_hold(true);
+        emu.advance(&vec![b'x'; HOLD_LIMIT + 1]);
+        assert!(emu.grid().to_text().starts_with('x'), "applied at once");
+    }
+
+    #[test]
+    fn overflow_applies_the_held_bytes_first_then_the_new_ones() {
+        let mut emu = Emulator::new(10, 2);
+        emu.set_hold(true);
+        emu.advance(b"ab\r");
+        // Carriage returns do not scroll: "c" overwrites "a" only if it comes after the held "ab".
+        let mut flood = vec![b'\r'; HOLD_LIMIT];
+        flood[0] = b'c';
+        emu.advance(&flood);
+        assert_eq!(emu.grid().to_text(), "cb\n\n", "held first, then new");
+    }
+
+    #[test]
+    fn leaving_copy_mode_keeps_an_explicit_hold() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"a");
+        emu.set_hold(true);
+        emu.enter_copy_mode();
+        emu.advance(b"b");
+        emu.leave_copy_mode();
+        assert_eq!(emu.grid().to_text(), "a\n\n", "still held");
+        emu.set_hold(false);
+        assert_eq!(emu.grid().to_text(), "ab\n\n");
+    }
+
+    #[test]
+    fn copy_esc_after_a_click_leaves_at_once() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello");
+        emu.start_selection(0, 1, Side::Left);
+        emu.enter_copy_mode();
+        assert_eq!(copy_keys(&mut emu, [CopyKey::Cancel]), CopyEnd::Leave(None));
+        assert!(!emu.copy_mode());
+    }
+
+    #[test]
+    fn entering_copy_mode_drops_a_mouse_selection() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello");
+        emu.start_selection(0, 0, Side::Left);
+        emu.update_selection(0, 3, Side::Right);
+        assert!(emu.selection_text().is_some());
+        emu.enter_copy_mode();
+        assert_eq!(emu.selection_text(), None);
     }
 }

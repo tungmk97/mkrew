@@ -4,27 +4,34 @@
 use crate::*;
 
 impl Shell {
-    /// Opens `menu` (closing any other Git popover); the Repositories menu starts with an
-    /// empty search that has the keyboard.
+    /// Opens `menu` (closing any other popover). The Repositories menu starts with an empty
+    /// search that has the keyboard and its first row selected.
     pub(crate) fn open_git_menu(
         &mut self,
         menu: GitMenu,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.begin_menu(window, cx);
         self.git_menu = Some(menu);
         if menu == GitMenu::Repos {
             self.git_repo_query.clear();
+            self.finish_menu(true, window, cx);
             window.focus(&self.git_repo_query_focus, cx);
+        } else {
+            self.finish_menu(window.last_input_was_keyboard(), window, cx);
         }
-        cx.notify();
     }
 
-    /// Closes the open Git popover; the list takes the keyboard back.
-    pub(crate) fn close_git_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.git_menu = None;
-        window.focus(&self.git_focus, cx);
-        cx.notify();
+    /// The repository tabs show for `project_id` (two or more repositories, no task worktree):
+    /// what "Switch repository…" needs.
+    pub(crate) fn git_repos_listed(&self, project_id: Ulid) -> bool {
+        self.git
+            .get(&project_id)
+            .is_some_and(|view| view.worktree_task_id.is_none())
+            && self.git_repos.get(&project_id).is_some_and(|repos| {
+                !git_view::repo_choices(repos, self.workspace_name(project_id)).is_empty()
+            })
     }
 
     /// The repository tabs of a multi-repo workspace (ADR 0029): the shown one underlined in
@@ -141,8 +148,54 @@ impl Shell {
             .map(RepoSummary::changed)
     }
 
-    /// "Repositories": a search field, then one row per repository with its branch and
-    /// Clean / N changes; a click shows it.
+    /// "Repositories": the heading, then one row per repository matching the search, with its
+    /// branch and Clean / N changes; Enter or a click shows it.
+    pub(crate) fn git_repo_rows(&self, project_id: Ulid, active: &Option<String>) -> Rows {
+        let repos = self
+            .git_repos
+            .get(&project_id)
+            .map_or(&[][..], Vec::as_slice);
+        let mut rows: Rows = vec![MenuRow::Heading("Repositories".into())];
+        let listed = git_view::repo_choices(repos, self.workspace_name(project_id))
+            .into_iter()
+            .filter(|(_, label)| palette::fuzzy(&self.git_repo_query, label).is_some())
+            .map(|(repo, label)| {
+                let summary = self.git_summary().and_then(|summary| {
+                    let name = repo.as_deref().unwrap_or("");
+                    summary.repos.iter().find(|summary| summary.repo == name)
+                });
+                let branch = summary
+                    .map(|summary| summary.branch.clone().unwrap_or_else(|| "detached".into()))
+                    .unwrap_or_default();
+                let state = match summary.map(RepoSummary::changed) {
+                    Some(0) => "Clean".to_owned(),
+                    Some(n) => format!("{n} changes"),
+                    None => String::new(),
+                };
+                let shown = *active == repo;
+                let item = MenuItem::new(
+                    label.to_owned(),
+                    act(move |shell, window, cx| {
+                        shell.set_git_repo(project_id, repo.clone(), window, cx);
+                    }),
+                )
+                .checked(shown)
+                .detail(state);
+                if branch.is_empty() {
+                    item
+                } else {
+                    item.sub(branch)
+                }
+                .row()
+            })
+            .collect::<Vec<_>>();
+        if listed.is_empty() {
+            rows.push(MenuRow::Note("No repository matches.".into()));
+        }
+        rows.extend(listed);
+        rows
+    }
+
     fn render_git_repo_menu(
         &self,
         project_id: Ulid,
@@ -151,121 +204,47 @@ impl Shell {
         window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let query = &self.git_repo_query;
         let focused = self.git_repo_query_focus.is_focused(window);
-        let repos = self
-            .git_repos
-            .get(&project_id)
-            .map_or(&[][..], Vec::as_slice);
-        let rows = git_view::repo_choices(repos, self.workspace_name(project_id))
-            .into_iter()
-            .enumerate()
-            .filter(|(_, (_, label))| palette::fuzzy(query, label).is_some())
-            .map(|(at, (repo, label))| {
-                let active = view.repo == repo;
-                let summary = self.git_summary().and_then(|summary| {
-                    let name = repo.as_deref().unwrap_or("");
-                    summary.repos.iter().find(|summary| summary.repo == name)
-                });
-                let branch = summary
-                    .map(|summary| summary.branch.clone().unwrap_or_else(|| "detached".into()))
-                    .unwrap_or_default();
-                let (state, color) = match summary.map(RepoSummary::changed) {
-                    Some(0) => ("Clean".to_owned(), theme.text_muted),
-                    Some(n) => (format!("{n} changes"), theme.git_untracked),
-                    None => (String::new(), theme.text_muted),
-                };
-                menu_item(SharedString::from(format!("git-repo-menu-{at}")), theme)
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(px(space::M))
-                            .text_color(rgb(theme.accent_text))
-                            .child(if active { "✓" } else { "" }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_color(rgb(theme.text))
-                                    .child(label.to_owned()),
-                            )
-                            .child(meta_line(theme, branch.into()).truncate()),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(font_size::META)
-                            .text_color(rgb(color))
-                            .child(state),
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.close_git_menu(window, cx);
-                        shell.set_git_repo(project_id, repo.clone(), window, cx);
-                    }))
-            })
-            .collect::<Vec<_>>();
-        let panel = menu_panel("git-repos-panel", theme)
-            .gap(px(space::XS))
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.git_menu = None;
-                cx.notify();
-            }))
-            .child(
-                caret_field(
-                    "git-repos-search",
-                    query,
-                    "Search repositories",
-                    focused,
-                    theme,
-                    cx,
-                    |shell, caret| {
-                        shell
-                            .git_repo_query
-                            .click(caret.at, caret.extend, caret.clicks);
-                    },
-                )
-                .track_focus(&self.git_repo_query_focus)
-                .on_key_down(cx.listener(Self::git_repo_query_key_down))
-                .relative()
-                .child(self.typing(
-                    &self.git_repo_query_focus,
-                    Self::git_repo_query_key_down,
-                    cx,
-                ))
-                .on_click(cx.listener(|shell, _, window, cx| {
-                    window.focus(&shell.git_repo_query_focus, cx);
-                    cx.notify();
-                })),
-            )
-            .child(
-                div()
-                    .px(px(space::S))
-                    .pt(px(space::XS))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child("Repositories"),
-            )
-            .when(rows.is_empty(), |el| {
-                el.child(meta_line(theme, "No repository matches.".into()).px(px(space::S)))
-            })
-            .children(rows);
-        deferred(
-            anchored()
-                .snap_to_window_with_margin(px(space::S))
-                .child(div().pt(px(space::XS)).child(panel)),
+        let search = caret_field(
+            "git-repos-search",
+            &self.git_repo_query,
+            "Search repositories",
+            focused,
+            theme,
+            cx,
+            |shell, caret| {
+                shell
+                    .git_repo_query
+                    .click(caret.at, caret.extend, caret.clicks);
+            },
         )
-        .into_any_element()
+        .track_focus(&self.git_repo_query_focus)
+        .on_key_down(cx.listener(Self::git_repo_query_key_down))
+        .relative()
+        .child(self.typing(
+            &self.git_repo_query_focus,
+            Self::git_repo_query_key_down,
+            cx,
+        ))
+        .on_click(cx.listener(|shell, _, window, cx| {
+            window.focus(&shell.git_repo_query_focus, cx);
+            cx.notify();
+        }))
+        .into_any_element();
+        render_menu(
+            self.menu_state(),
+            "git-repos-panel",
+            self.git_repo_rows(project_id, &view.repo),
+            Some(search),
+            Place::Dropdown,
+            theme,
+            cx,
+        )
     }
 
-    /// The Repositories search: typing filters, Enter shows the first match, Esc clears the
-    /// search (then closes the menu).
+    /// The Repositories search: typing filters (the first match is selected), ↑ / ↓ move the
+    /// selection through the filtered rows, Enter shows the selected one, Esc clears the search
+    /// (then closes the menu).
     pub(crate) fn git_repo_query_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -280,37 +259,45 @@ impl Shell {
         let paste = (key == quick_open::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
-        let query = &mut self.git_repo_query;
+        let active = self.git.get(&project_id).and_then(|view| view.repo.clone());
         match key {
-            quick_open::Key::Close if !query.is_empty() => query.clear(),
-            quick_open::Key::Close => return self.close_git_menu(window, cx),
+            quick_open::Key::Close if !self.git_repo_query.is_empty() => {
+                self.git_repo_query.clear();
+            }
+            quick_open::Key::Close => return self.dismiss_menus(window, cx),
+            // The key that opened the menu may still repeat: it must not pick a row.
+            quick_open::Key::Open if event.is_held => return,
             quick_open::Key::Open => {
-                let repos = self
-                    .git_repos
-                    .get(&project_id)
-                    .map_or(&[][..], Vec::as_slice);
-                let first = git_view::repo_choices(repos, self.workspace_name(project_id))
-                    .into_iter()
-                    .find(|(_, label)| palette::fuzzy(&self.git_repo_query, label).is_some())
-                    .map(|(repo, _)| repo);
-                self.close_git_menu(window, cx);
-                if let Some(repo) = first {
-                    self.set_git_repo(project_id, repo, window, cx);
+                let rows = self.git_repo_rows(project_id, &active);
+                let action = self
+                    .menu_selected
+                    .and_then(|at| menu_model::action_of(&rows, at))
+                    .cloned();
+                self.dismiss_menus(window, cx);
+                if let Some(action) = action {
+                    action(self, 0, window, cx);
                 }
                 return;
             }
-            quick_open::Key::Move(_) => {}
+            quick_open::Key::Move(by) => {
+                let rows = self.git_repo_rows(project_id, &active);
+                self.menu_selected = menu_model::step(&rows, self.menu_selected, by as isize);
+                return cx.notify();
+            }
             quick_open::Key::Edit(edit) => {
-                copy_selection(&edit, query, cx);
-                query.edit(&edit);
+                copy_selection(&edit, &self.git_repo_query, cx);
+                self.git_repo_query.edit(&edit);
             }
             quick_open::Key::Paste => {
-                query.insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
+                self.git_repo_query
+                    .insert(&paste.unwrap_or_default().replace(['\r', '\n'], " "));
             }
             quick_open::Key::Insert(text) => {
-                query.insert(&text);
+                self.git_repo_query.insert(&text);
             }
         }
+        let rows = self.git_repo_rows(project_id, &active);
+        self.menu_selected = menu_model::first(&rows);
         cx.notify();
     }
 
@@ -471,99 +458,59 @@ impl Shell {
                     })),
                 )
                 .when(open, |el| {
-                    el.child(self.render_git_changed_by_menu(project_id, view, changers, theme, cx))
+                    el.child(render_menu(
+                        self.menu_state(),
+                        "git-changed-by-panel",
+                        self.git_changed_by_rows(project_id, view),
+                        None,
+                        Place::Dropdown,
+                        theme,
+                        cx,
+                    ))
                 }),
         )
     }
 
     /// The "By" menu: All sessions, then AGENTS (sessions named by their agent) and OTHER
     /// SESSIONS (named or ended ones); the shown choice is checked.
-    fn render_git_changed_by_menu(
-        &self,
-        project_id: Ulid,
-        view: &GitView,
-        changers: Vec<git_view::Changer>,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
+    pub(crate) fn git_changed_by_rows(&self, project_id: Ulid, view: &GitView) -> Rows {
         let filtered = view.changed_by.session;
         let sessions = self.sidebar.sessions();
-        let item = |id: SharedString, label: String, session: Option<Ulid>| {
+        let item = |label: String, session: Option<Ulid>| {
             let tip = match session {
                 None => "Every changed file".to_owned(),
                 Some(_) => format!("Only the files {label} changed in the last 24 h"),
             };
-            menu_item(id, theme)
-                .tooltip(tooltip(theme, &tip, ""))
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(space::M))
-                        .text_color(rgb(theme.accent_text))
-                        .child(if filtered == session { "✓" } else { "" }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(rgb(theme.text))
-                        .child(label),
-                )
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.close_git_menu(window, cx);
+            MenuItem::new(
+                label,
+                act(move |shell, window, cx| {
                     shell.filter_git_changed_by(project_id, session, window, cx);
-                }))
-        };
-        let heading = |text: &'static str| {
-            div()
-                .px(px(space::S))
-                .pt(px(space::S))
-                .pb(px(space::XS))
-                .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
-                .child(text)
+                }),
+            )
+            .checked(filtered == session)
+            .tip(tip)
+            .row()
         };
         // An agent session without a name of its own is listed by its agent (`omp #1`).
-        let (agents, others): (Vec<_>, Vec<_>) = changers.into_iter().partition(|changer| {
-            sessions
-                .iter()
-                .find(|session| session.id == changer.session_id)
-                .is_some_and(|session| history::title(session).is_none())
-        });
-        let rows = |changers: Vec<git_view::Changer>| {
-            changers
-                .into_iter()
-                .map(|changer| {
-                    let id = SharedString::from(format!("git-changed-by-{}", changer.session_id));
-                    item(id, changer.label, Some(changer.session_id))
-                })
-                .collect::<Vec<_>>()
-        };
-        let panel = menu_panel("git-changed-by-panel", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.git_menu = None;
-                cx.notify();
-            }))
-            .child(item(
-                "git-changed-by-all".into(),
-                "All sessions".into(),
-                None,
-            ))
-            .when(!agents.is_empty(), |el| {
-                el.child(heading("AGENTS")).children(rows(agents))
-            })
-            .when(!others.is_empty(), |el| {
-                el.child(heading("OTHER SESSIONS")).children(rows(others))
+        let (agents, others): (Vec<_>, Vec<_>) =
+            view.changers(sessions).into_iter().partition(|changer| {
+                sessions
+                    .iter()
+                    .find(|session| session.id == changer.session_id)
+                    .is_some_and(|session| history::title(session).is_none())
             });
-        deferred(
-            anchored()
-                .snap_to_window_with_margin(px(space::S))
-                .child(div().pt(px(space::XS)).child(panel)),
-        )
-        .into_any_element()
+        let mut rows: Rows = vec![item("All sessions".into(), None)];
+        for (heading, list) in [("AGENTS", agents), ("OTHER SESSIONS", others)] {
+            if list.is_empty() {
+                continue;
+            }
+            rows.push(MenuRow::Heading(heading.into()));
+            rows.extend(
+                list.into_iter()
+                    .map(|changer| item(changer.label, Some(changer.session_id))),
+            );
+        }
+        rows
     }
 }
 

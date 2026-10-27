@@ -8,15 +8,16 @@ impl Shell {
         project_id: Ulid,
         path: String,
         position: Point<Pixels>,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.close_menus();
+        self.begin_menu(window, cx);
         self.file_tab_menu = Some(FileTabMenu {
             project_id,
             path,
             position,
         });
-        cx.notify();
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// One tab per opened file: pin, name (its folder too when two tabs share a name), `●`
@@ -97,6 +98,10 @@ impl Shell {
                             .active(|style| style.opacity(opacity::ACTIVE))
                     })
                     .when(tab.transient && !dirty, |el| el.italic())
+                    .when(is_active, |el| {
+                        el.relative()
+                            .child(record_bounds(Anchor::FileTab(tab.path.clone()), cx))
+                    })
                     .tooltip(tooltip(theme, &tab.path, ""))
                     .on_click(
                         cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
@@ -117,12 +122,13 @@ impl Shell {
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
+                        cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
                             shell.open_file_tab_menu(
                                 project_id,
                                 menu_path.clone(),
                                 event.position,
+                                window,
                                 cx,
                             );
                         }),
@@ -184,98 +190,66 @@ impl Shell {
             }))
     }
 
-    /// The tab menu at the click; a click outside closes it.
+    /// The tab menu: Close, Close others, Close to the right, Close all, Pin / Unpin, Copy path.
+    pub(crate) fn file_tab_menu_rows(&self, menu: &FileTabMenu) -> Rows {
+        let project_id = menu.project_id;
+        let view = self.files.get(&project_id);
+        let target = view.and_then(|view| view.worktree_task_id);
+        let pinned = (view.and_then(|view| view.tab_for(&menu.path))).is_some_and(|tab| tab.pinned);
+        let close = |label: &'static str, which: Close, keys: String| {
+            let path = menu.path.clone();
+            let enabled =
+                view.is_some_and(|view| !view.close_targets(&menu.path, which).is_empty());
+            MenuItem::new(
+                label,
+                act(move |shell, window, cx| {
+                    shell.close_file_tabs(project_id, &path, which, window, cx);
+                }),
+            )
+            .keys(keys)
+            .enabled(enabled)
+            .row()
+        };
+        let (pin_path, copy_path) = (menu.path.clone(), menu.path.clone());
+        vec![
+            close(
+                "Close",
+                Close::One,
+                self.keymap.label(Command::CloseFileTab),
+            ),
+            close("Close others", Close::Others, String::new()),
+            close("Close to the right", Close::Right, String::new()),
+            close("Close all", Close::All, String::new()),
+            MenuRow::Separator,
+            MenuItem::new(
+                if pinned { "Unpin" } else { "Pin" },
+                act(move |shell, _, cx| shell.pin_file_tab(project_id, &pin_path, !pinned, cx)),
+            )
+            .row(),
+            MenuItem::new(
+                "Copy path",
+                act(move |shell, _, cx| {
+                    shell.copy_file_path(project_id, target, &copy_path, cx);
+                }),
+            )
+            .row(),
+        ]
+    }
+
     pub(crate) fn render_file_tab_menu(
         &self,
         menu: &FileTabMenu,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let project_id = menu.project_id;
-        let view = self.files.get(&project_id);
-        let target = view.and_then(|view| view.worktree_task_id);
-        let pinned = (view.and_then(|view| view.tab_for(&menu.path))).is_some_and(|tab| tab.pinned);
-        let separator = || {
-            div()
-                .h(px(theme::BORDER_WIDTH))
-                .my(px(space::XS))
-                .bg(rgb(theme.border))
-        };
-        let close = |id: &'static str, label: &'static str, which: Close, keys: String| {
-            let path = menu.path.clone();
-            let enabled =
-                view.is_some_and(|view| !view.close_targets(&menu.path, which).is_empty());
-            menu_item(id.into(), theme)
-                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-                .child(div().text_size(font_size::META).child(keys))
-                .when(!enabled, |el| el.opacity(opacity::DISABLED))
-                .when(enabled, |el| {
-                    el.on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.close_file_tabs(project_id, &path, which, window, cx);
-                    }))
-                })
-        };
-        let (pin_path, copy_path) = (menu.path.clone(), menu.path.clone());
-        let panel = menu_panel("file-tab-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.file_tab_menu = None;
-                cx.notify();
-            }))
-            .child(close(
-                "file-tab-close",
-                "Close",
-                Close::One,
-                self.keymap.label(Command::CloseFileTab),
-            ))
-            .child(close(
-                "file-tab-close-others",
-                "Close others",
-                Close::Others,
-                String::new(),
-            ))
-            .child(close(
-                "file-tab-close-right",
-                "Close to the right",
-                Close::Right,
-                String::new(),
-            ))
-            .child(close(
-                "file-tab-close-all",
-                "Close all",
-                Close::All,
-                String::new(),
-            ))
-            .child(separator())
-            .child(
-                menu_item("file-tab-pin".into(), theme)
-                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
-                        "Unpin"
-                    } else {
-                        "Pin"
-                    }))
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.pin_file_tab(project_id, &pin_path, !pinned, cx);
-                    })),
-            )
-            .child(
-                menu_item("file-tab-copy-path".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Copy path"),
-                    )
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.file_tab_menu = None;
-                        shell.copy_file_path(project_id, target, &copy_path, cx);
-                    })),
-            );
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window_with_margin(px(space::S))
-                .child(panel),
+        render_menu(
+            self.menu_state(),
+            "file-tab-menu",
+            self.file_tab_menu_rows(menu),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
         )
-        .into_any_element()
     }
 }

@@ -23,15 +23,27 @@ impl Shell {
         cx.notify();
     }
 
-    /// Typing edits the text, ↑ / ↓ move between sessions, Tab checks one, Enter sends, Esc
-    /// closes.
+    /// Typing edits the text, ↑ / ↓ pick a session, Space checks it, Tab moves to the buttons,
+    /// Enter sends, Esc closes.
     pub(crate) fn broadcast_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
+        // A control has the keyboard: the message takes nothing but Esc / Ctrl+Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(
+                task_dialog::dialog_key(&event.keystroke),
+                Some(DialogKey::Cancel | DialogKey::Save)
+            )
+        {
+            return;
+        }
         let Some(dialog) = self.broadcast.as_mut() else {
             return;
         };
@@ -158,6 +170,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         if undo_dialog::cancels(&event.keystroke) {
             self.close_undo_dialog(window, cx);
@@ -373,8 +388,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::undo_dialog_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::undo_dialog_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -411,6 +430,7 @@ impl Shell {
                     .when(nothing_changed, |el| {
                         el.child(
                             button("undo-close", "Close", theme, true)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Close", "Esc"))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.close_undo_dialog(window, cx);
@@ -420,6 +440,7 @@ impl Shell {
                     .when(!nothing_changed, |el| {
                         el.child(
                             button("undo-cancel", "Cancel", theme, false)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Keep the changes", "Esc"))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.close_undo_dialog(window, cx);
@@ -427,6 +448,7 @@ impl Shell {
                         )
                         .child(match confirm {
                             Ok(_) => danger_button("undo-confirm", "Discard changes", theme)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Discard every change listed above", ""))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.confirm_undo(window, cx);
@@ -452,6 +474,7 @@ impl Shell {
     pub(crate) fn render_broadcast(
         &self,
         dialog: &Broadcast,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -487,7 +510,7 @@ impl Shell {
                 .border_color(gpui::transparent_black())
                 .text_size(font_size::BODY)
                 .text_color(rgb(theme.text))
-                .when(index == dialog.cursor, |el| {
+                .when(dialog.in_list && index == dialog.cursor, |el| {
                     el.border_color(rgb(theme.accent))
                 })
                 .when(busy, |el| el.opacity(opacity::DISABLED))
@@ -495,7 +518,7 @@ impl Shell {
                     el.cursor_pointer()
                         .hover(move |style| style.bg(rgb(hover)))
                         .active(|style| style.opacity(opacity::ACTIVE))
-                        .tooltip(tooltip(theme, "Check or uncheck", "Tab"))
+                        .tooltip(tooltip(theme, "Check or uncheck", "Space"))
                 })
                 .on_click(cx.listener(move |shell, _, _, cx| {
                     if let Some(dialog) = shell.broadcast.as_mut() {
@@ -530,6 +553,7 @@ impl Shell {
             footer
                 .child(
                     button("broadcast-close", "Close", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Close", "Esc"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_broadcast(window, cx);
@@ -537,6 +561,7 @@ impl Shell {
                 )
                 .child(
                     button("broadcast-terminals", "Show terminals", theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Start an agent there, then broadcast", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_broadcast(window, cx);
@@ -547,6 +572,7 @@ impl Shell {
             footer
                 .child(
                     button("broadcast-cancel", "Cancel", theme, false)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Close the dialog", "Esc"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.close_broadcast(window, cx);
@@ -554,6 +580,7 @@ impl Shell {
                 )
                 .child(if dialog.can_send() {
                     button("broadcast-send", send_label, theme, true)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, "Send to the checked sessions", "Enter"))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.send_broadcast(window, cx);
@@ -579,8 +606,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::broadcast_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                !dialog.rows.is_empty(),
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::broadcast_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::broadcast_key_down, cx))
             .child(
@@ -616,13 +647,13 @@ impl Shell {
                     div()
                         .text_size(font_size::META)
                         .text_color(rgb(theme.text_muted))
-                        .child("↑↓ move · Tab check · Enter send"),
+                        .child("↑↓ pick a session · Space checks it · Tab to the buttons · Enter sends"),
                 )
                 .child(caret_field(
                     "broadcast-text",
                     &dialog.text,
                     "e.g. run the tests",
-                    true,
+                    self.dialog_focus.is_focused(window),
                     theme,
                     cx,
                     |shell, caret| {

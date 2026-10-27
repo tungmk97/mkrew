@@ -27,6 +27,7 @@ use crate::git_graph::{self, GraphCell, GraphRow};
 use crate::git_history::{Detail, History};
 use crate::git_viewed::ViewedSet;
 use crate::highlight::{self, Spans};
+use crate::pick::Unit;
 use crate::text_box::Input;
 
 /// The group a changed file is listed in.
@@ -357,6 +358,41 @@ impl Shown {
         match mode {
             DiffMode::Unified => Some(at),
             DiffMode::Split => self.split.iter().position(|row| *row == SplitRow::Span(at)),
+        }
+    }
+
+    /// What Shift+↓ / Shift+↑ pick in the diff: the new-side lines it shows (added and
+    /// unchanged ones), one unit each, in order; comments anchor on these.
+    pub fn pick_units(&self) -> Vec<Unit> {
+        (self.diff.hunks.iter())
+            .flat_map(|hunk| &hunk.lines)
+            .filter_map(|line| line.new_line)
+            .map(|number| (number, number))
+            .collect()
+    }
+
+    /// The index in [`Self::pick_units`] of the first new-side line of hunk `hunk` (of the next
+    /// hunk that has one, when `hunk` only removes lines).
+    pub fn hunk_unit(&self, hunk: usize) -> usize {
+        (self.diff.hunks.iter().take(hunk))
+            .flat_map(|hunk| &hunk.lines)
+            .filter(|line| line.new_line.is_some())
+            .count()
+    }
+
+    /// The list row that draws new-side line `number` in `mode` (what a pick scrolls to).
+    pub fn line_row(&self, number: u32, mode: DiffMode) -> Option<usize> {
+        let at = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, DiffRow::Line(line) if line.new_line == Some(number)))?;
+        match mode {
+            DiffMode::Unified => Some(at),
+            DiffMode::Split => self.split.iter().position(|row| match *row {
+                SplitRow::Same(index) => index == at,
+                SplitRow::Change { new, .. } => new == Some(at),
+                SplitRow::Span(_) => false,
+            }),
         }
     }
 
@@ -1744,6 +1780,22 @@ impl GitView {
             _ => return false,
         };
         self.comments.start_quoted(quoted)
+    }
+
+    /// Shift+↓ / Shift+↑ (SPEC §12B): picks the first new-side line of the current hunk (`n` /
+    /// `p` choose it; the first hunk without one) when nothing is picked, else grows or shrinks
+    /// the pick one line (see [`crate::pick::step`]). `false` = nothing to pick: no diff shown,
+    /// the diff folded away, or the History.
+    pub fn step_pick(&mut self, down: bool) -> bool {
+        if !self.can_comment() || self.diff_collapsed() {
+            return false;
+        }
+        let Diff::Shown(shown) = &self.diff else {
+            return false;
+        };
+        let units = shown.pick_units();
+        let start = shown.hunk_unit(self.hunk.unwrap_or(0));
+        self.comments.step_pick(&units, down, start)
     }
 
     /// The comment margin shows beside the diff of a selected file while it has something to

@@ -166,6 +166,14 @@ impl Shell {
                 .take_if(|draft| draft.text.text().is_empty() && !draft.busy);
             cx.notify();
         });
+        // The focused control of a dialog left the frame (a button swapped for the next step):
+        // the dialog takes the keyboard back so Tab and Esc keep working. A confirm prompt
+        // keeps it; menus are never open over a modal.
+        let dialog_focus_lost = cx.on_focus_lost(window, |shell, window, cx| {
+            if shell.modal_open() && !window.has_active_prompt() {
+                window.focus(&shell.dialog_focus, cx);
+            }
+        });
         let (painted, painted_rx) = async_channel::bounded(1);
         // What the user saw before this start (A2): a corrupt or missing file is empty.
         let viewed = Viewed::load(&paths.data_dir);
@@ -183,6 +191,7 @@ impl Shell {
             early_tab_events: Vec::new(),
             reveal: None,
             tab_error: None,
+            tab_notice: None,
             starting_pane: None,
             router: Router::default(),
             panes: HashMap::new(),
@@ -210,16 +219,24 @@ impl Shell {
             phone_open: false,
             settings_dialog: None,
             settings_scroll: ScrollHandle::new(),
+            comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
             file_tab_menu: None,
             tab_menu: None,
+            card_menu: None,
+            menu_focus: cx.focus_handle(),
+            menu_return: None,
+            menu_selected: None,
+            menu_swatch: 0,
+            menu_pending: None,
             reorder: None,
             layout_menu: None,
             pane_menu: None,
             share_menu: None,
             run_setup: None,
             run_setup_scroll: ScrollHandle::new(),
+            run_picker_scroll: ScrollHandle::new(),
             run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
@@ -262,6 +279,7 @@ impl Shell {
             jira_layout,
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
+            jira_scroll: ScrollHandle::new(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,
@@ -269,6 +287,7 @@ impl Shell {
             follow_up: None,
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
+            _dialog_focus_lost: dialog_focus_lost,
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             drop_hover: None,
@@ -289,6 +308,7 @@ impl Shell {
             file_replace_focus: cx.focus_handle(),
             docs_filter_focus: cx.focus_handle(),
             doc_page: preview::Page::default(),
+            doc_source_scroll: UniformListScrollHandle::new(),
             file_page: preview::Page::default(),
             file_code_scroll: UniformListScrollHandle::new(),
             file_code_drag: scrollbar::Drag::default(),
@@ -312,6 +332,7 @@ impl Shell {
             git_diff_layout: Cell::new(None),
             git_diff_looks: Cell::new(None),
             git_diff_scroll_to: Cell::new(None),
+            git_diff_reveal: Cell::new(None),
             diff_mode,
             diff_wrap,
             features,

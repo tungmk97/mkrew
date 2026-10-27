@@ -11,6 +11,7 @@ fn context(view: View) -> Context {
         workspaces: 2,
         tabs: 2,
         file_tabs: 1,
+        file_tree: false,
         terminal: false,
         discard: false,
         git: view == View::Diff,
@@ -23,6 +24,20 @@ fn context(view: View) -> Context {
         markable: false,
         run_stopped: false,
         run_live: false,
+        tab_others: false,
+        tab_right: false,
+        pane: false,
+        live_session: false,
+        transcript: false,
+        plan_linked: false,
+        composer_open: false,
+        approve_card: false,
+        git_base: false,
+        git_repos: false,
+        jira: false,
+        last_error: false,
+        toast: false,
+        update_ready: false,
         features: FeatureSettings {
             docs: true,
             turns: true,
@@ -48,7 +63,11 @@ fn commands(context: &Context) -> Vec<Command> {
         .into_iter()
         .filter_map(|entry| match entry.action {
             Action::Run(command) => Some(command),
-            Action::Extra(_) | Action::GoTo(_) | Action::Theme(_) | Action::NewAgentPane(_) => None,
+            Action::Extra(_)
+            | Action::GoTo(_)
+            | Action::Theme(_)
+            | Action::NewAgentPane(_)
+            | Action::RunCommand(..) => None,
         })
         .collect()
 }
@@ -197,10 +216,13 @@ fn availability_follows_the_view() {
         Command::Tab(3),
         Command::Workspace(3),
         Command::Copy,
+        Command::CopyMode,
+        Command::LinkHints,
         Command::RunTask,
         Command::GitStage,
         Command::ToggleDocSource,
         Command::AddComment,
+        Command::PickDown,
         Command::SaveFile,
         Command::FindInFile,
         Command::ReplaceInFile,
@@ -213,6 +235,8 @@ fn availability_follows_the_view() {
     });
     assert!(focused.contains(&Command::Copy));
     assert!(focused.contains(&Command::Find));
+    assert!(focused.contains(&Command::CopyMode));
+    assert!(focused.contains(&Command::LinkHints));
     assert!(focused.contains(&Command::SendSelection));
     assert!(
         !terminals.contains(&Command::SendSelection),
@@ -229,6 +253,7 @@ fn availability_follows_the_view() {
     let git = commands(&context(View::Diff));
     assert!(git.contains(&Command::GitStage));
     assert!(git.contains(&Command::AddComment));
+    assert!(git.contains(&Command::PickUp));
     assert!(git.contains(&Command::SendSelection));
     assert!(
         !git.contains(&Command::ClosePane),
@@ -263,6 +288,7 @@ fn availability_follows_the_view() {
     let docs = commands(&context(View::Docs));
     assert!(docs.contains(&Command::ToggleDocSource));
     assert!(docs.contains(&Command::SendComments));
+    assert!(docs.contains(&Command::PickDown));
     assert!(commands(&context(View::Terminals)).contains(&Command::ToggleIgnored));
     assert!(commands(&context(View::Editor)).contains(&Command::SaveFile));
     assert!(commands(&context(View::Editor)).contains(&Command::ReplaceInFile));
@@ -274,6 +300,21 @@ fn availability_follows_the_view() {
     };
     assert!(!commands(&no_files).contains(&Command::ShowEditor));
     assert!(commands(&context(View::Terminals)).contains(&Command::ShowEditor));
+    // Move tab: terminal tabs on the panes, file tabs in the Editor view (needs a file tab).
+    assert!(commands(&context(View::Terminals)).contains(&Command::MoveTabLeft));
+    assert!(commands(&context(View::Editor)).contains(&Command::MoveTabLeft));
+    let editor_no_files = Context {
+        file_tabs: 0,
+        ..context(View::Editor)
+    };
+    assert!(!commands(&editor_no_files).contains(&Command::MoveTabLeft));
+    // Open in a kept tab needs the tree on screen.
+    assert!(!commands(&context(View::Terminals)).contains(&Command::OpenKept));
+    let with_tree = Context {
+        file_tree: true,
+        ..context(View::Terminals)
+    };
+    assert!(commands(&with_tree).contains(&Command::OpenKept));
 
     let lone = commands(&Context {
         workspaces: 1,
@@ -381,27 +422,153 @@ fn workspace_extras_need_an_active_workspace() {
 }
 
 fn extras(context: &Context) -> Vec<Extra> {
+    // Listed by the "workspace extras" test and the single-action test below.
+    const SEPARATE: [Extra; 8] = [
+        Extra::RunSetup,
+        Extra::PhoneAccess,
+        Extra::CheckUpdates,
+        Extra::WorkspacePin,
+        Extra::WorkspaceExplorer,
+        Extra::WorkspaceDefaultAgent,
+        Extra::WorkspaceRemove,
+        Extra::WorkspaceMenu,
+    ];
+    const ALWAYS: [Extra; 5] = [
+        Extra::TabPin,
+        Extra::WorkspaceDefaultShell,
+        Extra::WorkspaceMoveUp,
+        Extra::WorkspaceMoveDown,
+        Extra::History,
+    ];
     entries(&Keymap::defaults(), context, &[], &[], &[])
         .into_iter()
         .filter_map(|entry| match entry.action {
-            Action::Extra(extra)
-                if !matches!(
-                    extra,
-                    Extra::RunSetup
-                        | Extra::PhoneAccess
-                        | Extra::CheckUpdates
-                        | Extra::WorkspacePin
-                        | Extra::WorkspaceExplorer
-                        | Extra::WorkspaceDefaultAgent
-                        | Extra::WorkspaceRemove
-                        | Extra::WorkspaceMenu
-                ) =>
-            {
+            Action::Extra(extra) if !SEPARATE.contains(&extra) && !ALWAYS.contains(&extra) => {
                 Some(extra)
             }
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn tab_pane_workspace_and_agent_extras_follow_their_state() {
+    let always = [
+        Extra::TabPin,
+        Extra::WorkspaceDefaultShell,
+        Extra::WorkspaceMoveUp,
+        Extra::WorkspaceMoveDown,
+    ];
+    let terminals = context(View::Terminals);
+    for extra in always {
+        assert!(extra.available(&terminals), "{extra:?}");
+    }
+    let none = Context {
+        workspace: false,
+        ..context(View::Terminals)
+    };
+    let no_tabs = Context {
+        tabs: 0,
+        ..context(View::Terminals)
+    };
+    for extra in always {
+        assert!(!extra.available(&none), "{extra:?}");
+    }
+    assert!(!Extra::TabPin.available(&no_tabs), "no tab to pin");
+    assert!(
+        !Extra::TabPin.available(&context(View::Board)),
+        "the strip is not on screen"
+    );
+    assert!(
+        Extra::WorkspaceMoveUp.available(&context(View::Board)),
+        "any view"
+    );
+
+    let gated = [
+        (
+            Extra::TabCloseOthers,
+            Context {
+                tab_others: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::TabCloseRight,
+            Context {
+                tab_right: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::PanePin,
+            Context {
+                pane: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::PaneReading,
+            Context {
+                agent_pane: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentStop,
+            Context {
+                live_session: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentTranscript,
+            Context {
+                transcript: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentLinkPlan,
+            Context {
+                agent_pane: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentUnlinkPlan,
+            Context {
+                agent_pane: true,
+                plan_linked: true,
+                ..terminals
+            },
+        ),
+        (
+            Extra::AgentImprove,
+            Context {
+                composer_open: true,
+                ..terminals
+            },
+        ),
+    ];
+    for (extra, on) in gated {
+        assert!(extra.available(&on), "{extra:?} when its state holds");
+        assert!(!extra.available(&terminals), "{extra:?} without it");
+        assert!(
+            !extra.available(&Context {
+                view: View::Board,
+                ..on
+            }),
+            "{extra:?} on the Board"
+        );
+    }
+    let linked_shell = Context {
+        plan_linked: true,
+        ..terminals
+    };
+    assert!(
+        !Extra::AgentUnlinkPlan.available(&linked_shell),
+        "no agent pane"
+    );
 }
 
 #[test]
@@ -448,7 +615,13 @@ fn palette_only_actions_follow_the_view_and_state() {
     };
     assert_eq!(
         extras(&agent_pane),
-        [Extra::InsertPrompt, Extra::Turns, Extra::FollowInZed]
+        [
+            Extra::InsertPrompt,
+            Extra::Turns,
+            Extra::FollowInZed,
+            Extra::PaneReading,
+            Extra::AgentLinkPlan
+        ]
     );
     let elsewhere = Context {
         agent_pane: true,
@@ -501,6 +674,7 @@ fn palette_only_actions_follow_the_view_and_state() {
             Action::GoTo(_) => 2,
             Action::Theme(_) => 3,
             Action::NewAgentPane(_) => 4,
+            Action::RunCommand(..) => 5,
         })
         .collect();
     assert!(kinds.is_sorted(), "{kinds:?}");
@@ -556,6 +730,146 @@ fn one_entry_per_agent_profile_starts_a_pane_with_it() {
         ..context(View::Board)
     };
     assert!(agent_entries(&keymap, &no_tabs, &agents).is_empty());
+}
+
+#[test]
+fn git_jira_and_global_extras_follow_their_state() {
+    let gated = [
+        (
+            Extra::GitChangeBase,
+            Context {
+                git: true,
+                git_base: true,
+                ..context(View::Terminals)
+            },
+        ),
+        (
+            Extra::GitSwitchRepo,
+            Context {
+                git: true,
+                git_repos: true,
+                ..context(View::Terminals)
+            },
+        ),
+        (
+            Extra::JiraMine,
+            Context {
+                jira: true,
+                ..context(View::Board)
+            },
+        ),
+        (
+            Extra::JiraLayout,
+            Context {
+                jira: true,
+                ..context(View::Board)
+            },
+        ),
+        (
+            Extra::JiraRefresh,
+            Context {
+                jira: true,
+                ..context(View::Board)
+            },
+        ),
+        (
+            Extra::CopyLastError,
+            Context {
+                last_error: true,
+                ..context(View::Terminals)
+            },
+        ),
+        (
+            Extra::DismissToasts,
+            Context {
+                toast: true,
+                ..context(View::Terminals)
+            },
+        ),
+        (
+            Extra::InstallUpdate,
+            Context {
+                update_ready: true,
+                ..context(View::Terminals)
+            },
+        ),
+    ];
+    for (extra, on) in gated {
+        assert!(extra.available(&on), "{extra:?} when its state holds");
+        assert!(!extra.available(&context(on.view)), "{extra:?} without it");
+    }
+    // The Git entries need the Git list on screen, the Jira ones the Board.
+    let wrong_view = Context {
+        git_base: true,
+        git_repos: true,
+        ..context(View::Board)
+    };
+    assert!(!Extra::GitChangeBase.available(&wrong_view));
+    assert!(!Extra::GitSwitchRepo.available(&wrong_view));
+    assert!(!Extra::JiraRefresh.available(&Context {
+        jira: true,
+        git: true,
+        ..context(View::Diff)
+    }));
+    // The update and the toasts need no workspace.
+    let none = Context {
+        workspace: false,
+        update_ready: true,
+        toast: true,
+        ..context(View::Board)
+    };
+    assert!(Extra::InstallUpdate.available(&none) && Extra::DismissToasts.available(&none));
+    // History is the title bar button: it needs a workspace.
+    assert!(Extra::History.available(&context(View::Board)));
+    assert!(!Extra::History.available(&Context {
+        workspace: false,
+        ..context(View::Board)
+    }));
+}
+
+#[test]
+fn run_entries_follow_each_commands_state() {
+    use crate::run::{Row, RowState, RunAction, Summary};
+    let row = |name: &str, state| Row {
+        name: name.into(),
+        state,
+        session_id: None,
+        ports: Vec::new(),
+    };
+    let summary = Summary {
+        rows: vec![
+            row("api", RowState::Running(SessionState::Working)),
+            row("web", RowState::Stopped),
+            row("db", RowState::Exited),
+        ],
+        stray: 0,
+    };
+    let listed: Vec<(String, Action)> = run_entries(&summary)
+        .into_iter()
+        .map(|entry| (entry.title, entry.action))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                "Run: Restart api".to_owned(),
+                Action::RunCommand(RunAction::Restart, 0)
+            ),
+            (
+                "Run: Stop api".to_owned(),
+                Action::RunCommand(RunAction::Stop, 0)
+            ),
+            (
+                "Run: Start web".to_owned(),
+                Action::RunCommand(RunAction::Start, 1)
+            ),
+            (
+                "Run: Start db".to_owned(),
+                Action::RunCommand(RunAction::Start, 2)
+            ),
+        ]
+    );
+    assert!(run_entries(&Summary::default()).is_empty());
 }
 
 #[test]

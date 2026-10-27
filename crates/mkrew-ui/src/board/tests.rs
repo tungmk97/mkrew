@@ -825,3 +825,30 @@ fn enter_shows_a_live_session_else_opens_the_edit_dialog() {
     assert_eq!(board.card_open(idle.id, &sessions), Some(CardOpen::Edit));
     assert_eq!(board.card_open(Ulid::new(), &sessions), None);
 }
+
+#[test]
+fn approve_targets_only_a_selected_review_card_of_the_board() {
+    let (mine, other) = (Ulid::new(), Ulid::new());
+    let review = task(mine, "r", TaskStatus::Review, 1.0);
+    let todo = task(mine, "t", TaskStatus::Todo, 2.0);
+    let foreign = task(other, "f", TaskStatus::Review, 1.0);
+    let mut board = Board::default();
+    board.load(vec![review.clone(), todo.clone(), foreign.clone()]);
+    assert_eq!(board.approve_target(Some(review.id), mine), Some(review.id));
+    assert_eq!(
+        board.approve_target(Some(todo.id), mine),
+        None,
+        "not in Review"
+    );
+    assert_eq!(
+        board.approve_target(Some(foreign.id), mine),
+        None,
+        "another workspace"
+    );
+    assert_eq!(board.approve_target(None, mine), None);
+    assert_eq!(
+        board.approve_target(Some(Ulid::new()), mine),
+        None,
+        "unknown card"
+    );
+}

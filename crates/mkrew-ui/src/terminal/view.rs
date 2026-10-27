@@ -31,8 +31,10 @@ use crate::composer::{attachment, attachment_refusal, typed_paths};
 use crate::field::{caret_mouse, caret_text, copy_selection};
 use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
-use crate::terminal::emulator::{Emulator, Grid};
+use crate::terminal::copy_mode::{CopyKey, copy_key};
+use crate::terminal::emulator::{CopyEnd, Emulator, Grid};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
+use crate::terminal::hints::{self, Typed};
 use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::terminal::links::{self, Target};
@@ -74,6 +76,7 @@ pub struct TerminalPane {
     /// (the row is read again only when the pointer moves to another cell).
     hover_link: Option<HoverLink>,
     probed: Option<(usize, usize)>,
+    hints: Option<Hints>,
 }
 
 /// Ctrl+Click (Cmd+Click on macOS) on a link of the terminal: the shell opens it.
@@ -96,6 +99,18 @@ pub struct AttachFailed(pub String);
 
 impl EventEmitter<AttachFailed> for TerminalPane {}
 
+/// Copy mode turned on or off: the shell redraws the pane's "Copy mode" chip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopyModeChanged;
+
+impl EventEmitter<CopyModeChanged> for TerminalPane {}
+
+/// Link hints found no link on screen: the shell shows a notice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoLinks;
+
+impl EventEmitter<NoLinks> for TerminalPane {}
+
 /// The link under the pointer while Ctrl / Cmd is held: its row and cells, for the underline.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HoverLink {
@@ -103,6 +118,13 @@ struct HoverLink {
     start: usize,
     end: usize,
     open: OpenLink,
+}
+
+/// Link hints on screen (Alt+Shift+O): each link with its label, and the letters typed so far.
+struct Hints {
+    links: Vec<HoverLink>,
+    labels: Vec<String>,
+    typed: String,
 }
 
 /// Window position of the grid's top-left cell and the cell size.
@@ -158,6 +180,14 @@ impl TerminalPane {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         let focus_handle = cx.focus_handle();
+        // Labels belong to the keys that type them: leaving the pane ends them.
+        cx.on_blur(&focus_handle, window, |pane, _, cx| {
+            if pane.hints.is_some() {
+                pane.stop_hints();
+                cx.notify();
+            }
+        })
+        .detach();
         Self {
             session_id,
             connection,
@@ -177,6 +207,7 @@ impl TerminalPane {
             links: None,
             hover_link: None,
             probed: None,
+            hints: None,
         }
     }
 
@@ -202,9 +233,21 @@ impl TerminalPane {
         self.focus_handle.contains_focused(window, cx)
     }
 
-    /// The selected text, for "Send selection" (§20B.4).
-    pub fn selection_text(&self) -> Option<String> {
-        self.emulator.selection_text()
+    /// The selected text, for "Send selection" (§20B.4). A copy mode in progress ends when
+    /// there is a selection to send.
+    pub fn take_selection_text(&mut self, cx: &mut Context<'_, Self>) -> Option<String> {
+        let text = self.emulator.selection_text();
+        if text.is_some() && self.emulator.copy_mode() {
+            self.emulator.leave_copy_mode();
+            cx.emit(CopyModeChanged);
+            cx.notify();
+        }
+        text
+    }
+
+    /// Copy mode is on: the keys are the UI's, not the program's.
+    pub fn in_copy_mode(&self) -> bool {
+        self.emulator.copy_mode()
     }
 
     /// Feeds output bytes. The caller notifies once per batch (≤ one repaint per frame).
@@ -216,7 +259,12 @@ impl TerminalPane {
     /// queue overflowed). The scrollback restarts from the snapshot's history (≤ 1,000 lines,
     /// ADR 0030, 0082). The caller notifies.
     pub fn load_snapshot(&mut self, snapshot: &ScreenSnapshot) {
+        self.hints = None;
+        let copying = self.emulator.copy_mode();
         self.emulator = Emulator::from_snapshot(snapshot);
+        if copying {
+            self.emulator.enter_copy_mode();
+        }
         if let Some(find) = &self.find {
             find.reapply(&mut self.emulator);
         }
@@ -261,8 +309,19 @@ impl TerminalPane {
 
     /// Keys go to the session. Keystrokes bound in the keymap (SPEC §13) never get here: their
     /// action handler stops them first. Plain Ctrl+C copies a selection instead, also in an
-    /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026).
+    /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026). While copy mode is on every key
+    /// is the UI's.
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.hints.is_some() {
+            cx.stop_propagation();
+            self.hint_key(event, cx);
+            return;
+        }
+        if self.emulator.copy_mode() {
+            cx.stop_propagation();
+            self.copy_key_down(event, cx);
+            return;
+        }
         // Only plain Ctrl+C reads the selection: building its text per keystroke costs O(selection).
         let selected = is_copy_key(&event.keystroke) && self.emulator.selection_text().is_some();
         let mode = self.emulator.input_mode();
@@ -334,6 +393,32 @@ impl TerminalPane {
         true
     }
 
+    /// A key in copy mode: moves the vi cursor or selects (see [`copy_key`]); `y` / Enter put
+    /// the selection on the clipboard and leave. Unknown keys are swallowed: nothing reaches
+    /// the session.
+    fn copy_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<'_, Self>) {
+        let Some(key) = copy_key(&event.keystroke) else {
+            return;
+        };
+        if let CopyEnd::Leave(text) = self.emulator.copy_key(key) {
+            if let Some(text) = text {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            cx.emit(CopyModeChanged);
+        }
+        cx.notify();
+    }
+
+    fn toggle_copy_mode(&mut self, cx: &mut Context<'_, Self>) {
+        if self.emulator.copy_mode() {
+            self.emulator.leave_copy_mode();
+        } else {
+            self.emulator.enter_copy_mode();
+        }
+        cx.emit(CopyModeChanged);
+        cx.notify();
+    }
+
     /// The visible cell under a window position, once the grid has been painted.
     fn cell_at(&self, position: Point<Pixels>) -> Option<(usize, usize, Side)> {
         let geometry = self.geometry?;
@@ -362,9 +447,14 @@ impl TerminalPane {
 
     /// The link at a cell, read from that row of the cached grid only.
     fn link_in(&self, row: usize, col: usize) -> Option<HoverLink> {
-        let base = self.links.as_ref()?;
         let cells = self.emulator.shared_grid().row_chars(row)?;
-        let link = links::link_at(&cells, col)?;
+        self.hover_link(row, links::link_at(&cells, col)?)
+    }
+
+    /// `link` of screen row `row` as something the shell can open: a URL, or a file of the
+    /// pane's folder (checked on disk).
+    fn hover_link(&self, row: usize, link: links::Link) -> Option<HoverLink> {
+        let base = self.links.as_ref()?;
         let open = match link.target {
             Target::Url(url) => OpenLink::Url(url),
             Target::Path { path, line } => OpenLink::File {
@@ -378,6 +468,71 @@ impl TerminalPane {
             end: link.end,
             open,
         })
+    }
+
+    /// Alt+Shift+O: labels every openable link of the visible rows (the grid is read once,
+    /// the disk once per path link) and holds the program's output back so the labels stay
+    /// under their links. No link: [`NoLinks`].
+    fn start_hints(&mut self, cx: &mut Context<'_, Self>) {
+        let grid = self.emulator.shared_grid();
+        let mut found = Vec::new();
+        for row in 0..grid.rows.len() {
+            let Some(cells) = grid.row_chars(row) else {
+                continue;
+            };
+            for link in links::links_in(&cells) {
+                found.extend(self.hover_link(row, link));
+            }
+        }
+        if found.is_empty() {
+            cx.emit(NoLinks);
+            return;
+        }
+        let labels = hints::labels(found.len());
+        found.truncate(labels.len());
+        self.clear_link(cx);
+        self.emulator.set_hold(true);
+        self.hints = Some(Hints {
+            links: found,
+            labels,
+            typed: String::new(),
+        });
+        cx.notify();
+    }
+
+    /// Drops the labels and lets held output in. The caller notifies.
+    fn stop_hints(&mut self) {
+        self.hints = None;
+        self.emulator.set_hold(false);
+    }
+
+    /// A key while labels show: a letter narrows or picks (the link opens exactly like
+    /// Ctrl+Click); Esc or any other key cancels. Nothing reaches the session.
+    fn hint_key(&mut self, event: &KeyDownEvent, cx: &mut Context<'_, Self>) {
+        let m = event.keystroke.modifiers;
+        let letter = (!m.control && !m.alt && !m.platform)
+            .then_some(event.keystroke.key_char.as_deref())
+            .flatten()
+            .map(str::to_lowercase);
+        let outcome = match (self.hints.as_mut(), letter) {
+            (Some(hints), Some(letter)) => {
+                hints.typed.push_str(&letter);
+                hints::typed(&hints.labels, &hints.typed)
+            }
+            _ => Typed::Nothing,
+        };
+        match outcome {
+            Typed::Narrow => {}
+            Typed::Pick(at) => {
+                let link = (self.hints.take()).and_then(|hints| hints.links.into_iter().nth(at));
+                self.stop_hints();
+                if let Some(link) = link {
+                    cx.emit(link.open);
+                }
+            }
+            Typed::Nothing => self.stop_hints(),
+        }
+        cx.notify();
     }
 
     /// Ctrl / Cmd held (or not) with the pointer at `position`: finds the link under it, or
@@ -417,6 +572,10 @@ impl TerminalPane {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.hints.is_some() {
+            self.stop_hints();
+            cx.notify();
+        }
         if std::mem::take(&mut self.find_clicked) {
             return;
         }
@@ -473,6 +632,10 @@ impl TerminalPane {
         _window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.hints.is_some() {
+            self.stop_hints();
+            cx.notify();
+        }
         let Some(geometry) = self.geometry else {
             return;
         };
@@ -485,7 +648,7 @@ impl TerminalPane {
         if whole == 0 {
             return;
         }
-        if self.emulator.wheel_sends_arrows() {
+        if self.emulator.wheel_sends_arrows() && !self.emulator.copy_mode() {
             if self.exited.is_none() {
                 let data = wheel_bytes(whole, self.emulator.input_mode());
                 self.input(data, cx);
@@ -500,26 +663,41 @@ impl TerminalPane {
 
     /// The terminal's own commands; all others go on to the window shell.
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // Any command but its own ends the labels: the keys that were typing them moved on.
+        if !matches!(command, Command::LinkHints) && self.hints.is_some() {
+            self.stop_hints();
+            cx.notify();
+        }
+        let find_focused = self.find_focus.is_focused(window);
         match command {
             Command::Find => {
                 self.find.get_or_insert_default();
                 window.focus(&self.find_focus, cx);
                 cx.notify();
             }
-            Command::Paste if self.find.is_some() && self.find_focus.is_focused(window) => {
+            Command::Paste if self.find.is_some() && find_focused => {
                 let text = cx.read_from_clipboard().and_then(|item| item.text());
                 if let (Some(find), Some(text)) = (self.find.as_mut(), text) {
                     find.insert(&text, &mut self.emulator);
                     cx.notify();
                 }
             }
+            Command::CopyMode if !find_focused => self.toggle_copy_mode(cx),
+            Command::LinkHints if !find_focused => self.start_hints(cx),
             Command::Copy => {
                 self.copy_selection(cx);
             }
             Command::PageUp | Command::PageDown => {
-                self.emulator.scroll_page(*command == Command::PageUp);
+                let up = *command == Command::PageUp;
+                if self.emulator.copy_mode() {
+                    self.emulator.copy_key(CopyKey::Page { up });
+                } else {
+                    self.emulator.scroll_page(up);
+                }
                 cx.notify();
             }
+            // Keys are the UI's while copy mode is on: nothing is typed into the program.
+            Command::Paste if self.emulator.copy_mode() => {}
             Command::Paste => {
                 self.paste(cx);
             }
@@ -718,7 +896,7 @@ impl TerminalPane {
 
     /// Types `text` as one paste into a live session (dropped or pasted paths, §20B.5).
     pub fn type_text(&mut self, text: &str, cx: &mut Context<'_, Self>) {
-        if self.exited.is_some() || text.is_empty() {
+        if self.exited.is_some() || text.is_empty() || self.emulator.copy_mode() {
             return;
         }
         let data = paste_bytes(text, self.emulator.input_mode());
@@ -1049,6 +1227,55 @@ impl Element for TerminalElement {
                 size(cell_width * (link.end - link.start) as f32, thickness),
             );
             window.paint_quad(fill(underline, hsla(theme.accent)));
+        }
+        // Link hints: a label chip over the first cells of each link that still matches what
+        // was typed, outside the row cache. Copied out of the pane first: painting a shaped
+        // line needs `cx` mutably.
+        let chips: Vec<(usize, usize, String)> = self
+            .pane
+            .read(cx)
+            .hints
+            .as_ref()
+            .map(|hints| {
+                (hints.links.iter().zip(&hints.labels))
+                    .filter(|(link, label)| {
+                        link.row < grid.rows.len() && label.starts_with(&hints.typed)
+                    })
+                    .map(|(link, label)| (link.row, link.start, label.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (row, start, label) in chips {
+            let at = point(
+                origin.x + cell_width * start as f32,
+                origin.y + line_height * row as f32,
+            );
+            let chip = Bounds::new(
+                at,
+                size(cell_width * label.chars().count() as f32, line_height),
+            );
+            window.paint_quad(fill(chip, hsla(theme.accent)));
+            let style = CellStyle {
+                fg: theme.on_accent,
+                bg: theme.accent,
+                bold: true,
+                italic: false,
+                underline: false,
+            };
+            let run = text_run(
+                label.len(),
+                style,
+                &base_font,
+                theme.terminal_underline_thickness,
+            );
+            let shaped = text_system.shape_line(
+                SharedString::from(label),
+                font_size,
+                &[run],
+                Some(cell_width),
+            );
+            // A failed glyph paint only loses that glyph.
+            let _ = shaped.paint(at, line_height, TextAlign::Left, None, window, cx);
         }
         let pane = self.pane.read(cx);
         let (focus, marked) = (pane.focus_handle.clone(), pane.ime_marked.clone());

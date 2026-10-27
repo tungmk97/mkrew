@@ -545,6 +545,16 @@ impl Board {
         })
     }
 
+    /// The card `a` approves on `project_id`'s board: the selected one, if it is that board's
+    /// and sits in Review (what its Approve button needs).
+    pub fn approve_target(&self, selected: Option<Ulid>, project_id: Ulid) -> Option<Ulid> {
+        selected.filter(|&id| {
+            self.task(id).is_some_and(|task| {
+                task.project_id == project_id && task::approve(task.status).is_some()
+            })
+        })
+    }
+
     /// Whether `task_id`'s card still shows a follow-up field for `session_id` (see
     /// [`Card::follow_up_session`]).
     pub fn takes_follow_up(&self, task_id: Ulid, session_id: Ulid, sessions: &[Session]) -> bool {

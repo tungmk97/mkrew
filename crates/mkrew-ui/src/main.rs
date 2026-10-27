@@ -5,7 +5,7 @@
 // No console window next to the app in release builds (debug keeps stderr visible).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -39,7 +39,7 @@ use mkrew_protocol::{
     SessionState, SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams,
     TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
     TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
-    ViewedFile, WORKSPACE_COLORS,
+    ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::attention::{self, Tracker};
@@ -54,6 +54,7 @@ use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
 use mkrew_ui::diagram::Diagram;
+use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
@@ -77,9 +78,10 @@ use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
-    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, Run,
+    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
+use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
@@ -103,7 +105,7 @@ use mkrew_ui::tabs::{
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
-use mkrew_ui::terminal::view::{AttachFailed, OpenLink, TerminalPane};
+use mkrew_ui::terminal::view::{AttachFailed, CopyModeChanged, NoLinks, OpenLink, TerminalPane};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
@@ -121,11 +123,13 @@ use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
 
 mod shell;
+use shell::board::*;
 use shell::cards::*;
 use shell::files_render::*;
 use shell::git_diff::*;
 use shell::git_menus::*;
 use shell::git_rows::*;
+use shell::menu_render::*;
 use shell::menus::*;
 use shell::pane_drop::*;
 use shell::pane_render::*;
@@ -183,6 +187,7 @@ fn main() {
             let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
             cx.bind_keys(bindings);
             cx.set_global(ActiveKeymap(keymap.clone()));
+            cx.set_global(MenuAnchors::default());
             // Which char a shifted digit reports depends on the layout: bind again after a switch
             // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
             cx.on_keyboard_layout_change(|cx| {
@@ -318,6 +323,13 @@ struct FileTabMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
+/// The menu of a Board card (SPEC §10): its hover buttons as rows, for the keyboard.
+struct CardMenu {
+    task_id: Ulid,
+    /// Window position: the card's bottom-left.
+    position: gpui::Point<gpui::Pixels>,
+}
+
 /// The open popover of the Git view's side panel or diff toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GitMenu {
@@ -364,6 +376,8 @@ struct Shell {
     pending_jump: Option<(Ulid, Ulid)>,
     /// Last failure of a tab action (new tab), shown in the tab bar.
     tab_error: Option<String>,
+    /// A one-line notice in the tab bar that goes away by itself (link hints found none).
+    tab_notice: Option<String>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
     /// cold start): its buttons show a loading mark and further starts are ignored meanwhile.
     starting_pane: Option<SessionKind>,
@@ -420,6 +434,8 @@ struct Shell {
     settings_dialog: Option<SettingsDialog>,
     /// Scrolls its rows.
     settings_scroll: ScrollHandle,
+    /// Keeps the selected comment thread in view in the Docs / Git margin.
+    comments_scroll: ScrollHandle,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.
@@ -428,6 +444,20 @@ struct Shell {
     file_tab_menu: Option<FileTabMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
+    /// The open menu of a Board card (Shift+F10 on the selected card).
+    card_menu: Option<CardMenu>,
+    /// Focused while a popover menu is open (any menu, opened by mouse or keyboard): its key
+    /// context is `Menu` and [`Shell::menu_key_down`] drives the rows.
+    menu_focus: FocusHandle,
+    /// What had the keyboard before the first open menu took it (and the terminal session
+    /// whose pane it was); Esc, an action or a click outside gives it back.
+    menu_return: Option<(FocusHandle, Option<Ulid>)>,
+    /// The row the keyboard stands on, and the swatch cursor inside a swatch row.
+    menu_selected: Option<usize>,
+    menu_swatch: usize,
+    /// A group heading whose first row gets the selection as soon as the rows exist (the
+    /// agent lists load after the menu opens).
+    menu_pending: Option<&'static str>,
     /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
     reorder: Option<Reorder>,
     /// The open menu of the tab strip's split button (Split right / down, layouts).
@@ -440,6 +470,8 @@ struct Shell {
     run_setup: Option<RunSetup>,
     /// Keeps the Run setup's focused card in view; its scroll bar's drag.
     run_setup_scroll: ScrollHandle,
+    /// Keeps the Run setup picker's cursor row in view.
+    run_picker_scroll: ScrollHandle,
     run_setup_drag: scrollbar::Drag,
     /// The workspace whose Run menu (▾) is open.
     run_menu: Option<Ulid>,
@@ -511,6 +543,8 @@ struct Shell {
     jira_keys_focus: FocusHandle,
     /// The Jira list's "Filter issues" field.
     jira_filter_focus: FocusHandle,
+    /// Keeps the selected Jira List row in view.
+    jira_scroll: ScrollHandle,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
@@ -524,6 +558,8 @@ struct Shell {
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
     follow_up_focus: FocusHandle,
     _follow_up_blur: Subscription,
+    /// Gives a modal dialog the keyboard back when its focused control vanished.
+    _dialog_focus_lost: Subscription,
     /// Keeps the follow-up field's end (where the caret is) in view.
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).
@@ -595,6 +631,8 @@ struct Shell {
     /// The rendered Markdown page of Docs and of the Files view (virtual lists, kept across
     /// frames).
     doc_page: preview::Page,
+    /// Scroll of the Docs source view: where Shift+↓ starts, and what keeps a pick in view.
+    doc_source_scroll: UniformListScrollHandle,
     file_page: preview::Page,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
@@ -627,6 +665,8 @@ struct Shell {
     git_diff_layout: Cell<Option<(usize, DiffMode, usize)>>,
     git_diff_looks: Cell<Option<(bool, Option<Selection>)>>,
     git_diff_scroll_to: Cell<Option<usize>>,
+    /// A diff row to scroll into view once the list is laid out (a keyboard pick moved).
+    git_diff_reveal: Cell<Option<usize>>,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
@@ -689,7 +729,8 @@ struct Shell {
     filter_focus: FocusHandle,
     /// What had the keyboard before the peek took it; it gets it back on close.
     peek_return: Option<(FocusHandle, Option<Ulid>)>,
-    /// Focused while a dialog is open; the task dialog's keys edit the draft.
+    /// Focused while a dialog is open; the dialog's keys edit its draft. A dialog's panel tracks
+    /// it (`DialogControl::dialog_root`); its buttons take the keyboard with Tab.
     dialog_focus: FocusHandle,
     /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
     prompt_scroll: ScrollHandle,
@@ -710,12 +751,32 @@ struct Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
+        // event) must not leave it on the hidden menu: give it back to the pane. A menu whose
+        // owner went away (no rows) draws nothing: close it the same way.
+        if self.menu_open() && self.open_menu_rows().is_none() {
+            self.dismiss_menus(window, cx);
+        }
+        if !self.menu_open() && self.menu_focus.contains_focused(window, cx) {
+            self.focus_pane(window, cx);
+        }
         // Voice input types into the field whose typing canvas registers again during this
         // frame's paint (§20G); a field that is gone from the screen is no target. That field
         // paints the listening ring.
         self.typing_target.field.replace(None);
+        // Menus opened from the keyboard hang from what this frame lays out.
+        cx.global::<MenuAnchors>().clear();
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
+        // A dialog control that vanished while focused (a button swapped for its disabled twin
+        // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
+        // would miss the dialog: the dialog itself takes the keyboard back.
+        if self.modal_open()
+            && !window.has_active_prompt()
+            && !self.dialog_focus.contains_focused(window, cx)
+        {
+            window.focus(&self.dialog_focus, cx);
+        }
         if let Some(launched) = self.launched {
             if !self.first_frame_logged {
                 self.first_frame_logged = true;
@@ -747,10 +808,9 @@ impl Render for Shell {
             .flex_col()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
-            .when(
-                self.view() == View::Board && !self.jira_side_shown(),
-                |el| el.key_context(BOARD_CONTEXT),
-            )
+            .when(self.view() == View::Board, |el| {
+                el.key_context(BOARD_CONTEXT)
+            })
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
             .when(self.view() == View::Editor, |el| {
                 el.key_context(EDITOR_CONTEXT)
@@ -760,6 +820,7 @@ impl Render for Shell {
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                shell.docs_key_down(event, window, cx);
                 let filter_shown = !shell.sidebar_layout.hidden()
                     && !shell.sidebar_layout.compact()
                     && !shell.sidebar.is_empty();
@@ -770,6 +831,7 @@ impl Render for Shell {
                     && shell.focus_handle.is_focused(window)
                 {
                     cx.stop_propagation();
+                    shell.sidebar.end_browse();
                     window.focus(&shell.filter_focus, cx);
                     cx.notify();
                 }
@@ -802,7 +864,7 @@ impl Render for Shell {
                     .children(
                         self.task_dialog
                             .as_ref()
-                            .map(|dialog| self.render_task_dialog(dialog, &theme, cx)),
+                            .map(|dialog| self.render_task_dialog(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.undo_dialog
@@ -832,39 +894,36 @@ impl Render for Shell {
                     .children(
                         self.git_base
                             .as_ref()
-                            .map(|dialog| self.render_git_base(dialog, &theme, cx)),
+                            .map(|dialog| self.render_git_base(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.add_workspace
                             .as_ref()
-                            .map(|dialog| self.render_add_workspace(dialog, &theme, cx)),
+                            .map(|dialog| self.render_add_workspace(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.phone_open
                             .then(|| self.render_phone_access(&theme, cx)),
                     )
-                    .children(self.settings_dialog.as_ref().map(|dialog| {
-                        self.render_settings_dialog(
-                            dialog,
-                            window.viewport_size().height,
-                            &theme,
-                            cx,
-                        )
-                    }))
+                    .children(
+                        self.settings_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_settings_dialog(dialog, window, &theme, cx)),
+                    )
                     .children(
                         self.run_setup
                             .as_ref()
-                            .map(|setup| self.render_run_setup(setup, &theme, cx)),
+                            .map(|setup| self.render_run_setup(setup, window, &theme, cx)),
                     )
                     .children(
                         self.broadcast
                             .as_ref()
-                            .map(|dialog| self.render_broadcast(dialog, &theme, cx)),
+                            .map(|dialog| self.render_broadcast(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.ask
                             .as_ref()
-                            .map(|dialog| self.render_ask(dialog, &theme, cx)),
+                            .map(|dialog| self.render_ask(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.history
@@ -894,6 +953,12 @@ impl Render for Shell {
                         self.prompt_picker
                             .as_ref()
                             .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
+                    )
+                    .children(
+                        self.workspace_menu
+                            .as_ref()
+                            .filter(|_| !self.modal_open())
+                            .map(|menu| self.render_workspace_menu(menu, &theme, cx)),
                     )
                     .children(
                         self.tab_menu
@@ -936,6 +1001,12 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        self.card_menu
+                            .as_ref()
+                            .filter(|_| self.view() == View::Board && !self.modal_open())
+                            .map(|menu| self.render_card_menu(menu, &theme, cx)),
                     )
                     .children(self.render_toasts(&theme, cx))
                     .children(self.render_voice_pill(&theme, cx)),

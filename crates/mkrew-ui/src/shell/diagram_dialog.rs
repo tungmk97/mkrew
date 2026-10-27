@@ -49,13 +49,17 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
-                cx.stop_propagation();
-                if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-                    shell.close_diagram_dialog(window, cx);
-                }
-            }))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
+                        shell.close_diagram_dialog(window, cx);
+                    }
+                }),
+            )
             .child(
                 div()
                     .flex()
@@ -72,6 +76,7 @@ impl Shell {
                     )
                     .child(
                         button("diagram-close", "Close", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Close", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_diagram_dialog(window, cx);

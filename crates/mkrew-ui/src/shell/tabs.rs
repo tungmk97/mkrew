@@ -174,19 +174,23 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.workspace_menu = None;
-        self.pane_menu = None;
-        self.layout_menu = None;
         if let Some(tabs) = self.active_tabs_mut() {
             tabs.activate(tab_id);
         }
-        self.tab_menu = Some(TabMenu { tab_id, position });
         self.sync_panes(window, cx);
-        cx.notify();
+        // After the tab switch: the keyboard goes back to the pane that is on screen now.
+        self.begin_menu(window, cx);
+        self.tab_menu = Some(TabMenu { tab_id, position });
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// Opens the split button's menu for the active tab at `position` (SPEC §10).
-    pub(crate) fn open_layout_menu(&mut self, position: Point<Pixels>, cx: &mut Context<'_, Self>) {
+    pub(crate) fn open_layout_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(tab_id) = (self.workspace)
             .and_then(|id| self.tabs.get(&id))
             .and_then(|tabs| tabs.active())
@@ -194,9 +198,9 @@ impl Shell {
         else {
             return;
         };
-        self.close_menus();
+        self.begin_menu(window, cx);
         self.layout_menu = Some(LayoutMenu { tab_id, position });
-        cx.notify();
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// A divider between panes was released: saves the active tab's layout (one write per drag).
@@ -356,7 +360,6 @@ impl Shell {
     /// "Mark unread" (pane menu, palette): the finished agent session is back in Needs you until
     /// its pane is focused again (ADR 0064). UI memory only, like "viewed".
     pub(crate) fn mark_unread(&mut self, session_id: Ulid, cx: &mut Context<'_, Self>) {
-        self.pane_menu = None;
         if let Some(session) = (self.sidebar.sessions().iter())
             .find(|s| s.id == session_id)
             .filter(|session| inbox::can_mark_unread(session, &self.viewed))
@@ -424,18 +427,17 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.workspace_menu = None;
-        self.tab_menu = None;
         if let Some(tabs) = self.active_tabs_mut() {
             tabs.focus(session_id);
         }
         // Keyboard focus follows the highlighted pane (typed keys, F2, Ctrl+W).
         self.focus_pane(window, cx);
+        self.begin_menu(window, cx);
         self.pane_menu = Some(PaneMenu {
             session_id,
             position,
         });
-        cx.notify();
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// Sends a `tab.rename` / `session.rename` / `session.set_color` / `session.pin` / `tab.pin`; `shown` applies the
@@ -516,12 +518,49 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        if let step @ ("up" | "down") = event.keystroke.key.as_str() {
-            let rows = self.sidebar.view(&self.viewed).rows;
-            self.sidebar
-                .move_highlight(&rows, if step == "up" { -1 } else { 1 });
-            cx.notify();
-            return;
+        match event.keystroke.key.as_str() {
+            step @ ("up" | "down") => {
+                let rows = self.sidebar.view(&self.viewed).rows;
+                self.sidebar
+                    .move_highlight(&rows, if step == "up" { -1 } else { 1 });
+                cx.notify();
+                return;
+            }
+            // Tab / Shift+Tab walk the All / Working / Needs you chips (never typed). Ctrl+Tab
+            // stays the tab switch.
+            "tab" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.alt => {
+                let by = if event.keystroke.modifiers.shift {
+                    -1
+                } else {
+                    1
+                };
+                self.sidebar.set_chip(self.sidebar.chip().step(by));
+                cx.notify();
+                return;
+            }
+            // With an empty box ← / → have no caret to move: they fold / unfold the
+            // highlighted row's workspace. With text they stay the caret's.
+            side @ ("left" | "right")
+                if self.sidebar.filter().is_empty()
+                    && !self.sidebar.filtering()
+                    && !event.keystroke.modifiers.modified() =>
+            {
+                let rows = self.sidebar.view(&self.viewed).rows;
+                let project_id = match self.sidebar.highlighted(&rows) {
+                    Some(sidebar::Target::Workspace(id)) => Some(id),
+                    Some(sidebar::Target::Session(id)) => self.project_of(id),
+                    None => None,
+                };
+                if let Some(project_id) = project_id {
+                    self.sidebar.set_expanded(project_id, side == "right");
+                    // The highlight stays on the workspace (its sessions may have gone).
+                    let rows = self.sidebar.view(&self.viewed).rows;
+                    self.sidebar.browse_from(&rows, None, Some(project_id));
+                }
+                cx.notify();
+                return;
+            }
+            _ => {}
         }
         let Some(key) = find_key(&event.keystroke) else {
             return;
@@ -533,7 +572,9 @@ impl Shell {
             }
             FindKey::Older | FindKey::Newer => {
                 let rows = self.sidebar.view(&self.viewed).rows;
-                match self.sidebar.highlighted(&rows) {
+                let target = self.sidebar.highlighted(&rows);
+                self.sidebar.end_browse();
+                match target {
                     Some(sidebar::Target::Session(id)) => self.open_session(id, window, cx),
                     Some(sidebar::Target::Workspace(id)) => {
                         self.activate_workspace(id, window, cx);

@@ -15,6 +15,7 @@ use crate::diagram::{self, Diagram};
 use crate::highlight::{self, Code};
 use crate::markdown::{self, Block, BlockKind};
 use crate::palette;
+use crate::pick::Unit;
 use crate::text_box::Input;
 
 static NEXT_OPENING: AtomicU64 = AtomicU64::new(1);
@@ -92,6 +93,19 @@ impl Shown {
             code,
             diagrams,
         }
+    }
+
+    /// What Shift+↓ / Shift+↑ pick in the source: every line (line `n` is `lines[n - 1]`).
+    pub fn line_units(&self) -> Vec<Unit> {
+        let count = u32::try_from(self.lines.len()).unwrap_or(u32::MAX);
+        (1..=count).map(|n| (n, n)).collect()
+    }
+
+    /// What Shift+↓ / Shift+↑ pick in the preview: the source lines of every top-level block.
+    pub fn block_units(&self) -> Vec<Unit> {
+        (self.blocks.iter())
+            .map(|block| (block.lines.start, block.lines.end))
+            .collect()
     }
 }
 
@@ -644,5 +658,14 @@ mod tests {
         assert_eq!(docs.step_selection(-1).as_deref(), Some("docs/plan-v2.md"));
         docs.filter = "zz".into();
         assert_eq!(docs.step_selection(1), None);
+    }
+
+    #[test]
+    fn picks_follow_blocks_in_the_preview_and_lines_in_the_source() {
+        let shown = Shown::from_text("# Title\n\n```\ncode\n```\n\nafter\n");
+        assert_eq!(shown.block_units(), [(1, 1), (3, 5), (7, 7)]);
+        assert_eq!(shown.line_units().len(), 7);
+        assert_eq!(shown.line_units()[3], (4, 4));
+        assert!(Shown::from_text("").block_units().is_empty());
     }
 }

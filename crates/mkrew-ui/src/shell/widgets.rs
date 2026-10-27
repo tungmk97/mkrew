@@ -213,6 +213,72 @@ pub(crate) fn danger_button(
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
+/// Keyboard focus for the controls of a modal dialog (ADR 0085). gpui keeps the focus handle
+/// of an element that has a tab index in its element state, so a control needs no field on
+/// `Shell`. Every control here is a `Stateful<Div>` ([`button`], [`secondary_button`],
+/// [`quiet_button`], [`danger_button`], [`icon_button`], [`segment`], chips, check rows).
+pub(crate) trait DialogControl: Sized {
+    /// A Tab stop that shows the `focus_ring` while the keyboard has it. It keeps a 1 px
+    /// border, transparent at rest, so the ring shifts nothing. Enter / Space click it (gpui).
+    fn focus_stop(self, theme: &Theme) -> Self;
+    /// [`DialogControl::focus_stop`] for a control that already draws its own 1 px border (a
+    /// secondary button, a chip): only the ring color changes.
+    fn focusable_bordered(self, theme: &Theme) -> Self;
+    /// ← / → on a focused chip move the keyboard to its neighbour in a row of `len`; the
+    /// ends keep it.
+    fn chip_arrows(self, index: usize, len: usize) -> Self;
+    /// The panel of a modal dialog: it has the keyboard through `focus` (a Tab stop when the
+    /// dialog has `has_text` fields, so Shift+Tab can come back to them), `guard` runs first
+    /// in the capture phase ([`Shell::dialog_guard`]) and `on_key` gets every key.
+    fn dialog_root(
+        self,
+        focus: &FocusHandle,
+        has_text: bool,
+        guard: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+        on_key: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self;
+}
+
+impl DialogControl for gpui::Stateful<gpui::Div> {
+    fn focus_stop(self, theme: &Theme) -> Self {
+        self.border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::transparent_black())
+            .focusable_bordered(theme)
+    }
+
+    fn focusable_bordered(self, theme: &Theme) -> Self {
+        let ring = rgb(theme.focus_ring);
+        self.tab_index(0)
+            .focus_visible(move |style| style.border_color(ring))
+    }
+
+    fn chip_arrows(self, index: usize, len: usize) -> Self {
+        self.on_key_down(move |event, window, cx| {
+            let Some(step) = dialog_focus::group_step(&event.keystroke, index, len) else {
+                return;
+            };
+            cx.stop_propagation();
+            match step {
+                dialog_focus::Step::Prev => window.focus_prev(cx),
+                dialog_focus::Step::Next => window.focus_next(cx),
+                dialog_focus::Step::Stay => {}
+            }
+        })
+    }
+
+    fn dialog_root(
+        self,
+        focus: &FocusHandle,
+        has_text: bool,
+        guard: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+        on_key: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.track_focus(&focus.clone().tab_stop(has_text))
+            .capture_key_down(guard)
+            .on_key_down(on_key)
+    }
+}
+
 /// A keyboard shortcut hint (`Keymap::label` text): a small mono key cap. On an accent
 /// button it is drawn in `on_accent` at reduced opacity.
 pub(crate) fn kbd(text: String, theme: &Theme, on_accent: bool) -> gpui::Div {
@@ -693,18 +759,21 @@ pub(crate) fn menu_panel(
 }
 
 /// One color choice of a color menu: a filled dot (`None` = an empty ring = no color); the
-/// current one is ringed in the text color. A click calls `pick`; the element id is
-/// `<id_prefix>-<color>`.
+/// current one is ringed in the text color and `focused` rings it in the accent (the keyboard
+/// cursor). A click calls `pick`; the element id is `<id_prefix>-<color>`.
 pub(crate) fn color_swatch(
     id_prefix: &'static str,
     color: Option<&'static str>,
     current: Option<&str>,
     theme: &Theme,
+    focused: bool,
     cx: &mut Context<'_, Shell>,
     pick: impl Fn(&mut Shell, Option<&'static str>, &mut Window, &mut Context<'_, Shell>) + 'static,
 ) -> gpui::AnyElement {
     let fill = color.and_then(|name| theme.workspace_color(name));
-    let ring = if color == current {
+    let ring = if focused {
+        theme.accent
+    } else if color == current {
         theme.text
     } else {
         fill.unwrap_or(theme.text_muted)

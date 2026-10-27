@@ -36,8 +36,32 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let back = event.keystroke.modifiers.shift;
+        let edge = (self.settings_dialog.as_ref())
+            .is_some_and(|dialog| dialog.chain_edge(back, &self.keymap));
+        if edge && event.keystroke.key == "tab" && self.dialog_focus.is_focused(window) {
+            // Leaving the rows writes the draft of the row it leaves, like Tab to the next row.
+            let effect = self.settings_dialog.as_mut().map(SettingsDialog::leave);
+            if let Some(effect) = effect {
+                self.apply_settings_effect(effect, window, cx);
+            }
+        }
+        let keymap = self.keymap.clone();
+        if self.dialog_nav(event, edge, window, cx, move |shell, forward| {
+            if let Some(dialog) = shell.settings_dialog.as_mut() {
+                dialog.enter(forward, &keymap);
+            }
+        }) {
+            return;
+        }
         cx.stop_propagation();
         let key = task_dialog::dialog_key(&event.keystroke);
+        // A button or link has the keyboard: the rows take nothing but Esc / Ctrl+Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, Some(DialogKey::Cancel | DialogKey::Save))
+        {
+            return;
+        }
         let paste = (key == Some(DialogKey::Paste))
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -138,10 +162,14 @@ impl Shell {
     pub(crate) fn render_settings_dialog(
         &self,
         dialog: &SettingsDialog,
-        viewport_height: Pixels,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
+        let viewport_height = window.viewport_size().height;
+        // The model's field paints a caret only while the dialog's own text has the keyboard,
+        // not while Tab put it on a button or link.
+        let typing = self.dialog_focus.is_focused(window);
         let tabs = Tab::all().into_iter().map(|tab| {
             let active = tab == dialog.tab;
             let focused = active && dialog.focus == Focus::Tabs;
@@ -188,7 +216,7 @@ impl Shell {
                 "settings-search",
                 &dialog.search,
                 "Search shortcuts",
-                dialog.focus == Focus::Search,
+                dialog.focus == Focus::Search && typing,
                 theme,
                 cx,
                 |shell, caret| {
@@ -217,7 +245,7 @@ impl Shell {
             .children(
                 rows.iter()
                     .enumerate()
-                    .map(|(i, row)| self.settings_row(dialog, i, *row, theme, cx)),
+                    .map(|(i, row)| self.settings_row(dialog, i, *row, typing, theme, cx)),
             );
 
         let footer = div()
@@ -268,8 +296,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::settings_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::settings_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::settings_key_down, cx))
             .child(
@@ -337,6 +369,7 @@ impl Shell {
             .text_color(rgb(theme.accent_text))
             .hover(|style| style.underline())
             .on_click(cx.listener(move |shell, _, _, cx| on_click(shell, cx)))
+            .focus_stop(theme)
             .child(label)
     }
 
@@ -345,6 +378,7 @@ impl Shell {
         dialog: &SettingsDialog,
         index: usize,
         row: Row,
+        typing: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -354,7 +388,7 @@ impl Shell {
             Row::Setting(setting) => (
                 setting.label.into(),
                 (!setting.help.is_empty()).then(|| setting.help.to_owned()),
-                self.settings_control(dialog, setting, focused, theme, cx),
+                self.settings_control(dialog, setting, focused, typing, theme, cx),
             ),
             Row::Binding(command) => (
                 palette::title(command).into(),
@@ -425,7 +459,7 @@ impl Shell {
                     .text_color(rgb(theme.status_exited))
                     .child(error)
             }))
-            .children(self.list_pick_view(dialog, row, theme, cx))
+            .children(self.list_pick_view(dialog, row, typing, theme, cx))
             .into_any_element()
     }
 
@@ -434,6 +468,7 @@ impl Shell {
         dialog: &SettingsDialog,
         setting: &'static Setting,
         focused: bool,
+        typing: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -507,7 +542,7 @@ impl Shell {
                         "settings-value",
                         input,
                         "",
-                        true,
+                        typing,
                         theme,
                         cx,
                         |shell, caret| {
@@ -588,6 +623,7 @@ impl Shell {
                             cx.stop_propagation();
                             shell.settings_do(|d, _| d.reset(command), window, cx);
                         }))
+                        .focus_stop(theme)
                         .child("Reset"),
                 )
             })
@@ -606,6 +642,7 @@ impl Shell {
         &self,
         dialog: &SettingsDialog,
         row: Row,
+        typing: bool,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> Option<gpui::AnyElement> {
@@ -628,7 +665,7 @@ impl Shell {
                     } else {
                         "Search fonts"
                     },
-                    true,
+                    typing,
                     theme,
                     cx,
                     |shell, caret| {

@@ -774,7 +774,10 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   session title as you type (every word must match; client-side, not remembered; while it holds
   text ↑/↓ move a highlight over the matching session rows, no wrap, and Enter opens the
   highlighted one, the first by default, or the first workspace when no session matches; with an
-  empty box Enter gives the keyboard back to the pane); beside it the
+  empty box Enter gives the keyboard back to the pane).
+  Alt+0 (§13) focuses the box with the active row highlighted: with an empty box ↑/↓ walk every visible row, ←/→ fold / unfold the highlighted row's workspace and Enter opens it; with text ←/→ move the caret.
+  Tab / Shift+Tab in the box step the All / Working / Needs you chips.
+  Next to the filter box sit the
   remove-idle-agents button (only while there are some), collapse / expand all and `+` (add
   workspace); under it a segmented control `All N`, `Working N` and `Needs you N` (N amber while
   above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
@@ -865,6 +868,8 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   the keyboard back and keeps a typed draft on the card, like the composer).
   New task: the empty board's button, or `New task` in the Todo column header.
   With `[jira] site` set, a `Tasks | Jira` switch heads the Board (§20I).
+  Show Board (Ctrl+Shift+2) again switches Tasks / Jira, and the card keys walk the Jira rows.
+  Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
   for a tab without panes), one status dot of its most urgent pane (§11: pulsing accent while an
@@ -880,6 +885,7 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   lacks start sessions of the focused pane's kind (as Split right), one after another; then the
   layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
   why); if a start fails, the sessions that started are placed as Split right places them.
+  Every popover menu below opens by mouse or keyboard, takes the keyboard while it is open and gives it back when it closes (§13).
   `⋯`, and a right-click on a tab, open the tab menu: Pin, Split right, Split down, Rename, Close,
   Close others, Close tabs to the right (both leave pinned tabs and make the menu's tab active;
   greyed when nothing would close); on the active tab also the focused pane's Rename pane, Close
@@ -971,6 +977,20 @@ Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view 
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
+- **Copy mode** (`Alt+Shift+C`, ADR 0085): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
+  While it is on the keys go to the UI, not the program, and the pane header (the tab bar for a single pane) shows `Copy mode` with the key hints.
+  `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
+  `v` / `Shift+V` start, switch or drop a character / line selection; entering copy mode clears a mouse selection.
+  `y` or `Enter` copy it (a trailing newline of a line selection is trimmed) and leave; `Ctrl+Shift+C` copies it too and stays in copy mode; `Ctrl+Shift+L` sends it to an agent's composer and leaves copy mode; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
+  `Esc` drops the selection, or leaves copy mode when there is none (an empty selection from a click counts as none).
+  Copy mode survives the pane losing focus.
+  With copy mode on, voice text goes to the clipboard, not the terminal.
+  Output that arrives meanwhile is held back (up to 1 MiB) so the view and the cursor stay on their text; leaving copy mode applies it and returns to the live screen.
+- **Link hints** (`Alt+Shift+O`, ADR 0085): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
+  Typing a label opens that link exactly like Ctrl+Click; `Esc` or any other key cancels.
+  Output is held back while the labels show (up to 1 MiB, like copy mode).
+  Any key, a wheel scroll, a click or the pane losing focus ends the hints and applies the held output.
+  No link on screen: the tab bar says "No links on screen." for 3 seconds.
 - **Run pill** (ADR 0018, ADR 0054) in the title bar: while something runs a green pill
   `● 2 running :8080 :5180 ▾` (`run-pill-*` tokens; amber dot and `1/2 running` when some
   exited; a steady dot: a pulse would redraw the window for as long as a server runs, §15);
@@ -1039,8 +1059,8 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
-- Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
-  like F2; greyed for a run pane), **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise) and **Change color** (the workspace palette; none clears). A
+- Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
+  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
   top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
@@ -1074,7 +1094,7 @@ Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, comman
   highlighted by their fence language (syntect, as in the Editor); the text uses the doc
   typography of §14 (ADR 0021). ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust
   renderer, theme colors); a block that cannot be drawn shows its source and the reason.
-- **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →
+- **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0085) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
   lines highlights them (ADR 0006; character selection in Docs and anchor-aligned cards are
@@ -1180,7 +1200,8 @@ Only edit this file. When done, for EACH comment run:
   "Copy path" (absolute), "Add to .gitignore" (rows only: appends `/path` or `/path/` to the
   shown folder's `.gitignore`, once), "Open in File Explorer" and "Open in Zed" (§10). The app
   does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
-  in the sidebar. A click outside closes the menu.
+  in the sidebar. A click outside or Esc closes the menu.
+  Shift+F10 opens it on the cursor row (on the active tab's menu while the editor has the keyboard).
 - **Open at a line:** Ctrl+Click on a file path in a terminal (§10) opens that file in the Editor with the
   caret on the line, scrolled into view. A path in another task's worktree switches to
   that worktree (asking about unsaved text first).
@@ -1262,7 +1283,7 @@ Windows (tens of ms, worse with antivirus), so:
   the expanded commit's files show its lanes running straight through.
 - **Task changes:** from a Review-column task card, "View changes" opens the Git tab and the diff from
   `task.checkpoint` to now (ties into M5).
-- **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in
+- **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; Shift+↓ / Shift+↑ pick the first new-side line of the current hunk (`n` / `p` choose it), then grow or shrink the pick one line, across hunks, scrolled into view; as in
   ADR 0006) → comment, reusing the M6 comment system (`context = 'diff'`, anchored to new-side
   lines + quote = the picked lines shown; not in History). Threads are listed in a margin beside
   the diff while the file has any (or lines are picked, a draft is open, or listing failed). "Send to agent" delivers them to the
@@ -1314,6 +1335,8 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
+| Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
+| Global | Open the context menu of what has the keyboard (the menu a right-click opens: terminal pane, file tree cursor row, editor tab, sidebar row, Board card; else the workspace menu under the switcher); again closes it | Shift+F10 (the Menu key: bind `context_menu` in Settings) |
 | View | Toggle the right panel (Files / Session / Git tabs; keeps the tab) | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -1327,11 +1350,14 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Board | Select a card (↑/↓ in the column, ←/→ the same row of the next column with cards) / move it one column (the same `task.move`s as a drag) | ↑↓←→ / Shift+← Shift+→ |
 | Board | Open the selected card (its live session, else its edit dialog) / edit it | Enter / E |
+| Board | Approve the selected Review card (also: the same ↑↓←→ and Enter move and open rows of the Jira list and Kanban; ←/→ fold a List row) | A |
+| Board | Show Board while the Board is shown and Jira is set up: switch Tasks / Jira | Ctrl+Shift+2 |
 | Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
 | Tabs | Next / previous tab (file tabs while the Editor is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
 | Tabs | Jump to tab 1–9 (file tabs while the Editor is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
 | Tabs | Rename / close tab (close: the active file tab while the Editor is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
+| Tabs | Move the active tab (the active file tab in the Editor) one place left / right inside its pinned or unpinned group | Ctrl+Shift+PgUp / Ctrl+Shift+PgDn |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
@@ -1344,13 +1370,18 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
 | Terminal / Editor / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
+| Terminal | Copy mode: select and copy with vi keys (§10) / label the links on screen and open one by typing its label (§10) | Alt+Shift+C / Alt+Shift+O |
 | Docs | Comment on selection | Ctrl+Alt+M |
 | Docs | Send comments to agent | Ctrl+Shift+S |
+| Docs / Git | Pick lines: the first line or block in view (Git: the current hunk's first line), then grow / shrink the pick one line or block (Esc clears; a text field keeps Shift+↑/↓) | Shift+↓ / Shift+↑ |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
+| Docs / Git | Select the next / previous comment thread (scrolled into view) | F8 / Shift+F8 |
+| Docs / Git | Reply to / resolve or reopen the selected thread | Ctrl+Alt+R / Ctrl+Alt+Enter |
 | Editor | Toggle preview / source of a Markdown file (no terminal has focus there, so Paste keeps the keys in terminals) | Ctrl+Shift+V |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
 | File tree | Expand/collapse, move | ← → ↑ ↓ |
 | File tree | Toggle ignored files (while the tree has the keyboard; the palette entry works anywhere in a workspace) | Ctrl+Shift+H |
+| File tree | Open the tree's cursor file in a kept tab (Enter opens a transient one) | Alt+Enter |
 | Editor | Save the opened file | Ctrl+S |
 | Editor | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
 | Editor | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
@@ -1362,6 +1393,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Toggle Working changes / Against base | b |
 | Git | Toggle History | h |
 | Git | Toggle Unified / Split diff | d |
+| Git | Wrap long diff lines / cut them at the edge | W |
 | Git | Mark the selected file viewed / not viewed | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Stage all of the selected file's group (Unstaged + Untracked when a Staged file or nothing is selected) / unstage all | Shift+S / Shift+U |
@@ -1372,12 +1404,37 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace | command palette only |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
 
 In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
+Alt+0 and Ctrl+Shift+PgUp / PgDn no longer reach a focused terminal.
+In the Board, the Git tab and the file tree the single keys `a`, `w` and Alt+Enter act only while the card board, the changed-file list (or the diff, with the list hidden) or the file tree has the keyboard; a text field, a comment draft or the Editor keeps them.
+Shift+F10 does not reach a focused terminal either; rebind `context_menu` if a program needs it.
+Alt+Shift+C and Alt+Shift+O no longer reach a focused terminal either (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
+The keys of copy mode (`h j k l w b e 0 $ g G v V y`, arrows, PgUp / PgDn, Enter, Esc) and the letters of link hints are not in `keymap.toml`.
+While a popover menu is open it has the keyboard (key context `Menu`, not in `keymap.toml`):
+↑ / ↓ select the next / previous enabled row, wrapping.
+Home / End select the first / last.
+← / → move between the swatches of a color row.
+Enter or Space run the row and close the menu (a multi-select row of the fan-out picker ticks and stays; Enter on its Run row runs).
+A letter selects the next row starting with it.
+Esc closes the menu and gives the keyboard back.
+A held (auto-repeat) key does nothing.
+The Board's single keys stay with the menu while it is open.
+
+Modal dialogs (ADR 0085): Tab and Shift+Tab move through the dialog's controls and wrap inside it.
+The order is the dialog's text fields first, then its options (chips, checkboxes), then its buttons left to right.
+Enter or Space on a focused control clicks it; ← / → move between the chips of a row; Esc closes the dialog from anywhere in it.
+Tab is not in `keymap.toml`: like the keys of the confirm prompt it only means something inside a dialog.
+A destructive button (Discard changes, Remove worktree, Discard files, Git Discard) is never the first focus and does not run on the Enter that opened the dialog.
+It runs when Tab moved onto it and Enter or Space is pressed; an auto-repeating key does nothing.
+Turns: D shows the changes since the selected turn.
+Broadcast: ↑ / ↓ move the keyboard into the session list and pick a session; Space checks it only while the list has the keyboard.
+Typing leaves the list, so a space can still be typed in the message.
+Run setup: Shift+Tab walks back; in its folder picker ↑ / ↓ move, → opens a folder, ← goes up, Enter takes the folder or env file under the cursor.
 
 Invalid or duplicate bindings: report the error and fall back to defaults for that entry. The
 command palette shows each command's shortcut; tooltips show shortcuts too.
@@ -1518,6 +1575,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   opens `settings.toml` and `keymap.toml` in Zed.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
+- Focus ring (ADR 0085): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
+  A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
   Find matches (`status-needs-input` amber mixed into `bg`, text drawn in `text`):

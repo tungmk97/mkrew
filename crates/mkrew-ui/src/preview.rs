@@ -13,8 +13,9 @@ use gpui::prelude::*;
 use gpui::{
     AnyElement, App, Bounds, CursorStyle, Div, FontStyle, FontWeight, HighlightStyle, Hsla,
     ListAlignment, ListState, MouseButton, MouseDownEvent, Pixels, SharedString,
-    StrikethroughStyle, StyledText, TextLayout, UnderlineStyle, UniformList, Window, canvas, div,
-    img, list, point, px, relative, rgb, uniform_list,
+    StrikethroughStyle, StyledText, TextLayout, UnderlineStyle, UniformList,
+    UniformListScrollHandle, Window, canvas, div, img, list, point, px, relative, rgb,
+    uniform_list,
 };
 
 use crate::comments::Selection;
@@ -107,6 +108,16 @@ impl Page {
         }
         *current = Some((opening, Rc::clone(shown)));
         true
+    }
+
+    /// The index of the block at the top of the view.
+    pub fn top(&self) -> usize {
+        self.state.logical_scroll_top().item_ix
+    }
+
+    /// Scrolls block `ix` into view (nothing moves when it is shown already).
+    pub fn reveal(&self, ix: usize) {
+        self.state.scroll_to_reveal_item(ix);
     }
 
     /// Measures every block again (keeping the place) when `fonts` differ from the ones the
@@ -742,12 +753,14 @@ fn text(runs: &[Run], theme: &Theme, selected: Option<Range<usize>>, bg: Hsla) -
 pub type OnLine = Rc<dyn Fn(u32, bool, &mut Window, &mut App)>;
 
 /// The file's lines with right-aligned line numbers in the monospaced font; only the rows on
-/// screen are laid out. The `selected` lines are highlighted; a click picks a line.
+/// screen are laid out. The `selected` lines are highlighted; a click picks a line; `scroll`
+/// follows the list so the shell can read and set its position.
 pub fn source(
     id: &'static str,
     shown: Rc<Shown>,
     selected: Option<Selection>,
     on_line: OnLine,
+    scroll: &UniformListScrollHandle,
     theme: &Theme,
 ) -> UniformList {
     let total = shown.lines.len();
@@ -789,6 +802,7 @@ pub fn source(
             })
             .collect()
     })
+    .track_scroll(scroll)
     .font_family(theme.terminal_font_family.clone())
     .text_size(px(theme.terminal_font_size))
 }

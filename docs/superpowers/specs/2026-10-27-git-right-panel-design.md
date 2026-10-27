@@ -2,7 +2,7 @@
 
 - Date: 2026-10-27
 - Status: approved in chat, awaiting spec review
-- ADR to write with the implementation: `docs/decisions/0082-git-in-the-right-panel.md`
+- ADR to write with the implementation: `docs/decisions/0084-git-in-the-right-panel.md`
 - Follows sub-project 1: `docs/superpowers/specs/2026-10-27-files-right-panel-design.md` (ADR 0081).
 
 ## Goal
@@ -106,7 +106,7 @@ Out (YAGNI; may come later):
 
 ## Docs
 
-- ADR 0082 "Git in the right panel": supersedes in part ADR 0081 (two-tab panel) and the ADRs that placed the Git side column right of the diff.
+- ADR 0084 "Git in the right panel": supersedes in part ADR 0081 (two-tab panel) and the ADRs that placed the Git side column right of the diff.
 - SPEC §10: layout sketch, view bar (`Diff`), the Git tab, `[ui] right_panel = "git"`, the Changes card's "Review diff".
 - SPEC §12B: the Git tab, the Diff view, opening / closing a diff, the refresh rule.
 - SPEC §12A: "what the Git view calls unstaged" → "what the Git tab calls unstaged".

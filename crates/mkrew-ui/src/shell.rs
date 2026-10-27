@@ -5,6 +5,7 @@
 pub(crate) mod cards;
 mod chrome;
 pub(crate) mod inspector;
+pub(crate) mod menu_render;
 pub(crate) mod menus;
 pub(crate) mod pane_drop;
 pub(crate) mod pane_render;
@@ -29,11 +30,12 @@ pub(crate) mod git_menus;
 mod git_render;
 pub(crate) mod git_rows;
 mod git_viewed;
+mod picking;
 mod send_dialog;
 
 mod ask_dialog;
 mod attention;
-mod board;
+pub(crate) mod board;
 mod composer;
 mod connection;
 mod dialogs;

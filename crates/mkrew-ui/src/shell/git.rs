@@ -567,9 +567,9 @@ impl Shell {
         self.open_git_diff(project_id, window, cx);
     }
 
-    /// ↑ ↓ / j k move between files; Enter opens the selection's diff; Esc closes an open Git
-    /// menu, else unselects the picked diff lines, else closes the diff; the other Git keys
-    /// are keymap commands ([`Self::git_key`]).
+    /// ↑ ↓ / j k move between files; Enter opens the selection's diff; Esc unselects the picked
+    /// diff lines, else closes the diff (an open Git menu has the keyboard itself); the other
+    /// Git keys are keymap commands ([`Self::git_key`]).
     pub(crate) fn git_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -577,10 +577,6 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-            if self.git_menu.is_some() {
-                cx.stop_propagation();
-                return self.close_git_menu(window, cx);
-            }
             if let Some(project_id) = self.workspace
                 && self
                     .git

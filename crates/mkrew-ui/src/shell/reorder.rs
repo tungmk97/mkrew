@@ -193,6 +193,41 @@ impl Shell {
         );
     }
 
+    /// Ctrl+Shift+PgUp / PgDn (`by` -1 / 1): the active tab (the active file tab in the Editor
+    /// view) one place along its pin group, through the same functions a drag drop calls.
+    pub(crate) fn move_active_tab(
+        &mut self,
+        by: isize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if self.view() == View::Editor {
+            let view = self.files_view(project_id);
+            let Some((pinned, from, len)) = view.active_place() else {
+                return;
+            };
+            let Some(to) = sidebar::step_index(len, from, by) else {
+                return;
+            };
+            view.move_tab(pinned, from, to);
+            if let Some(at) = view.active_index() {
+                self.file_tabs_scroll.scroll_to_item(at);
+            }
+            cx.notify();
+            return;
+        }
+        let Some((pinned, from, len)) = self.tabs.get(&project_id).and_then(Tabs::active_place)
+        else {
+            return;
+        };
+        if let Some(to) = sidebar::step_index(len, from, by) {
+            self.drop_tab(project_id, pinned, from, to, window, cx);
+        }
+    }
+
     /// The `from`-th of the pinned or unpinned workspaces goes to place `to` among them: the
     /// group gets positions `1..=n`, shown at once and saved with `project.update`.
     fn drop_workspace(
@@ -215,6 +250,30 @@ impl Shell {
                 let params = workspace_menu::set_position(project_id, position);
                 self.update_project(params, "Cannot move the workspace", window, cx);
             }
+        }
+    }
+
+    /// Workspace: Move up / down (`by` -1 / 1): the active workspace one place along its pinned
+    /// or unpinned group, the same reorder as the drag.
+    pub(crate) fn move_workspace(
+        &mut self,
+        project_id: Ulid,
+        by: isize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(pinned) = (self.sidebar.projects().iter())
+            .find(|p| p.id == project_id)
+            .map(|p| p.pinned)
+        else {
+            return;
+        };
+        let order = self.sidebar.workspace_order(pinned);
+        let Some(from) = order.iter().position(|id| *id == project_id) else {
+            return;
+        };
+        if let Some(to) = sidebar::step_index(order.len(), from, by) {
+            self.drop_workspace(pinned, from, to, window, cx);
         }
     }
 }

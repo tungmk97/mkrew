@@ -31,9 +31,11 @@ pub struct Context {
     pub tabs: usize,
     /// The active workspace's open file tabs.
     pub file_tabs: usize,
+    /// The file tree is painted in the right panel (Open in a kept tab acts on its cursor).
+    pub file_tree: bool,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
     pub terminal: bool,
-    /// The Git view's selected file can be discarded (unstaged or untracked).
+    /// The Git list's selected file can be discarded (unstaged or untracked).
     pub discard: bool,
     /// The active workspace's Git is on screen (the panel's Git tab or the Diff view): the
     /// Git keys act.
@@ -56,6 +58,34 @@ pub struct Context {
     pub run_stopped: bool,
     /// A run session of the active workspace lives.
     pub run_live: bool,
+    /// The active terminal tab has other unpinned tabs ("Close others").
+    pub tab_others: bool,
+    /// The active terminal tab has unpinned tabs to its right.
+    pub tab_right: bool,
+    /// A terminal pane is focused.
+    pub pane: bool,
+    /// The focused pane's session can be stopped (`inspector::stop_action`).
+    pub live_session: bool,
+    /// The focused agent pane's session has a transcript file.
+    pub transcript: bool,
+    /// The focused agent pane's session has a linked plan.
+    pub plan_linked: bool,
+    /// The focused pane's prompt composer is open.
+    pub composer_open: bool,
+    /// The selected board card is in Review (`a` approves it).
+    pub approve_card: bool,
+    /// The Git list shows Against base.
+    pub git_base: bool,
+    /// The Git list shows several repositories.
+    pub git_repos: bool,
+    /// The Board shows Jira.
+    pub jira: bool,
+    /// An error toast was shown this run.
+    pub last_error: bool,
+    /// A toast is shown.
+    pub toast: bool,
+    /// An update is ready to install.
+    pub update_ready: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
     pub features: FeatureSettings,
 }
@@ -81,10 +111,32 @@ pub enum Extra {
     WorkspaceDefaultAgent,
     WorkspaceRemove,
     WorkspaceMenu,
+    TabPin,
+    TabCloseOthers,
+    TabCloseRight,
+    PanePin,
+    PaneReading,
+    WorkspaceDefaultShell,
+    WorkspaceMoveUp,
+    WorkspaceMoveDown,
+    AgentStop,
+    AgentTranscript,
+    AgentLinkPlan,
+    AgentUnlinkPlan,
+    AgentImprove,
+    GitChangeBase,
+    GitSwitchRepo,
+    JiraMine,
+    JiraLayout,
+    JiraRefresh,
+    CopyLastError,
+    DismissToasts,
+    History,
+    InstallUpdate,
 }
 
 impl Extra {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 40] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -103,6 +155,28 @@ impl Extra {
         Self::WorkspaceDefaultAgent,
         Self::WorkspaceRemove,
         Self::WorkspaceMenu,
+        Self::TabPin,
+        Self::TabCloseOthers,
+        Self::TabCloseRight,
+        Self::PanePin,
+        Self::PaneReading,
+        Self::WorkspaceDefaultShell,
+        Self::WorkspaceMoveUp,
+        Self::WorkspaceMoveDown,
+        Self::AgentStop,
+        Self::AgentTranscript,
+        Self::AgentLinkPlan,
+        Self::AgentUnlinkPlan,
+        Self::AgentImprove,
+        Self::GitChangeBase,
+        Self::GitSwitchRepo,
+        Self::JiraMine,
+        Self::JiraLayout,
+        Self::JiraRefresh,
+        Self::CopyLastError,
+        Self::DismissToasts,
+        Self::History,
+        Self::InstallUpdate,
     ];
 
     pub fn title(self) -> &'static str {
@@ -125,6 +199,28 @@ impl Extra {
             Self::WorkspaceDefaultAgent => "Workspace: Set default agent…",
             Self::WorkspaceRemove => "Workspace: Remove…",
             Self::WorkspaceMenu => "Workspace: Open workspace menu",
+            Self::TabPin => "Tab: Pin / Unpin",
+            Self::TabCloseOthers => "Tab: Close others",
+            Self::TabCloseRight => "Tab: Close tabs to the right",
+            Self::PanePin => "Pane: Pin / Unpin",
+            Self::PaneReading => "Pane: Reading width (on / off)",
+            Self::WorkspaceDefaultShell => "Workspace: Set default shell…",
+            Self::WorkspaceMoveUp => "Workspace: Move up",
+            Self::WorkspaceMoveDown => "Workspace: Move down",
+            Self::AgentStop => "Agent: Stop session…",
+            Self::AgentTranscript => "Agent: Open transcript",
+            Self::AgentLinkPlan => "Agent: Link plan…",
+            Self::AgentUnlinkPlan => "Agent: Unlink plan",
+            Self::AgentImprove => "Agent: Improve prompt",
+            Self::GitChangeBase => "Git: Change base…",
+            Self::GitSwitchRepo => "Git: Switch repository…",
+            Self::JiraMine => "Jira: Toggle All / Mine",
+            Self::JiraLayout => "Jira: Toggle List / Kanban",
+            Self::JiraRefresh => "Jira: Refresh",
+            Self::CopyLastError => "Global: Copy last error",
+            Self::DismissToasts => "Global: Dismiss notifications",
+            Self::History => "Global: History…",
+            Self::InstallUpdate => "Global: Install update",
         }
     }
 
@@ -155,7 +251,32 @@ impl Extra {
             | Self::WorkspaceRemove
             | Self::WorkspaceMenu => context.workspace,
             Self::MarkUnread => context.markable,
+            Self::TabPin => in_view(View::Terminals) && context.tabs > 0,
+            Self::TabCloseOthers => in_view(View::Terminals) && context.tab_others,
+            Self::TabCloseRight => in_view(View::Terminals) && context.tab_right,
+            Self::PanePin => in_view(View::Terminals) && context.tabs > 0 && context.pane,
+            Self::PaneReading | Self::AgentLinkPlan => {
+                in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
+            }
+            Self::WorkspaceDefaultShell | Self::WorkspaceMoveUp | Self::WorkspaceMoveDown => {
+                context.workspace
+            }
+            Self::AgentStop => in_view(View::Terminals) && context.live_session,
+            Self::AgentTranscript => in_view(View::Terminals) && context.transcript,
+            Self::AgentUnlinkPlan => {
+                in_view(View::Terminals) && context.agent_pane && context.plan_linked
+            }
+            Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates => true,
+            Self::GitChangeBase => context.workspace && context.git && context.git_base,
+            Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
+            Self::JiraMine | Self::JiraLayout | Self::JiraRefresh => {
+                in_view(View::Board) && context.jira
+            }
+            Self::CopyLastError => context.last_error,
+            Self::DismissToasts => context.toast,
+            Self::History => context.workspace,
+            Self::InstallUpdate => context.update_ready,
         }
     }
 }
@@ -179,6 +300,9 @@ pub enum Action {
     /// "Agent: New <Profile> pane": a new pane with the profile at this position of the
     /// shell's profile list (see [`agent_entries`]).
     NewAgentPane(usize),
+    /// Run: Start / Restart / Stop `<command>`: the `usize`-th command of the active workspace's
+    /// Run summary (like `NewAgentPane`).
+    RunCommand(crate::run::RunAction, usize),
 }
 
 /// One palette line.
@@ -240,6 +364,8 @@ pub fn title(command: Command) -> String {
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
         Command::OpenComposer => "Agent: Open the prompt composer".into(),
         Command::SendSelection => "Agent: Send selection to an agent".into(),
+        Command::CopyMode => "Terminal: Copy mode (select and copy with the keyboard)".into(),
+        Command::LinkHints => "Terminal: Open a link by its label".into(),
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
@@ -250,7 +376,16 @@ pub fn title(command: Command) -> String {
         Command::ToggleDocSource => "Docs: Toggle preview / source".into(),
         Command::AddComment => "Comments: Comment on selected lines".into(),
         Command::SendComments => "Comments: Send comments to agent".into(),
+        Command::PickDown => "Comments: Pick the next line or block (grow the pick down)".into(),
+        Command::PickUp => "Comments: Pick the previous line or block (grow the pick up)".into(),
+        Command::NextComment => "Comments: Next comment thread".into(),
+        Command::PreviousComment => "Comments: Previous comment thread".into(),
+        Command::ReplyComment => "Comments: Reply to the selected thread".into(),
+        Command::ResolveComment => "Comments: Resolve or reopen the selected thread".into(),
+        Command::MoveTabLeft => "Tabs: Move tab left".into(),
+        Command::MoveTabRight => "Tabs: Move tab right".into(),
         Command::ToggleIgnored => "File tree: Toggle ignored files".into(),
+        Command::OpenKept => "File tree: Open file in a kept tab".into(),
         Command::SaveFile => "Editor: Save file".into(),
         Command::FindInFile => "Editor: Find in file".into(),
         Command::ReplaceInFile => "Editor: Replace in file".into(),
@@ -265,6 +400,7 @@ pub fn title(command: Command) -> String {
         Command::GitUnstage => "Git: Unstage selected file or hunk".into(),
         Command::GitFocusCommit => "Git: Focus commit message".into(),
         Command::GitToggleDiffMode => "Git: Toggle Unified / Split diff".into(),
+        Command::GitToggleWrap => "Git: Toggle Wrap of the diff".into(),
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::GitStageAll => "Git: Stage all (selected group, else every change)".into(),
         Command::GitUnstageAll => "Git: Unstage all".into(),
@@ -273,6 +409,7 @@ pub fn title(command: Command) -> String {
         Command::GitPush => "Git: Push".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
+        Command::ApproveCard => "Task: Approve selected task".into(),
         Command::Card(key) => match key {
             CardKey::Up => "Board: Select card above".into(),
             CardKey::Down => "Board: Select card below".into(),
@@ -296,6 +433,8 @@ pub fn title(command: Command) -> String {
         Command::ToggleInspector => "View: Toggle right panel".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
+        Command::ContextMenu => "Global: Open context menu".into(),
+        Command::FocusSidebar => "Sidebar: Focus the filter".into(),
     }
 }
 
@@ -329,7 +468,9 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ShowGitPanel
         | Command::QuickOpen
         | Command::ToggleInspector
-        | Command::NewTask => context.workspace,
+        | Command::NewTask
+        | Command::ContextMenu
+        | Command::FocusSidebar => context.workspace,
         Command::ShowDiff => context.workspace && context.diff,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::ShowEditor => context.workspace && context.file_tabs > 0,
@@ -348,9 +489,12 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ZoomPane
         | Command::RenamePane
         | Command::ClosePane => on_panes,
-        Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
-            on_panes && context.terminal
-        }
+        Command::Copy
+        | Command::Paste
+        | Command::PageUp
+        | Command::PageDown
+        | Command::CopyMode
+        | Command::LinkHints => on_panes && context.terminal,
         Command::Find => {
             (on_panes && context.terminal) || in_view(View::Editor) || in_view(View::Docs)
         }
@@ -359,11 +503,23 @@ pub fn available(command: Command, context: &Context) -> bool {
             in_view(View::Editor) || in_view(View::Diff) || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
+        Command::ApproveCard => in_view(View::Board) && context.approve_card,
         Command::RunStart => context.workspace && context.run_stopped,
         Command::RunRestart | Command::RunStop => context.workspace && context.run_live,
         Command::ToggleDocSource => in_view(View::Docs),
-        Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Diff),
+        Command::AddComment
+        | Command::SendComments
+        | Command::PickDown
+        | Command::PickUp
+        | Command::NextComment
+        | Command::PreviousComment
+        | Command::ReplyComment
+        | Command::ResolveComment => in_view(View::Docs) || in_view(View::Diff),
+        Command::MoveTabLeft | Command::MoveTabRight => {
+            on_panes || (in_view(View::Editor) && context.file_tabs > 0)
+        }
         Command::ToggleIgnored => context.workspace,
+        Command::OpenKept => context.workspace && context.file_tree,
         Command::SaveFile
         | Command::FindInFile
         | Command::ReplaceInFile
@@ -376,6 +532,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitStage
         | Command::GitUnstage
         | Command::GitToggleDiffMode
+        | Command::GitToggleWrap
         | Command::GitToggleViewed
         | Command::GitStageAll
         | Command::GitUnstageAll
@@ -457,6 +614,29 @@ pub fn agent_entries(
             },
         })
         .collect()
+}
+
+/// "Run: Start / Restart / Stop <command>", one group per command of the workspace in Run menu
+/// order (a running command offers Restart and Stop, any other Start), like the Run menu's
+/// row buttons. The `usize` is the row's place in `summary`, resolved again when picked.
+pub fn run_entries(summary: &crate::run::Summary) -> Vec<Entry> {
+    use crate::run::{RowState, RunAction};
+    let mut entries = Vec::new();
+    for (index, row) in summary.rows.iter().enumerate() {
+        let actions: &[(RunAction, &str)] = if matches!(row.state, RowState::Running(_)) {
+            &[(RunAction::Restart, "Restart"), (RunAction::Stop, "Stop")]
+        } else {
+            &[(RunAction::Start, "Start")]
+        };
+        for &(action, verb) in actions {
+            entries.push(Entry {
+                action: Action::RunCommand(action, index),
+                title: format!("Run: {verb} {}", row.name),
+                shortcut: String::new(),
+            });
+        }
+    }
+    entries
 }
 
 /// The palette's entries: "Go to" every session that needs input first, then the available

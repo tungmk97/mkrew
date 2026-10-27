@@ -179,8 +179,15 @@ impl Shell {
             // itself (rows stop the event first).
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
-                    shell.open_file_menu(project_id, String::new(), true, event.position, cx);
+                cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
+                    shell.open_file_menu(
+                        project_id,
+                        String::new(),
+                        true,
+                        event.position,
+                        window,
+                        cx,
+                    );
                 }),
             )
             .child(header)
@@ -965,6 +972,10 @@ pub(crate) fn file_row(
         .when(!at_cursor && !opened, |el| {
             el.hover(move |style| style.bg(rgb(hover)))
         })
+        .when(at_cursor, |el| {
+            el.relative()
+                .child(record_bounds(Anchor::FileRow(entry.path.clone()), cx))
+        })
         .active(|style| style.opacity(opacity::ACTIVE))
         .child(
             div()
@@ -1043,8 +1054,15 @@ pub(crate) fn file_row(
         )
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
-                shell.open_file_menu(project_id, menu_path.clone(), is_dir, event.position, cx);
+            cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
+                shell.open_file_menu(
+                    project_id,
+                    menu_path.clone(),
+                    is_dir,
+                    event.position,
+                    window,
+                    cx,
+                );
                 cx.stop_propagation();
             }),
         )

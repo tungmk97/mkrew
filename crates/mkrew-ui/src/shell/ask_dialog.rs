@@ -51,10 +51,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
         };
+        // A control has the keyboard: the question takes nothing but Esc / Ctrl+Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, DialogKey::Cancel | DialogKey::Save)
+        {
+            return;
+        }
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -112,6 +121,7 @@ impl Shell {
     pub(crate) fn render_ask(
         &self,
         dialog: &Ask,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -148,6 +158,7 @@ impl Shell {
                 Self::chip_row(
                     "Agent",
                     chips,
+                    true,
                     theme,
                     |shell, id, _, cx| {
                         if let Some(dialog) = shell.ask.as_mut() {
@@ -184,6 +195,7 @@ impl Shell {
             Self::chip_row(
                 "Web search",
                 chips,
+                true,
                 theme,
                 |shell, on, _, cx| {
                     shell.ask_web = on;
@@ -201,7 +213,7 @@ impl Shell {
             "ask-question",
             dialog.question.input(),
             "Ask anything…",
-            true,
+            self.dialog_focus.is_focused(window),
             theme,
             cx,
             |shell, caret| {
@@ -259,6 +271,7 @@ impl Shell {
             )
             .children(answer_text.map(|text| {
                 button("ask-copy", "Copy answer", theme, false)
+                    .focus_stop(theme)
                     .tooltip(tooltip(theme, "Copy the answer as Markdown", ""))
                     .on_click(move |_, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
@@ -266,11 +279,13 @@ impl Shell {
             }))
             .child(
                 button("ask-close", "Close", theme, false)
+                    .focus_stop(theme)
                     .tooltip(tooltip(theme, "Close the dialog", "Esc"))
                     .on_click(cx.listener(|shell, _, window, cx| shell.close_ask(window, cx))),
             )
             .child(if can_ask {
                 button("ask-send", ask_label, theme, true)
+                    .focus_stop(theme)
                     .tooltip(tooltip(theme, "Ask the question", "Ctrl+Enter"))
                     .on_click(cx.listener(|shell, _, window, cx| shell.send_ask(window, cx)))
             } else {
@@ -293,8 +308,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::ask_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::ask_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::ask_key_down, cx))
             .child(

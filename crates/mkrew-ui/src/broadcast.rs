@@ -75,8 +75,11 @@ pub struct Broadcast {
     pub rows: Vec<Row>,
     /// The text being typed (one line; Enter sends).
     pub text: Input,
-    /// The row ↑ / ↓ move and Tab toggles.
+    /// The row ↑ / ↓ move and Space toggles.
     pub cursor: usize,
+    /// ↑ / ↓ handed the keyboard to the session list (Space checks the cursor row); typing
+    /// takes it back (Space is a space).
+    pub in_list: bool,
 }
 
 /// Whether `session` is a live (not exited) agent session of `project_id`.
@@ -109,6 +112,7 @@ impl Broadcast {
             rows,
             text: Input::default(),
             cursor: 0,
+            in_list: false,
         }
     }
 
@@ -119,34 +123,39 @@ impl Broadcast {
             .any(|row| row.delivery == Some(Delivery::Sending))
     }
 
-    /// Applies a key press: ↑ / ↓ move the cursor, Tab toggles its row, typing edits the text.
+    /// Applies a key press: ↑ / ↓ move the cursor and hand the keyboard to the list, where Space
+    /// checks the cursor's row; any other key goes back to the text. Tab is the dialog's focus
+    /// key (`Shell::dialog_nav`), not a tick.
     pub fn key(&mut self, keystroke: &Keystroke) -> Outcome {
         if !keystroke.modifiers.modified() {
             match keystroke.key.as_str() {
                 "up" => {
                     self.cursor = self.cursor.saturating_sub(1);
+                    self.in_list = true;
                     return Outcome::Edited;
                 }
                 "down" => {
                     self.cursor = (self.cursor + 1).min(self.rows.len().saturating_sub(1));
+                    self.in_list = true;
+                    return Outcome::Edited;
+                }
+                "space" if self.in_list => {
+                    self.toggle(self.cursor);
                     return Outcome::Edited;
                 }
                 _ => {}
             }
         }
+        self.in_list = false;
         match dialog_key(keystroke) {
             Some(DialogKey::Cancel) => Outcome::Close,
             Some(DialogKey::Enter | DialogKey::Save) => Outcome::Send,
             Some(DialogKey::Paste) => Outcome::Paste,
-            Some(DialogKey::SwitchField) => {
-                self.toggle(self.cursor);
-                Outcome::Edited
-            }
             Some(DialogKey::Insert(text)) => {
                 self.insert(&text);
                 Outcome::Edited
             }
-            Some(DialogKey::Copy) | None => Outcome::Edited,
+            Some(DialogKey::Copy | DialogKey::SwitchField) | None => Outcome::Edited,
             // The caller copies the selection before Cut.
             Some(key) => {
                 if !self.busy() {
@@ -321,9 +330,12 @@ mod tests {
         press(&mut dialog, "down");
         press(&mut dialog, "down");
         assert_eq!(dialog.cursor, 1);
-        assert_eq!(press(&mut dialog, "tab"), Outcome::Edited);
+        // Space checks the row the arrows picked; Tab is the dialog's focus key, not a tick.
+        assert_eq!(press(&mut dialog, "space"), Outcome::Edited);
         assert!(!dialog.rows[1].checked);
-        press(&mut dialog, "tab");
+        press(&mut dialog, "space");
+        assert!(dialog.rows[1].checked);
+        assert_eq!(press(&mut dialog, "tab"), Outcome::Edited);
         assert!(dialog.rows[1].checked);
         dialog.toggle(0);
         assert!(!dialog.rows[0].checked);
@@ -340,6 +352,39 @@ mod tests {
         assert_eq!(press(&mut dialog, "escape"), Outcome::Close);
         assert_eq!(press(&mut dialog, "enter"), Outcome::Send);
         assert_eq!(press(&mut dialog, "ctrl-v"), Outcome::Paste);
+    }
+
+    #[test]
+    fn space_is_a_space_in_the_message_until_an_arrow_key_picks_the_list() {
+        let mut dialog = two();
+        let space = || {
+            let mut key = Keystroke::parse("space").unwrap();
+            key.key_char = Some(" ".into());
+            key
+        };
+        let letter = |c: &str| {
+            let mut key = Keystroke::parse("a").unwrap();
+            key.key = c.into();
+            key.key_char = Some(c.into());
+            key
+        };
+        // Typing: Space is a space and nothing is unchecked.
+        dialog.key(&letter("a"));
+        dialog.key(&space());
+        assert_eq!(dialog.text, "a ");
+        assert!(dialog.rows.iter().all(|row| row.checked));
+        // An arrow key hands the keyboard to the list: Space checks, types nothing.
+        press(&mut dialog, "down");
+        assert!(dialog.in_list);
+        dialog.key(&space());
+        assert!(!dialog.rows[1].checked);
+        assert_eq!(dialog.text, "a ");
+        // Typing returns to the message.
+        dialog.key(&letter("b"));
+        assert!(!dialog.in_list);
+        dialog.key(&space());
+        assert_eq!(dialog.text, "a b ");
+        assert!(!dialog.rows[1].checked, "still unchecked, not toggled back");
     }
 
     #[test]
