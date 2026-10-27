@@ -252,6 +252,8 @@ impl Shell {
                     shell.toast_error(failed.0.clone(), cx);
                 })
                 .detach();
+                cx.subscribe(&pane, |_, _, _: &CopyModeChanged, cx| cx.notify())
+                    .detach();
                 shell.panes.insert(session, pane);
                 if shell.focused_session() == Some(session) {
                     shell.focus_pane(window, cx);

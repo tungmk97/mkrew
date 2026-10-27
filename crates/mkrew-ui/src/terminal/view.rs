@@ -31,7 +31,8 @@ use crate::composer::{attachment, attachment_refusal, typed_paths};
 use crate::field::{caret_mouse, caret_text, copy_selection};
 use crate::icons::{Icon, icon_svg};
 use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
-use crate::terminal::emulator::{Emulator, Grid};
+use crate::terminal::copy_mode::{CopyKey, copy_key};
+use crate::terminal::emulator::{CopyEnd, Emulator, Grid};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
 use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
@@ -95,6 +96,12 @@ impl EventEmitter<OpenLink> for TerminalPane {}
 pub struct AttachFailed(pub String);
 
 impl EventEmitter<AttachFailed> for TerminalPane {}
+
+/// Copy mode turned on or off: the shell redraws the pane's "Copy mode" chip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CopyModeChanged;
+
+impl EventEmitter<CopyModeChanged> for TerminalPane {}
 
 /// The link under the pointer while Ctrl / Cmd is held: its row and cells, for the underline.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,6 +214,11 @@ impl TerminalPane {
         self.emulator.selection_text()
     }
 
+    /// Copy mode is on: the keys are the UI's, not the program's.
+    pub fn in_copy_mode(&self) -> bool {
+        self.emulator.copy_mode()
+    }
+
     /// Feeds output bytes. The caller notifies once per batch (≤ one repaint per frame).
     pub fn feed(&mut self, bytes: &[u8]) {
         self.emulator.advance(bytes);
@@ -216,7 +228,11 @@ impl TerminalPane {
     /// queue overflowed). The scrollback restarts from the snapshot's history (≤ 200 lines,
     /// ADR 0030). The caller notifies.
     pub fn load_snapshot(&mut self, snapshot: &ScreenSnapshot) {
+        let copying = self.emulator.copy_mode();
         self.emulator = Emulator::from_snapshot(snapshot);
+        if copying {
+            self.emulator.enter_copy_mode();
+        }
         if let Some(find) = &self.find {
             find.reapply(&mut self.emulator);
         }
@@ -261,8 +277,14 @@ impl TerminalPane {
 
     /// Keys go to the session. Keystrokes bound in the keymap (SPEC §13) never get here: their
     /// action handler stops them first. Plain Ctrl+C copies a selection instead, also in an
-    /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026).
+    /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026). While copy mode is on every key
+    /// is the UI's.
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.emulator.copy_mode() {
+            cx.stop_propagation();
+            self.copy_key_down(event, cx);
+            return;
+        }
         // Only plain Ctrl+C reads the selection: building its text per keystroke costs O(selection).
         let selected = is_copy_key(&event.keystroke) && self.emulator.selection_text().is_some();
         let mode = self.emulator.input_mode();
@@ -332,6 +354,32 @@ impl TerminalPane {
         self.emulator.clear_selection();
         cx.notify();
         true
+    }
+
+    /// A key in copy mode: moves the vi cursor or selects (see [`copy_key`]); `y` / Enter put
+    /// the selection on the clipboard and leave. Unknown keys are swallowed: nothing reaches
+    /// the session.
+    fn copy_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<'_, Self>) {
+        let Some(key) = copy_key(&event.keystroke) else {
+            return;
+        };
+        if let CopyEnd::Leave(text) = self.emulator.copy_key(key) {
+            if let Some(text) = text {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            cx.emit(CopyModeChanged);
+        }
+        cx.notify();
+    }
+
+    fn toggle_copy_mode(&mut self, cx: &mut Context<'_, Self>) {
+        if self.emulator.copy_mode() {
+            self.emulator.leave_copy_mode();
+        } else {
+            self.emulator.enter_copy_mode();
+        }
+        cx.emit(CopyModeChanged);
+        cx.notify();
     }
 
     /// The visible cell under a window position, once the grid has been painted.
@@ -485,7 +533,7 @@ impl TerminalPane {
         if whole == 0 {
             return;
         }
-        if self.emulator.wheel_sends_arrows() {
+        if self.emulator.wheel_sends_arrows() && !self.emulator.copy_mode() {
             if self.exited.is_none() {
                 let data = wheel_bytes(whole, self.emulator.input_mode());
                 self.input(data, cx);
@@ -500,26 +548,35 @@ impl TerminalPane {
 
     /// The terminal's own commands; all others go on to the window shell.
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let find_focused = self.find_focus.is_focused(window);
         match command {
             Command::Find => {
                 self.find.get_or_insert_default();
                 window.focus(&self.find_focus, cx);
                 cx.notify();
             }
-            Command::Paste if self.find.is_some() && self.find_focus.is_focused(window) => {
+            Command::Paste if self.find.is_some() && find_focused => {
                 let text = cx.read_from_clipboard().and_then(|item| item.text());
                 if let (Some(find), Some(text)) = (self.find.as_mut(), text) {
                     find.insert(&text, &mut self.emulator);
                     cx.notify();
                 }
             }
+            Command::CopyMode if !find_focused => self.toggle_copy_mode(cx),
             Command::Copy => {
                 self.copy_selection(cx);
             }
             Command::PageUp | Command::PageDown => {
-                self.emulator.scroll_page(*command == Command::PageUp);
+                let up = *command == Command::PageUp;
+                if self.emulator.copy_mode() {
+                    self.emulator.copy_key(CopyKey::Page { up });
+                } else {
+                    self.emulator.scroll_page(up);
+                }
                 cx.notify();
             }
+            // Keys are the UI's while copy mode is on: nothing is typed into the program.
+            Command::Paste if self.emulator.copy_mode() => {}
             Command::Paste => {
                 self.paste(cx);
             }
@@ -718,7 +775,7 @@ impl TerminalPane {
 
     /// Types `text` as one paste into a live session (dropped or pasted paths, §20B.5).
     pub fn type_text(&mut self, text: &str, cx: &mut Context<'_, Self>) {
-        if self.exited.is_some() || text.is_empty() {
+        if self.exited.is_some() || text.is_empty() || self.emulator.copy_mode() {
             return;
         }
         let data = paste_bytes(text, self.emulator.input_mode());

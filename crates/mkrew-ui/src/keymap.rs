@@ -73,6 +73,8 @@ pub enum Command {
     /// Send the picked lines (Files, Git diff) or the terminal selection to an agent's
     /// composer (§20B.4).
     SendSelection,
+    /// Terminal only: keyboard selection with vi keys (copy mode, SPEC §10).
+    CopyMode,
     /// Show the active workspace's task board.
     ShowBoard,
     /// Show the active workspace's terminal tabs.
@@ -254,6 +256,7 @@ impl Command {
             Command::Peek,
             Command::OpenComposer,
             Command::SendSelection,
+            Command::CopyMode,
             Command::ShowBoard,
             Command::ShowTerminals,
             Command::ShowDocs,
@@ -347,6 +350,7 @@ impl Command {
             Command::Peek => "peek".into(),
             Command::OpenComposer => "open_composer".into(),
             Command::SendSelection => "send_selection".into(),
+            Command::CopyMode => "copy_mode".into(),
             Command::ShowBoard => "show_board".into(),
             Command::ShowTerminals => "show_terminals".into(),
             Command::ShowDocs => "show_docs".into(),
@@ -452,6 +456,7 @@ impl Command {
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
             Command::SendSelection => "ctrl-shift-l".into(),
+            Command::CopyMode => "alt-shift-c".into(),
             Command::ShowBoard => "ctrl-shift-2".into(),
             Command::ShowTerminals => "ctrl-shift-1".into(),
             Command::ShowDocs => "ctrl-shift-5".into(),
@@ -516,9 +521,11 @@ impl Command {
     /// Key context the binding is limited to; `None` = anywhere in the window.
     pub fn context(self) -> Option<&'static str> {
         match self {
-            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
-                Some(TERMINAL_CONTEXT)
-            }
+            Command::Copy
+            | Command::Paste
+            | Command::PageUp
+            | Command::PageDown
+            | Command::CopyMode => Some(TERMINAL_CONTEXT),
             Command::Find => Some(FIND_CONTEXT),
             Command::RunTask | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),

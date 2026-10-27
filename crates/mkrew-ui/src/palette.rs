@@ -233,6 +233,7 @@ pub fn title(command: Command) -> String {
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
         Command::OpenComposer => "Agent: Open the prompt composer".into(),
         Command::SendSelection => "Agent: Send selection to an agent".into(),
+        Command::CopyMode => "Terminal: Copy mode (select and copy with the keyboard)".into(),
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
@@ -340,9 +341,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ZoomPane
         | Command::RenamePane
         | Command::ClosePane => on_panes,
-        Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {
-            on_panes && context.terminal
-        }
+        Command::Copy
+        | Command::Paste
+        | Command::PageUp
+        | Command::PageDown
+        | Command::CopyMode => on_panes && context.terminal,
         Command::Find => {
             (on_panes && context.terminal) || in_view(View::Files) || in_view(View::Docs)
         }

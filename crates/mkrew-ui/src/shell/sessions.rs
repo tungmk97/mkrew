@@ -551,7 +551,11 @@ impl Shell {
                 }
             }
             // Handled by the focused terminal pane.
-            Command::Copy | Command::Paste | Command::PageUp | Command::PageDown => {}
+            Command::Copy
+            | Command::Paste
+            | Command::PageUp
+            | Command::PageDown
+            | Command::CopyMode => {}
             // A focused terminal pane handles it itself.
             Command::Find => match self.view() {
                 View::Files => self.open_file_find(false, window, cx),

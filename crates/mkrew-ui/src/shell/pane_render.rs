@@ -648,6 +648,35 @@ impl Shell {
                     .into_any_element(),
             );
         }
+        if self
+            .panes
+            .get(&session)
+            .is_some_and(|pane| pane.read(cx).in_copy_mode())
+        {
+            parts.push(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .px(px(space::S))
+                    .rounded_full()
+                    .whitespace_nowrap()
+                    .bg(rgb(theme.accent_bg))
+                    .child(
+                        div()
+                            .font_weight(FontWeight(weight::MEDIUM))
+                            .text_color(rgb(theme.accent_text))
+                            .child("Copy mode"),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgb(theme.text_muted))
+                            .child("v select · y copy · Esc exit"),
+                    )
+                    .into_any_element(),
+            );
+        }
         parts
     }
 
