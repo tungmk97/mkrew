@@ -50,14 +50,24 @@ impl Shell {
         cx.notify();
     }
 
-    /// Keys typed in the task dialog edit the focused field; Enter (title) or Ctrl+Enter
-    /// saves, Esc cancels.
+    /// Keys typed in the task dialog edit the focused field; Tab / Shift+Tab move between the
+    /// title and the prompt, then through the buttons; Enter (title) or Ctrl+Enter saves, Esc
+    /// cancels.
     pub(crate) fn task_dialog_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let edge = (self.task_dialog.as_ref())
+            .is_some_and(|dialog| dialog.at_edge(!event.keystroke.modifiers.shift));
+        if self.dialog_nav(event, edge, window, cx, |shell, forward| {
+            if let Some(dialog) = shell.task_dialog.as_mut() {
+                dialog.enter(forward);
+            }
+        }) {
+            return;
+        }
         cx.stop_propagation();
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
@@ -283,42 +293,48 @@ impl Shell {
             Agents::Failed(error) => vec![
                 notice(theme.text, format!("✕ Cannot list the agents: {error}")).into_any_element(),
             ],
-            Agents::Loaded(profiles) => dialog
-                .agent_choices(profiles, default_agent)
-                .into_iter()
-                .map(|choice| {
-                    let hover = theme.surface_raised;
-                    let agent = choice.id;
-                    div()
-                        .id(SharedString::from(format!("task-agent-{agent}")))
-                        .px(px(space::S))
-                        .py(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .border(px(theme::BORDER_WIDTH))
-                        .cursor_pointer()
-                        .text_size(font_size::BODY)
-                        .when(choice.selected, |el| {
-                            el.border_color(rgb(theme.accent))
-                                .text_color(rgb(theme.text))
-                                .font_weight(FontWeight(weight::MEDIUM))
-                                .child(format!("✓ {}", choice.label))
-                        })
-                        .when(!choice.selected, |el| {
-                            el.border_color(rgb(theme.border))
-                                .text_color(rgb(theme.text_muted))
-                                .hover(move |style| style.bg(rgb(hover)))
-                                .active(|style| style.opacity(opacity::ACTIVE))
-                                .child(choice.label)
-                        })
-                        .on_click(cx.listener(move |shell, _, _, cx| {
-                            if let Some(dialog) = shell.task_dialog.as_mut() {
-                                dialog.choose_agent(&agent);
-                                cx.notify();
-                            }
-                        }))
-                        .into_any_element()
-                })
-                .collect(),
+            Agents::Loaded(profiles) => {
+                let choices = dialog.agent_choices(profiles, default_agent);
+                let len = choices.len();
+                choices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, choice)| {
+                        let hover = theme.surface_raised;
+                        let agent = choice.id;
+                        div()
+                            .id(SharedString::from(format!("task-agent-{agent}")))
+                            .px(px(space::S))
+                            .py(px(space::XS))
+                            .rounded(px(radius::SMALL))
+                            .border(px(theme::BORDER_WIDTH))
+                            .cursor_pointer()
+                            .text_size(font_size::BODY)
+                            .when(choice.selected, |el| {
+                                el.border_color(rgb(theme.accent))
+                                    .text_color(rgb(theme.text))
+                                    .font_weight(FontWeight(weight::MEDIUM))
+                                    .child(format!("✓ {}", choice.label))
+                            })
+                            .when(!choice.selected, |el| {
+                                el.border_color(rgb(theme.border))
+                                    .text_color(rgb(theme.text_muted))
+                                    .hover(move |style| style.bg(rgb(hover)))
+                                    .active(|style| style.opacity(opacity::ACTIVE))
+                                    .child(choice.label)
+                            })
+                            .on_click(cx.listener(move |shell, _, _, cx| {
+                                if let Some(dialog) = shell.task_dialog.as_mut() {
+                                    dialog.choose_agent(&agent);
+                                    cx.notify();
+                                }
+                            }))
+                            .focusable_bordered(theme)
+                            .chip_arrows(index, len)
+                            .into_any_element()
+                    })
+                    .collect()
+            }
         };
         let hover = theme.surface_raised;
         let locked = dialog.worktree_locked();
@@ -352,6 +368,7 @@ impl Shell {
                         }
                         cx.notify();
                     }))
+                    .focus_stop(theme)
             })
             .child(
                 div()
@@ -387,10 +404,18 @@ impl Shell {
             .font_family(theme.ui_font_family.clone())
             // The prompt picker over it has the keyboard meanwhile.
             .when(self.prompt_picker.is_none(), |el| {
-                el.track_focus(&self.dialog_focus)
-                    .on_key_down(cx.listener(Self::task_dialog_key_down))
-                    .relative()
-                    .child(self.typing(&self.dialog_focus, Self::task_dialog_key_down, cx))
+                el.dialog_root(
+                    &self.dialog_focus,
+                    true,
+                    cx.listener(Self::dialog_guard),
+                    cx.listener(Self::task_dialog_key_down),
+                )
+                .relative()
+                .child(self.typing(
+                    &self.dialog_focus,
+                    Self::task_dialog_key_down,
+                    cx,
+                ))
             })
             .child(
                 div()
@@ -421,6 +446,7 @@ impl Shell {
                             .when(!dialog.busy, |el| {
                                 el.child(
                                     button("task-from-prompt", "From prompt…", theme, false)
+                                        .focus_stop(theme)
                                         .tooltip(tooltip(
                                             theme,
                                             "Add a prompt from the library",
@@ -476,6 +502,7 @@ impl Shell {
                     .when(editing && !dialog.busy, |el| {
                         el.child(
                             button("task-delete", "Delete", theme, false)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Delete this task", ""))
                                 .on_click(cx.listener(|shell, _, window, cx| {
                                     shell.delete_task(window, cx);
@@ -485,6 +512,7 @@ impl Shell {
                     .child(div().flex_1())
                     .child(
                         button("task-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Discard changes", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_task_dialog(window, cx);
@@ -494,6 +522,7 @@ impl Shell {
                         disabled_button("task-save", save_label, theme, true)
                     } else {
                         button("task-save", save_label, theme, true)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, save_label, "Ctrl+Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.save_task(window, cx);

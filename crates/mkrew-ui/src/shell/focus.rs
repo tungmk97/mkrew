@@ -25,6 +25,60 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
+    /// Drops an auto-repeating Enter / Space while a control has the keyboard: gpui clicks a
+    /// focused control on the release of an Enter / Space it saw pressed, so the Enter that
+    /// opened a dialog, held a moment too long, must not click what has focus
+    /// ([`dialog_focus::blocks_repeat`]). In the dialog's own text a held Enter is typing.
+    pub(crate) fn dialog_guard(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.dialog_focus.is_focused(window)
+            && dialog_focus::blocks_repeat(&event.keystroke, event.is_held)
+        {
+            cx.stop_propagation();
+        }
+    }
+
+    /// The dialog-level keys of `event` ([`dialog_focus::nav`]): Tab / Shift+Tab move to the
+    /// next / previous control and wrap inside the dialog, and a focused control takes Enter,
+    /// Space and typing. `edge`: the dialog's own fields have none left in that direction. When
+    /// the move lands back on the dialog's own text, `enter(self, forward)` puts its caret on the
+    /// first (Tab) or last (Shift+Tab) field. `true` = handled: the dialog's own key handler
+    /// must return.
+    pub(crate) fn dialog_nav(
+        &mut self,
+        event: &KeyDownEvent,
+        edge: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+        enter: impl FnOnce(&mut Self, bool),
+    ) -> bool {
+        let on_control = !self.dialog_focus.is_focused(window);
+        match dialog_focus::nav(&event.keystroke, on_control, edge) {
+            Nav::Pass => false,
+            Nav::Absorb => {
+                cx.stop_propagation();
+                true
+            }
+            Nav::Move(forward) => {
+                cx.stop_propagation();
+                if forward {
+                    window.focus_next(cx);
+                } else {
+                    window.focus_prev(cx);
+                }
+                if self.dialog_focus.is_focused(window) {
+                    enter(self, forward);
+                }
+                cx.notify();
+                true
+            }
+        }
+    }
+
     /// Closes every transient popover menu without moving the keyboard; see
     /// [`Self::dismiss_menus`] for the version that gives it back. Called by every bound command
     /// through `dismiss_menus`.

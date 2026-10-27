@@ -53,6 +53,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
+use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
 use mkrew_ui::editor::{self, EditKey, Pos};
@@ -707,7 +708,8 @@ struct Shell {
     filter_focus: FocusHandle,
     /// What had the keyboard before the peek took it; it gets it back on close.
     peek_return: Option<(FocusHandle, Option<Ulid>)>,
-    /// Focused while a dialog is open; the task dialog's keys edit the draft.
+    /// Focused while a dialog is open; the dialog's keys edit its draft. A dialog's panel tracks
+    /// it (`DialogControl::dialog_root`); its buttons take the keyboard with Tab.
     dialog_focus: FocusHandle,
     /// Scrolls the dialog's prompt field to its end (where the caret is) after edits.
     prompt_scroll: ScrollHandle,
@@ -741,6 +743,15 @@ impl Render for Shell {
         cx.global::<MenuAnchors>().clear();
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
+        // A dialog control that vanished while focused (a button swapped for its disabled twin
+        // while saving, the next step of a dialog) would leave the keyboard on nothing and Esc
+        // would miss the dialog: the dialog itself takes the keyboard back.
+        if self.modal_open()
+            && !window.has_active_prompt()
+            && !self.dialog_focus.contains_focused(window, cx)
+        {
+            window.focus(&self.dialog_focus, cx);
+        }
         if let Some(launched) = self.launched {
             if !self.first_frame_logged {
                 self.first_frame_logged = true;
