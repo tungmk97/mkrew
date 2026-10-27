@@ -141,12 +141,14 @@ pub fn diff_blocked(turn: &Turn) -> Option<&'static str> {
     turn.start_tree.is_none().then_some(NO_SNAPSHOT)
 }
 
-/// Esc closes the dialog; ↑ / ↓ pick a turn; Enter restores before it.
+/// Esc closes the dialog; ↑ / ↓ pick a turn; Enter restores before it; D shows the changes
+/// since it started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Close,
     Move(isize),
     Restore,
+    DiffSince,
 }
 
 pub fn key(keystroke: &Keystroke) -> Option<Key> {
@@ -156,6 +158,7 @@ pub fn key(keystroke: &Keystroke) -> Option<Key> {
         "up" if !modified => Some(Key::Move(-1)),
         "down" if !modified => Some(Key::Move(1)),
         "enter" if !modified => Some(Key::Restore),
+        "d" if !modified => Some(Key::DiffSince),
         _ => None,
     }
 }
@@ -305,6 +308,8 @@ mod tests {
         assert_eq!(parse("up"), Some(Key::Move(-1)));
         assert_eq!(parse("down"), Some(Key::Move(1)));
         assert_eq!(parse("enter"), Some(Key::Restore));
+        assert_eq!(parse("d"), Some(Key::DiffSince));
+        assert_eq!(parse("ctrl-d"), None);
         assert_eq!(parse("ctrl-enter"), None);
         assert_eq!(parse("a"), None);
     }

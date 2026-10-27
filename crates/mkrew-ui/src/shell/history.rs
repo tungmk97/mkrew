@@ -146,6 +146,20 @@ impl Shell {
                     self.restore_before_turn(n, window, cx);
                 }
             }
+            Some(turns_dialog::Key::DiffSince) => {
+                let Some(dialog) = &self.turns_dialog else {
+                    return;
+                };
+                let diffable = match &dialog.listing {
+                    turns_dialog::Listing::Loaded(turns) => turns
+                        .get(dialog.selected)
+                        .is_some_and(|turn| turns_dialog::diff_blocked(turn).is_none()),
+                    _ => false,
+                };
+                if let Some(n) = dialog.selected_turn().filter(|_| diffable) {
+                    self.diff_since_turn(n, window, cx);
+                }
+            }
             None => {}
         }
     }
@@ -535,7 +549,7 @@ impl Shell {
                                     .tooltip(tooltip(
                                         theme,
                                         &format!("Show the changes since turn {n} started"),
-                                        "",
+                                        if selected { "D" } else { "" },
                                     ))
                                     .on_click(cx.listener(move |shell, _, window, cx| {
                                         shell.diff_since_turn(n, window, cx);
