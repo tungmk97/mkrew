@@ -686,6 +686,9 @@ pub struct Theme {
     pub qr_light: u32,
     /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
     pub pane_focus_border: u32,
+    /// The ring of a keyboard-focused dialog control (ADR 0081): a 1 px border in the text
+    /// color, so it reads on `surface` and on an accent button in every theme.
+    pub focus_ring: u32,
     /// Background of selected terminal cells (accent mixed into `bg`, text stays readable).
     pub terminal_selection_bg: u32,
     /// Background of find-bar matches (needs-input amber mixed into `bg`).
@@ -866,6 +869,7 @@ impl Theme {
             // ~14 %: chip and pill fills.
             tint_alpha: 0x24,
             pane_focus_border: 0x4A528E,
+            focus_ring: 0xECEDEF,
             terminal_selection_bg: 0x353B60,
             terminal_match_bg: 0x3F3524,
             terminal_match_current_bg: 0x7A5A1F,
@@ -959,6 +963,7 @@ impl Theme {
             // ~12 %: chip and pill fills.
             tint_alpha: 0x1F,
             pane_focus_border: 0xA7ADEA,
+            focus_ring: 0x1B1D22,
             terminal_selection_bg: 0xCACEF2,
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
@@ -1051,6 +1056,7 @@ impl Theme {
             run_pill_text: 0xC9EED8,
             tint_alpha: 0x2E,
             pane_focus_border: 0x4A528E,
+            focus_ring: 0xE4E5E9,
             terminal_selection_bg: 0x353B60,
             terminal_match_bg: 0x3F3524,
             terminal_match_current_bg: 0x7A5A1F,
@@ -1121,6 +1127,7 @@ impl Theme {
             run_pill_text: 0x1E6B3A,
             tint_alpha: 0x24,
             pane_focus_border: 0xA7ADEA,
+            focus_ring: 0x1B1D22,
             terminal_selection_bg: 0xCACEF2,
             terminal_match_bg: 0xF6EBCF,
             terminal_match_current_bg: 0xE9C46A,
@@ -1197,6 +1204,7 @@ impl Theme {
             qr_dark: 0x101114,
             qr_light: 0xFFFFFF,
             pane_focus_border: 0,
+            focus_ring: 0,
             terminal_selection_bg: 0,
             terminal_match_bg: 0,
             terminal_match_current_bg: 0,
@@ -1378,6 +1386,7 @@ impl Theme {
             info_text: text(p.blue),
             accent_bg: tint(p.accent, 0.14),
             pane_focus_border: mix(p.accent, p.bg, 0.50),
+            focus_ring: p.fg,
             on_accent,
             terminal_selection_bg: fill(p.bg, p.accent, 0.30, p.fg),
             terminal_match_bg: fill(p.bg, p.yellow, 0.20, p.fg),
