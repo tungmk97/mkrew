@@ -263,6 +263,7 @@ impl Shell {
             match self.worktree_dialog.as_mut() {
                 Some(dialog) if matches!(dialog.step, worktree_dialog::Step::ConfirmDiscard(_)) => {
                     dialog.keep_files();
+                    window.focus(&self.dialog_focus, cx);
                     cx.notify();
                 }
                 _ => self.close_worktree_dialog(window, cx),
@@ -559,10 +560,11 @@ impl Shell {
                             "Back to the list; nothing is discarded",
                             "Esc",
                         ))
-                        .on_click(cx.listener(|shell, _, _, cx| {
+                        .on_click(cx.listener(|shell, _, window, cx| {
                             if let Some(dialog) = shell.worktree_dialog.as_mut() {
                                 dialog.keep_files();
                             }
+                            window.focus(&shell.dialog_focus, cx);
                             cx.notify();
                         }))
                         .into_any_element(),
@@ -587,10 +589,11 @@ impl Shell {
                         danger_button("worktree-discard", "Discard…", theme)
                             .focus_stop(theme)
                             .tooltip(tooltip(theme, "Choose to discard these changes", ""))
-                            .on_click(cx.listener(|shell, _, _, cx| {
+                            .on_click(cx.listener(|shell, _, window, cx| {
                                 if let Some(dialog) = shell.worktree_dialog.as_mut() {
                                     dialog.ask_discard();
                                 }
+                                window.focus(&shell.dialog_focus, cx);
                                 cx.notify();
                             }))
                             .into_any_element(),

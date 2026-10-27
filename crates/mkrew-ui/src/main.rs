@@ -548,6 +548,8 @@ struct Shell {
     /// Focused while the follow-up field takes keys; losing it drops an empty draft.
     follow_up_focus: FocusHandle,
     _follow_up_blur: Subscription,
+    /// Gives a modal dialog the keyboard back when its focused control vanished.
+    _dialog_focus_lost: Subscription,
     /// Keeps the follow-up field's end (where the caret is) in view.
     follow_up_scroll: ScrollHandle,
     /// The prompt composer draft of every agent session (§20B.1).

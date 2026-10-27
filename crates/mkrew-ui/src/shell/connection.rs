@@ -165,6 +165,14 @@ impl Shell {
                 .take_if(|draft| draft.text.text().is_empty() && !draft.busy);
             cx.notify();
         });
+        // The focused control of a dialog left the frame (a button swapped for the next step):
+        // the dialog takes the keyboard back so Tab and Esc keep working. A confirm prompt
+        // keeps it; menus are never open over a modal.
+        let dialog_focus_lost = cx.on_focus_lost(window, |shell, window, cx| {
+            if shell.modal_open() && !window.has_active_prompt() {
+                window.focus(&shell.dialog_focus, cx);
+            }
+        });
         let (painted, painted_rx) = async_channel::bounded(1);
         // What the user saw before this start (A2): a corrupt or missing file is empty.
         let viewed = Viewed::load(&paths.data_dir);
@@ -274,6 +282,7 @@ impl Shell {
             follow_up: None,
             follow_up_focus,
             _follow_up_blur: follow_up_blur,
+            _dialog_focus_lost: dialog_focus_lost,
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             drop_hover: None,
