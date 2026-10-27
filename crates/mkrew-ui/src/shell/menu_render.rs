@@ -348,6 +348,14 @@ impl Shell {
         if let Some(menu) = &self.fan_out {
             return Some(fan_out_rows(menu));
         }
+        if let (Some(menu), Some(project_id)) = (self.git_menu, self.workspace) {
+            let view = self.git.get(&project_id)?;
+            return Some(match menu {
+                GitMenu::ChangedBy => self.git_changed_by_rows(project_id, view),
+                GitMenu::More => self.git_more_rows(project_id, view),
+                GitMenu::Repos => self.git_repo_rows(project_id, &view.repo),
+            });
+        }
         None
     }
 

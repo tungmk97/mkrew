@@ -483,17 +483,21 @@ impl Shell {
                     })),
             )
             .when(open, |el| {
-                el.child(self.render_git_more_menu(project_id, view, theme, cx))
+                el.child(render_menu(
+                    self.menu_state(),
+                    "git-diff-more-panel",
+                    self.git_more_rows(project_id, view),
+                    None,
+                    Place::Dropdown,
+                    theme,
+                    cx,
+                ))
             })
     }
 
-    fn render_git_more_menu(
-        &self,
-        project_id: Ulid,
-        view: &GitView,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
+    /// The diff toolbar's "⋯": comment on the picked lines, send the open comments. A row that
+    /// cannot act now is greyed with its reason in the label.
+    pub(crate) fn git_more_rows(&self, project_id: Ulid, view: &GitView) -> Rows {
         let can_comment =
             matches!(view.diff, git_view::Diff::Shown(_)) && view.comments.selection.is_some();
         let sendable = match &view.comments.list {
@@ -502,78 +506,35 @@ impl Shell {
             }
             _ => 0,
         };
-        let label = |text: String, keys: SharedString| {
-            [
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(rgb(theme.text))
-                    .child(text),
-                div()
-                    .flex_none()
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child(keys),
-            ]
+        let send_label = match sendable {
+            0 => "Send to agent (no open comments)".to_owned(),
+            1 => "Send 1 open comment to agent…".to_owned(),
+            n => format!("Send {n} open comments to agent…"),
         };
-        // A row that cannot act now: faded, no hover, no click (no dead buttons).
-        let disabled = |text: &'static str, keys: SharedString| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .opacity(opacity::DISABLED)
-                .text_size(font_size::BODY)
-                .children(label(text.to_owned(), keys))
-                .into_any_element()
-        };
-        let comment_keys: SharedString = self.keymap.label(Command::AddComment).into();
-        let send_keys: SharedString = self.keymap.label(Command::SendComments).into();
-        let comment = if can_comment {
-            menu_item("git-more-comment".into(), theme)
-                .children(label("Comment on selected lines".into(), comment_keys))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.close_git_menu(window, cx);
+        vec![
+            MenuItem::new(
+                if can_comment {
+                    "Comment on selected lines"
+                } else {
+                    "Comment (select lines first)"
+                },
+                act(move |shell, window, cx| {
                     shell.start_comment(project_id, CommentContext::Diff, window, cx);
-                }))
-                .into_any_element()
-        } else {
-            disabled("Comment (select lines first)", comment_keys)
-        };
-        let send = if sendable > 0 {
-            let text = if sendable == 1 {
-                "Send 1 open comment to agent…".to_owned()
-            } else {
-                format!("Send {sendable} open comments to agent…")
-            };
-            menu_item("git-more-send".into(), theme)
-                .children(label(text, send_keys))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.close_git_menu(window, cx);
+                }),
+            )
+            .keys(self.keymap.label(Command::AddComment))
+            .enabled(can_comment)
+            .row(),
+            MenuItem::new(
+                send_label,
+                act(move |shell, window, cx| {
                     shell.open_send_dialog(project_id, CommentContext::Diff, window, cx);
-                }))
-                .into_any_element()
-        } else {
-            disabled("Send to agent (no open comments)", send_keys)
-        };
-        let panel = menu_panel("git-diff-more-panel", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.git_menu = None;
-                cx.notify();
-            }))
-            .child(comment)
-            .child(send);
-        deferred(
-            anchored()
-                .snap_to_window_with_margin(px(space::S))
-                .child(div().pt(px(space::XS)).child(panel)),
-        )
-        .into_any_element()
+                }),
+            )
+            .keys(self.keymap.label(Command::SendComments))
+            .enabled(sendable > 0)
+            .row(),
+        ]
     }
 
     /// The diff rows of `shown` in a variable-height list (wrapped lines are taller): reset for

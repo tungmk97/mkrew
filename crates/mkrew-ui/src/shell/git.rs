@@ -486,28 +486,24 @@ impl Shell {
         self.git_requests(project_id, requests, window, cx);
     }
 
-    /// ↑ ↓ / j k move between files; Esc closes an open Git menu, else unselects the picked
-    /// diff lines; the other Git keys are keymap commands ([`Self::git_key`]).
+    /// ↑ ↓ / j k move between files; Esc unselects the picked diff lines; the other Git keys
+    /// are keymap commands ([`Self::git_key`]).
     pub(crate) fn git_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-            if self.git_menu.is_some() {
-                cx.stop_propagation();
-                return self.close_git_menu(window, cx);
-            }
-            if let Some(project_id) = self.workspace
-                && self
-                    .git
-                    .get(&project_id)
-                    .is_some_and(|view| view.comments.selection.is_some())
-            {
-                cx.stop_propagation();
-                return self.clear_diff_pick(project_id, cx);
-            }
+        if event.keystroke.key == "escape"
+            && !event.keystroke.modifiers.modified()
+            && let Some(project_id) = self.workspace
+            && self
+                .git
+                .get(&project_id)
+                .is_some_and(|view| view.comments.selection.is_some())
+        {
+            cx.stop_propagation();
+            return self.clear_diff_pick(project_id, cx);
         }
         let Some(key) = git_view::key(&event.keystroke) else {
             return;
