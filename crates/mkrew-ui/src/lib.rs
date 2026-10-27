@@ -58,6 +58,7 @@ pub mod jira_board;
 pub mod keymap;
 pub mod lifecycle;
 pub mod markdown;
+pub mod menu;
 pub mod palette;
 pub mod pane_text;
 pub mod peek;
