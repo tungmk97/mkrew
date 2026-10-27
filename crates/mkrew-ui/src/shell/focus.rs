@@ -51,6 +51,29 @@ impl Shell {
         tabs.active()?.focused()
     }
 
+    /// The views the right panel is drawn next to.
+    pub(crate) fn panel_shown(&self) -> bool {
+        self.right_panel.open && matches!(self.view(), View::Terminals | View::Files)
+    }
+
+    /// The right panel shows the file tree.
+    pub(crate) fn file_tree_shown(&self) -> bool {
+        self.panel_shown() && self.right_panel.tab == PanelTab::Files
+    }
+
+    /// Some of the active workspace's Files view is drawn (the editor or the tree), so it
+    /// follows `git.changed` and refreshes when it comes back.
+    pub(crate) fn files_on_screen(&self) -> bool {
+        self.view() == View::Files || self.file_tree_shown()
+    }
+
+    /// The pane the Session tab describes: the active tab's focused pane, also while the
+    /// Editor is shown (unlike `focused_session`, which is where keys go).
+    pub(crate) fn panel_session(&self) -> Option<Ulid> {
+        let tabs = self.tabs.get(&self.workspace?)?;
+        tabs.active()?.focused()
+    }
+
     /// Attaches the sessions on screen (live ones, or already attached; none while the window
     /// is minimized or the board is shown) and detaches all others (SPEC §10), then focuses
     /// the focused pane.

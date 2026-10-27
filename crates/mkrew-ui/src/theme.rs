@@ -367,9 +367,6 @@ pub const SEND_SESSIONS_HEIGHT: f32 = 200.0;
 /// the undo one.
 pub const CHANGES_DIFF_HEIGHT: f32 = 420.0;
 
-/// Width of the Files view's tree.
-pub const FILE_TREE_WIDTH: f32 = 280.0;
-
 /// Indent per folder level in the Files tree.
 pub const FILE_TREE_INDENT: f32 = space::M;
 

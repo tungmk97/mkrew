@@ -3,9 +3,33 @@
 use crate::*;
 
 impl Shell {
-    /// The workspace's files (SPEC §12A): the lazy tree with git markers, and the opened file
-    /// read-only with line numbers and syntax colors.
-    pub(crate) fn render_files(
+    /// The Files view (SPEC §12A): the opened files' tabs, header and editor / preview. The
+    /// tree is in the right panel (`render_file_tree`).
+    pub(crate) fn render_editor(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        let Some(view) = self.files.get(&project_id) else {
+            return message(theme, None, "Loading files…".into(), None)
+                .flex_1()
+                .into_any_element();
+        };
+        div()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .font_family(theme.ui_font_family.clone())
+            .child(self.render_file(project_id, view, window, theme, cx))
+            .into_any_element()
+    }
+
+    /// The right panel's Files tab (SPEC §12A): search, Ignored, the worktree chooser, a
+    /// "New file…" field and the lazy tree with git markers.
+    pub(crate) fn render_file_tree(
         &self,
         project_id: Ulid,
         theme: &Theme,
@@ -33,7 +57,7 @@ impl Shell {
         };
         let search_keys = self.keymap.label(Command::QuickOpen);
         // A button that opens quick open, framed like a text input. The shortcut is in the
-        // tooltip: the 280 px tree has no room to show it beside "Ignored".
+        // tooltip: the narrow panel has no room to show it beside "Ignored".
         let search = search_box(
             div()
                 .id("files-search-label")
@@ -142,47 +166,29 @@ impl Shell {
             }
         };
         div()
+            .id("files-tree")
             .flex_1()
             .min_h_0()
             .flex()
-            .font_family(theme.ui_font_family.clone())
-            .child(self.render_file(project_id, view, window, theme, cx))
-            .child(
-                div()
-                    .id("files-tree")
-                    .flex_none()
-                    .w(px(theme::FILE_TREE_WIDTH))
-                    .h_full()
-                    .flex()
-                    .flex_col()
-                    .py(px(space::S))
-                    .bg(rgb(theme.surface))
-                    .border_l(px(theme::BORDER_WIDTH))
-                    .border_color(rgb(theme.divider))
-                    .track_focus(&self.files_focus)
-                    .on_key_down(cx.listener(Self::files_key_down))
-                    // Right click on the header or the blank part of the tree = the folder
-                    // itself (rows stop the event first).
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
-                            shell.open_file_menu(
-                                project_id,
-                                String::new(),
-                                true,
-                                event.position,
-                                cx,
-                            );
-                        }),
-                    )
-                    .child(header)
-                    .children(
-                        self.target_chooser(project_id, view.worktree_task_id, false, theme, cx)
-                            .map(|chooser| chooser.px(px(space::S)).pb(px(space::S))),
-                    )
-                    .children(self.render_new_entry(project_id, view.worktree_task_id, theme, cx))
-                    .child(tree),
+            .flex_col()
+            .py(px(space::S))
+            .track_focus(&self.files_focus)
+            .on_key_down(cx.listener(Self::files_key_down))
+            // Right click on the header or the blank part of the tree = the folder
+            // itself (rows stop the event first).
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
+                    shell.open_file_menu(project_id, String::new(), true, event.position, cx);
+                }),
             )
+            .child(header)
+            .children(
+                self.target_chooser(project_id, view.worktree_task_id, false, theme, cx)
+                    .map(|chooser| chooser.px(px(space::S)).pb(px(space::S))),
+            )
+            .children(self.render_new_entry(project_id, view.worktree_task_id, theme, cx))
+            .child(tree)
             .into_any_element()
     }
 
@@ -666,7 +672,7 @@ impl Shell {
             Content::Shown(_) if tab.previewing() => {
                 self.render_md_preview(project_id, tab, window, theme, cx)
             }
-            Content::Shown(shown) => self.render_editor(project_id, shown, window, theme, cx),
+            Content::Shown(shown) => self.render_shown_file(project_id, shown, window, theme, cx),
         };
         let disk_banner = tab
             .shown()
@@ -741,7 +747,7 @@ impl Shell {
 
     /// The Files editor (§12A, ADR 0028): the lines with the caret, selection, syntax colors
     /// and find matches. A click places the caret; Shift+click and drag select.
-    pub(crate) fn render_editor(
+    pub(crate) fn render_shown_file(
         &self,
         project_id: Ulid,
         shown: &files_view::Shown,

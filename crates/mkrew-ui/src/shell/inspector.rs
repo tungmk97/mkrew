@@ -3,21 +3,56 @@
 use crate::*;
 
 impl Shell {
-    /// `ToggleInspector` / the status-bar button: opens or closes the session panel; from
-    /// another view it shows Terminals with the panel open (the panel lives there only).
+    /// `ToggleInspector` / the title bar's `◨`: hides or shows the right panel (its tab is
+    /// kept); from a view without it, shows Terminals with the panel open.
     pub(crate) fn toggle_inspector(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.workspace.is_none() {
             return;
         }
-        if self.view() != View::Terminals {
-            self.inspector_open = true;
+        if !matches!(self.view(), View::Terminals | View::Files) {
+            self.right_panel.open = true;
             self.show_view(View::Terminals, window, cx);
         } else {
-            self.inspector_open = !self.inspector_open;
-            if !self.inspector_open {
-                // The grip is gone: no mouse-up will end a drag in progress.
-                self.end_inspector_drag(cx);
+            self.right_panel.open = !self.right_panel.open;
+        }
+        self.panel_changed(window, cx);
+    }
+
+    /// A click on the panel's `Files` / `Session` tab.
+    pub(crate) fn show_panel_tab(
+        &mut self,
+        tab: PanelTab,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.right_panel.show(tab);
+        self.panel_changed(window, cx);
+    }
+
+    /// After the panel opened, closed or switched tab: a tree that came on screen is
+    /// refreshed, a hidden one gives the keyboard back, the grip of a hidden panel ends its
+    /// drag, and `[ui] right_panel` is saved.
+    fn panel_changed(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if !self.right_panel.open {
+            // The grip is gone: no mouse-up will end a drag in progress.
+            self.end_inspector_drag(cx);
+        }
+        if self.file_tree_shown() {
+            if let Some(project_id) = self.workspace {
+                self.refresh_files(project_id, window, cx);
             }
+        } else if self.files_focus.is_focused(window) {
+            if self.view() == View::Files {
+                window.focus(&self.file_editor_focus, cx);
+            } else {
+                self.focus_pane(window, cx);
+            }
+        }
+        let value = format!("\"{}\"", self.right_panel.mode().name());
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "right_panel", &value)
+        {
+            self.settings_write_failed("the right panel", error, cx);
         }
         cx.notify();
     }
@@ -47,7 +82,7 @@ impl Shell {
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let open = self.inspector_open;
+        let open = self.panel_shown();
         icon_button_in(
             "toggle-inspector",
             Icon::PanelRight,
@@ -58,9 +93,9 @@ impl Shell {
         .tooltip(tooltip(
             theme,
             if open {
-                "Hide session panel"
+                "Hide right panel"
             } else {
-                "Show session panel"
+                "Show right panel"
             },
             self.keymap.label(Command::ToggleInspector),
         ))
@@ -86,18 +121,17 @@ impl Shell {
             .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
     }
 
-    /// The session panel (SPEC §10): the focused pane's cards, right of Terminals. Rendered
-    /// only while open; it is a sibling of the panes, never inside the terminal element.
-    pub(crate) fn render_inspector(
+    /// The right panel (SPEC §10, §12A): `Files | Session` tabs, right of Terminals and the
+    /// Editor. Rendered only while open; it is a sibling of the panes, never inside the
+    /// terminal element.
+    pub(crate) fn render_right_panel(
         &self,
         project_id: Ulid,
         now: i64,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let session = self
-            .focused_session()
-            .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let grip = div()
             .id("inspector-grip")
             .absolute()
@@ -128,28 +162,75 @@ impl Shell {
                 MouseButton::Left,
                 cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
-        let thread = session.and_then(|s| self.render_thread_section(s, theme, cx));
-        let cards = div()
-            .id("inspector-body")
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(space::M))
-            .p(px(space::M))
-            .children(match session {
-                Some(session) => vec![self.render_session_card(session, now, theme, cx)],
-                None => vec![meta_line(theme, "No session focused".into()).into_any_element()],
-            })
-            // Follows the workspace, not the focused pane.
-            .children(
-                self.render_changes_card(project_id, theme, cx)
-                    .map(IntoElement::into_any_element),
-            )
-            .children(
-                session
-                    .filter(|s| s.kind == SessionKind::Agent && s.state != SessionState::Exited)
-                    .map(|s| self.render_plan_card(s, theme, cx)),
+        let tab = self.right_panel.tab;
+        let tabs = div()
+            .flex_none()
+            .p(px(space::S))
+            .child(
+                segmented(theme).children([PanelTab::Files, PanelTab::Session].map(|each| {
+                    let title = match each {
+                        PanelTab::Files => "Files",
+                        PanelTab::Session => "Session",
+                    };
+                    segment(
+                        SharedString::from(format!("panel-{title}")),
+                        each == tab,
+                        theme,
+                    )
+                    .flex_1()
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.show_panel_tab(each, window, cx);
+                    }))
+                    .child(title)
+                })),
             );
+        let body = match tab {
+            PanelTab::Files => self.render_file_tree(project_id, theme, window, cx),
+            PanelTab::Session => {
+                let session = self
+                    .panel_session()
+                    .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
+                let thread = session.and_then(|s| self.render_thread_section(s, theme, cx));
+                let cards = div()
+                    .id("inspector-body")
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(space::M))
+                    .p(px(space::M))
+                    .children(match session {
+                        Some(session) => {
+                            vec![self.render_session_card(session, now, theme, cx)]
+                        }
+                        None => {
+                            vec![meta_line(theme, "No session focused".into()).into_any_element()]
+                        }
+                    })
+                    // Follows the workspace, not the focused pane.
+                    .children(
+                        self.render_changes_card(project_id, theme, cx)
+                            .map(IntoElement::into_any_element),
+                    )
+                    .children(
+                        session
+                            .filter(|s| {
+                                s.kind == SessionKind::Agent && s.state != SessionState::Exited
+                            })
+                            .map(|s| self.render_plan_card(s, theme, cx)),
+                    );
+                match thread {
+                    // The cards keep their height (at most half); the thread fills the rest.
+                    Some(thread) => div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(cards.flex_none().max_h(relative(0.5)))
+                        .child(thread)
+                        .into_any_element(),
+                    None => cards.size_full().into_any_element(),
+                }
+            }
+        };
         div()
             .flex_none()
             .w(px(self.inspector_width))
@@ -161,17 +242,10 @@ impl Shell {
             .font_family(theme.ui_font_family.clone())
             .text_size(font_size::BODY)
             .text_color(rgb(theme.text))
-            .child(match thread {
-                // The cards keep their height (at most half); the thread fills the rest.
-                Some(thread) => div()
-                    .size_full()
-                    .flex()
-                    .flex_col()
-                    .child(cards.flex_none().max_h(relative(0.5)))
-                    .child(thread)
-                    .into_any_element(),
-                None => cards.size_full().into_any_element(),
-            })
+            .flex()
+            .flex_col()
+            .child(tabs)
+            .child(div().flex_1().min_h_0().flex().flex_col().child(body))
             .child(grip)
             .into_any_element()
     }

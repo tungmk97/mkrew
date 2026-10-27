@@ -20,10 +20,20 @@ impl Shell {
         };
         let view = self.view();
         let main = div().flex_1().min_w_0().h_full().flex().flex_col();
+        let panel = self
+            .panel_shown()
+            .then(|| self.render_right_panel(project_id, now, theme, window, cx));
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
-            (View::Files, _) => main.child(self.render_files(project_id, theme, window, cx)),
+            (View::Files, _) => main.child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(self.render_editor(project_id, theme, window, cx))
+                    .children(panel),
+            ),
             (View::Git, _) => main.child(self.render_git(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => {
                 // Voice text goes to the focused terminal when it has the keyboard: ring it.
@@ -53,9 +63,7 @@ impl Shell {
                         .min_h_0()
                         .flex()
                         .child(terminals)
-                        .when(self.inspector_open, |el| {
-                            el.child(self.render_inspector(project_id, now, theme, cx))
-                        }),
+                        .children(panel),
                 )
             }
             (View::Terminals, None) => {

@@ -72,7 +72,7 @@ use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::icons::{self, Icon, icon_svg};
 use mkrew_ui::ime;
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
-use mkrew_ui::inspector;
+use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
@@ -540,8 +540,9 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The session panel right of Terminals is open (closed at every start; SPEC §10).
-    inspector_open: bool,
+    /// The right panel (Files / Session tabs) next to Terminals and the Editor; from
+    /// `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081).
+    right_panel: inspector::RightPanel,
     /// The session panel's Thread section (ADR 0057): the shown session's reading. `None`
     /// while the panel is closed or shows no agent with a native id.
     thread: Option<ThreadWatch>,
@@ -910,7 +911,7 @@ impl Render for Shell {
                         (self.file_menu.as_ref())
                             .filter(|menu| {
                                 self.workspace == Some(menu.project_id)
-                                    && self.view() == View::Files
+                                    && self.file_tree_shown()
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),

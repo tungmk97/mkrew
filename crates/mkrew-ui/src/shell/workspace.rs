@@ -42,7 +42,7 @@ impl Shell {
         if switched && self.view() == View::Docs {
             self.load_docs(project_id, window, cx);
         }
-        if switched && self.view() == View::Files {
+        if switched && self.files_on_screen() {
             self.refresh_files(project_id, window, cx);
         }
         if switched && self.view() == View::Git {
@@ -353,19 +353,21 @@ impl Shell {
             return;
         }
         self.close_menus();
+        let tree_before = self.files_on_screen();
         let shown = self.views.insert(project_id, view).unwrap_or_default();
-        if view != View::Terminals {
-            // The panel (and its grip) leaves with Terminals: end a drag in progress.
+        if !matches!(view, View::Terminals | View::Files) {
+            // The panel (and its grip) leaves with Terminals and Files: end a drag in progress.
             self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);
         }
-        if view == View::Files {
-            if shown != View::Files {
-                self.refresh_files(project_id, window, cx);
-            }
-            window.focus(&self.files_focus, cx);
+        if self.files_on_screen() && !tree_before {
+            self.refresh_files(project_id, window, cx);
+        }
+        // A tree click keeps the keyboard in the tree; any other way in types in the editor.
+        if view == View::Files && !self.files_focus.is_focused(window) {
+            window.focus(&self.file_editor_focus, cx);
         }
         if view == View::Git {
             if shown != View::Git {

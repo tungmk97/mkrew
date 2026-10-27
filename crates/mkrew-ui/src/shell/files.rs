@@ -210,7 +210,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Files) else {
+        let Some(project_id) = self.workspace.filter(|_| self.files_on_screen()) else {
             return;
         };
         let Some(view) = self.files.get_mut(&project_id) else {
@@ -843,7 +843,7 @@ impl Shell {
         for project_id in files {
             self.files
                 .insert(project_id, FilesView::new(project_id, None));
-            if shown == Some(project_id) && self.view() == View::Files {
+            if shown == Some(project_id) && self.files_on_screen() {
                 self.refresh_files(project_id, window, cx);
             }
         }
