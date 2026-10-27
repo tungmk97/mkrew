@@ -1469,7 +1469,13 @@ pub(crate) fn session_row(
                         .map(|fraction| progress_bar(fraction, theme::PLAN_ROW_BAR_HEIGHT, theme)),
                 ),
         )
-        .when(row.pinned, |el| el.child(pin_mark()))
+        .when(row.pinned, |el| {
+            el.child(
+                icon_svg(Icon::Pin, theme::PIN_ICON_SIZE, theme.status_needs_input)
+                    .id(SharedString::from(format!("session-pin-{session_id}")))
+                    .tooltip(tooltip(theme, "Pinned", "")),
+            )
+        })
         .children(mark.filter(|_| !working).map(|state| {
             div()
                 .flex_none()

@@ -719,7 +719,7 @@ pub(crate) fn color_swatch(
         .into_any_element()
 }
 
-/// The pin before the name of a pinned workspace, session or tab.
+/// The pin before the name of a pinned workspace or tab.
 pub(crate) fn pin_mark() -> gpui::Div {
     div()
         .flex_none()

@@ -128,6 +128,8 @@ pub const ICON_SIZE: f32 = 16.0;
 /// A Lucide icon among body / meta text: text buttons, row actions, row chevrons, window
 /// controls.
 pub const ICON_SIZE_SMALL: f32 = 14.0;
+/// The pin before the time of a pinned session row.
+pub const PIN_ICON_SIZE: f32 = 13.0;
 /// Inset of a segmented control around its segments.
 pub const SEGMENT_PADDING: f32 = 3.0;
 /// The thin vertical rule before the window controls.
@@ -1712,7 +1714,7 @@ pub fn mode_icon(mode: ThemeMode) -> crate::icons::Icon {
     }
 }
 
-/// Marks a pinned workspace, session row or tab (SPEC §10). Plain text like the other glyphs:
+/// Marks a pinned workspace or tab (SPEC §10). Plain text like the other glyphs:
 /// on Windows GPUI draws it as a color emoji through DirectWrite's font fallback (Segoe UI
 /// Emoji), so it ignores `text_color`.
 pub const PIN_GLYPH: &str = "📌";

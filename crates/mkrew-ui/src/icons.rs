@@ -84,6 +84,7 @@ icons! {
         PanelLeftOpen => "panel-left-open",
         PanelRight => "panel-right",
         Pencil => "pencil",
+        Pin => "pin",
         Play => "play",
         Plus => "plus",
         RotateCw => "rotate-cw",
