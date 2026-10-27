@@ -88,10 +88,15 @@ impl Shell {
     ) {
         self.git_view(project_id).close_diff();
         self.follow_git_diff(project_id, window, cx);
+        // The Git tab is still on screen: the keyboard stays in its list.
+        if self.workspace == Some(project_id) && self.git_panel_shown() {
+            window.focus(&self.git_focus, cx);
+        }
     }
 
     /// The Diff view was left on screen with its diff closed (by hand, or the list
-    /// emptied): Terminals shows instead, with its panes attached again.
+    /// emptied): Terminals shows instead, with its panes attached again. `show_view` focuses
+    /// a pane; the keyboard stays in the Git list while its tab is on screen.
     fn follow_git_diff(
         &mut self,
         project_id: Ulid,
@@ -102,7 +107,13 @@ impl Shell {
             && self.views.get(&project_id) == Some(&View::Diff)
             && !self.diff_open(project_id)
         {
+            let in_git = self.git_focus.is_focused(window)
+                || self.git_filter_focus.is_focused(window)
+                || self.git_commit_focus.is_focused(window);
             self.show_view(View::Terminals, window, cx);
+            if in_git && self.git_panel_shown() {
+                window.focus(&self.git_focus, cx);
+            }
         }
     }
 
@@ -589,6 +600,7 @@ impl Shell {
         if event.keystroke.key == "enter"
             && !event.keystroke.modifiers.modified()
             && let Some(project_id) = self.workspace
+            && self.git.get(&project_id).is_some_and(|view| view.selected.is_some())
         {
             cx.stop_propagation();
             return self.open_git_diff(project_id, window, cx);

@@ -49,17 +49,26 @@ impl Shell {
             let retry = history
                 .filter(|history| matches!(history.detail, git_history::Detail::Failed(_)))
                 .and_then(|history| history.selected.clone());
-            return panel.child(
-                message(theme, None, sentence.into(), detail.map(Into::into))
-                    .flex_1()
-                    .children(retry.map(|hash| {
-                        button("git-show-retry", "Retry", theme, true).on_click(cx.listener(
-                            move |shell, _, window, cx| {
-                                shell.select_git_commit(project_id, hash.clone(), window, cx);
-                            },
-                        ))
-                    })),
-            );
+            return panel
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .px(px(space::M))
+                        .py(px(space::XS))
+                        .child(self.git_diff_close(project_id, theme, cx)),
+                )
+                .child(
+                    message(theme, None, sentence.into(), detail.map(Into::into))
+                        .flex_1()
+                        .children(retry.map(|hash| {
+                            button("git-show-retry", "Retry", theme, true).on_click(cx.listener(
+                                move |shell, _, window, cx| {
+                                    shell.select_git_commit(project_id, hash.clone(), window, cx);
+                                },
+                            ))
+                        })),
+                );
         };
         let toolbar = self.git_diff_toolbar(project_id, view, &selected, theme, cx);
         let body = match &view.diff {
@@ -459,13 +468,21 @@ impl Shell {
             .when(view.can_comment() && !collapsed, |el| {
                 el.child(self.git_diff_more(project_id, view, theme, cx))
             })
-            .child(
-                icon_button("git-diff-close", Icon::X, theme)
-                    .tooltip(tooltip(theme, "Close diff", "Esc"))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.close_git_diff(project_id, window, cx);
-                    })),
-            )
+            .child(self.git_diff_close(project_id, theme, cx))
+    }
+
+    /// "×": the diff closes (also `Esc`).
+    fn git_diff_close(
+        &self,
+        project_id: Ulid,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> impl IntoElement {
+        icon_button("git-diff-close", Icon::X, theme)
+            .tooltip(tooltip(theme, "Close diff", "Esc"))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.close_git_diff(project_id, window, cx);
+            }))
     }
 
     /// "⋯": Comment on the selected lines and Send to agent (both also on the bar under picked
