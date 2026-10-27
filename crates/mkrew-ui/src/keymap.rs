@@ -85,17 +85,19 @@ pub enum Command {
     AddComment,
     /// Docs only: send the shown file's open (or selected) comments to an agent session.
     SendComments,
-    /// Show the active workspace's file tree and viewer.
-    ShowFiles,
-    /// Files only: show or hide git-ignored files in the tree.
+    /// Open the right panel on the file tree and give it the keyboard.
+    ShowFileTree,
+    /// Show the Editor view (the opened files) while a file is open.
+    ShowEditor,
+    /// Tree only: show or hide git-ignored files in the tree.
     ToggleIgnored,
-    /// Files only: save the opened file (Ctrl+S, ADR 0028).
+    /// Editor only: save the opened file (Ctrl+S, ADR 0028).
     SaveFile,
-    /// Files only: open the find bar over the opened file (Ctrl+F).
+    /// Editor only: open the find bar over the opened file (Ctrl+F).
     FindInFile,
-    /// Files only: open the find bar with its replace row (Ctrl+H).
+    /// Editor only: open the find bar with its replace row (Ctrl+H).
     ReplaceInFile,
-    /// Files only: close the active tab, asking about unsaved text (Ctrl+W).
+    /// Editor only: close the active tab, asking about unsaved text (Ctrl+W).
     CloseFileTab,
     /// Show the active workspace's Git view.
     ShowGit,
@@ -176,8 +178,11 @@ pub const BOARD_CONTEXT: &str = "Board";
 /// Key context of the window while a Docs view is shown.
 pub const DOCS_CONTEXT: &str = "Docs";
 
-/// Key context of the window while a Files view is shown.
-pub const FILES_CONTEXT: &str = "Files";
+/// Key context of the window while the Editor view is shown.
+pub const EDITOR_CONTEXT: &str = "Editor";
+
+/// Key context of the file tree in the right panel while it has the keyboard.
+pub const FILE_TREE_CONTEXT: &str = "FileTree";
 
 /// Key context of the Git view's changed-file list while it has focus (so its single-key
 /// shortcuts never reach a text field).
@@ -186,8 +191,8 @@ pub const GIT_CONTEXT: &str = "Git";
 /// Comment commands work in the Docs view and in the Git view's list (diff comments).
 pub const COMMENTS_CONTEXT: &str = "Docs || Git";
 
-/// Find: in a terminal's scrollback, the Files view's opened file, and the Docs list filter.
-pub const FIND_CONTEXT: &str = "Terminal || Files || Docs";
+/// Find: in a terminal's scrollback, the Editor's opened file, and the Docs list filter.
+pub const FIND_CONTEXT: &str = "Terminal || Editor || Docs";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
@@ -250,7 +255,8 @@ impl Command {
             Command::ToggleDocSource,
             Command::AddComment,
             Command::SendComments,
-            Command::ShowFiles,
+            Command::ShowFileTree,
+            Command::ShowEditor,
             Command::ToggleIgnored,
             Command::SaveFile,
             Command::FindInFile,
@@ -340,7 +346,8 @@ impl Command {
             Command::ToggleDocSource => "toggle_doc_source".into(),
             Command::AddComment => "add_comment".into(),
             Command::SendComments => "send_comments".into(),
-            Command::ShowFiles => "show_files".into(),
+            Command::ShowFileTree => "show_file_tree".into(),
+            Command::ShowEditor => "show_editor".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
             Command::SaveFile => "save_file".into(),
             Command::FindInFile => "find_in_file".into(),
@@ -442,7 +449,8 @@ impl Command {
             Command::ToggleDocSource => "ctrl-shift-e".into(),
             Command::AddComment => "ctrl-alt-m".into(),
             Command::SendComments => "ctrl-shift-s".into(),
-            Command::ShowFiles => "ctrl-shift-3".into(),
+            Command::ShowFileTree => "ctrl-shift-3".into(),
+            Command::ShowEditor => "ctrl-shift-6".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::SaveFile => "ctrl-s".into(),
             Command::FindInFile => "ctrl-f".into(),
@@ -504,11 +512,11 @@ impl Command {
             Command::RunTask | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
             Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
-            Command::ToggleIgnored
-            | Command::SaveFile
+            Command::ToggleIgnored => Some(FILE_TREE_CONTEXT),
+            Command::SaveFile
             | Command::FindInFile
             | Command::ReplaceInFile
-            | Command::CloseFileTab => Some(FILES_CONTEXT),
+            | Command::CloseFileTab => Some(EDITOR_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -984,15 +992,16 @@ mod tests {
         assert_eq!(bound("ctrl-shift-e"), Some(Command::ToggleDocSource));
         assert_eq!(bound("ctrl-alt-m"), Some(Command::AddComment));
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
-        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowFiles));
+        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowFileTree));
+        assert_eq!(bound("ctrl-shift-6"), Some(Command::ShowEditor));
         assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
-        // Files only: plain Ctrl+S saves the opened file (the terminal never has focus there).
+        // Editor only: plain Ctrl+S saves the opened file (the terminal never has focus there).
         assert_eq!(bound("ctrl-s"), Some(Command::SaveFile));
-        assert_eq!(Command::SaveFile.context(), Some(FILES_CONTEXT));
+        assert_eq!(Command::SaveFile.context(), Some(EDITOR_CONTEXT));
         assert_eq!(bound("ctrl-f"), Some(Command::FindInFile));
         assert_eq!(bound("ctrl-h"), Some(Command::ReplaceInFile));
         for command in [Command::FindInFile, Command::ReplaceInFile] {
-            assert_eq!(command.context(), Some(FILES_CONTEXT), "{command:?}");
+            assert_eq!(command.context(), Some(EDITOR_CONTEXT), "{command:?}");
         }
         assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowGit));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
@@ -1052,14 +1061,14 @@ mod tests {
         for command in [Command::AddComment, Command::SendComments] {
             assert_eq!(command.context(), Some(COMMENTS_CONTEXT), "{command:?}");
             let predicate = gpui::KeyBindingContextPredicate::parse(COMMENTS_CONTEXT).unwrap();
-            for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Files", false)]
+            for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Editor", false)]
             {
                 let stack = [gpui::KeyContext::parse(context).unwrap()];
                 assert_eq!(predicate.eval(&stack), matches, "{context}");
             }
         }
-        // Ctrl+Shift+H only toggles ignored files while Files are shown.
-        assert_eq!(Command::ToggleIgnored.context(), Some(FILES_CONTEXT));
+        // Ctrl+Shift+H only toggles ignored files while the tree has the keyboard.
+        assert_eq!(Command::ToggleIgnored.context(), Some(FILE_TREE_CONTEXT));
         // SPEC §13 Git single keys, only while the Git list has focus.
         for (keys, command) in [
             ("b", Command::GitToggleMode),
@@ -1122,7 +1131,7 @@ mod tests {
             let plain_ctrl = m.control && !m.shift && !m.alt && keys.key.len() == 1;
             let letter = keys.key.chars().all(|c| c.is_ascii_alphabetic());
             assert!(
-                !plain_ctrl || !letter || command.context() == Some(FILES_CONTEXT),
+                !plain_ctrl || !letter || command.context() == Some(EDITOR_CONTEXT),
                 "{command:?}"
             );
         }
@@ -1135,7 +1144,7 @@ mod tests {
             keymap.command_for(&keystroke("ctrl-w")),
             Some(Command::CloseFileTab)
         );
-        assert_eq!(Command::CloseFileTab.context(), Some(FILES_CONTEXT));
+        assert_eq!(Command::CloseFileTab.context(), Some(EDITOR_CONTEXT));
         assert_eq!(keymap.label(Command::CloseFileTab), "Ctrl+W");
     }
 

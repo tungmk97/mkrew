@@ -1,4 +1,4 @@
-//! The session panel (inspector) and its cards.
+//! The right panel (file tree and session cards) and its title bar toggle.
 
 use crate::*;
 
@@ -9,13 +9,17 @@ impl Shell {
         if self.workspace.is_none() {
             return;
         }
-        if !matches!(self.view(), View::Terminals | View::Files) {
+        let tree_before = if matches!(self.view(), View::Terminals | View::Editor) {
+            let before = self.files_on_screen();
+            self.right_panel.open = !self.right_panel.open;
+            before
+        } else {
             self.right_panel.open = true;
             self.show_view(View::Terminals, window, cx);
-        } else {
-            self.right_panel.open = !self.right_panel.open;
-        }
-        self.panel_changed(window, cx);
+            // `show_view` refreshed the tree if it came on screen.
+            self.files_on_screen()
+        };
+        self.panel_changed(tree_before, window, cx);
     }
 
     /// A click on the panel's `Files` / `Session` tab.
@@ -25,24 +29,43 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let tree_before = self.files_on_screen();
         self.right_panel.show(tab);
-        self.panel_changed(window, cx);
+        self.panel_changed(tree_before, window, cx);
     }
 
-    /// After the panel opened, closed or switched tab: a tree that came on screen is
-    /// refreshed, a hidden one gives the keyboard back, the grip of a hidden panel ends its
-    /// drag, and `[ui] right_panel` is saved.
-    fn panel_changed(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// Ctrl+Shift+3: the right panel on the file tree, which gets the keyboard; from a view
+    /// without the panel, Terminals first.
+    pub(crate) fn show_file_tree(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.workspace.is_none() {
+            return;
+        }
+        if !matches!(self.view(), View::Terminals | View::Editor) {
+            self.show_view(View::Terminals, window, cx);
+        }
+        self.show_panel_tab(PanelTab::Files, window, cx);
+        window.focus(&self.files_focus, cx);
+    }
+
+    /// After the panel opened, closed or switched tab: a tree that came on screen
+    /// (`tree_before` was false) is refreshed, a hidden one gives the keyboard back, the grip
+    /// of a hidden panel ends its drag, and `[ui] right_panel` is saved.
+    fn panel_changed(
+        &mut self,
+        tree_before: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if !self.right_panel.open {
             // The grip is gone: no mouse-up will end a drag in progress.
             self.end_inspector_drag(cx);
         }
         if self.file_tree_shown() {
-            if let Some(project_id) = self.workspace {
+            if !tree_before && let Some(project_id) = self.workspace {
                 self.refresh_files(project_id, window, cx);
             }
         } else if self.files_focus.is_focused(window) {
-            if self.view() == View::Files {
+            if self.view() == View::Editor {
                 window.focus(&self.file_editor_focus, cx);
             } else {
                 self.focus_pane(window, cx);
@@ -75,7 +98,7 @@ impl Shell {
         }
     }
 
-    /// The title bar's session panel toggle: a gray icon, on a raised fill while the panel is
+    /// The title bar's right panel toggle: a gray icon, on a raised fill while the panel is
     /// open.
     pub(crate) fn inspector_toggle(
         &self,

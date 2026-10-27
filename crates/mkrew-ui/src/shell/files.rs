@@ -44,6 +44,7 @@ impl Shell {
             .insert(project_id, FilesView::new(project_id, target));
         self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.refresh_files(project_id, window, cx);
+        self.follow_file_tabs(project_id, window, cx);
     }
 
     /// Lists the root and open folders of the Files view of `project_id` again and re-reads
@@ -203,7 +204,8 @@ impl Shell {
         .detach();
     }
 
-    /// Follows `git.changed` in the Files view on screen (hidden ones refresh when shown).
+    /// Follows `git.changed` in the Editor or the tree on screen (hidden ones refresh when
+    /// shown).
     pub(crate) fn files_event(
         &mut self,
         event: &Event,
@@ -638,7 +640,7 @@ impl Shell {
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
-        self.show_view(View::Files, window, cx);
+        self.show_view(View::Editor, window, cx);
         self.leave_files(project_id, paths, then, window, cx);
         true
     }
@@ -843,6 +845,7 @@ impl Shell {
         for project_id in files {
             self.files
                 .insert(project_id, FilesView::new(project_id, None));
+            self.follow_file_tabs(project_id, window, cx);
             if shown == Some(project_id) && self.files_on_screen() {
                 self.refresh_files(project_id, window, cx);
             }

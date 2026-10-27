@@ -53,7 +53,7 @@ impl Shell {
 
     /// The views the right panel is drawn next to.
     pub(crate) fn panel_shown(&self) -> bool {
-        self.right_panel.open && matches!(self.view(), View::Terminals | View::Files)
+        self.right_panel.open && matches!(self.view(), View::Terminals | View::Editor)
     }
 
     /// The right panel shows the file tree.
@@ -61,10 +61,10 @@ impl Shell {
         self.panel_shown() && self.right_panel.tab == PanelTab::Files
     }
 
-    /// Some of the active workspace's Files view is drawn (the editor or the tree), so it
+    /// Some of the active workspace's Editor view is drawn (the editor or the tree), so it
     /// follows `git.changed` and refreshes when it comes back.
     pub(crate) fn files_on_screen(&self) -> bool {
-        self.view() == View::Files || self.file_tree_shown()
+        self.view() == View::Editor || self.file_tree_shown()
     }
 
     /// The pane the Session tab describes: the active tab's focused pane, also while the

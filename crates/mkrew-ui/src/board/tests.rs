@@ -11,10 +11,33 @@ fn each_view_maps_to_its_own_show_command() {
         [
             Command::ShowTerminals,
             Command::ShowBoard,
-            Command::ShowFiles,
             Command::ShowGit,
-            Command::ShowDocs
+            Command::ShowDocs,
+            Command::ShowEditor
         ]
+    );
+}
+
+#[test]
+fn the_view_bar_lists_the_editor_only_with_open_files() {
+    let bar = |docs, editor| View::bar(docs, editor).collect::<Vec<_>>();
+    assert_eq!(
+        bar(true, false),
+        [View::Terminals, View::Board, View::Git, View::Docs]
+    );
+    assert_eq!(
+        bar(true, true),
+        [
+            View::Terminals,
+            View::Board,
+            View::Git,
+            View::Docs,
+            View::Editor
+        ]
+    );
+    assert_eq!(
+        bar(false, true),
+        [View::Terminals, View::Board, View::Git, View::Editor]
     );
 }
 

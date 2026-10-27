@@ -177,7 +177,7 @@ impl Shell {
         };
         let sessions = self.sidebar.sessions();
         let (file_path, prefill, task) = match self.view() {
-            view @ (View::Files | View::Git) => {
+            view @ (View::Editor | View::Git) => {
                 let picked = self
                     .picked_lines(project_id, view)
                     .filter(|(_, _, _, text)| !text.trim().is_empty());

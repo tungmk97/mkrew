@@ -75,8 +75,8 @@ use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
 use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
-    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
-    GIT_CONTEXT, Keymap, KeymapError, Run,
+    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
+    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::palette::{self, Extra, Palette};
@@ -563,13 +563,13 @@ struct Shell {
     comment_focus: FocusHandle,
     /// The Files view of every workspace it was shown for.
     files: HashMap<Ulid, FilesView>,
-    /// Focused while a Files view is shown, so arrow keys move its tree cursor.
+    /// Focused while the right panel's tree has the keyboard, so arrow keys move its cursor.
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
     /// Keeps the active Files tab in view in the tab strip.
     file_tabs_scroll: ScrollHandle,
-    /// The Files viewer's find field (outside `FILES_CONTEXT`'s arrow keys).
+    /// The Editor's find field (outside `EDITOR_CONTEXT`'s arrow keys).
     file_find_focus: FocusHandle,
     /// The Files find bar's replace field.
     file_replace_focus: FocusHandle,
@@ -746,8 +746,8 @@ impl Render for Shell {
                 |el| el.key_context(BOARD_CONTEXT),
             )
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
-            .when(self.view() == View::Files, |el| {
-                el.key_context(FILES_CONTEXT)
+            .when(self.view() == View::Editor, |el| {
+                el.key_context(EDITOR_CONTEXT)
             })
             .on_action(cx.listener(Self::run))
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
@@ -920,7 +920,7 @@ impl Render for Shell {
                         (self.file_tab_menu.as_ref())
                             .filter(|menu| {
                                 self.workspace == Some(menu.project_id)
-                                    && self.view() == View::Files
+                                    && self.view() == View::Editor
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),

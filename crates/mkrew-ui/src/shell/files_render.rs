@@ -172,6 +172,7 @@ impl Shell {
             .flex()
             .flex_col()
             .py(px(space::S))
+            .key_context(FILE_TREE_CONTEXT)
             .track_focus(&self.files_focus)
             .on_key_down(cx.listener(Self::files_key_down))
             // Right click on the header or the blank part of the tree = the folder

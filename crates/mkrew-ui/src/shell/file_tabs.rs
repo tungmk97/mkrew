@@ -1,4 +1,4 @@
-//! Files view tabs (SPEC §12A, ADR 0080): switching, closing (unsaved text is asked about
+//! Editor view tabs (SPEC §12A, ADR 0080): switching, closing (unsaved text is asked about
 //! first), pinning. The strip and its menu are drawn in `file_tabs_render`.
 
 use crate::*;
@@ -42,6 +42,26 @@ impl Shell {
         let requests = Requests { list: vec![], read };
         self.files_requests(project_id, requests, window, cx);
         self.build_preview(project_id, window, cx);
+        self.follow_file_tabs(project_id, window, cx);
+    }
+
+    /// The Editor view comes with the first open file and leaves with the last one (closed,
+    /// or another worktree started the files over). Only for the shown workspace.
+    pub(crate) fn follow_file_tabs(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.workspace != Some(project_id) {
+            return;
+        }
+        let stored = self.views.get(&project_id).copied().unwrap_or_default();
+        match (self.has_file_tabs(project_id), stored == View::Editor) {
+            (true, false) => self.show_view(View::Editor, window, cx),
+            (false, true) => self.show_view(View::Terminals, window, cx),
+            _ => {}
+        }
     }
 
     /// A click on a tab (`Kept` for a double click), or any open of a file: its tab shows.

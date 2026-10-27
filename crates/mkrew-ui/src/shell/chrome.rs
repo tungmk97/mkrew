@@ -26,7 +26,7 @@ impl Shell {
         match (view, self.tabs.get(&project_id)) {
             (View::Board, _) => main.child(self.render_board(project_id, now, theme, window, cx)),
             (View::Docs, _) => main.child(self.render_docs(project_id, theme, window, cx)),
-            (View::Files, _) => main.child(
+            (View::Editor, _) => main.child(
                 div()
                     .flex_1()
                     .min_h_0()
@@ -268,30 +268,26 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
         let changed = self.git_summary().map_or(0, GitSummary::changed);
-        segmented(theme).children(
-            View::ALL
-                .into_iter()
-                .filter(|&view| view != View::Docs || self.features.docs)
-                .map(|view| {
-                    segment(
-                        SharedString::from(format!("view-{}", view.title())),
-                        view == shown,
-                        theme,
-                    )
-                    .tooltip(tooltip(
-                        theme,
-                        view.title(),
-                        self.keymap.label(view.command()),
-                    ))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.show_view(view, window, cx);
-                    }))
-                    .child(view.title())
-                    .when(view == View::Git && changed > 0, |el| {
-                        el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
-                    })
-                }),
-        )
+        let editor = self.workspace.is_some_and(|id| self.has_file_tabs(id));
+        segmented(theme).children(View::bar(self.features.docs, editor).map(|view| {
+            segment(
+                SharedString::from(format!("view-{}", view.title())),
+                view == shown,
+                theme,
+            )
+            .tooltip(tooltip(
+                theme,
+                view.title(),
+                self.keymap.label(view.command()),
+            ))
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.show_view(view, window, cx);
+            }))
+            .child(view.title())
+            .when(view == View::Git && changed > 0, |el| {
+                el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
+            })
+        }))
     }
 
     /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and

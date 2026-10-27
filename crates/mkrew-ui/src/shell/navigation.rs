@@ -307,8 +307,8 @@ impl Shell {
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
-        self.show_view(View::Files, window, cx);
-        // Revealed only while the Files view still shows the folder that was searched.
+        // The Editor view comes with the revealed file's tab (`file_tab_shown`), and only
+        // while the Editor view still shows the folder that was searched.
         let Some(view) = self.files_at(project_id, target) else {
             return;
         };
@@ -367,10 +367,13 @@ impl Shell {
             view: self.view(),
             workspaces: self.sidebar.projects().len(),
             tabs: match (workspace, self.view()) {
-                (Some(id), View::Files) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
+                (Some(id), View::Editor) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
                 (Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
                 (None, _) => 0,
             },
+            file_tabs: workspace.map_or(0, |id| {
+                self.files.get(&id).map_or(0, |view| view.tabs().len())
+            }),
             terminal: terminal.is_some(),
             discard,
             worktree_task,
