@@ -3,7 +3,7 @@
 use crate::*;
 
 impl Shell {
-    /// The Files view (SPEC §12A): the opened files' tabs, header and editor / preview. The
+    /// The Editor view (SPEC §12A): the opened files' tabs, header and editor / preview. The
     /// tree is in the right panel (`render_file_tree`).
     pub(crate) fn render_editor(
         &self,

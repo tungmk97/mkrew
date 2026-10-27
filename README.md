@@ -167,7 +167,8 @@ The hooks call `mk hook …`, which does nothing when the agent runs outside Mkr
 - **Terminals** (`Ctrl+Shift+1`): tabs split into panes, each an agent or a shell. New agent tab
   `Ctrl+Shift+A`, shell tab `Ctrl+Shift+T`, split `Alt+Shift+=` / `Alt+Shift+-`.
 - **Task board** (`Ctrl+Shift+2`): new task `Ctrl+Shift+N`, run it `Ctrl+Enter`.
-- **Files** (`Ctrl+Shift+3`) and **Git** (`Ctrl+Shift+4`): browse files, diff against the base
+- **File tree** (`Ctrl+Shift+3`, in the right panel), **Editor** (`Ctrl+Shift+6`) and **Git**
+  (`Ctrl+Shift+4`): browse files, diff against the base
   branch, stage, commit, comment on diff lines. Quick open `Ctrl+Shift+O`; "Open in Zed"
   `Ctrl+Shift+Z`.
 - **Docs** (`Ctrl+Shift+5`): review Markdown plans, comment on passages and send the comments

@@ -364,6 +364,7 @@ impl Shell {
         }
         self.close_menus();
         let tree_before = self.files_on_screen();
+        let tree_focused = self.files_focus.is_focused(window);
         let shown = self.views.insert(project_id, view).unwrap_or_default();
         if !matches!(view, View::Terminals | View::Editor) {
             // The panel (and its grip) leaves with Terminals and Editor: end a drag in progress.
@@ -387,8 +388,13 @@ impl Shell {
         }
         // After `sync_panes` (its focus would win). A tree click keeps the keyboard in the
         // tree; any other way in types in the editor.
-        if view == View::Editor && !self.files_focus.is_focused(window) {
-            window.focus(&self.file_editor_focus, cx);
+        if view == View::Editor {
+            let target = if tree_focused {
+                &self.files_focus
+            } else {
+                &self.file_editor_focus
+            };
+            window.focus(target, cx);
         }
     }
 }

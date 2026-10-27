@@ -9,6 +9,7 @@ impl Shell {
         if self.workspace.is_none() {
             return;
         }
+        let mode_before = self.right_panel.mode();
         let tree_before = if matches!(self.view(), View::Terminals | View::Editor) {
             let before = self.files_on_screen();
             self.right_panel.open = !self.right_panel.open;
@@ -19,7 +20,7 @@ impl Shell {
             // `show_view` refreshed the tree if it came on screen.
             self.files_on_screen()
         };
-        self.panel_changed(tree_before, window, cx);
+        self.panel_changed(tree_before, mode_before, window, cx);
     }
 
     /// A click on the panel's `Files` / `Session` tab.
@@ -29,22 +30,25 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let tree_before = self.files_on_screen();
+        let (tree_before, mode_before) = (self.files_on_screen(), self.right_panel.mode());
         self.right_panel.show(tab);
-        self.panel_changed(tree_before, window, cx);
+        self.panel_changed(tree_before, mode_before, window, cx);
     }
 
     /// Ctrl+Shift+3: the right panel on the file tree, which gets the keyboard; from a view
     /// without the panel, Terminals first.
     pub(crate) fn show_file_tree(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        if self.workspace.is_none() {
+        let Some(project_id) = self.workspace else {
             return;
-        }
+        };
         if !matches!(self.view(), View::Terminals | View::Editor) {
             self.show_view(View::Terminals, window, cx);
         }
         self.show_panel_tab(PanelTab::Files, window, cx);
-        window.focus(&self.files_focus, cx);
+        // Without loaded tabs the Terminals view draws no panel: nothing to focus.
+        if self.view() == View::Editor || self.tabs.contains_key(&project_id) {
+            window.focus(&self.files_focus, cx);
+        }
     }
 
     /// After the panel opened, closed or switched tab: a tree that came on screen
@@ -53,6 +57,7 @@ impl Shell {
     fn panel_changed(
         &mut self,
         tree_before: bool,
+        mode_before: mkrew_core::settings::RightPanelMode,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
@@ -72,8 +77,9 @@ impl Shell {
             }
         }
         let value = format!("\"{}\"", self.right_panel.mode().name());
-        if let Err(error) =
-            mkrew_core::settings::write_ui_value(&self.settings_file, "right_panel", &value)
+        if self.right_panel.mode() != mode_before
+            && let Err(error) =
+                mkrew_core::settings::write_ui_value(&self.settings_file, "right_panel", &value)
         {
             self.settings_write_failed("the right panel", error, cx);
         }

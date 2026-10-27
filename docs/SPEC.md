@@ -843,7 +843,7 @@ The right panel (below) is a third column right of Terminals and the Editor whil
   with their logs replayed read-only; **Resume** (Enter) continues the selected agent session's
   conversation in a new pane that gets the keyboard, ADR 0055), the theme toggle,
   the phone icon (`smartphone`, §14; a green dot while Phone access is on; the tooltip explains
-  it; hidden without a daemon connection), the session-panel toggle (◨, ADR 0038) and the
+  it; hidden without a daemon connection), the right panel toggle (◨, ADR 0038, ADR 0081) and the
   outlined `+ New ▾` (one row per installed agent profile, the workspace's default first with ✓
   and Alt+Shift+A, then Shell with Alt+Shift+S; choosing a profile starts a pane with it), in every view (New's entries switch to
   Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). Every icon is gray (`text-muted`,
