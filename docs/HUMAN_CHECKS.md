@@ -28,8 +28,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Press Tab until each control has the keyboard: the title, the prompt, From prompt, every agent chip, Run in a worktree, Cancel, Create task, then the title again.
   Each control shows a 1 px ring in the text color; a mouse click on the same controls shows none.
   Shift+Tab goes the other way.
+  Not run (2026-10-27 smoke): no keyboard automation allowed (it once typed into the browser); dark and light both unseen.
 - [ ] **Chips:** with an agent chip focused press ← / → (moves along the row, stops at the ends) and Enter or Space (picks it).
   The Ask AI dialog's Agent and Web search rows do the same.
+  Not run (2026-10-27 smoke): needs a person at the keyboard.
 - [ ] **Destructive confirmations:** open the Undo dialog of a Review card.
   No button has a ring and Enter does nothing.
   Tab once: Cancel.
@@ -38,19 +40,25 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Repeat with Remove worktree, Discard files and Git Discard.
   Open each with the Enter key held a moment: nothing is clicked.
   Also check Tab and Esc after Discard... and after Keep files, and the confirm, busy, re-read cycle of the worktree dialog; Enter on the dialog itself does nothing.
+  Not run (2026-10-27 smoke): no Review card or worktree exists in the sandbox, and no key may be sent to the app.
 - [ ] **Broadcast:** type a message with spaces (they stay spaces); press ↓ and Space to uncheck a session; type again (Space types a space); Tab reaches Cancel and Send.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and a running session.
 - [ ] **Run setup:** Tab walks the fields, then both checkboxes, then Duplicate, Remove and Browse of the last card that had the keyboard (after the last card's fields), Add command, Cancel, Save.
   Shift+Tab goes back.
   Browse opens the picker: ↓ ↑ move, → opens a folder, ← goes up, Enter picks the folder or the .env file under the cursor.
   Tab to Remove and press Enter on a card: the keyboard stays usable.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and a folder to browse.
 - [ ] **Settings and others:** Tab through Settings reaches Fix in Zed, Reset and the footer links after the rows.
   A Reset that vanishes after the click keeps the keyboard in the dialog; Enter on Reset puts the keyboard back on the dialog, so Tab restarts at the first stop.
   Phone access, Add workspace, Git base, Compare and the Send dialog reach all their buttons with Tab.
   Turns: D opens the diff since the selected turn.
+  Not run (2026-10-27 smoke): needs a person at the keyboard; no Settings, Phone access, Compare or Turns view was driven.
 - [ ] **Buttons are not text fields:** Tab to a button, then paste or press an arrow: nothing happens.
   Click a text field after a button: the keyboard returns to the field.
+  Not run (2026-10-27 smoke): needs a person at the keyboard.
 - [ ] **A button that vanishes:** in the worktree dialog focus Discard, press Enter (the step changes).
   Esc still closes the dialog.
+  Not run (2026-10-27 smoke): no key may be sent to the app and no worktree exists in the sandbox; only the launch was checked.
 
 ### To verify - 2026-10-27 Keyboard context menus (ADR 0081, wave 1)
 
