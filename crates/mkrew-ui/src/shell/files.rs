@@ -128,6 +128,7 @@ impl Shell {
             return;
         };
         let view = self.files_view(project_id);
+        let opening = view.tab_for(&path).map(|tab| tab.opening);
         if !view.begin_read(&path) {
             return;
         }
@@ -153,8 +154,9 @@ impl Shell {
                 if let Err(error) = &read {
                     tracing::warn!(%project_id, path, "fs.read failed: {error}");
                 }
-                let again = shell
-                    .files_at(project_id, target)
+                // Dropped when its tab was closed (and maybe opened again) meanwhile.
+                let again = (shell.files_at(project_id, target))
+                    .filter(|view| view.tab_for(&path).map(|tab| tab.opening) == opening)
                     .and_then(|view| view.read(&path, read));
                 if let Some(path) = again {
                     shell.read_file(project_id, path, window, cx);
@@ -465,8 +467,7 @@ impl Shell {
     }
 
     /// Ctrl+S / "Save" (§12A): `fs.write` of tab `path` over the version it was read as.
-    /// `then` runs after a successful save (dropped if a save is already in flight: the user
-    /// asks again).
+    /// `then` runs after a successful save; while one is in flight already, after that one.
     pub(crate) fn save_file(
         &mut self,
         project_id: Ulid,
@@ -482,7 +483,13 @@ impl Shell {
             return;
         };
         let target = view.worktree_task_id;
+        let opening = view.tab_for(&path).map(|tab| tab.opening);
         let Some(save) = view.begin_save(&path) else {
+            if let Some(then) = then
+                && view.tab_for(&path).is_some_and(FileTab::is_saving)
+            {
+                self.files_after_save.push((project_id, path, then));
+            }
             return;
         };
         let written = connection.call::<FsWritten>(Request::FsWrite(FsWriteParams {
@@ -500,15 +507,25 @@ impl Shell {
                 }
                 let done = matches!(&written, Ok(written) if written.saved);
                 let unshown = match shell.files_at(project_id, target) {
-                    Some(view) => view.saved(&save.path, save.point, written),
-                    // The workspace's Files view is gone.
-                    None => files_view::unshown_save(written),
+                    // Its tab is still the one that asked (not closed and opened again).
+                    Some(view) if view.tab_for(&save.path).map(|tab| tab.opening) == opening => {
+                        view.saved(&save.path, save.point, written)
+                    }
+                    // The tab or the workspace's Files view is gone.
+                    _ => files_view::unshown_save(written),
                 };
                 if let Some(message) = unshown {
                     shell.toast_error(message, cx);
                 }
-                if let (true, Some(then)) = (done, then) {
-                    then(shell, window, cx);
+                let (waiting, others): (Vec<_>, Vec<_>) =
+                    std::mem::take(&mut shell.files_after_save)
+                        .into_iter()
+                        .partition(|(id, path, _)| *id == project_id && *path == save.path);
+                shell.files_after_save = others;
+                if done {
+                    for then in then.into_iter().chain(waiting.into_iter().map(|w| w.2)) {
+                        then(shell, window, cx);
+                    }
                 }
                 cx.notify();
             });

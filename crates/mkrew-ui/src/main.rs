@@ -566,6 +566,9 @@ struct Shell {
     file_code_scroll: UniformListScrollHandle,
     /// Where the Files editor's scroll bar thumb is held while it is dragged.
     file_code_drag: scrollbar::Drag,
+    /// What waits for a Files save in flight (a "Save" answered while one was already sent):
+    /// `(workspace, path, then)`, run after that save succeeds.
+    files_after_save: Vec<(Ulid, String, AfterSave)>,
     /// The Files editor (ADR 0028): typing goes there while it has focus.
     file_editor_focus: FocusHandle,
     /// The block edit field of the Files Markdown preview (ADR 0072).

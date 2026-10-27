@@ -394,6 +394,7 @@ impl Shell {
             file_page: preview::Page::default(),
             file_code_scroll: UniformListScrollHandle::new(),
             file_code_drag: scrollbar::Drag::default(),
+            files_after_save: Vec::new(),
             file_editor_focus: cx.focus_handle(),
             file_block_focus: cx.focus_handle(),
             file_text_left: Rc::default(),

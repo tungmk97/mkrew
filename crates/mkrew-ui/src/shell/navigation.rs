@@ -321,11 +321,7 @@ impl Shell {
                 .scroll_to_item(at, ScrollStrategy::Nearest);
         }
         self.files_requests(project_id, requests, window, cx);
-        self.show_pending_line(project_id, target);
-        // A link's line already scrolled the editor there.
-        if line.is_none() {
-            self.file_tab_shown(project_id, None, window, cx);
-        }
+        self.file_tab_shown(project_id, None, window, cx);
     }
 
     /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,

@@ -962,6 +962,11 @@ impl FileTab {
         self.shown().is_some_and(|shown| shown.editor.is_dirty())
     }
 
+    /// An `fs.write` of this tab is in flight.
+    pub fn is_saving(&self) -> bool {
+        self.saving
+    }
+
     /// Whether activating the tab must read it: `git.changed` came while it was hidden, or
     /// its last read failed (a retry). Clears the stale mark.
     fn take_read(&mut self) -> bool {
