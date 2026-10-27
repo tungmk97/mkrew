@@ -251,6 +251,8 @@ pub fn title(command: Command) -> String {
         Command::PreviousComment => "Comments: Previous comment thread".into(),
         Command::ReplyComment => "Comments: Reply to the selected thread".into(),
         Command::ResolveComment => "Comments: Resolve or reopen the selected thread".into(),
+        Command::MoveTabLeft => "Tabs: Move tab left".into(),
+        Command::MoveTabRight => "Tabs: Move tab right".into(),
         Command::ToggleIgnored => "Files: Toggle ignored files".into(),
         Command::SaveFile => "Files: Save file".into(),
         Command::FindInFile => "Files: Find in file".into(),
@@ -377,6 +379,9 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::PreviousComment
         | Command::ReplyComment
         | Command::ResolveComment => in_view(View::Docs) || in_view(View::Git),
+        Command::MoveTabLeft | Command::MoveTabRight => {
+            on_panes || (in_view(View::Files) && context.tabs > 0)
+        }
         Command::ToggleIgnored
         | Command::SaveFile
         | Command::FindInFile

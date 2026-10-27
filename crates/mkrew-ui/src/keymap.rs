@@ -189,6 +189,10 @@ pub enum Command {
     ReplyComment,
     /// Docs / Git: resolve (or reopen) the selected thread.
     ResolveComment,
+    /// Move the active terminal tab (the active file tab in Files) one place left / right,
+    /// within its pinned / unpinned group.
+    MoveTabLeft,
+    MoveTabRight,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -325,6 +329,8 @@ impl Command {
             Command::PreviousComment,
             Command::ReplyComment,
             Command::ResolveComment,
+            Command::MoveTabLeft,
+            Command::MoveTabRight,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -427,6 +433,8 @@ impl Command {
             Command::PreviousComment => "previous_comment".into(),
             Command::ReplyComment => "reply_comment".into(),
             Command::ResolveComment => "resolve_comment".into(),
+            Command::MoveTabLeft => "move_tab_left".into(),
+            Command::MoveTabRight => "move_tab_right".into(),
         }
     }
 
@@ -551,6 +559,8 @@ impl Command {
             Command::PreviousComment => "shift-f8".into(),
             Command::ReplyComment => "ctrl-alt-r".into(),
             Command::ResolveComment => "ctrl-alt-enter".into(),
+            Command::MoveTabLeft => "ctrl-shift-pageup".into(),
+            Command::MoveTabRight => "ctrl-shift-pagedown".into(),
         }
     }
 

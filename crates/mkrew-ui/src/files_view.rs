@@ -619,6 +619,17 @@ impl FilesView {
         self.active = active.and_then(|path| self.position(&path));
     }
 
+    /// The active tab's pin group and place in it (see `Tabs::active_place`).
+    pub fn active_place(&self) -> Option<(bool, usize, usize)> {
+        let active = self.tab()?;
+        let group: Vec<&str> = (self.tabs.iter())
+            .filter(|tab| tab.pinned == active.pinned)
+            .map(|tab| tab.path.as_str())
+            .collect();
+        let at = group.iter().position(|path| *path == active.path)?;
+        Some((active.pinned, at, group.len()))
+    }
+
     /// Opens file `path` from outside the tree (quick open, a terminal link): its folders open
     /// (listed as needed), the cursor moves to it and its tab shows; with `line`, the caret
     /// goes there once the file is shown ([`FileTab::apply_pending_line`]).

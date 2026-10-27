@@ -193,6 +193,41 @@ impl Shell {
         );
     }
 
+    /// Ctrl+Shift+PgUp / PgDn (`by` -1 / 1): the active tab (the active file tab in the Files
+    /// view) one place along its pin group, through the same functions a drag drop calls.
+    pub(crate) fn move_active_tab(
+        &mut self,
+        by: isize,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if self.view() == View::Files {
+            let view = self.files_view(project_id);
+            let Some((pinned, from, len)) = view.active_place() else {
+                return;
+            };
+            let Some(to) = sidebar::step_index(len, from, by) else {
+                return;
+            };
+            view.move_tab(pinned, from, to);
+            if let Some(at) = view.active_index() {
+                self.file_tabs_scroll.scroll_to_item(at);
+            }
+            cx.notify();
+            return;
+        }
+        let Some((pinned, from, len)) = self.tabs.get(&project_id).and_then(Tabs::active_place)
+        else {
+            return;
+        };
+        if let Some(to) = sidebar::step_index(len, from, by) {
+            self.drop_tab(project_id, pinned, from, to, window, cx);
+        }
+    }
+
     /// The `from`-th of the pinned or unpinned workspaces goes to place `to` among them: the
     /// group gets positions `1..=n`, shown at once and saved with `project.update`.
     fn drop_workspace(

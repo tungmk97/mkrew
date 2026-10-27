@@ -279,6 +279,8 @@ impl Shell {
                 Command::CloseTab | Command::CloseFileTab => {
                     return self.close_active_file_tab(project_id, window, cx);
                 }
+                Command::MoveTabLeft => return self.move_active_tab(-1, window, cx),
+                Command::MoveTabRight => return self.move_active_tab(1, window, cx),
                 _ => {}
             }
         }
@@ -303,6 +305,8 @@ impl Shell {
                 | Command::Resize(_)
                 | Command::EqualizePanes
                 | Command::ZoomPane
+                | Command::MoveTabLeft
+                | Command::MoveTabRight
                 | Command::ClosePane => return,
                 _ => {}
             }
@@ -545,6 +549,8 @@ impl Shell {
             Command::PreviousComment => self.step_comment(false, cx),
             Command::ReplyComment => self.reply_selected_comment(window, cx),
             Command::ResolveComment => self.resolve_selected_comment(window, cx),
+            Command::MoveTabLeft => self.move_active_tab(-1, window, cx),
+            Command::MoveTabRight => self.move_active_tab(1, window, cx),
             Command::ApproveCard if self.jira_side_shown() => {}
             Command::Card(key) if self.jira_side_shown() => self.jira_key(key, window, cx),
             Command::Card(key) => self.card_key(key, window, cx),
