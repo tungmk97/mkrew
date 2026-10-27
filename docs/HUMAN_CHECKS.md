@@ -52,6 +52,10 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Each shows only in its state and does what the mouse control does.
 - [ ] **Not automated:** all of the above is keyboard-only GPUI input.
   The agent could not send key events to the app (see the smoke note in the plan).
+  Smoke: not run keyboard-only by the agent (reason: no keyboard automation allowed, it once typed into the user's browser); every line above stays unticked.
+  Only the launch was checked (2026-10-27): verify.sh passes, the dev exe starts in a sandbox, connects to the sandbox daemon, and the log has no panic.
+  The one ERROR line is the Windows DXGI debug-layer message (0x887A002D), unrelated to this wave.
+  Dark and light both unseen.
 
 ### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0081)
 
