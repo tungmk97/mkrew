@@ -272,3 +272,21 @@ Fix tooltips that miss their key while the action has one: hunk Stage / Unstage 
 - §12 / §12B: Shift+↑/↓ picks lines.
 - §10: copy mode and link hints in the terminal; the card menu on the Board.
 - ADR 0081: keyboard-only operation, including the destructive-confirmation change from wave 2.
+
+## Refinements found while planning (2026-10-27)
+
+The plans in `docs/superpowers/plans/2026-10-27-keyboard-wave-{1..4}-*.md` refine this spec as follows; where they differ, these lines win.
+
+- Wave 1: `MenuRow::Item` holds a `MenuItem` struct (icon / agent badge / layout thumb / status dot lead, tone, tooltip) and a `Heading` row is added, because today's menus draw more than a label.
+- Wave 1: an open menu shields the Board's single keys with `NoAction` bindings in key context `Menu`, since GPUI runs bindings before `on_key_down`.
+- Wave 1: the workspace menu floats at an anchor at the window root instead of dropping down inside the sidebar row.
+- Wave 1: the Run menu's inline ↻ / ■ / ▶ icons become rows; the Git "⋯" popover moves to the shared renderer too.
+- Wave 2: the focus ring reuses `BORDER_WIDTH` and adds one `focus_ring` color token.
+- Wave 2: a dialog without a text field starts with the keyboard on the dialog itself (Enter keeps its old meaning); no button gets first focus.
+- Wave 2: Compare Pick only opens Merge back, so it is a plain Tab stop, not a destructive confirmation.
+- Wave 2: in Broadcast, Space ticks only in list mode (entered with ↑/↓, left by typing), so a space can still be typed in the message.
+- Wave 3: while copy mode or link hints are on, the emulator holds incoming output (capped at 1 MiB) so the view and the labels do not move.
+- Wave 3: `Ctrl+Shift+L` does not send a Docs pick (sending stays Files / Git / terminal); a Docs pick is commented with `Ctrl+Alt+M`.
+- Wave 4: `Alt+0` on the compact rail widens the sidebar, since the rail has no filter.
+- Wave 4: ←/→ in the sidebar filter collapse / expand only while the filter is empty (else they move the caret).
+- Wave 4: "Global: History…" needs an active workspace; "Agent: Unlink plan" shows only with a linked plan; "Git: Change base…" only in Against base.
