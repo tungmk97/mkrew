@@ -880,14 +880,11 @@ impl Render for Shell {
                         self.phone_open
                             .then(|| self.render_phone_access(&theme, cx)),
                     )
-                    .children(self.settings_dialog.as_ref().map(|dialog| {
-                        self.render_settings_dialog(
-                            dialog,
-                            window.viewport_size().height,
-                            &theme,
-                            cx,
-                        )
-                    }))
+                    .children(
+                        self.settings_dialog
+                            .as_ref()
+                            .map(|dialog| self.render_settings_dialog(dialog, window, &theme, cx)),
+                    )
                     .children(
                         self.run_setup
                             .as_ref()

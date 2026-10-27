@@ -343,6 +343,41 @@ impl SettingsDialog {
         self.move_focus(order[next], keymap)
     }
 
+    /// Tab (`!back`) / Shift+Tab has no stop left in the page list, search box and rows: the
+    /// keyboard leaves them for the dialog's buttons ([`crate::dialog_focus::nav`]). Never while
+    /// a shortcut is being captured or a list pick is open: those keep Tab.
+    pub fn chain_edge(&self, back: bool, keymap: &Keymap) -> bool {
+        if self.capture.is_some() || self.list_pick.is_some() {
+            return false;
+        }
+        if back {
+            return self.focus == Focus::Tabs;
+        }
+        let rows = self.rows(keymap).len();
+        match self.focus {
+            Focus::Row(i) => i + 1 >= rows,
+            Focus::Search => rows == 0,
+            Focus::Tabs => self.tab != Tab::Keyboard && rows == 0,
+        }
+    }
+
+    /// Writes a draft before the keyboard leaves for the buttons.
+    pub fn leave(&mut self) -> Effect {
+        self.commit_draft()
+    }
+
+    /// The keyboard came back from the buttons: Tab lands on the page list, Shift+Tab on the
+    /// last row.
+    pub fn enter(&mut self, forward: bool, keymap: &Keymap) {
+        let last = match self.rows(keymap).len() {
+            0 if self.tab == Tab::Keyboard => Focus::Search,
+            0 => Focus::Tabs,
+            count => Focus::Row(count - 1),
+        };
+        // `leave` already wrote any draft, so there is no effect to apply.
+        let _ = self.move_focus(if forward { Focus::Tabs } else { last }, keymap);
+    }
+
     fn list_key(&mut self, key: DialogKey) -> Effect {
         let choices = self.list_choices();
         let last = choices.len().saturating_sub(1);
@@ -816,5 +851,32 @@ mod tests {
                 palette::title(Command::AddWorkspace)
             )
         );
+    }
+
+    #[test]
+    fn tab_leaves_the_page_list_and_rows_at_their_ends() {
+        let keymap = Keymap::defaults();
+        let mut d = dialog();
+        assert!(
+            d.chain_edge(true, &keymap),
+            "Shift+Tab from the page list leaves"
+        );
+        assert!(!d.chain_edge(false, &keymap));
+        let last = d.rows(&keymap).len() - 1;
+        for _ in 0..=last {
+            d.key(&key("tab"), None, &keymap);
+        }
+        assert_eq!(d.focus, Focus::Row(last));
+        assert!(d.chain_edge(false, &keymap), "Tab from the last row leaves");
+        assert!(!d.chain_edge(true, &keymap));
+        d.enter(true, &keymap);
+        assert_eq!(d.focus, Focus::Tabs, "Tab from the last button");
+        d.enter(false, &keymap);
+        assert_eq!(d.focus, Focus::Row(last), "Shift+Tab from the first button");
+        // A shortcut being captured keeps Tab.
+        d.set_tab(Tab::Keyboard);
+        d.click(Focus::Row(0), &keymap);
+        assert!(d.capture.is_some());
+        assert!(!d.chain_edge(false, &keymap) && !d.chain_edge(true, &keymap));
     }
 }
