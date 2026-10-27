@@ -864,6 +864,7 @@ The session panel (below) is a third column right of Terminals while open.
   the keyboard back and keeps a typed draft on the card, like the composer).
   New task: the empty board's button, or `New task` in the Todo column header.
   With `[jira] site` set, a `Tasks | Jira` switch heads the Board (§20I).
+  Shift+F10 on the selected card opens its menu: Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents… (each as its hover button; the buttons stay and call the same functions).
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
   Each tab shows an icon of its focused pane (the agent's badge chip, or `>_` for a shell; none
   for a tab without panes), one status dot of its most urgent pane (§11: pulsing accent while an
@@ -879,6 +880,7 @@ The session panel (below) is a third column right of Terminals while open.
   lacks start sessions of the focused pane's kind (as Split right), one after another; then the
   layout is saved once. A layout with fewer panes than the tab has is greyed (its tooltip says
   why); if a start fails, the sessions that started are placed as Split right places them.
+  Every popover menu below opens by mouse or keyboard, takes the keyboard while it is open and gives it back when it closes (§13).
   `⋯`, and a right-click on a tab, open the tab menu: Pin, Split right, Split down, Rename, Close,
   Close others, Close tabs to the right (both leave pinned tabs and make the menu's tab active;
   greyed when nothing would close); on the active tab also the focused pane's Rename pane, Close
@@ -1029,7 +1031,7 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
-- Pane menu (right-click a split pane's header or a sidebar session row): **Rename** (inline
+- Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Rename** (inline
   like F2; greyed for a run pane), **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
   top of its terminal); the border still shows state (ADR 0037).
@@ -1165,7 +1167,7 @@ Only edit this file. When done, for EACH comment run:
   "Copy path" (absolute), "Add to .gitignore" (rows only: appends `/path` or `/path/` to the
   shown folder's `.gitignore`, once), "Open in File Explorer" and "Open in Zed" (§10). The app
   does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
-  in the sidebar. A click outside closes the menu.
+  in the sidebar. A click outside or Esc closes the menu; Shift+F10 opens it on the cursor row (on the active tab's menu while the editor has the keyboard).
 - **Open at a line:** Ctrl+Click on a file path in a terminal (§10) shows that file with the
   caret on the line, scrolled into view. A path in another task's worktree switches the view to
   that worktree (asking about unsaved text first).
@@ -1296,6 +1298,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
+| Global | Open the context menu of what has the keyboard (the menu a right-click opens: terminal pane, Files cursor row or tab, sidebar row, Board card; else the workspace menu under the switcher); again closes it | Shift+F10 (the Menu key: bind `context_menu` in Settings) |
 | View | Toggle the session panel | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
@@ -1347,12 +1350,20 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace | command palette only |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace | command palette only (the menu items also by Shift+F10) |
 
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
+Shift+F10 does not reach a focused terminal either; rebind `context_menu` if a program needs it.
+While a popover menu is open it has the keyboard (key context `Menu`, not in `keymap.toml`):
+↑ / ↓ select the next / previous enabled row, wrapping; Home / End the first / last;
+← / → move between the swatches of a color row; Enter or Space run the row and close the menu
+(a multi-select row of the fan-out picker ticks and stays; Enter on its Run row runs);
+a letter selects the next row starting with it; Esc closes and gives the keyboard back.
+A held (auto-repeat) key does nothing.
+The Board's single keys stay with the menu while it is open.
 
 Invalid or duplicate bindings: report the error and fall back to defaults for that entry. The
 command palette shows each command's shortcut; tooltips show shortcuts too.

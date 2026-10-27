@@ -21,6 +21,21 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Keyboard context menus (ADR 0081, wave 1)
+
+- [ ] **Selected row in both themes:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓; the selected row has the `selected` fill and stays readable in dark and light, including the swatch ring (accent) on the color rows.
+- [ ] **Shift+F10 per owner, dark and light:** terminal pane (menu under the pane header), Files tree cursor row, Files editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher). Check that each menu sits at the owner's bottom-left and that Esc returns typing to where you were (the terminal types again).
+- [ ] **Shift+F10 toggles:** with any menu open, Shift+F10 closes it and the keyboard goes back to where it was (the Menu context shield does not cover it, it is global).
+- [ ] **Focus returns:** after Esc, after running a row, and after a click outside, typing goes to the pane / field that had the keyboard before the menu opened, with no click.
+- [ ] **Menu key:** bind `context_menu` to `menu` in Settings → Keyboard and check it opens the same menus (Windows only).
+- [ ] **Held key:** hold Enter in the palette on "Workspace: Open workspace menu"; the menu opens with its first row selected and nothing runs while the key repeats.
+- [ ] **Fan-out picker by keyboard:** Shift+F10 on a Todo card → "Run with several agents…" → Space ticks agents, ↓ reaches the Run row, Enter runs; the other rows go grey at the cap.
+- [ ] **Board keys while a menu is open:** with a card menu open, ↑/↓/Enter move the menu and never the selected card.
+- [ ] **Repositories search:** with several repositories, open the Repositories menu, type to filter (typing keeps working), ↑/↓ move the selection, Enter shows the selected one; Esc closes By:, ⋯ and Repositories.
+- [ ] **Sidebar row anchor:** Shift+F10 on a highlighted sidebar row opens its menu under that row, also while an agent is streaming.
+- [ ] **Visual changes to look at:** the workspace menu now floats at the click (it used to drop inside the sidebar row); the workspace switcher's ✓ is in a left column; Run menu commands are rows (Enter starts or restarts, a "Stop <name>" row stops) instead of inline icon buttons; a menu error line shows "✕" in muted text instead of red; the Repositories rows show "N changes" muted instead of amber.
+- [ ] **Not automated:** the smoke run (2026-10-27) launched the dev exe in a sandbox, but `SendKeys` went to the foreground browser because the Mkrew window could not be activated, so no menu was driven in the real window and the run was stopped. Everything above is unticked and needs a human; Shift+F10 toggle is confirmed in code only (global binding, not in the `Menu` NoAction shield, `Shell::run` closes the menu and does not reopen it).
+
 ### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
 
 - [ ] **Pill (dark + light):** press Ctrl+Shift+D. A pill fades and slides up at the bottom center of the window. It shows a breathing dot, 7 bars, `0:03`, and the `Ctrl+Shift+D stops` key. Speak: the bars jump up with your voice and sink slowly, with a wave running across them. Stay silent: the bars stay low but keep breathing. Press again: the pill shows the dots and `Transcribing`, then disappears.
