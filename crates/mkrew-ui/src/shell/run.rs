@@ -157,10 +157,34 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let edge = (self.run_setup.as_ref())
+            .is_some_and(|setup| setup.at_edge(!event.keystroke.modifiers.shift));
+        if self.dialog_nav(event, edge, window, cx, |shell, forward| {
+            if let Some(setup) = shell.run_setup.as_mut() {
+                setup.enter(forward);
+            }
+        }) {
+            return;
+        }
         cx.stop_propagation();
+        // Shift+Tab walks the fields back (`dialog_key` knows only Tab).
+        if event.keystroke.key == "tab" && event.keystroke.modifiers.shift {
+            if let Some(setup) = self.run_setup.as_mut() {
+                setup.tab(false);
+            }
+            self.reveal_run_card();
+            cx.notify();
+            return;
+        }
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
         };
+        // A control has the keyboard: the fields take nothing but Esc / Ctrl+Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, DialogKey::Cancel | DialogKey::Save)
+        {
+            return;
+        }
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -179,15 +203,26 @@ impl Shell {
             setup.insert(&text);
         }
         let outcome = setup.key(key);
-        let card = setup.focused_card();
+        // The picker's cursor row, else the focused card, stays in view.
+        let target = match &setup.picker {
+            Some(picker) => picker.cursor,
+            None => setup.focused_card(),
+        };
+        let in_picker = setup.picker.is_some();
         match outcome {
             run_setup::Outcome::Cancel => return self.close_run_setup(window, cx),
             run_setup::Outcome::Save => return self.save_run_setup(window, cx),
-            run_setup::Outcome::List(dir) => return self.list_run_picker(Some(dir), window, cx),
+            run_setup::Outcome::List(dir) => {
+                return self.list_run_picker(Some(dir), window, cx);
+            }
             run_setup::Outcome::Edited => {}
         }
-        if let Some(i) = card {
-            self.run_setup_scroll.scroll_to_item(i);
+        if let Some(i) = target {
+            if in_picker {
+                self.run_picker_scroll.scroll_to_item(i);
+            } else {
+                self.run_setup_scroll.scroll_to_item(i);
+            }
         }
         cx.notify();
     }
@@ -221,6 +256,7 @@ impl Shell {
                 }
                 if let Some(setup) = shell.run_setup.as_mut() {
                     setup.listed(&dir, listed);
+                    shell.run_picker_scroll.scroll_to_item(0);
                     cx.notify();
                 }
             });
@@ -510,6 +546,7 @@ impl Shell {
     pub(crate) fn render_run_setup(
         &self,
         setup: &RunSetup,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -545,6 +582,8 @@ impl Shell {
                 .child(field)
         };
         let mono = theme.terminal_font_family.clone();
+        // A button holding the keyboard means no field is: one focus indicator at a time.
+        let text_focused = self.dialog_focus.is_focused(window);
         let field = |cx: &mut Context<'_, Self>,
                      i: usize,
                      which: Field,
@@ -554,7 +593,7 @@ impl Shell {
                 id,
                 setup.cards[i].input(which),
                 placeholder,
-                setup.focus == Focus::Field(i, which),
+                setup.focus == Focus::Field(i, which) && text_focused,
                 theme,
                 cx,
                 move |shell, caret| {
@@ -578,6 +617,7 @@ impl Shell {
                 .child(div().flex_1().min_w_0().child(field))
                 .child(
                     quiet_button(id, "Browse…", theme, theme.surface_raised)
+                        .focus_stop(theme)
                         .tooltip(tooltip(theme, hint, ""))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             let dir = shell
@@ -647,7 +687,7 @@ impl Shell {
             .overflow_y_scroll()
             .track_scroll(&self.run_setup_scroll);
         // Only the card holding the keyboard shows its fields; the others are one line each.
-        let open = setup.focused_card();
+        let open = setup.shown_card();
         for i in 0..setup.cards.len() {
             let card = &setup.cards[i];
             let named = card.name.as_str().trim();
@@ -678,13 +718,19 @@ impl Shell {
                 .child((i + 1).to_string());
             let group = SharedString::from(format!("run-card-{i}"));
             let card_action = |id: &'static str, glyph: Icon, tip: &'static str| {
-                quiet_button(
+                let action = quiet_button(
                     id,
                     icon_svg(glyph, theme::ICON_SIZE_SMALL, theme.text_muted),
                     theme,
                     theme.surface_raised,
                 )
-                .tooltip(tooltip(theme, tip, ""))
+                .tooltip(tooltip(theme, tip, ""));
+                // A folded card shows its buttons on hover only: not Tab stops.
+                if open == Some(i) {
+                    action.focus_stop(theme)
+                } else {
+                    action
+                }
             };
             let actions = div()
                 .flex_none()
@@ -743,7 +789,7 @@ impl Shell {
                         .active(|style| style.opacity(opacity::ACTIVE))
                         .on_click(cx.listener(move |shell, _, _, cx| {
                             if let Some(setup) = shell.run_setup.as_mut() {
-                                setup.focus = Focus::Field(i, Field::Command);
+                                setup.set_focus(Focus::Field(i, Field::Command));
                                 shell.reveal_run_card();
                             }
                             cx.notify();
@@ -812,7 +858,7 @@ impl Shell {
                 "run-exit",
                 "Close the pane when it ends",
                 card.exit_after,
-                setup.focus == Focus::Exit(i),
+                setup.focus == Focus::Exit(i) && text_focused,
                 "Off: the shell stays open after the command, showing its output",
             )
             .on_click(cx.listener(move |shell, _, _, cx| {
@@ -820,7 +866,7 @@ impl Shell {
                     && let Some(card) = setup.cards.get_mut(i)
                 {
                     card.exit_after = !card.exit_after;
-                    setup.focus = Focus::Exit(i);
+                    setup.set_focus(Focus::Exit(i));
                 }
                 cx.notify();
             }));
@@ -885,7 +931,8 @@ impl Shell {
                         shell.reveal_run_card();
                     }
                     cx.notify();
-                })),
+                }))
+                .focusable_bordered(theme),
         );
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == setup.project_id)
@@ -902,7 +949,7 @@ impl Shell {
             "run-autostart",
             "Start with the daemon",
             setup.autostart,
-            setup.focus == Focus::Autostart,
+            setup.focus == Focus::Autostart && text_focused,
             "Start the run commands when the daemon starts",
         )
         .on_click(cx.listener(|shell, _, _, cx| {
@@ -924,8 +971,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::run_setup_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::run_setup_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::run_setup_key_down, cx))
             .child(
@@ -983,6 +1034,7 @@ impl Shell {
                     .child(div().flex_1())
                     .child(
                         button("run-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Keep the current commands", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_run_setup(window, cx);
@@ -992,6 +1044,7 @@ impl Shell {
                         disabled_button("run-save", "Saving…", theme, true)
                     } else {
                         button("run-save", "Save", theme, true)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Save the run commands", "Ctrl+Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.save_run_setup(window, cx);
@@ -1024,7 +1077,8 @@ impl Shell {
             .flex()
             .flex_col()
             .max_h(px(theme::RUN_SETUP_MAX_HEIGHT))
-            .overflow_y_scroll();
+            .overflow_y_scroll()
+            .track_scroll(&self.run_picker_scroll);
         list = match &picker.entries {
             None => list.child(note("Loading…".into())),
             Some(Err(error)) => list.child(note(format!("✕ Cannot list the folder: {error}"))),
@@ -1049,6 +1103,9 @@ impl Shell {
                     .cursor_pointer()
                     .text_size(font_size::BODY)
                     .hover(move |style| style.bg(rgb(hover)))
+                    .when(picker.cursor == Some(index), |el| {
+                        el.bg(rgb(theme.surface_raised))
+                    })
                     .active(|style| style.opacity(opacity::ACTIVE))
                     .child(
                         div()
@@ -1104,6 +1161,7 @@ impl Shell {
                 theme,
                 theme.surface_raised,
             )
+            .focus_stop(theme)
             .tooltip(tooltip(theme, "The folder above", ""))
             .on_click(cx.listener(|shell, _, window, cx| {
                 let dir = shell.run_setup.as_mut().and_then(RunSetup::browse_up);
@@ -1128,8 +1186,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::run_setup_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                false,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::run_setup_key_down),
+            )
             .child(
                 div()
                     .text_size(font_size::CARD_TITLE)
@@ -1162,6 +1224,16 @@ impl Shell {
             .child(list)
             .child(
                 div()
+                    .text_size(font_size::META)
+                    .text_color(rgb(theme.text_muted))
+                    .child(if folder {
+                        "↑↓ choose · → open · ← up · Enter takes the folder under the cursor, else this folder · Esc back"
+                    } else {
+                        "↑↓ choose · → open · ← up · Enter picks the file or opens the folder · Esc back"
+                    }),
+            )
+            .child(
+                div()
                     .flex()
                     .items_center()
                     .justify_end()
@@ -1169,6 +1241,7 @@ impl Shell {
                     .pt(px(space::S))
                     .child(
                         button("run-picker-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Back to Run setup", "Esc"))
                             .on_click(cx.listener(|shell, _, _, cx| {
                                 if let Some(setup) = shell.run_setup.as_mut() {
@@ -1180,6 +1253,7 @@ impl Shell {
                     .when(folder, |row| {
                         row.child(
                             button("run-picker-use", "Use this folder", theme, true)
+                                .focus_stop(theme)
                                 .tooltip(tooltip(theme, "Run the command in this folder", "Enter"))
                                 .on_click(cx.listener(|shell, _, _, cx| {
                                     if let Some(setup) = shell.run_setup.as_mut() {

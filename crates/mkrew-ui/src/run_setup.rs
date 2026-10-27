@@ -517,7 +517,7 @@ impl RunSetup {
     }
 
     /// Puts the keyboard on `focus`; a card it enters becomes the one the dialog keeps open.
-    fn set_focus(&mut self, focus: Focus) {
+    pub fn set_focus(&mut self, focus: Focus) {
         if let Focus::Field(i, _) | Focus::Exit(i) = focus {
             self.open = i;
         }
@@ -1044,6 +1044,19 @@ mod tests {
         setup.remove_card(1);
         setup.remove_card(0);
         assert_eq!(setup.shown_card(), None, "no card left to show");
+    }
+
+    #[test]
+    fn a_clicked_card_is_the_one_shown_once_tab_reaches_autostart() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.add_card();
+        setup.set_focus(Focus::Field(0, Field::Name));
+        // A click on the folded last card (what the card's click handler does).
+        setup.set_focus(Focus::Field(1, Field::Command));
+        while setup.focus != Focus::Autostart {
+            setup.tab(true);
+        }
+        assert_eq!(setup.shown_card(), Some(1), "the clicked card, not card 0");
     }
 
     #[test]

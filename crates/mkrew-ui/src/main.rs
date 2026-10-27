@@ -464,6 +464,8 @@ struct Shell {
     run_setup: Option<RunSetup>,
     /// Keeps the Run setup's focused card in view; its scroll bar's drag.
     run_setup_scroll: ScrollHandle,
+    /// Keeps the Run setup picker's cursor row in view.
+    run_picker_scroll: ScrollHandle,
     run_setup_drag: scrollbar::Drag,
     /// The workspace whose Run menu (▾) is open.
     run_menu: Option<Ulid>,
@@ -888,7 +890,7 @@ impl Render for Shell {
                     .children(
                         self.run_setup
                             .as_ref()
-                            .map(|setup| self.render_run_setup(setup, &theme, cx)),
+                            .map(|setup| self.render_run_setup(setup, window, &theme, cx)),
                     )
                     .children(
                         self.broadcast

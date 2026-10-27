@@ -233,6 +233,7 @@ impl Shell {
             share_menu: None,
             run_setup: None,
             run_setup_scroll: ScrollHandle::new(),
+            run_picker_scroll: ScrollHandle::new(),
             run_setup_drag: scrollbar::Drag::default(),
             run_menu: None,
             workspace_switcher: false,
