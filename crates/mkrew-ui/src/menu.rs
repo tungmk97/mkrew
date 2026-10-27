@@ -474,12 +474,21 @@ mod tests {
             ..Focus::default()
         };
         assert_eq!(owner(&board), Owner::Card(id(3)));
-        // The tree has the keyboard in any view (it may live in a side panel).
+        // `owner` trusts the flag (the shell sets it only while the tree is painted), in any view.
         let panel = Focus {
             view: View::Terminals,
             ..tree
         };
         assert!(matches!(owner(&panel), Owner::FileRow { .. }));
+        // A hidden tree (flag off, cursor kept) never wins over the shown Board's card.
+        let hidden_tree = Focus {
+            view: View::Board,
+            files_tree_focused: false,
+            files_cursor: Some(("src".into(), true)),
+            card: Some(id(4)),
+            ..Focus::default()
+        };
+        assert_eq!(owner(&hidden_tree), Owner::Card(id(4)));
     }
 
     #[test]

@@ -602,7 +602,8 @@ impl Shell {
                         .highlighted(&self.sidebar.view(&self.viewed).rows)
                 })
                 .flatten(),
-            files_tree_focused: self.files_focus.is_focused(window),
+            // GPUI keeps focus on an element that is no longer painted: only a shown tree counts.
+            files_tree_focused: self.view() == View::Files && self.files_focus.is_focused(window),
             files_cursor: files.and_then(|view| {
                 let cursor = view.cursor.as_deref()?;
                 view.rows().iter().find_map(|row| match row {
