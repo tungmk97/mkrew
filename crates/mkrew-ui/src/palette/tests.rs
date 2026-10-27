@@ -11,6 +11,7 @@ fn context(view: View) -> Context {
         workspaces: 2,
         tabs: 2,
         file_tabs: 1,
+        file_tree: false,
         terminal: false,
         discard: false,
         git: view == View::Diff,
@@ -299,6 +300,21 @@ fn availability_follows_the_view() {
     };
     assert!(!commands(&no_files).contains(&Command::ShowEditor));
     assert!(commands(&context(View::Terminals)).contains(&Command::ShowEditor));
+    // Move tab: terminal tabs on the panes, file tabs in the Editor view (needs a file tab).
+    assert!(commands(&context(View::Terminals)).contains(&Command::MoveTabLeft));
+    assert!(commands(&context(View::Editor)).contains(&Command::MoveTabLeft));
+    let editor_no_files = Context {
+        file_tabs: 0,
+        ..context(View::Editor)
+    };
+    assert!(!commands(&editor_no_files).contains(&Command::MoveTabLeft));
+    // Open in a kept tab needs the tree on screen.
+    assert!(!commands(&context(View::Terminals)).contains(&Command::OpenKept));
+    let with_tree = Context {
+        file_tree: true,
+        ..context(View::Terminals)
+    };
+    assert!(commands(&with_tree).contains(&Command::OpenKept));
 
     let lone = commands(&Context {
         workspaces: 1,

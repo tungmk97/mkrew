@@ -605,6 +605,7 @@ impl Shell {
             // GPUI keeps focus on an element that is no longer painted: only a tree painted in
             // the right panel counts.
             files_tree_focused: self.file_tree_shown() && self.files_focus.is_focused(window),
+            git_focused: self.git_panel_shown() && self.git_focus.is_focused(window),
             files_cursor: files.and_then(|view| {
                 let cursor = view.cursor.as_deref()?;
                 view.rows().iter().find_map(|row| match row {

@@ -393,6 +393,8 @@ pub struct Focus {
     /// The sidebar filter has the keyboard and highlights this row.
     pub sidebar_row: Option<Target>,
     pub files_tree_focused: bool,
+    /// The Git list (painted in the right panel) has the keyboard.
+    pub git_focused: bool,
     /// The file tree's cursor row and whether it is a folder.
     pub files_cursor: Option<(String, bool)>,
     /// The active file tab of the Editor view.
@@ -417,6 +419,9 @@ pub fn owner(focus: &Focus) -> Owner {
             path: path.clone(),
             is_dir: *is_dir,
         };
+    }
+    if focus.git_focused {
+        return Owner::Workspace;
     }
     match focus.view {
         View::Editor => focus
@@ -521,6 +526,14 @@ mod tests {
             ..Focus::default()
         };
         assert_eq!(owner(&hidden_tab), Owner::Workspace);
+        // The Git list has the keyboard in the Editor view: the workspace menu, not the tab's.
+        let git_list = Focus {
+            view: View::Editor,
+            git_focused: true,
+            file_tab: Some("a".into()),
+            ..Focus::default()
+        };
+        assert_eq!(owner(&git_list), Owner::Workspace);
     }
 
     fn item(label: &'static str) -> MenuRow<u8> {

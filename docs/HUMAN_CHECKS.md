@@ -46,7 +46,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   A running agent pane is not disturbed.
 - [ ] **Git and Files:** `W` toggles Wrap in the Git list; the Wrap tooltip shows `W`.
   Alt+Enter on a tree row opens a kept (non-italic) tab; in the editor it does not.
-  Expected limit: the palette entry "Open file in a kept tab" does nothing while the editor has the keyboard.
+  The palette entry "Open file in a kept tab" is listed only while the tree is painted, and gives the tree the keyboard.
 - [ ] **Tooltips:** hunk Stage shows `S` on the current hunk only, the Branch chip `Ctrl+Shift+4`, the workspace switcher `Alt+1 … Alt+9`, the card Approve `A` on the selected card.
 - [ ] **Palette, keyed commands:** the palette lists approve card, next / previous / reply / resolve comment, move tab left / right, wrap, open kept and focus sidebar, each with its key, and each only in its state.
 - [ ] **Palette, menus:** "Git: Switch repository" and "Git: Change base…" (only in Against base) open their menu anchored, with the keyboard on it after the palette closes.
@@ -67,7 +67,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   More Shift+↓ grows, Shift+↑ shrinks, and the moved end scrolls into view.
   Esc clears; Ctrl+Alt+M opens the comment draft on it.
   Not run (2026-10-27 smoke): no keyboard automation allowed (it once typed into the browser); only the launch was checked (the app starts, connects to a sandbox daemon, no panic or error in the logs), dark and light both unseen.
-- [ ] **Pick lines in the Git diff (dark + light, Unified + Split):** Git → a changed file with 2+ hunks.
+- [ ] **Pick lines in the Git diff (dark + light, Unified + Split):** Git tab → a changed file with 2+ hunks → Diff view.
   `n` then Shift+↓ picks the first new-side line of that hunk.
   Shift+↓ grows across the gap into the next hunk and scrolls; the pick bar sits under the last line.
   Esc clears; Ctrl+Alt+M comments, Ctrl+Shift+L sends.
@@ -143,7 +143,16 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Shift+↓ / Shift+↑ pick lines in the diff, Ctrl+Alt+M comments, F8 / Shift+F8 and Ctrl+Alt+R / Ctrl+Alt+Enter work on threads.
   `w`, F8 and the Shift keys stay in the commit box, the filter and a comment draft.
   Esc: clears the pick, then closes the diff.
-  Git By:, ⋯ and Repositories open with the keyboard in the 240 px panel; "Open in Git" in the worktree dialog takes Tab.
+  Git By: and Repositories open with the keyboard in the 240 px panel, and ⋯ on the diff toolbar does too.
+  "Open in Git" in the worktree dialog takes Tab.
+  Not run: needs a person at the keyboard.
+- [ ] **Tree keys in the right panel (merge with ADR 0081):** open the tree with Ctrl+Shift+3 from Terminals, then check these.
+  Shift+F10 on a tree row opens the file menu.
+  Alt+Enter opens the cursor file in a kept tab, and Ctrl+Shift+H toggles ignored files.
+  Ctrl+Shift+Y hides the panel and the keyboard goes to the pane (or the editor in the Editor view).
+  Not run: needs a person at the keyboard.
+- [ ] **Git list menus and palette (merge with ADR 0084):** Shift+F10 with the Git list focused, also in the Editor view, opens the workspace menu.
+  In the Diff view with the panel closed, the palette entry "Git: Switch repository…" opens the panel on the Git tab and the menu is visible with the keyboard in it.
   Not run: needs a person at the keyboard.
 
 ### To verify - 2026-10-27 Keyboard context menus (ADR 0085, wave 1)

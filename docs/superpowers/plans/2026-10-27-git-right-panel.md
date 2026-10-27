@@ -90,7 +90,7 @@ Run: `cargo test -p mkrew-ui an_open_diff_follows`
 In `struct GitView`, after `pub viewed: Rc<ViewedSet>,`:
 
 ```rust
-    /// The Diff view is open (SPEC §12B, ADR 0082): a click / Enter on a file or an entry
+    /// The Diff view is open (SPEC §12B, ADR 0084): a click / Enter on a file or an entry
     /// point opens it; `×`, `Esc` and an empty list close it. A selection moving by itself
     /// (staging, ↑ ↓, a refresh) keeps it.
     open: bool,
@@ -216,7 +216,7 @@ Doc of the enum: "`[ui] right_panel`: the right panel next to Terminals / Editor
 `inspector.rs`, `PanelTab`, after `Session,` add `Git,`.
 `from_mode`: `RightPanelMode::Git => Self { open: true, tab: PanelTab::Git },`.
 `mode`: `(true, PanelTab::Git) => RightPanelMode::Git,`.
-Module doc: "The right panel next to Terminals / Editor / Diff (SPEC §10, ADR 0038, ADR 0081, ADR 0082): its tabs, width, the Stop rule and the text of the Session card. Pure; `main.rs` draws it."
+Module doc: "The right panel next to Terminals / Editor / Diff (SPEC §10, ADR 0038, ADR 0081, ADR 0084): its tabs, width, the Stop rule and the text of the Session card. Pure; `main.rs` draws it."
 
 `cargo test -p mkrew-core right_panel_parses` passes now; the `mkrew-ui` test passes once Step 4 makes the binary's `match tab` exhaustive.
 
@@ -902,15 +902,15 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Diff view replaces th
 ### Task 4: SPEC, ADR, human check, full verify
 
 **Files:**
-- Create: `docs/decisions/0082-git-in-the-right-panel.md`
+- Create: `docs/decisions/0084-git-in-the-right-panel.md`
 - Modify: `docs/decisions/0081-files-tree-in-the-right-panel.md` (Status line only)
 - Modify: `docs/SPEC.md` (§10 ~745-930, §12A line "what the Git view calls unstaged", §12B ~1189-1270, §13 ~1271-1340, config sample `right_panel` line)
 - Modify: `docs/HUMAN_CHECKS.md` ("To verify" section, newest first)
 
-- [ ] **Step 1: ADR 0082** (list `docs/decisions/` first: if 0082 is taken, use the next free number everywhere in this task)
+- [ ] **Step 1: ADR 0084** (list `docs/decisions/` first: if 0084 is taken, use the next free number everywhere in this task)
 
 ```markdown
-# 0082 - Git in the right panel
+# 0084 - Git in the right panel
 
 - Date: 2026-10-27
 - Status: accepted
@@ -943,7 +943,7 @@ SPEC §10, §12A, §12B, §13 and the config sample change in the same commit.
 `keymap.toml` entries named `show_git` are reported as unknown (no alias).
 ```
 
-Set the Status of ADR 0081 to `accepted; superseded in part by 0082`.
+Set the Status of ADR 0081 to `accepted; superseded in part by 0084`.
 
 - [ ] **Step 2: SPEC**
 
@@ -966,7 +966,7 @@ Set the Status of ADR 0081 to `accepted; superseded in part by 0082`.
 - [ ] **Step 3: HUMAN_CHECKS** (top of "To verify")
 
 ```markdown
-### To verify - 2026-10-27 Git in the right panel (ADR 0082)
+### To verify - 2026-10-27 Git in the right panel (ADR 0084)
 
 - [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.
 - [ ] **Diff view:** a click shows `Diff` in the view bar and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
@@ -991,6 +991,6 @@ Repeat the Task 3 smoke list in one run, plus:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add docs/SPEC.md docs/decisions/0082-git-in-the-right-panel.md docs/decisions/0081-files-tree-in-the-right-panel.md docs/HUMAN_CHECKS.md
-git -c user.email=tungnv975@gmail.com commit -m "docs: git in the right panel (ADR 0082)"
+git add docs/SPEC.md docs/decisions/0084-git-in-the-right-panel.md docs/decisions/0081-files-tree-in-the-right-panel.md docs/HUMAN_CHECKS.md
+git -c user.email=tungnv975@gmail.com commit -m "docs: git in the right panel (ADR 0084)"
 ```

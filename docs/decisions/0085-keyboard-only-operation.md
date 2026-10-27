@@ -87,7 +87,7 @@ Compare Pick only opens Merge back, so it is a plain Tab stop and not part of th
   Nothing picked: the first line or block in view, in Git the first new-side line of the current hunk (`n` / `p` choose the hunk).
   Picked: Shift+↓ moves the end that was last moved, Shift+↑ shrinks it, a single line grows towards the key's direction.
   `Comments.head` remembers which end moves; a click resets it.
-- Shift+↑/↓ stays with a focused text field, a comment draft or the Editor: the shell's `run` already hands every command to them, and the Git key context sits on the file list only.
+- Shift+↑/↓ stays with a focused text field, a comment draft or the Editor: the shell's `run` already hands every command to them, and the Git key context sits on the Git list, or on the diff card while the list is hidden.
 - Esc clears the pick in Docs (Git already did).
 - Terminal copy mode is `alacritty_terminal`'s vi mode (`Term::toggle_vi_mode`, `vi_motion`) on the focused pane's emulator, `copy_mode` = `alt-shift-c`.
   While it is on, keys go to the UI and never to the PTY; the keys are not in `keymap.toml`.
@@ -112,23 +112,32 @@ Ten commands and about 40 palette entries cover the actions that had no key: foc
 Each key calls the function the mouse handler calls, so a click and a key cannot diverge.
 Keys a text field also uses are bound in a view context (`Board`, `Git`, `FileTree`, `Editor`, `Docs || Git`) and `Shell::run` hands them to a focused field (`jira_*`, `comment_*`, `git_commit_*`); `OpenKept` is bound in `FileTree` and acts only while the tree painted in the right panel has the keyboard.
 Decisions: Alt+0 widens the compact rail because the rail has no filter box and saves the layout like Ctrl+Alt+B; in the sidebar filter ←/→ fold rows only while the box is empty; the Board key context is on over the Jira list so the `Card` keys reach it (Kanban cards are not scrolled into view, the same known limit as Board cards); "Run: Start / Restart / Stop <command>" entries carry the command's index in the Run summary and resolve it when picked, like "Agent: New <Profile> pane"; "Agent: Unlink plan" is listed only when a plan is linked, and "Global: History…" needs an active workspace (it is the title bar button's function).
-Expected limits: "File tree: Open file in a kept tab" from the palette does nothing while the editor has the keyboard (the key has the same gate); "Git: Change base…" is listed only in Against base.
+Expected limits: "File tree: Open file in a kept tab" from the palette is listed only while the tree is painted; "Git: Change base…" is listed only in Against base.
 
 ## Merge with the files tree in the right panel (ADR 0081)
 
-- This ADR was numbered 0081 on the branch. Master took 0081 (files tree in the right panel), 0082 and 0083, so it is 0085 now.
-- `View::Files` is gone. The tree is in the right panel, and the opened files are the Editor view.
-- The tree's own keys (`ToggleIgnored`, `OpenKept`) are in `FileTree`. Save, find and close are in `Editor`.
-- Shift+F10 opens the file row menu when the tree painted in the right panel has the keyboard. It opens the file tab menu when the Editor view is shown and neither the tree nor a pane has the keyboard.
+- This ADR was numbered 0081 on the branch.
+- Master took 0081 (files tree in the right panel), 0082 and 0083, so it became 0084 first.
+- `View::Files` is gone.
+- The tree is in the right panel, and the opened files are the Editor view.
+- The tree's own keys (`ToggleIgnored`, `OpenKept`) are in `FileTree`.
+- Save, find and close are in `Editor`.
+- Shift+F10 opens the file row menu when the tree painted in the right panel has the keyboard.
+- It opens the file tab menu when the Editor view is shown and neither the tree, the Git list nor a pane has the keyboard.
 - The palette entry "Tabs: Move tab left / right" moves file tabs while the Editor view is shown.
+- "File tree: Open file in a kept tab" is listed only while the tree is painted, and the palette gives the tree the keyboard first.
 - The diagram dialog (ADR 0083) has a Tab stop on Close and the dialog guard like the other dialogs.
 
 ## Merge with git in the right panel (ADR 0084)
 
-- This ADR was numbered 0084 for a while. Master took 0084 (git in the right panel), so it is 0085 now.
-- `View::Git` is gone. The Git list is in the right panel's Git tab, and the diff is the Diff view.
-- `GIT_CONTEXT` stays on the element that holds `git_focus`: the list in the panel, or the diff card while the panel is not drawn. So the Git single keys, Shift+↑/↓ picking and the comment-thread keys work in both places.
-- The header, filter, commit box and Repositories search stay outside `GIT_CONTEXT`; `Shell::run` still hands keys to the commit box.
-- Palette Git commands, "Git: Change base…" and "Git: Switch repository" are listed while the Git tab or the Diff view is on screen.
+- Master took 0084 (git in the right panel), so this ADR is 0085 now.
+- `View::Git` is gone.
+- The Git list is in the right panel's Git tab, and the diff is the Diff view.
+- `GIT_CONTEXT` stays on the element that holds `git_focus`: the list in the panel, or the diff card while the panel is not drawn.
+- So the Git single keys, Shift+↑/↓ picking and the comment-thread keys work in both places.
+- The header, filter, commit box and Repositories search stay outside `GIT_CONTEXT`.
+- `Shell::run` still hands keys to the commit box.
+- Palette Git commands and "Git: Change base…" are listed while the Git tab or the Diff view is on screen.
+- "Git: Switch repository…" first shows the Git tab, because its menu hangs on the repo strip.
 - Shift+F10 on the Git list or the Diff view opens the workspace menu, as it did on the old Git view.
 - The worktree dialog button "Open in Git" is a Tab stop like the other dialog buttons.

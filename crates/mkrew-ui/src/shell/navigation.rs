@@ -412,6 +412,7 @@ impl Shell {
             file_tabs: workspace.map_or(0, |id| {
                 self.files.get(&id).map_or(0, |view| view.tabs().len())
             }),
+            file_tree: self.file_tree_shown(),
             terminal: terminal.is_some(),
             discard,
             git: self.git_shown(),
@@ -636,6 +637,8 @@ impl Shell {
                     })
                 {
                     window.focus(&self.git_focus, cx);
+                } else if self.file_tree_shown() && command.context() == Some(FILE_TREE_CONTEXT) {
+                    window.focus(&self.files_focus, cx);
                 }
                 // Deferred; gpui-pre captures the focus just restored now and resolves it in
                 // the last rendered frame (root if gone), so terminal commands reach the pane.
@@ -810,7 +813,11 @@ impl Shell {
                         }
                     }
                     Extra::GitChangeBase => self.open_git_base(project_id, window, cx),
-                    Extra::GitSwitchRepo => self.open_git_menu(GitMenu::Repos, window, cx),
+                    Extra::GitSwitchRepo => {
+                        // The menu hangs on the repo strip: show the Git tab first.
+                        self.show_git_panel(window, cx);
+                        self.open_git_menu(GitMenu::Repos, window, cx);
+                    }
                     Extra::JiraMine => {
                         self.set_jira_mine(project_id, !self.jira_mine, window, cx);
                     }

@@ -31,9 +31,11 @@ pub struct Context {
     pub tabs: usize,
     /// The active workspace's open file tabs.
     pub file_tabs: usize,
+    /// The file tree is painted in the right panel (Open in a kept tab acts on its cursor).
+    pub file_tree: bool,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
     pub terminal: bool,
-    /// The Git view's selected file can be discarded (unstaged or untracked).
+    /// The Git list's selected file can be discarded (unstaged or untracked).
     pub discard: bool,
     /// The active workspace's Git is on screen (the panel's Git tab or the Diff view): the
     /// Git keys act.
@@ -516,7 +518,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::MoveTabLeft | Command::MoveTabRight => {
             on_panes || (in_view(View::Editor) && context.file_tabs > 0)
         }
-        Command::ToggleIgnored | Command::OpenKept => context.workspace,
+        Command::ToggleIgnored => context.workspace,
+        Command::OpenKept => context.workspace && context.file_tree,
         Command::SaveFile
         | Command::FindInFile
         | Command::ReplaceInFile

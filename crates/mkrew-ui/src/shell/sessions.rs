@@ -148,7 +148,7 @@ impl Shell {
             return self.close_palette(window, cx);
         }
         // The context menu acts before the focused-field guards below: it must work from a
-        // pane, the Files tree or the sidebar filter, and never takes the key from a dialog.
+        // pane, the file tree or the sidebar filter, and never takes the key from a dialog.
         if *command == Command::ContextMenu {
             if self.modal_open() {
                 cx.propagate();
@@ -479,7 +479,7 @@ impl Shell {
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),
             Command::ContextMenu | Command::FocusSidebar => {}
-            // Only bound while the Git list has focus.
+            // Only bound while the Git list or diff has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
             Command::GitNextHunk => self.git_key(git_view::Key::NextHunk, window, cx),
@@ -555,21 +555,21 @@ impl Shell {
                 }
             }
             Command::AddComment => {
-                // Only bound while Docs are shown or the Git list has focus.
+                // Only bound while Docs are shown or the Git list or diff has focus.
                 if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
                 {
                     self.start_comment(project_id, context, window, cx);
                 }
             }
             Command::SendComments => {
-                // Only bound while Docs are shown or the Git list has focus.
+                // Only bound while Docs are shown or the Git list or diff has focus.
                 if let (Some(project_id), Some(context)) = (self.workspace, self.comment_context())
                 {
                     self.open_send_dialog(project_id, context, window, cx);
                 }
             }
             Command::PickDown | Command::PickUp => {
-                // Only bound while Docs are shown or the Git list has focus; a focused text
+                // Only bound while Docs are shown or the Git list or diff has focus; a focused text
                 // field, comment draft or dialog never gets here (the guards above).
                 self.pick_step(*command == Command::PickDown, cx);
             }
@@ -581,7 +581,7 @@ impl Shell {
                 }
             }
             Command::RunTask if self.jira_side_shown() => {}
-            // Only bound while Docs are shown or the Git list has focus.
+            // Only bound while Docs are shown or the Git list or diff has focus.
             Command::NextComment => self.step_comment(true, cx),
             Command::PreviousComment => self.step_comment(false, cx),
             Command::ReplyComment => self.reply_selected_comment(window, cx),

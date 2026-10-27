@@ -1411,7 +1411,7 @@ Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
 Alt+0 and Ctrl+Shift+PgUp / PgDn no longer reach a focused terminal.
-In Board, Git and Files the single keys `a`, `w` and Alt+Enter act only while the card board, the changed-file list or the file tree has the keyboard; a text field, a comment draft or the Files editor keeps them.
+In the Board, the Git tab and the file tree the single keys `a`, `w` and Alt+Enter act only while the card board, the changed-file list (or the diff, with the list hidden) or the file tree has the keyboard; a text field, a comment draft or the Editor keeps them.
 Shift+F10 does not reach a focused terminal either; rebind `context_menu` if a program needs it.
 Alt+Shift+C and Alt+Shift+O no longer reach a focused terminal either (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
 The keys of copy mode (`h j k l w b e 0 $ g G v V y`, arrows, PgUp / PgDn, Enter, Esc) and the letters of link hints are not in `keymap.toml`.

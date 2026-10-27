@@ -568,8 +568,8 @@ impl Shell {
     }
 
     /// ↑ ↓ / j k move between files; Enter opens the selection's diff; Esc unselects the picked
-    /// diff lines, else closes the diff (an open Git menu has the keyboard itself); the other Git keys
-    /// are keymap commands ([`Self::git_key`]).
+    /// diff lines, else closes the diff (an open Git menu has the keyboard itself); the other
+    /// Git keys are keymap commands ([`Self::git_key`]).
     pub(crate) fn git_key_down(
         &mut self,
         event: &KeyDownEvent,
