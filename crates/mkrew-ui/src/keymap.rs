@@ -186,6 +186,9 @@ pub const GIT_CONTEXT: &str = "Git";
 /// Comment commands work in the Docs view and in the Git view's list (diff comments).
 pub const COMMENTS_CONTEXT: &str = "Docs || Git";
 
+/// Key context of an open popover menu (`Shell::menu_focus`).
+pub const MENU_CONTEXT: &str = "Menu";
+
 /// Find: in a terminal's scrollback, the Files view's opened file, and the Docs list filter.
 pub const FIND_CONTEXT: &str = "Terminal || Files || Docs";
 
@@ -817,11 +820,25 @@ impl Keymap {
             .map(|(command, _)| *command)
     }
 
+    /// Keys an open menu keeps for itself: every context-limited binding on a plain or Shift-only
+    /// key (the Board's arrows, Enter and `e`, the Git single keys, later waves' single keys).
+    /// Ctrl / Alt / Cmd keys stay bound, so a shortcut still closes the menu and acts.
+    pub fn menu_shielded(&self) -> impl Iterator<Item = &Keystroke> {
+        self.bindings
+            .iter()
+            .filter(|(command, keys)| {
+                let m = keys.modifiers;
+                command.context().is_some() && !(m.control || m.alt || m.platform || m.function)
+            })
+            .map(|(_, keys)| keys)
+    }
+
     /// GPUI key bindings for [`Keymap::bindings`], folded by `mapper` the way the platform
     /// reports typed keys (on Windows Shift folds into digits and punctuation: Ctrl+Shift+2
     /// arrives as `ctrl-@` on a US layout). Rebuild them when the keyboard layout changes.
     pub fn key_bindings(&self, mapper: &dyn gpui::PlatformKeyboardMapper) -> Vec<gpui::KeyBinding> {
-        self.bindings
+        let mut bindings: Vec<gpui::KeyBinding> = self
+            .bindings
             .iter()
             .filter_map(|(command, keystroke)| {
                 // Never fails in practice: the keystroke was parsed and is unparsed back, the
@@ -844,7 +861,24 @@ impl Keymap {
                     .inspect_err(|error| tracing::warn!("{command:?}: cannot bind {keys}: {error}"))
                     .ok()
             })
-            .collect()
+            .collect();
+        // The deepest context wins, and `NoAction` hides the shallower binding of the same key.
+        if let Ok(predicate) = gpui::KeyBindingContextPredicate::parse(MENU_CONTEXT) {
+            let menu: std::rc::Rc<gpui::KeyBindingContextPredicate> = predicate.into();
+            bindings.extend(self.menu_shielded().filter_map(|keystroke| {
+                let keys = keystroke.unparse();
+                gpui::KeyBinding::load(
+                    &keys,
+                    Box::new(gpui::NoAction),
+                    Some(menu.clone()),
+                    true,
+                    None,
+                    mapper,
+                )
+                .ok()
+            }));
+        }
+        bindings
     }
 
     /// Shortcut text for tooltips and menus, e.g. "Ctrl+Shift+X"; empty if unbound.
@@ -1100,6 +1134,31 @@ mod tests {
         assert_eq!(keymap.label(Command::GitPush), "Shift+P");
     }
 
+    #[test]
+    fn an_open_menu_keeps_the_single_keys_of_every_view_for_itself() {
+        let keymap = Keymap::defaults();
+        let shielded: Vec<String> = keymap.menu_shielded().map(Keystroke::unparse).collect();
+        let has = |keys: &str| shielded.iter().any(|shielded| shielded == keys);
+        for keys in [
+            "up",
+            "down",
+            "left",
+            "right",
+            "enter",
+            "e",
+            "shift-left",
+            "shift-right",
+            "s",
+            "b",
+        ] {
+            assert!(has(keys), "{keys} must stay with the menu");
+        }
+        // Shortcuts keep working: they close the menu, then act.
+        for keys in ["ctrl-enter", "ctrl-shift-p", "alt-1", "f2", "ctrl-alt-m"] {
+            assert!(!has(keys), "{keys} must stay bound");
+        }
+    }
+
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted
     /// and encode to the bytes a terminal sends.
     #[test]
@@ -1226,7 +1285,11 @@ mod tests {
     fn every_binding_becomes_a_gpui_key_binding() {
         let (keymap, _) = Keymap::parse("split_down = \"ctrl-alt--\"\n");
         let bindings = keymap.key_bindings(&gpui::DummyKeyboardMapper);
-        assert_eq!(bindings.len(), Command::all().len());
+        // One binding per command, plus one `NoAction` shield per menu-shielded key.
+        assert_eq!(
+            bindings.len(),
+            Command::all().len() + keymap.menu_shielded().count()
+        );
     }
 
     /// gpui-pre-windows reports Ctrl+Shift+2 as `ctrl-@` (Shift folded into the digit, layout
