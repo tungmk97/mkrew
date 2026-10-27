@@ -26,7 +26,7 @@ impl Shell {
         else {
             return;
         };
-        if self.starting_pane.is_some() || self.ask_for_default(project_id, kind, window, cx) {
+        if self.still_starting(cx) || self.ask_for_default(project_id, kind, window, cx) {
             return;
         }
         self.starting_pane = Some(kind);
@@ -37,6 +37,9 @@ impl Shell {
             let spawned = spawned.await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.starting_pane = None;
+                shell
+                    .tab_error
+                    .take_if(|error| error.starts_with(lifecycle::STILL_STARTING));
                 match spawned {
                     Ok(spawned) => {
                         // Next to the focused pane of the tab active now (the user may have
@@ -54,6 +57,18 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// True (after telling the user in the tab bar) while another pane is still starting: one
+    /// `session.spawn` at a time. The note goes once that pane is up.
+    pub(crate) fn still_starting(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let Some(kind) = self.starting_pane else {
+            return false;
+        };
+        let (still, what) = (lifecycle::STILL_STARTING, lifecycle::kind_noun(kind));
+        self.tab_error = Some(format!("{still} {what}; try again once it shows."));
+        cx.notify();
+        true
     }
 
     /// True (after telling the user and opening the workspace menu) when the workspace has no
@@ -333,6 +348,7 @@ impl Shell {
                 None => {}
             },
             Command::NextInbox => self.jump_next_inbox(window, cx),
+            Command::PreviousInbox => self.jump_previous_inbox(window, cx),
             // Again while it has the keyboard closes it.
             Command::Peek => {
                 if self.peek.as_ref().is_some_and(|peek| peek.focused) {
@@ -428,6 +444,27 @@ impl Shell {
                     .and_then(|project_id| self.board.run_target(self.selected_card, project_id));
                 if let Some(task_id) = target {
                     self.run_task(task_id, window, cx);
+                }
+            }
+            Command::RunStart => {
+                if let Some(project_id) = self.workspace {
+                    if self.run_summary(project_id).rows.is_empty() {
+                        self.open_run_setup(project_id, true, window, cx);
+                    } else {
+                        self.run_action(project_id, RunAction::Start, None, window, cx);
+                    }
+                }
+            }
+            Command::RunRestart | Command::RunStop => {
+                let action = match *command {
+                    Command::RunRestart => RunAction::Restart,
+                    _ => RunAction::Stop,
+                };
+                // Nothing to restart or stop: no run session lives.
+                if let Some(project_id) =
+                    self.workspace.filter(|id| self.run_summary(*id).any_live())
+                {
+                    self.run_action(project_id, action, None, window, cx);
                 }
             }
             // Handled by the focused terminal pane.

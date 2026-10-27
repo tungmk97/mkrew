@@ -395,14 +395,8 @@ impl Shell {
         })
     }
 
-    pub(crate) fn close_follow_up(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        self.follow_up = None;
-        self.focus_pane(window, cx);
-        cx.notify();
-    }
-
-    /// Keys typed in the follow-up field: Enter is a new line, Ctrl+Enter sends, Esc drops the
-    /// draft.
+    /// Keys typed in the follow-up field: Enter is a new line, Ctrl+Enter sends, Esc gives the
+    /// keyboard back (the blur keeps a typed draft on its card and drops an empty one).
     pub(crate) fn follow_up_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -433,7 +427,10 @@ impl Shell {
                 }
                 cx.notify();
             }
-            follow_up::Outcome::Cancel => self.close_follow_up(window, cx),
+            follow_up::Outcome::Leave => {
+                self.focus_pane(window, cx);
+                cx.notify();
+            }
             follow_up::Outcome::Send => self.send_follow_up(window, cx),
         }
     }

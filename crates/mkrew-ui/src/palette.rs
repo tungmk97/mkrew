@@ -62,9 +62,6 @@ pub enum Extra {
     InsertPrompt,
     Turns,
     FollowInZed,
-    RunStart,
-    RunRestart,
-    RunStop,
     RunSetup,
     RunShowTab,
     PhoneAccess,
@@ -73,7 +70,7 @@ pub enum Extra {
 }
 
 impl Extra {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 14] = [
         Self::GitFetch,
         Self::GitPush,
         Self::GitDiscard,
@@ -83,9 +80,6 @@ impl Extra {
         Self::InsertPrompt,
         Self::Turns,
         Self::FollowInZed,
-        Self::RunStart,
-        Self::RunRestart,
-        Self::RunStop,
         Self::RunSetup,
         Self::RunShowTab,
         Self::PhoneAccess,
@@ -104,9 +98,6 @@ impl Extra {
             Self::InsertPrompt => "Agent: Insert prompt…",
             Self::Turns => "Agent: Turns…",
             Self::FollowInZed => "Agent: Follow in Zed (on/off)",
-            Self::RunStart => "Run: Start all",
-            Self::RunRestart => "Run: Restart all",
-            Self::RunStop => "Run: Stop all",
             Self::RunSetup => "Run: Setup…",
             Self::RunShowTab => "Run: Show Run tab",
             Self::PhoneAccess => "Global: Phone access…",
@@ -135,10 +126,7 @@ impl Extra {
             Self::InsertPrompt | Self::FollowInZed => {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
-            Self::RunStart => context.workspace && context.run_stopped,
-            Self::RunRestart | Self::RunStop | Self::RunShowTab => {
-                context.workspace && context.run_live
-            }
+            Self::RunShowTab => context.workspace && context.run_live,
             Self::RunSetup => context.workspace,
             Self::MarkUnread => context.markable,
             Self::PhoneAccess | Self::CheckUpdates => true,
@@ -219,6 +207,7 @@ pub fn title(command: Command) -> String {
         Command::Find => "Find: in scrollback, the open file or the Docs list".into(),
         Command::OpenInZed => "Zed: Open workspace or current file in Zed".into(),
         Command::NextInbox => "Inbox: Jump to next item needing attention".into(),
+        Command::PreviousInbox => "Inbox: Jump to previous item needing attention".into(),
         Command::Peek => "Agent: Peek the first Inbox entry".into(),
         Command::OpenComposer => "Agent: Open the prompt composer".into(),
         Command::SendSelection => "Agent: Send selection to an agent".into(),
@@ -246,6 +235,9 @@ pub fn title(command: Command) -> String {
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
+        Command::RunStart => "Run: Start all".into(),
+        Command::RunRestart => "Run: Restart all".into(),
+        Command::RunStop => "Run: Stop all".into(),
         Command::CommandPalette => "Global: Command palette".into(),
         Command::OpenSettings => "Global: Open settings".into(),
         Command::ToggleTheme => "Global: Toggle theme (System → Light → Dark)".into(),
@@ -268,6 +260,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::CommandPalette => false,
         Command::AddWorkspace
         | Command::NextInbox
+        | Command::PreviousInbox
         | Command::Peek
         | Command::OpenSettings
         | Command::ToggleTheme
@@ -316,6 +309,8 @@ pub fn available(command: Command, context: &Context) -> bool {
             in_view(View::Files) || in_view(View::Git) || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
+        Command::RunStart => context.workspace && context.run_stopped,
+        Command::RunRestart | Command::RunStop => context.workspace && context.run_live,
         Command::ToggleDocSource => in_view(View::Docs),
         Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Git),
         Command::ToggleIgnored
@@ -381,9 +376,10 @@ pub fn theme_entries(current: &str) -> Vec<Entry> {
         .collect()
 }
 
-/// The palette's entries: the available commands in keymap order, the available
-/// palette-only actions, then "Go to" every workspace, live session and task (archived
-/// workspaces and their items left out).
+/// The palette's entries: "Go to" every session that needs input first, then the available
+/// commands in keymap order, the available palette-only actions, then "Go to" every workspace,
+/// other live session and task (archived workspaces and their items left out). Session rows
+/// show their state on the right.
 pub fn entries(
     keymap: &Keymap,
     context: &Context,
@@ -432,18 +428,24 @@ pub fn entries(
                 )
             }),
     );
-    entries.extend(
-        sessions
-            .iter()
-            .filter(|session| session.state != SessionState::Exited)
-            .filter_map(|session| {
-                let name = workspace(session.project_id)?;
-                Some(go_to(
+    let (asking, others): (Vec<_>, Vec<_>) = sessions
+        .iter()
+        .filter(|session| session.state != SessionState::Exited)
+        .filter_map(|session| {
+            let name = workspace(session.project_id)?;
+            let status = crate::sidebar::status_display(session.state);
+            let entry = Entry {
+                shortcut: format!("{} {}", status.icon, status.label),
+                ..go_to(
                     Target::Session(session.id),
                     format!("Go to session: {} · {name}", history::label(session)),
-                ))
-            }),
-    );
+                )
+            };
+            Some((session.state == SessionState::NeedsInput, entry))
+        })
+        .partition(|(asking, _)| *asking);
+    entries.extend(others.into_iter().map(|(_, entry)| entry));
+    entries.splice(0..0, asking.into_iter().map(|(_, entry)| entry));
     entries.extend(tasks.iter().filter_map(|task| {
         let name = workspace(task.project_id)?;
         Some(go_to(

@@ -1,8 +1,8 @@
 //! Peek + quick reply (SPEC §20A.1): a popover next to a sidebar session row with the
 //! session's last screen lines (`session.read`, never attaching) and a one-line reply. Hovering
 //! a row for [`crate::theme::PEEK_HOVER_DELAY`] opens it; the Peek shortcut opens the first
-//! session that needs you with the keyboard in it (↑ / ↓ cycle those sessions, Esc closes).
-//! Pure and tested headlessly; `main.rs` renders it.
+//! session that needs you with the keyboard in it (↑ / ↓ cycle those sessions, Alt+Y / Alt+N
+//! answer, Ctrl+O opens the pane, Esc closes). Pure and tested headlessly; `main.rs` renders it.
 
 use gpui::Keystroke;
 use mkrew_protocol::{SessionReadParams, SessionSendParams, SessionState};
@@ -36,6 +36,10 @@ pub enum Outcome {
     Cycle(i32),
     /// Ctrl+V: the caller inserts the clipboard text.
     Paste,
+    /// Alt+Y / Alt+N: send that letter (only while the session needs input, [`Peek::answer`]).
+    Answer(char),
+    /// Ctrl+O: open the session's pane and close the popover.
+    Open,
 }
 
 /// The open popover.
@@ -93,12 +97,24 @@ impl Peek {
 
     /// Applies a key press while the popover has the keyboard.
     pub fn key(&mut self, keystroke: &Keystroke) -> Outcome {
-        if !keystroke.modifiers.modified() {
+        let modifiers = &keystroke.modifiers;
+        if !modifiers.modified() {
             match keystroke.key.as_str() {
                 "up" => return Outcome::Cycle(-1),
                 "down" => return Outcome::Cycle(1),
                 _ => {}
             }
+        }
+        // Alt alone: Ctrl+Alt is AltGr on Windows, which types characters.
+        if modifiers.alt && !modifiers.control && !modifiers.platform && !modifiers.shift {
+            match keystroke.key.as_str() {
+                "y" => return Outcome::Answer('y'),
+                "n" => return Outcome::Answer('n'),
+                _ => {}
+            }
+        }
+        if modifiers.secondary() && !modifiers.alt && !modifiers.shift && keystroke.key == "o" {
+            return Outcome::Open;
         }
         match dialog_key(keystroke) {
             Some(DialogKey::Cancel) => Outcome::Close,
@@ -288,6 +304,11 @@ mod tests {
         assert_eq!(peek.key(&keystroke("ctrl-v")), Outcome::Paste);
         assert_eq!(peek.key(&keystroke("escape")), Outcome::Close);
         assert_eq!(peek.key(&keystroke("enter")), Outcome::Send);
+        assert_eq!(peek.key(&keystroke("alt-y")), Outcome::Answer('y'));
+        assert_eq!(peek.key(&keystroke("alt-n")), Outcome::Answer('n'));
+        assert_eq!(peek.key(&keystroke("ctrl-o")), Outcome::Open);
+        // AltGr (Ctrl+Alt) types into the reply instead of answering.
+        assert_eq!(peek.key(&keystroke("ctrl-alt-y")), Outcome::Edited);
         assert_eq!(
             peek.send_params(),
             Some(SessionSendParams {

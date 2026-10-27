@@ -822,22 +822,34 @@ impl Shell {
             0 => "Nothing staged".to_owned(),
             n => format!("{n} staged"),
         };
+        // Nothing staged but changes to stage: the button stages them all, then commits.
+        let stage_all = staged == 0 && view.stage_all().is_some();
         let label = if draft.busy {
             "Committing…"
+        } else if stage_all {
+            "Stage all & commit"
         } else {
             "Commit"
         };
-        let tip = if staged == 0 {
+        let tip = if stage_all {
+            "Stage every change, then commit (Ctrl+Enter twice)"
+        } else if staged == 0 {
             "Stage changes to commit them"
         } else {
             "Commit the staged changes"
         };
-        let commit = if draft.busy || generating || staged == 0 {
+        let commit = if draft.busy || generating || (staged == 0 && !stage_all) {
             disabled_button("git-commit", label, theme, true)
         } else {
-            button("git-commit", label, theme, true).on_click(
-                cx.listener(move |shell, _, window, cx| shell.commit_git(project_id, window, cx)),
-            )
+            button("git-commit", label, theme, true).on_click(cx.listener(
+                move |shell, _, window, cx| {
+                    // The click is the confirmation the keyboard gives with a second Ctrl+Enter.
+                    if stage_all {
+                        shell.git_view(project_id).commit.stage_all_offered = true;
+                    }
+                    shell.commit_git(project_id, window, cx);
+                },
+            ))
         };
         let write = if draft.busy || generating {
             let label = if generating { "Writing…" } else { "Generate" };

@@ -847,7 +847,8 @@ The session panel (below) is a third column right of Terminals while open.
   focused agent's context share in the tab strip (single pane) or pane header (split), and the
   other usage fields (tokens, cache, model) on the session panel's card.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
-  Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`).
+  Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`; Esc gives
+  the keyboard back and keeps a typed draft on the card, like the composer).
   New task: the empty board's button, or `New task` in the Todo column header.
   With `[jira] site` set, a `Tasks | Jira` switch heads the Board (§20I).
 - **Terminals:** tab bar on top; each tab is a split tree of panes; each pane is a session.
@@ -974,8 +975,9 @@ The session panel (below) is a third column right of Terminals while open.
   ignored files shown) that opens folders on click and goes `↑ Up`; for Folder it starts at the
   workspace root and `Use this folder` (Enter) takes the shown one (`.` at the root); for Env
   file it starts in the card's folder (the root when that is not a folder of the workspace), can go up to
-  the workspace root, and a click on a file takes it relative to the workspace (ADR 0049). Esc closes only the picker. Palette: `Run: Start all`,
-  `Run: Restart all`, `Run: Stop all`, `Run: Setup…`, `Run: Show Run tab`.
+  the workspace root, and a click on a file takes it relative to the workspace (ADR 0049). Esc closes only the picker. Palette: `Run: Start all`
+  (Ctrl+F5), `Run: Restart all` (Ctrl+Shift+F5), `Run: Stop all` (Ctrl+Alt+F5), `Run: Setup…`, `Run: Show Run tab`; the Run menu
+  shows the three keys. Restart / Stop act only while a run session lives; Start with nothing set up opens Run setup.
 - **Empty states** everywhere (see §14).
 
 ---
@@ -1204,7 +1206,10 @@ Windows (tens of ms, worse with antivirus), so:
 - **Commit:** multi-line message box, Commit button (`Ctrl+Enter`), and ✦: the workspace's
   default agent writes a Conventional Commits message from the staged changes (else the
   unstaged ones) via `ai.generate` (§7); the answer replaces the draft, nothing is committed
-  until the user commits. No amend in v1.
+  until the user commits. No amend in v1. With nothing staged but changes in the list, the button
+  reads "Stage all & commit" (one `git.stage` of every unstaged and untracked file, then the
+  commit); Ctrl+Enter first says so under the box and does it on the next Ctrl+Enter (an edit
+  withdraws the offer).
 - **Fetch / Push:** fetch refreshes the base; push sends the current branch to its upstream only,
   never with force. Pull, rebase, merge and branch switching are backlog.
 - **History:** last 50 commits (`git log --parents`, which rewrites parents past commits a subfolder project hides;
@@ -1272,8 +1277,9 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
 | View | Terminals / Board / Files / Git / Docs | Ctrl+Shift+1 / 2 / 3 / 4 / 5 |
-| Inbox | Jump to next item needing attention | Ctrl+Shift+I |
+| Inbox | Jump to next / previous item needing attention (sessions asking for input first, then newest first) | Ctrl+Shift+I / Ctrl+Alt+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
+| Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
 | Tabs | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Tabs | Jump to tab 1–9 | Ctrl+Alt+1 … Ctrl+Alt+9 |
@@ -1308,7 +1314,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Focus commit message / commit | c / Ctrl+Enter |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
-| Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
+| Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out | command palette only |
@@ -1868,7 +1874,9 @@ context_window = 200000        # tokens, for the % shown
    (first session that needs you; ↑/↓ cycles those sessions, Esc closes; the row is shown first: its workspace opens and the filter clears), opens a popover with the last 8 non-blank
    screen lines (monospace plain text, ADR 0012), the state and its age, and a one-line input. Enter sends
    the text with submit (`session.send`); for a `needs_input` session the popover also shows
-   buttons `y` and `n` that send that letter with submit. Focus returns where it was. Data comes
+   buttons `y` and `n` (Alt+Y / Alt+N) that send that letter with submit. Ctrl+O opens the session's pane and
+   closes the popover. After a send, a popover with the keyboard moves on to the next session that needs
+   you (it closes when there is none). Focus returns where it was. Data comes
    from the new request `session.read` (below), never from attaching.
 2. **Sound.** OS notifications (§8) play the OS default sound when `notify.sound` (notify-rust
    `sound_name` on macOS, a hint on Linux; the toast's `<audio>` on Windows). `notify.needs_input` / `notify.done` switch each kind
@@ -2255,7 +2263,7 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
 3. **Tray icon (Windows).** Owned by the UI process, shown while it runs. Icon: Mkrew's own while
    nothing works or waits, a dot in the working color while an agent works, a dot in the needs-input
    color while something needs you; tooltip `Mkrew · 2 need you · 1 working`. Right-click menu: up to
-   8 sessions that need you, newest first, `agent · workspace — state, age` (a click shows the window
+   8 sessions that need you (asking for input first, then newest first), `agent · workspace — state, age` (a click shows the window
    and opens that pane); a greyed `● N working`; `Open Mkrew`; `Quit UI (agents keep running)`. A
    left click opens the window.
 4. **Close to tray (Windows).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window

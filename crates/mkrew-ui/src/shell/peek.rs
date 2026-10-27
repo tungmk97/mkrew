@@ -61,6 +61,21 @@ impl Shell {
         }
     }
 
+    /// Opens the Inbox entry before the focused pane's session (wrapping); nothing while the
+    /// Inbox is empty.
+    pub(crate) fn jump_previous_inbox(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let entries = self.inbox_entries();
+        let focused = self.focused_session().and_then(|id| {
+            self.sidebar
+                .sessions()
+                .iter()
+                .find(|session| session.id == id)
+        });
+        if let Some(session) = inbox::previous(&entries, focused) {
+            self.open_session(session, window, cx);
+        }
+    }
+
     /// Whether `session_id` can be peeked: listed and live (`session.read` needs a live one).
     pub(crate) fn peekable(&self, session_id: Ulid) -> bool {
         self.sidebar
@@ -263,8 +278,8 @@ impl Shell {
         .detach();
     }
 
-    /// Typing edits the reply, Enter sends it, ↑ / ↓ peek the other sessions that need you, Esc
-    /// closes.
+    /// Typing edits the reply, Enter sends it, Alt+Y / Alt+N answer, Ctrl+O opens the pane, ↑ / ↓
+    /// peek the other sessions that need you, Esc closes.
     pub(crate) fn peek_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -300,6 +315,12 @@ impl Shell {
                     self.open_peek(next, true, window, cx);
                 }
             }
+            peek::Outcome::Answer(letter) => self.answer_peek(letter, window, cx),
+            peek::Outcome::Open => {
+                let session = peek.session_id;
+                self.close_peek(window, cx);
+                self.open_session(session, window, cx);
+            }
         }
     }
 
@@ -324,7 +345,8 @@ impl Shell {
         }
     }
 
-    /// `session.send` from the peek; a sent `draft` empties the reply field.
+    /// `session.send` from the peek; a sent `draft` empties the reply field. Once sent, a peek
+    /// with the keyboard moves on to the next session that needs you (closing when none is left).
     pub(crate) fn send_peek(
         &mut self,
         params: SessionSendParams,
@@ -349,18 +371,28 @@ impl Shell {
                 Ok(Outcome::Error(body)) => Err(body.message),
                 Err(error) => Err(format!("{error:#}")),
             };
-            let _ = this.update(cx, |shell, cx| {
+            let _ = this.update_in(cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%session_id, "session.send failed: {error}");
                 }
                 // The peek was closed or moved to another session meanwhile.
-                if let Some(peek) = shell
+                let Some(peek) = shell
                     .peek
                     .as_mut()
                     .filter(|peek| peek.session_id == session_id)
-                {
-                    peek.sent(result, draft);
-                    cx.notify();
+                else {
+                    return;
+                };
+                let advance = result.is_ok() && peek.focused;
+                peek.sent(result, draft);
+                cx.notify();
+                if advance {
+                    match peek::cycle(&shell.inbox_entries(), session_id, 1) {
+                        Some(next) if next != session_id => {
+                            shell.open_peek(next, true, window, cx);
+                        }
+                        _ => shell.close_peek(window, cx),
+                    }
                 }
             });
         })
@@ -450,7 +482,11 @@ impl Shell {
                 disabled_button(id, label, theme, false)
             } else {
                 button(id, label, theme, false)
-                    .tooltip(tooltip(theme, tip, ""))
+                    .tooltip(tooltip(
+                        theme,
+                        tip,
+                        if letter == 'y' { "Alt+Y" } else { "Alt+N" },
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.answer_peek(letter, window, cx);
                     }))
@@ -494,8 +530,10 @@ impl Shell {
                 "Click the field to reply · {} peeks the first session that needs you",
                 self.keymap.label(Command::Peek)
             )
+        } else if needs_input {
+            "Enter sends · Alt+Y / Alt+N answer · Ctrl+O opens · ↑ ↓ others · Esc closes".to_owned()
         } else {
-            "Enter sends · ↑ ↓ other sessions that need you · Esc closes".to_owned()
+            "Enter sends · Ctrl+O opens the pane · ↑ ↓ others that need you · Esc closes".to_owned()
         };
         let panel = div()
             .id("peek")

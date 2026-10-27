@@ -287,6 +287,7 @@ fn availability_follows_the_view() {
         [
             Command::AddWorkspace,
             Command::NextInbox,
+            Command::PreviousInbox,
             Command::Peek,
             Command::OpenSettings,
             Command::ToggleTheme,
@@ -416,15 +417,19 @@ fn palette_only_actions_follow_the_view_and_state() {
         run_stopped: true,
         ..context(View::Docs)
     };
-    assert_eq!(extras(&stopped), [Extra::RunStart]);
+    assert_eq!(extras(&stopped), []);
+    assert!(commands(&stopped).contains(&Command::RunStart));
+    assert!(!commands(&stopped).contains(&Command::RunStop));
     let live = Context {
         run_live: true,
         ..context(View::Docs)
     };
-    assert_eq!(
-        extras(&live),
-        [Extra::RunRestart, Extra::RunStop, Extra::RunShowTab]
+    assert_eq!(extras(&live), [Extra::RunShowTab]);
+    let live_commands = commands(&live);
+    assert!(
+        live_commands.contains(&Command::RunRestart) && live_commands.contains(&Command::RunStop)
     );
+    assert!(!live_commands.contains(&Command::RunStart));
     let all = entries(&Keymap::defaults(), &context(View::Board), &[], &[], &[]);
     assert!(
         all.iter()
@@ -508,6 +513,23 @@ fn go_to_workspaces_live_sessions_and_tasks() {
     );
     // Commands come first.
     assert!(matches!(all[0].action, Action::Run(_)));
+    let working = all
+        .iter()
+        .find(|entry| entry.action == Action::GoTo(Target::Session(sessions[0].id)));
+    assert_eq!(working.map(|e| e.shortcut.as_str()), Some("••• working"));
+
+    // A session that needs input leads the list, before the commands.
+    let asking = session(app.id, Some("deploy?"), SessionState::NeedsInput);
+    let all = entries(
+        &Keymap::defaults(),
+        &context(View::Terminals),
+        std::slice::from_ref(&app),
+        &[sessions[0].clone(), asking.clone()],
+        &[],
+    );
+    assert_eq!(all[0].action, Action::GoTo(Target::Session(asking.id)));
+    assert_eq!(all[0].shortcut, "? needs input");
+    assert!(matches!(all[1].action, Action::Run(_)));
 }
 
 #[test]

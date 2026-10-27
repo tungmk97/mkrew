@@ -481,10 +481,12 @@ impl Shell {
                 .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
                 .child(div().flex_1().text_color(rgb(color)).child(label))
         };
+        let keys = |command: Command| kbd(self.keymap.label(command), theme, false);
         let mut actions: Vec<gpui::AnyElement> = Vec::new();
         if live {
             actions.push(
                 item("run-restart", Icon::RotateCw, "Restart all", theme.text)
+                    .child(keys(Command::RunRestart))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         cx.stop_propagation();
                         shell.run_action(project_id, RunAction::Restart, None, window, cx);
@@ -498,6 +500,7 @@ impl Shell {
                     "Stop all",
                     theme.status_exited,
                 )
+                .child(keys(Command::RunStop))
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     cx.stop_propagation();
                     shell.run_action(project_id, RunAction::Stop, None, window, cx);
@@ -507,6 +510,7 @@ impl Shell {
         } else if !summary.rows.is_empty() {
             actions.push(
                 item("run-start", Icon::Play, "Start all", theme.text)
+                    .child(keys(Command::RunStart))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         cx.stop_propagation();
                         shell.run_action(project_id, RunAction::Start, None, window, cx);

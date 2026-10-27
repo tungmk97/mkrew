@@ -612,20 +612,6 @@ impl Shell {
                             self.toggle_follow(session, cx);
                         }
                     }
-                    // The list is built on open: the run state may have changed since.
-                    Extra::RunStart => {
-                        if self.run_summary(project_id).rows.is_empty() {
-                            self.open_run_setup(project_id, true, window, cx);
-                        } else {
-                            self.run_action(project_id, RunAction::Start, None, window, cx);
-                        }
-                    }
-                    Extra::RunRestart => {
-                        self.run_action(project_id, RunAction::Restart, None, window, cx)
-                    }
-                    Extra::RunStop => {
-                        self.run_action(project_id, RunAction::Stop, None, window, cx)
-                    }
                     Extra::RunSetup => self.open_run_setup(project_id, false, window, cx),
                     Extra::RunShowTab => self.show_run_tab(project_id, window, cx),
                     Extra::MarkUnread => {

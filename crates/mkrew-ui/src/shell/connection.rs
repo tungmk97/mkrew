@@ -165,119 +165,7 @@ impl Shell {
             cx.notify();
         });
         let (painted, painted_rx) = async_channel::bounded(1);
-        cx.spawn_in(window, async move |this, cx| {
-            // Blocking (polls a starting daemon for up to 10 s): off the UI thread.
-            let connected = cx
-                .background_executor()
-                .spawn(async move { mkrew_ui::connect::connect(&paths) })
-                .await;
-            let connection = match connected {
-                Ok(connection) => Rc::new(connection),
-                Err(error) => {
-                    let _ = this.update(cx, |shell, cx| {
-                        shell.status = Status::Failed(format!("{error:#}"));
-                        cx.notify();
-                    });
-                    return;
-                }
-            };
-            let incoming = connection.incoming();
-            tracing::info!(
-                daemon_version = %connection.hello().daemon_version,
-                "connected to the daemon"
-            );
-            let loaded = this.update_in(cx, |shell, window, cx| {
-                shell.connection = Some(connection);
-                shell.refresh(window, cx);
-                shell.poll_phone(window, cx);
-            });
-            if loaded.is_err() {
-                return;
-            }
-            // Drain at once when frames arrive (low key latency); after feeding output, wait
-            // until that frame is painted and `OUTPUT_FRAME` has passed, so a flood is fed once
-            // per frame and at most ~60 times a second whatever the display rate.
-            while let Ok(first) = incoming.recv().await {
-                // A paint from an earlier frame must not end the wait below.
-                let _ = painted_rx.try_recv();
-                let mut batch = vec![first];
-                while batch.len() < DRAIN_BATCH
-                    && let Ok(next) = incoming.try_recv()
-                {
-                    batch.push(next);
-                }
-                let started = Instant::now();
-                match this.update_in(cx, |shell, window, cx| shell.dispatch(batch, window, cx)) {
-                    Ok(true) => {
-                        let painted = async {
-                            let _ = painted_rx.recv().await;
-                        };
-                        let timeout = cx.background_executor().timer(PAINT_TIMEOUT);
-                        futures_lite::future::or(painted, timeout).await;
-                        if let Some(rest) = OUTPUT_FRAME.checked_sub(started.elapsed()) {
-                            cx.background_executor().timer(rest).await;
-                        }
-                    }
-                    Ok(false) => {}
-                    Err(_) => return,
-                }
-            }
-            let _ = this.update_in(cx, |shell, window, cx| {
-                shell.status = Status::Disconnected;
-                shell.connection = None;
-                shell.workspace = None;
-                shell.tabs.clear();
-                shell.loading_tabs.clear();
-                shell.early_tab_events.clear();
-                shell.reveal = None;
-                shell.tab_error = None;
-                shell.router.clear();
-                shell.panes.clear();
-                shell.attach_errors.clear();
-                shell.renaming = None;
-                shell.close_menus();
-                shell.run_setup = None;
-                shell.run_reveal = None;
-                shell.ports = Ports::default();
-                shell.plans = Plans::default();
-                shell.plan_error = None;
-                shell.broadcast = None;
-                shell.ask = None;
-                shell.task_dialog = None;
-                shell.undo_dialog = None;
-                shell.worktree_dialog = None;
-                shell.compare = None;
-                shell.turns_dialog = None;
-                shell.turns_return = None;
-                shell.git_discard = None;
-                shell.git_base = None;
-                shell.add_workspace = None;
-                shell.phone_open = false;
-                shell.phone = Phone::default();
-                shell.history = None;
-                shell.history_pane = None;
-                shell.doc_dialog = None;
-                shell.quick_open = None;
-                shell.restore_theme_pick(window, cx);
-                shell.palette = None;
-                shell.prompt_picker = None;
-                shell.palette_return = None;
-                shell.peek = None;
-                shell.peek_return = None;
-                shell.follow_up = None;
-                shell.docs.clear();
-                shell.files.clear();
-                shell.git.clear();
-                shell.git_summary = None;
-                // An open confirmation keeps the keyboard; it hands focus back when answered.
-                if !window.has_active_prompt() {
-                    window.focus(&shell.focus_handle, cx);
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        Self {
+        let mut shell = Self {
             status: Status::Connecting,
             connection: None,
             update: None,
@@ -297,6 +185,8 @@ impl Shell {
             panes: HashMap::new(),
             attach_errors: HashMap::new(),
             painted,
+            painted_rx,
+            paths,
             focus_handle,
             renaming: None,
             rename_focus,
@@ -448,7 +338,131 @@ impl Shell {
             sidebar_view: None,
             toasts: Toasts::default(),
             pending_jump: jump,
-        }
+        };
+        shell.connect(window, cx);
+        shell
+    }
+
+    /// Connects to the daemon (starting it if needed) off the UI thread, then feeds its frames
+    /// until the connection closes. Startup runs it; so do Retry / Reconnect on the failure
+    /// screens.
+    pub(crate) fn connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.status = Status::Connecting;
+        cx.notify();
+        let paths = self.paths.clone();
+        let painted_rx = self.painted_rx.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            // Blocking (polls a starting daemon for up to 10 s): off the UI thread.
+            let connected = cx
+                .background_executor()
+                .spawn(async move { mkrew_ui::connect::connect(&paths) })
+                .await;
+            let connection = match connected {
+                Ok(connection) => Rc::new(connection),
+                Err(error) => {
+                    let _ = this.update(cx, |shell, cx| {
+                        shell.status = Status::Failed(format!("{error:#}"));
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let incoming = connection.incoming();
+            tracing::info!(
+                daemon_version = %connection.hello().daemon_version,
+                "connected to the daemon"
+            );
+            let loaded = this.update_in(cx, |shell, window, cx| {
+                shell.connection = Some(connection);
+                shell.refresh(window, cx);
+                shell.poll_phone(window, cx);
+            });
+            if loaded.is_err() {
+                return;
+            }
+            // Drain at once when frames arrive (low key latency); after feeding output, wait
+            // until that frame is painted and `OUTPUT_FRAME` has passed, so a flood is fed once
+            // per frame and at most ~60 times a second whatever the display rate.
+            while let Ok(first) = incoming.recv().await {
+                // A paint from an earlier frame must not end the wait below.
+                let _ = painted_rx.try_recv();
+                let mut batch = vec![first];
+                while batch.len() < DRAIN_BATCH
+                    && let Ok(next) = incoming.try_recv()
+                {
+                    batch.push(next);
+                }
+                let started = Instant::now();
+                match this.update_in(cx, |shell, window, cx| shell.dispatch(batch, window, cx)) {
+                    Ok(true) => {
+                        let painted = async {
+                            let _ = painted_rx.recv().await;
+                        };
+                        let timeout = cx.background_executor().timer(PAINT_TIMEOUT);
+                        futures_lite::future::or(painted, timeout).await;
+                        if let Some(rest) = OUTPUT_FRAME.checked_sub(started.elapsed()) {
+                            cx.background_executor().timer(rest).await;
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(_) => return,
+                }
+            }
+            let _ = this.update_in(cx, |shell, window, cx| {
+                shell.status = Status::Disconnected;
+                shell.connection = None;
+                shell.workspace = None;
+                shell.tabs.clear();
+                shell.loading_tabs.clear();
+                shell.early_tab_events.clear();
+                shell.reveal = None;
+                shell.tab_error = None;
+                shell.router.clear();
+                shell.panes.clear();
+                shell.attach_errors.clear();
+                shell.renaming = None;
+                shell.close_menus();
+                shell.run_setup = None;
+                shell.run_reveal = None;
+                shell.ports = Ports::default();
+                shell.plans = Plans::default();
+                shell.plan_error = None;
+                shell.broadcast = None;
+                shell.ask = None;
+                shell.task_dialog = None;
+                shell.undo_dialog = None;
+                shell.worktree_dialog = None;
+                shell.compare = None;
+                shell.turns_dialog = None;
+                shell.turns_return = None;
+                shell.git_discard = None;
+                shell.git_base = None;
+                shell.add_workspace = None;
+                shell.phone_open = false;
+                shell.phone = Phone::default();
+                shell.history = None;
+                shell.history_pane = None;
+                shell.doc_dialog = None;
+                shell.quick_open = None;
+                shell.restore_theme_pick(window, cx);
+                shell.palette = None;
+                shell.prompt_picker = None;
+                shell.palette_return = None;
+                shell.peek = None;
+                shell.peek_return = None;
+                shell.follow_up = None;
+                shell.docs.clear();
+                shell.files.clear();
+                shell.git.clear();
+                shell.git_summary = None;
+                // An open confirmation keeps the keyboard; it hands focus back when answered.
+                if !window.has_active_prompt() {
+                    window.focus(&shell.focus_handle, cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Re-reads workspaces and sessions. The first time, shows the workspace of the most
@@ -849,13 +863,10 @@ impl Shell {
             Status::Connecting => ("Connecting to the daemon…".into(), None),
             Status::Connected if self.sidebar.is_empty() => (
                 "No workspaces yet.".into(),
-                Some("Add a project folder from the sidebar to get started.".into()),
+                Some("Add a project folder or clone a repository to get started.".into()),
             ),
             Status::Connected => ("Opening the workspace…".into(), None),
-            Status::Disconnected => (
-                "The daemon connection closed. Restart Mkrew to reconnect.".into(),
-                None,
-            ),
+            Status::Disconnected => ("The daemon connection closed.".into(), None),
             Status::Failed(error) => (
                 "Cannot reach the daemon.".into(),
                 Some(error.clone().into()),
@@ -865,5 +876,33 @@ impl Shell {
                 Some(error.clone().into()),
             ),
         }
+    }
+
+    /// The one action under the status line: Add workspace when there is none, Reconnect /
+    /// Retry after a failure; `None` while connecting or opening.
+    pub(crate) fn status_action(
+        &self,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        let retry = |id: &'static str, label: &'static str| {
+            button(id, label, theme, true).on_click(cx.listener(|shell, _, window, cx| {
+                match shell.status {
+                    Status::ListFailed(_) => shell.refresh(window, cx),
+                    _ => shell.connect(window, cx),
+                }
+            }))
+        };
+        let action = match &self.status {
+            Status::Connected if self.sidebar.is_empty() => {
+                button("status-add-workspace", "Add workspace", theme, true)
+                    .child(kbd(self.keymap.label(Command::AddWorkspace), theme, true))
+                    .on_click(cx.listener(|shell, _, window, cx| shell.add_workspace(window, cx)))
+            }
+            Status::Disconnected => retry("status-reconnect", "Reconnect"),
+            Status::Failed(_) | Status::ListFailed(_) => retry("status-retry", "Retry"),
+            Status::Connecting | Status::Connected => return None,
+        };
+        Some(action.into_any_element())
     }
 }

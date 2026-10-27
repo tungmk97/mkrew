@@ -21,6 +21,19 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-26 UX quick wins (branch `feat/ux-quick-wins`)
+
+- [ ] **Inbox order:** with one finished agent and one asking (older), Ctrl+Shift+I and Ctrl+Shift+Space go to the asking one first; Ctrl+Alt+I steps backwards; the tray menu lists it first.
+- [ ] **Peek (dark + light):** Ctrl+Shift+Space on an asking agent → Alt+Y sends `y`, the peek moves to the next session that needs you (closes when none is left); the y / n tooltips show Alt+Y / Alt+N; Ctrl+O opens the pane; the hint line names the keys. A hover peek (no keyboard) stays put after a send. On a layout with AltGr, AltGr+Y still types.
+- [ ] **Palette (dark + light):** an asking session is the first row ("Go to session: …", `? needs input` on the right); other session rows show their state on the right.
+- [ ] **Still starting:** press Alt+Shift+A twice quickly → the tab bar says "Still starting an agent; try again once it shows." and the note goes when the pane appears.
+- [ ] **Board follow-up:** type in a running card's follow-up, Esc → the keyboard goes back, the draft stays on the card; Esc on an empty field removes it.
+- [ ] **Git commit (dark + light):** nothing staged, some changes, a message → the button reads "Stage all & commit" and works; Ctrl+Enter shows "Nothing staged. Ctrl+Enter again…", a second Ctrl+Enter stages everything and commits; typing in between withdraws the offer. Also in a task worktree and a child repo.
+- [ ] **Run keys:** Ctrl+F5 starts (or opens Run setup with no commands), Ctrl+Shift+F5 restarts, Ctrl+Alt+F5 stops; nothing happens with nothing running; the Run menu shows the three keys (dark + light). Keyboard settings list `run_start` / `run_restart` / `run_stop` / `previous_inbox`.
+- [ ] **First run (dark + light):** with no workspace, the main area shows "Add workspace" with Ctrl+Shift+K on the button; it opens the dialog.
+- [ ] **Reconnect / Retry:** in a sandbox (`MKREW_DATA_DIR`, `MKREW_CONFIG_DIR`, `MKREW_SOCKET` set to temp values), start a dev `mkrew.exe`, then stop that sandbox daemon (`mk daemon stop` with the same variables) → "The daemon connection closed." with Reconnect; Reconnect shows "Connecting…", starts the daemon again and brings the workspaces back. "Cannot reach the daemon." (e.g. `mkrew-daemon.exe` missing next to the dev build) shows Retry.
+- [ ] **Tooltips:** tab strip `+` names the agent / shell tab keys; split shows Alt+Shift+=; title bar `+ New` shows Alt+Shift+A / Alt+Shift+S.
+
 ### To verify — 2026-10-25 Theme picker and built-in themes (ADR 0078)
 
 - [ ] **New themes:** check the 10 new themes visually (Terminals, Git, Files, dialogs) via Ctrl+Alt+J; Mkrew Dark / Light must look unchanged (ADR 0078).

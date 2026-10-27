@@ -1,7 +1,7 @@
 //! The "needs you" set (SPEC §10, §11): every session that needs input, or finished (done, or
-//! an agent that went quiet after working, or one marked unread) and not yet viewed, newest
-//! first. It feeds the sidebar's `Needs you` chip, its bold rows, its footer and "next
-//! Inbox entry". Pure and tested headlessly.
+//! an agent that went quiet after working, or one marked unread) and not yet viewed; sessions
+//! asking for input first, then newest first. It feeds the sidebar's `Needs you` chip, its bold
+//! rows, its footer and "next Inbox entry". Pure and tested headlessly.
 
 use std::collections::HashMap;
 
@@ -116,8 +116,8 @@ pub fn can_mark_unread(session: &Session, viewed: &Viewed) -> bool {
         && !needs_you(session, viewed)
 }
 
-/// The Inbox, newest state change first. Sessions of unknown (e.g. archived) workspaces are
-/// left out.
+/// The Inbox: sessions that need input first (a blocked agent outranks a finished one), then
+/// newest state change first. Sessions of unknown (e.g. archived) workspaces are left out.
 pub fn entries(projects: &[Project], sessions: &[Session], viewed: &Viewed) -> Vec<Entry> {
     let mut entries: Vec<Entry> = sessions
         .iter()
@@ -136,30 +136,53 @@ pub fn entries(projects: &[Project], sessions: &[Session], viewed: &Viewed) -> V
             })
         })
         .collect();
-    entries.sort_by_key(|entry| std::cmp::Reverse((entry.state_changed_at, entry.session_id)));
+    entries.sort_by_key(|entry| order(entry.state, entry.state_changed_at, entry.session_id));
     entries
 }
 
+/// The Inbox sort key of a session in `state`, changed at `at`.
+fn order(state: SessionState, at: i64, id: Ulid) -> std::cmp::Reverse<(bool, i64, Ulid)> {
+    std::cmp::Reverse((state == SessionState::NeedsInput, at, id))
+}
+
+/// Where `focused` sits in the Inbox: `Ok(index)` when listed; a focused `done` session already
+/// left the Inbox once viewed, so `Err(index)` is where it was listed; `None` for any other.
+fn place(entries: &[Entry], focused: &Session) -> Option<Result<usize, usize>> {
+    if let Some(index) = entries.iter().position(|e| e.session_id == focused.id) {
+        return Some(Ok(index));
+    }
+    (focused.state == SessionState::Done).then(|| {
+        let was = order(focused.state, focused.state_changed_at, focused.id);
+        Err(entries.partition_point(|e| order(e.state, e.state_changed_at, e.session_id) < was))
+    })
+}
+
 /// The session "next Inbox entry" (§13) jumps to: the entry after `focused`, wrapping to the
-/// first. A focused `done` session already left the Inbox once viewed, so it counts from where
-/// it was listed; any other unlisted focus starts at the first (newest) entry. `None` if the
-/// Inbox is empty.
+/// first; an unlisted focus (not a viewed `done`) starts at the first entry. `None` if the Inbox
+/// is empty.
 pub fn next(entries: &[Entry], focused: Option<&Session>) -> Option<Ulid> {
-    let key = |at: i64, id: Ulid| std::cmp::Reverse((at, id));
-    let after = focused.map_or(0, |focused| {
-        let listed = entries.iter().position(|e| e.session_id == focused.id);
-        match listed {
-            Some(index) => index + 1,
-            None if focused.state == SessionState::Done => {
-                let was = key(focused.state_changed_at, focused.id);
-                entries.partition_point(|e| key(e.state_changed_at, e.session_id) < was)
-            }
-            None => 0,
-        }
-    });
+    let after = match focused.and_then(|focused| place(entries, focused)) {
+        Some(Ok(index)) => index + 1,
+        Some(Err(index)) => index,
+        None => 0,
+    };
     entries
         .get(after)
         .or_else(|| entries.first())
+        .map(|entry| entry.session_id)
+}
+
+/// The session "previous Inbox entry" jumps to: the entry before `focused`, wrapping to the
+/// last; an unlisted focus (not a viewed `done`) starts at the last entry. `None` if the Inbox
+/// is empty.
+pub fn previous(entries: &[Entry], focused: Option<&Session>) -> Option<Ulid> {
+    let before = match focused.and_then(|focused| place(entries, focused)) {
+        Some(Ok(index) | Err(index)) => index.checked_sub(1),
+        None => None,
+    };
+    before
+        .and_then(|index| entries.get(index))
+        .or_else(|| entries.last())
         .map(|entry| entry.session_id)
 }
 
@@ -252,11 +275,13 @@ mod tests {
     }
 
     #[test]
-    fn lists_needs_input_and_done_newest_first() {
+    fn lists_needs_input_first_then_finished_newest_first() {
         let (api, web) = (project("api"), project("web"));
         let asking = session(&api, SessionState::NeedsInput, 10);
         let finished = session(&web, SessionState::Done, 20);
+        let older = session(&web, SessionState::Done, 15);
         let sessions = vec![
+            older.clone(),
             asking.clone(),
             session(&api, SessionState::Working, 30),
             session(&api, SessionState::Idle, 40),
@@ -264,13 +289,17 @@ mod tests {
             finished.clone(),
         ];
         let entries = entries(&[api, web], &sessions, &Viewed::default());
-        assert_eq!(ids(&entries), vec![finished.id, asking.id]);
-        let first = &entries[0];
+        assert_eq!(ids(&entries), vec![asking.id, finished.id, older.id]);
+        let second = &entries[1];
         assert_eq!(
-            (first.workspace.as_str(), first.agent.as_str(), first.state),
+            (
+                second.workspace.as_str(),
+                second.agent.as_str(),
+                second.state
+            ),
             ("web", "claude", SessionState::Done)
         );
-        assert_eq!(first.title.as_deref(), Some("fix login"));
+        assert_eq!(second.title.as_deref(), Some("fix login"));
     }
 
     #[test]
@@ -358,27 +387,36 @@ mod tests {
         assert_eq!(next(&entries, Some(oldest)), Some(newest.id));
         assert_eq!(next(&entries[..1], Some(newest)), Some(newest.id));
         assert_eq!(next(&[], Some(newest)), None);
+
+        assert_eq!(previous(&entries, None), Some(oldest.id));
+        assert_eq!(previous(&entries, Some(&working)), Some(oldest.id));
+        assert_eq!(previous(&entries, Some(oldest)), Some(middle.id));
+        assert_eq!(previous(&entries, Some(newest)), Some(oldest.id));
+        assert_eq!(previous(&[], Some(newest)), None);
     }
 
     #[test]
-    fn next_entry_after_a_viewed_done_keeps_its_place() {
+    fn stepping_from_a_viewed_done_keeps_its_place_below_the_asking_ones() {
         let api = project("api");
-        let newest = session(&api, SessionState::NeedsInput, 3);
+        let asking = session(&api, SessionState::NeedsInput, 0);
+        let newest = session(&api, SessionState::Done, 3);
         let done = session(&api, SessionState::Done, 2);
-        let oldest = session(&api, SessionState::NeedsInput, 1);
+        let oldest = session(&api, SessionState::Done, 1);
         let mut viewed = Viewed::default();
         viewed.view(&done);
-        let sessions = [newest.clone(), done.clone(), oldest.clone()];
+        let sessions = [newest.clone(), done.clone(), oldest.clone(), asking.clone()];
         let entries = entries(&[api], &sessions, &viewed);
-        assert_eq!(ids(&entries), vec![newest.id, oldest.id]);
+        assert_eq!(ids(&entries), vec![asking.id, newest.id, oldest.id]);
 
         assert_eq!(next(&entries, Some(&done)), Some(oldest.id));
+        assert_eq!(previous(&entries, Some(&done)), Some(newest.id));
         // The oldest done wraps around.
         let older = Session {
             state_changed_at: 0,
             ..done.clone()
         };
-        assert_eq!(next(&entries, Some(&older)), Some(newest.id));
+        assert_eq!(next(&entries, Some(&older)), Some(asking.id));
+        assert_eq!(previous(&entries, Some(&older)), Some(oldest.id));
     }
 
     #[test]

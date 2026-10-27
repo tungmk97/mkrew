@@ -33,7 +33,23 @@ pub struct CommitBox {
     pub error: Option<String>,
     /// The `ai.generate` writing this draft (SPEC §12B ✦), by id; typing waits for it.
     pub generating: Option<Ulid>,
+    /// Ctrl+Enter found nothing staged but changes to stage: the next commit stages them all
+    /// first. Any edit withdraws the offer.
+    pub stage_all_offered: bool,
 }
+
+/// What a commit sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Begin {
+    /// `git.commit` of the staged changes.
+    Commit(GitCommitParams),
+    /// `git.stage` of every changed file, then `git.commit`.
+    StageAllThenCommit(GitCommitParams),
+}
+
+/// The commit box's note while it offers to stage everything.
+pub const STAGE_ALL_OFFER: &str =
+    "Nothing staged. Ctrl+Enter again stages every change and commits.";
 
 impl CommitBox {
     /// Applies a key; Enter is a new line. Paste is the caller's (see [`CommitBox::insert`]).
@@ -45,6 +61,7 @@ impl CommitBox {
             key => {
                 self.text.key(key);
                 self.error = None;
+                self.stage_all_offered = false;
                 Outcome::Edited
             }
         }
@@ -57,34 +74,45 @@ impl CommitBox {
         }
         self.text.insert(text);
         self.error = None;
+        self.stage_all_offered = false;
     }
 
-    /// The `git.commit` of the draft (blank lines and spaces around it trimmed), and marks it
-    /// in flight; `None`
-    /// while one is in flight or when the draft cannot be committed ([`Self::error`] says why).
-    pub fn begin(&mut self, project_id: Ulid, staged: usize) -> Option<GitCommitParams> {
+    /// What committing the draft (blank lines and spaces around it trimmed) sends, and marks it
+    /// in flight; `None` while one is in flight or when the draft cannot be committed
+    /// ([`Self::error`] says why). With nothing `staged` but `unstaged` files, the first try
+    /// offers to stage them all ([`STAGE_ALL_OFFER`]) and the next one does.
+    pub fn begin(&mut self, project_id: Ulid, staged: usize, unstaged: usize) -> Option<Begin> {
         if self.busy || self.generating.is_some() {
             return None;
         }
         let message = self.text.text().trim();
-        let invalid = if staged == 0 {
-            Some("Stage changes to commit them.")
-        } else if message.is_empty() {
+        let invalid = if message.is_empty() {
             Some("Write a commit message.")
+        } else if staged == 0 && unstaged == 0 {
+            Some("Stage changes to commit them.")
+        } else if staged == 0 && !self.stage_all_offered {
+            Some(STAGE_ALL_OFFER)
         } else {
             None
         };
         if let Some(invalid) = invalid {
+            self.stage_all_offered = invalid == STAGE_ALL_OFFER;
             self.error = Some(invalid.to_owned());
             return None;
         }
-        self.busy = true;
-        self.error = None;
-        Some(GitCommitParams {
+        let params = GitCommitParams {
             project_id,
             worktree_task_id: None,
             repo: None,
             message: message.to_owned(),
+        };
+        self.busy = true;
+        self.error = None;
+        Some(if staged == 0 {
+            self.stage_all_offered = false;
+            Begin::StageAllThenCommit(params)
+        } else {
+            Begin::Commit(params)
         })
     }
 
@@ -224,7 +252,7 @@ mod tests {
             "typing is ignored while the agent writes"
         );
         assert!(
-            commit.begin(Ulid::new(), 1).is_none(),
+            commit.begin(Ulid::new(), 1, 0).is_none(),
             "no commit while the agent writes"
         );
         assert!(
@@ -275,16 +303,16 @@ mod tests {
         assert_eq!(draft.key(DialogKey::Cancel), Outcome::Leave);
 
         assert_eq!(
-            draft.begin(project_id, 1),
-            Some(GitCommitParams {
+            draft.begin(project_id, 1, 3),
+            Some(Begin::Commit(GitCommitParams {
                 project_id,
                 worktree_task_id: None,
                 repo: None,
                 message: "Fix login\n\nBody\nmore".into(),
-            })
+            }))
         );
         assert!(draft.busy);
-        assert_eq!(draft.begin(project_id, 1), None, "one commit at a time");
+        assert_eq!(draft.begin(project_id, 1, 0), None, "one commit at a time");
         draft.insert("x");
         draft.key(DialogKey::Backspace);
         assert_eq!(
@@ -302,11 +330,11 @@ mod tests {
     fn nothing_staged_or_no_message_is_explained_instead_of_sent() {
         let mut draft = CommitBox::default();
         draft.insert("  \n ");
-        assert_eq!(draft.begin(Ulid::new(), 2), None);
+        assert_eq!(draft.begin(Ulid::new(), 2, 0), None);
         assert_eq!(draft.error.as_deref(), Some("Write a commit message."));
         draft.insert("Ship it");
         assert_eq!(draft.error, None, "typing clears the hint");
-        assert_eq!(draft.begin(Ulid::new(), 0), None);
+        assert_eq!(draft.begin(Ulid::new(), 0, 0), None);
         assert_eq!(
             draft.error.as_deref(),
             Some("Stage changes to commit them.")
@@ -317,10 +345,42 @@ mod tests {
     }
 
     #[test]
+    fn nothing_staged_offers_to_stage_everything_then_does_on_the_next_try() {
+        let project_id = Ulid::new();
+        let mut draft = CommitBox::default();
+        draft.insert("Ship it");
+        assert_eq!(draft.begin(project_id, 0, 3), None);
+        assert_eq!(draft.error.as_deref(), Some(STAGE_ALL_OFFER));
+        assert!(!draft.busy);
+        // Editing withdraws the offer: the next try asks again.
+        draft.insert("!");
+        assert_eq!(draft.begin(project_id, 0, 3), None);
+        assert!(draft.stage_all_offered);
+        let params = GitCommitParams {
+            project_id,
+            worktree_task_id: None,
+            repo: None,
+            message: "Ship it!".into(),
+        };
+        assert_eq!(
+            draft.begin(project_id, 0, 3),
+            Some(Begin::StageAllThenCommit(params))
+        );
+        assert!(draft.busy && !draft.stage_all_offered && draft.error.is_none());
+        draft.committed(Ok(()));
+        // Staged changes commit at once, offer or not.
+        draft.insert("Next");
+        assert!(matches!(
+            draft.begin(project_id, 2, 3),
+            Some(Begin::Commit(_))
+        ));
+    }
+
+    #[test]
     fn a_failed_commit_keeps_the_draft_and_says_why() {
         let mut draft = CommitBox::default();
         draft.insert("Ship it");
-        assert!(draft.begin(Ulid::new(), 1).is_some());
+        assert!(draft.begin(Ulid::new(), 1, 0).is_some());
         draft.committed(Err("pre-commit hook failed".into()));
         assert!(!draft.busy);
         assert_eq!(draft.text.text(), "Ship it");
@@ -363,7 +423,9 @@ mod tests {
         assert_eq!(draft.text.text(), "Ship it", "Esc keeps the text");
         assert_eq!(draft.key(DialogKey::Save), Outcome::Commit);
         assert_eq!(
-            draft.begin(Ulid::new(), 1).map(|p| p.message),
+            draft.begin(Ulid::new(), 1, 0).map(|begin| match begin {
+                Begin::Commit(params) | Begin::StageAllThenCommit(params) => params.message,
+            }),
             Some("Ship it".to_owned()),
             "Ctrl+Enter commits the whole selected text"
         );

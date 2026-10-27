@@ -366,6 +366,10 @@ struct Shell {
     attach_errors: HashMap<Ulid, String>,
     /// Given to panes; signalled after each terminal paint.
     painted: async_channel::Sender<()>,
+    /// The frame loop's end of `painted` (each connection's loop reads it).
+    painted_rx: async_channel::Receiver<()>,
+    /// Where the daemon is, for connecting again after a failure or a lost connection.
+    paths: Paths,
     /// Focused while no pane is, so window-level actions (Add workspace) still dispatch.
     focus_handle: FocusHandle,
     /// The tab or pane title being edited inline.

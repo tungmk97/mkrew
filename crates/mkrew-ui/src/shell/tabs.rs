@@ -97,7 +97,7 @@ impl Shell {
         let focused = (self.focused_session())
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let kind = lifecycle::split_kind(focused);
-        if self.starting_pane.is_some() || self.ask_for_default(project_id, kind, window, cx) {
+        if self.still_starting(cx) || self.ask_for_default(project_id, kind, window, cx) {
             return;
         }
         self.starting_pane = Some(kind);
@@ -120,6 +120,9 @@ impl Shell {
             }
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.starting_pane = None;
+                shell
+                    .tab_error
+                    .take_if(|error| error.starts_with(lifecycle::STILL_STARTING));
                 let write = (shell.tabs.get_mut(&project_id))
                     .and_then(|tabs| tabs.arrange(tab_id, preset, &started));
                 match write {

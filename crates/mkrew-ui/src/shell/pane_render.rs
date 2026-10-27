@@ -192,7 +192,15 @@ impl Shell {
             }))
             .child(
                 icon_button("new-tab", Icon::Plus, theme)
-                    .tooltip(tooltip(theme, "New tab", ""))
+                    .tooltip(tooltip(
+                        theme,
+                        &format!(
+                            "New empty tab ({} starts an agent tab, {} a shell tab)",
+                            self.keymap.label(Command::NewAgentTab),
+                            self.keymap.label(Command::NewShellTab)
+                        ),
+                        "",
+                    ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         shell.create_tab(project_id, None, window, cx);
                     })),
@@ -250,7 +258,11 @@ impl Shell {
             })
             .child(
                 icon_button("tab-split", Icon::Columns2, theme)
-                    .tooltip(tooltip(theme, "Split or pick a layout", ""))
+                    .tooltip(tooltip(
+                        theme,
+                        "Split or pick a layout",
+                        self.keymap.label(Command::SplitRight),
+                    ))
                     .on_click(cx.listener(|shell, event: &gpui::ClickEvent, _, cx| {
                         shell.open_layout_menu(event.position(), cx);
                     })),

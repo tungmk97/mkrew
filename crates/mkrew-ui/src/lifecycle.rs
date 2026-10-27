@@ -128,6 +128,9 @@ pub fn kind_noun(kind: SessionKind) -> &'static str {
     }
 }
 
+/// Start of the tab bar note shown while a pane is still starting ("Still starting an agent…").
+pub const STILL_STARTING: &str = "Still starting";
+
 /// What closing the pane of a session does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseAction {

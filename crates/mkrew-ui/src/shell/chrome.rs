@@ -13,6 +13,7 @@ impl Shell {
         let Some(project_id) = self.workspace.filter(|_| self.connection.is_some()) else {
             let (sentence, detail) = self.status_line();
             return message(theme, Some("Mkrew"), sentence, detail)
+                .children(self.status_action(theme, cx))
                 .flex_1()
                 .h_full()
                 .into_any_element();
@@ -52,7 +53,12 @@ impl Shell {
             }
             (View::Terminals, None) => {
                 let (sentence, detail) = self.status_line();
-                main.child(message(theme, None, sentence, detail).flex_1())
+                let action = self.status_action(theme, cx);
+                main.child(
+                    message(theme, None, sentence, detail)
+                        .children(action)
+                        .flex_1(),
+                )
             }
         }
         .into_any_element()
@@ -460,7 +466,15 @@ impl Shell {
             true,
         )
         .flex_none()
-        .tooltip(tooltip(theme, "New agent or shell pane", ""))
+        .tooltip(tooltip(
+            theme,
+            "New agent or shell pane",
+            format!(
+                "{} / {}",
+                self.keymap.label(Command::SplitAgent),
+                self.keymap.label(Command::SplitShell)
+            ),
+        ))
         // An open menu already closed on this mouse down (outside it): the click reopens it.
         .on_click(cx.listener(|shell, _, _, cx| {
             shell.new_menu = true;

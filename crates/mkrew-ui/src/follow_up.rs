@@ -13,8 +13,8 @@ use crate::text_box::{self, TextBox};
 pub enum Outcome {
     /// Keep it open (the draft may have changed).
     Edited,
-    /// Esc: drop the draft.
-    Cancel,
+    /// Esc: leave the field; a typed draft stays on its card (like the composer).
+    Leave,
     /// Ctrl+Enter: send the draft.
     Send,
 }
@@ -42,10 +42,10 @@ impl FollowUp {
         }
     }
 
-    /// Enter types a new line, Ctrl+Enter sends, Esc cancels; edits are ignored while sending.
+    /// Enter types a new line, Ctrl+Enter sends, Esc leaves; edits are ignored while sending.
     pub fn key(&mut self, key: DialogKey) -> Outcome {
         match key {
-            DialogKey::Cancel => Outcome::Cancel,
+            DialogKey::Cancel => Outcome::Leave,
             DialogKey::Save => Outcome::Send,
             _ if self.busy => Outcome::Edited,
             key => {
@@ -105,7 +105,7 @@ mod tests {
                 submit: true,
             })
         );
-        assert_eq!(draft.key(DialogKey::Cancel), Outcome::Cancel);
+        assert_eq!(draft.key(DialogKey::Cancel), Outcome::Leave);
     }
 
     #[test]

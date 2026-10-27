@@ -63,6 +63,8 @@ pub enum Command {
     OpenInZed,
     /// Jump to the next Inbox entry (after the focused session, wrapping).
     NextInbox,
+    /// Jump to the previous Inbox entry (before the focused session, wrapping).
+    PreviousInbox,
     /// Peek the first Inbox entry (↑ / ↓ cycle, Esc closes; §20A.1).
     Peek,
     /// Open the prompt composer of the focused agent pane (§20B.1).
@@ -116,6 +118,12 @@ pub enum Command {
     NewTask,
     /// Board only: run the selected Todo card.
     RunTask,
+    /// Start the workspace's run commands (opens Run setup when none is saved yet).
+    RunStart,
+    /// Restart the workspace's live run sessions.
+    RunRestart,
+    /// Stop the workspace's live run sessions.
+    RunStop,
     /// Open the command palette (every command, plus "Go to" workspace / session / task).
     CommandPalette,
     /// Open the Settings dialog (ADR 0073).
@@ -215,6 +223,7 @@ impl Command {
             Command::Find,
             Command::OpenInZed,
             Command::NextInbox,
+            Command::PreviousInbox,
             Command::Peek,
             Command::OpenComposer,
             Command::SendSelection,
@@ -242,6 +251,9 @@ impl Command {
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
+            Command::RunStart,
+            Command::RunRestart,
+            Command::RunStop,
             Command::CommandPalette,
             Command::OpenSettings,
             Command::ToggleTheme,
@@ -294,6 +306,7 @@ impl Command {
             Command::Find => "find".into(),
             Command::OpenInZed => "open_in_zed".into(),
             Command::NextInbox => "next_inbox".into(),
+            Command::PreviousInbox => "previous_inbox".into(),
             Command::Peek => "peek".into(),
             Command::OpenComposer => "open_composer".into(),
             Command::SendSelection => "send_selection".into(),
@@ -321,6 +334,9 @@ impl Command {
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
+            Command::RunStart => "run_start".into(),
+            Command::RunRestart => "run_restart".into(),
+            Command::RunStop => "run_stop".into(),
             Command::CommandPalette => "command_palette".into(),
             Command::OpenSettings => "open_settings".into(),
             Command::ToggleTheme => "toggle_theme".into(),
@@ -385,6 +401,7 @@ impl Command {
             Command::Find => "ctrl-shift-f".into(),
             Command::OpenInZed => "ctrl-shift-z".into(),
             Command::NextInbox => "ctrl-shift-i".into(),
+            Command::PreviousInbox => "ctrl-alt-i".into(),
             Command::Peek => "ctrl-shift-space".into(),
             Command::OpenComposer => "ctrl-shift-enter".into(),
             Command::SendSelection => "ctrl-shift-l".into(),
@@ -412,6 +429,10 @@ impl Command {
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
+            // Not F5 / Shift+F5 alone: terminal programs use those.
+            Command::RunStart => "ctrl-f5".into(),
+            Command::RunRestart => "ctrl-shift-f5".into(),
+            Command::RunStop => "ctrl-alt-f5".into(),
             Command::CommandPalette => "ctrl-shift-p".into(),
             Command::OpenSettings => "ctrl-,".into(),
             Command::ToggleTheme => "ctrl-shift-j".into(),

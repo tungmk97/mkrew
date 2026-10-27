@@ -680,8 +680,10 @@ impl Shell {
                 .is_some_and(GitView::commit_box_shown)
     }
 
-    /// `git.commit` of the staged changes with the drafted message; then the view reads its
-    /// status again either way (a hook may have changed files; a failure stays under the box).
+    /// `git.commit` of the staged changes with the drafted message (after one `git.stage` of
+    /// every change when the box offered "stage all" and the user confirmed); then the view
+    /// reads its status again either way (a hook may have changed files; a failure stays under
+    /// the box).
     pub(crate) fn commit_git(
         &mut self,
         project_id: Ulid,
@@ -696,19 +698,35 @@ impl Shell {
             git_view::Status::Loaded(status) => status.staged.len(),
             git_view::Status::Loading | git_view::Status::Failed(_) => 0,
         };
+        let stage_all = view.stage_all();
+        let unstaged = stage_all.as_ref().map_or(0, |all| all.params.paths.len());
         let at = view.at();
-        let params = view.commit.begin(project_id, staged);
+        let begun = view.commit.begin(project_id, staged, unstaged);
         cx.notify();
-        let Some(mut params) = params else {
-            return;
+        let (mut params, stage_first) = match begun {
+            Some(git_actions::Begin::Commit(params)) => (params, None),
+            Some(git_actions::Begin::StageAllThenCommit(params)) => (params, stage_all),
+            None => return,
         };
         (params.worktree_task_id, params.repo) = at.clone();
-        let committed = connection.call::<GitCommitResult>(Request::GitCommit(params));
         cx.spawn_in(window, async move |this, cx| {
-            let result = committed
-                .await
-                .map(|_| ())
-                .map_err(|error| format!("{error:#}"));
+            let staged = match stage_first {
+                Some(change) => match connection.request(change.request()).await {
+                    Ok(Outcome::Result(_)) => Ok(()),
+                    Ok(Outcome::Error(body)) => Err(body.message),
+                    Err(error) => Err(format!("{error:#}")),
+                }
+                .map_err(|error| format!("cannot stage the changes: {error}")),
+                None => Ok(()),
+            };
+            let result = match staged {
+                Ok(()) => connection
+                    .call::<GitCommitResult>(Request::GitCommit(params))
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| format!("{error:#}")),
+                Err(error) => Err(error),
+            };
             let _ = this.update_in(cx, |shell, window, cx| {
                 if let Err(error) = &result {
                     tracing::warn!(%project_id, "git.commit failed: {error}");

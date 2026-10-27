@@ -1338,6 +1338,19 @@ impl GitView {
         })
     }
 
+    /// "Stage all & commit": one `git.stage` of every Unstaged and Untracked file; `None` when
+    /// there is nothing to stage.
+    pub fn stage_all(&self) -> Option<StageRequest> {
+        let mut groups = [Group::Unstaged, Group::Untracked]
+            .into_iter()
+            .filter_map(|group| self.group_change(group));
+        let mut request = groups.next()?;
+        for more in groups {
+            request.params.paths.extend(more.params.paths);
+        }
+        Some(request)
+    }
+
     /// The next / previous file; in the History, past the expanded commit's first / last file
     /// the previous / next commit (its first file once listed).
     fn step_file(&mut self, by: isize) -> Requests {
