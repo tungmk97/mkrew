@@ -121,10 +121,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         let Some(key) = base_dialog::key(&event.keystroke) else {
             return;
         };
+        // A control has the keyboard: the ref takes nothing but Esc / Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, base_dialog::Key::Close | base_dialog::Key::Save)
+        {
+            return;
+        }
         let paste = (key == base_dialog::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -386,6 +395,7 @@ impl Shell {
     pub(crate) fn render_git_base(
         &self,
         dialog: &BaseDialog,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -415,8 +425,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::git_base_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::git_base_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::git_base_key_down, cx))
             .child(
@@ -441,7 +455,7 @@ impl Shell {
                 "git-base-ref",
                 &dialog.text,
                 "A branch or ref, e.g. develop or origin/main",
-                true,
+                self.dialog_focus.is_focused(window),
                 theme,
                 cx,
                 |shell, caret| {
@@ -460,6 +474,7 @@ impl Shell {
                     .pt(px(space::S))
                     .child(
                         button("git-base-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Keep the current base", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_git_base(window, cx);
@@ -470,6 +485,7 @@ impl Shell {
                         disabled_button("git-base-auto", "Auto-detect", theme, false)
                     } else {
                         button("git-base-auto", "Auto-detect", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(
                                 theme,
                                 "Use origin/HEAD, else main, else master",
@@ -483,6 +499,7 @@ impl Shell {
                         disabled_button("git-base-use", use_label, theme, true)
                     } else {
                         button("git-base-use", use_label, theme, true)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Compare with the typed ref", "Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.set_git_base(false, window, cx);

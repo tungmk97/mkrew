@@ -30,17 +30,27 @@ impl Shell {
         cx.notify();
     }
 
-    /// Typing edits the URL, Enter clones, Esc closes (a running clone goes on).
+    /// Typing edits the URL, Enter clones, Tab reaches Open a folder, Browse and the buttons,
+    /// Esc closes (a running clone goes on).
     pub(crate) fn add_workspace_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.dialog_nav(event, true, window, cx, |_, _| {}) {
+            return;
+        }
         cx.stop_propagation();
         let Some(key) = base_dialog::key(&event.keystroke) else {
             return;
         };
+        // A control has the keyboard: the URL takes nothing but Esc / Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, base_dialog::Key::Close | base_dialog::Key::Save)
+        {
+            return;
+        }
         let paste = (key == base_dialog::Key::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -790,6 +800,7 @@ impl Shell {
     pub(crate) fn render_add_workspace(
         &self,
         dialog: &CloneDialog,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -819,8 +830,12 @@ impl Shell {
             .bg(rgb(theme.surface))
             .shadow_md()
             .font_family(theme.ui_font_family.clone())
-            .track_focus(&self.dialog_focus)
-            .on_key_down(cx.listener(Self::add_workspace_key_down))
+            .dialog_root(
+                &self.dialog_focus,
+                true,
+                cx.listener(Self::dialog_guard),
+                cx.listener(Self::add_workspace_key_down),
+            )
             .relative()
             .child(self.typing(&self.dialog_focus, Self::add_workspace_key_down, cx))
             .child(
@@ -841,6 +856,7 @@ impl Shell {
                             icon_text(Icon::FolderPlus, "Open a folder…", theme.text_dim),
                             theme,
                         )
+                        .focusable_bordered(theme)
                         .tooltip(tooltip(theme, "Add a folder on this computer", ""))
                         .on_click(cx.listener(|shell, _, window, cx| {
                             shell.pick_workspace_folder(false, window, cx);
@@ -857,7 +873,7 @@ impl Shell {
                 "add-workspace-url",
                 &dialog.url,
                 "https://github.com/owner/repo.git or git@host:owner/repo.git",
-                true,
+                self.dialog_focus.is_focused(window),
                 theme,
                 cx,
                 |shell, caret| {
@@ -875,6 +891,7 @@ impl Shell {
                     .child(meta_line(theme, target.into()).min_w_0().truncate())
                     .child(
                         quiet_button("add-workspace-browse", "Browse…", theme, theme.hover)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Choose where the clone goes", ""))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.pick_workspace_folder(true, window, cx);
@@ -891,6 +908,7 @@ impl Shell {
                     .pt(px(space::S))
                     .child(
                         button("add-workspace-cancel", "Cancel", theme, false)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Close (a running clone goes on)", "Esc"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.close_add_workspace(window, cx);
@@ -900,6 +918,7 @@ impl Shell {
                         disabled_button("add-workspace-clone", "Cloning…", theme, true)
                     } else {
                         button("add-workspace-clone", "Clone", theme, true)
+                            .focus_stop(theme)
                             .tooltip(tooltip(theme, "Clone and add as a workspace", "Enter"))
                             .on_click(cx.listener(|shell, _, window, cx| {
                                 shell.clone_workspace(window, cx);

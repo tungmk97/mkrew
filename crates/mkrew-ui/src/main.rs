@@ -869,12 +869,12 @@ impl Render for Shell {
                     .children(
                         self.git_base
                             .as_ref()
-                            .map(|dialog| self.render_git_base(dialog, &theme, cx)),
+                            .map(|dialog| self.render_git_base(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.add_workspace
                             .as_ref()
-                            .map(|dialog| self.render_add_workspace(dialog, &theme, cx)),
+                            .map(|dialog| self.render_add_workspace(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.phone_open
