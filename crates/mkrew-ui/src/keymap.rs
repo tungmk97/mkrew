@@ -85,6 +85,10 @@ pub enum Command {
     AddComment,
     /// Docs only: send the shown file's open (or selected) comments to an agent session.
     SendComments,
+    /// Docs / Git: pick the first line (block) in view, or grow the pick one line (block) down.
+    PickDown,
+    /// Docs / Git: the same upwards; shrinks a pick that was grown down.
+    PickUp,
     /// Show the active workspace's file tree and viewer.
     ShowFiles,
     /// Files only: show or hide git-ignored files in the tree.
@@ -256,6 +260,8 @@ impl Command {
             Command::ToggleDocSource,
             Command::AddComment,
             Command::SendComments,
+            Command::PickDown,
+            Command::PickUp,
             Command::ShowFiles,
             Command::ToggleIgnored,
             Command::SaveFile,
@@ -347,6 +353,8 @@ impl Command {
             Command::ToggleDocSource => "toggle_doc_source".into(),
             Command::AddComment => "add_comment".into(),
             Command::SendComments => "send_comments".into(),
+            Command::PickDown => "pick_down".into(),
+            Command::PickUp => "pick_up".into(),
             Command::ShowFiles => "show_files".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
             Command::SaveFile => "save_file".into(),
@@ -450,6 +458,8 @@ impl Command {
             Command::ToggleDocSource => "ctrl-shift-e".into(),
             Command::AddComment => "ctrl-alt-m".into(),
             Command::SendComments => "ctrl-shift-s".into(),
+            Command::PickDown => "shift-down".into(),
+            Command::PickUp => "shift-up".into(),
             Command::ShowFiles => "ctrl-shift-3".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::SaveFile => "ctrl-s".into(),
@@ -512,7 +522,9 @@ impl Command {
             Command::Find => Some(FIND_CONTEXT),
             Command::RunTask | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
-            Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
+            Command::AddComment | Command::SendComments | Command::PickDown | Command::PickUp => {
+                Some(COMMENTS_CONTEXT)
+            }
             Command::ToggleIgnored
             | Command::SaveFile
             | Command::FindInFile

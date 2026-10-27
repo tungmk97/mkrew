@@ -475,7 +475,10 @@ impl Shell {
                     "{} selected. Comment on them ({keys}).",
                     comments::lines_label(picked.start, picked.end)
                 ),
-                None => format!("Select lines, then comment ({keys})."),
+                None => format!(
+                    "Select lines (click or {}), then comment ({keys}).",
+                    self.keymap.label(Command::PickDown)
+                ),
             };
             return margin.child(meta_line(theme, hint.into()));
         }

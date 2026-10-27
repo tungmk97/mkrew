@@ -28,6 +28,7 @@ pub(crate) mod git_menus;
 mod git_render;
 pub(crate) mod git_rows;
 mod git_viewed;
+mod picking;
 mod send_dialog;
 
 mod ask_dialog;

@@ -620,6 +620,8 @@ struct Shell {
     /// The rendered Markdown page of Docs and of the Files view (virtual lists, kept across
     /// frames).
     doc_page: preview::Page,
+    /// Scroll of the Docs source view: where Shift+↓ starts, and what keeps a pick in view.
+    doc_source_scroll: UniformListScrollHandle,
     file_page: preview::Page,
     /// The Git view of every workspace it was shown for.
     git: HashMap<Ulid, GitView>,
@@ -652,6 +654,8 @@ struct Shell {
     git_diff_layout: Cell<Option<(usize, DiffMode, usize)>>,
     git_diff_looks: Cell<Option<(bool, Option<Selection>)>>,
     git_diff_scroll_to: Cell<Option<usize>>,
+    /// A diff row to scroll into view once the list is laid out (a keyboard pick moved).
+    git_diff_reveal: Cell<Option<usize>>,
     /// How the Git diff viewer lays out a file (`[ui] diff_mode`, §12B); global, every repo.
     diff_mode: DiffMode,
     /// Long diff lines wrap (`[ui] diff_wrap`, on by default); global, every repo.
@@ -799,6 +803,7 @@ impl Render for Shell {
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
+                shell.docs_key_down(event, window, cx);
                 let filter_shown = !shell.sidebar_layout.hidden()
                     && !shell.sidebar_layout.compact()
                     && !shell.sidebar.is_empty();

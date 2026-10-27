@@ -570,6 +570,9 @@ impl Shell {
                 offset_in_item: px(0.),
             });
         }
+        if let Some(row) = self.git_diff_reveal.take() {
+            self.git_diff_list.scroll_to_reveal_item(row);
+        }
         let shown = Rc::clone(shown);
         let current = view.hunk;
         // Hunk headers get a stage / unstage action when the file can go by hunk.

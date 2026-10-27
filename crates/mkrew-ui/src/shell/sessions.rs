@@ -505,6 +505,11 @@ impl Shell {
                     self.open_send_dialog(project_id, context, window, cx);
                 }
             }
+            Command::PickDown | Command::PickUp => {
+                // Only bound while Docs are shown or the Git list has focus; a focused text
+                // field, comment draft or dialog never gets here (the guards above).
+                self.pick_step(*command == Command::PickDown, cx);
+            }
             Command::NewTask => {
                 if let Some(project_id) = self.workspace {
                     // The new card shows up on the board.

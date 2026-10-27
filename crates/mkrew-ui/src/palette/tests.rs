@@ -198,6 +198,7 @@ fn availability_follows_the_view() {
         Command::GitStage,
         Command::ToggleDocSource,
         Command::AddComment,
+        Command::PickDown,
         Command::ToggleIgnored,
         Command::SaveFile,
         Command::FindInFile,
@@ -227,6 +228,7 @@ fn availability_follows_the_view() {
     let git = commands(&context(View::Git));
     assert!(git.contains(&Command::GitStage));
     assert!(git.contains(&Command::AddComment));
+    assert!(git.contains(&Command::PickUp));
     assert!(git.contains(&Command::SendSelection));
     assert!(
         !git.contains(&Command::ClosePane),
@@ -261,6 +263,7 @@ fn availability_follows_the_view() {
     let docs = commands(&context(View::Docs));
     assert!(docs.contains(&Command::ToggleDocSource));
     assert!(docs.contains(&Command::SendComments));
+    assert!(docs.contains(&Command::PickDown));
     assert!(commands(&context(View::Files)).contains(&Command::ToggleIgnored));
     assert!(commands(&context(View::Files)).contains(&Command::SaveFile));
     assert!(commands(&context(View::Files)).contains(&Command::ReplaceInFile));

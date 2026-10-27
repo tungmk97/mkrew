@@ -1628,6 +1628,22 @@ fn a_pick_past_the_end_after_a_reload_starts_over() {
 }
 
 #[test]
+fn a_last_hunk_that_only_removes_lines_picks_the_last_line() {
+    let mut view = loaded();
+    assert!(view.begin_diff());
+    let shown = laid_out(vec![
+        hunk_of(vec![ctx(1, 1), add(2)], hunk(1, 1, 1, 2)),
+        hunk_of(vec![del(8)], hunk(8, 1, 8, 0)),
+    ]);
+    view.diff_loaded(&target(Group::Staged, "a.rs"), Ok(shown));
+    view.key(Key::NextHunk);
+    view.key(Key::NextHunk);
+    // The start of hunk 2 is past the last unit: the last line is picked, no panic.
+    assert!(view.step_pick(true));
+    assert_eq!(picked(&view), Some((2, 2)));
+}
+
+#[test]
 fn no_pick_in_the_history_or_a_folded_diff() {
     let mut view = loaded();
     assert!(!view.step_pick(true), "diff still loading");
