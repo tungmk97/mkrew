@@ -776,7 +776,7 @@ The session panel (below) is a third column right of Terminals while open.
   empty box Enter gives the keyboard back to the pane).
   Alt+0 (§13) focuses the box with the active row highlighted: with an empty box ↑/↓ walk every visible row, ←/→ fold / unfold the highlighted row's workspace and Enter opens it; with text ←/→ move the caret.
   Tab / Shift+Tab in the box step the All / Working / Needs you chips.
-  Beside it the
+  Next to the filter box sit the
   remove-idle-agents button (only while there are some), collapse / expand all and `+` (add
   workspace); under it a segmented control `All N`, `Working N` and `Needs you N` (N amber while
   above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
@@ -1378,7 +1378,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
-| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan / improve prompt, run start / restart / stop of one command, Git change base and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History, install update | command palette only (the menu items also by Shift+F10) |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
 
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
