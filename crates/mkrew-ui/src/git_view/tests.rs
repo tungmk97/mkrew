@@ -1573,3 +1573,85 @@ fn shift_s_stages_the_selected_group_and_shift_u_unstages_all() {
     }));
     assert_eq!(all(&view, Stage::Stage), None);
 }
+
+/// Two hunks: new lines 1-3 (the second added over a removed one) and 10-11.
+fn two_hunks() -> Shown {
+    laid_out(vec![
+        hunk_of(vec![ctx(1, 1), del(2), add(2), ctx(3, 3)], hunk(1, 3, 1, 3)),
+        hunk_of(vec![ctx(9, 10), add(11)], hunk(9, 1, 10, 2)),
+    ])
+}
+
+/// A Working view showing [`two_hunks`] of its first file.
+fn picking() -> GitView {
+    let mut view = loaded();
+    assert!(view.begin_diff());
+    view.diff_loaded(&target(Group::Staged, "a.rs"), Ok(two_hunks()));
+    view
+}
+
+fn picked(view: &GitView) -> Option<(u32, u32)> {
+    view.comments.selection.map(|s| (s.start, s.end))
+}
+
+#[test]
+fn shift_down_picks_the_first_line_of_the_current_hunk_and_grows_across_hunks() {
+    let mut view = picking();
+    assert!(view.step_pick(true));
+    assert_eq!(picked(&view), Some((1, 1)));
+    for expected in [(1, 2), (1, 3), (1, 10), (1, 11), (1, 11)] {
+        assert!(view.step_pick(true));
+        assert_eq!(picked(&view), Some(expected));
+    }
+    assert!(view.step_pick(false));
+    assert_eq!(picked(&view), Some((1, 10)));
+
+    // `n` chooses the hunk a new pick starts in.
+    let mut view = picking();
+    view.key(Key::NextHunk);
+    view.key(Key::NextHunk);
+    assert!(view.step_pick(false));
+    assert_eq!(picked(&view), Some((10, 10)));
+}
+
+#[test]
+fn a_pick_past_the_end_after_a_reload_starts_over() {
+    let mut view = picking();
+    view.comments.pick(10, 11, false);
+    view.begin_diff();
+    view.diff_loaded(
+        &target(Group::Staged, "a.rs"),
+        Ok(laid_out(vec![hunk(1, 1, 1, 1)])),
+    );
+    assert!(view.step_pick(true));
+    assert_eq!(picked(&view), Some((1, 1)));
+}
+
+#[test]
+fn no_pick_in_the_history_or_a_folded_diff() {
+    let mut view = loaded();
+    assert!(!view.step_pick(true), "diff still loading");
+    let mut view = picking();
+    view.toggle_history();
+    assert!(!view.step_pick(true));
+    assert_eq!(picked(&view), None);
+}
+
+#[test]
+fn a_new_side_line_has_a_row_in_both_layouts() {
+    let shown = two_hunks();
+    assert_eq!(
+        shown.pick_units(),
+        [(1, 1), (2, 2), (3, 3), (10, 10), (11, 11)]
+    );
+    assert_eq!(shown.hunk_unit(0), 0);
+    assert_eq!(shown.hunk_unit(1), 3);
+    // Unified: hunk 0, ctx 1, del, add 2, ctx 3, gap, hunk 1, ctx 10, add 11.
+    assert_eq!(shown.line_row(2, DiffMode::Unified), Some(3));
+    assert_eq!(shown.line_row(11, DiffMode::Unified), Some(8));
+    // Split pairs the removed and the added line in one row.
+    assert_eq!(shown.line_row(2, DiffMode::Split), Some(2));
+    assert_eq!(shown.line_row(3, DiffMode::Split), Some(3));
+    assert_eq!(shown.line_row(11, DiffMode::Split), Some(7));
+    assert_eq!(shown.line_row(5, DiffMode::Unified), None);
+}
