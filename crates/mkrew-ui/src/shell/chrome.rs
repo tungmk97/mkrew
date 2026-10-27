@@ -34,7 +34,14 @@ impl Shell {
                     .child(self.render_editor(project_id, theme, window, cx))
                     .children(panel),
             ),
-            (View::Git, _) => main.child(self.render_git(project_id, theme, window, cx)),
+            (View::Git, _) => main.child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(self.render_diff_view(project_id, theme, window, cx))
+                    .children(panel),
+            ),
             (View::Terminals, Some(tabs)) => {
                 // Voice text goes to the focused terminal when it has the keyboard: ring it.
                 let voice_ring = self.voice_ring(theme, cx).filter(|_| {

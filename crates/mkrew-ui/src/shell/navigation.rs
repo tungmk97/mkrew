@@ -587,7 +587,7 @@ impl Shell {
         let workspace = self.workspace;
         match action {
             palette::Action::Run(command) => {
-                if self.view() == View::Git
+                if self.git_shown()
                     && command.context().is_some_and(|context| {
                         context == GIT_CONTEXT || context == COMMENTS_CONTEXT
                     })

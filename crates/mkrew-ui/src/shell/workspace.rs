@@ -45,7 +45,7 @@ impl Shell {
         if switched && self.files_on_screen() {
             self.refresh_files(project_id, window, cx);
         }
-        if switched && self.view() == View::Git {
+        if switched && self.git_shown() {
             self.refresh_git(project_id, window, cx);
         }
         self.sync_panes(window, cx);
@@ -349,7 +349,8 @@ impl Shell {
 
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
     /// Docs re-lists its files (agents may have written new ones); showing the Editor refreshes
-    /// the tree and gives the editor the keyboard, likewise for Git and its changes.
+    /// the tree and gives the editor the keyboard; Git (the panel's tab or the diff) coming on
+    /// screen refreshes its changes.
     pub(crate) fn show_view(
         &mut self,
         view: View,
@@ -364,10 +365,11 @@ impl Shell {
         }
         self.close_menus();
         let tree_before = self.files_on_screen();
+        let git_before = self.git_shown();
         let tree_focused = self.files_focus.is_focused(window);
         let shown = self.views.insert(project_id, view).unwrap_or_default();
-        if !matches!(view, View::Terminals | View::Editor) {
-            // The panel (and its grip) leaves with Terminals and Editor: end a drag in progress.
+        if !self.panel_view() {
+            // The panel (and its grip) leaves with the views that draw it: end a drag in progress.
             self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
@@ -376,10 +378,10 @@ impl Shell {
         if self.files_on_screen() && !tree_before {
             self.refresh_files(project_id, window, cx);
         }
+        if self.git_shown() && !git_before {
+            self.refresh_git(project_id, window, cx);
+        }
         if view == View::Git {
-            if shown != View::Git {
-                self.refresh_git(project_id, window, cx);
-            }
             window.focus(&self.git_focus, cx);
         }
         if shown != view {

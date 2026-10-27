@@ -451,14 +451,15 @@ impl Shell {
         .detach();
     }
 
-    /// Follows `git.changed` in the Git view on screen (hidden ones refresh when shown).
+    /// Follows `git.changed` while the active workspace's Git is on screen (the panel's tab or
+    /// the diff); hidden ones refresh when shown.
     pub(crate) fn git_event(
         &mut self,
         event: &Event,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Git) else {
+        let Some(project_id) = self.workspace.filter(|_| self.git_shown()) else {
             return;
         };
         let Some(view) = self.git.get_mut(&project_id) else {
@@ -699,9 +700,9 @@ impl Shell {
         }
     }
 
-    /// Whether the active workspace's Git view is shown with its commit box.
+    /// Whether the panel's Git tab is shown with its commit box.
     pub(crate) fn git_commit_shown(&self) -> bool {
-        self.view() == View::Git
+        self.git_panel_shown()
             && self
                 .workspace
                 .and_then(|id| self.git.get(&id))

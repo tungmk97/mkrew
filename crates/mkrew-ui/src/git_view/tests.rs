@@ -189,7 +189,10 @@ fn the_selection_follows_its_file_across_groups_or_falls_back_to_the_first() {
 #[test]
 fn an_open_diff_follows_its_selection_and_closes_when_nothing_is_left() {
     let mut view = loaded();
-    assert!(!view.diff_open(), "selecting the first file does not open the diff");
+    assert!(
+        !view.diff_open(),
+        "selecting the first file does not open the diff"
+    );
     view.key(Key::Down);
     assert!(!view.diff_open(), "moving the selection does not open it");
     view.open_diff();
