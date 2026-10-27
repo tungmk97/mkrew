@@ -268,19 +268,30 @@ impl Node {
     /// Splits the pane of `target` in half along `axis`; `new` goes right of / below it.
     /// Returns false (and changes nothing) if `target` is not in the tree or `new` already is.
     pub fn split(&mut self, target: Ulid, axis: Axis, new: Ulid) -> bool {
-        if self.contains(new) {
-            return false;
-        }
-        self.split_inner(target, axis, new)
+        self.split_with(target, axis, Node::pane(new))
     }
 
-    fn split_inner(&mut self, target: Ulid, axis: Axis, new: Ulid) -> bool {
+    /// Splits the pane of `target` in half along `axis`; `new` (one pane or a whole layout)
+    /// goes right of / below it. Returns false (and changes nothing) if `target` is not in the
+    /// tree or a pane of `new` already is.
+    pub fn split_with(&mut self, target: Ulid, axis: Axis, new: Node) -> bool {
+        if !self.contains(target) || new.sessions().into_iter().any(|id| self.contains(id)) {
+            return false;
+        }
+        self.split_inner(target, axis, &mut Some(new))
+    }
+
+    /// `new` is taken by the pane of `target`.
+    fn split_inner(&mut self, target: Ulid, axis: Axis, new: &mut Option<Node>) -> bool {
         match self {
             Node::Pane { session } if *session == target => {
+                let Some(new) = new.take() else {
+                    return false;
+                };
                 *self = Node::Split {
                     split: axis,
                     ratio: 0.5,
-                    children: Box::new([Node::pane(target), Node::pane(new)]),
+                    children: Box::new([Node::pane(target), new]),
                 };
                 true
             }
@@ -540,6 +551,16 @@ impl Rect {
     };
 }
 
+/// The split a pane dropped on a pane at `(x, y)` (fractions of that pane, 0..1) makes: right
+/// of it (`Vertical`) when the pointer is further right than down, else below it.
+pub fn drop_axis(x: f32, y: f32) -> Axis {
+    if x > y {
+        Axis::Vertical
+    } else {
+        Axis::Horizontal
+    }
+}
+
 /// The two children's areas of a split of `area`.
 fn halves(axis: Axis, ratio: f64, area: Rect) -> (Rect, Rect) {
     match axis {
@@ -581,6 +602,37 @@ mod tests {
 
     fn ids<const N: usize>() -> [Ulid; N] {
         std::array::from_fn(|_| Ulid::new())
+    }
+
+    #[test]
+    fn a_drop_leaning_right_splits_right_else_below() {
+        assert_eq!(drop_axis(0.9, 0.5), Axis::Vertical);
+        assert_eq!(drop_axis(0.6, 0.1), Axis::Vertical);
+        assert_eq!(drop_axis(0.5, 0.9), Axis::Horizontal);
+        assert_eq!(drop_axis(0.1, 0.6), Axis::Horizontal);
+    }
+
+    #[test]
+    fn a_whole_layout_splits_in_beside_a_pane() {
+        let [a, b, c] = ids();
+        let mut node = Node::pane(a);
+        let moved = Node::Split {
+            split: Axis::Horizontal,
+            ratio: 0.3,
+            children: Box::new([Node::pane(b), Node::pane(c)]),
+        };
+        // A pane of `moved` already shown, or a missing target: nothing changes.
+        assert!(!node.clone().split_with(a, Axis::Vertical, Node::pane(a)));
+        assert!(!node.split_with(b, Axis::Vertical, moved.clone()));
+        assert!(node.split_with(a, Axis::Vertical, moved.clone()));
+        assert_eq!(
+            node,
+            Node::Split {
+                split: Axis::Vertical,
+                ratio: 0.5,
+                children: Box::new([Node::pane(a), moved]),
+            }
+        );
     }
 
     #[test]

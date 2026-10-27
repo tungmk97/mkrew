@@ -889,6 +889,11 @@ The right panel (below) is a third column right of Terminals and the Editor whil
   among the pinned or the unpinned tabs only; tabs and sidebar rows share one drag look: a small
   title chip follows the pointer, the item stays dim in place and an accent line marks the gap
   it lands in.
+  Drag a tab onto a pane of the shown tab, or a pane by its header (among several panes) onto
+  another pane, to split that pane: the half under the pointer lights up (the right half when
+  the pointer is further right than down, else the bottom half) and the drop puts the dragged
+  panes there, a tab keeping its layout. A pane moves within its tab or out of another one; an
+  emptied tab closes after both layouts are saved (`tab.set_layout`, then `tab.close`).
   Sessions are `agent` (from a profile) or `shell` (a shell profile, §6: the workspace's default
   shell, picked in the workspace menu under "Default shell for new panes" like the default agent;
   a new shell pane without one asks the user to pick; ADR 0032).

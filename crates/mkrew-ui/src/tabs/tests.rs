@@ -714,3 +714,87 @@ fn a_default_named_tab_with_one_pane_on_screen_shows_its_session_title() {
         Some("Fix login")
     );
 }
+
+fn split(axis: &str, first: serde_json::Value, second: serde_json::Value) -> serde_json::Value {
+    json!({"split": axis, "ratio": 0.5, "children": [first, second]})
+}
+
+#[test]
+fn a_pane_moves_beside_another_in_its_tab_or_from_another_tab() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, split("vertical", pane(a), pane(b)));
+    let two = wire(project, "two", 2.0, pane(c));
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone()]);
+
+    // Same tab: `a` goes below `b`; one write.
+    let writes = tabs.move_pane(a, b, Axis::Horizontal).unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].tab_id, one.id);
+    assert_eq!(writes[0].layout, split("horizontal", pane(b), pane(a)));
+    assert_eq!(tabs.active().and_then(Tab::focused), Some(a));
+
+    // Another tab: the source tab is written first, the target tab is activated.
+    let writes = tabs.move_pane(a, c, Axis::Vertical).unwrap();
+    assert_eq!((writes[0].tab_id, &writes[0].layout), (one.id, &pane(b)));
+    assert_eq!(
+        (writes[1].tab_id, &writes[1].layout),
+        (two.id, &split("vertical", pane(c), pane(a)))
+    );
+    assert_eq!(tabs.active().map(|tab| tab.id), Some(two.id));
+    assert_eq!(tabs.active().and_then(Tab::focused), Some(a));
+    assert_eq!(tabs.tab(one.id).and_then(Tab::focused), Some(b));
+
+    // Onto itself, or with a pane in no tab: nothing moves.
+    assert_eq!(tabs.move_pane(a, a, Axis::Vertical), None);
+    assert_eq!(tabs.move_pane(Ulid::new(), a, Axis::Vertical), None);
+    assert_eq!(tabs.move_pane(a, Ulid::new(), Axis::Vertical), None);
+}
+
+#[test]
+fn moving_a_pane_ends_the_zoom_of_its_new_tab() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![
+        wire(project, "one", 1.0, split("vertical", pane(a), pane(b))),
+        wire(project, "two", 2.0, pane(c)),
+    ]);
+    assert!(tabs.toggle_zoom());
+    tabs.move_pane(c, b, Axis::Vertical).unwrap();
+    assert_eq!(tabs.active().and_then(Tab::zoomed), None);
+    assert_eq!(tabs.visible(), vec![a, b, c]);
+}
+
+#[test]
+fn a_tab_merges_beside_a_pane_of_another_tab_keeping_its_layout() {
+    let project = Ulid::new();
+    let [a, b, c] = [Ulid::new(), Ulid::new(), Ulid::new()];
+    let one = wire(project, "one", 1.0, pane(a));
+    let two = wire(project, "two", 2.0, split("horizontal", pane(b), pane(c)));
+    let empty = wire(project, "empty", 3.0, serde_json::Value::Null);
+    let mut tabs = Tabs::new(project);
+    tabs.load(vec![one.clone(), two.clone(), empty.clone()]);
+
+    // Onto a pane of its own tab, or an empty tab: nothing moves.
+    assert_eq!(tabs.merge_tab(two.id, b, Axis::Vertical), None);
+    assert_eq!(tabs.merge_tab(empty.id, a, Axis::Vertical), None);
+
+    let [placed, emptied] = tabs.merge_tab(two.id, a, Axis::Vertical).unwrap();
+    assert_eq!(placed.tab_id, one.id);
+    assert_eq!(
+        placed.layout,
+        split("vertical", pane(a), split("horizontal", pane(b), pane(c)))
+    );
+    assert_eq!(
+        (emptied.tab_id, emptied.layout),
+        (two.id, serde_json::Value::Null)
+    );
+    assert_eq!(tabs.active().map(|tab| tab.id), Some(one.id));
+    assert_eq!(tabs.active().and_then(Tab::focused), Some(b));
+    assert!(
+        tabs.tab(two.id)
+            .is_some_and(|tab| tab.sessions().is_empty())
+    );
+}

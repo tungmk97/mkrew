@@ -472,7 +472,7 @@ impl Shell {
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
         let accent_border = theme.accent;
-        div()
+        let frame = div()
             .relative()
             .size_full()
             .flex()
@@ -484,7 +484,8 @@ impl Shell {
                         shell.drop_tree_path(session, dragged, window, cx);
                     }
                 }),
-            )
+            );
+        self.pane_drop_target(frame, session, cx)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -569,6 +570,7 @@ impl Shell {
                         style.border_color(rgb(accent_border))
                     }),
             )
+            .children(self.pane_drop_overlay(session, theme, cx))
             .when_some(voice_ring, |el, color| {
                 el.child(
                     div()
@@ -819,7 +821,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let session = info.id;
-        div()
+        let header = div()
             .flex_none()
             .flex()
             .items_center()
@@ -848,8 +850,8 @@ impl Shell {
                 cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
                     shell.open_pane_menu(session, event.position, window, cx);
                 }),
-            )
-            .into_any_element()
+            );
+        self.draggable_pane(header, info, theme)
     }
 
     /// A tab's status dot from its most urgent pane: amber needs input, red exited, a pulsing

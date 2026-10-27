@@ -94,7 +94,7 @@ use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
-use mkrew_ui::split::{Axis, Divider, Preset};
+use mkrew_ui::split::{Axis, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
@@ -127,6 +127,7 @@ use shell::git_diff::*;
 use shell::git_menus::*;
 use shell::git_rows::*;
 use shell::menus::*;
+use shell::pane_drop::*;
 use shell::pane_render::*;
 use shell::reorder::*;
 use shell::sidebar::*;
@@ -530,6 +531,8 @@ struct Shell {
     /// The pane under an OS file drag (§20B.5), tracked without GPUI's hover check: gpui-pre
     /// 0.3.7 keeps keyboard modality during OLE drags, so `on_drop` misses drops after typing.
     drop_hover: Option<(Ulid, ExternalPaths)>,
+    /// Where the tab or pane dragged over a pane would split it (stale once no drag is active).
+    pane_drop: Option<PaneDrop>,
     /// Focused while the focused pane's composer takes keys.
     composer_focus: FocusHandle,
     /// Composing IME chars typed into the focused field so far (see `mkrew_ui::ime`).

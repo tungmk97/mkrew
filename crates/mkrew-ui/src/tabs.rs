@@ -447,6 +447,76 @@ impl Tabs {
         Some(tab.write())
     }
 
+    /// Moves the pane of `session` next to the pane of `target` (right of it along
+    /// `Axis::Vertical`, below along `Horizontal`), within its tab or from another one. The
+    /// moved pane is focused and its new tab activated. Returns the writes, the source tab's
+    /// first when it differs; `None` if nothing moves (the same pane, or either is in no tab).
+    pub fn move_pane(
+        &mut self,
+        session: Ulid,
+        target: Ulid,
+        axis: Axis,
+    ) -> Option<Vec<TabSetLayoutParams>> {
+        let from = self.tab_of(session)?.id;
+        let to = self.tab_of(target)?.id;
+        if session == target {
+            return None;
+        }
+        let mut writes = Vec::new();
+        let source = self.tab_mut(from)?;
+        let closed = source.layout.take()?.close(session);
+        source.layout = closed.remaining;
+        if source.focused == Some(session) {
+            source.focused = closed.focus;
+        }
+        source.fix_focus();
+        if from != to {
+            writes.push(source.write());
+        }
+        let tab = self.tab_mut(to)?;
+        // `target` is still in the tab (it is not `session`), which no longer holds `session`.
+        let placed = (tab.layout.as_mut())
+            .is_some_and(|node| node.split_with(target, axis, Node::pane(session)));
+        debug_assert!(placed, "the moved pane always fits next to its target");
+        tab.focused = Some(session);
+        tab.fix_focus();
+        writes.push(tab.write());
+        self.active = Some(to);
+        Some(writes)
+    }
+
+    /// Moves every pane of tab `source` next to the pane of `target` in another tab (as
+    /// [`Self::move_pane`]), keeping their layout; `source` is left without panes, for the
+    /// caller to close once both writes are saved. The target tab is activated with the first
+    /// moved pane focused. Returns the writes, the target tab's first; `None` if nothing moves
+    /// (`target` is in `source` or in no tab, or `source` has no panes).
+    pub fn merge_tab(
+        &mut self,
+        source: Ulid,
+        target: Ulid,
+        axis: Axis,
+    ) -> Option<[TabSetLayoutParams; 2]> {
+        let to = self.tab_of(target)?.id;
+        if to == source {
+            return None;
+        }
+        let moved = self.tab(source)?.layout.clone()?;
+        let first = *moved.sessions().first()?;
+        let tab = self.tab_mut(to)?;
+        if !tab.layout.as_mut()?.split_with(target, axis, moved) {
+            return None;
+        }
+        tab.focused = Some(first);
+        tab.fix_focus();
+        let placed = tab.write();
+        let emptied = self.tab_mut(source)?;
+        emptied.layout = None;
+        emptied.fix_focus();
+        let emptied = emptied.write();
+        self.active = Some(to);
+        Some([placed, emptied])
+    }
+
     /// Lays tab `tab_id` out as `preset` (SPEC §10 layouts): its panes keep their tree
     /// order, then come the `new` sessions it does not show yet. `None` (nothing changes)
     /// unless that makes exactly the preset's panes, or when a new session is shown in

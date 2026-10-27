@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Drag a tab or pane onto a pane to split it (SPEC §10)
+
+- [ ] **Tab onto pane (dark + light):** with 2+ tabs, drag a tab off the strip onto a pane of the shown tab. The right half of the pane lights up when the pointer is right of the diagonal, the bottom half when it is below. Drop: the tab's panes (keeping their layout) sit right of / below that pane, the dragged tab is gone from the strip, and its sessions keep running (also after a UI restart).
+- [ ] **Pane onto pane:** with 3+ panes, drag a pane by its header onto another pane: it moves there; the pane headers' buttons, double-click rename and right-click menu still work.
+- [ ] **No-ops:** dragging a pane onto itself or a tab onto its own pane shows no overlay; dragging a tab along the strip still reorders it with the accent line.
+
 ### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
 
 - [ ] **Panel (dark + light):** `◨` opens the right panel on `Files │ Session`; the tab row, tree rows, markers and search fit 240 px without clipping; dragging the edge resizes both tabs.

@@ -272,6 +272,7 @@ impl Shell {
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             drop_hover: None,
+            pane_drop: None,
             composer_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
             typing_target: Rc::default(),
