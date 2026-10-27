@@ -539,6 +539,8 @@ struct Shell {
     jira_keys_focus: FocusHandle,
     /// The Jira list's "Filter issues" field.
     jira_filter_focus: FocusHandle,
+    /// Keeps the selected Jira List row in view.
+    jira_scroll: ScrollHandle,
     /// The card Ctrl+Enter runs (clicked last).
     selected_card: Option<Ulid>,
     /// Tasks whose `task.run` is in flight (Run is disabled meanwhile).
@@ -793,10 +795,9 @@ impl Render for Shell {
             .flex_col()
             .bg(rgb(theme.bg))
             .track_focus(&self.focus_handle)
-            .when(
-                self.view() == View::Board && !self.jira_side_shown(),
-                |el| el.key_context(BOARD_CONTEXT),
-            )
+            .when(self.view() == View::Board, |el| {
+                el.key_context(BOARD_CONTEXT)
+            })
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
             .when(self.view() == View::Files, |el| {
                 el.key_context(FILES_CONTEXT)

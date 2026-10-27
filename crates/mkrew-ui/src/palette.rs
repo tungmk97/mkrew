@@ -49,6 +49,8 @@ pub struct Context {
     pub run_stopped: bool,
     /// A run session of the active workspace lives.
     pub run_live: bool,
+    /// The selected board card is in Review (`a` approves it).
+    pub approve_card: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
     pub features: FeatureSettings,
 }
@@ -267,6 +269,7 @@ pub fn title(command: Command) -> String {
         Command::GitPush => "Git: Push".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
+        Command::ApproveCard => "Task: Approve selected task".into(),
         Command::Card(key) => match key {
             CardKey::Up => "Board: Select card above".into(),
             CardKey::Down => "Board: Select card below".into(),
@@ -358,6 +361,7 @@ pub fn available(command: Command, context: &Context) -> bool {
             in_view(View::Files) || in_view(View::Git) || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
+        Command::ApproveCard => in_view(View::Board) && context.approve_card,
         Command::RunStart => context.workspace && context.run_stopped,
         Command::RunRestart | Command::RunStop => context.workspace && context.run_live,
         Command::ToggleDocSource => in_view(View::Docs),

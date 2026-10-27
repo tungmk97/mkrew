@@ -5,7 +5,7 @@
 use mkrew_core::settings::JiraLayout;
 use mkrew_ui::jira::Issue;
 use mkrew_ui::jira_board::{
-    Section, TreeRow, is_in_progress, linked_task, sections, split_area, tree,
+    Section, TreeRow, columns, is_in_progress, linked_task, sections, select_step, split_area, tree,
 };
 
 use super::widgets::status_pill;
@@ -157,6 +157,85 @@ impl Shell {
         cx.notify();
     }
 
+    /// Show Board again while the Board is shown (and Jira is set up): Tasks <-> Jira, like the
+    /// `Tasks | Jira` switch.
+    pub(crate) fn toggle_board_source(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let source = (self.jira.get(&project_id)).map_or(Source::Tasks, |view| view.source);
+        self.set_board_source(project_id, source.other(), window, cx);
+    }
+
+    /// A board key (`Command::Card`) while the Jira list shows: up / down walk the column, in
+    /// the Kanban left / right walk the columns, in the List left / right fold / unfold the row,
+    /// Enter opens the issue like a click. Shift+left / right and `e` do nothing here.
+    // ponytail: Kanban cards are not scrolled into view (one scroll area per column); add a
+    // per-column ScrollHandle if long columns need it. The List scrolls through `jira_scroll`.
+    pub(crate) fn jira_key(
+        &mut self,
+        key: board::CardKey,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = self
+            .workspace
+            .filter(|_| self.view() == View::Board && self.jira_side_shown())
+        else {
+            return;
+        };
+        let layout = self.jira_layout;
+        let Some(view) = self.jira.get(&project_id) else {
+            return;
+        };
+        let Load::Loaded(issues) = &view.load else {
+            return;
+        };
+        let selected = view.selected.clone();
+        let filter = view.filter.as_str();
+        let cols = columns(issues, layout, filter, &view.collapsed);
+        if key == board::CardKey::Open {
+            let listed = |key: &String| cols.iter().flatten().any(|listed| listed == key);
+            if let Some(issue_key) = selected.filter(listed) {
+                self.open_issue(project_id, issue_key, window, cx);
+            }
+            return;
+        }
+        let is_list = matches!(layout, JiraLayout::List);
+        if is_list && matches!(key, board::CardKey::Left | board::CardKey::Right) {
+            let fold = tree(issues, filter, &view.collapsed)
+                .into_iter()
+                .find(|row| Some(row.key) == selected.as_deref())
+                // Left folds an open parent, Right unfolds a folded one.
+                .filter(|row| row.has_children && row.collapsed == (key == board::CardKey::Right))
+                .map(|row| row.key.to_owned());
+            if let (Some(fold), Some(view)) = (fold, self.jira.get_mut(&project_id)) {
+                view.toggle_collapsed(&fold);
+                cx.notify();
+            }
+            return;
+        }
+        let Some(next) = select_step(&cols, selected.as_deref(), key).map(str::to_owned) else {
+            return;
+        };
+        let at = is_list
+            .then(|| {
+                tree(issues, filter, &view.collapsed)
+                    .iter()
+                    .position(|row| row.key == next)
+            })
+            .flatten();
+        if let Some(view) = self.jira.get_mut(&project_id) {
+            view.selected = Some(next);
+        }
+        if let Some(at) = at {
+            self.jira_scroll.scroll_to_item(at);
+        }
+        cx.notify();
+    }
+
     /// A click on an issue row: the linked task's edit dialog, else a new task from the ticket.
     pub(crate) fn open_issue(
         &mut self,
@@ -165,6 +244,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.jira.entry(project_id).or_default().selected = Some(key.clone());
         if !self.board.is_loaded() {
             self.jira.entry(project_id).or_default().row_error =
                 Some((key, "Tasks are still loading, try again".into()));
@@ -656,6 +736,7 @@ impl Shell {
                             .collect();
                         div()
                             .id("jira-issues")
+                            .track_scroll(&self.jira_scroll)
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
@@ -783,6 +864,11 @@ impl Shell {
                 .into_any_element()
         };
         let row_hover = theme.row_hover;
+        let selected = self
+            .jira
+            .get(&project_id)
+            .and_then(|view| view.selected.as_deref())
+            == Some(row.key);
         div()
             .id(("jira-issue", index))
             .flex()
@@ -792,6 +878,13 @@ impl Shell {
             .pl(px(space::S + row.depth as f32 * space::XL))
             .pr(px(space::S))
             .rounded(px(radius::MEDIUM))
+            // Always bordered, so selecting does not shift the content.
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(if selected {
+                rgb(theme.pane_focus_border).into()
+            } else {
+                gpui::transparent_black()
+            })
             .cursor_pointer()
             .text_color(rgb(theme.text))
             .hover(move |style| style.bg(rgb(row_hover)))
@@ -841,6 +934,11 @@ impl Shell {
         let key = issue.key.clone();
         let (area, title) = split_area(&issue.summary);
         let hover = theme.border;
+        let selected = self
+            .jira
+            .get(&project_id)
+            .and_then(|view| view.selected.as_deref())
+            == Some(issue.key.as_str());
         div()
             .id(("jira-card", index))
             .flex_none()
@@ -852,8 +950,14 @@ impl Shell {
             .bg(rgb(theme.surface_raised))
             // Always bordered, so hovering does not shift the content.
             .border(px(theme::BORDER_WIDTH))
-            .border_color(rgb(theme.surface_raised))
-            .hover(move |style| style.border_color(rgb(hover)))
+            .border_color(rgb(if selected {
+                theme.pane_focus_border
+            } else {
+                theme.surface_raised
+            }))
+            .when(!selected, |el| {
+                el.hover(move |style| style.border_color(rgb(hover)))
+            })
             .cursor_pointer()
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.open_issue(project_id, key.clone(), window, cx);

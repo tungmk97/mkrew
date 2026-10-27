@@ -18,6 +18,8 @@ pub(crate) struct CardContext<'a> {
     pub(crate) follow_up_focused: bool,
     /// Shortcut label of Run on the selected card.
     pub(crate) run_keys: String,
+    /// Shortcut label of Approve on the selected card.
+    pub(crate) approve_keys: String,
     /// Shortcut label of Edit on the selected card.
     pub(crate) edit_keys: String,
     pub(crate) conflicts: &'a Conflicts,
@@ -735,7 +737,11 @@ pub(crate) fn card_action(
             "card-approve",
             "Approve",
             "Accept the result and move the task to Done",
-            String::new(),
+            if selected {
+                cards.approve_keys.clone()
+            } else {
+                String::new()
+            },
         ),
     };
     // Accent only on the selected card: a full Todo column stays calm.

@@ -384,6 +384,10 @@ impl Shell {
             run_stopped: workspace.is_some()
                 && (run_state.rows.is_empty() || run_state.live() < run_state.rows.len()),
             run_live: run_state.any_live(),
+            approve_card: workspace.is_some_and(|id| {
+                !self.jira_side_shown()
+                    && self.board.approve_target(self.selected_card, id).is_some()
+            }),
             features: self.features,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());

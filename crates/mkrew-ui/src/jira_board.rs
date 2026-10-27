@@ -4,9 +4,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use mkrew_core::settings::JiraLayout;
 use mkrew_protocol::Task;
 use ulid::Ulid;
 
+use crate::board::CardKey;
 use crate::jira::Issue;
 use crate::text_box::Input;
 
@@ -16,6 +18,16 @@ pub enum Source {
     #[default]
     Tasks,
     Jira,
+}
+
+impl Source {
+    /// The other side (Show Board while the Board is shown switches them).
+    pub fn other(self) -> Self {
+        match self {
+            Source::Tasks => Source::Jira,
+            Source::Jira => Source::Tasks,
+        }
+    }
 }
 
 /// The issue list of a workspace; kept until Refresh or app restart.
@@ -47,6 +59,9 @@ pub struct JiraView {
     pub filter: Input,
     /// Keys of the List rows whose children are folded away.
     pub collapsed: HashSet<String>,
+    /// The issue key the arrow keys selected (its row / card is ringed); a key no longer
+    /// listed selects nothing.
+    pub selected: Option<String>,
 }
 
 impl JiraView {
@@ -307,11 +322,71 @@ pub fn tree<'a>(
     out
 }
 
+/// The issue keys the arrows walk, one list per column: the List is one column (the rows that
+/// are issues; a parent outside the results is only a header), the Kanban one per status.
+pub fn columns<'a>(
+    issues: &'a [Issue],
+    layout: JiraLayout,
+    filter: &str,
+    collapsed: &HashSet<String>,
+) -> Vec<Vec<&'a str>> {
+    match layout {
+        JiraLayout::List => vec![
+            tree(issues, filter, collapsed)
+                .into_iter()
+                .filter(|row| row.issue.is_some())
+                .map(|row| row.key)
+                .collect(),
+        ],
+        JiraLayout::Kanban => sections(issues, filter)
+            .into_iter()
+            .map(|section| section.issues.into_iter().map(|i| i.key.as_str()).collect())
+            .collect(),
+    }
+}
+
+/// The issue an arrow key selects: up / down the neighbour in the column, left / right the
+/// card at the nearest row of the next column that has cards (Board::select_step). Nothing at
+/// an edge. Without a (listed) selection any arrow selects the first issue. Other keys: `None`.
+pub fn select_step<'a>(
+    columns: &[Vec<&'a str>],
+    selected: Option<&str>,
+    key: CardKey,
+) -> Option<&'a str> {
+    let step: isize = match key {
+        CardKey::Up | CardKey::Left => -1,
+        CardKey::Down | CardKey::Right => 1,
+        _ => return None,
+    };
+    let at = selected.and_then(|selected| {
+        columns
+            .iter()
+            .enumerate()
+            .find_map(|(col, keys)| Some((col, keys.iter().position(|key| *key == selected)?)))
+    });
+    let Some((col, row)) = at else {
+        return columns.iter().find_map(|keys| keys.first().copied());
+    };
+    if matches!(key, CardKey::Up | CardKey::Down) {
+        return columns[col].get(row.checked_add_signed(step)?).copied();
+    }
+    let mut next = col;
+    loop {
+        next = next.checked_add_signed(step)?;
+        let keys = columns.get(next)?;
+        if let Some(last) = keys.len().checked_sub(1) {
+            return Some(keys[row.min(last)]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use mkrew_protocol::TaskStatus;
 
     use super::*;
+    use crate::board::CardKey;
+    use mkrew_core::settings::JiraLayout;
 
     fn task(project_id: Ulid, title: &str) -> Task {
         Task {
@@ -544,5 +619,61 @@ mod tests {
     fn a_parent_loop_still_ends() {
         let issues = vec![child("A-1", "A-2"), child("A-2", "A-1")];
         assert_eq!(tree(&issues, "", &HashSet::new()).len(), 2);
+    }
+
+    #[test]
+    fn the_board_source_toggles_both_ways() {
+        assert_eq!(Source::Tasks.other(), Source::Jira);
+        assert_eq!(Source::Jira.other(), Source::Tasks);
+    }
+
+    #[test]
+    fn arrows_walk_the_list_and_the_kanban_columns() {
+        let issues = [
+            issue_in("A-1", "To Do"),
+            issue_in("A-2", "To Do"),
+            issue_in("A-3", "In Progress"),
+        ];
+        let none = HashSet::new();
+        let list = columns(&issues, JiraLayout::List, "", &none);
+        assert_eq!(list, [["A-1", "A-2", "A-3"]]);
+        assert_eq!(select_step(&list, None, CardKey::Down), Some("A-1"));
+        assert_eq!(select_step(&list, Some("A-1"), CardKey::Down), Some("A-2"));
+        assert_eq!(
+            select_step(&list, Some("A-1"), CardKey::Up),
+            None,
+            "no wrap"
+        );
+        assert_eq!(select_step(&list, Some("A-3"), CardKey::Down), None);
+        assert_eq!(
+            select_step(&list, Some("A-1"), CardKey::Right),
+            None,
+            "one column"
+        );
+        assert_eq!(select_step(&list, Some("A-1"), CardKey::Open), None);
+
+        // Kanban: In Progress first, then To Do.
+        let board = columns(&issues, JiraLayout::Kanban, "", &none);
+        assert_eq!(board, [vec!["A-3"], vec!["A-1", "A-2"]]);
+        assert_eq!(select_step(&board, None, CardKey::Down), Some("A-3"));
+        assert_eq!(
+            select_step(&board, Some("A-3"), CardKey::Right),
+            Some("A-1")
+        );
+        // The same row of the next column, else its last card.
+        assert_eq!(select_step(&board, Some("A-2"), CardKey::Left), Some("A-3"));
+        assert_eq!(select_step(&board, Some("A-2"), CardKey::Right), None);
+        // A selection that is gone starts again at the first card.
+        assert_eq!(
+            select_step(&board, Some("GONE"), CardKey::Down),
+            Some("A-3")
+        );
+    }
+
+    #[test]
+    fn a_parent_outside_the_results_is_not_selectable() {
+        let issues = [child("A-2", "A-1")];
+        let list = columns(&issues, JiraLayout::List, "", &HashSet::new());
+        assert_eq!(list, [["A-2"]], "the muted parent header row is skipped");
     }
 }

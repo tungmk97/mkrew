@@ -180,6 +180,8 @@ pub enum Command {
     /// filter the keyboard with the active row highlighted; again while it has the keyboard
     /// gives it back to the pane.
     FocusSidebar,
+    /// Board only: approve the selected Review card (its Approve button).
+    ApproveCard,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -311,6 +313,7 @@ impl Command {
             Command::AskAi,
             Command::ContextMenu,
             Command::FocusSidebar,
+            Command::ApproveCard,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -408,6 +411,7 @@ impl Command {
             Command::AskAi => "ask_ai".into(),
             Command::ContextMenu => "context_menu".into(),
             Command::FocusSidebar => "focus_sidebar".into(),
+            Command::ApproveCard => "approve_card".into(),
         }
     }
 
@@ -527,6 +531,7 @@ impl Command {
             Command::AskAi => "ctrl-shift-g".into(),
             Command::ContextMenu => "shift-f10".into(),
             Command::FocusSidebar => "alt-0".into(),
+            Command::ApproveCard => "a".into(),
         }
     }
 
@@ -540,7 +545,7 @@ impl Command {
             | Command::CopyMode
             | Command::LinkHints => Some(TERMINAL_CONTEXT),
             Command::Find => Some(FIND_CONTEXT),
-            Command::RunTask | Command::Card(_) => Some(BOARD_CONTEXT),
+            Command::RunTask | Command::ApproveCard | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
             Command::AddComment | Command::SendComments | Command::PickDown | Command::PickUp => {
                 Some(COMMENTS_CONTEXT)

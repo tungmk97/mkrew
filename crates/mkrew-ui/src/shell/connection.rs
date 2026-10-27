@@ -277,6 +277,7 @@ impl Shell {
             jira_layout,
             jira_keys_focus: cx.focus_handle(),
             jira_filter_focus: cx.focus_handle(),
+            jira_scroll: ScrollHandle::new(),
             selected_card: None,
             starting: HashSet::new(),
             run_with: None,

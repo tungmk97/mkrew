@@ -750,6 +750,7 @@ impl Shell {
             typing_target: &self.typing_target,
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
+            approve_keys: self.keymap.label(Command::ApproveCard),
             edit_keys: self.keymap.label(Command::Card(board::CardKey::Edit)),
             conflicts: &self.conflicts,
             run_with: self.run_with.as_ref(),

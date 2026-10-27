@@ -231,6 +231,14 @@ impl Shell {
             }
             window.focus(&self.focus_handle, cx);
         }
+        // Board keys while a Jira field has the keyboard: the field types them (the Board
+        // context is on over the Jira list too, for its arrow keys).
+        if (self.jira_filter_focus.is_focused(window) || self.jira_keys_focus.is_focused(window))
+            && command.context() == Some(BOARD_CONTEXT)
+        {
+            cx.propagate();
+            return;
+        }
         // Same for the sidebar filter while it has the keyboard, except the shortcuts that
         // leave it (Peek, Toggle sidebar, Toggle compact sidebar).
         if self.filter_focus.is_focused(window) {
@@ -427,6 +435,11 @@ impl Shell {
             }
             Command::OpenComposer => self.open_composer(window, cx),
             Command::SendSelection => self.open_selection_dialog(window, cx),
+            Command::ShowBoard if self.view() == View::Board && self.jira_on => {
+                if let Some(project_id) = self.workspace {
+                    self.toggle_board_source(project_id, window, cx);
+                }
+            }
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
@@ -527,8 +540,18 @@ impl Shell {
                 }
             }
             Command::RunTask if self.jira_side_shown() => {}
-            Command::Card(_) if self.jira_side_shown() => {}
+            Command::ApproveCard if self.jira_side_shown() => {}
+            Command::Card(key) if self.jira_side_shown() => self.jira_key(key, window, cx),
             Command::Card(key) => self.card_key(key, window, cx),
+            Command::ApproveCard => {
+                // Only bound while a board is shown; the selection may be another workspace's.
+                let target = self
+                    .workspace
+                    .and_then(|id| self.board.approve_target(self.selected_card, id));
+                if let Some(task_id) = target {
+                    self.approve_task(task_id, window, cx);
+                }
+            }
             Command::RunTask => {
                 // Only bound while a board is shown; the selection may be another workspace's.
                 let target = self

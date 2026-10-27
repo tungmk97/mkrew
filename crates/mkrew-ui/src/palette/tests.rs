@@ -20,6 +20,7 @@ fn context(view: View) -> Context {
         markable: false,
         run_stopped: false,
         run_live: false,
+        approve_card: false,
         features: FeatureSettings {
             docs: true,
             turns: true,
