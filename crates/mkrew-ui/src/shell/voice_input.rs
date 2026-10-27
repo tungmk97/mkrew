@@ -163,7 +163,7 @@ impl Shell {
             .values()
             .find(|pane| {
                 let pane = pane.read(cx);
-                !pane.is_exited() && pane.has_focus(window, cx)
+                !pane.is_exited() && !pane.in_copy_mode() && pane.has_focus(window, cx)
             })
             .cloned();
         if let Some(pane) = pane {

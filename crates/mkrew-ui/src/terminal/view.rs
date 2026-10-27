@@ -209,9 +209,16 @@ impl TerminalPane {
         self.focus_handle.contains_focused(window, cx)
     }
 
-    /// The selected text, for "Send selection" (§20B.4).
-    pub fn selection_text(&self) -> Option<String> {
-        self.emulator.selection_text()
+    /// The selected text, for "Send selection" (§20B.4). A copy mode in progress ends when
+    /// there is a selection to send.
+    pub fn take_selection_text(&mut self, cx: &mut Context<'_, Self>) -> Option<String> {
+        let text = self.emulator.selection_text();
+        if text.is_some() && self.emulator.copy_mode() {
+            self.emulator.leave_copy_mode();
+            cx.emit(CopyModeChanged);
+            cx.notify();
+        }
+        text
     }
 
     /// Copy mode is on: the keys are the UI's, not the program's.
