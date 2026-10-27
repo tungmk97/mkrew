@@ -3,6 +3,110 @@
 use crate::*;
 
 impl Shell {
+    pub(crate) fn open_switcher(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.begin_menu(window, cx);
+        self.workspace_switcher = true;
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
+    pub(crate) fn open_new_menu(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.begin_menu(window, cx);
+        self.new_menu = true;
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
+    /// Every workspace (the shown one checked), then "Add workspace…".
+    pub(crate) fn switcher_rows(&self, project_id: Ulid) -> Rows {
+        let mut rows: Rows = self
+            .sidebar
+            .projects()
+            .iter()
+            .map(|project| {
+                let id = project.id;
+                MenuItem::new(
+                    project.name.clone(),
+                    act(move |shell, window, cx| shell.activate_workspace(id, window, cx)),
+                )
+                .lead(Lead::Avatar {
+                    name: project.name.clone(),
+                    color: project.color.clone(),
+                })
+                .checked(id == project_id)
+                .row()
+            })
+            .collect();
+        rows.push(MenuRow::Separator);
+        rows.push(
+            MenuItem::new(
+                "Add workspace…",
+                act(|shell, window, cx| shell.add_workspace(window, cx)),
+            )
+            .row(),
+        );
+        rows
+    }
+
+    /// One row per installed agent profile (the default first and checked, with its shortcut),
+    /// the plain "Agent" row while none is listed, then "Shell".
+    pub(crate) fn new_menu_rows(&self) -> Rows {
+        let mut rows: Rows = Vec::new();
+        for agent in self.pane_agents() {
+            let profile = agent.id.clone();
+            let item = MenuItem::new(
+                agent.name.clone(),
+                act(move |shell, window, cx| {
+                    shell.show_view(View::Terminals, window, cx);
+                    shell.new_pane_with(
+                        SessionKind::Agent,
+                        Some(profile.clone()),
+                        Axis::Vertical,
+                        window,
+                        cx,
+                    );
+                }),
+            )
+            .lead(Lead::Agent(sidebar::agent_badge(
+                agent.icon.as_deref(),
+                &agent.id,
+            )))
+            .checked(agent.default);
+            rows.push(
+                if agent.default {
+                    item.keys(self.keymap.label(Command::SplitAgent))
+                } else {
+                    item
+                }
+                .row(),
+            );
+        }
+        if rows.is_empty() {
+            rows.push(
+                MenuItem::new(
+                    "Agent",
+                    act(|shell, window, cx| {
+                        shell.show_view(View::Terminals, window, cx);
+                        shell.new_pane(SessionKind::Agent, Axis::Vertical, window, cx);
+                    }),
+                )
+                .keys(self.keymap.label(Command::SplitAgent))
+                .row(),
+            );
+        }
+        rows.push(
+            MenuItem::new(
+                "Shell",
+                // The title bar shows it in every view; the new pane is seen in Terminals.
+                act(|shell, window, cx| {
+                    shell.show_view(View::Terminals, window, cx);
+                    shell.new_pane(SessionKind::Shell, Axis::Vertical, window, cx);
+                }),
+            )
+            .keys(self.keymap.label(Command::SplitShell))
+            .row(),
+        );
+        rows
+    }
+
     pub(crate) fn render_main(
         &self,
         now: i64,
@@ -325,9 +429,8 @@ impl Shell {
                 self.keymap.label(Command::NextWorkspace),
             ))
             // An open menu already closed on this mouse down (outside it): the click reopens it.
-            .on_click(cx.listener(|shell, _, _, cx| {
-                shell.workspace_switcher = true;
-                cx.notify();
+            .on_click(cx.listener(|shell, _, window, cx| {
+                shell.open_switcher(window, cx);
             }))
             .child(workspace_avatar(name, color, theme))
             .child(
@@ -382,62 +485,14 @@ impl Shell {
             )
         });
         let menu = (self.workspace_switcher && !self.modal_open()).then(|| {
-            let rows = projects.iter().map(|project| {
-                let id = project.id;
-                let color = project
-                    .color
-                    .as_deref()
-                    .and_then(|name| theme.workspace_color(name));
-                menu_item(SharedString::from(format!("switch-{id}")), theme)
-                    .child(workspace_avatar(&project.name, color, theme))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .text_color(rgb(theme.text))
-                            .child(project.name.clone()),
-                    )
-                    .when(id == project_id, |el| {
-                        el.child(div().text_color(rgb(theme.accent_text)).child("✓"))
-                    })
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.activate_workspace(id, window, cx);
-                    }))
-            });
-            let panel = menu_panel("workspace-switch-panel", theme)
-                .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                    shell.workspace_switcher = false;
-                    cx.notify();
-                }))
-                .children(rows)
-                .child(
-                    div()
-                        .h(px(theme::BORDER_WIDTH))
-                        .my(px(space::XS))
-                        .bg(rgb(theme.border)),
-                )
-                .child(
-                    menu_item("switch-add".into(), theme)
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_color(rgb(theme.text))
-                                .child("Add workspace…"),
-                        )
-                        .on_click(cx.listener(|shell, _, window, cx| {
-                            cx.stop_propagation();
-                            shell.workspace_switcher = false;
-                            shell.add_workspace(window, cx);
-                        })),
-                );
-            deferred(
-                anchored()
-                    .snap_to_window_with_margin(px(space::S))
-                    .child(div().pt(px(space::XS)).child(panel)),
+            render_menu(
+                self.menu_state(),
+                "workspace-switch-panel",
+                self.switcher_rows(project_id),
+                None,
+                Place::Dropdown,
+                theme,
+                cx,
             )
         });
         div()
@@ -483,103 +538,18 @@ impl Shell {
             ),
         ))
         // An open menu already closed on this mouse down (outside it): the click reopens it.
-        .on_click(cx.listener(|shell, _, _, cx| {
-            shell.new_menu = true;
-            cx.notify();
+        .on_click(cx.listener(|shell, _, window, cx| {
+            shell.open_new_menu(window, cx);
         }));
         let menu = (self.new_menu && !self.modal_open()).then(|| {
-            // One row per installed agent profile, the default first and checked; with none
-            // listed (still loading) the plain "Agent" row starts the default.
-            let agents = self.pane_agents();
-            let mut rows: Vec<gpui::AnyElement> = agents
-                .into_iter()
-                .map(|agent| {
-                    let profile = agent.id.clone();
-                    menu_item(format!("new-agent-pane-{}", agent.id).into(), theme)
-                        .child(
-                            div()
-                                .w(px(space::M))
-                                .text_color(rgb(theme.accent))
-                                .child(if agent.default { "✓" } else { "" }),
-                        )
-                        .child(agent_chip(
-                            sidebar::agent_badge(agent.icon.as_deref(), &agent.id),
-                            theme.text,
-                            theme,
-                        ))
-                        .child(
-                            div()
-                                .flex_1()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .whitespace_nowrap()
-                                .text_color(rgb(theme.text))
-                                .when(agent.default, |el| {
-                                    el.font_weight(FontWeight(weight::MEDIUM))
-                                })
-                                .child(agent.name),
-                        )
-                        .when(agent.default, |el| {
-                            el.child(kbd(self.keymap.label(Command::SplitAgent), theme, false))
-                        })
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            cx.stop_propagation();
-                            shell.new_menu = false;
-                            shell.show_view(View::Terminals, window, cx);
-                            shell.new_pane_with(
-                                SessionKind::Agent,
-                                Some(profile.clone()),
-                                Axis::Vertical,
-                                window,
-                                cx,
-                            );
-                        }))
-                        .into_any_element()
-                })
-                .collect();
-            let plain = if rows.is_empty() {
-                vec![(
-                    "new-agent-pane",
-                    "Agent",
-                    SessionKind::Agent,
-                    Command::SplitAgent,
-                )]
-            } else {
-                vec![]
-            };
-            rows.extend(
-                plain
-                    .into_iter()
-                    .chain([(
-                        "new-shell-pane",
-                        "Shell",
-                        SessionKind::Shell,
-                        Command::SplitShell,
-                    )])
-                    .map(|(id, label, kind, command)| {
-                        menu_item(id.into(), theme)
-                            .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-                            .child(kbd(self.keymap.label(command), theme, false))
-                            .on_click(cx.listener(move |shell, _, window, cx| {
-                                cx.stop_propagation();
-                                shell.new_menu = false;
-                                // The title bar shows it in every view; the new pane is seen in Terminals.
-                                shell.show_view(View::Terminals, window, cx);
-                                shell.new_pane(kind, Axis::Vertical, window, cx);
-                            }))
-                            .into_any_element()
-                    }),
-            );
-            let panel = menu_panel("new-pane-panel", theme)
-                .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                    shell.new_menu = false;
-                    cx.notify();
-                }))
-                .children(rows);
-            deferred(
-                anchored()
-                    .snap_to_window_with_margin(px(space::S))
-                    .child(div().pt(px(space::XS)).child(panel)),
+            render_menu(
+                self.menu_state(),
+                "new-pane-panel",
+                self.new_menu_rows(),
+                None,
+                Place::Dropdown,
+                theme,
+                cx,
             )
         });
         div().child(button).children(menu).into_any_element()

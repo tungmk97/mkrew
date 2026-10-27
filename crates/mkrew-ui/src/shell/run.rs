@@ -331,9 +331,8 @@ impl Shell {
             .active(|style| style.opacity(opacity::ACTIVE))
             .tooltip(tooltip(theme, &tip, ""))
             // An open menu already closed on this mouse down (outside it): the click reopens it.
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                shell.run_menu = Some(project_id);
-                cx.notify();
+            .on_click(cx.listener(move |shell, _, window, cx| {
+                shell.open_run_menu(project_id, window, cx);
             }))
             // ponytail: a steady dot, not a pulse: a pulse re-renders the window for as long as
             // a dev server runs (hours), against the idle CPU budget (SPEC §15).
@@ -358,204 +357,150 @@ impl Shell {
         div()
             .child(pill)
             .when(open, |el| {
-                el.child(self.render_run_menu(project_id, &summary, theme, cx))
+                el.child(render_menu(
+                    self.menu_state(),
+                    "run-menu-panel",
+                    self.run_menu_rows(project_id),
+                    None,
+                    Place::Dropdown,
+                    theme,
+                    cx,
+                ))
             })
             .into_any_element()
     }
 
-    /// `RUNNING IN <WORKSPACE>`: one row per command (state dot, name, ports, then ↻ and a red
-    /// ■ while it runs, ▶ otherwise); then Restart all / Stop all while anything runs, Start all
-    /// while nothing does, Show Run tab, and Run setup… (which runs the commands after saving
-    /// when none were set up yet).
-    pub(crate) fn render_run_menu(
-        &self,
+    pub(crate) fn open_run_menu(
+        &mut self,
         project_id: Ulid,
-        summary: &Summary,
-        theme: &Theme,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        let separator = || {
-            div()
-                .h(px(theme::BORDER_WIDTH))
-                .my(px(space::XS))
-                .bg(rgb(theme.border))
-        };
+    ) {
+        self.begin_menu(window, cx);
+        self.run_menu = Some(project_id);
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
+    /// `RUNNING IN <WORKSPACE>`: one row per command (state dot, name, ports or state; Enter
+    /// starts it, or restarts it while it runs, and a running command has a "Stop" row under
+    /// it); then Restart all / Stop all while anything runs, Start all while nothing does,
+    /// Show Run tab, and Run setup… (which runs the commands after saving when none were set up
+    /// yet).
+    pub(crate) fn run_menu_rows(&self, project_id: Ulid) -> Rows {
+        let summary = self.run_summary(project_id);
         let live = summary.any_live();
         let workspace = (self.sidebar.projects().iter())
             .find(|project| project.id == project_id)
             .map_or(String::new(), |project| project.name.to_uppercase());
-        let heading = div()
-            .px(px(space::S))
-            .py(px(space::XS))
-            .text_size(font_size::META)
-            .font_weight(FontWeight(weight::MEDIUM))
-            .text_color(rgb(theme.text_muted))
-            .child(if live {
+        let key = |command: Command| self.keymap.label(command);
+        let run = move |action: RunAction, name: Option<String>| {
+            act(move |shell, window, cx| {
+                shell.run_action(project_id, action, name.clone(), window, cx);
+            })
+        };
+        let mut rows: Rows = vec![MenuRow::Heading(
+            if live {
                 format!("RUNNING IN {workspace}")
             } else {
                 format!("RUN IN {workspace}")
-            });
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+            }
+            .into(),
+        )];
         for row in &summary.rows {
-            let running = matches!(row.state, RowState::Running(_));
-            let (color, hollow) = match row.state {
-                RowState::Running(_) => (theme.status_done, false),
-                RowState::Exited => (theme.status_exited, false),
-                RowState::Stopped => (theme.status_idle, true),
+            let dot = match row.state {
+                RowState::Running(_) => Dot::Running,
+                RowState::Exited => Dot::Exited,
+                RowState::Stopped => Dot::Stopped,
             };
-            let controls: &[(Icon, &'static str, RunAction)] = if running {
-                &[
-                    (Icon::RotateCw, "Restart this command", RunAction::Restart),
-                    (Icon::CircleStop, "Stop this command", RunAction::Stop),
-                ]
-            } else {
-                &[(Icon::Play, "Run this command", RunAction::Start)]
-            };
-            let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
-            let mut line = div()
-                .flex()
-                .items_center()
-                .gap(px(space::S))
-                .px(px(space::S))
-                .py(px(space::XS))
-                .text_size(font_size::BODY)
-                .child(status_dot(
-                    SharedString::from(format!("run-dot-{}", row.name)),
-                    color,
-                    hollow,
-                    false,
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(rgb(theme.text))
-                        .child(row.name.clone()),
-                )
-                // Running: its ports; otherwise its state in words (never color alone).
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(font_size::META)
-                        .text_color(rgb(theme.text_muted))
-                        .when(running, |el| {
-                            el.font_family(theme.terminal_font_family.clone())
-                                .child(ports.join(" "))
-                        })
-                        .when(!running, |el| {
-                            el.child(
-                                run::state_text(&row.state)
-                                    .trim_start_matches(['○', '✕', ' '])
-                                    .to_owned(),
-                            )
-                        }),
+            if matches!(row.state, RowState::Running(_)) {
+                let ports: Vec<String> = row.ports.iter().map(|p| format!(":{p}")).collect();
+                rows.push(
+                    MenuItem::new(
+                        row.name.clone(),
+                        run(RunAction::Restart, Some(row.name.clone())),
+                    )
+                    .lead(Lead::Dot(dot))
+                    .detail(ports.join(" "))
+                    .tip("Restart this command")
+                    .row(),
                 );
-            for &(glyph, tip, action) in controls {
-                let name = row.name.clone();
-                let colors = run::action_colors(action, theme);
-                line = line.child(
-                    div()
-                        .id(SharedString::from(format!("run-{action:?}-{}", row.name)))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .p(px(space::XS))
-                        .rounded(px(radius::SMALL))
-                        .cursor_pointer()
-                        .hover(move |style| style.bg(rgb(colors.tint)))
-                        .tooltip(tooltip(theme, tip, ""))
-                        .on_click(cx.listener(move |shell, _, window, cx| {
-                            // Not a click on what lies under the menu (a card, a pane).
-                            cx.stop_propagation();
-                            shell.run_action(project_id, action, Some(name.clone()), window, cx);
-                        }))
-                        .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, colors.fg)),
+                rows.push(
+                    MenuItem::new(
+                        format!("Stop {}", row.name),
+                        run(RunAction::Stop, Some(row.name.clone())),
+                    )
+                    .lead(Lead::Icon(Icon::CircleStop))
+                    .tone(Tone::Danger)
+                    .tip("Stop this command")
+                    .row(),
+                );
+            } else {
+                // Its state in words (never color alone).
+                let state = run::state_text(&row.state)
+                    .trim_start_matches(['○', '✕', ' '])
+                    .to_owned();
+                rows.push(
+                    MenuItem::new(
+                        row.name.clone(),
+                        run(RunAction::Start, Some(row.name.clone())),
+                    )
+                    .lead(Lead::Dot(dot))
+                    .detail(state)
+                    .tip("Run this command")
+                    .row(),
                 );
             }
-            rows.push(line.into_any_element());
         }
-        let item = |id: &'static str, glyph: Icon, label: &'static str, color: u32| {
-            menu_item(id.into(), theme)
-                .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
-                .child(div().flex_1().text_color(rgb(color)).child(label))
-        };
-        let keys = |command: Command| kbd(self.keymap.label(command), theme, false);
-        let mut actions: Vec<gpui::AnyElement> = Vec::new();
+        if !summary.rows.is_empty() {
+            rows.push(MenuRow::Separator);
+        }
+        let commands = rows.len();
         if live {
-            actions.push(
-                item("run-restart", Icon::RotateCw, "Restart all", theme.text)
-                    .child(keys(Command::RunRestart))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.run_action(project_id, RunAction::Restart, None, window, cx);
-                    }))
-                    .into_any_element(),
+            rows.push(
+                MenuItem::new("Restart all", run(RunAction::Restart, None))
+                    .lead(Lead::Icon(Icon::RotateCw))
+                    .keys(key(Command::RunRestart))
+                    .row(),
             );
-            actions.push(
-                item(
-                    "run-stop",
-                    Icon::CircleStop,
-                    "Stop all",
-                    theme.status_exited,
-                )
-                .child(keys(Command::RunStop))
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.run_action(project_id, RunAction::Stop, None, window, cx);
-                }))
-                .into_any_element(),
+            rows.push(
+                MenuItem::new("Stop all", run(RunAction::Stop, None))
+                    .lead(Lead::Icon(Icon::CircleStop))
+                    .tone(Tone::Danger)
+                    .keys(key(Command::RunStop))
+                    .row(),
             );
         } else if !summary.rows.is_empty() {
-            actions.push(
-                item("run-start", Icon::Play, "Start all", theme.text)
-                    .child(keys(Command::RunStart))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.run_action(project_id, RunAction::Start, None, window, cx);
-                    }))
-                    .into_any_element(),
+            rows.push(
+                MenuItem::new("Start all", run(RunAction::Start, None))
+                    .lead(Lead::Icon(Icon::Play))
+                    .keys(key(Command::RunStart))
+                    .row(),
             );
+        }
+        if rows.len() > commands {
+            rows.push(MenuRow::Separator);
         }
         // Nothing set up yet: Save in the setup also runs them (the old Run button's click).
         let run_after = summary.rows.is_empty();
-        let panel = menu_panel("run-menu-panel", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.run_menu = None;
-                cx.notify();
-            }))
-            .child(heading)
-            .when(!rows.is_empty(), |el| el.children(rows).child(separator()))
-            .when(!actions.is_empty(), |el| {
-                el.children(actions).child(separator())
-            })
-            .child(
-                item(
-                    "run-show-tab",
-                    Icon::SquareTerminal,
-                    "Show Run tab",
-                    theme.text,
-                )
-                .on_click(cx.listener(move |shell, _, window, cx| {
-                    cx.stop_propagation();
-                    shell.show_run_tab(project_id, window, cx);
-                })),
+        rows.push(
+            MenuItem::new(
+                "Show Run tab",
+                act(move |shell, window, cx| shell.show_run_tab(project_id, window, cx)),
             )
-            .child(
-                item("run-setup", Icon::Settings, "Run setup…", theme.text).on_click(cx.listener(
-                    move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.run_menu = None;
-                        shell.open_run_setup(project_id, run_after, window, cx);
-                    },
-                )),
-            );
-        deferred(
-            anchored()
-                .snap_to_window_with_margin(px(space::S))
-                .child(div().pt(px(space::XS)).child(panel)),
-        )
-        .into_any_element()
+            .lead(Lead::Icon(Icon::SquareTerminal))
+            .row(),
+        );
+        rows.push(
+            MenuItem::new(
+                "Run setup…",
+                act(move |shell, window, cx| {
+                    shell.open_run_setup(project_id, run_after, window, cx);
+                }),
+            )
+            .lead(Lead::Icon(Icon::Settings))
+            .row(),
+        );
+        rows
     }
 
     /// "Run setup": a header naming the workspace, one card per command (number, name,

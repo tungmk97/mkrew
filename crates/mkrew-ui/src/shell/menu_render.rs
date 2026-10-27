@@ -318,6 +318,17 @@ impl Shell {
         if let Some(menu) = &self.share_menu {
             return Some(self.share_menu_rows(menu));
         }
+        if let Some(project_id) = self.run_menu {
+            return Some(self.run_menu_rows(project_id));
+        }
+        if self.workspace_switcher {
+            return self
+                .workspace
+                .map(|project_id| self.switcher_rows(project_id));
+        }
+        if self.new_menu {
+            return Some(self.new_menu_rows());
+        }
         None
     }
 
