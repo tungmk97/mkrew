@@ -631,7 +631,7 @@ The daemon never buffers unboundedly and never blocks a PTY reader on a slow cli
 the same `snapshot`. A snapshot is the visible screen of the daemon's emulator plus its history
 (ADR 0030): `cols`, `rows`, `lines` (one array per row of style runs `{text, fg, bg, flags}`,
 trailing default blanks omitted), `history` (the rows above the screen in the same format, oldest
-first, at most the daemon's 200 lines; empty and omitted on the alternate screen), `cursor`
+first, at most the daemon's 2,000 lines; empty and omitted on the alternate screen), `cursor`
 `{row, col, visible}` and `modes` (`alt_screen`, `app_cursor`,
 `app_keypad`, `bracketed_paste`, `mouse`, `sgr_mouse`, `focus_events`). Colors are `"default"`,
 `{"indexed": n}` (0–15 = ANSI) or `{"rgb": [r, g, b]}`. `flags` bits: bold 1, dim 2, italic 4,
@@ -667,11 +667,11 @@ Protocol 47 (ADR 0069): `Project.position`, `project.update` `position?`.
   thread that reads into a buffer and forwards chunks over a bounded channel to tokio. Never call
   blocking PTY reads inside async tasks.
 - **Headless emulator per session:** the daemon feeds every chunk into its own
-  `alacritty_terminal` instance sized to the session, with a SMALL scrollback (200 lines). It is
-  used for (a) state detection on the real screen text and (b) instant attach snapshots, which
-  carry those 200 lines (ADR 0030).
-  Memory budget: a cell costs tens of bytes, so large scrollback in the daemon is forbidden.
-  Long history lives in the session log file on disk.
+  `alacritty_terminal` instance sized to the session, with a bounded scrollback (2,000 lines,
+  ADR 0082). It is used for (a) state detection on the real screen text and (b) instant attach
+  snapshots, which carry those lines (ADR 0030).
+  Memory budget: a cell costs about 24 bytes (≈ 5.8 MB per full 120-column history), so the
+  daemon scrollback stays bounded. Long history lives in the session log file on disk.
 - Output fan-out per chunk: emulator → state detector, session log file (buffered writer),
   attached clients (binary frames, §7).
 - **Command lookup:** on Windows try `PATHEXT` (`claude.cmd`, `.ps1` shims). Clear error if not found.
@@ -946,7 +946,7 @@ The right panel (below) is a third column right of Terminals and the Editor whil
     - Present at most once per display refresh; coalesce output that arrives between frames.
     - Panes that are not visible (other tab, other workspace, minimized window) are detached:
       no parsing, no layout, no rendering. Re-attach uses the daemon snapshot, so the pane's
-      scrollback restarts from the daemon's ≤ 200 history lines (ADR 0030).
+      scrollback restarts from the daemon's ≤ 2,000 history lines (ADR 0030, 0082).
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
 - **Open in Zed:** on task cards, the workspace menu, the file tree menu and Docs; runs
   `zed <path>[:line]`; clear error with install hint if `zed` is missing.

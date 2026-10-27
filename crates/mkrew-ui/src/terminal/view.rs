@@ -213,8 +213,8 @@ impl TerminalPane {
     }
 
     /// Replaces the screen with a fresh daemon snapshot (`session.snapshot` after the output
-    /// queue overflowed). The scrollback restarts from the snapshot's history (≤ 200 lines,
-    /// ADR 0030). The caller notifies.
+    /// queue overflowed). The scrollback restarts from the snapshot's history (≤ 2,000 lines,
+    /// ADR 0030, 0082). The caller notifies.
     pub fn load_snapshot(&mut self, snapshot: &ScreenSnapshot) {
         self.emulator = Emulator::from_snapshot(snapshot);
         if let Some(find) = &self.find {

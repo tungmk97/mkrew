@@ -13,9 +13,9 @@ use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler};
 use mkrew_protocol::{CellRun, CursorSnapshot, ScreenSnapshot, TermColor, TermModes};
 
-/// Small on purpose: long history lives in the session log file (SPEC §8). Attach snapshots
-/// carry all of it, so a re-attached pane can scroll back (ADR 0030).
-pub const SCROLLBACK_LINES: usize = 200;
+/// Bounded: long history lives in the session log file (SPEC §8). Attach snapshots carry all
+/// of it, so a re-attached pane can scroll back (ADR 0030, 0082).
+pub const SCROLLBACK_LINES: usize = 2_000;
 
 /// Characters kept of a terminal title used as a pane name.
 pub const TITLE_MAX_CHARS: usize = 60;
@@ -508,5 +508,20 @@ mod tests {
         // Leaving the alternate screen brings the history back.
         emu.advance(b"\x1b[?1049l");
         assert_eq!(emu.snapshot().history.len(), 9);
+    }
+
+    /// The snapshot carries the newest `SCROLLBACK_LINES` rows and drops older ones (ADR 0082).
+    #[test]
+    fn snapshot_history_is_capped_at_the_scrollback_limit() {
+        let mut emu = Emulator::new(10, 2);
+        let total = SCROLLBACK_LINES + 50;
+        for n in 0..total {
+            emu.advance(format!("line{n}\r\n").as_bytes());
+        }
+        let history = emu.snapshot().history;
+        assert_eq!(history.len(), SCROLLBACK_LINES);
+        // `total` lines + the cursor's empty row: the oldest kept is the one after the dropped.
+        let first: String = history[0].iter().map(|run| run.text.as_str()).collect();
+        assert_eq!(first, format!("line{}", total - 1 - SCROLLBACK_LINES));
     }
 }
