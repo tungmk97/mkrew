@@ -28,11 +28,14 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Shift+↓ picks the first block in view (Preview) or line (Source), highlighted like a click.
   More Shift+↓ grows, Shift+↑ shrinks, and the moved end scrolls into view.
   Esc clears; Ctrl+Alt+M opens the comment draft on it.
+  Not run (2026-10-27 smoke): no keyboard automation allowed (it once typed into the browser); only the launch was checked (the app starts, connects to a sandbox daemon, no panic or error in the logs), dark and light both unseen.
 - [ ] **Pick lines in the Git diff (dark + light, Unified + Split):** Git → a changed file with 2+ hunks.
   `n` then Shift+↓ picks the first new-side line of that hunk.
   Shift+↓ grows across the gap into the next hunk and scrolls; the pick bar sits under the last line.
   Esc clears; Ctrl+Alt+M comments, Ctrl+Shift+L sends.
+  Not run (2026-10-27 smoke): no key may be sent to the app; the sandbox had no changed file with 2+ hunks open, dark and light both unseen.
 - [ ] **Text fields keep Shift+↑/↓:** in the Docs filter, a comment draft and the Git commit box (two lines typed), Shift+↑ / Shift+↓ select text and pick no lines.
+  Not run (2026-10-27 smoke): needs a person at the keyboard.
 - [ ] **Copy mode (dark + light):** a shell pane with a few screens of output: Alt+Shift+C shows a block cursor and a "Copy mode" chip with the key hints in the tab bar (single pane) or pane header (split).
   `h j k l`, `w b e`, `0 $`, `g G`, PgUp / PgDn move the cursor.
   `v` / `V` select (selection color readable); a click-selection made before is gone.
@@ -41,15 +44,20 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   While an agent keeps printing the view does not move, and leaving shows the live screen.
   Ctrl+Shift+F finds and moves the cursor; Ctrl+Shift+L sends the selection and ends copy mode.
   Esc with a selection drops it, Esc again leaves; Esc after a plain click (no selection) leaves at once.
+  Not run (2026-10-27 smoke): no key may be sent to the app and no shell pane was driven.
 - [ ] **Copy mode survives focus loss (dark + light):** in copy mode, click another pane and come back; the cursor and the chip are still there.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and a second pane.
 - [ ] **Voice in copy mode (dark + light):** with a selection in copy mode, the voice key puts the spoken text on the clipboard and does not type into the shell.
+  Not run (2026-10-27 smoke): needs a person at the keyboard and the microphone.
 - [ ] **Link hints (dark + light):** a pane showing a URL, a file path of the workspace and a path that does not exist.
   Alt+Shift+O shows accent labels over the first two only.
   Typing a label opens the URL in the browser / the file in Files at its line.
   Esc, another key, a wheel scroll, a click or moving focus to another pane ends the hints, and held output shows.
   With 30+ links two-letter labels appear and narrow as you type.
   With none the tab bar says "No links on screen." and clears after 3 s.
+  Not run (2026-10-27 smoke): no key may be sent to the app; the browser opening and the tab bar notice were not seen.
 - [ ] **AltGr layouts:** on a layout where Alt+Shift+C / O type a character, rebind `copy_mode` / `link_hints` in Settings → Keyboard and check the new keys.
+  Not run (2026-10-27 smoke): needs an AltGr layout and a person at the keyboard.
 
 ### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0081, wave 2)
 
