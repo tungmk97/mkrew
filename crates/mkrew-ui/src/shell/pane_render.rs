@@ -478,10 +478,6 @@ impl Shell {
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
-            // Always there, so the drop ring never shifts the content.
-            .border(px(theme::BORDER_WIDTH))
-            .border_color(gpui::transparent_black())
-            .drag_over::<DraggedPath>(move |style, _, _, _| style.border_color(rgb(accent_border)))
             .on_drop(
                 cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
                     if shell.workspace == Some(dragged.project_id) {
@@ -561,6 +557,18 @@ impl Shell {
                         .border_color(rgb(border)),
                 )
             })
+            // The drop ring: an overlay, so the terminal keeps its size and the pointer.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(radius::MEDIUM))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(gpui::transparent_black())
+                    .drag_over::<DraggedPath>(move |style, _, _, _| {
+                        style.border_color(rgb(accent_border))
+                    }),
+            )
             .when_some(voice_ring, |el, color| {
                 el.child(
                     div()
