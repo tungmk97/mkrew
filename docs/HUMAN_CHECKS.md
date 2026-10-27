@@ -23,18 +23,38 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify - 2026-10-27 Keyboard context menus (ADR 0081, wave 1)
 
-- [ ] **Selected row in both themes:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓; the selected row has the `selected` fill and stays readable in dark and light, including the swatch ring (accent) on the color rows.
-- [ ] **Shift+F10 per owner, dark and light:** terminal pane (menu under the pane header), Files tree cursor row, Files editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher). Check that each menu sits at the owner's bottom-left and that Esc returns typing to where you were (the terminal types again).
-- [ ] **Shift+F10 toggles:** with any menu open, Shift+F10 closes it and the keyboard goes back to where it was (the Menu context shield does not cover it, it is global).
+- Every check in this entry is done in both dark and light.
+- [ ] **Selected row:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓.
+  The selected row has the `selected` fill and stays readable, including the swatch ring (accent) on the color rows.
+- [ ] **Navigation keys:** in a menu with several rows, ↑ on the first row wraps to the last and ↓ on the last wraps to the first.
+  Home / End select the first / last enabled row; disabled rows, separators and notes are skipped.
+  On a color row ← / → move between the swatches and Enter picks the swatch.
+  Space runs a row like Enter.
+  A letter selects the next row starting with it; a repeated letter goes on to the following one.
+- [ ] **Run menu by keyboard:** open the Run menu, select a command row and press Enter: it starts, or restarts when it already ran.
+  While it runs, the "Stop <name>" row stops it.
+- [ ] **Shift+F10 per owner:** terminal pane (menu under the pane header), Files tree cursor row, Files editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher).
+  Each menu sits at the owner's bottom-left.
+  Esc returns typing to where you were (the terminal types again).
+- [ ] **Shift+F10 toggles:** with any menu open, Shift+F10 closes it and the keyboard goes back to where it was.
 - [ ] **Focus returns:** after Esc, after running a row, and after a click outside, typing goes to the pane / field that had the keyboard before the menu opened, with no click.
 - [ ] **Menu key:** bind `context_menu` to `menu` in Settings → Keyboard and check it opens the same menus (Windows only).
-- [ ] **Held key:** hold Enter in the palette on "Workspace: Open workspace menu"; the menu opens with its first row selected and nothing runs while the key repeats.
-- [ ] **Fan-out picker by keyboard:** Shift+F10 on a Todo card → "Run with several agents…" → Space ticks agents, ↓ reaches the Run row, Enter runs; the other rows go grey at the cap.
+- [ ] **Held key:** hold Enter in the palette on "Workspace: Open workspace menu".
+  The menu opens with its first row selected and nothing runs while the key repeats.
+- [ ] **Fan-out picker by keyboard:** Shift+F10 on a Todo card → "Run with several agents…".
+  Space ticks agents, ↓ reaches the Run row, Enter runs; the other rows go grey at the cap.
 - [ ] **Board keys while a menu is open:** with a card menu open, ↑/↓/Enter move the menu and never the selected card.
-- [ ] **Repositories search:** with several repositories, open the Repositories menu, type to filter (typing keeps working), ↑/↓ move the selection, Enter shows the selected one; Esc closes By:, ⋯ and Repositories.
+- [ ] **Repositories search:** with several repositories, open the Repositories menu and type to filter (typing keeps working).
+  ↑/↓ move the selection and Enter shows the selected one.
+  Esc closes By:, ⋯ and Repositories.
 - [ ] **Sidebar row anchor:** Shift+F10 on a highlighted sidebar row opens its menu under that row, also while an agent is streaming.
-- [ ] **Visual changes to look at:** the workspace menu now floats at the click (it used to drop inside the sidebar row); the workspace switcher's ✓ is in a left column; Run menu commands are rows (Enter starts or restarts, a "Stop <name>" row stops) instead of inline icon buttons; a menu error line shows "✕" in muted text instead of red; the Repositories rows show "N changes" muted instead of amber.
-- [ ] **Not automated:** the smoke run (2026-10-27) launched the dev exe in a sandbox, but `SendKeys` went to the foreground browser because the Mkrew window could not be activated, so no menu was driven in the real window and the run was stopped. Everything above is unticked and needs a human; Shift+F10 toggle is confirmed in code only (global binding, not in the `Menu` NoAction shield, `Shell::run` closes the menu and does not reopen it).
+- [ ] **Visual changes to look at:** the workspace menu now floats at the click (it used to drop inside the sidebar row).
+  The workspace switcher's ✓ is in a left column.
+  Run menu commands are rows instead of inline icon buttons.
+  A menu error line shows "✕" in muted text instead of red; the Repositories rows show "N changes" muted instead of amber.
+- [ ] **Not automated:** the smoke run (2026-10-27) could not drive the real window, so no menu was driven by keyboard and every item above is unticked.
+  Synthetic input is not used any more; a human does these checks.
+  The Shift+F10 toggle is confirmed in code only: the binding is global, not in the `Menu` NoAction shield, and `Shell::run` closes the menu and does not reopen it.
 
 ### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
 

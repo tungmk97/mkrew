@@ -1031,8 +1031,8 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   border, the unfocused ones are dimmed. The sidebar session row also puts the badge
   before the title. The badge is a bordered square chip (a logo chip has no border at rest, one
   color, ADR 0058); it also shows on board cards and in agent menus.
-- Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Rename** (inline
-  like F2; greyed for a run pane), **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise) and **Change color** (the workspace palette; none clears). A
+- Pane menu (right-click a split pane's header or a sidebar session row, or Shift+F10 with the pane focused): **Pin**, **Mark unread** (a finished agent goes back to Needs you until its pane is focused again, §20J; greyed otherwise), **Rename** (inline
+  like F2; greyed for a run pane) and **Change color** (the workspace palette; none clears). A
   colored pane tints its agent chip and draws a thin line under its header (a single pane: on
   top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
@@ -1358,10 +1358,12 @@ ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rena
 Settings → Keyboard if needed.
 Shift+F10 does not reach a focused terminal either; rebind `context_menu` if a program needs it.
 While a popover menu is open it has the keyboard (key context `Menu`, not in `keymap.toml`):
-↑ / ↓ select the next / previous enabled row, wrapping; Home / End the first / last;
-← / → move between the swatches of a color row; Enter or Space run the row and close the menu
-(a multi-select row of the fan-out picker ticks and stays; Enter on its Run row runs);
-a letter selects the next row starting with it; Esc closes and gives the keyboard back.
+↑ / ↓ select the next / previous enabled row, wrapping.
+Home / End select the first / last.
+← / → move between the swatches of a color row.
+Enter or Space run the row and close the menu (a multi-select row of the fan-out picker ticks and stays; Enter on its Run row runs).
+A letter selects the next row starting with it.
+Esc closes the menu and gives the keyboard back.
 A held (auto-repeat) key does nothing.
 The Board's single keys stay with the menu while it is open.
 
