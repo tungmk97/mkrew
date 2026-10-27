@@ -190,6 +190,19 @@ pub fn file_ref(template: &str, path: &str) -> String {
     template.replace("{path}", &path)
 }
 
+/// What a tree row dropped on a pane types (§20B.5, ADR 0081): `composer.file_ref` on an
+/// agent pane, the bare path on a shell (it has no `@`); a folder ends with `/`. One space
+/// after it keeps two drops in a row apart; never an Enter.
+pub fn dropped_ref(template: &str, path: &str, is_dir: bool, agent: bool) -> String {
+    let path = if is_dir {
+        format!("{}/", path.trim_end_matches('/'))
+    } else {
+        path.to_owned()
+    };
+    let template = if agent { template } else { "{path}" };
+    format!("{} ", file_ref(template, &path))
+}
+
 /// What "Send selection" (§20B.4) opens the composer with: `` `<path>:<a>-<b>` `` for picked
 /// lines `a..=b` of a file (`lines`; `None` = terminal text), then `text` in a fenced block
 /// (fenced longer than any backtick run inside), ending on a new line for the instruction.
@@ -475,6 +488,27 @@ mod tests {
         );
         assert_eq!(file_ref("{path}", "a b\\c.txt"), "\"a b/c.txt\"");
         assert_eq!(file_ref("see {path} ", "x.rs"), "see x.rs ");
+    }
+
+    #[test]
+    fn dropped_refs_follow_the_pane_kind_and_mark_folders() {
+        assert_eq!(
+            dropped_ref("@{path}", "src/main.rs", false, true),
+            "@src/main.rs "
+        );
+        assert_eq!(dropped_ref("@{path}", "src", true, true), "@src/ ");
+        assert_eq!(
+            dropped_ref("@{path}", "src/main.rs", false, false),
+            "src/main.rs "
+        );
+        assert_eq!(
+            dropped_ref("@{path}", "docs/my notes", true, false),
+            "\"docs/my notes/\" "
+        );
+        assert!(
+            !dropped_ref("@{path}", "a.rs", false, true).contains('\n'),
+            "never an Enter"
+        );
     }
 
     #[test]
