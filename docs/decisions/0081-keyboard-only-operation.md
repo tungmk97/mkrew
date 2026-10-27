@@ -44,3 +44,37 @@ The work ships in four waves; each wave appends its section here.
 - `Shift+F10` no longer reaches a focused terminal; rebind `context_menu` in Settings → Keyboard if a program needs it.
 - The Windows Menu key arrives as `menu`: bind it in Settings → Keyboard.
 - Waves 2 to 4 (focusable dialog controls, picking by keyboard, single actions) append their sections.
+
+## Wave 2 - focusable controls in dialogs (2026-10-27)
+
+### Decision
+
+- The controls of a modal dialog are Tab stops through gpui's tab index.
+  A control with `tab_index(0)` keeps its focus handle in its element state, so no field on `Shell` and no `use_keyed_state` is needed.
+- The dialog's panel keeps `dialog_focus`.
+  It is the first Tab stop when the dialog has text fields, so Shift+Tab can come back to them.
+- Tab and Shift+Tab are handled in each dialog's `on_key_down` (`Shell::dialog_nav`), not bound in `keymap.toml`.
+  gpui has no default Tab binding, and the key only means something inside a dialog.
+- The text fields stay virtual (a `field` or `focus` value in the dialog model and one `dialog_focus` handle).
+  Tab walks them first; at the end of that chain it moves on to the buttons, and from the last button it wraps back.
+- A focused control takes Enter and Space (gpui clicks it on release) and every typed key.
+  Esc, arrow keys and Ctrl combinations still reach the dialog.
+- The ring is a 1 px border in `Theme.focus_ring` (the text color) over the control's own border, shown by `focus_visible` only after keyboard input.
+- Chips of a row are each a Tab stop, and ← / → move between them.
+- Initial focus is the dialog itself (or its first text field), where Enter keeps its old meaning.
+  The spec said "else the primary button"; the primary button of several dialogs is destructive, so no button gets the first focus.
+- Broadcast: Space checks the row the arrows picked; Space in the message types a space until an arrow key moves the keyboard to the list.
+- A control that disappears while focused (a button swapped for its disabled twin) returns the keyboard to the dialog, so Esc keeps working.
+
+### Destructive confirmations (replaces the rule of `undo_dialog.rs`)
+
+Before: Undo Discard, worktree Remove and Discard files, Git Discard and Compare Pick took only a click ("discarding takes an explicit click").
+Now: they also run when Tab moved the keyboard onto the button and Enter or Space is pressed.
+They are never the first focus, and an auto-repeating Enter or Space is dropped before a control sees it (`dialog_focus::blocks_repeat`), like the held-key guard of the confirm prompt.
+The daemon still re-checks every destructive request (previews and fingerprints), so nothing else changed.
+
+### Consequences
+
+- SPEC §13 and §14 describe the dialog keys and the ring.
+- Turns: D shows the diff since the selected turn.
+  Run setup: Shift+Tab walks back, and its picker takes ↑ ↓ → ← and Enter on the entry under the cursor.

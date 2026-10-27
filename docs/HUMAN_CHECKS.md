@@ -21,6 +21,34 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0081, wave 2)
+
+- [ ] **Focus ring (dark + light):** open the task dialog (palette: New task).
+  Press Tab until each control has the keyboard: the title, the prompt, From prompt, every agent chip, Run in a worktree, Cancel, Create task, then the title again.
+  Each control shows a 1 px ring in the text color; a mouse click on the same controls shows none.
+  Shift+Tab goes the other way.
+- [ ] **Chips:** with an agent chip focused press ← / → (moves along the row, stops at the ends) and Enter or Space (picks it).
+  The Ask AI dialog's Agent and Web search rows do the same.
+- [ ] **Destructive confirmations:** open the Undo dialog of a Review card.
+  No button has a ring and Enter does nothing.
+  Tab once: Cancel. Tab twice: Discard changes (red text, ring). Enter discards.
+  Repeat with Remove worktree, Discard files and Git Discard.
+  Open each with the Enter key held a moment: nothing is clicked.
+  Also check Tab and Esc after Discard... and after Keep files, and the confirm, busy, re-read cycle of the worktree dialog; Enter on the dialog itself does nothing.
+- [ ] **Broadcast:** type a message with spaces (they stay spaces); press ↓ and Space to uncheck a session; type again (Space types a space); Tab reaches Cancel and Send.
+- [ ] **Run setup:** Tab walks the fields, then both checkboxes, then Duplicate, Remove and Browse of the last card that had the keyboard (after the last card's fields), Add command, Cancel, Save.
+  Shift+Tab goes back.
+  Browse opens the picker: ↓ ↑ move, → opens a folder, ← goes up, Enter picks the folder or the .env file under the cursor.
+  Tab to Remove and press Enter on a card: the keyboard stays usable.
+- [ ] **Settings and others:** Tab through Settings reaches Fix in Zed, Reset and the footer links after the rows.
+  A Reset that vanishes after the click keeps the keyboard in the dialog; Enter on Reset puts the keyboard back on the dialog, so Tab restarts at the first stop.
+  Phone access, Add workspace, Git base, Compare and the Send dialog reach all their buttons with Tab.
+  Turns: D opens the diff since the selected turn.
+- [ ] **Buttons are not text fields:** Tab to a button, then paste or press an arrow: nothing happens.
+  Click a text field after a button: the keyboard returns to the field.
+- [ ] **A button that vanishes:** in the worktree dialog focus Discard, press Enter (the step changes).
+  Esc still closes the dialog.
+
 ### To verify - 2026-10-27 Keyboard context menus (ADR 0081, wave 1)
 
 - Every check in this entry is done in both dark and light.
