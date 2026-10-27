@@ -605,6 +605,10 @@ pub struct GitView {
     /// The files marked as viewed (SPEC §12B, ADR 0065): the daemon's last answer, plus the
     /// user's toggles since. Shared with the list's render closure.
     pub viewed: Rc<ViewedSet>,
+    /// The Diff view is open (SPEC §12B, ADR 0082): a click / Enter on a file or an entry
+    /// point opens it; `×`, `Esc` and an empty list close it. A selection moving by itself
+    /// (staging, ↑ ↓, a refresh) keeps it.
+    open: bool,
     /// The viewed file whose collapsed diff "Show diff" opened.
     unfolded: Option<Target>,
     /// Serial of the last `git.viewed` asked for or toggle made: an older answer is dropped.
@@ -651,6 +655,7 @@ impl GitView {
             filter: Input::default(),
             collapsed: HashSet::new(),
             viewed: Rc::new(ViewedSet::default()),
+            open: false,
             unfolded: None,
             viewed_asked: 0,
             commented: None,
@@ -767,6 +772,8 @@ impl GitView {
             Some(next) if Some(&next) == self.selected.as_ref() => None,
             Some(next) => self.select(next),
             None => {
+                // No file left (committed, discarded, clean): the open diff closes with it.
+                self.open = false;
                 self.select_none();
                 None
             }
@@ -886,6 +893,21 @@ impl GitView {
         self.selected = None;
         self.diff = Diff::None;
         self.hunk = None;
+    }
+
+    /// Opens the Diff view on the selection (or the first file once listed).
+    pub fn open_diff(&mut self) {
+        self.open = true;
+    }
+
+    /// Closes the Diff view; the selection stays for the next open.
+    pub fn close_diff(&mut self) {
+        self.open = false;
+    }
+
+    /// The Diff view is open.
+    pub fn diff_open(&self) -> bool {
+        self.open
     }
 
     /// The listed section.

@@ -187,6 +187,35 @@ fn the_selection_follows_its_file_across_groups_or_falls_back_to_the_first() {
 }
 
 #[test]
+fn an_open_diff_follows_its_selection_and_closes_when_nothing_is_left() {
+    let mut view = loaded();
+    assert!(!view.diff_open(), "selecting the first file does not open the diff");
+    view.key(Key::Down);
+    assert!(!view.diff_open(), "moving the selection does not open it");
+    view.open_diff();
+    // `new.txt` got staged: the selection moves with it, the diff stays open.
+    view.select(target(Group::Untracked, "new.txt"));
+    let mut status = working();
+    status.untracked.clear();
+    status.staged.push(file("new.txt", ChangeKind::Added));
+    view.begin_status();
+    view.status_loaded(Ok(status));
+    assert_eq!(view.selected, Some(target(Group::Staged, "new.txt")));
+    assert!(view.diff_open());
+    view.key(Key::Up);
+    assert!(view.diff_open(), "moving the selection keeps it open");
+    // Everything committed: nothing to show, the diff closes.
+    view.begin_status();
+    view.status_loaded(Ok(GitStatus::default()));
+    assert!(!view.diff_open());
+    // Closed by hand.
+    let mut view = loaded();
+    view.open_diff();
+    view.close_diff();
+    assert!(!view.diff_open());
+}
+
+#[test]
 fn a_failed_status_says_so_but_a_failed_refresh_keeps_the_list() {
     let mut view = loaded();
     view.begin_status();
