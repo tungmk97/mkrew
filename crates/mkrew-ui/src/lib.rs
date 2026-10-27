@@ -65,6 +65,7 @@ pub mod pane_text;
 pub mod peek;
 pub mod phone;
 pub mod phone_dialog;
+pub mod pick;
 pub mod plan;
 pub mod preview;
 pub mod preview_select;

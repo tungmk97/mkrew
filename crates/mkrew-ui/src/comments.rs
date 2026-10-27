@@ -9,6 +9,7 @@ use mkrew_protocol::{
 };
 use ulid::Ulid;
 
+use crate::pick::{self, Head, Unit};
 use crate::task_dialog::DialogKey;
 use crate::text_box::Input;
 
@@ -197,6 +198,8 @@ pub struct Comments {
     pub file_path: Option<String>,
     pub list: List,
     pub selection: Option<Selection>,
+    /// Which end of `selection` Shift+↑ / Shift+↓ move (a click resets it to the end).
+    pub head: Head,
     pub draft: Option<Draft>,
     /// Why the last Resolve / Reopen failed.
     pub error: Option<String>,
@@ -219,6 +222,7 @@ impl Comments {
             file_path: None,
             list: List::Loading,
             selection: None,
+            head: Head::End,
             draft: None,
             error: None,
             early: Vec::new(),
@@ -285,6 +289,28 @@ impl Comments {
     /// A click on `start..=end`.
     pub fn pick(&mut self, start: u32, end: u32, extend: bool) {
         self.selection = Some(Selection::pick(self.selection, start, end, extend));
+        self.head = Head::End;
+    }
+
+    /// Shift+↓ / Shift+↑ over `units` (see [`pick::step`]); `start` is the unit picked when
+    /// nothing is. `false` = there are no units.
+    pub fn step_pick(&mut self, units: &[Unit], down: bool, start: usize) -> bool {
+        let Some((selection, head)) = pick::step(units, self.selection, self.head, down, start)
+        else {
+            return false;
+        };
+        self.selection = Some(selection);
+        self.head = head;
+        true
+    }
+
+    /// The source line at the end Shift+↑ / Shift+↓ move: what scrolls into view.
+    pub fn head_line(&self) -> Option<u32> {
+        let selection = self.selection?;
+        Some(match self.head {
+            Head::End => selection.end,
+            Head::Start => selection.start,
+        })
     }
 
     /// Opens a draft for a new comment on the selection of the shown `lines`, quoting them;
@@ -579,6 +605,21 @@ mod tests {
             (CommentContext::Diff, 4, 5)
         );
         assert_eq!(params.quote, "let a = 1;\nlet b = 2;");
+    }
+
+    #[test]
+    fn keyboard_picks_keep_their_head_and_a_click_resets_it() {
+        let mut comments = Comments::default();
+        let lines: Vec<Unit> = (1..=4).map(|n| (n, n)).collect();
+        assert!(comments.step_pick(&lines, false, 1));
+        assert_eq!(comments.selection, Some(Selection { start: 2, end: 2 }));
+        // One line picked: Up grows the start, which is now the head.
+        assert!(comments.step_pick(&lines, false, 1));
+        assert_eq!(comments.selection, Some(Selection { start: 1, end: 2 }));
+        assert_eq!(comments.head_line(), Some(1));
+        comments.pick(3, 3, false);
+        assert_eq!(comments.head_line(), Some(3));
+        assert!(!comments.step_pick(&[], true, 0), "no units");
     }
 
     #[test]
