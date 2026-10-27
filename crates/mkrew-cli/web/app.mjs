@@ -506,7 +506,7 @@ function ensureTerminal() {
     // First: its unicode-range limits it to icon code points, and a later font may claim those as tofu.
     fontFamily: '"Symbols Nerd Font Mono", "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace',
     fontSize: 8,
-    // Like the desktop pane (SPEC §10); the attach itself brings at most the daemon's 2,000 lines.
+    // Like the desktop pane (SPEC §10); the attach itself brings at most the daemon's 1,000 lines.
     scrollback: 10000,
     theme: TERMINAL_THEME,
   });

@@ -1,4 +1,4 @@
-# 0082 - Daemon scrollback raised to 2,000 lines
+# 0082 - Daemon scrollback raised to 1,000 lines
 
 - Date: 2026-10-27
 - Status: accepted
@@ -13,7 +13,7 @@ One agent answer or diff is often longer than 200 lines, and the user could not 
 
 ## Options
 
-1. Raise the daemon scrollback to 2,000 lines.
+1. Raise the daemon scrollback to 1,000 lines.
 2. Keep hidden panes' UI emulators (rejected in ADR 0030).
 3. Replay the tail of the session log file on attach (rejected in ADR 0030).
 
@@ -24,9 +24,9 @@ It is a one-constant change and keeps the ADR 0030 path.
 
 ## Consequences
 
-- A full history costs about 2,000 rows x cols x 24 bytes (alacritty `Cell`): about 5.8 MB at 120 columns, against 0.6 MB before.
-  Six sessions with full histories use about 35 MB, near the §15 daemon budget (< 50 MB); wide panes (200+ columns) can pass it.
+- A full history costs about 1,000 rows x cols x 24 bytes (alacritty `Cell`): about 2.9 MB at 120 columns, against 0.6 MB before.
+  Six sessions with full histories use about 17 MB (about 29 MB at 200 columns), inside the §15 daemon budget (< 50 MB).
   Alacritty allocates history rows only as output scrolls, so short sessions cost what they used.
-- An attach snapshot carries up to 2,000 rows of JSON (a few MB for colorful output), still far below the 16 MiB frame limit (§7).
+- An attach snapshot carries up to 1,000 rows of JSON (at most a few MB for colorful output), far below the 16 MiB frame limit (§7).
 - SPEC §7, §8 and §10 are updated.
   Older output is still in the History dialog (session log).

@@ -1286,9 +1286,9 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
 - [ ] **Terminal commit refreshes:** with `fe` shown, run `git -C fe commit --allow-empty -m x`
   in a terminal → the History / ahead count updates within ~1 s without clicking.
 - [ ] **Scrollback after a tab switch (ADR 0030, 0082):** in a pwsh pane run
-  `1..2300 | % { "line $_" }`, then Ctrl+Tab to another tab and back. Also try opening the Board and
+  `1..1300 | % { "line $_" }`, then Ctrl+Tab to another tab and back. Also try opening the Board and
   coming back, and minimizing and restoring. Each time, the mouse wheel and Shift+PgUp scroll back
-  about 2,000 lines above the screen (to around `line 300`), the screen looks the same as before the
+  about 1,000 lines above the screen (to around `line 300`), the screen looks the same as before the
   switch, and typing returns to the live prompt. Do the same in a claude pane after a long answer.
   `mk attach <session>` in Windows Terminal: its scrollbar shows the same lines above the screen.
 - [ ] **Alt+Shift+A / Alt+Shift+S:** with a terminal focused, Alt+Shift+A splits the focused pane to

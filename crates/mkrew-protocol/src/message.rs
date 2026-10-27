@@ -1422,7 +1422,7 @@ pub struct ScreenSnapshot {
     /// One entry per visible row, top to bottom. Trailing default blanks are omitted.
     pub lines: Vec<Vec<CellRun>>,
     /// The main screen's scrollback, oldest first, same row format as `lines` (at most the
-    /// daemon's 2,000 lines). Empty on the alternate screen, which has no history.
+    /// daemon's 1,000 lines). Empty on the alternate screen, which has no history.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<Vec<CellRun>>,
     pub cursor: CursorSnapshot,

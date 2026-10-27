@@ -15,7 +15,7 @@ use mkrew_protocol::{CellRun, CursorSnapshot, ScreenSnapshot, TermColor, TermMod
 
 /// Bounded: long history lives in the session log file (SPEC §8). Attach snapshots carry all
 /// of it, so a re-attached pane can scroll back (ADR 0030, 0082).
-pub const SCROLLBACK_LINES: usize = 2_000;
+pub const SCROLLBACK_LINES: usize = 1_000;
 
 /// Characters kept of a terminal title used as a pane name.
 pub const TITLE_MAX_CHARS: usize = 60;
