@@ -409,6 +409,7 @@ impl Shell {
         let hover = theme.hover;
         let button = div()
             .id("workspace-switch")
+            .relative()
             .max_w(theme::rems_px(theme::TITLE_CHIP_MAX_WIDTH))
             .min_w_0()
             .flex()
@@ -445,7 +446,8 @@ impl Shell {
                 Icon::ChevronDown,
                 theme::ICON_SIZE_SMALL,
                 theme.text_muted,
-            ));
+            ))
+            .child(record_bounds(Anchor::Switcher, cx));
         let repos = self.git_summary().and_then(|summary| {
             let label = summary.branch_label()?;
             let tip = summary.branch_tooltip().unwrap_or_default();

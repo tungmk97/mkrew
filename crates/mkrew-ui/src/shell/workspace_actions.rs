@@ -279,20 +279,22 @@ impl Shell {
         .detach();
     }
 
-    /// Opens the menu of `project_id` (closing any other) and lists the agent profiles for it.
+    /// Opens the menu of `project_id` floating at `anchor` (closing any other) and lists the
+    /// agent profiles for it. `by_keyboard` selects its first row.
     pub(crate) fn open_workspace_menu(
         &mut self,
         project_id: Ulid,
+        anchor: Point<Pixels>,
+        by_keyboard: bool,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.sidebar_layout.show();
-        self.file_menu = None;
-        self.workspace_menu = Some(WorkspaceMenu::new(project_id));
-        cx.notify();
+        self.begin_menu(window, cx);
+        self.workspace_menu = Some(WorkspaceMenu::new(project_id, anchor));
+        self.finish_menu(by_keyboard || window.last_input_was_keyboard(), window, cx);
         let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
         cx.spawn_in(window, async move |this, cx| {
             let agents = match listed.await {
@@ -301,17 +303,31 @@ impl Shell {
             };
             let _ = this.update(cx, |shell, cx| {
                 // Unless the menu closed (or moved to another workspace) meanwhile.
-                if let Some(menu) = shell
+                let Some(menu) = shell
                     .workspace_menu
                     .as_mut()
                     .filter(|menu| menu.project_id == project_id)
-                {
-                    menu.agents = agents;
-                    cx.notify();
-                }
+                else {
+                    return;
+                };
+                menu.agents = agents;
+                shell.apply_menu_pending();
+                cx.notify();
             });
         })
         .detach();
+    }
+
+    /// The same menu under the title bar's workspace switcher: the palette, "pick a default
+    /// first" and Shift+F10 without an owner.
+    pub(crate) fn open_workspace_menu_at_switcher(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let at = self.menu_anchor(&Anchor::Switcher, window, cx);
+        self.open_workspace_menu(project_id, at, true, window, cx);
     }
 
     /// Opens the folder of `project_id` in Zed; a failure (e.g. `zed` missing) shows a toast.

@@ -119,7 +119,7 @@ impl Shell {
             self.tab_error = Some(format!(
                 "Pick a default {what} for this workspace, then try again."
             ));
-            self.open_workspace_menu(project_id, window, cx);
+            self.open_workspace_menu_at_switcher(project_id, window, cx);
         }
         missing
     }

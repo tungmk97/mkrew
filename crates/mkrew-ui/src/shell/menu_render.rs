@@ -321,6 +321,9 @@ impl Shell {
         if let Some(project_id) = self.run_menu {
             return Some(self.run_menu_rows(project_id));
         }
+        if let Some(menu) = &self.workspace_menu {
+            return Some(self.workspace_menu_rows(menu));
+        }
         if self.workspace_switcher {
             return self
                 .workspace
@@ -477,5 +480,70 @@ impl Shell {
             self.menu_swatch = menu_model::swatch_start(&rows, at);
             self.menu_pending = None;
         }
+    }
+}
+
+/// What a menu opened from the keyboard hangs from.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum Anchor {
+    /// The title bar's workspace switcher: where every owner falls back to.
+    Switcher,
+}
+
+impl Anchor {
+    /// Owners inside the cached sidebar view (it re-records them only when it re-renders).
+    fn in_sidebar(&self) -> bool {
+        match self {
+            Self::Switcher => false,
+        }
+    }
+}
+
+/// Where owners were laid out in the last frame (recorded by [`record_bounds`] during
+/// prepaint, cleared at the start of every `Shell` render, except the sidebar's keys: the
+/// sidebar is a cached view that clears and records them itself).
+#[derive(Clone, Default)]
+pub(crate) struct MenuAnchors(Rc<RefCell<HashMap<Anchor, Bounds<Pixels>>>>);
+
+impl gpui::Global for MenuAnchors {}
+
+impl MenuAnchors {
+    pub(crate) fn clear(&self) {
+        self.0.borrow_mut().retain(|key, _| key.in_sidebar());
+    }
+
+    fn bottom_left(&self, key: &Anchor) -> Option<Point<Pixels>> {
+        self.0.borrow().get(key).map(Bounds::bottom_left)
+    }
+}
+
+/// A zero-cost layer that records its parent's bounds under `key` while the frame is laid
+/// out. Put it as a child of the owner element; the owner must be positioned (`relative`).
+pub(crate) fn record_bounds(key: Anchor, cx: &App) -> impl IntoElement + use<> {
+    let anchors = cx.global::<MenuAnchors>().clone();
+    canvas(
+        move |bounds, _, _| {
+            anchors.0.borrow_mut().insert(key, bounds);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
+impl Shell {
+    /// The bottom-left of `key`'s owner as painted in the last frame; else of the title bar's
+    /// switcher; else just under the title bar.
+    pub(crate) fn menu_anchor(&self, key: &Anchor, window: &Window, cx: &App) -> Point<Pixels> {
+        let anchors = cx.global::<MenuAnchors>();
+        anchors
+            .bottom_left(key)
+            .or_else(|| anchors.bottom_left(&Anchor::Switcher))
+            .unwrap_or_else(|| {
+                point(
+                    px(space::M),
+                    theme::rems_px(theme::TITLE_BAR_HEIGHT).to_pixels(window.rem_size()),
+                )
+            })
     }
 }

@@ -2,188 +2,102 @@
 
 use crate::*;
 
+/// The headings of the workspace menu's lists (`Shell::menu_select_after` takes them).
+pub(crate) const DEFAULT_AGENT_HEADING: &str = "Default agent for new panes";
+pub(crate) const DEFAULT_SHELL_HEADING: &str = "Default shell for new panes";
+
 impl Shell {
-    /// The workspace menu: "Pin", "Open in Zed", "Run setup…", the default agent and the default shell
-    /// for new panes, the workspace color and "Remove workspace…". Floats over the sidebar; a
-    /// click outside closes it.
+    /// The workspace menu: "Pin", "Open in Zed", "Run setup…", the default agent and the default
+    /// shell for new panes, the workspace color and "Remove workspace…". Floats at the click
+    /// (or under the title bar's switcher).
+    pub(crate) fn workspace_menu_rows(&self, menu: &WorkspaceMenu) -> Rows {
+        let project_id = menu.project_id;
+        let project = self
+            .sidebar
+            .projects()
+            .iter()
+            .find(|project| project.id == project_id);
+        let pinned = project.is_some_and(|project| project.pinned);
+        let key = |command: Command| self.keymap.label(command);
+        let mut rows: Rows = vec![
+            MenuItem::new(
+                if pinned { "Unpin" } else { "Pin" },
+                act(move |shell, window, cx| shell.pin_workspace(project_id, !pinned, window, cx)),
+            )
+            .row(),
+            MenuRow::Separator,
+            MenuItem::new(
+                "Open in Zed",
+                act(move |shell, _, cx| shell.open_in_zed(project_id, cx)),
+            )
+            .keys(key(Command::OpenInZed))
+            .row(),
+            MenuItem::new(
+                "Open in File Explorer",
+                act(move |shell, _, cx| shell.open_workspace_in_explorer(project_id, cx)),
+            )
+            .row(),
+            MenuRow::Separator,
+            MenuItem::new(
+                "Run setup…",
+                act(move |shell, window, cx| shell.open_run_setup(project_id, false, window, cx)),
+            )
+            .row(),
+            MenuRow::Separator,
+            MenuRow::Heading(DEFAULT_AGENT_HEADING.into()),
+        ];
+        rows.extend(agent_menu_rows(
+            &menu.agents,
+            SessionKind::Agent,
+            project.and_then(|project| project.default_agent.as_deref()),
+            move |shell, agent, window, cx| shell.set_default_agent(project_id, agent, window, cx),
+        ));
+        rows.push(MenuRow::Separator);
+        rows.push(MenuRow::Heading(DEFAULT_SHELL_HEADING.into()));
+        // Loading and errors already show once, under the agents.
+        if let Agents::Loaded(_) = &menu.agents {
+            rows.extend(agent_menu_rows(
+                &menu.agents,
+                SessionKind::Shell,
+                project.and_then(|project| project.default_shell.as_deref()),
+                move |shell, id, window, cx| shell.set_default_shell(project_id, id, window, cx),
+            ));
+        }
+        rows.push(MenuRow::Separator);
+        rows.push(MenuRow::Heading("Color".into()));
+        rows.push(MenuRow::swatches(
+            project.and_then(|project| project.color.as_deref()),
+            act_swatch(move |shell, color, window, cx| {
+                shell.set_workspace_color(project_id, color, window, cx);
+            }),
+        ));
+        rows.push(MenuRow::Separator);
+        rows.push(
+            MenuItem::new(
+                "Remove workspace…",
+                act(move |shell, window, cx| shell.archive_workspace(project_id, window, cx)),
+            )
+            .tone(Tone::Danger)
+            .row(),
+        );
+        rows
+    }
+
     pub(crate) fn render_workspace_menu(
         &self,
         menu: &WorkspaceMenu,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let project_id = menu.project_id;
-        let current = self
-            .sidebar
-            .projects()
-            .iter()
-            .find(|project| project.id == project_id)
-            .and_then(|project| project.default_agent.as_deref());
-        let current_color = (self.sidebar.projects().iter())
-            .find(|project| project.id == project_id)
-            .and_then(|project| project.color.as_deref());
-        let pinned = (self.sidebar.projects().iter())
-            .find(|project| project.id == project_id)
-            .is_some_and(|project| project.pinned);
-        let separator = || {
-            div()
-                .h(px(theme::BORDER_WIDTH))
-                .my(px(space::XS))
-                .bg(rgb(theme.border))
-        };
-        let agents = agent_rows(
-            &menu.agents,
-            SessionKind::Agent,
-            current,
-            "default-agent",
+        render_menu(
+            self.menu_state(),
+            "workspace-menu",
+            self.workspace_menu_rows(menu),
+            None,
+            Place::At(menu.position),
             theme,
             cx,
-            move |shell, agent, window, cx| shell.set_default_agent(project_id, agent, window, cx),
-        );
-        let current_shell = (self.sidebar.projects().iter())
-            .find(|project| project.id == project_id)
-            .and_then(|project| project.default_shell.as_deref());
-        // Loading and errors already show once, under the agents.
-        let shells = match &menu.agents {
-            Agents::Loaded(_) => agent_rows(
-                &menu.agents,
-                SessionKind::Shell,
-                current_shell,
-                "default-shell",
-                theme,
-                cx,
-                move |shell, id, window, cx| shell.set_default_shell(project_id, id, window, cx),
-            ),
-            _ => Vec::new(),
-        };
-        let heading = |text: &'static str| {
-            div()
-                .px(px(space::S))
-                .pt(px(space::XS))
-                .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
-                .child(text)
-        };
-        let panel = menu_panel("workspace-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.workspace_menu = None;
-                cx.notify();
-            }))
-            .child(
-                menu_item("pin-workspace".into(), theme)
-                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
-                        "Unpin"
-                    } else {
-                        "Pin"
-                    }))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.pin_workspace(project_id, !pinned, window, cx);
-                    })),
-            )
-            .child(separator())
-            .child(
-                menu_item("open-in-zed".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Open in Zed"),
-                    )
-                    .child(
-                        div()
-                            .text_size(font_size::META)
-                            .child(self.keymap.label(Command::OpenInZed)),
-                    )
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.open_in_zed(project_id, cx);
-                    })),
-            )
-            .child(
-                menu_item("open-in-explorer".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Open in File Explorer"),
-                    )
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.open_workspace_in_explorer(project_id, cx);
-                    })),
-            )
-            .child(separator())
-            .child(
-                menu_item("workspace-run-setup".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Run setup…"),
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.open_run_setup(project_id, false, window, cx);
-                    })),
-            )
-            .child(separator())
-            .child(heading("Default agent for new panes"))
-            .children(agents)
-            .child(separator())
-            .child(heading("Default shell for new panes"))
-            .children(shells)
-            .child(separator())
-            .child(heading("Color"))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(space::XS))
-                    .px(px(space::S))
-                    .py(px(space::S))
-                    .child(color_swatch(
-                        "workspace-color",
-                        None,
-                        current_color,
-                        theme,
-                        false,
-                        cx,
-                        move |shell, color, window, cx| {
-                            shell.set_workspace_color(project_id, color, window, cx);
-                        },
-                    ))
-                    .children(WORKSPACE_COLORS.iter().map(|name| {
-                        color_swatch(
-                            "workspace-color",
-                            Some(*name),
-                            current_color,
-                            theme,
-                            false,
-                            cx,
-                            move |shell, color, window, cx| {
-                                shell.set_workspace_color(project_id, color, window, cx);
-                            },
-                        )
-                    })),
-            )
-            .child(separator())
-            .child(
-                menu_item("remove-workspace".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            // The destructive color of `danger_button`.
-                            .text_color(rgb(theme.diff_del_text))
-                            .child("Remove workspace…"),
-                    )
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.archive_workspace(project_id, window, cx);
-                    })),
-            );
-        deferred(
-            anchored()
-                .snap_to_window_with_margin(px(space::S))
-                .child(div().pt(px(space::XS)).child(panel)),
         )
-        .into_any_element()
     }
 
     /// The Files tree's right-click menu at the click position; a click outside closes it.
@@ -568,28 +482,6 @@ impl Shell {
         self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
-    /// `row` with the workspace menu dropping down below it while the menu is open for
-    /// `project_id` (both sidebar widths).
-    pub(crate) fn with_workspace_menu(
-        &self,
-        row: gpui::AnyElement,
-        project_id: Ulid,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
-        match self
-            .workspace_menu
-            .as_ref()
-            .filter(|menu| menu.project_id == project_id)
-        {
-            Some(menu) => div()
-                .child(row)
-                .child(self.render_workspace_menu(menu, theme, cx))
-                .into_any_element(),
-            None => row,
-        }
-    }
-
     /// A left click on a workspace row: the first shows the workspace; clicking the shown one
     /// expands/collapses it.
     pub(crate) fn click_workspace_row(
@@ -603,6 +495,59 @@ impl Shell {
             cx.notify();
         } else {
             self.activate_workspace(project_id, window, cx);
+        }
+    }
+}
+
+/// The rows of a profile list (agents or shells) in a menu (`current` checked): loading, the
+/// error, an empty hint or one item per profile; Enter or a click calls `pick` with the
+/// profile id.
+pub(crate) fn agent_menu_rows(
+    agents: &Agents,
+    kind: SessionKind,
+    current: Option<&str>,
+    pick: impl Fn(&mut Shell, String, &mut Window, &mut Context<'_, Shell>) + Clone + 'static,
+) -> Rows {
+    match agents {
+        Agents::Loading => vec![MenuRow::Note("Loading agents…".into())],
+        Agents::Failed(error) => {
+            vec![MenuRow::Note(
+                format!("✕ Cannot list the agents: {error}").into(),
+            )]
+        }
+        Agents::Loaded(profiles) => {
+            let choices = workspace_menu::agent_choices(profiles, kind, current);
+            if choices.is_empty() {
+                let empty = match kind {
+                    SessionKind::Agent => "No agent profiles. Add one to the profiles folder.",
+                    SessionKind::Shell => {
+                        "No shell found on PATH. Add a shell profile to the profiles folder."
+                    }
+                };
+                return vec![MenuRow::Note(empty.into())];
+            }
+            choices
+                .into_iter()
+                .map(|choice| {
+                    let agent = choice.id;
+                    let pick = pick.clone();
+                    let picked = agent.clone();
+                    let item = MenuItem::new(
+                        choice.label,
+                        act(move |shell, window, cx| pick(shell, picked.clone(), window, cx)),
+                    )
+                    .checked(choice.selected);
+                    if agent.is_empty() {
+                        item
+                    } else {
+                        item.lead(Lead::Agent(sidebar::agent_badge(
+                            choice.icon.as_deref(),
+                            &agent,
+                        )))
+                    }
+                    .row()
+                })
+                .collect()
         }
     }
 }

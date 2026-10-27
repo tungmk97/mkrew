@@ -5,7 +5,7 @@
 // No console window next to the app in release builds (debug keeps stderr visible).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -39,7 +39,7 @@ use mkrew_protocol::{
     SessionState, SessionUnqueueParams, SessionUsageEvent, StateSource, TabCreateParams,
     TabListParams, TabPinParams, TabRef, TabSetLayoutParams, Task, TaskFanoutParams,
     TaskListParams, TaskMoveParams, TaskRef, TaskStatus, TerminalTab, Turn, UndoPreview,
-    ViewedFile, WORKSPACE_COLORS,
+    ViewedFile,
 };
 use mkrew_ui::ask::{self, Ask};
 use mkrew_ui::attention::{self, Tracker};
@@ -183,6 +183,7 @@ fn main() {
             let bindings = keymap.key_bindings(cx.keyboard_mapper().as_ref());
             cx.bind_keys(bindings);
             cx.set_global(ActiveKeymap(keymap.clone()));
+            cx.set_global(MenuAnchors::default());
             // Which char a shifted digit reports depends on the layout: bind again after a switch
             // (e.g. US ↔ Vietnamese), or Ctrl+Shift+1..5 stop working until a restart.
             cx.on_keyboard_layout_change(|cx| {
@@ -726,6 +727,8 @@ impl Render for Shell {
         // frame's paint (§20G); a field that is gone from the screen is no target. That field
         // paints the listening ring.
         self.typing_target.field.replace(None);
+        // Menus opened from the keyboard hang from what this frame lays out.
+        cx.global::<MenuAnchors>().clear();
         self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         if let Some(launched) = self.launched {
@@ -900,6 +903,12 @@ impl Render for Shell {
                         self.prompt_picker
                             .as_ref()
                             .map(|picker| self.render_prompt_picker(picker, &theme, cx)),
+                    )
+                    .children(
+                        self.workspace_menu
+                            .as_ref()
+                            .filter(|_| !self.modal_open())
+                            .map(|menu| self.render_workspace_menu(menu, &theme, cx)),
                     )
                     .children(
                         self.tab_menu

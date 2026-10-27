@@ -4,11 +4,12 @@
 use mkrew_protocol::{AgentProfileInfo, ProjectUpdateParams, RunCommand, SessionKind};
 use ulid::Ulid;
 
-/// The open menu of one workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The open menu of one workspace, floating at `position` (window coordinates).
+#[derive(Debug, Clone, PartialEq)]
 pub struct WorkspaceMenu {
     pub project_id: Ulid,
     pub agents: Agents,
+    pub position: gpui::Point<gpui::Pixels>,
 }
 
 /// The agent profiles offered as default agent (`agent.profiles`, fetched when the menu opens).
@@ -31,10 +32,11 @@ pub struct AgentChoice {
 }
 
 impl WorkspaceMenu {
-    pub fn new(project_id: Ulid) -> Self {
+    pub fn new(project_id: Ulid, position: gpui::Point<gpui::Pixels>) -> Self {
         Self {
             project_id,
             agents: Agents::Loading,
+            position,
         }
     }
 }

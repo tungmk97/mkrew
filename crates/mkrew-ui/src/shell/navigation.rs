@@ -640,8 +640,12 @@ impl Shell {
                     }
                     Extra::WorkspaceExplorer => self.open_workspace_in_explorer(project_id, cx),
                     // The default agent is chosen in the workspace's menu.
-                    Extra::WorkspaceDefaultAgent | Extra::WorkspaceMenu => {
-                        self.open_workspace_menu(project_id, window, cx);
+                    Extra::WorkspaceDefaultAgent => {
+                        self.open_workspace_menu_at_switcher(project_id, window, cx);
+                        self.menu_select_after(DEFAULT_AGENT_HEADING);
+                    }
+                    Extra::WorkspaceMenu => {
+                        self.open_workspace_menu_at_switcher(project_id, window, cx);
                     }
                     Extra::WorkspaceRemove => self.archive_workspace(project_id, window, cx),
                     Extra::MarkUnread => {
