@@ -77,12 +77,28 @@ impl Shell {
         } else if self.files_focus.is_focused(window) {
             self.focus_center(window, cx);
         }
-        if self.git_shown() {
-            if !git_before && let Some(project_id) = self.workspace {
-                self.refresh_git(project_id, window, cx);
+        if self.git_shown()
+            && !git_before
+            && let Some(project_id) = self.workspace
+        {
+            self.refresh_git(project_id, window, cx);
+        }
+        // The Git tab went away under the keyboard: its list, filter field or commit box.
+        if !self.git_panel_shown()
+            && [
+                &self.git_focus,
+                &self.git_filter_focus,
+                &self.git_commit_focus,
+            ]
+            .into_iter()
+            .any(|focus| focus.is_focused(window))
+        {
+            if self.view() == View::Git {
+                // The diff card holds `git_focus` itself.
+                window.focus(&self.git_focus, cx);
+            } else {
+                self.focus_center(window, cx);
             }
-        } else if self.git_focus.is_focused(window) {
-            self.focus_center(window, cx);
         }
         let value = format!("\"{}\"", self.right_panel.mode().name());
         if self.right_panel.mode() != mode_before
