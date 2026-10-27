@@ -21,6 +21,14 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Git in the right panel (ADR 0084)
+
+- [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.
+- [ ] **Diff view:** a click shows `Diff` in the view bar and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
+- [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act.
+- [ ] **Restart:** the panel comes back on the Git tab when left there.
+- [ ] **Filter with no match:** typing a filter that matches no file closes the Diff view (Terminals shows); confirm that is acceptable.
+
 ### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
 
 - [ ] **Panel (dark + light):** `◨` opens the right panel on `Files │ Session`; the tab row, tree rows, markers and search fit 240 px without clipping; dragging the edge resizes both tabs.

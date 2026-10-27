@@ -1,7 +1,7 @@
 # 0081 - Files tree in the right panel
 
 - Date: 2026-10-27
-- Status: accepted
+- Status: accepted; superseded in part by 0084
 - Milestone: M7
 
 ## Context
