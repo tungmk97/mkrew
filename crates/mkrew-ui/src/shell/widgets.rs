@@ -504,9 +504,19 @@ pub(crate) fn typing_input_for(
     canvas(
         |_, _, _| (),
         move |bounds, (), window, cx| {
-            // Voice input types into the field that has the keyboard (§20G).
+            // Voice input types into the field that has the keyboard (§20G), ringed while it
+            // listens.
             if focus.is_focused(window) {
-                typing_target.replace(Some((focus.clone(), on_key)));
+                typing_target.field.replace(Some((focus.clone(), on_key)));
+                if let Some(color) = typing_target.ring.get() {
+                    // Over the field's own border (this layer fills the box inside it).
+                    let ring = bounds.dilate(px(theme::BORDER_WIDTH));
+                    window.paint_quad(
+                        gpui::outline(ring, color, gpui::BorderStyle::Solid)
+                            .border_widths(px(theme::VOICE_RING_WIDTH))
+                            .corner_radii(px(radius::MEDIUM)),
+                    );
+                }
             }
             let typing = ime::Typing {
                 view,
@@ -871,20 +881,18 @@ pub(crate) fn status_dot(
     .into_any_element()
 }
 
-/// The voice level meter (§20G): five bars, tallest in the middle, that rise with `level`
-/// (0..=1, [`crate::voice::Level::meter`]).
-pub(crate) fn voice_meter(level: f32, color: gpui::Rgba) -> gpui::Div {
-    const SHAPE: [f32; 5] = [0.55, 0.8, 1.0, 0.8, 0.55];
+/// The voice waveform (§20G): one bar per height in `bars` (0..=1, [`crate::voice::bars`]).
+pub(crate) fn voice_meter(bars: &[f32], color: gpui::Rgba) -> gpui::Div {
+    let tall = theme::VOICE_BAR_MAX - theme::VOICE_BAR_MIN;
     div()
         .flex()
         .items_center()
         .h(theme::rems_px(theme::VOICE_BAR_MAX))
         .gap(theme::rems_px(theme::VOICE_BAR_GAP))
-        .children(SHAPE.map(|weight| {
-            let tall = theme::VOICE_BAR_MAX - theme::VOICE_BAR_MIN;
+        .children(bars.iter().map(|bar| {
             div()
                 .w(theme::rems_px(theme::VOICE_BAR_WIDTH))
-                .h(theme::rems_px(theme::VOICE_BAR_MIN + tall * level * weight))
+                .h(theme::rems_px(theme::VOICE_BAR_MIN + tall * bar))
                 .rounded_full()
                 .bg(color)
         }))

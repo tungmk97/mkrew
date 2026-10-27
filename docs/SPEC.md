@@ -2160,11 +2160,19 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    records the default microphone, and the same key stops it. It works everywhere, also while a
    terminal, a text field or a dialog has the keyboard. A recording stops by itself after
    `[voice] max_seconds` (§20.0). While transcribing, the key does nothing.
-2. **Sidebar footer** (the title bar while the sidebar is hidden; the rail shows the meter
-   only). A five-bar level meter that follows the microphone loudness (redrawn every
-   `theme::VOICE_METER_TICK`) and `m:ss · Ctrl+Shift+D stops` while recording; the `working`
-   dots and `Transcribing` while waiting; nothing after success. Errors and notes
-   (`✕ Voice: …`) stay until the next start.
+2. **Recording pill.** While recording, a pill floats centered at the bottom of the window
+   content. It fades and slides in over `theme::motion::SLOW`. It holds a breathing dot, a
+   seven-bar waveform, `m:ss`, and `Ctrl+Shift+D stops`. The waveform follows the microphone
+   loudness, smoothed: quick up, slow down. A wave runs across the bars, and in silence they keep a
+   low breath, so a live microphone never looks still. It is redrawn every
+   `theme::VOICE_METER_TICK`. While transcribing, the pill shows the `working` dots and
+   `Transcribing`, and after that it disappears. It never takes a click or the keyboard.
+   The field or terminal pane that has the keyboard gets an accent ring over its border. The ring
+   breathes while recording and holds steady while transcribing. Under reduce motion, the dots,
+   the ring, and the wave stand still, and the bars still follow the loudness.
+   The sidebar footer (the title bar while the sidebar is hidden, and the rail) shows only the
+   breathing dot or the `working` dots. Errors and notes (`✕ Voice: …`) show there and stay until
+   the next start.
 3. **Speech to text.** One `POST {base_url}/audio/transcriptions` (OpenAI-compatible: Groq by
    default, OpenAI, or a local server) carries the recording as 16-bit mono WAV in multipart form
    data, with `model`, `response_format=json`, `temperature=0`, and `language` / `prompt` when set.

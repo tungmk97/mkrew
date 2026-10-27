@@ -100,13 +100,29 @@ pub const STATUS_MARK_WIDTH: f32 = space::L;
 /// The sidebar's narrower mark slot: one blinking dot while working, else the glyph.
 pub const SIDEBAR_MARK_WIDTH: f32 = space::S;
 
-/// Voice input level meter (§20G): bars this wide and this far apart, from `MIN` to `MAX` tall
-/// (px at the default 13 px body, [`rems_px`]), redrawn this often while recording.
-pub const VOICE_BAR_WIDTH: f32 = 2.0;
+/// Voice input waveform in the recording pill (§20G): bars this wide and this far apart, from
+/// `MIN` to `MAX` tall (px at the default 13 px body, [`rems_px`]), redrawn this often while
+/// recording.
+pub const VOICE_BAR_WIDTH: f32 = 3.0;
 pub const VOICE_BAR_GAP: f32 = 2.0;
-pub const VOICE_BAR_MIN: f32 = 2.0;
-pub const VOICE_BAR_MAX: f32 = 12.0;
+pub const VOICE_BAR_MIN: f32 = 3.0;
+pub const VOICE_BAR_MAX: f32 = 16.0;
 pub const VOICE_METER_TICK: Duration = Duration::from_millis(60);
+/// Per meter tick the drawn level closes this share of the gap to the microphone: quick up,
+/// slow down.
+pub const VOICE_RISE: f32 = 0.6;
+pub const VOICE_FALL: f32 = 0.15;
+/// How full the bars stay in silence (they still breathe: the microphone is live).
+pub const VOICE_IDLE: f32 = 0.2;
+/// One run of the wave across the bars; each bar lags its neighbour by `STEP` radians; the wave
+/// takes up to `DEPTH` of a bar's height.
+pub const VOICE_WAVE_PERIOD: Duration = Duration::from_millis(900);
+pub const VOICE_WAVE_STEP: f32 = 0.9;
+pub const VOICE_WAVE_DEPTH: f32 = 0.35;
+/// The breathing ring on the field or terminal pane that gets the text, over its own border.
+pub const VOICE_RING_WIDTH: f32 = 2.0;
+/// The recording pill slides up this far as it fades in.
+pub const VOICE_PILL_SLIDE: f32 = space::S;
 
 /// Narrowest the time column on the right of a session row gets (fits `1h 5m`), so times and
 /// titles line up.

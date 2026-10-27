@@ -21,6 +21,12 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
+
+- [ ] **Pill (dark + light):** press Ctrl+Shift+D. A pill fades and slides up at the bottom center of the window. It shows a breathing dot, 7 bars, `0:03`, and the `Ctrl+Shift+D stops` key. Speak: the bars jump up with your voice and sink slowly, with a wave running across them. Stay silent: the bars stay low but keep breathing. Press again: the pill shows the dots and `Transcribing`, then disappears.
+- [ ] **Ring:** start dictating in the composer, the sidebar filter, and the Git commit box. The focused field gets a breathing accent ring over its border, and the ring holds steady while transcribing. Start with a terminal pane focused: the pane gets the ring. With several panes, only the focused pane gets it.
+- [ ] **Footer:** while recording, the sidebar footer (the title bar while the sidebar is hidden, and the compact rail) shows only a breathing dot, then the working dots. Errors such as `✕ Voice: heard nothing` still show there.
+
 ### To verify — 2026-10-27 UX packs 2 and 3 (branch `feat/ux-pack-2-3`)
 
 - [ ] **Viewed survives restart:** finish an agent, focus its pane (leaves Needs you), restart the UI → it stays out of Needs you; same for an idle-after-work agent; a "Mark unread" pane is still unread. Delete or garble `%APPDATA%\..\mkrew\ui_viewed.json` (data dir) → the UI starts, finished agents are back in Needs you.

@@ -70,7 +70,23 @@ pub fn keys(marked: &Cell<usize>, text: &str, mark: bool) -> Vec<Keystroke> {
 pub type OnKey<V> = fn(&mut V, &KeyDownEvent, &mut Window, &mut Context<'_, V>);
 /// The field whose input handler was registered on the last paint while focused, with its key
 /// handler: voice text (SPEC §20G) is typed there the same way an IME commit is.
-pub type FocusedField<V> = Rc<RefCell<Option<(FocusHandle, OnKey<V>)>>>;
+pub type FocusedField<V> = Rc<TypingTarget<V>>;
+
+/// See [`FocusedField`].
+pub struct TypingTarget<V> {
+    pub field: RefCell<Option<(FocusHandle, OnKey<V>)>>,
+    /// While voice input listens, the focused field paints a ring in this color (§20G).
+    pub ring: Cell<Option<gpui::Hsla>>,
+}
+
+impl<V> Default for TypingTarget<V> {
+    fn default() -> Self {
+        Self {
+            field: RefCell::new(None),
+            ring: Cell::new(None),
+        }
+    }
+}
 
 /// The input handler of one focused field: feeds `view`'s `on_key`.
 pub struct Typing<V: 'static> {

@@ -1,6 +1,7 @@
 //! Voice input (§20G): record, transcribe, and type the text where the keyboard is.
 
 use crate::*;
+use gpui::{Animation, AnimationExt, ease_out_quint};
 
 impl Shell {
     /// Voice input (§20G): start recording, or stop it; the text arrives in `voice_text`.
@@ -36,23 +37,37 @@ impl Shell {
         let (stop, level, clip) =
             voice::record(Duration::from_secs(u64::from(settings.max_seconds)));
         let since = Instant::now();
-        self.voice = voice::State::Recording { since, stop, level };
+        self.voice = voice::State::Recording {
+            since,
+            stop,
+            level,
+            shown: 0.0,
+        };
         cx.notify();
-        // The level meter moves with the voice: redraw often, only while this recording lasts.
+        // The waveform moves with the voice: redraw often, only while this recording lasts.
         cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(theme::VOICE_METER_TICK)
                     .await;
                 let recording = this.update_in(cx, |shell, window, cx| {
-                    let on = matches!(
-                        &shell.voice,
-                        voice::State::Recording { since: started, .. } if *started == since
-                    );
-                    if on && window.is_visible() {
+                    let voice::State::Recording {
+                        since: started,
+                        level,
+                        shown,
+                        ..
+                    } = &mut shell.voice
+                    else {
+                        return false;
+                    };
+                    if *started != since {
+                        return false;
+                    }
+                    *shown = voice::smooth(*shown, level.meter());
+                    if window.is_visible() {
                         cx.notify();
                     }
-                    on
+                    true
                 });
                 if !matches!(recording, Ok(true)) {
                     return;
@@ -126,6 +141,7 @@ impl Shell {
     ) -> bool {
         let field = self
             .typing_target
+            .field
             .borrow()
             .clone()
             .filter(|(focus, _)| focus.is_focused(window));
@@ -155,5 +171,97 @@ impl Shell {
             return true;
         }
         false
+    }
+
+    /// The ring on the field or terminal pane that gets the text (§20G): the accent, breathing
+    /// while it records (still under reduce motion), steady while it transcribes.
+    pub(crate) fn voice_ring(&self, theme: &Theme, cx: &App) -> Option<gpui::Hsla> {
+        let accent = gpui::Hsla::from(rgb(theme.accent));
+        match &self.voice {
+            voice::State::Recording { since, .. } if !cx.reduce_motion() => {
+                Some(accent.opacity(voice::pulse(since.elapsed())))
+            }
+            voice::State::Recording { .. } | voice::State::Transcribing => Some(accent),
+            voice::State::Idle | voice::State::Message(_) => None,
+        }
+    }
+
+    /// The recording pill (§20G), centered at the bottom over the content: a breathing dot, the
+    /// waveform, the time and the stop key while it records; the `working` dots and
+    /// `Transcribing` after. It fades and slides in once; it never takes a click or the
+    /// keyboard.
+    pub(crate) fn render_voice_pill(&self, theme: &Theme, cx: &App) -> Option<gpui::AnyElement> {
+        let content = match &self.voice {
+            voice::State::Recording { since, shown, .. } => {
+                let elapsed = since.elapsed();
+                let seconds = elapsed.as_secs();
+                let color = theme.status_needs_input;
+                let bars = voice::bars(*shown, (!cx.reduce_motion()).then_some(elapsed));
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(space::S))
+                    .child(status_dot("voice-pill-dot", color, false, true))
+                    .child(voice_meter(&bars, rgb(color)))
+                    .child(
+                        div()
+                            .text_size(font_size::BODY)
+                            .text_color(rgb(theme.text))
+                            .child(format!("{}:{:02}", seconds / 60, seconds % 60)),
+                    )
+                    .child(kbd(self.keymap.label(Command::VoiceInput), theme, false))
+                    .child(
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.text_muted))
+                            .child("stops"),
+                    )
+            }
+            voice::State::Transcribing => div()
+                .flex()
+                .items_center()
+                .gap(px(space::S))
+                .child(working_dots(status::now_ms(), rgb(theme.text_muted)))
+                .child(
+                    div()
+                        .text_size(font_size::BODY)
+                        .text_color(rgb(theme.text_muted))
+                        .child("Transcribing"),
+                ),
+            voice::State::Idle | voice::State::Message(_) => return None,
+        };
+        let pill = div()
+            .id("voice-pill")
+            .relative()
+            .py(px(space::S))
+            .flex()
+            .items_center()
+            .font_family(theme.ui_font_family.clone())
+            .px(px(space::M))
+            .rounded(px(radius::PILL))
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(rgb(theme.border))
+            .bg(rgb(theme.surface_raised))
+            .shadow_md()
+            .child(content)
+            .with_animation(
+                "voice-pill-in",
+                Animation::new(theme::motion::SLOW).with_easing(ease_out_quint()),
+                |pill, delta| {
+                    pill.opacity(delta)
+                        .top(px(theme::VOICE_PILL_SLIDE * (1.0 - delta)))
+                },
+            );
+        Some(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom(px(space::L))
+                .flex()
+                .justify_center()
+                .child(pill)
+                .into_any_element(),
+        )
     }
 }

@@ -10,6 +10,8 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use cpal::FromSample;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+use crate::theme;
+
 /// Shorter recordings are a slip of the shortcut, not speech.
 pub const MIN_SECONDS: f32 = 0.3;
 /// A 30 ms frame with an RMS below this (about -40 dBFS) is silence; Whisper invents text for
@@ -28,11 +30,13 @@ const METER_FULL_DB: f32 = -15.0;
 pub enum State {
     #[default]
     Idle,
-    /// Leaving this state drops `stop`, which ends the recording.
+    /// Leaving this state drops `stop`, which ends the recording. `shown` is the meter as
+    /// drawn: [`smooth`]ed toward `level` on every meter tick.
     Recording {
         since: Instant,
         stop: Stop,
         level: Level,
+        shown: f32,
     },
     Transcribing,
     /// The last outcome worth showing (an error, or where the text went); the next start
@@ -64,6 +68,43 @@ impl Level {
 pub fn meter(rms: f32) -> f32 {
     let db = 20.0 * rms.max(f32::MIN_POSITIVE).log10();
     ((db - METER_FLOOR_DB) / (METER_FULL_DB - METER_FLOOR_DB)).clamp(0.0, 1.0)
+}
+
+/// One meter tick of the drawn level toward `target` (both 0..=1): it jumps up with the voice
+/// and sinks slowly, so the bars follow speech without flicker.
+pub fn smooth(shown: f32, target: f32) -> f32 {
+    let rate = if target > shown {
+        theme::VOICE_RISE
+    } else {
+        theme::VOICE_FALL
+    };
+    shown + (target - shown) * rate
+}
+
+/// How tall each waveform bar is (0..=1) at drawn level `level`, `elapsed` into the
+/// recording: tallest in the middle, a wave running across them, and a low breath in silence
+/// so a live microphone never looks still. `elapsed: None` (reduce motion) stands still.
+pub fn bars(level: f32, elapsed: Option<Duration>) -> [f32; 7] {
+    const SHAPE: [f32; 7] = [0.45, 0.7, 0.9, 1.0, 0.9, 0.7, 0.45];
+    let full = theme::VOICE_IDLE + (1.0 - theme::VOICE_IDLE) * level;
+    let turn = elapsed.map(|t| t.as_secs_f32() / theme::VOICE_WAVE_PERIOD.as_secs_f32());
+    let mut out = SHAPE;
+    for (i, bar) in out.iter_mut().enumerate() {
+        // 0..=1 per bar, each a step behind its left neighbour.
+        let wave = turn.map_or(1.0, |turn| {
+            0.5 + 0.5 * (std::f32::consts::TAU * turn - i as f32 * theme::VOICE_WAVE_STEP).cos()
+        });
+        *bar *= full * (1.0 - theme::VOICE_WAVE_DEPTH + theme::VOICE_WAVE_DEPTH * wave);
+    }
+    out
+}
+
+/// The opacity of a breathing mark `elapsed` into it: full, down to
+/// [`theme::PULSE_MIN_OPACITY`] half a [`theme::PULSE_PERIOD`] later, and back.
+pub fn pulse(elapsed: Duration) -> f32 {
+    let turn = elapsed.as_secs_f32() / theme::PULSE_PERIOD.as_secs_f32();
+    let dip = 0.5 - 0.5 * (std::f32::consts::TAU * turn).cos();
+    1.0 - (1.0 - theme::PULSE_MIN_OPACITY) * dip
 }
 
 /// Root mean square of `samples` (0 for none).
@@ -264,6 +305,40 @@ mod tests {
         assert!((meter(10f32.powf(-30.0 / 20.0)) - 0.5).abs() < 1e-4);
         // The silence gate (MIN_LEVEL, -40 dBFS) shows as a sliver, not as speech.
         assert!(meter(MIN_LEVEL) < 0.2);
+    }
+
+    #[test]
+    fn smoothing_rises_fast_and_falls_slow() {
+        let up = smooth(0.0, 1.0);
+        let down = 1.0 - smooth(1.0, 0.0);
+        assert!(up > down, "rise {up} beats fall {down}");
+        assert_eq!(smooth(0.4, 0.4), 0.4, "at the target it stays");
+        // Many ticks of silence bring it all the way down, never below.
+        let rest = (0..200).fold(1.0, |shown, _| smooth(shown, 0.0));
+        assert!((0.0..1e-3).contains(&rest), "{rest}");
+    }
+
+    #[test]
+    fn bars_wave_breathe_in_silence_and_rise_with_the_voice() {
+        let at = |ms| bars(0.0, Some(Duration::from_millis(ms)));
+        // Silence still shows low bars, and they move.
+        assert!(at(0).iter().all(|&bar| bar > 0.0), "{:?}", at(0));
+        assert_ne!(at(0), at(200));
+        // Neighbours are out of step: the middle pair (same shape weight) differs.
+        let frame = bars(1.0, Some(Duration::from_millis(200)));
+        assert!((frame[2] - frame[4]).abs() > 1e-3, "{frame:?}");
+        // Louder is taller, and full voice reaches the top in the middle.
+        assert!(bars(1.0, None)[3] > bars(0.2, None)[3]);
+        assert_eq!(bars(1.0, None)[3], 1.0);
+        assert!(bars(1.0, None).iter().all(|&bar| bar <= 1.0));
+    }
+
+    #[test]
+    fn pulse_dips_to_the_minimum_half_way_and_comes_back() {
+        assert_eq!(pulse(Duration::ZERO), 1.0);
+        let half = pulse(theme::PULSE_PERIOD / 2);
+        assert!((half - theme::PULSE_MIN_OPACITY).abs() < 1e-4, "{half}");
+        assert!((pulse(theme::PULSE_PERIOD) - 1.0).abs() < 1e-4);
     }
 
     #[test]

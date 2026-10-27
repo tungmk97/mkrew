@@ -26,6 +26,12 @@ impl Shell {
             (View::Files, _) => main.child(self.render_files(project_id, theme, window, cx)),
             (View::Git, _) => main.child(self.render_git(project_id, theme, window, cx)),
             (View::Terminals, Some(tabs)) => {
+                // Voice text goes to the focused terminal when it has the keyboard: ring it.
+                let voice_ring = self.voice_ring(theme, cx).filter(|_| {
+                    (tabs.active().and_then(Tab::focused))
+                        .and_then(|session| self.panes.get(&session))
+                        .is_some_and(|pane| pane.read(cx).has_focus(window, cx))
+                });
                 let terminals = div()
                     .flex_1()
                     .min_w_0()
@@ -37,6 +43,7 @@ impl Shell {
                         tabs,
                         now,
                         self.composer_focus.is_focused(window),
+                        voice_ring,
                         theme,
                         cx,
                     ));

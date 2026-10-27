@@ -326,12 +326,14 @@ impl Shell {
     }
 
     /// The active tab's split tree: each pane placed at its fraction of the area.
-    /// `composer_focused`: the focused pane's composer has the keyboard.
+    /// `composer_focused`: the focused pane's composer has the keyboard. `voice_ring`: the
+    /// focused pane's terminal gets the voice text; its ring color (§20G).
     pub(crate) fn render_tab(
         &self,
         tabs: &Tabs,
         now: i64,
         composer_focused: bool,
+        voice_ring: Option<Hsla>,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
@@ -397,6 +399,7 @@ impl Shell {
                         several,
                         is_focused,
                         is_focused && composer_focused,
+                        voice_ring.filter(|_| is_focused),
                         now,
                         theme,
                         cx,
@@ -441,7 +444,7 @@ impl Shell {
     /// One pane: the terminal (or why it is not shown; at reading width, centered, for an agent
     /// pane with it on), its composer, its border. Among several panes it gets a compact header
     /// and the unfocused ones a dim; a single pane has no header (the tab bar shows its status)
-    /// and its color is a 2 px line on top.
+    /// and its color is a 2 px line on top. `voice_ring`: the listening ring over the border.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn pane_frame(
         &self,
@@ -449,6 +452,7 @@ impl Shell {
         several: bool,
         is_focused: bool,
         composer_focused: bool,
+        voice_ring: Option<Hsla>,
         now: i64,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
@@ -543,6 +547,16 @@ impl Shell {
                         .rounded(px(radius::MEDIUM))
                         .border(px(theme::BORDER_WIDTH))
                         .border_color(rgb(border)),
+                )
+            })
+            .when_some(voice_ring, |el, color| {
+                el.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(px(radius::MEDIUM))
+                        .border(px(theme::VOICE_RING_WIDTH))
+                        .border_color(color),
                 )
             })
     }

@@ -704,8 +704,10 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         // Voice input types into the field whose typing canvas registers again during this
-        // frame's paint (§20G); a field that is gone from the screen is no target.
-        self.typing_target.replace(None);
+        // frame's paint (§20G); a field that is gone from the screen is no target. That field
+        // paints the listening ring.
+        self.typing_target.field.replace(None);
+        self.typing_target.ring.set(self.voice_ring(&theme, cx));
         window.set_rem_size(px(cx.global::<theme::Fonts>().ui_size));
         if let Some(launched) = self.launched {
             if !self.first_frame_logged {
@@ -922,7 +924,8 @@ impl Render for Shell {
                             })
                             .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),
                     )
-                    .children(self.render_toasts(&theme, cx)),
+                    .children(self.render_toasts(&theme, cx))
+                    .children(self.render_voice_pill(&theme, cx)),
             )
     }
 }

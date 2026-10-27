@@ -1049,40 +1049,24 @@ impl Shell {
             .when(self.modal_open(), |el| el.relative().child(inert_layer()))
     }
 
-    /// Voice input (§20G): the level meter and recording time, Transcribing, or the last
-    /// outcome; `None` while idle. `meter_only`: just the meter / dots (the compact rail).
-    pub(crate) fn voice_status(&self, meter_only: bool, theme: &Theme) -> Option<gpui::Div> {
+    /// Voice input (§20G): a breathing dot while it records, the `working` dots while it
+    /// transcribes (the recording pill says the rest), or the last outcome; `None` while idle.
+    /// `compact`: the rail, which has no room for the outcome text.
+    pub(crate) fn voice_status(&self, compact: bool, theme: &Theme) -> Option<gpui::Div> {
         let row = || div().min_w_0().flex().items_center().gap(px(space::XS));
         match &self.voice {
             voice::State::Idle => None,
-            voice::State::Recording { since, level, .. } => {
-                let seconds = since.elapsed().as_secs();
-                let color = theme.status_needs_input;
-                Some(
-                    row()
-                        .child(voice_meter(level.meter(), rgb(color)))
-                        .when(!meter_only, |el| {
-                            el.child(notice(
-                                color,
-                                format!(
-                                    "{}:{:02} · {} stops",
-                                    seconds / 60,
-                                    seconds % 60,
-                                    self.keymap.label(Command::VoiceInput)
-                                ),
-                            ))
-                        }),
-                )
+            voice::State::Recording { .. } => Some(row().child(status_dot(
+                "voice-status-dot",
+                theme.status_needs_input,
+                false,
+                true,
+            ))),
+            voice::State::Transcribing => {
+                Some(row().child(working_dots(status::now_ms(), rgb(theme.text_muted))))
             }
-            voice::State::Transcribing => Some(
-                row()
-                    .child(working_dots(status::now_ms(), rgb(theme.text_muted)))
-                    .when(!meter_only, |el| {
-                        el.child(notice(theme.text_muted, "Transcribing".to_owned()))
-                    }),
-            ),
             voice::State::Message(text) => {
-                (!meter_only).then(|| row().child(notice(theme.text_muted, text.clone())))
+                (!compact).then(|| row().child(notice(theme.text_muted, text.clone())))
             }
         }
     }
