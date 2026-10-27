@@ -18,7 +18,7 @@
 - §10 UI: layout, workspaces & terminals
 - §11 UI: per-session status
 - §12 UI: Markdown review
-- §12A UI: Files view
+- §12A UI: Files (tree and Editor)
 - §12B UI: Git view
 - §13 UI: keyboard shortcuts
 - §14 UI: visual design system
@@ -64,7 +64,7 @@ mid-range machine. Windows native is first-class; Linux and macOS are supported.
 
 **Non-goals**
 
-- Not an IDE: no LSP, completion or multi-cursor. The Files view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
+- Not an IDE: no LSP, completion or multi-cursor. The Editor view has a plain editor (ADR 0028); diffs are read-only; bigger edits happen in Zed.
 - No native mobile app, cloud sync or user accounts. A browser on the user's own tailnet can watch and answer sessions through `mk web` (ADR 0052). Optional phone notifications (§20.0 `[web] push`, ADR 0067) are the other exception to "no cloud" and are described below.
 - No GitHub/Linear integration in v1.
 - Mkrew never calls LLM APIs itself; it only runs CLI agents the user installed. One exception:
@@ -749,7 +749,7 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ ◈ ◧ A api ▾ ⎇ master [Board│Terminals│Docs│Files│Git 3]  (● 2 running :8080 ▾) ◷ ◐ ▯ ◨ [+ New ▾] ─ □ ✕ │
+│ ◈ ◧ A api ▾ ⎇ master [Terminals│Board│Git 3│Docs│Editor*]  (● 2 running :8080 ▾) ◷ ◐ ▯ ◨ [+ New ▾] ─ □ ✕ │
 ├──────────────┬────────────────────────────────────────────────────────────────────────┤
 │ [⌕ Filter… /]⇲+│ tab strip: [▣ ● tab ✕] [>_ ○ tab ✕] +    (● Working · 4s) 📖 Share ◫ ⋯ │
 │ [All│Working│Needs you]│                                                              │
@@ -764,7 +764,7 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 ```
 ADR 0054 simplified this screen: one place per piece of information, color for status only,
 empty things hidden, detail on hover / in menus. There is no status bar.
-The session panel (below) is a third column right of Terminals while open.
+The right panel (below) is a third column right of Terminals and the Editor while open.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
@@ -830,14 +830,14 @@ The session panel (below) is a third column right of Terminals while open.
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Terminals, Board, Files, Git, Docs.
+- **Views per workspace:** Terminals, Board, Git, Docs, Editor (only while a file tab is open; Docs only with `[features] docs`).
 - **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; the
   sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
   switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
   `⎇ N repos` (several; the only place this shows; the tooltip lists each repository's
   branch and HEAD; a workspace folder without `.git` but with child repositories shows the
   children, ADR 0029; hidden when there is no repository; a click shows the Git view); the
-  views Board / Terminals / Docs / Files / Git as a segmented control (tooltips show their
+  views Terminals / Board / Git / Docs / Editor as a segmented control (tooltips show their
   shortcuts, §13), the Git one with a neutral gray `N` badge (N = changed files summed over every
   repository, hidden at 0); then, right-aligned, the Run pill, History (`◷`: finished sessions
   with their logs replayed read-only; **Resume** (Enter) continues the selected agent session's
@@ -858,7 +858,7 @@ The session panel (below) is a third column right of Terminals while open.
 - **No status bar** (ADR 0054): its sidebar toggle is in the title bar, its Inbox state and
   compact toggle in the sidebar footer, its git HEAD in the title bar's repository tooltip, the
   focused agent's context share in the tab strip (single pane) or pane header (split), and the
-  other usage fields (tokens, cache, model) on the session panel's card.
+  other usage fields (tokens, cache, model) on the Session tab's card.
 - **Board:** columns by task status, drag & drop. Card: title, agent, run time, session status.
   Todo cards have Run. Running cards have a **follow-up** input (sends via `session.send`; Esc gives
   the keyboard back and keeps a typed draft on the card, like the composer).
@@ -903,11 +903,15 @@ The session panel (below) is a third column right of Terminals while open.
   resize sends `session.resize` (nothing reflows its output). Agent panes start with
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
   panes are always full width.
-- **Session panel** (ADR 0038): a column right of the Terminals view, closed at every start,
-  toggled by the title bar's `◨` and `Ctrl+Shift+Y` (from another view the key shows
-  Terminals first). Drag its left edge to resize (240–560 px, saved as `[ui] inspector_width` when
-  the button is released); the terminals lose that width, so an agent redraws once. It shows the
-  focused pane's session. **Session card:** agent, title, state + time, the usage of §20E.3 (context
+- **Right panel** (ADR 0038, ADR 0081): a column right of the Terminals and Editor views with
+  tabs `Files │ Session` (a click switches the tab). The title bar's `◨` and `Ctrl+Shift+Y` hide
+  and show it and keep the tab; from the Board, Docs or Git view the key shows Terminals with the
+  panel open. `[ui] right_panel` (`"files"`, `"session"` or `"hidden"`, default hidden) remembers
+  it across restarts. Drag its left edge to resize (240–560 px, one width for both tabs, saved as
+  `[ui] inspector_width` when the button is released); the terminals lose that width, so an agent
+  redraws once. **Files tab:** the file tree of §12A. **Session tab:** the session of the active
+  tab's focused pane, also while the Editor is shown.
+  **Session card:** agent, title, state + time, the usage of §20E.3 (context
   share, tokens, cache, model; rows without data are left out), **Open transcript** (the agent's
   `.jsonl` in Zed; disabled until the daemon located it) and **Stop** (`session.kill`; a running
   agent asks first, a shell does not; the pane closes when the session exits, ADR 0033).
@@ -944,9 +948,9 @@ The session panel (below) is a third column right of Terminals while open.
       no parsing, no layout, no rendering. Re-attach uses the daemon snapshot, so the pane's
       scrollback restarts from the daemon's ≤ 200 history lines (ADR 0030).
     - Use a monospace font with a precomputed cell size; no per-cell measurement.
-- **Open in Zed:** on task cards, the workspace menu, the Files tree menu and Docs; runs
+- **Open in Zed:** on task cards, the workspace menu, the file tree menu and Docs; runs
   `zed <path>[:line]`; clear error with install hint if `zed` is missing.
-- **Open in File Explorer:** in the workspace menu and in the Files tree's right-click menu
+- **Open in File Explorer:** in the workspace menu and in the file tree's right-click menu
   (§12A). It opens the OS file manager (Explorer, Finder, the Linux file manager): a folder is
   opened, a file is shown selected in its folder.
 - **Terminal links:** while Ctrl (Cmd on macOS) is held over a terminal pane (agents and
@@ -955,7 +959,7 @@ The session panel (below) is a third column right of Terminals while open.
   paths, relative (`./src/a.rs`, `crates/x/main.rs`) or absolute (`/home/u/a.rs`,
   `C:\x\a.rs`), with an optional `:line` or `:line:col`. A path is a link only if it names an
   existing file inside the pane's folder (the project folder, or the worktree of the pane's
-  task); it opens in the Files view (§12A) with the caret on that line. Trailing `.,;:!?`,
+  task); it opens in the Editor (§12A) with the caret on that line. Trailing `.,;:!?`,
   unbalanced closing brackets and quotes are not part of a link. `file(12)` (the path before
   the bracket is the link, without the line), `~/…` paths and links wrapped over two rows are
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
@@ -1035,7 +1039,7 @@ dot, the sidebar row. Always icon + text, never color alone (the tab dot's hover
   top of its terminal); the border still shows state (ADR 0037).
 - Tab label: the most urgent state among its panes: needs_input > done > working > idle > exited.
 - Workspace row: `● N working` (a pill, pulsing dot) while an agent works, else `N idle`; amber
-  `? N` while N need input; no token total (the session panel shows usage). Sidebar session rows
+  `? N` while N need input; no token total (the Session tab shows usage). Sidebar session rows
   sit indented in the workspace's card (ADR 0062): agent chip (an accent chip while working;
   its hover gives the
   state in words and when it changed), title, the state glyph of a waiting or done agent (none
@@ -1061,14 +1065,14 @@ Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, comman
   path; ↑ / ↓ in it show the previous / next file.
 - **Rendering:** `pulldown-cmark` → GPUI elements: headings, paragraphs, lists, task lists, tables,
   code blocks, links, quotes. Toggle to source view with line numbers. Code blocks are
-  highlighted by their fence language (syntect, as in the Files viewer); the text uses the doc
+  highlighted by their fence language (syntect, as in the Editor); the text uses the doc
   typography of §14 (ADR 0021). ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust
   renderer, theme colors); a block that cannot be drawn shows its source and the reason.
 - **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
   lines highlights them (ADR 0006; character selection in Docs and anchor-aligned cards are
-  backlog; the Files preview selects characters, ADR 0072).
+  backlog; the Editor's preview selects characters, ADR 0072).
 - **Re-anchoring:** on `doc.changed`, find `quote` in the new content to update lines; if not found
   → `outdated` (still visible, never auto-deleted).
 - **Send to agent:** sends all open comments of the file (or the selected ones) to one session.
@@ -1094,15 +1098,20 @@ Only edit this file. When done, for EACH comment run:
 
 ---
 
-## §12A UI: Files view
+## §12A UI: Files (tree and Editor)
 
-- **Tree** (right of the file; ADR 0050): lazily loaded per folder, respects `.gitignore` (an
+- **Tree** (the right panel's Files tab, ADR 0081; opens with `Ctrl+Shift+3`; its rows drag onto
+  panes, §20B.5): lazily loaded per folder, respects `.gitignore` (an
   `Ignored` toggle beside the search shows ignored files),
   git status markers next to names (M modified, A added, D deleted, ? untracked), a small dot on
   folders containing changes. In a workspace with child repositories (ADR 0029) the markers come
   from the project folder's repository and from each child repository the listed folder is in
   (all of them when the root is listed). Updates live when agents create/delete/rename files.
-- **Editor** (left of the tree; ADR 0028): the opened file with line numbers and syntax highlighting via
+- **Editor view:** listed in the view bar only while a file tab is open. A tree click or Enter,
+  quick open, a terminal link and "New file…" show it (a tree click keeps the keyboard in the
+  tree); `Ctrl+Shift+6` shows it again. Closing the last tab, or switching to another worktree,
+  shows Terminals.
+- **Editor** (the center Editor view; ADR 0028): the opened file with line numbers and syntax highlighting via
   `syntect` (lazy-loaded syntax set; re-highlighted 150 ms after typing stops). A plain editor:
   click places the caret, Shift+click / drag select; arrows (Ctrl = by word), Home/End
   (Ctrl = file), PgUp/PgDn, Backspace/Delete (Ctrl = word), Enter keeps the indent, Tab, Ctrl+A,
@@ -1121,7 +1130,7 @@ Only edit this file. When done, for EACH comment run:
   Unpin, Copy path. Tabs are dragged within their group (pinned / unpinned). `Ctrl+Tab` /
   `Ctrl+Shift+Tab` cycle, `Ctrl+Alt+1–9` jump (9 = last). One find bar for the view, searched
   on the shown tab. `git.changed` reads the shown tab; the others are read when shown. Tabs
-  live in memory only; another worktree starts with none.
+  live in memory only; another worktree starts with none (and shows Terminals).
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
   from the file's text in the git index (what the Git view calls unstaged): added
   (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
@@ -1155,19 +1164,19 @@ Only edit this file. When done, for EACH comment run:
   way. A re-read or edited page keeps the scroll position; another tab (or the same file
   opened again) starts at the top, and a live font change measures the page again.
 - **Quick open** (`Ctrl+Shift+O`, or the "Search files…" entry at the top of the tree)
-  fuzzy-finds files of the current workspace, in the folder the Files view shows (project or
+  fuzzy-finds files of the current workspace, in the folder the tree shows (project or
   task worktree) (`ignore` to walk, `nucleo-matcher` to rank).
 - "Open in Zed" opens the file at the caret's line.
 - **Right-click menu** on tree rows (files and folders) and on the blank part of the tree (the
-  folder the view shows: the project, or the task worktree): "New file…" and "New folder…" (a
+  folder the tree shows: the project, or the task worktree): "New file…" and "New folder…" (a
   name field over the tree; Enter creates it in the folder clicked, or next to the file
   clicked; `/` in the name makes subfolders; a new file opens, a new folder opens in the tree),
   "Copy path" (absolute), "Add to .gitignore" (rows only: appends `/path` or `/path/` to the
   shown folder's `.gitignore`, once), "Open in File Explorer" and "Open in Zed" (§10). The app
   does these on the local disk; the watcher's `git.changed` lists the tree again. Failures show
   in the sidebar. A click outside closes the menu.
-- **Open at a line:** Ctrl+Click on a file path in a terminal (§10) shows that file with the
-  caret on the line, scrolled into view. A path in another task's worktree switches the view to
+- **Open at a line:** Ctrl+Click on a file path in a terminal (§10) opens that file in the Editor with the
+  caret on the line, scrolled into view. A path in another task's worktree switches to
   that worktree (asking about unsaved text first).
 - **Find & replace** (VS Code style): `Ctrl+F` (also `Ctrl+Shift+F` or "Find" in the header)
   opens the bar, `Ctrl+H` opens it with the replace row. A selection on one line becomes the
@@ -1265,7 +1274,7 @@ All shortcuts live in `<config>/mkrew/keymap.toml`, which the Settings dialog's 
 (applied at once, ADR 0073); below are defaults. While a terminal has focus,
 only combinations bound in the keymap are intercepted; everything else goes to the agent. Defaults
 therefore avoid plain `Ctrl+<letter>` and favor `Ctrl+Shift`/`Alt`, like Windows Terminal.
-Files-only commands may use plain `Ctrl+<letter>` (no terminal has focus there, ADR 0028); the
+Editor-only commands may use plain `Ctrl+<letter>` (no terminal has focus there, ADR 0028); the
 editor's own keys (arrows, Ctrl+Z/Y/A/C/X/V) are not in the keymap.
 One exception: plain Ctrl+C copies while terminal text is selected (ADR 0022); without a selection
 it reaches the agent as ^C. Anything sent to the agent clears the selection.
@@ -1277,7 +1286,7 @@ find bars, the inline rename) edits like a normal text box (ADR 0075): ←/→, 
 Home / End, Ctrl+Home / End, ↑/↓ between lines of a multi-line field, Shift to select; Ctrl+A
 (select all: the next key replaces it), Backspace / Delete, Ctrl+Backspace / Ctrl+Delete (the
 word before / after the caret: blanks, then a run of letters / digits / `_` or of punctuation,
-like the Files editor), Ctrl+C / Ctrl+X / Ctrl+V, and Ctrl+Z / Ctrl+Y (a typed word is one undo
+like the Editor), Ctrl+C / Ctrl+X / Ctrl+V, and Ctrl+Z / Ctrl+Y (a typed word is one undo
 step). A click puts the caret under the pointer, Shift+click or a drag selects, a double / triple
 click selects the word / line. Where a field sits over a list, ↑/↓ move in the list.
 Shift+Enter sends `ESC CR` (the Alt+Enter form), which agents read as a new line; Mkrew has no
@@ -1296,20 +1305,22 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Toggle compact sidebar | Ctrl+Alt+B |
 | Global | Voice input: start / stop recording (§20G) | Ctrl+Shift+D |
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
-| View | Toggle the session panel | Ctrl+Shift+Y |
+| View | Toggle the right panel (Files / Session tabs; keeps the tab) | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
-| View | Terminals / Board / Files / Git / Docs | Ctrl+Shift+1 / 2 / 3 / 4 / 5 |
+| View | Terminals / Board / Git / Docs | Ctrl+Shift+1 / 2 / 4 / 5 |
+| View | Show file tree (right panel, the tree gets the keyboard; ADR 0081) | Ctrl+Shift+3 |
+| View | Show editor (only while a file tab is open) | Ctrl+Shift+6 |
 | Inbox | Jump to next / previous item needing attention (sessions asking for input first, then newest first) | Ctrl+Shift+I / Ctrl+Alt+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
 | Board | Select a card (↑/↓ in the column, ←/→ the same row of the next column with cards) / move it one column (the same `task.move`s as a drag) | ↑↓←→ / Shift+← Shift+→ |
 | Board | Open the selected card (its live session, else its edit dialog) / edit it | Enter / E |
 | Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
-| Tabs | Next / previous tab (file tabs while the Files view is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
-| Tabs | Jump to tab 1–9 (file tabs while the Files view is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
-| Tabs | Rename / close tab (close: the active file tab while the Files view is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
+| Tabs | Next / previous tab (file tabs while the Editor is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
+| Tabs | Jump to tab 1–9 (file tabs while the Editor is shown; 9 = the last) | Ctrl+Alt+1 … Ctrl+Alt+9 |
+| Tabs | Rename / close tab (close: the active file tab while the Editor is shown) | Ctrl+Shift+R / Ctrl+Shift+W |
 | Panes | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Panes | Layout the active tab: 2 columns / 2 rows / 3 columns / 1 + 2 / 2 × 2 (§10) | Alt+Shift+1 / 2 / 3 / 4 / 5 |
 | Panes | Equalize pane sizes (§10) | Alt+Shift+0 |
@@ -1320,17 +1331,17 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Panes | Close pane (asks if agent running) | Ctrl+Shift+X |
 | Panes | Rename pane (also: double-click its title) | F2 |
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
-| Terminal / Files / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
+| Terminal / Editor / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
 | Docs | Comment on selection | Ctrl+Alt+M |
 | Docs | Send comments to agent | Ctrl+Shift+S |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
-| Files | Expand/collapse, move | ← → ↑ ↓ |
-| Files | Toggle ignored files | Ctrl+Shift+H |
-| Files | Save the opened file | Ctrl+S |
-| Files | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
-| Files | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
+| File tree | Expand/collapse, move | ← → ↑ ↓ |
+| File tree | Toggle ignored files (while the tree has the keyboard; the palette entry works anywhere in a workspace) | Ctrl+Shift+H |
+| Editor | Save the opened file | Ctrl+S |
+| Editor | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
+| Editor | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
 | Git | Next / previous hunk | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |
@@ -1345,11 +1356,11 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Send comments to agent | Ctrl+Shift+S |
 | Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
-| Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
+| Agent (v2) | Send selection to an agent (Editor, Git diff, terminal) | Ctrl+Shift+L |
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
 | Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace | command palette only |
 
-In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
+In the Editor and Git views the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
@@ -1453,7 +1464,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
 - Terminal: `terminal-bg` fill, 16 px padding on every side, line height 1.75;
   bar cursor in the text color (hollow block when the pane is unfocused; a program's DECSCUSR
   shape wins); a lone pane has no border, borders mark the focused split pane and needs-input.
-  Files code rows keep line height 1.35 (`code_line_height`).
+  Editor code rows keep line height 1.35 (`code_line_height`).
 - Icons (ADR 0051): icon-only buttons, toggles, window controls, row actions and row chevrons
   draw Lucide SVG icons (`icon/lucide/`, `crates/mkrew-ui/src/icons.rs`) in a theme token color,
   16 px in icon buttons and 14 px among text (`ICON_SIZE`, `ICON_SIZE_SMALL`). The glyphs this
@@ -1738,7 +1749,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
       e2e with the fake agent: a text queued while working and removed is never typed.
 - [ ] Prompt library: samples seeded on first run, variables rendered (unit tests), insertable from
       the palette, the composer and the task dialog.
-- [ ] Send selection from Files, Git diff and a terminal opens the right session's composer, prefilled.
+- [ ] Send selection from the Editor, Git diff and a terminal opens the right session's composer, prefilled.
 - [ ] Dropping files types their paths; pasting an image stores it via `attachment.save` and types
       the path; attachments of sessions ended > 7 days ago are deleted.
 - [ ] "Run with…" on a Todo/Review card updates the task's agent and runs it.
@@ -1758,7 +1769,7 @@ After M3 Mkrew is usable day to day (it can replace a plain terminal multiplexer
 - [ ] Worktree task: Run creates the worktree and `mkrew/…` branch from HEAD, copies
       `.worktreeinclude` entries, runs the agent inside; the main folder's branch, HEAD, index and
       files are unchanged (real-git test). Resume after a daemon restart uses the worktree.
-- [ ] Git and Files views work on a task worktree; Merge only when both sides are clean and aborts
+- [ ] The file tree, the Editor and the Git view work on a task worktree; Merge only when both sides are clean and aborts
       cleanly on conflict; Remove keeps an unmerged branch (real-git tests).
 - [ ] Fan-out runs 2–5 agents in their own worktrees; Compare and Pick work; e2e with fake profiles.
 - [ ] Usage: fixture transcripts in the current Claude and Codex formats give the expected
@@ -1840,13 +1851,14 @@ theme = "system"            # §14; "system" | "light" | "dark"; the title bar t
 light_theme = "Mkrew Light" # §14; a built-in theme name, shown in Light mode / a light OS
 dark_theme = "Mkrew Dark"   # §14; shown in Dark mode / a dark OS
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
-inspector_width = 300       # §10; px, the session panel's width (dragging its edge writes it; kept 240–560)
+inspector_width = 300       # §10; px, the right panel's width (dragging its edge writes it; kept 240–560)
+right_panel = "hidden"      # §10; "files" | "session" | "hidden"; the right panel's toggle and tabs write it
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
 close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
 
 [terminal]
 font_family = ""            # §14; "" = first installed of the platform list; use a monospace family
-font_size = 13              # px, 8–32; also the Files and Git code views
+font_size = 13              # px, 8–32; also the Editor and Git code views
 
 [voice]                     # §20G, ADR 0045
 base_url = "https://api.groq.com/openai/v1"  # OpenAI-compatible; POST {base_url}/audio/transcriptions
@@ -1961,14 +1973,14 @@ context_window = 200000        # tokens, for the % shown
    once written); event `session.queue` carries the session's current queue after every change
    (an exiting session announces it empty). The pane header shows `⧗ 2 queued`.
 3. **Prompt library.** Markdown files in `<config>/mkrew/prompts/*.md`; file stem = name; optional
-   first line `# Title`. Variables: `{file}` (current file of Files/Git, project-relative),
+   first line `# Title`. Variables: `{file}` (current file of the Editor/Git, project-relative),
    `{selection}` (picked lines, as quoted text), `{task}` (task title), `{project}` (name). An unknown
    or unavailable variable renders as empty and is listed in a muted note under the preview. Pure
    `mkrew_core::prompt::render(template, vars)`. Entry points: palette "Insert prompt…" (into the
    open composer, else opens one on the focused agent pane), a "Prompts" menu in the composer,
    and a "From prompt…" menu in the task dialog. Three samples are seeded on first run if the dir
    is missing: `review.md`, `explain.md`, `fix-tests.md`. Read by the UI directly (config, not state).
-4. **Send selection to agent.** `Ctrl+Shift+L` in Files (the editor's selected lines, else the caret's line), Git diff (picked new-side
+4. **Send selection to agent.** `Ctrl+Shift+L` in the Editor (the editor's selected lines, else the caret's line), Git diff (picked new-side
    lines) and a terminal (selected text) opens a session picker (default: the task's session for
    Git task changes, else the workspace's most recently active agent session; same list as
    §12's send dialog), then that session's composer prefilled with
@@ -1981,6 +1993,11 @@ context_window = 200000        # tokens, for the % shown
    `Ctrl+Shift+V` with an image on the clipboard (gpui `ClipboardEntry::Image`; a BMP image is
    re-encoded as PNG) saves it through `attachment.save` and types the returned path the same
    way; copied files type their paths. Text clipboard behaves as before.
+   **Drag from the file tree.** Dragging a row of the file tree (§12A) onto a pane types
+   `composer.file_ref` with the path relative to the tree's folder (the project, or the task
+   worktree) on an agent pane, the bare path on a shell pane, a folder ending with `/`, then one
+   space; no Enter. The same rules as above: the whole pane accepts it, the paths go into the
+   composer draft while it is shown, and the pane shows an accent ring while the row hovers it.
 6. **Run with…** A task card's menu offers "Run with…" (pick a profile): updates the task's agent,
    then runs it. Only for Todo or Review cards without a live session.
 
@@ -2077,7 +2094,7 @@ and milestone numbers are not reused.
    runs in the project folder, saying so in the first output line (ADR 0010). Child repositories
    (ADR 0029) are not isolated: a task worktree holds the project folder's repository only, and
    the Git view's repo chooser is hidden while a worktree is shown.
-   - The task card shows `⎇ mkrew/<branch>`. Files and Git views gain a target chooser
+   - The task card shows `⎇ mkrew/<branch>`. The file tree and the Git view gain a target chooser
      "Project | <task worktree>…" — all §12A/§12B features work on a worktree (the daemon resolves
      `project_id` + `worktree_task_id?` to a folder).
    - **Merge back** (card menu, Review/Done cards): allowed only when the worktree has no
@@ -2184,7 +2201,7 @@ Speak instead of typing, in Vietnamese or English (mixed and accented speech inc
    `error.message`.
 4. **Where the text goes.** Whitespace collapses to single spaces, because a line break would be
    Enter and send the text to an agent. When the text arrives, it is typed into the text field
-   that has the keyboard exactly like an IME commit (every field of §13 and the Files editor). If
+   that has the keyboard exactly like an IME commit (every field of §13 and the Editor). If
    a terminal pane has focus instead, it is pasted there like a paste (bracketed when the program
    asked for it, never followed by Enter). If neither has focus, it goes to the clipboard and the
    footer says so.
@@ -2309,7 +2326,7 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
 4. **Close to tray (Windows).** `[ui] close_to_tray = true` (default): ✕ and Alt+F4 hide the window
    instead of closing it (no pane is attached while hidden, §10). The tray menu, an OS notification click and
    starting Mkrew again (same exe, same daemon socket) show it. `false`, or no tray icon: ✕ quits the UI as before
-   (unsaved Files changes ask first). `Quit UI` shows the window if unsaved Files changes need an
+   (unsaved Editor changes ask first). `Quit UI` shows the window if unsaved Editor changes need an
    answer, then ends the UI; the daemon and every agent keep running (§2.2).
 5. **Mark unread.** Pane menu (right-click a split pane's header or a sidebar session row) **Mark
    unread** and palette "Agent: Mark unread" (no key) put a finished agent session (done, or idle
@@ -2340,7 +2357,7 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    exe is under `%LOCALAPPDATA%`. macOS: the exe is `<X>.app/Contents/MacOS/mkrew` → app bundle.
    Anything else (dev build, MSI install, Linux, Intel Mac, no matching asset): the button opens
    the release page.
-4. **Apply.** Unsaved Files changes are asked about first. A confirmation (`window.prompt`):
+4. **Apply.** Unsaved Editor changes are asked about first. A confirmation (`window.prompt`):
    "Update to Mkrew <v>?", detail "Mkrew closes, installs and reopens. Agent panes resume their
    conversation." + "N agents are working; their current turn stops." when any is + "Shells and
    run commands without autostart do not come back."; Update / What's new (opens the release page,
@@ -2351,7 +2368,7 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
    and reopens Mkrew as the logged-in user (`runasoriginaluser`). macOS: `ditto` unpacks beside
    the bundle, the bundle's `mk daemon stop`, the bundle is renamed `.old` (put back on failure),
    the new one moved in, its `mkrew` started directly (keeps the environment, so `PATH`), the UI
-   quits; `.old` and the unpack folder are removed at the next start. Files edits made while it
+   quits; `.old` and the unpack folder are removed at the next start. Editor edits made while it
    downloaded are asked about before the installer runs. A failure
    before the quit shows an error toast and keeps the app running.
 5. **What survives.** The new UI starts a new daemon, which resumes agent panes and tasks (§8).

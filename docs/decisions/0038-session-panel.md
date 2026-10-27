@@ -1,7 +1,7 @@
 # 0038 — Session panel (right inspector)
 
 - Date: 2026-10-10
-- Status: accepted
+- Status: accepted; superseded in part by 0081
 - Milestone: inbox 2026-10-10
 - Amends: 0027
 

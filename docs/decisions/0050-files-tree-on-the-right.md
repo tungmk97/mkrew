@@ -1,7 +1,7 @@
 # 0050 — The Files tree sits on the right; search and Ignored are redrawn
 
 - Date: 2026-10-12
-- Status: accepted
+- Status: accepted; superseded in part by 0081
 
 ## Context
 

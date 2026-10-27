@@ -21,6 +21,13 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
+
+- [ ] **Panel (dark + light):** `◨` opens the right panel on `Files │ Session`; the tab row, tree rows, markers and search fit 240 px without clipping; dragging the edge resizes both tabs.
+- [ ] **Editor:** clicking a tree file shows `Editor` in the view bar and the file; closing every tab hides it and shows Terminals; the tree keeps the keyboard after a click.
+- [ ] **Drag:** dragging a file / folder onto a Claude pane types `@path ` / `@folder/ `; onto a shell the bare path; the pane shows an accent ring while hovered; a plain click still opens.
+- [ ] **Restart:** the panel comes back on the tab it was left on, or hidden.
+
 ### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
 
 - [ ] **Pill (dark + light):** press Ctrl+Shift+D. A pill fades and slides up at the bottom center of the window. It shows a breathing dot, 7 bars, `0:03`, and the `Ctrl+Shift+D stops` key. Speak: the bars jump up with your voice and sink slowly, with a wave running across them. Stay silent: the bars stay low but keep breathing. Press again: the pill shows the dots and `Transcribing`, then disappears.
