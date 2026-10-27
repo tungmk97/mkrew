@@ -76,9 +76,10 @@ use mkrew_ui::inspector;
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
     self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
-    GIT_CONTEXT, Keymap, KeymapError, Run,
+    GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
+use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone};
 use mkrew_ui::palette::{self, Extra, Palette};
 use mkrew_ui::pane_text;
 use mkrew_ui::peek::{self, Peek};
@@ -125,6 +126,7 @@ use shell::files_render::*;
 use shell::git_diff::*;
 use shell::git_menus::*;
 use shell::git_rows::*;
+use shell::menu_render::*;
 use shell::menus::*;
 use shell::pane_render::*;
 use shell::reorder::*;
@@ -426,6 +428,18 @@ struct Shell {
     file_tab_menu: Option<FileTabMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
+    /// Focused while a popover menu is open (any menu, opened by mouse or keyboard): its key
+    /// context is `Menu` and [`Shell::menu_key_down`] drives the rows.
+    menu_focus: FocusHandle,
+    /// What had the keyboard before the first open menu took it (and the terminal session
+    /// whose pane it was); Esc, an action or a click outside gives it back.
+    menu_return: Option<(FocusHandle, Option<Ulid>)>,
+    /// The row the keyboard stands on, and the swatch cursor inside a swatch row.
+    menu_selected: Option<usize>,
+    menu_swatch: usize,
+    /// A group heading whose first row gets the selection as soon as the rows exist (the
+    /// agent lists load after the menu opens).
+    menu_pending: Option<&'static str>,
     /// The sidebar-row or tab reorder drag in progress (stale once no drag is active).
     reorder: Option<Reorder>,
     /// The open menu of the tab strip's split button (Split right / down, layouts).
@@ -703,6 +717,11 @@ struct Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
+        // event) must not leave it on the hidden menu: give it back to the pane.
+        if !self.menu_open() && self.menu_focus.contains_focused(window, cx) {
+            self.focus_pane(window, cx);
+        }
         // Voice input types into the field whose typing canvas registers again during this
         // frame's paint (§20G); a field that is gone from the screen is no target. That field
         // paints the listening ring.

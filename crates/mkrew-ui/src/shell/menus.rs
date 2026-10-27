@@ -144,6 +144,7 @@ impl Shell {
                         None,
                         current_color,
                         theme,
+                        false,
                         cx,
                         move |shell, color, window, cx| {
                             shell.set_workspace_color(project_id, color, window, cx);
@@ -155,6 +156,7 @@ impl Shell {
                             Some(*name),
                             current_color,
                             theme,
+                            false,
                             cx,
                             move |shell, color, window, cx| {
                                 shell.set_workspace_color(project_id, color, window, cx);
@@ -657,6 +659,7 @@ impl Shell {
                                     color,
                                     current,
                                     theme,
+                                    false,
                                     cx,
                                     move |shell, color, window, cx| {
                                         shell.set_pane_color(session_id, color, window, cx);
@@ -676,47 +679,50 @@ impl Shell {
         )
     }
 
-    /// The Share menu of an agent pane: "Follow in Zed" (✓ while on). Floats at the click.
+    /// The Share menu of an agent pane: "Follow in Zed" (✓ while on).
+    pub(crate) fn share_menu_rows(&self, menu: &PaneMenu) -> Rows {
+        let session_id = menu.session_id;
+        vec![
+            MenuItem::new(
+                "Follow in Zed",
+                act(move |shell, _, cx| shell.toggle_follow(session_id, cx)),
+            )
+            .checked(self.follow.is_on(session_id))
+            .row(),
+        ]
+    }
+
     pub(crate) fn render_share_menu(
         &self,
         menu: &PaneMenu,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let session_id = menu.session_id;
-        let following = self.follow.is_on(session_id);
-        let panel = menu_panel("share-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.share_menu = None;
-                cx.notify();
-            }))
-            .child(
-                menu_item("share-follow-zed".into(), theme)
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(px(space::M))
-                            .text_color(rgb(theme.accent_text))
-                            .child(if following { "✓" } else { "" }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Follow in Zed"),
-                    )
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.share_menu = None;
-                        shell.toggle_follow(session_id, cx);
-                    })),
-            );
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window_with_margin(px(space::S))
-                .child(panel),
+        render_menu(
+            self.menu_state(),
+            "share-menu",
+            self.share_menu_rows(menu),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
         )
-        .into_any_element()
+    }
+
+    /// Opens the Share menu of `session_id` at `position`.
+    pub(crate) fn open_share_menu(
+        &mut self,
+        session_id: Ulid,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.begin_menu(window, cx);
+        self.share_menu = Some(PaneMenu {
+            session_id,
+            position,
+        });
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// `row` with the workspace menu dropping down below it while the menu is open for
@@ -850,7 +856,7 @@ pub(crate) fn agent_rows(
 }
 
 /// A small drawing of `preset`'s panes for the layout menu.
-fn layout_thumb(preset: Preset, theme: &Theme) -> gpui::Div {
+pub(crate) fn layout_thumb(preset: Preset, theme: &Theme) -> gpui::Div {
     div()
         .relative()
         .flex_none()

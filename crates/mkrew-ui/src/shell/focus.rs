@@ -25,7 +25,9 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
-    /// Closes every transient popover menu. Called by every bound command.
+    /// Closes every transient popover menu without moving the keyboard; see
+    /// [`Self::dismiss_menus`] for the version that gives it back. Called by every bound command
+    /// through `dismiss_menus`.
     pub(crate) fn close_menus(&mut self) {
         self.tab_menu = None;
         self.layout_menu = None;
@@ -39,6 +41,11 @@ impl Shell {
         self.new_menu = false;
         self.run_with = None;
         self.fan_out = None;
+        self.git_menu = None;
+        self.menu_return = None;
+        self.menu_selected = None;
+        self.menu_swatch = 0;
+        self.menu_pending = None;
     }
 
     /// The pane keyboard input goes to: the focused pane of the active tab (none while the

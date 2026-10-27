@@ -693,18 +693,21 @@ pub(crate) fn menu_panel(
 }
 
 /// One color choice of a color menu: a filled dot (`None` = an empty ring = no color); the
-/// current one is ringed in the text color. A click calls `pick`; the element id is
-/// `<id_prefix>-<color>`.
+/// current one is ringed in the text color and `focused` rings it in the accent (the keyboard
+/// cursor). A click calls `pick`; the element id is `<id_prefix>-<color>`.
 pub(crate) fn color_swatch(
     id_prefix: &'static str,
     color: Option<&'static str>,
     current: Option<&str>,
     theme: &Theme,
+    focused: bool,
     cx: &mut Context<'_, Shell>,
     pick: impl Fn(&mut Shell, Option<&'static str>, &mut Window, &mut Context<'_, Shell>) + 'static,
 ) -> gpui::AnyElement {
     let fill = color.and_then(|name| theme.workspace_color(name));
-    let ring = if color == current {
+    let ring = if focused {
+        theme.accent
+    } else if color == current {
         theme.text
     } else {
         fill.unwrap_or(theme.text_muted)

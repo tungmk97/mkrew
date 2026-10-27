@@ -729,14 +729,11 @@ impl Shell {
             },
             "",
         ))
-        .on_click(cx.listener(move |shell, event: &gpui::ClickEvent, _, cx| {
-            shell.close_menus();
-            shell.share_menu = Some(PaneMenu {
-                session_id: session,
-                position: event.position(),
-            });
-            cx.notify();
-        }));
+        .on_click(
+            cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
+                shell.open_share_menu(session, event.position(), window, cx);
+            }),
+        );
         vec![reading_toggle.into_any_element(), share.into_any_element()]
     }
 

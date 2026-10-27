@@ -137,8 +137,8 @@ impl Shell {
         if *command == Command::VoiceInput {
             return self.toggle_voice(window, cx);
         }
-        // A shortcut ends every open popover (they never own the keyboard).
-        self.close_menus();
+        // A shortcut ends every open popover and gives the keyboard back before it acts.
+        self.dismiss_menus(window, cx);
         // Shortcuts still fire while a title is edited: save it first (closing its tab, …).
         self.finish_rename(true, window, cx);
         // Its own shortcut closes the palette again.
