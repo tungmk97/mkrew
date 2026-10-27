@@ -356,17 +356,19 @@ impl Shell {
         cx.notify();
     }
 
-    /// Right click on a Files tree row (`path`) or on the tree itself (`""`).
+    /// Right click on a Files tree row (`path`) or on the tree itself (`""`), or Shift+F10 on
+    /// the cursor row.
     pub(crate) fn open_file_menu(
         &mut self,
         project_id: Ulid,
         path: String,
         is_dir: bool,
         position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let target = (self.files.get(&project_id)).and_then(|view| view.worktree_task_id);
-        self.close_menus();
+        self.begin_menu(window, cx);
         self.file_menu = Some(FileMenu {
             project_id,
             target,
@@ -374,7 +376,7 @@ impl Shell {
             is_dir,
             position,
         });
-        cx.notify();
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
     }
 
     /// "Open in File Explorer" on a Files path: a file is shown selected in its folder, a

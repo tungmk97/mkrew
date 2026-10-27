@@ -324,6 +324,12 @@ impl Shell {
         if let Some(menu) = &self.workspace_menu {
             return Some(self.workspace_menu_rows(menu));
         }
+        if let Some(menu) = &self.file_menu {
+            return Some(self.file_menu_rows(menu));
+        }
+        if let Some(menu) = &self.file_tab_menu {
+            return Some(self.file_tab_menu_rows(menu));
+        }
         if self.workspace_switcher {
             return self
                 .workspace

@@ -100,97 +100,91 @@ impl Shell {
         )
     }
 
-    /// The Files tree's right-click menu at the click position; a click outside closes it.
-    pub(crate) fn render_file_menu(
-        &self,
-        menu: &FileMenu,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
+    /// The Files tree's right-click menu: New file…, New folder…, Copy path, Add to .gitignore
+    /// (rows only), Open in File Explorer, Open in Zed.
+    pub(crate) fn file_menu_rows(&self, menu: &FileMenu) -> Rows {
         let (project_id, target, is_dir) = (menu.project_id, menu.target, menu.is_dir);
-        let path = SharedString::from(menu.path.clone());
         let root = menu.path.is_empty();
-        let item = |id: &'static str, label: &'static str| {
-            menu_item(id.into(), theme)
-                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-        };
-        let separator = || {
-            div()
-                .h(px(theme::BORDER_WIDTH))
-                .my(px(space::XS))
-                .bg(rgb(theme.border))
-        };
         // In the folder clicked, or next to the file clicked.
         let dir = if is_dir {
             menu.path.as_str()
         } else {
             menu.path.rsplit_once('/').map_or("", |(dir, _)| dir)
         };
-        let new_entry = |id: &'static str, label: &'static str, folder: bool| {
+        let new_entry = |label: &'static str, folder: bool| {
             let entry = NewEntry {
                 project_id,
                 target,
                 dir: dir.to_owned(),
                 folder,
             };
-            item(id, label).on_click(cx.listener(move |shell, _, window, cx| {
-                shell.start_new_entry(entry.clone(), window, cx);
-            }))
+            MenuItem::new(
+                label,
+                act(move |shell, window, cx| shell.start_new_entry(entry.clone(), window, cx)),
+            )
+            .row()
         };
-        let (copy_path, ignore_path, explorer_path, zed_path) =
-            (path.clone(), path.clone(), path.clone(), path.clone());
-        let panel = menu_panel("file-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.file_menu = None;
-                cx.notify();
-            }))
-            .child(new_entry("file-menu-new-file", "New file…", false))
-            .child(new_entry("file-menu-new-folder", "New folder…", true))
-            .child(separator())
-            .child(
-                item("file-menu-copy-path", "Copy path").on_click(cx.listener(
-                    move |shell, _, _, cx| {
-                        shell.copy_file_path(project_id, target, &copy_path, cx);
-                    },
-                )),
+        let path = menu.path.clone();
+        let copy = path.clone();
+        let mut rows: Rows = vec![
+            new_entry("New file…", false),
+            new_entry("New folder…", true),
+            MenuRow::Separator,
+            MenuItem::new(
+                "Copy path",
+                act(move |shell, _, cx| shell.copy_file_path(project_id, target, &copy, cx)),
             )
-            // The folder itself cannot ignore itself.
-            .when(!root, |panel| {
-                panel.child(
-                    item("file-menu-gitignore", "Add to .gitignore").on_click(cx.listener(
-                        move |shell, _, window, cx| {
-                            shell.ignore_file_path(
-                                project_id,
-                                target,
-                                &ignore_path,
-                                is_dir,
-                                window,
-                                cx,
-                            );
-                        },
-                    )),
+            .row(),
+        ];
+        // The folder itself cannot ignore itself.
+        if !root {
+            let ignore = path.clone();
+            rows.push(
+                MenuItem::new(
+                    "Add to .gitignore",
+                    act(move |shell, window, cx| {
+                        shell.ignore_file_path(project_id, target, &ignore, is_dir, window, cx);
+                    }),
                 )
-            })
-            .child(separator())
-            .child(
-                item("file-menu-explorer", "Open in File Explorer").on_click(cx.listener(
-                    move |shell, _, _, cx| {
-                        shell.open_path_in_explorer(project_id, target, &explorer_path, is_dir, cx);
-                    },
-                )),
+                .row(),
+            );
+        }
+        let explorer = path.clone();
+        rows.push(MenuRow::Separator);
+        rows.push(
+            MenuItem::new(
+                "Open in File Explorer",
+                act(move |shell, _, cx| {
+                    shell.open_path_in_explorer(project_id, target, &explorer, is_dir, cx);
+                }),
             )
-            .child(item("file-menu-zed", "Open in Zed").on_click(cx.listener(
-                move |shell, _, _, cx| {
-                    shell.open_path_in_zed(project_id, target, &zed_path, cx);
-                },
-            )));
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window_with_margin(px(space::S))
-                .child(panel),
+            .row(),
+        );
+        rows.push(
+            MenuItem::new(
+                "Open in Zed",
+                act(move |shell, _, cx| shell.open_path_in_zed(project_id, target, &path, cx)),
+            )
+            .row(),
+        );
+        rows
+    }
+
+    pub(crate) fn render_file_menu(
+        &self,
+        menu: &FileMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        render_menu(
+            self.menu_state(),
+            "file-menu",
+            self.file_menu_rows(menu),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
         )
-        .into_any_element()
     }
 
     /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,

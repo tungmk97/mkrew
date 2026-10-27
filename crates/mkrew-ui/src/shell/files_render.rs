@@ -165,12 +165,13 @@ impl Shell {
                     // itself (rows stop the event first).
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
+                        cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
                             shell.open_file_menu(
                                 project_id,
                                 String::new(),
                                 true,
                                 event.position,
+                                window,
                                 cx,
                             );
                         }),
@@ -1023,8 +1024,15 @@ pub(crate) fn file_row(
         )
         .on_mouse_down(
             MouseButton::Right,
-            cx.listener(move |shell, event: &gpui::MouseDownEvent, _, cx| {
-                shell.open_file_menu(project_id, menu_path.clone(), is_dir, event.position, cx);
+            cx.listener(move |shell, event: &gpui::MouseDownEvent, window, cx| {
+                shell.open_file_menu(
+                    project_id,
+                    menu_path.clone(),
+                    is_dir,
+                    event.position,
+                    window,
+                    cx,
+                );
                 cx.stop_propagation();
             }),
         )
