@@ -128,7 +128,7 @@ pub enum Command {
     GitFetch,
     /// Git only: push the shown repository's branch.
     GitPush,
-    /// Fuzzy-find a file of the active workspace and open it in the Files view.
+    /// Fuzzy-find a file of the active workspace and open it in the Editor view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
     NewTask,
@@ -1124,7 +1124,7 @@ mod tests {
             assert_eq!(keymap.command_for(&keystroke), None, "{keys} is bound");
             assert_eq!(key_to_bytes(&keystroke, mode), Some(bytes), "{keys}");
         }
-        // No default is a plain Ctrl+<letter>, except in the Files view (ADR 0028): no
+        // No default is a plain Ctrl+<letter>, except in the Editor view (ADR 0028): no
         // terminal has focus there (SPEC §13).
         for (command, keys) in keymap.bindings() {
             let m = keys.modifiers;
@@ -1138,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_w_closes_a_file_tab_in_files_only() {
+    fn ctrl_w_closes_a_file_tab_in_the_editor_only() {
         let keymap = Keymap::defaults();
         assert_eq!(
             keymap.command_for(&keystroke("ctrl-w")),

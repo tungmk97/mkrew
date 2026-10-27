@@ -460,7 +460,7 @@ impl Shell {
                 }
             }
             Command::SaveFile => {
-                // Only bound while Files are shown.
+                // Only bound while the Editor is shown.
                 let active = (self.workspace).and_then(|project_id| {
                     let path = self.files.get(&project_id)?.file()?.to_owned();
                     Some((project_id, path))

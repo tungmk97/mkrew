@@ -50,7 +50,7 @@ impl Shell {
             cx.notify();
             return;
         };
-        // Project-relative paths for the composer, whatever the Files view shows.
+        // Project-relative paths for the composer, whatever the tree shows.
         let mut open = QuickOpen::new(project_id, None);
         open.composer = Some(session);
         self.quick_open = Some(open);
@@ -184,7 +184,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Opens the picked file in the Files view (its folders open, the cursor lands on it).
+    /// Opens the picked file in the Editor view (its folders open, the cursor lands on it).
     pub(crate) fn open_quick_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(open) = self.quick_open.take() else {
             return;
@@ -236,7 +236,7 @@ impl Shell {
         })
     }
 
-    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file in the Files view.
+    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file in the Editor view.
     pub(crate) fn open_terminal_link(
         &mut self,
         session: Ulid,
@@ -255,7 +255,7 @@ impl Shell {
         }
     }
 
-    /// Shows `path` of the Files view on `target` (the project, or a task worktree) with the
+    /// Shows `path` of the files on `target` (the project, or a task worktree) with the
     /// caret on `line`. Another target starts the view over, so unsaved tabs are asked about
     /// first (as the chooser does).
     pub(crate) fn open_file_at(
@@ -291,7 +291,7 @@ impl Shell {
         }
     }
 
-    /// Shows `path` in the Files view of `project_id` (its folders open, the cursor lands on
+    /// Shows `path` in the Editor view of `project_id` (its folders open, the cursor lands on
     /// it, its tab shows).
     #[allow(clippy::too_many_arguments)] // The open's target, file, line and kind.
     pub(crate) fn reveal_file(
@@ -307,8 +307,7 @@ impl Shell {
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
-        // The Editor view comes with the revealed file's tab (`file_tab_shown`), and only
-        // while the Editor view still shows the folder that was searched.
+        // Revealed only while the tree still shows the folder that was searched.
         let Some(view) = self.files_at(project_id, target) else {
             return;
         };
@@ -322,6 +321,9 @@ impl Shell {
         }
         self.files_requests(project_id, requests, window, cx);
         self.file_tab_shown(project_id, None, window, cx);
+        // The tab exists now; also when the Editor was already stored, the editor gets the
+        // keyboard back from the closed dialog.
+        self.show_view(View::Editor, window, cx);
     }
 
     /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
@@ -678,7 +680,7 @@ impl Shell {
     }
 
     /// Quick open: the query field over the best matches (matched chars in the accent color,
-    /// the pick ringed); a click or Enter opens one in the Files view.
+    /// the pick ringed); a click or Enter opens one in the Editor view.
     pub(crate) fn render_quick_open(
         &self,
         open: &QuickOpen,

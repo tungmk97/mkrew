@@ -242,6 +242,12 @@ impl Shell {
             // A file click lists nothing; only the read matters.
             return self.file_tab_shown(project_id, requests.read, window, cx);
         }
+        // Clicking the file that is already the active tab still brings the Editor up.
+        if self.view() != View::Editor
+            && self.files.get(&project_id).and_then(|view| view.file()) == Some(path)
+        {
+            self.show_view(View::Editor, window, cx);
+        }
         self.files_requests(project_id, requests, window, cx);
     }
 
