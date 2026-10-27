@@ -422,6 +422,7 @@ impl Emulator {
     /// the view when that is scrolled out).
     pub fn enter_copy_mode(&mut self) {
         if !self.copy_mode() {
+            self.term.selection = None;
             self.term.toggle_vi_mode();
             self.changed();
         }
@@ -456,12 +457,18 @@ impl Emulator {
             }
             CopyKey::Select(select) => self.copy_select(select),
             CopyKey::Copy => {
-                let text = self.selection_text();
+                // A line selection ends with a line break; pasted into a shell it would run.
+                let text = (self.selection_text())
+                    .map(|text| text.trim_end_matches('\n').to_owned())
+                    .filter(|text| !text.is_empty());
                 self.leave_copy_mode();
                 return CopyEnd::Leave(text);
             }
             CopyKey::Cancel => {
-                if self.term.selection.take().is_none() {
+                if (self.term.selection.take())
+                    .filter(|selection| !selection.is_empty())
+                    .is_none()
+                {
                     self.leave_copy_mode();
                     return CopyEnd::Leave(None);
                 }
@@ -1046,7 +1053,7 @@ mod tests {
         let CopyEnd::Leave(Some(text)) = end else {
             panic!("nothing copied: {end:?}");
         };
-        assert!(text.starts_with("hello abc\nsecond"), "{text:?}");
+        assert_eq!(text, "hello abc\nsecond", "no trailing line break");
     }
 
     #[test]
@@ -1152,5 +1159,51 @@ mod tests {
         emu.set_hold(true);
         emu.advance(&vec![b'x'; HOLD_LIMIT + 1]);
         assert!(emu.grid().to_text().starts_with('x'), "applied at once");
+    }
+
+    #[test]
+    fn overflow_applies_the_held_bytes_first_then_the_new_ones() {
+        let mut emu = Emulator::new(10, 2);
+        emu.set_hold(true);
+        emu.advance(b"ab\r");
+        // Carriage returns do not scroll: "c" overwrites "a" only if it comes after the held "ab".
+        let mut flood = vec![b'\r'; HOLD_LIMIT];
+        flood[0] = b'c';
+        emu.advance(&flood);
+        assert_eq!(emu.grid().to_text(), "cb\n\n", "held first, then new");
+    }
+
+    #[test]
+    fn leaving_copy_mode_keeps_an_explicit_hold() {
+        let mut emu = Emulator::new(10, 2);
+        emu.advance(b"a");
+        emu.set_hold(true);
+        emu.enter_copy_mode();
+        emu.advance(b"b");
+        emu.leave_copy_mode();
+        assert_eq!(emu.grid().to_text(), "a\n\n", "still held");
+        emu.set_hold(false);
+        assert_eq!(emu.grid().to_text(), "ab\n\n");
+    }
+
+    #[test]
+    fn copy_esc_after_a_click_leaves_at_once() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello");
+        emu.start_selection(0, 1, Side::Left);
+        emu.enter_copy_mode();
+        assert_eq!(copy_keys(&mut emu, [CopyKey::Cancel]), CopyEnd::Leave(None));
+        assert!(!emu.copy_mode());
+    }
+
+    #[test]
+    fn entering_copy_mode_drops_a_mouse_selection() {
+        let mut emu = Emulator::new(12, 3);
+        emu.advance(b"hello");
+        emu.start_selection(0, 0, Side::Left);
+        emu.update_selection(0, 3, Side::Right);
+        assert!(emu.selection_text().is_some());
+        emu.enter_copy_mode();
+        assert_eq!(emu.selection_text(), None);
     }
 }
