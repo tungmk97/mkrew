@@ -30,24 +30,28 @@ pub enum View {
     Docs,
     /// The opened files' tabs and editor (SPEC §12A); the tree is in the right panel.
     Editor,
-    /// Changed files and their diffs (SPEC §12B).
-    Git,
+    /// The open diff (SPEC §12B); the Git list is in the right panel.
+    Diff,
 }
 
 impl View {
     pub const ALL: [View; 5] = [
         View::Terminals,
         View::Board,
-        View::Git,
         View::Docs,
         View::Editor,
+        View::Diff,
     ];
 
-    /// The view bar's views: Docs while `[features] docs` is on, Editor while files are open.
-    pub fn bar(docs: bool, editor: bool) -> impl Iterator<Item = View> {
-        View::ALL
-            .into_iter()
-            .filter(move |&view| (view != View::Docs || docs) && (view != View::Editor || editor))
+    /// The view bar's views: Docs while `[features] docs` is on, Editor while files are
+    /// open, Diff while a diff is open.
+    pub fn bar(docs: bool, editor: bool, diff: bool) -> impl Iterator<Item = View> {
+        View::ALL.into_iter().filter(move |&view| match view {
+            View::Docs => docs,
+            View::Editor => editor,
+            View::Diff => diff,
+            View::Board | View::Terminals => true,
+        })
     }
 
     pub fn title(self) -> &'static str {
@@ -56,7 +60,7 @@ impl View {
             View::Terminals => "Terminals",
             View::Docs => "Docs",
             View::Editor => "Editor",
-            View::Git => "Git",
+            View::Diff => "Diff",
         }
     }
 
@@ -68,7 +72,7 @@ impl View {
             View::Terminals => Command::ShowTerminals,
             View::Docs => Command::ShowDocs,
             View::Editor => Command::ShowEditor,
-            View::Git => Command::ShowGit,
+            View::Diff => Command::ShowDiff,
         }
     }
 }
@@ -238,7 +242,7 @@ impl Card {
         self.branch.is_some() && matches!(self.status, TaskStatus::Review | TaskStatus::Done)
     }
 
-    /// Whether the card offers "View changes" (since the checkpoint, in the Git view): a
+    /// Whether the card offers "View changes" (since the checkpoint, in the Git tab): a
     /// Review card with a checkpoint (SPEC §12B).
     pub fn can_view_changes(&self) -> bool {
         self.checkpoint && self.status == TaskStatus::Review

@@ -406,6 +406,8 @@ impl Shell {
             }),
             terminal: terminal.is_some(),
             discard,
+            git: self.git_shown(),
+            diff: workspace.is_some_and(|id| self.diff_open(id)),
             worktree_task,
             task_changes,
             fan_out,

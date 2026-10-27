@@ -35,6 +35,11 @@ pub struct Context {
     pub terminal: bool,
     /// The Git view's selected file can be discarded (unstaged or untracked).
     pub discard: bool,
+    /// The active workspace's Git is on screen (the panel's Git tab or the Diff view): the
+    /// Git keys act.
+    pub git: bool,
+    /// The active workspace has an open diff (the Diff view exists).
+    pub diff: bool,
     /// The selected board card offers "View changes".
     pub task_changes: bool,
     /// The selected board card offers "Merge back…" and "Remove worktree…".
@@ -240,7 +245,8 @@ pub fn title(command: Command) -> String {
         Command::ShowDocs => "View: Docs".into(),
         Command::ShowFileTree => "View: File tree".into(),
         Command::ShowEditor => "View: Editor".into(),
-        Command::ShowGit => "View: Git".into(),
+        Command::ShowGitPanel => "View: Git panel".into(),
+        Command::ShowDiff => "View: Diff".into(),
         Command::ToggleDocSource => "Docs: Toggle preview / source".into(),
         Command::AddComment => "Comments: Comment on selected lines".into(),
         Command::SendComments => "Comments: Send comments to agent".into(),
@@ -319,10 +325,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ShowBoard
         | Command::ShowTerminals
         | Command::ShowFileTree
-        | Command::ShowGit
+        | Command::ShowGitPanel
         | Command::QuickOpen
         | Command::ToggleInspector
         | Command::NewTask => context.workspace,
+        Command::ShowDiff => context.workspace && context.diff,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::ShowEditor => context.workspace && context.file_tabs > 0,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
@@ -348,13 +355,13 @@ pub fn available(command: Command, context: &Context) -> bool {
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::SendSelection => {
-            in_view(View::Editor) || in_view(View::Git) || (on_panes && context.terminal)
+            in_view(View::Editor) || in_view(View::Diff) || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
         Command::RunStart => context.workspace && context.run_stopped,
         Command::RunRestart | Command::RunStop => context.workspace && context.run_live,
         Command::ToggleDocSource => in_view(View::Docs),
-        Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Git),
+        Command::AddComment | Command::SendComments => in_view(View::Docs) || in_view(View::Diff),
         Command::ToggleIgnored => context.workspace,
         Command::SaveFile
         | Command::FindInFile
@@ -372,8 +379,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitUnstageAll
         | Command::GitFetch
         | Command::GitPush
-        | Command::GitFocusCommit => in_view(View::Git),
-        Command::GitDiscard => in_view(View::Git) && context.discard,
+        | Command::GitFocusCommit => context.workspace && context.git,
+        Command::GitDiscard => context.workspace && context.git && context.discard,
         Command::Card(_) => in_view(View::Board),
     }
 }

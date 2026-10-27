@@ -55,6 +55,22 @@ impl Shell {
         }
     }
 
+    /// Ctrl+Shift+4: the right panel on the Git tab, whose list gets the keyboard; from a
+    /// view without the panel, Terminals first.
+    pub(crate) fn show_git_panel(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if !self.panel_view() {
+            self.show_view(View::Terminals, window, cx);
+        }
+        self.show_panel_tab(PanelTab::Git, window, cx);
+        // Without loaded tabs the Terminals view draws no panel: nothing to focus.
+        if self.view() != View::Terminals || self.tabs.contains_key(&project_id) {
+            window.focus(&self.git_focus, cx);
+        }
+    }
+
     /// After the panel opened, closed or switched tab: a tree or Git list that came on screen
     /// is refreshed, a hidden one gives the keyboard back, the grip of a hidden panel ends its
     /// drag, and `[ui] right_panel` is saved.
@@ -93,7 +109,7 @@ impl Shell {
             .into_iter()
             .any(|focus| focus.is_focused(window))
         {
-            if self.view() == View::Git {
+            if self.view() == View::Diff {
                 // The diff card holds `git_focus` itself.
                 window.focus(&self.git_focus, cx);
             } else {

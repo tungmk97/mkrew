@@ -329,13 +329,20 @@ impl Shell {
     }
 
     /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046), and the Editor while the workspace has no open file.
+    /// off (ADR 0046), the Editor while the workspace has no open file, the Diff while it has
+    /// no open diff.
     pub(crate) fn view(&self) -> View {
-        self.workspace
-            .and_then(|id| self.views.get(&id).copied())
-            .filter(|&view| view != View::Docs || self.features.docs)
-            .filter(|&view| {
-                view != View::Editor || self.workspace.is_some_and(|id| self.has_file_tabs(id))
+        let Some(id) = self.workspace else {
+            return View::default();
+        };
+        self.views
+            .get(&id)
+            .copied()
+            .filter(|&view| match view {
+                View::Docs => self.features.docs,
+                View::Editor => self.has_file_tabs(id),
+                View::Diff => self.diff_open(id),
+                View::Board | View::Terminals => true,
             })
             .unwrap_or_default()
     }
@@ -345,6 +352,11 @@ impl Shell {
         self.files
             .get(&project_id)
             .is_some_and(|view| !view.tabs().is_empty())
+    }
+
+    /// The workspace has an open diff (the Diff view exists).
+    pub(crate) fn diff_open(&self, project_id: Ulid) -> bool {
+        self.git.get(&project_id).is_some_and(GitView::diff_open)
     }
 
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
@@ -381,7 +393,7 @@ impl Shell {
         if self.git_shown() && !git_before {
             self.refresh_git(project_id, window, cx);
         }
-        if view == View::Git {
+        if view == View::Diff {
             window.focus(&self.git_focus, cx);
         }
         if shown != view {

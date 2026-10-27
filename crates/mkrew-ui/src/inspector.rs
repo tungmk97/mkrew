@@ -1,4 +1,4 @@
-//! The right panel next to Terminals / Editor / Diff (SPEC §10, ADR 0038, ADR 0081, ADR 0082): its tabs, width,
+//! The right panel next to Terminals / Editor / Diff (SPEC §10, ADR 0038, ADR 0081, ADR 0084): its tabs, width,
 //! the Stop rule and the text of the Session card. Pure; `main.rs` draws it.
 
 use mkrew_core::settings::RightPanelMode;

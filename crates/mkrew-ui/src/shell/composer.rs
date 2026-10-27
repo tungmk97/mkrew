@@ -228,10 +228,10 @@ impl Shell {
                     .map(|target| target.path.clone())
             });
         // The shown view's pick first (one picked earlier elsewhere may linger).
-        let views = if self.view() == View::Git {
-            [View::Git, View::Editor]
+        let views = if self.view() == View::Diff {
+            [View::Diff, View::Editor]
         } else {
-            [View::Editor, View::Git]
+            [View::Editor, View::Diff]
         };
         let selection = views
             .into_iter()
@@ -270,7 +270,7 @@ impl Shell {
                 let line = |index: usize| u32::try_from(index + 1).ok();
                 Some((path.to_owned(), line(first)?, line(last)?, text))
             }
-            View::Git => {
+            View::Diff => {
                 let git = self.git.get(&project_id)?;
                 let (Some(target), Some(selection), git_view::Diff::Shown(shown)) =
                     (&git.selected, git.comments.selection, &git.diff)

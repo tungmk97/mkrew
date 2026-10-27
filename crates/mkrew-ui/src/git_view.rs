@@ -605,7 +605,7 @@ pub struct GitView {
     /// The files marked as viewed (SPEC §12B, ADR 0065): the daemon's last answer, plus the
     /// user's toggles since. Shared with the list's render closure.
     pub viewed: Rc<ViewedSet>,
-    /// The Diff view is open (SPEC §12B, ADR 0082): a click / Enter on a file or an entry
+    /// The Diff view is open (SPEC §12B, ADR 0084): a click / Enter on a file or an entry
     /// point opens it; `×`, `Esc` and an empty list close it. A selection moving by itself
     /// (staging, ↑ ↓, a refresh) keeps it.
     open: bool,

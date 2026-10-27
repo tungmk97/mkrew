@@ -34,7 +34,7 @@ impl Shell {
                     .child(self.render_editor(project_id, theme, window, cx))
                     .children(panel),
             ),
-            (View::Git, _) => main.child(
+            (View::Diff, _) => main.child(
                 div()
                     .flex_1()
                     .min_h_0()
@@ -266,17 +266,16 @@ impl Shell {
         bar
     }
 
-    /// The views as a segmented control; the Git one carries the `Git N` badge (N = changed
-    /// files over all repositories of the workspace, hidden at 0).
+    /// The views as a segmented control; Editor and Diff only while open.
     pub(crate) fn render_view_tabs(
         &self,
         shown: View,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> impl IntoElement {
-        let changed = self.git_summary().map_or(0, GitSummary::changed);
         let editor = self.workspace.is_some_and(|id| self.has_file_tabs(id));
-        segmented(theme).children(View::bar(self.features.docs, editor).map(|view| {
+        let diff = self.workspace.is_some_and(|id| self.diff_open(id));
+        segmented(theme).children(View::bar(self.features.docs, editor, diff).map(|view| {
             segment(
                 SharedString::from(format!("view-{}", view.title())),
                 view == shown,
@@ -291,16 +290,13 @@ impl Shell {
                 shell.show_view(view, window, cx);
             }))
             .child(view.title())
-            .when(view == View::Git && changed > 0, |el| {
-                el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
-            })
         }))
     }
 
     /// The workspace name with ▾: opens a dropdown of every workspace (click switches) and
     /// "Add workspace…". After it, muted, the repository label `⎇ master` / `⎇ 2 repos` (its
-    /// only place; tooltip: one line per repository; a click shows the Git view), hidden while
-    /// the summary is not loaded or the folder holds no repository.
+    /// only place; tooltip: one line per repository; a click opens the Git tab and the diff),
+    /// hidden while the summary is not loaded or the folder holds no repository.
     pub(crate) fn render_workspace_switcher(
         &self,
         project_id: Ulid,
@@ -376,7 +372,9 @@ impl Shell {
                     .hover(move |style| style.bg(rgb(hover)))
                     .tooltip(tooltip(theme, &tip, ""))
                     .on_click(cx.listener(|shell, _, window, cx| {
-                        shell.show_view(View::Git, window, cx);
+                        if let Some(id) = shell.workspace {
+                            shell.open_git(id, window, cx);
+                        }
                     }))
                     .child(icon_svg(
                         Icon::GitBranch,

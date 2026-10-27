@@ -29,7 +29,7 @@ impl Shell {
         self.move_cards(task_id, moves, "Cannot approve the task", window, cx);
     }
 
-    /// "Changes" on a Review card: the Git view with the task's changes since its checkpoint.
+    /// "Changes" on a Review card: the Git tab and Diff view with the task's changes since its checkpoint.
     pub(crate) fn view_task_changes(
         &mut self,
         task_id: Ulid,
@@ -54,7 +54,7 @@ impl Shell {
         self.show_git_since(project_id, since, window, cx);
     }
 
-    /// The Git view listing the changes since `since`'s checkpoint.
+    /// The Git tab and Diff view listing the changes since `since`'s checkpoint.
     pub(crate) fn show_git_since(
         &mut self,
         project_id: Ulid,
@@ -62,13 +62,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let requests = self.git_view(project_id).show_since(since);
+        let _ = self.git_view(project_id).show_since(since);
         self.git_files_scroll.scroll_to_item(0, ScrollStrategy::Top);
-        // Showing the Git view refreshes it (the same requests) unless it is shown already.
-        if self.view() == View::Git {
-            self.git_requests(project_id, requests, window, cx);
-        }
-        self.show_view(View::Git, window, cx);
+        // `open_git` refreshes either way, asking the status `show_since` would.
+        self.open_git(project_id, window, cx);
     }
 
     /// Sends the `task.move`s of one action on `task_id`'s card; a failure shows `what` and

@@ -22,7 +22,7 @@ impl Shell {
     pub(crate) fn comment_context(&self) -> Option<CommentContext> {
         match self.view() {
             View::Docs => Some(CommentContext::Doc),
-            View::Git => Some(CommentContext::Diff),
+            View::Diff => Some(CommentContext::Diff),
             _ => None,
         }
     }
@@ -161,7 +161,7 @@ impl Shell {
         if let Some(comments) = shown.and_then(|(id, context)| self.comments_mut(id, context)) {
             comments.draft = None;
         }
-        if self.view() == View::Git {
+        if self.view() == View::Diff {
             window.focus(&self.git_focus, cx);
         } else {
             window.focus(&self.focus_handle, cx);
@@ -250,7 +250,7 @@ impl Shell {
                     comments.submitted(serial, saved);
                 }
                 if ok && shell.comment_focus.is_focused(window) && shell.comment_draft().is_none() {
-                    if shell.view() == View::Git {
+                    if shell.view() == View::Diff {
                         window.focus(&shell.git_focus, cx);
                     } else {
                         window.focus(&shell.focus_handle, cx);

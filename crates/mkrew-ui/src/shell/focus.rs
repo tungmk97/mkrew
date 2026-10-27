@@ -53,7 +53,7 @@ impl Shell {
 
     /// The views the right panel is drawn next to.
     pub(crate) fn panel_view(&self) -> bool {
-        matches!(self.view(), View::Terminals | View::Editor | View::Git)
+        matches!(self.view(), View::Terminals | View::Editor | View::Diff)
     }
 
     /// The right panel is drawn.
@@ -80,7 +80,7 @@ impl Shell {
     /// Some of the active workspace's Git is drawn (the panel's list or the diff), so it
     /// follows `git.changed` and refreshes when it comes back (SPEC §12B).
     pub(crate) fn git_shown(&self) -> bool {
-        self.view() == View::Git || self.git_panel_shown()
+        self.view() == View::Diff || self.git_panel_shown()
     }
 
     /// The pane the Session tab describes: the active tab's focused pane, also while the

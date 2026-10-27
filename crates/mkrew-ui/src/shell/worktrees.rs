@@ -339,8 +339,8 @@ impl Shell {
         .detach();
     }
 
-    /// "Open Git view" of the worktree dialog: the Git view on the task's worktree, to commit
-    /// or unstage there.
+    /// "Open in Git" of the worktree dialog: the Git tab and Diff view on the task's
+    /// worktree, to commit or unstage there.
     pub(crate) fn worktree_dialog_git(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(dialog) = self
             .worktree_dialog
@@ -350,10 +350,7 @@ impl Shell {
         };
         let project_id = dialog.project_id;
         self.retarget_git(project_id, Some(dialog.task_id), None);
-        if self.view() == View::Git {
-            self.refresh_git(project_id, window, cx);
-        }
-        self.show_view(View::Git, window, cx);
+        self.open_git(project_id, window, cx);
     }
 
     /// "Merge back…" / "Remove worktree…" (SPEC §20E.1): the commits to merge or the
@@ -499,8 +496,8 @@ impl Shell {
             _ => false,
         };
         let git_button = open_git.then(|| {
-            button("worktree-git", "Open Git view", theme, false)
-                .tooltip(tooltip(theme, "The Git view on this task's worktree", ""))
+            button("worktree-git", "Open in Git", theme, false)
+                .tooltip(tooltip(theme, "The Git tab on this task's worktree", ""))
                 .on_click(cx.listener(|shell, _, window, cx| {
                     shell.worktree_dialog_git(window, cx);
                 }))

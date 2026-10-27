@@ -99,8 +99,10 @@ pub enum Command {
     ReplaceInFile,
     /// Editor only: close the active tab, asking about unsaved text (Ctrl+W).
     CloseFileTab,
-    /// Show the active workspace's Git view.
-    ShowGit,
+    /// Open the right panel on the Git tab and give its list the keyboard.
+    ShowGitPanel,
+    /// Show the Diff view while a diff is open.
+    ShowDiff,
     /// Git only: switch between Working changes and Against base.
     GitToggleMode,
     /// Git only: switch to the commit History and back.
@@ -184,11 +186,11 @@ pub const EDITOR_CONTEXT: &str = "Editor";
 /// Key context of the file tree in the right panel while it has the keyboard.
 pub const FILE_TREE_CONTEXT: &str = "FileTree";
 
-/// Key context of the Git view's changed-file list while it has focus (so its single-key
-/// shortcuts never reach a text field).
+/// Key context of the Git list (right panel) while it has focus, or of the diff card while
+/// the list is hidden (so its single-key shortcuts never reach a text field).
 pub const GIT_CONTEXT: &str = "Git";
 
-/// Comment commands work in the Docs view and in the Git view's list (diff comments).
+/// Comment commands work in the Docs view and with the Git keyboard (diff comments).
 pub const COMMENTS_CONTEXT: &str = "Docs || Git";
 
 /// Find: in a terminal's scrollback, the Editor's opened file, and the Docs list filter.
@@ -262,7 +264,8 @@ impl Command {
             Command::FindInFile,
             Command::ReplaceInFile,
             Command::CloseFileTab,
-            Command::ShowGit,
+            Command::ShowGitPanel,
+            Command::ShowDiff,
             Command::GitToggleMode,
             Command::GitToggleHistory,
             Command::GitNextHunk,
@@ -353,7 +356,8 @@ impl Command {
             Command::FindInFile => "find_in_file".into(),
             Command::ReplaceInFile => "replace_in_file".into(),
             Command::CloseFileTab => "close_file_tab".into(),
-            Command::ShowGit => "show_git".into(),
+            Command::ShowGitPanel => "show_git_panel".into(),
+            Command::ShowDiff => "show_diff".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
             Command::GitToggleHistory => "git_toggle_history".into(),
             Command::GitNextHunk => "git_next_hunk".into(),
@@ -456,7 +460,8 @@ impl Command {
             Command::FindInFile => "ctrl-f".into(),
             Command::ReplaceInFile => "ctrl-h".into(),
             Command::CloseFileTab => "ctrl-w".into(),
-            Command::ShowGit => "ctrl-shift-4".into(),
+            Command::ShowGitPanel => "ctrl-shift-4".into(),
+            Command::ShowDiff => "ctrl-shift-7".into(),
             Command::GitToggleMode => "b".into(),
             Command::GitToggleHistory => "h".into(),
             Command::GitNextHunk => "n".into(),
@@ -1003,7 +1008,8 @@ mod tests {
         for command in [Command::FindInFile, Command::ReplaceInFile] {
             assert_eq!(command.context(), Some(EDITOR_CONTEXT), "{command:?}");
         }
-        assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowGit));
+        assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowGitPanel));
+        assert_eq!(bound("ctrl-shift-7"), Some(Command::ShowDiff));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
         assert_eq!(bound("ctrl-shift-n"), Some(Command::NewTask));
         assert_eq!(bound("ctrl-enter"), Some(Command::RunTask));

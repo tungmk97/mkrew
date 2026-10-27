@@ -194,7 +194,7 @@ impl Shell {
 
     /// The diff toolbar (wraps when narrow): previous / next file with "1 / 6", `folder / name`,
     /// +/− counts and the current hunk; then [Unified | Split], Wrap, Viewed, Open in Zed,
-    /// Discard, Stage file and "⋯" (comment, send to agent).
+    /// Discard, Stage file, "⋯" (comment, send to agent) and × (close the diff).
     fn git_diff_toolbar(
         &self,
         project_id: Ulid,
@@ -459,6 +459,13 @@ impl Shell {
             .when(view.can_comment() && !collapsed, |el| {
                 el.child(self.git_diff_more(project_id, view, theme, cx))
             })
+            .child(
+                icon_button("git-diff-close", Icon::X, theme)
+                    .tooltip(tooltip(theme, "Close diff", "Esc"))
+                    .on_click(cx.listener(move |shell, _, window, cx| {
+                        shell.close_git_diff(project_id, window, cx);
+                    })),
+            )
     }
 
     /// "⋯": Comment on the selected lines and Send to agent (both also on the bar under picked
