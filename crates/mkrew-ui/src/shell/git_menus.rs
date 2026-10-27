@@ -254,6 +254,8 @@ impl Shell {
                 self.git_repo_query.clear();
             }
             quick_open::Key::Close => return self.dismiss_menus(window, cx),
+            // The key that opened the menu may still repeat: it must not pick a row.
+            quick_open::Key::Open if event.is_held => return,
             quick_open::Key::Open => {
                 let rows = self.git_repo_rows(project_id, &active);
                 let action = self
