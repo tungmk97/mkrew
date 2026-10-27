@@ -549,6 +549,7 @@ impl Shell {
         Some(Self::chip_row(
             "Showing",
             chips,
+            false,
             theme,
             move |shell, target, window, cx| {
                 if git {
@@ -564,16 +565,19 @@ impl Shell {
     }
 
     /// A chooser row: `heading`, then one chip per choice. A click on an inactive chip calls
-    /// `on_pick` with its `pick`.
+    /// `on_pick` with its `pick`. With `tab_stops` (a dialog's row) every chip is a Tab stop
+    /// with the focus ring, ← / → move between the chips of the row and Enter / Space pick.
     pub(crate) fn chip_row<P: Clone + 'static>(
         heading: &'static str,
         chips: Vec<Chip<P>>,
+        tab_stops: bool,
         theme: &Theme,
         on_pick: impl Fn(&mut Self, P, &mut Window, &mut Context<'_, Self>) + Clone + 'static,
         cx: &mut Context<'_, Self>,
     ) -> gpui::Div {
         let hover = theme.surface;
-        let chips = chips.into_iter().map(|chip| {
+        let len = chips.len();
+        let chips = chips.into_iter().enumerate().map(|(index, chip)| {
             let Chip {
                 id,
                 label,
@@ -606,6 +610,7 @@ impl Shell {
                             on_pick(shell, pick.clone(), window, cx);
                         }))
                 })
+                .when(tab_stops, |el| el.focus_stop(theme).chip_arrows(index, len))
                 .child(label)
         });
         div()

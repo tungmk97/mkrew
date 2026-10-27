@@ -899,7 +899,7 @@ impl Render for Shell {
                     .children(
                         self.ask
                             .as_ref()
-                            .map(|dialog| self.render_ask(dialog, &theme, cx)),
+                            .map(|dialog| self.render_ask(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.history
