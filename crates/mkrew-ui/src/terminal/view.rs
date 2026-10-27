@@ -180,6 +180,14 @@ impl TerminalPane {
         cx.observe_window_appearance(window, |_, _, cx| cx.notify())
             .detach();
         let focus_handle = cx.focus_handle();
+        // Labels belong to the keys that type them: leaving the pane ends them.
+        cx.on_blur(&focus_handle, window, |pane, _, cx| {
+            if pane.hints.is_some() {
+                pane.stop_hints();
+                cx.notify();
+            }
+        })
+        .detach();
         Self {
             session_id,
             connection,
@@ -564,6 +572,10 @@ impl TerminalPane {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.hints.is_some() {
+            self.stop_hints();
+            cx.notify();
+        }
         if std::mem::take(&mut self.find_clicked) {
             return;
         }
@@ -620,6 +632,10 @@ impl TerminalPane {
         _window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.hints.is_some() {
+            self.stop_hints();
+            cx.notify();
+        }
         let Some(geometry) = self.geometry else {
             return;
         };
