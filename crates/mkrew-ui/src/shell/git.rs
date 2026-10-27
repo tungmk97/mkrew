@@ -569,6 +569,34 @@ impl Shell {
         self.git_requests(project_id, requests, window, cx);
     }
 
+    /// Shift+S / Shift+U: stage the selected file's group (every change without one) or
+    /// unstage every staged file.
+    pub(crate) fn git_stage_all(
+        &mut self,
+        stage: git_view::Stage,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if let Some(change) = self.git_view(project_id).stage_all_key(stage) {
+            self.stage_git(project_id, change, window, cx);
+        }
+    }
+
+    /// `x`: the discard confirmation of the selected file (nothing for a file that cannot be
+    /// discarded: `open_git_discard` checks).
+    pub(crate) fn git_discard_selected(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        let target = (self.git.get(&project_id)).and_then(|view| view.selected.clone());
+        if let Some(target) = target {
+            self.open_git_discard(project_id, target, window, cx);
+        }
+    }
+
     /// Scrolls the diff to `row` once its list is laid out for the shown diff (the render
     /// resets the list for another diff or mode, which would drop a scroll done now).
     pub(crate) fn scroll_diff_to(&self, row: usize) {

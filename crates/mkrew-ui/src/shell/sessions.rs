@@ -12,6 +12,19 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.new_pane_with(kind, None, axis, window, cx);
+    }
+
+    /// [`Shell::new_pane`] with an agent profile picked (`None` = the workspace's default of
+    /// `kind`, which must be set; a picked profile needs no default).
+    pub(crate) fn new_pane_with(
+        &mut self,
+        kind: SessionKind,
+        profile: Option<String>,
+        axis: Axis,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -26,12 +39,17 @@ impl Shell {
         else {
             return;
         };
-        if self.still_starting(cx) || self.ask_for_default(project_id, kind, window, cx) {
+        if profile.is_some() {
+            self.tab_error = None;
+        }
+        if self.still_starting(cx)
+            || (profile.is_none() && self.ask_for_default(project_id, kind, window, cx))
+        {
             return;
         }
         self.starting_pane = Some(kind);
         cx.notify();
-        let params = lifecycle::spawn_params(project_id, Some(tab_id), kind);
+        let params = lifecycle::spawn_params(project_id, Some(tab_id), kind, profile.as_deref());
         let spawned = connection.call::<SessionSpawnResult>(Request::SessionSpawn(params));
         cx.spawn_in(window, async move |this, cx| {
             let spawned = spawned.await;
@@ -57,6 +75,16 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// The installed agent profiles a new pane can start with in the active workspace, its
+    /// default first (the "+ New" menu and the palette).
+    pub(crate) fn pane_agents(&self) -> Vec<lifecycle::PaneAgent> {
+        let default = self.workspace.and_then(|id| {
+            let project = self.sidebar.projects().iter().find(|p| p.id == id)?;
+            project.default_agent.as_deref()
+        });
+        lifecycle::pane_agents(&self.agent_profiles, default)
     }
 
     /// True (after telling the user in the tab bar) while another pane is still starting: one
@@ -414,6 +442,18 @@ impl Shell {
             }
             Command::GitToggleDiffMode => self.set_diff_mode(self.diff_mode.other(), cx),
             Command::GitToggleViewed => self.toggle_selected_viewed(window, cx),
+            Command::GitStageAll => self.git_stage_all(git_view::Stage::Stage, window, cx),
+            Command::GitUnstageAll => self.git_stage_all(git_view::Stage::Unstage, window, cx),
+            Command::GitDiscard => self.git_discard_selected(window, cx),
+            Command::GitFetch | Command::GitPush => {
+                let remote = match *command {
+                    Command::GitFetch => Remote::Fetch,
+                    _ => Remote::Push,
+                };
+                if let Some(project_id) = self.workspace {
+                    self.run_git_remote(project_id, remote, window, cx);
+                }
+            }
             Command::SaveFile => {
                 // Only bound while Files are shown.
                 let active = (self.workspace).and_then(|project_id| {
@@ -460,6 +500,8 @@ impl Shell {
                 }
             }
             Command::RunTask if self.jira_side_shown() => {}
+            Command::Card(_) if self.jira_side_shown() => {}
+            Command::Card(key) => self.card_key(key, window, cx),
             Command::RunTask => {
                 // Only bound while a board is shown; the selection may be another workspace's.
                 let target = self

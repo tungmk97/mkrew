@@ -106,7 +106,7 @@ impl Shell {
             let mut started = Vec::new();
             let mut failed = None;
             for _ in 0..missing {
-                let params = lifecycle::spawn_params(project_id, Some(tab_id), kind);
+                let params = lifecycle::spawn_params(project_id, Some(tab_id), kind, None);
                 match connection
                     .call::<SessionSpawnResult>(Request::SessionSpawn(params))
                     .await
@@ -506,7 +506,9 @@ impl Shell {
     }
 
     /// Keys typed in the sidebar's filter box edit it; Esc clears it and gives the keyboard
-    /// back to the pane, Enter just gives it back.
+    /// back to the pane. ↑/↓ move the highlight over the matching rows and Enter opens the
+    /// highlighted one (the first match by default); with nothing typed Enter just gives the
+    /// keyboard back.
     pub(crate) fn filter_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -514,6 +516,13 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
+        if let step @ ("up" | "down") = event.keystroke.key.as_str() {
+            let rows = self.sidebar.view(&self.viewed).rows;
+            self.sidebar
+                .move_highlight(&rows, if step == "up" { -1 } else { 1 });
+            cx.notify();
+            return;
+        }
         let Some(key) = find_key(&event.keystroke) else {
             return;
         };
@@ -522,7 +531,16 @@ impl Shell {
                 self.sidebar.filter_mut().clear();
                 self.focus_pane(window, cx);
             }
-            FindKey::Older | FindKey::Newer => self.focus_pane(window, cx),
+            FindKey::Older | FindKey::Newer => {
+                let rows = self.sidebar.view(&self.viewed).rows;
+                match self.sidebar.highlighted(&rows) {
+                    Some(sidebar::Target::Session(id)) => self.open_session(id, window, cx),
+                    Some(sidebar::Target::Workspace(id)) => {
+                        self.activate_workspace(id, window, cx);
+                    }
+                    None => self.focus_pane(window, cx),
+                }
+            }
             FindKey::Paste => {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                     self.sidebar
@@ -792,7 +810,7 @@ impl Shell {
                 }
                 Err(error) => {
                     tracing::warn!(%session_id, "session.remove failed: {error:#}");
-                    shell.sidebar_error = Some(format!("Cannot remove the session: {error:#}"));
+                    shell.toast_error(format!("Cannot remove the session: {error:#}"), cx);
                     cx.notify();
                 }
             });
@@ -832,7 +850,7 @@ impl Shell {
                     }
                     Err(error) => {
                         tracing::warn!(%session_id, "session.remove failed: {error:#}");
-                        shell.sidebar_error = Some(format!("Cannot remove the session: {error:#}"));
+                        shell.toast_error(format!("Cannot remove the session: {error:#}"), cx);
                         cx.notify();
                     }
                 });

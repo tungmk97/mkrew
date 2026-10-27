@@ -378,6 +378,8 @@ impl Shell {
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let view = self.sidebar.view(&self.viewed);
         let shown_in = view.shown_in(shown);
+        // ↑/↓ in the filter box move it; Enter opens it (`filter_key_down`).
+        let highlighted = self.sidebar.highlighted(&view.rows);
         let any_open = self.sidebar.any_expanded();
         let removable = self.sidebar.idle_agents_and_terminals().len();
         // Without workspaces: the title and `+` (the empty state below offers it too).
@@ -592,7 +594,7 @@ impl Shell {
                         )),
                 )
         });
-        let errors = [&self.sidebar_error, &self.keymap_error].map(|error| {
+        let errors = [&self.keymap_error].map(|error| {
             error.clone().map(|error| {
                 div()
                     .px(px(space::M))
@@ -698,7 +700,8 @@ impl Shell {
                         let (project_id, active) =
                             (row.project_id, self.workspace == Some(row.project_id));
                         // Its selected session row already says it is the shown one.
-                        let highlight = active && shown_in != Some(project_id);
+                        let highlight = (active && shown_in != Some(project_id))
+                            || highlighted == Some(sidebar::Target::Workspace(project_id));
                         // Nothing to show under it: on the "N empty workspaces" line instead
                         // (the shown and pinned ones stay in place).
                         if row.empty && !active && !row.pinned && !filtering {
@@ -723,8 +726,11 @@ impl Shell {
                         card = Some((header, color, item));
                     }
                     Row::Session(row) => {
-                        let (selected, session_id) =
-                            (shown == Some(row.session_id), row.session_id);
+                        let (selected, session_id) = (
+                            shown == Some(row.session_id)
+                                || highlighted == Some(sidebar::Target::Session(row.session_id)),
+                            row.session_id,
+                        );
                         let (group, rows_of) = if row.shell {
                             (RowGroup::Terminal, &mut terminals)
                         } else {
@@ -883,10 +889,7 @@ impl Shell {
             });
         // An error is too long for the rail: its mark, with the text on hover.
         let mut list = Vec::new();
-        for (i, error) in [&self.sidebar_error, &self.keymap_error]
-            .into_iter()
-            .enumerate()
-        {
+        for (i, error) in [&self.keymap_error].into_iter().enumerate() {
             if let Some(error) = error {
                 list.push(
                     div()

@@ -431,8 +431,8 @@ impl Shell {
             .into_any_element()
     }
 
-    /// "Open transcript": the agent's `.jsonl` in Zed. A failure (Zed missing, file gone) shows
-    /// in the sidebar like the other Zed actions.
+    /// "Open transcript": the agent's `.jsonl` in Zed. A failure (Zed missing, file gone) toasts
+    /// like the other Zed actions.
     pub(crate) fn open_transcript(&mut self, session: Ulid, cx: &mut Context<'_, Self>) {
         let Some(path) = self
             .usages
@@ -441,12 +441,9 @@ impl Shell {
         else {
             return;
         };
-        match zed::open(Path::new(&path), None) {
-            Ok(()) => self.sidebar_error = None,
-            Err(error) => {
-                tracing::warn!(%session, path, "open transcript failed: {error}");
-                self.sidebar_error = Some(error.to_string());
-            }
+        if let Err(error) = zed::open(Path::new(&path), None) {
+            tracing::warn!(%session, path, "open transcript failed: {error}");
+            self.toast_error(error.to_string(), cx);
         }
         cx.notify();
     }

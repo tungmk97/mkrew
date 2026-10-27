@@ -379,7 +379,7 @@ impl Shell {
             .tooltip(tooltip(
                 theme,
                 "Discard this file's changes (asks first)",
-                "",
+                self.keymap.label(Command::GitDiscard),
             ))
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.open_git_discard(project_id, target.clone(), window, cx);

@@ -21,6 +21,19 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify — 2026-10-27 UX packs 2 and 3 (branch `feat/ux-pack-2-3`)
+
+- [ ] **Viewed survives restart:** finish an agent, focus its pane (leaves Needs you), restart the UI → it stays out of Needs you; same for an idle-after-work agent; a "Mark unread" pane is still unread. Delete or garble `%APPDATA%\..\mkrew\ui_viewed.json` (data dir) → the UI starts, finished agents are back in Needs you.
+- [ ] **+ New ▾ (dark + light):** one row per installed agent with its chip, the default first with ✓ and Alt+Shift+A, Shell last; clicking a row starts that agent. Palette "Agent: New <Name> pane" per profile.
+- [ ] **Board keys (dark + light):** ↑↓←→ move the selected-card ring; Shift+←/→ moves the card (a refused move shows in the card notice); Enter opens a running card's terminal, a Todo/finished card's edit dialog; E edits; nothing acts while typing in the follow-up, a dialog, the sidebar filter, or with Jira shown. Known limit: the selected card is not scrolled into view.
+- [ ] **Git keys:** in the list Shift+S / Shift+U / x / f / Shift+P; Fetch, Push, Discard and the group-header Stage all / Unstage all tooltips show the keys. Palette on Board with a Review/Done worktree card: Merge back / Remove worktree open the same dialogs as the buttons.
+- [ ] **Toasts:** hover an error toast for > 4 s → it stays; leave → gone ~4 s later; click its text → clipboard has the full text and a "Copied" toast shows. Open in Zed with `zed` missing → a toast, no line in the sidebar.
+- [ ] **Sidebar filter (dark + light):** type, ↑/↓ move the highlight (selected fill + ring), Enter opens it; Esc clears.
+- [ ] **Sidebar layout kept:** hide / compact the sidebar, restart → same layout (`[ui] sidebar` in settings.toml).
+- [ ] **Workspace palette entries:** "Workspace: Pin / Unpin", "Open in File Explorer", "Set default agent…", "Remove…", "Open workspace menu" act on the active workspace; none without one.
+- [ ] **Update:** while downloading, "Updating…" shows beside ⬆; the confirm prompt has "What's new", which opens the release page.
+- [ ] **Auto-reconnect:** in a sandbox (`MKREW_DATA_DIR`, `MKREW_CONFIG_DIR`, `MKREW_SOCKET`), `mk daemon stop` while the UI runs → "Reconnecting automatically in 1 s…", the workspace comes back with no click; with the daemon unstartable the waits grow 1/2/5/10/30 s; clicking Reconnect during a wait connects at once with no second try after. A New task dialog with typed text stays open through the loss and saves after reconnect; idle CPU ≈ 0 while waiting.
+
 ### To verify — 2026-10-26 UX quick wins (branch `feat/ux-quick-wins`)
 
 - [ ] **Inbox order:** with one finished agent and one asking (older), Ctrl+Shift+I and Ctrl+Shift+Space go to the asking one first; Ctrl+Alt+I steps backwards; the tray menu lists it first.

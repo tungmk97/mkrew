@@ -83,7 +83,7 @@ impl Drop for StopOnDrop {
 
 /// What the UI's "+ Agent" button sends.
 fn new_agent_pane(connection: &Connection, project_id: Ulid, tab_id: Ulid) -> Ulid {
-    let params = lifecycle::spawn_params(project_id, Some(tab_id), SessionKind::Agent);
+    let params = lifecycle::spawn_params(project_id, Some(tab_id), SessionKind::Agent, None);
     let spawned: SessionSpawnResult =
         block_on(connection.call(Request::SessionSpawn(params))).unwrap();
     spawned.session_id

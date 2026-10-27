@@ -1530,3 +1530,46 @@ fn a_collapsed_diff_ignores_hunk_keys_and_stages_the_whole_file() {
     view.toggle_viewed(&a);
     assert_eq!(view.hunk, None);
 }
+
+#[test]
+fn shift_s_stages_the_selected_group_and_shift_u_unstages_all() {
+    let mut view = loaded();
+    let all = |view: &GitView, stage| view.stage_all_key(stage).map(|r| paths(&r));
+    let changes = || (Stage::Stage, vec!["a.rs".into(), "b.rs".into()], None);
+    let everything = (
+        Stage::Stage,
+        vec!["a.rs".into(), "b.rs".into(), "new.txt".into()],
+        None,
+    );
+    // A Staged file is selected: no stageable group, so Unstaged + Untracked.
+    assert_eq!(all(&view, Stage::Stage), Some(everything.clone()));
+    assert_eq!(
+        all(&view, Stage::Unstage),
+        Some((Stage::Unstage, vec!["a.rs".into()], None))
+    );
+    // The group of the selected file: Changes, or Untracked.
+    view.selected = Some(target(Group::Unstaged, "b.rs"));
+    assert_eq!(all(&view, Stage::Stage), Some(changes()));
+    view.selected = Some(target(Group::Untracked, "new.txt"));
+    assert_eq!(
+        all(&view, Stage::Stage),
+        Some((Stage::Stage, vec!["new.txt".into()], None))
+    );
+    // Unstage all ignores the selection.
+    assert_eq!(
+        all(&view, Stage::Unstage),
+        Some((Stage::Unstage, vec!["a.rs".into()], None))
+    );
+    // Nothing selected: everything stageable.
+    view.selected = None;
+    assert_eq!(all(&view, Stage::Stage), Some(everything));
+
+    // Nothing to change: no request.
+    let mut view = GitView::new(Ulid::new(), None);
+    view.begin_status();
+    view.status_loaded(Ok(GitStatus {
+        staged: vec![file("a.rs", ChangeKind::Modified)],
+        ..GitStatus::default()
+    }));
+    assert_eq!(all(&view, Stage::Stage), None);
+}

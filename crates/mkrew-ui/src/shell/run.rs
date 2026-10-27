@@ -34,10 +34,10 @@ impl Shell {
             cx.spawn_in(window, async move |this, cx| {
                 let stopped = stopped.await;
                 let _ = this.update(cx, |shell, cx| {
-                    shell.sidebar_error = stopped.err().map(|error| {
+                    if let Err(error) = stopped {
                         tracing::warn!(%project_id, "project.run_stop failed: {error:#}");
-                        format!("Cannot stop: {error:#}")
-                    });
+                        shell.toast_error(format!("Cannot stop: {error:#}"), cx);
+                    }
                     cx.notify();
                 });
             })
@@ -63,7 +63,6 @@ impl Shell {
             let _ = this.update_in(cx, |shell, window, cx| {
                 match started {
                     Ok(run) => {
-                        shell.sidebar_error = None;
                         if reveal {
                             shell.views.insert(project_id, View::Terminals);
                             shell.run_reveal = run.tab_id;
@@ -73,7 +72,7 @@ impl Shell {
                     }
                     Err(error) => {
                         tracing::warn!(%project_id, "run failed: {error:#}");
-                        shell.sidebar_error = Some(format!("Cannot run: {error:#}"));
+                        shell.toast_error(format!("Cannot run: {error:#}"), cx);
                     }
                 }
                 cx.notify();

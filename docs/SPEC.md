@@ -136,6 +136,13 @@ CLI are clients.
 
 - UI starts → connects to the daemon; if none is running it spawns `mkrew-daemon` detached,
   then reconnects.
+- Connection lost or a connect fails → the UI shows why with Reconnect / Retry and also retries
+  on its own after 1 s, 2 s, 5 s, 10 s, then every 30 s (each try may start the daemon, like
+  startup; one try at a time; the status line says "Reconnecting automatically in N s…"; a timer
+  per try, no per-frame work). Reconnect / Retry tries at once and restarts the backoff. The task
+  dialog and the Add workspace / clone dialog stay open with their text (they cannot send until
+  connected); everything mirroring daemon state is cleared. With no workspace the main area offers
+  Add workspace (Ctrl+Shift+K).
 - UI closes → daemon and all agents keep running.
 - `mk daemon stop` or a reboot → agents stop. On next start the daemon restores workspaces,
   tasks, tabs and sessions; agents whose profile has `resume` and that reported their own
@@ -763,7 +770,10 @@ The session panel (below) is a third column right of Terminals while open.
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
   A **filter box** (`⌕ Filter sessions…`, `/` focuses it while no terminal or field has the
   keyboard; `×` inside it clears it while it holds text) matches workspace name, agent and
-  session title as you type (every word must match; client-side, not remembered); beside it the
+  session title as you type (every word must match; client-side, not remembered; while it holds
+  text ↑/↓ move a highlight over the matching session rows, no wrap, and Enter opens the
+  highlighted one, the first by default, or the first workspace when no session matches; with an
+  empty box Enter gives the keyboard back to the pane); beside it the
   remove-idle-agents button (only while there are some), collapse / expand all and `+` (add
   workspace); under it a segmented control `All N`, `Working N` and `Needs you N` (N amber while
   above 0) narrows the list (the numbers count the sessions matching the filter text). *Needs
@@ -790,7 +800,9 @@ The session panel (below) is a third column right of Terminals while open.
   `N need you`; a click = Jump to next, as Ctrl+Shift+I), the voice input state while there is
   one (§20G; shown in the title bar while the sidebar is hidden) and the compact toggle.
   There is no Inbox card: the chips, the footer and Ctrl+Shift+I replace it; hovering a
-  session row still peeks it (§20A). Toggle sidebar (Ctrl+Shift+B, the title bar's `◧`, palette) hides it; not remembered across restarts.
+  session row still peeks it (§20A). Toggle sidebar (Ctrl+Shift+B, the title bar's `◧`, palette) hides it.
+  The layout is remembered as `[ui] sidebar = "full" | "compact" | "hidden"` (default full),
+  written by both toggles and read at start (a peek or menu showing it for a moment is not saved).
   Toggle compact sidebar (Ctrl+Alt+B, the footer's `⇤` / `⇥`, palette) narrows it to a rail:
   workspace avatars with `?` or the working count, and per open workspace its sessions' status
   mark + agent chip; hovering a rail row shows its full name, status and folder as a tooltip
@@ -832,7 +844,8 @@ The session panel (below) is a third column right of Terminals while open.
   conversation in a new pane that gets the keyboard, ADR 0055), the theme toggle,
   the phone icon (`smartphone`, §14; a green dot while Phone access is on; the tooltip explains
   it; hidden without a daemon connection), the session-panel toggle (◨, ADR 0038) and the
-  outlined `+ New ▾` (a dropdown of Agent / Shell), in every view (New's entries switch to
+  outlined `+ New ▾` (one row per installed agent profile, the workspace's default first with ✓
+  and Alt+Shift+A, then Shell with Alt+Shift+S; choosing a profile starts a pane with it), in every view (New's entries switch to
   Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). Every icon is gray (`text-muted`,
   `text` on hover): color only for status. The git label and badge come from `git.repos`
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
@@ -1290,6 +1303,8 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | View | Terminals / Board / Files / Git / Docs | Ctrl+Shift+1 / 2 / 3 / 4 / 5 |
 | Inbox | Jump to next / previous item needing attention (sessions asking for input first, then newest first) | Ctrl+Shift+I / Ctrl+Alt+I |
 | Task | New task / run selected task | Ctrl+Shift+N / Ctrl+Enter |
+| Board | Select a card (↑/↓ in the column, ←/→ the same row of the next column with cards) / move it one column (the same `task.move`s as a drag) | ↑↓←→ / Shift+← Shift+→ |
+| Board | Open the selected card (its live session, else its edit dialog) / edit it | Enter / E |
 | Run | Start all / restart all / stop all (§10 Run) | Ctrl+F5 / Ctrl+Shift+F5 / Ctrl+Alt+F5 |
 | Tabs | New shell tab / new agent tab (pick profile) | Ctrl+Shift+T / Ctrl+Shift+A |
 | Tabs | Next / previous tab (file tabs while the Files view is shown) | Ctrl+Tab / Ctrl+Shift+Tab |
@@ -1324,12 +1339,15 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Git | Toggle Unified / Split diff | d |
 | Git | Mark the selected file viewed / not viewed | v |
 | Git | Focus commit message / commit | c / Ctrl+Enter |
+| Git | Stage all of the selected file's group (Unstaged + Untracked when a Staged file or nothing is selected) / unstage all | Shift+S / Shift+U |
+| Git | Discard the selected file (asks first) / fetch / push | x / f / Shift+P |
 | Git | Comment on selected lines | Ctrl+Alt+M |
 | Git | Send comments to agent | Ctrl+Shift+S |
 | Agent (v2) | Peek the first session that needs you (↑/↓ cycle, Alt+Y / Alt+N answer, Ctrl+O open the pane, Esc close); hovering a row also peeks | Ctrl+Shift+Space |
 | Agent (v2) | Open the prompt composer of the focused agent pane | Ctrl+Shift+Enter |
 | Agent (v2) | Send selection to an agent (Files, Git diff, terminal) | Ctrl+Shift+L |
-| Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out | command palette only |
+| Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
+| Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace | command palette only |
 
 In Files and Git views the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
@@ -1483,14 +1501,16 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   hues ≥ 12° apart).
 - Update button (§20K): Lucide `circle-arrow-up` in `accent-text` in the title bar right before
   the phone icon while a newer release is known; dimmed (`opacity::DISABLED`) and not clickable
-  while it downloads.
+  while it downloads, with "Updating…" shown beside it.
 - In-app toasts (`crates/mkrew-ui/src/toast.rs` queue, `shell/toasts.rs` card): bottom-right over
   the content, at most 3 (a fourth drops the oldest; the same message again restarts its toast),
   each hides after about 4 s (`TOAST_DURATION`, expired on the 500 ms status tick, so 4.0–4.5 s) or
-  on its ✕. Never blocking: no focus, no animation, only the card itself takes clicks. Two kinds,
+  on its ✕; hovering a toast pauses its expiry and leaving restarts the full time. Clicking an error
+  toast's text copies the full text and shows an info toast "Copied". Never blocking: no focus, no animation, only the card itself takes clicks. Two kinds,
   always icon + text: info (Lucide `info`, `accent-text`) and error (Lucide `circle-alert`,
   `status-exited`). Used for results of an action that has no place of its own (a failure after its
-  dialog closed or its view moved, a failed settings write, a copy); a failure that has one (a
+  dialog closed or its view moved, a failed settings write, a copy, and one-off workspace actions:
+  open in Zed / File Explorer, add / remove / update a workspace, run / stop); a failure that has one (a
   dialog's error row, the commit box, the tab bar notice, a card notice) stays there.
 - Confirmations (`window.prompt`) are drawn in the window, never as the OS message box
   (`App::set_prompt_builder`, `shell/confirm_prompt.rs`): the modal shade, a `surface` card
@@ -2287,9 +2307,13 @@ sidebar chip's count (§10, ADR 0036): needs input, plus finished and not yet vi
    unread** and palette "Agent: Mark unread" (no key) put a finished agent session (done, or idle
    after work) back into Needs you — chip, row tint, Inbox, badge, tray — until its pane is focused
    again in the active window or its state changes. Greyed for a session that already needs you,
-   works, or is a terminal. Not saved: like "viewed" it lives in UI memory.
+   works, or is a terminal. Saved with "viewed" (below).
 6. **Cost.** Counts come from the sessions the UI already holds; the badge, the icon and the menu
    are updated only when the count (or the listed set) changes, never per frame.
+7. **Viewed is kept.** Which finishes were seen, which idle agents went quiet after work and which
+   sessions were marked unread survive a UI restart in `<data_dir>/ui_viewed.json`, written only
+   when it changes and pruned to the listed sessions. A missing or corrupt file is an empty state;
+   the daemon never reads it.
 
 ### §20K In-app update (outside the milestones, ADR 0071)
 
@@ -2311,7 +2335,8 @@ A tag push publishes a release; a running Mkrew offers it and installs it in pla
 4. **Apply.** Unsaved Files changes are asked about first. A confirmation (`window.prompt`):
    "Update to Mkrew <v>?", detail "Mkrew closes, installs and reopens. Agent panes resume their
    conversation." + "N agents are working; their current turn stops." when any is + "Shells and
-   run commands without autostart do not come back."; Update / Cancel. The asset is downloaded to
+   run commands without autostart do not come back."; Update / What's new (opens the release page,
+   then asks again) / Cancel. The asset is downloaded to
    `<temp>/mkrew-update/` (its name must be a plain file name, its length the release's `size`).
    Windows: the setup runs detached with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LAUNCH=1` +
    `/CURRENTUSER` or `/ALLUSERS` (UAC only then), the UI quits; setup stops the daemon, installs

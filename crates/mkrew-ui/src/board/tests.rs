@@ -446,6 +446,14 @@ fn finished_cards_with_a_worktree_offer_merge_back_and_removal() {
             vec![true]
         ]
     );
+    // The palette's "Merge back…" / "Remove worktree…" gate agrees with the card buttons.
+    for card in board.columns(api, None, &[]).iter().flat_map(|c| &c.cards) {
+        assert_eq!(
+            board.manages_worktree(card.task_id),
+            card.manages_worktree()
+        );
+    }
+    assert!(!board.manages_worktree(Ulid::new()));
 }
 
 #[test]
@@ -647,4 +655,150 @@ fn approving_moves_a_review_card_to_the_end_of_done() {
     assert!(board.approve_moves(todo.id).is_empty());
     assert!(board.approve_moves(review.id).is_empty());
     assert!(board.approve_moves(Ulid::new()).is_empty());
+}
+
+/// A board with Todo a, b, c; Review d, e; Done none (Running / Needs input empty), and one
+/// card of another workspace.
+fn keyed() -> (Board, Ulid, [Task; 5]) {
+    let api = Ulid::new();
+    let tasks = [
+        task(api, "a", TaskStatus::Todo, 1.0),
+        task(api, "b", TaskStatus::Todo, 2.0),
+        task(api, "c", TaskStatus::Todo, 3.0),
+        task(api, "d", TaskStatus::Review, 1.0),
+        task(api, "e", TaskStatus::Review, 2.0),
+    ];
+    let mut board = Board::default();
+    let mut all = tasks.to_vec();
+    all.push(task(Ulid::new(), "other", TaskStatus::Todo, 0.0));
+    board.load(all);
+    (board, api, tasks)
+}
+
+#[test]
+fn arrows_move_the_selection_inside_a_column_and_across_columns_by_row() {
+    let (board, api, [a, b, c, d, e]) = keyed();
+    let step = |from: &Task, key| board.select_step(api, Some(from.id), key);
+    // Within the column; nothing past its ends.
+    assert_eq!(step(&a, CardKey::Down), Some(b.id));
+    assert_eq!(step(&b, CardKey::Up), Some(a.id));
+    assert_eq!(step(&a, CardKey::Up), None);
+    assert_eq!(step(&c, CardKey::Down), None);
+    assert_eq!(step(&d, CardKey::Down), Some(e.id));
+    // Across columns, skipping the empty ones, at the same row or the nearest (last) one.
+    assert_eq!(step(&a, CardKey::Right), Some(d.id));
+    assert_eq!(step(&b, CardKey::Right), Some(e.id));
+    assert_eq!(step(&c, CardKey::Right), Some(e.id));
+    assert_eq!(step(&e, CardKey::Left), Some(b.id));
+    assert_eq!(step(&d, CardKey::Left), Some(a.id));
+    // Edges: Todo has nothing on its left, Done is empty on the right of Review.
+    assert_eq!(step(&a, CardKey::Left), None);
+    assert_eq!(step(&e, CardKey::Right), None);
+    // Only the arrows select.
+    for key in [
+        CardKey::MoveLeft,
+        CardKey::MoveRight,
+        CardKey::Open,
+        CardKey::Edit,
+    ] {
+        assert_eq!(step(&a, key), None, "{key:?}");
+    }
+}
+
+#[test]
+fn an_arrow_without_a_selection_on_this_board_picks_the_first_card() {
+    let (board, api, [a, ..]) = keyed();
+    let other = board.tasks().iter().find(|t| t.title == "other").unwrap();
+    for selected in [None, Some(Ulid::new()), Some(other.id)] {
+        assert_eq!(board.select_step(api, selected, CardKey::Down), Some(a.id));
+    }
+    assert_eq!(Board::default().select_step(api, None, CardKey::Up), None);
+}
+
+#[test]
+fn shift_arrows_drop_the_card_one_column_over_like_a_drag() {
+    let api = Ulid::new();
+    let (a, b, running) = (
+        task(api, "a", TaskStatus::Todo, 1.0),
+        task(api, "b", TaskStatus::Todo, 2.0),
+        task(api, "r", TaskStatus::Running, 1.0),
+    );
+    let mut board = Board::default();
+    board.load(vec![a.clone(), b.clone(), running.clone()]);
+
+    // Row 0 lands before the card of that row; row 1 (no such card) at the end.
+    let to_row = board.shift_moves(a.id, CardKey::MoveRight);
+    assert_eq!(
+        to_row,
+        board.drop_moves(a.id, TaskStatus::Running, Some(running.id))
+    );
+    assert_eq!(
+        to_row,
+        [TaskMoveParams {
+            task_id: a.id,
+            status: TaskStatus::Running,
+            position: 0.0,
+        }]
+    );
+    let to_end = board.shift_moves(b.id, CardKey::MoveRight);
+    assert_eq!(to_end, board.drop_moves(b.id, TaskStatus::Running, None));
+    assert_eq!(to_end[0].position, 2.0);
+    apply_moves(&mut board, &to_row);
+    let columns = board.columns(api, None, &[]);
+    assert_eq!(ids(&columns[0]), [b.id]);
+    assert_eq!(ids(&columns[1]), [a.id, running.id]);
+
+    // Back left: before the card of its row in Todo.
+    let back = board.shift_moves(a.id, CardKey::MoveLeft);
+    apply_moves(&mut board, &back);
+    assert_eq!(ids(&board.columns(api, None, &[])[0]), [a.id, b.id]);
+
+    // Only one column at a time, nothing past the first / last column, nothing for other keys
+    // or an unknown card.
+    assert_eq!(
+        board.shift_moves(a.id, CardKey::MoveRight)[0].status,
+        TaskStatus::Running
+    );
+    assert!(board.shift_moves(a.id, CardKey::MoveLeft).is_empty());
+    assert!(board.shift_moves(a.id, CardKey::Right).is_empty());
+    assert!(
+        board
+            .shift_moves(Ulid::new(), CardKey::MoveRight)
+            .is_empty()
+    );
+    let mut done = board.task(a.id).cloned().unwrap();
+    done.status = TaskStatus::Done;
+    done.updated_at += 1;
+    board.apply(&Event::TaskUpdated(done));
+    assert!(board.shift_moves(a.id, CardKey::MoveRight).is_empty());
+}
+
+#[test]
+fn enter_shows_a_live_session_else_opens_the_edit_dialog() {
+    let api = Ulid::new();
+    let todo = task(api, "todo", TaskStatus::Todo, 1.0);
+    let running = task(api, "running", TaskStatus::Running, 1.0);
+    let review = task(api, "review", TaskStatus::Review, 1.0);
+    let idle = task(api, "idle", TaskStatus::Running, 2.0);
+    let mut board = Board::default();
+    board.load(vec![
+        todo.clone(),
+        running.clone(),
+        review.clone(),
+        idle.clone(),
+    ]);
+    let live = session(&running, 10, None);
+    let mut exited = session(&review, 10, Some(20));
+    exited.state = SessionState::Exited;
+    // A Todo card dragged back keeps its old live session: Enter still edits it.
+    let stale = session(&todo, 10, None);
+    let sessions = [live.clone(), exited, stale];
+    assert_eq!(
+        board.card_open(running.id, &sessions),
+        Some(CardOpen::Session(live.id))
+    );
+    assert_eq!(board.card_open(review.id, &sessions), Some(CardOpen::Edit));
+    assert_eq!(board.card_open(todo.id, &sessions), Some(CardOpen::Edit));
+    assert_eq!(board.card_open(idle.id, &sessions), Some(CardOpen::Edit));
+    assert_eq!(board.card_open(Ulid::new(), &sessions), None);
 }

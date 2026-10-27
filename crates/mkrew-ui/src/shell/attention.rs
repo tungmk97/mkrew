@@ -7,8 +7,10 @@ impl Shell {
     /// Recounts "Needs you" and updates only what changed: the badge when its number moved, the
     /// tray (icon, tooltip, menu) when anything it shows moved. O(sessions), no allocation when
     /// nothing changed; called on session events, after a list load and when a view changed
-    /// what needs the user, never per frame.
+    /// what needs the user, never per frame. A changed viewed state is saved here too (A2).
     pub(crate) fn sync_attention(&mut self, cx: &mut Context<'_, Self>) {
+        self.viewed
+            .save(self.sidebar.sessions(), &self.paths.data_dir);
         let (projects, sessions) = (self.sidebar.projects(), self.sidebar.sessions());
         let counts = attention::counts(projects, sessions, &self.viewed);
         let change = self.attention.update(counts);

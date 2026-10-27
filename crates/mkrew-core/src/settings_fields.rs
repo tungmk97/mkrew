@@ -218,6 +218,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     hidden("ui", "inspector_width"),
     hidden("ui", "sidebar_width"),
+    hidden("ui", "sidebar"),
     row(
         Notifications,
         "notify",

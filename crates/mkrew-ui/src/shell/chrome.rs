@@ -481,32 +481,88 @@ impl Shell {
             cx.notify();
         }));
         let menu = (self.new_menu && !self.modal_open()).then(|| {
-            let rows = [
-                (
+            // One row per installed agent profile, the default first and checked; with none
+            // listed (still loading) the plain "Agent" row starts the default.
+            let agents = self.pane_agents();
+            let mut rows: Vec<gpui::AnyElement> = agents
+                .into_iter()
+                .map(|agent| {
+                    let profile = agent.id.clone();
+                    menu_item(format!("new-agent-pane-{}", agent.id).into(), theme)
+                        .child(
+                            div()
+                                .w(px(space::M))
+                                .text_color(rgb(theme.accent))
+                                .child(if agent.default { "✓" } else { "" }),
+                        )
+                        .child(agent_chip(
+                            sidebar::agent_badge(agent.icon.as_deref(), &agent.id),
+                            theme.text,
+                            theme,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .text_color(rgb(theme.text))
+                                .when(agent.default, |el| {
+                                    el.font_weight(FontWeight(weight::MEDIUM))
+                                })
+                                .child(agent.name),
+                        )
+                        .when(agent.default, |el| {
+                            el.child(kbd(self.keymap.label(Command::SplitAgent), theme, false))
+                        })
+                        .on_click(cx.listener(move |shell, _, window, cx| {
+                            cx.stop_propagation();
+                            shell.new_menu = false;
+                            shell.show_view(View::Terminals, window, cx);
+                            shell.new_pane_with(
+                                SessionKind::Agent,
+                                Some(profile.clone()),
+                                Axis::Vertical,
+                                window,
+                                cx,
+                            );
+                        }))
+                        .into_any_element()
+                })
+                .collect();
+            let plain = if rows.is_empty() {
+                vec![(
                     "new-agent-pane",
                     "Agent",
                     SessionKind::Agent,
                     Command::SplitAgent,
-                ),
-                (
-                    "new-shell-pane",
-                    "Shell",
-                    SessionKind::Shell,
-                    Command::SplitShell,
-                ),
-            ]
-            .map(|(id, label, kind, command)| {
-                menu_item(id.into(), theme)
-                    .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-                    .child(kbd(self.keymap.label(command), theme, false))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        cx.stop_propagation();
-                        shell.new_menu = false;
-                        // The title bar shows it in every view; the new pane is seen in Terminals.
-                        shell.show_view(View::Terminals, window, cx);
-                        shell.new_pane(kind, Axis::Vertical, window, cx);
-                    }))
-            });
+                )]
+            } else {
+                vec![]
+            };
+            rows.extend(
+                plain
+                    .into_iter()
+                    .chain([(
+                        "new-shell-pane",
+                        "Shell",
+                        SessionKind::Shell,
+                        Command::SplitShell,
+                    )])
+                    .map(|(id, label, kind, command)| {
+                        menu_item(id.into(), theme)
+                            .child(div().flex_1().text_color(rgb(theme.text)).child(label))
+                            .child(kbd(self.keymap.label(command), theme, false))
+                            .on_click(cx.listener(move |shell, _, window, cx| {
+                                cx.stop_propagation();
+                                shell.new_menu = false;
+                                // The title bar shows it in every view; the new pane is seen in Terminals.
+                                shell.show_view(View::Terminals, window, cx);
+                                shell.new_pane(kind, Axis::Vertical, window, cx);
+                            }))
+                            .into_any_element()
+                    }),
+            );
             let panel = menu_panel("new-pane-panel", theme)
                 .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
                     shell.new_menu = false;

@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use mkrew_core::settings::SidebarMode;
 use mkrew_protocol::{Event, Project, Session, SessionKind, SessionState, StateSource};
 use ulid::Ulid;
 
@@ -179,7 +180,7 @@ pub fn session_tip(row: &SessionRow, now_ms: i64) -> String {
 }
 
 /// How the sidebar shows (SPEC §10): full width, the compact rail, or hidden. Hiding keeps the
-/// width it comes back at. In memory only: not remembered across restarts.
+/// width it comes back at. Remembered as `[ui] sidebar` (the two toggles write it).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Layout {
     hidden: bool,
@@ -187,6 +188,25 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// The layout `[ui] sidebar` asks for at start.
+    pub fn from_mode(mode: SidebarMode) -> Self {
+        Self {
+            hidden: mode == SidebarMode::Hidden,
+            compact: mode == SidebarMode::Compact,
+        }
+    }
+
+    /// What `[ui] sidebar` is saved as.
+    pub fn mode(self) -> SidebarMode {
+        if self.hidden {
+            SidebarMode::Hidden
+        } else if self.compact {
+            SidebarMode::Compact
+        } else {
+            SidebarMode::Full
+        }
+    }
+
     pub fn hidden(self) -> bool {
         self.hidden
     }
@@ -310,6 +330,8 @@ pub struct Sidebar {
     /// The filter box text (client-side, SPEC §10); in memory only.
     filter: Input,
     chip: Chip,
+    /// Which target of the filtered list ↑/↓ in the filter box points at (0 = the first).
+    highlight: usize,
     /// Set once the first project list was loaded (decides the initial expansion).
     loaded: bool,
     /// Events applied since [`Sidebar::begin_load`]: the lists may predate them, so
@@ -408,7 +430,32 @@ impl Sidebar {
     }
 
     pub fn filter_mut(&mut self) -> &mut Input {
+        // The text changes the matches: the highlight starts again at the first.
+        self.highlight = 0;
         &mut self.filter
+    }
+
+    /// What Enter in the filter box opens: the highlighted session (the first match until ↑/↓
+    /// moves it), else the first workspace. None while the box is empty.
+    pub fn highlighted(&self, rows: &[Row]) -> Option<Target> {
+        if self.filter.trim().is_empty() {
+            return None;
+        }
+        let targets = targets(rows);
+        targets
+            .get(self.highlight.min(targets.len().saturating_sub(1)))
+            .copied()
+    }
+
+    /// ↑ (`-1`) / ↓ (`1`) in the filter box: the highlight moves one target and stops at the
+    /// ends (no wrap).
+    pub fn move_highlight(&mut self, rows: &[Row], delta: isize) {
+        let last = targets(rows).len().saturating_sub(1);
+        self.highlight = self
+            .highlight
+            .min(last)
+            .saturating_add_signed(delta)
+            .min(last);
     }
 
     pub fn chip(&self) -> Chip {
@@ -711,6 +758,33 @@ impl Sidebar {
         self.projects
             .sort_by_key(|p| (!p.pinned, p.position, p.created_at));
     }
+}
+
+/// A row the filter box can open with Enter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Target {
+    Session(Ulid),
+    Workspace(Ulid),
+}
+
+/// The visible session rows in order; workspaces only when no session is listed.
+fn targets(rows: &[Row]) -> Vec<Target> {
+    let sessions: Vec<Target> = rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Session(row) => Some(Target::Session(row.session_id)),
+            _ => None,
+        })
+        .collect();
+    if !sessions.is_empty() {
+        return sessions;
+    }
+    rows.iter()
+        .filter_map(|row| match row {
+            Row::Workspace(row) => Some(Target::Workspace(row.project_id)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The item at `from` dragged onto `to` takes that slot; the new order as positions `1..=n`

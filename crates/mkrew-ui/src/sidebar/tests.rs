@@ -871,3 +871,86 @@ fn shown_in_names_the_workspace_only_while_the_session_row_is_listed() {
         "collapsed"
     );
 }
+
+#[test]
+fn the_filter_highlight_starts_first_stops_at_the_ends_and_resets_when_the_text_changes() {
+    let (api, web) = (project("api"), project("web"));
+    let (a, b) = (
+        session(&api, 1, SessionState::Idle),
+        session(&api, 2, SessionState::Idle),
+    );
+    let w = session(&web, 3, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone(), web], vec![a.clone(), b.clone(), w]);
+    let viewed = Viewed::default();
+    assert_eq!(sidebar.highlighted(&sidebar.rows()), None, "an empty box");
+
+    sidebar.filter_mut().insert("api");
+    let rows = sidebar.view(&viewed).rows;
+    let listed = session_ids(&rows);
+    assert_eq!(listed.len(), 2);
+    let at = |sidebar: &Sidebar| sidebar.highlighted(&sidebar.view(&viewed).rows);
+    assert_eq!(
+        at(&sidebar),
+        Some(Target::Session(listed[0])),
+        "default: first"
+    );
+    sidebar.move_highlight(&rows, -1);
+    assert_eq!(
+        at(&sidebar),
+        Some(Target::Session(listed[0])),
+        "no wrap at the top"
+    );
+    sidebar.move_highlight(&rows, 1);
+    assert_eq!(at(&sidebar), Some(Target::Session(listed[1])));
+    sidebar.move_highlight(&rows, 1);
+    assert_eq!(
+        at(&sidebar),
+        Some(Target::Session(listed[1])),
+        "no wrap at the bottom"
+    );
+
+    sidebar.filter_mut().insert("x");
+    sidebar.filter_mut().clear();
+    sidebar.filter_mut().insert("api");
+    assert_eq!(
+        at(&sidebar),
+        Some(Target::Session(listed[0])),
+        "typing resets"
+    );
+    sidebar.filter_mut().clear();
+    sidebar.filter_mut().insert("zzz");
+    assert_eq!(at(&sidebar), None, "nothing matches");
+    sidebar.move_highlight(&[], 1);
+}
+
+#[test]
+fn the_highlight_falls_back_to_a_workspace_when_no_session_is_listed() {
+    let api = project("api");
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone()], Vec::new());
+    // Rows of an unfiltered list (a filter drops workspaces without a match).
+    let rows = sidebar.rows();
+    sidebar.filter_mut().insert("api");
+    assert_eq!(sidebar.highlighted(&rows), Some(Target::Workspace(api.id)));
+}
+
+#[test]
+fn the_layout_round_trips_through_its_saved_mode() {
+    for mode in [SidebarMode::Full, SidebarMode::Compact, SidebarMode::Hidden] {
+        assert_eq!(Layout::from_mode(mode).mode(), mode);
+    }
+    assert!(Layout::from_mode(SidebarMode::Hidden).hidden());
+    assert!(Layout::from_mode(SidebarMode::Compact).compact());
+    let mut layout = Layout::from_mode(SidebarMode::Full);
+    layout.toggle_compact();
+    assert_eq!(layout.mode(), SidebarMode::Compact);
+    layout.toggle_hidden();
+    assert_eq!(layout.mode(), SidebarMode::Hidden);
+    layout.toggle_compact();
+    assert_eq!(
+        layout.mode(),
+        SidebarMode::Compact,
+        "hidden comes back as the rail"
+    );
+}

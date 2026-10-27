@@ -367,6 +367,71 @@ impl Shell {
         }
     }
 
+    /// A board key (bound in `BOARD_CONTEXT`, or picked in the palette): the arrows select a
+    /// card, Shift+←/→ move it through the same `task.move`s as a drop, Enter opens its live
+    /// session (else the edit dialog), `e` edits it.
+    // ponytail: the selected card is not scrolled into view (columns have no scroll handle);
+    // add a per-column `ScrollHandle` if long columns need it.
+    pub(crate) fn card_key(
+        &mut self,
+        key: board::CardKey,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Board) else {
+            return;
+        };
+        // The selection may be another workspace's.
+        let selected = self.selected_card.filter(|&id| {
+            self.board
+                .task(id)
+                .is_some_and(|t| t.project_id == project_id)
+        });
+        match key {
+            board::CardKey::Up
+            | board::CardKey::Down
+            | board::CardKey::Left
+            | board::CardKey::Right => {
+                if let Some(next) = self.board.select_step(project_id, selected, key)
+                    && Some(next) != self.selected_card
+                {
+                    self.selected_card = Some(next);
+                    cx.notify();
+                }
+            }
+            board::CardKey::MoveLeft | board::CardKey::MoveRight => {
+                if let Some(task_id) = selected {
+                    let moves = self.board.shift_moves(task_id, key);
+                    self.move_cards(task_id, moves, "Cannot move the card", window, cx);
+                }
+            }
+            board::CardKey::Open => {
+                let Some(task_id) = selected else {
+                    return;
+                };
+                match self.board.card_open(task_id, self.sidebar.sessions()) {
+                    Some(board::CardOpen::Session(session)) => {
+                        self.card_clicked(task_id, Some(session), window, cx);
+                    }
+                    Some(board::CardOpen::Edit) => self.edit_card(task_id, window, cx),
+                    None => {}
+                }
+            }
+            board::CardKey::Edit => {
+                if let Some(task_id) = selected {
+                    self.edit_card(task_id, window, cx);
+                }
+            }
+        }
+    }
+
+    /// The edit dialog of `task_id`'s card.
+    fn edit_card(&mut self, task_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(task) = self.board.task(task_id).cloned() {
+            self.open_task_dialog(TaskDialog::edit(task), window, cx);
+        }
+    }
+
     /// Gives the follow-up field of `task_id`'s card the keyboard (keeping its draft).
     pub(crate) fn open_follow_up(
         &mut self,
@@ -549,6 +614,7 @@ impl Shell {
             typing_target: &self.typing_target,
             follow_up_focused: self.follow_up_focus.is_focused(window),
             run_keys: self.keymap.label(Command::RunTask),
+            edit_keys: self.keymap.label(Command::Card(board::CardKey::Edit)),
             conflicts: &self.conflicts,
             run_with: self.run_with.as_ref(),
             fan_out: self.fan_out.as_ref(),

@@ -24,6 +24,17 @@ impl Shell {
             self.workspace_menu = None;
         }
         cx.notify();
+        self.save_sidebar_layout(cx);
+    }
+
+    /// Saves the layout as `[ui] sidebar` (a file that does not parse keeps it for this run).
+    fn save_sidebar_layout(&mut self, cx: &mut Context<'_, Self>) {
+        let value = format!("\"{}\"", self.sidebar_layout.mode().name());
+        if let Err(error) =
+            mkrew_core::settings::write_ui_value(&self.settings_file, "sidebar", &value)
+        {
+            self.settings_write_failed("the sidebar layout", error, cx);
+        }
     }
 
     /// Full width ↔ compact rail; a hidden sidebar comes back as the rail. The rail draws no
@@ -44,6 +55,7 @@ impl Shell {
             self.workspace_menu = None;
         }
         cx.notify();
+        self.save_sidebar_layout(cx);
     }
 
     /// Opens the Inbox entry after the focused pane's session (wrapping); nothing while the

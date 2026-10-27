@@ -13,6 +13,7 @@ use std::path::Path;
 
 use gpui::Keystroke;
 
+use crate::board::CardKey;
 use crate::split::{Direction, Preset};
 
 /// Something a shortcut does.
@@ -114,12 +115,26 @@ pub enum Command {
     GitToggleDiffMode,
     /// Git only: mark the selected file as viewed, or clear the mark (SPEC §12B, ADR 0065).
     GitToggleViewed,
+    /// Git only: stage every file of the selected file's group (Unstaged + Untracked without
+    /// one).
+    GitStageAll,
+    /// Git only: unstage every Staged file.
+    GitUnstageAll,
+    /// Git only: open the discard confirmation of the selected file.
+    GitDiscard,
+    /// Git only: fetch the shown repository.
+    GitFetch,
+    /// Git only: push the shown repository's branch.
+    GitPush,
     /// Fuzzy-find a file of the active workspace and open it in the Files view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
     NewTask,
     /// Board only: run the selected Todo card.
     RunTask,
+    /// Board only: select a card (arrows), move the selected card a column (Shift+←/→), open
+    /// it (Enter) or edit it (`e`).
+    Card(CardKey),
     /// Start the workspace's run commands (opens Run setup when none is saved yet).
     RunStart,
     /// Restart the workspace's live run sessions.
@@ -137,10 +152,10 @@ pub enum Command {
     SelectTheme,
     /// Toggle the window filling the whole screen (not remembered across restarts).
     ToggleFullScreen,
-    /// Hide or show the workspace sidebar (not remembered across restarts).
+    /// Hide or show the workspace sidebar (remembered as `[ui] sidebar`).
     ToggleSidebar,
     /// Narrow the workspace sidebar to the compact rail, or widen it back (a hidden sidebar
-    /// comes back as the rail). Not remembered across restarts.
+    /// comes back as the rail). Remembered as `[ui] sidebar`.
     ToggleCompactSidebar,
     /// Show or hide the session panel right of Terminals (SPEC §10); from another view it
     /// shows Terminals with the panel open.
@@ -251,6 +266,11 @@ impl Command {
             Command::GitFocusCommit,
             Command::GitToggleDiffMode,
             Command::GitToggleViewed,
+            Command::GitStageAll,
+            Command::GitUnstageAll,
+            Command::GitDiscard,
+            Command::GitFetch,
+            Command::GitPush,
             Command::QuickOpen,
             Command::NewTask,
             Command::RunTask,
@@ -268,6 +288,7 @@ impl Command {
             Command::VoiceInput,
             Command::AskAi,
         ]);
+        all.extend(CardKey::ALL.map(Command::Card));
         all
     }
 
@@ -335,9 +356,15 @@ impl Command {
             Command::GitFocusCommit => "git_focus_commit".into(),
             Command::GitToggleDiffMode => "git_toggle_diff_mode".into(),
             Command::GitToggleViewed => "git_toggle_viewed".into(),
+            Command::GitStageAll => "git_stage_all".into(),
+            Command::GitUnstageAll => "git_unstage_all".into(),
+            Command::GitDiscard => "git_discard".into(),
+            Command::GitFetch => "git_fetch".into(),
+            Command::GitPush => "git_push".into(),
             Command::QuickOpen => "quick_open".into(),
             Command::NewTask => "new_task".into(),
             Command::RunTask => "run_task".into(),
+            Command::Card(key) => format!("card_{}", key.name()),
             Command::RunStart => "run_start".into(),
             Command::RunRestart => "run_restart".into(),
             Command::RunStop => "run_stop".into(),
@@ -431,9 +458,25 @@ impl Command {
             Command::GitFocusCommit => "c".into(),
             Command::GitToggleDiffMode => "d".into(),
             Command::GitToggleViewed => "v".into(),
+            Command::GitStageAll => "shift-s".into(),
+            Command::GitUnstageAll => "shift-u".into(),
+            Command::GitDiscard => "x".into(),
+            Command::GitFetch => "f".into(),
+            Command::GitPush => "shift-p".into(),
             Command::QuickOpen => "ctrl-shift-o".into(),
             Command::NewTask => "ctrl-shift-n".into(),
             Command::RunTask => "ctrl-enter".into(),
+            Command::Card(key) => match key {
+                CardKey::Up => "up",
+                CardKey::Down => "down",
+                CardKey::Left => "left",
+                CardKey::Right => "right",
+                CardKey::MoveLeft => "shift-left",
+                CardKey::MoveRight => "shift-right",
+                CardKey::Open => "enter",
+                CardKey::Edit => "e",
+            }
+            .into(),
             // Not F5 / Shift+F5 alone: terminal programs use those.
             Command::RunStart => "ctrl-f5".into(),
             Command::RunRestart => "ctrl-shift-f5".into(),
@@ -458,7 +501,7 @@ impl Command {
                 Some(TERMINAL_CONTEXT)
             }
             Command::Find => Some(FIND_CONTEXT),
-            Command::RunTask => Some(BOARD_CONTEXT),
+            Command::RunTask | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
             Command::AddComment | Command::SendComments => Some(COMMENTS_CONTEXT),
             Command::ToggleIgnored
@@ -474,6 +517,11 @@ impl Command {
             | Command::GitUnstage
             | Command::GitToggleDiffMode
             | Command::GitToggleViewed
+            | Command::GitStageAll
+            | Command::GitUnstageAll
+            | Command::GitDiscard
+            | Command::GitFetch
+            | Command::GitPush
             | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
@@ -1023,11 +1071,33 @@ mod tests {
             ("c", Command::GitFocusCommit),
             ("d", Command::GitToggleDiffMode),
             ("v", Command::GitToggleViewed),
+            ("shift-s", Command::GitStageAll),
+            ("shift-u", Command::GitUnstageAll),
+            ("x", Command::GitDiscard),
+            ("f", Command::GitFetch),
+            ("shift-p", Command::GitPush),
         ] {
             assert_eq!(bound(keys), Some(command), "{keys}");
             assert_eq!(command.context(), Some(GIT_CONTEXT), "{command:?}");
         }
         assert_eq!(keymap.label(Command::GitNextHunk), "N");
+        // SPEC §13 Board single keys, only while a board is shown.
+        for (keys, key) in [
+            ("up", CardKey::Up),
+            ("down", CardKey::Down),
+            ("left", CardKey::Left),
+            ("right", CardKey::Right),
+            ("shift-left", CardKey::MoveLeft),
+            ("shift-right", CardKey::MoveRight),
+            ("enter", CardKey::Open),
+            ("e", CardKey::Edit),
+        ] {
+            assert_eq!(bound(keys), Some(Command::Card(key)), "{keys}");
+            assert_eq!(Command::Card(key).context(), Some(BOARD_CONTEXT));
+        }
+        assert_eq!(keymap.label(Command::Card(CardKey::MoveLeft)), "Shift+←");
+        assert_eq!(keymap.label(Command::Card(CardKey::Open)), "Enter");
+        assert_eq!(keymap.label(Command::GitPush), "Shift+P");
     }
 
     /// SPEC §13: unbound keys reach the agent — Ctrl+C, Ctrl+R and Esc are never intercepted

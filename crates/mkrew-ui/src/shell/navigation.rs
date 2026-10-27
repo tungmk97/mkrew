@@ -340,6 +340,12 @@ impl Shell {
                     .as_ref()
                     .is_some_and(|target| view.discard(target).is_some())
             });
+        let worktree_task = self.selected_card.is_some_and(|id| {
+            self.board
+                .task(id)
+                .is_some_and(|task| Some(task.project_id) == workspace)
+                && self.board.manages_worktree(id)
+        });
         let task_changes = self
             .selected_card
             .and_then(|id| self.board.task(id))
@@ -367,6 +373,7 @@ impl Shell {
             },
             terminal: terminal.is_some(),
             discard,
+            worktree_task,
             task_changes,
             fan_out,
             agents: workspace.is_some_and(|id| broadcast::has_targets(id, self.sidebar.sessions())),
@@ -387,6 +394,11 @@ impl Shell {
             self.sidebar.projects(),
             self.sidebar.sessions(),
             self.board.tasks(),
+        ));
+        entries.extend(palette::agent_entries(
+            &self.keymap,
+            &context,
+            &self.pane_agents(),
         ));
         self.restore_theme_pick(window, cx);
         self.workspace_menu = None;
@@ -554,6 +566,17 @@ impl Shell {
                 window.dispatch_action(Box::new(Run(command)), cx);
             }
             palette::Action::Theme(_) => {}
+            palette::Action::NewAgentPane(index) => {
+                let agent = self
+                    .agent_profiles
+                    .get(index)
+                    .map(|profile| profile.id.clone());
+                if let Some(agent) = agent {
+                    // Like "New agent pane": the new pane is seen in Terminals.
+                    self.show_view(View::Terminals, window, cx);
+                    self.new_pane_with(SessionKind::Agent, Some(agent), Axis::Vertical, window, cx);
+                }
+            }
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
             palette::Action::Extra(extra) => {
@@ -561,20 +584,24 @@ impl Shell {
                     return;
                 };
                 match extra {
-                    Extra::GitFetch => self.run_git_remote(project_id, Remote::Fetch, window, cx),
-                    Extra::GitPush => self.run_git_remote(project_id, Remote::Push, window, cx),
-                    Extra::GitDiscard => {
-                        let target = self
-                            .git
-                            .get(&project_id)
-                            .and_then(|view| view.selected.clone());
-                        if let Some(target) = target {
-                            self.open_git_discard(project_id, target, window, cx);
-                        }
-                    }
                     Extra::ViewTaskChanges => {
                         if let Some(task_id) = self.selected_card {
                             self.view_task_changes(task_id, window, cx);
+                        }
+                    }
+                    Extra::MergeBack | Extra::RemoveWorktree => {
+                        let kind = match extra {
+                            Extra::MergeBack => worktree_dialog::Kind::Merge,
+                            _ => worktree_dialog::Kind::Remove,
+                        };
+                        if let Some(task_id) = self.selected_card.filter(|&id| {
+                            self.board.manages_worktree(id)
+                                && self
+                                    .board
+                                    .task(id)
+                                    .is_some_and(|t| t.project_id == project_id)
+                        }) {
+                            self.open_worktree_dialog(kind, task_id, window, cx);
                         }
                     }
                     Extra::FanOut => {
@@ -605,6 +632,18 @@ impl Shell {
                     }
                     Extra::RunSetup => self.open_run_setup(project_id, false, window, cx),
                     Extra::RunShowTab => self.show_run_tab(project_id, window, cx),
+                    Extra::WorkspacePin => {
+                        let pinned = (self.sidebar.projects().iter())
+                            .find(|p| p.id == project_id)
+                            .is_some_and(|p| p.pinned);
+                        self.pin_workspace(project_id, !pinned, window, cx);
+                    }
+                    Extra::WorkspaceExplorer => self.open_workspace_in_explorer(project_id, cx),
+                    // The default agent is chosen in the workspace's menu.
+                    Extra::WorkspaceDefaultAgent | Extra::WorkspaceMenu => {
+                        self.open_workspace_menu(project_id, window, cx);
+                    }
+                    Extra::WorkspaceRemove => self.archive_workspace(project_id, window, cx),
                     Extra::MarkUnread => {
                         if let Some(session) = self.focused_session() {
                             self.mark_unread(session, cx);

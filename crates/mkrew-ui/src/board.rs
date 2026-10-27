@@ -103,6 +103,56 @@ pub enum CardAction {
     Approve,
 }
 
+/// Board keys (SPEC §13 "Board"): the arrows move the selection between cards, Shift+←/→ move
+/// the selected card one column, Enter opens it, `e` edits it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    MoveLeft,
+    MoveRight,
+    Open,
+    Edit,
+}
+
+impl CardKey {
+    pub const ALL: [CardKey; 8] = [
+        CardKey::Up,
+        CardKey::Down,
+        CardKey::Left,
+        CardKey::Right,
+        CardKey::MoveLeft,
+        CardKey::MoveRight,
+        CardKey::Open,
+        CardKey::Edit,
+    ];
+
+    /// The part of the `keymap.toml` name after `card_`.
+    pub fn name(self) -> &'static str {
+        match self {
+            CardKey::Up => "up",
+            CardKey::Down => "down",
+            CardKey::Left => "left",
+            CardKey::Right => "right",
+            CardKey::MoveLeft => "move_left",
+            CardKey::MoveRight => "move_right",
+            CardKey::Open => "open",
+            CardKey::Edit => "edit",
+        }
+    }
+}
+
+/// What Enter does on a card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CardOpen {
+    /// Show the card's live session.
+    Session(Ulid),
+    /// No live session: the edit dialog.
+    Edit,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
     pub task_id: Ulid,
@@ -507,6 +557,88 @@ impl Board {
         }
     }
 
+    /// `project_id`'s cards, one list of ids per column of [`COLUMNS`] (board order).
+    fn grid(&self, project_id: Ulid) -> Vec<Vec<Ulid>> {
+        let tasks = self.ordered(project_id);
+        COLUMNS
+            .iter()
+            .map(|&status| {
+                tasks
+                    .iter()
+                    .filter(|task| task.status == status)
+                    .map(|task| task.id)
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The card an arrow key selects on `project_id`'s board: ↑ / ↓ the neighbour in the column,
+    /// ← / → the card at the nearest row of the next column that has cards. Nothing at an edge.
+    /// Without a (valid) selection any arrow selects the first card. Other keys: `None`.
+    pub fn select_step(
+        &self,
+        project_id: Ulid,
+        selected: Option<Ulid>,
+        key: CardKey,
+    ) -> Option<Ulid> {
+        let step: isize = match key {
+            CardKey::Up | CardKey::Left => -1,
+            CardKey::Down | CardKey::Right => 1,
+            _ => return None,
+        };
+        let grid = self.grid(project_id);
+        let Some((col, row)) = selected.and_then(|id| locate(&grid, id)) else {
+            return grid.iter().find_map(|ids| ids.first().copied());
+        };
+        if matches!(key, CardKey::Up | CardKey::Down) {
+            return grid[col].get(row.checked_add_signed(step)?).copied();
+        }
+        let mut next = col;
+        loop {
+            next = next.checked_add_signed(step)?;
+            let ids = grid.get(next)?;
+            if let Some(last) = ids.len().checked_sub(1) {
+                return Some(ids[row.min(last)]);
+            }
+        }
+    }
+
+    /// The `task.move`s of Shift+← / Shift+→ on `task_id`: a drop into the neighbouring column
+    /// right before the card at the same row (the end when that column is shorter), so it goes
+    /// through [`Board::drop_moves`] like a drag. Empty at the first / last column.
+    pub fn shift_moves(&self, task_id: Ulid, key: CardKey) -> Vec<TaskMoveParams> {
+        let step: isize = match key {
+            CardKey::MoveLeft => -1,
+            CardKey::MoveRight => 1,
+            _ => return Vec::new(),
+        };
+        let Some(task) = self.task(task_id) else {
+            return Vec::new();
+        };
+        let grid = self.grid(task.project_id);
+        let Some((col, row)) = locate(&grid, task_id) else {
+            return Vec::new();
+        };
+        let to = col.checked_add_signed(step);
+        let (Some(ids), Some(&status)) = (
+            to.and_then(|to| grid.get(to)),
+            to.and_then(|to| COLUMNS.get(to)),
+        ) else {
+            return Vec::new();
+        };
+        self.drop_moves(task_id, status, ids.get(row).copied())
+    }
+
+    /// What Enter does on `task_id`'s card: its live session, else the edit dialog (a Todo
+    /// card and a fan-out group card have no session to show). `None`: no such task.
+    pub fn card_open(&self, task_id: Ulid, sessions: &[Session]) -> Option<CardOpen> {
+        let task = self.task(task_id)?;
+        let live = newest_session(sessions, task_id)
+            .filter(|session| session.state != SessionState::Exited)
+            .filter(|_| task.status != TaskStatus::Todo && !self.fanned_out(task_id));
+        Some(live.map_or(CardOpen::Edit, |session| CardOpen::Session(session.id)))
+    }
+
     /// Whether a run time on `project_id`'s board reads differently at `now_ms` than at
     /// `last_ms` (session spinners are covered by [`status::redraw_due`]).
     pub fn redraw_due(
@@ -525,6 +657,15 @@ impl Board {
                     != status::format_duration(run_end(session, now_ms) - session.started_at)
             })
     }
+
+    /// Whether `task_id`'s card offers "Merge back…" and "Remove worktree…" (see
+    /// [`Card::manages_worktree`]).
+    pub fn manages_worktree(&self, task_id: Ulid) -> bool {
+        self.task(task_id).is_some_and(|task| {
+            worktree_target::branch_line(task).is_some()
+                && matches!(task.status, TaskStatus::Review | TaskStatus::Done)
+        })
+    }
 }
 
 pub(crate) fn newest_session(sessions: &[Session], task_id: Ulid) -> Option<&Session> {
@@ -532,6 +673,13 @@ pub(crate) fn newest_session(sessions: &[Session], task_id: Ulid) -> Option<&Ses
         .iter()
         .filter(|session| session.task_id == Some(task_id))
         .max_by_key(|session| (session.started_at, session.id))
+}
+
+/// The column and row of `task_id` in a [`Board::grid`].
+fn locate(grid: &[Vec<Ulid>], task_id: Ulid) -> Option<(usize, usize)> {
+    grid.iter()
+        .enumerate()
+        .find_map(|(col, ids)| Some((col, ids.iter().position(|&id| id == task_id)?)))
 }
 
 #[cfg(test)]

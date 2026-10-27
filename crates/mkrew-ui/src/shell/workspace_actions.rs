@@ -8,7 +8,6 @@ impl Shell {
         if self.connection.is_none() {
             return;
         }
-        self.sidebar_error = None;
         self.add_workspace = Some(CloneDialog::new(self.clone_parent()));
         window.focus(&self.dialog_focus, cx);
         cx.notify();
@@ -139,12 +138,11 @@ impl Shell {
                 match added {
                     Ok(project) => {
                         let project_id = project.id;
-                        shell.sidebar_error = None;
                         shell.sidebar.add_project(project);
                         shell.activate_workspace(project_id, window, cx);
                     }
                     Err(error) => {
-                        shell.sidebar_error = Some(format!("Cannot add the workspace: {error:#}"));
+                        shell.toast_error(format!("Cannot add the workspace: {error:#}"), cx);
                     }
                 }
                 cx.notify();
@@ -316,19 +314,15 @@ impl Shell {
         .detach();
     }
 
-    /// Opens the folder of `project_id` in Zed; a failure (e.g. `zed` missing) shows in the
-    /// sidebar.
+    /// Opens the folder of `project_id` in Zed; a failure (e.g. `zed` missing) shows a toast.
     pub(crate) fn open_in_zed(&mut self, project_id: Ulid, cx: &mut Context<'_, Self>) {
         self.workspace_menu = None;
         let Some(project) = self.sidebar.projects().iter().find(|p| p.id == project_id) else {
             return;
         };
-        match zed::open(Path::new(&project.path), None) {
-            Ok(()) => self.sidebar_error = None,
-            Err(error) => {
-                tracing::warn!(%project_id, "open in Zed failed: {error}");
-                self.sidebar_error = Some(error.to_string());
-            }
+        if let Err(error) = zed::open(Path::new(&project.path), None) {
+            tracing::warn!(%project_id, "open in Zed failed: {error}");
+            self.toast_error(error.to_string(), cx);
         }
         cx.notify();
     }
@@ -388,8 +382,8 @@ impl Shell {
         cx.notify();
     }
 
-    /// "Open in Zed" on a Files path (a file or a folder); a failure shows in the sidebar,
-    /// like the workspace menu's.
+    /// "Open in Zed" on a Files path (a file or a folder); a failure toasts, like the
+    /// workspace menu's.
     pub(crate) fn open_path_in_zed(
         &mut self,
         project_id: Ulid,
@@ -398,14 +392,11 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         self.file_menu = None;
-        if let Some(full) = self.target_file(project_id, target, path) {
-            match zed::open(&full, None) {
-                Ok(()) => self.sidebar_error = None,
-                Err(error) => {
-                    tracing::warn!(path = %full.display(), "open in Zed failed: {error}");
-                    self.sidebar_error = Some(error.to_string());
-                }
-            }
+        if let Some(full) = self.target_file(project_id, target, path)
+            && let Err(error) = zed::open(&full, None)
+        {
+            tracing::warn!(path = %full.display(), "open in Zed failed: {error}");
+            self.toast_error(error.to_string(), cx);
         }
         cx.notify();
     }
@@ -427,7 +418,7 @@ impl Shell {
     }
 
     /// The name field was committed: creates the entry, then shows it (a new file opens in
-    /// the editor). A blank name does nothing; a failure shows in the sidebar.
+    /// the editor). A blank name does nothing; a failure toasts.
     pub(crate) fn create_entry(
         &mut self,
         entry: NewEntry,
@@ -451,11 +442,10 @@ impl Shell {
             Ok(path) => path,
             Err(error) => {
                 tracing::warn!(%project_id, "new file / folder failed: {error}");
-                self.sidebar_error = Some(error);
+                self.toast_error(error, cx);
                 return;
             }
         };
-        self.sidebar_error = None;
         if self.files_at(project_id, target).is_none() {
             return;
         }
@@ -488,7 +478,7 @@ impl Shell {
 
     /// "Add to .gitignore" on a Files path: appended to the `.gitignore` of the folder the
     /// view shows; the tree lists again (the entry hides unless ignored files are shown). A
-    /// failure shows in the sidebar.
+    /// failure toasts.
     pub(crate) fn ignore_file_path(
         &mut self,
         project_id: Ulid,
@@ -504,31 +494,27 @@ impl Shell {
         };
         match file_ops::ignore(&root, path, is_dir) {
             Ok(()) => {
-                self.sidebar_error = None;
                 if self.files_at(project_id, target).is_some() {
                     self.refresh_files(project_id, window, cx);
                 }
             }
             Err(error) => {
                 tracing::warn!(%project_id, path, "add to .gitignore failed: {error}");
-                self.sidebar_error = Some(error);
+                self.toast_error(error, cx);
             }
         }
         cx.notify();
     }
 
     /// Settings dialog "Edit keymap.toml in Zed": creates the commented template if missing and
-    /// opens it in Zed; a failure shows in the sidebar.
+    /// opens it in Zed; a failure toasts.
     pub(crate) fn edit_keymap_file(&mut self, cx: &mut Context<'_, Self>) {
         let opened = keymap::ensure_file(&self.keymap_file, &keymap::template())
             .map_err(|error| format!("Cannot create keymap.toml: {error}"))
             .and_then(|()| zed::open(&self.keymap_file, None).map_err(|error| error.to_string()));
-        match opened {
-            Ok(()) => self.sidebar_error = None,
-            Err(error) => {
-                tracing::warn!(path = %self.keymap_file.display(), "open keymap settings failed: {error}");
-                self.sidebar_error = Some(error);
-            }
+        if let Err(error) = opened {
+            tracing::warn!(path = %self.keymap_file.display(), "open keymap settings failed: {error}");
+            self.toast_error(error, cx);
         }
         cx.notify();
     }
@@ -552,17 +538,14 @@ impl Shell {
     }
 
     /// Settings dialog "Edit settings.toml in Zed": creates the commented template if missing
-    /// and opens it in Zed; a failure shows in the sidebar.
+    /// and opens it in Zed; a failure toasts.
     pub(crate) fn edit_settings_file(&mut self, cx: &mut Context<'_, Self>) {
         let opened = keymap::ensure_file(&self.settings_file, mkrew_core::settings::template())
             .map_err(|error| format!("Cannot create settings.toml: {error}"))
             .and_then(|()| zed::open(&self.settings_file, None).map_err(|error| error.to_string()));
-        match opened {
-            Ok(()) => self.sidebar_error = None,
-            Err(error) => {
-                tracing::warn!(path = %self.settings_file.display(), "open settings failed: {error}");
-                self.sidebar_error = Some(error);
-            }
+        if let Err(error) = opened {
+            tracing::warn!(path = %self.settings_file.display(), "open settings failed: {error}");
+            self.toast_error(error, cx);
         }
         cx.notify();
     }
@@ -634,17 +617,14 @@ impl Shell {
     }
 
     /// The prompt picker's empty state: opens the prompts folder (created if missing) in Zed
-    /// to add Markdown prompts; a failure shows in the sidebar.
+    /// to add Markdown prompts; a failure toasts.
     pub(crate) fn open_prompts_dir(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let opened = std::fs::create_dir_all(&self.prompts_dir)
             .map_err(|error| format!("Cannot create the prompts folder: {error}"))
             .and_then(|()| zed::open(&self.prompts_dir, None).map_err(|error| error.to_string()));
-        match opened {
-            Ok(()) => self.sidebar_error = None,
-            Err(error) => {
-                tracing::warn!(path = %self.prompts_dir.display(), "open prompts folder failed: {error}");
-                self.sidebar_error = Some(error);
-            }
+        if let Err(error) = opened {
+            tracing::warn!(path = %self.prompts_dir.display(), "open prompts folder failed: {error}");
+            self.toast_error(error, cx);
         }
         self.close_prompt_picker(None, window, cx);
     }
@@ -696,14 +676,10 @@ impl Shell {
                 .await;
             let _ = this.update_in(cx, |shell, window, cx| {
                 match archived {
-                    Ok(_) => {
-                        shell.sidebar_error = None;
-                        shell.refresh(window, cx);
-                    }
+                    Ok(_) => shell.refresh(window, cx),
                     Err(error) => {
                         tracing::warn!(%project_id, "project.archive failed: {error:#}");
-                        shell.sidebar_error =
-                            Some(format!("Cannot remove the workspace: {error:#}"));
+                        shell.toast_error(format!("Cannot remove the workspace: {error:#}"), cx);
                     }
                 }
                 cx.notify();
@@ -763,8 +739,7 @@ impl Shell {
         self.update_project(params, "Cannot pin the workspace", window, cx);
     }
 
-    /// Closes the workspace menu and sends `project.update`; a failure shows in the sidebar
-    /// after `failure`.
+    /// Closes the workspace menu and sends `project.update`; a failure toasts after `failure`.
     pub(crate) fn update_project(
         &mut self,
         params: ProjectUpdateParams,
@@ -782,12 +757,9 @@ impl Shell {
         cx.spawn_in(window, async move |this, cx| {
             let updated = updated.await;
             let _ = this.update(cx, |shell, cx| {
-                match updated {
-                    Ok(_) => shell.sidebar_error = None,
-                    Err(error) => {
-                        tracing::warn!(%project_id, "project.update failed: {error:#}");
-                        shell.sidebar_error = Some(format!("{failure}: {error:#}"));
-                    }
+                if let Err(error) = updated {
+                    tracing::warn!(%project_id, "project.update failed: {error:#}");
+                    shell.toast_error(format!("{failure}: {error:#}"), cx);
                 }
                 cx.notify();
             });

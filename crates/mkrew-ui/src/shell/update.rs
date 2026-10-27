@@ -5,8 +5,9 @@ use mkrew_ui::update::{self, InstallKind, Release};
 use crate::*;
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
-/// `window.prompt` answers; Cancel is also Esc.
-const ANSWERS: [&str; 2] = ["Update", "Cancel"];
+/// `window.prompt` answers; Cancel is also Esc. "What's new" opens the release page and asks
+/// again.
+const ANSWERS: [&str; 3] = ["Update", "What's new", "Cancel"];
 
 impl Shell {
     /// Asks GitHub for the newest release. `manual` (palette) always answers with a toast.
@@ -55,26 +56,40 @@ impl Shell {
         cx.notify();
     }
 
-    /// The title bar button while a newer release is known.
+    /// The title bar button while a newer release is known; "Updating…" shows beside it
+    /// while the download runs (the tooltip says which version).
     pub(crate) fn render_update_button(
         &self,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::Stateful<gpui::Div>> {
+    ) -> Option<gpui::Div> {
         let release = self.update.as_ref()?;
         let text = if self.updating {
             format!("Downloading Mkrew {}…", release.version)
         } else {
             format!("Update to Mkrew {} (you have {CURRENT})", release.version)
         };
+        let button = icon_button_in("update", Icon::CircleArrowUp, theme.accent_text, theme)
+            .tooltip(tooltip(theme, &text, ""))
+            .when(self.updating, |el| el.opacity(opacity::DISABLED))
+            .when(!self.updating, |el| {
+                el.on_click(cx.listener(|shell, _, window, cx| {
+                    shell.start_update(window, cx);
+                }))
+            });
         Some(
-            icon_button_in("update", Icon::CircleArrowUp, theme.accent_text, theme)
-                .tooltip(tooltip(theme, &text, ""))
-                .when(self.updating, |el| el.opacity(opacity::DISABLED))
-                .when(!self.updating, |el| {
-                    el.on_click(cx.listener(|shell, _, window, cx| {
-                        shell.start_update(window, cx);
-                    }))
+            div()
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .child(button)
+                .when(self.updating, |row| {
+                    row.child(
+                        div()
+                            .text_size(font_size::META)
+                            .text_color(rgb(theme.accent_text))
+                            .child("Updating…"),
+                    )
                 }),
         )
     }
@@ -114,8 +129,17 @@ impl Shell {
             &ANSWERS,
             cx,
         );
+        let page_url = release.page_url.clone();
         cx.spawn_in(window, async move |this, cx| {
-            if answer.await.ok() != Some(0) {
+            let choice = answer.await.ok();
+            if choice == Some(1) {
+                let _ = this.update_in(cx, |shell, window, cx| {
+                    cx.open_url(&page_url);
+                    shell.start_update(window, cx);
+                });
+                return;
+            }
+            if choice != Some(0) {
                 return;
             }
             let _ = this.update(cx, |shell, cx| {

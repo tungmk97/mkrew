@@ -19,6 +19,10 @@ impl Shell {
         let focused = self.git_focus.is_focused(window);
         let row_theme = theme.clone();
         let now = status::now_ms();
+        let stage_keys = (
+            self.keymap.label(Command::GitStageAll),
+            self.keymap.label(Command::GitUnstageAll),
+        );
         let lanes = view.graph_lanes();
         let viewed = Rc::clone(&view.viewed);
         uniform_list(
@@ -49,6 +53,7 @@ impl Shell {
                             is_viewed,
                             focused,
                             graph,
+                            &stage_keys,
                             now,
                             &row_theme,
                             cx,
@@ -131,13 +136,24 @@ pub(crate) fn git_file_row(
     viewed: bool,
     focused: bool,
     graph: Option<(GraphCell, usize)>,
+    stage_keys: &(String, String),
     now: i64,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
     let (target, file) = match row {
         git_view::ListRow::Header(group, count) => {
-            return group_header(project_id, *group, *count, folded, theme, cx);
+            // Shift+S stages the selected file's group; Shift+U unstages every Staged one.
+            let keys = match git_view::Stage::of(*group) {
+                Some(git_view::Stage::Unstage) => stage_keys.1.clone(),
+                Some(git_view::Stage::Stage)
+                    if selected.is_some_and(|target| target.group == *group) =>
+                {
+                    stage_keys.0.clone()
+                }
+                _ => String::new(),
+            };
+            return group_header(project_id, *group, *count, folded, keys, theme, cx);
         }
         git_view::ListRow::Hint(hint) => {
             // A dashed box filling the row, the message centered in it.
@@ -328,6 +344,7 @@ fn group_header(
     group: git_view::Group,
     count: usize,
     folded: bool,
+    keys: String,
     theme: &Theme,
     cx: &mut Context<'_, Shell>,
 ) -> gpui::AnyElement {
@@ -372,10 +389,11 @@ fn group_header(
                             ("Unstage all", "Unstage every file of this group")
                         }
                     };
+                    let keys = keys.clone();
                     row_action(SharedString::from(format!("{id}-stage")), label, theme)
                         .opacity(opacity::HIDDEN)
                         .group_hover(id.clone(), |style| style.opacity(opacity::FULL))
-                        .tooltip(tooltip(theme, tip, ""))
+                        .tooltip(tooltip(theme, tip, keys))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             // Not a click on the header (which would fold it).
                             cx.stop_propagation();

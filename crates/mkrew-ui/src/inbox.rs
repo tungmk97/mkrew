@@ -4,9 +4,14 @@
 //! rows, its footer and "next Inbox entry". Pure and tested headlessly.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use mkrew_protocol::{Event, Project, Session, SessionKind, SessionState, StateSource};
+use serde::{Deserialize, Serialize};
 use ulid::Ulid;
+
+/// The file of the viewed state, in the data dir (UI-only: the daemon never reads it).
+pub const VIEWED_FILE: &str = "ui_viewed.json";
 
 /// One Inbox line.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +31,8 @@ pub struct Entry {
 
 /// Which finishes the user has seen: a finished session leaves the Inbox once its pane was
 /// focused in the active window; a later finish (new `state_changed_at`) shows it again.
-/// "Mark unread" (ADR 0064) puts one back until it is looked at again. UI memory only.
+/// "Mark unread" (ADR 0064) puts one back until it is looked at again. Kept across UI restarts
+/// in [`VIEWED_FILE`] ([`Viewed::load`], [`Viewed::save`]).
 #[derive(Debug, Default)]
 pub struct Viewed {
     /// Session → `state_changed_at` of the state it was last viewed in.
@@ -40,9 +46,78 @@ pub struct Viewed {
     /// The (session, `state_changed_at`) [`Viewed::view`] saw last. Looking at the same state
     /// again changes nothing, so a pane marked unread while it has the keyboard stays unread.
     last: Option<(Ulid, i64)>,
+    /// A map changed since [`Viewed::take_changed`], so the file is stale.
+    changed: bool,
+}
+
+/// What [`VIEWED_FILE`] holds: the three maps of [`Viewed`].
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Saved {
+    #[serde(default)]
+    seen: HashMap<Ulid, i64>,
+    #[serde(default)]
+    quiet: HashMap<Ulid, i64>,
+    #[serde(default)]
+    unread: HashMap<Ulid, i64>,
 }
 
 impl Viewed {
+    /// The state `json` holds; empty for anything unreadable (it never fails a start).
+    pub fn from_json(json: &str) -> Viewed {
+        let saved: Saved = serde_json::from_str(json).unwrap_or_default();
+        Viewed {
+            seen: saved.seen,
+            quiet: saved.quiet,
+            unread: saved.unread,
+            ..Viewed::default()
+        }
+    }
+
+    /// The JSON [`Viewed::from_json`] reads back.
+    pub fn to_json(&self) -> String {
+        let saved = Saved {
+            seen: self.seen.clone(),
+            quiet: self.quiet.clone(),
+            unread: self.unread.clone(),
+        };
+        serde_json::to_string(&saved).unwrap_or_default()
+    }
+
+    /// Reads [`VIEWED_FILE`] of the data dir `dir`; empty when it is missing or corrupt.
+    pub fn load(dir: &Path) -> Viewed {
+        std::fs::read_to_string(dir.join(VIEWED_FILE))
+            .map_or_else(|_| Viewed::default(), |json| Viewed::from_json(&json))
+    }
+
+    /// Writes the state to [`VIEWED_FILE`] of the data dir `dir` once something changed since
+    /// the last call (else nothing happens, not even an allocation), after dropping the
+    /// sessions that are not in `sessions` any more. A failed write is only logged: the file
+    /// is a cache of what the user saw.
+    pub fn save(&mut self, sessions: &[Session], dir: &Path) {
+        if !self.take_changed() {
+            return;
+        }
+        self.prune(sessions);
+        let file = dir.join(VIEWED_FILE);
+        if let Err(error) = std::fs::write(&file, self.to_json()) {
+            tracing::warn!("cannot save {}: {error}", file.display());
+        }
+    }
+
+    /// Whether a map changed since the last call.
+    fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+
+    /// Forgets the sessions that are not in `sessions`.
+    pub fn prune(&mut self, sessions: &[Session]) {
+        let known = |id: &Ulid| sessions.iter().any(|session| session.id == *id);
+        self.seen.retain(|id, _| known(id));
+        self.quiet.retain(|id, _| known(id));
+        self.unread.retain(|id, _| known(id));
+        self.last.take_if(|(id, _)| !known(id));
+    }
+
     /// `session` is on screen and focused. `true` if that changed what needs the user.
     pub fn view(&mut self, session: &Session) -> bool {
         let state = (session.id, session.state_changed_at);
@@ -51,7 +126,9 @@ impl Viewed {
         }
         let seen = self.seen.insert(session.id, session.state_changed_at);
         let marked = self.unread.remove(&session.id).is_some();
-        seen != Some(session.state_changed_at) || marked
+        let changed = seen != Some(session.state_changed_at) || marked;
+        self.changed |= changed;
+        changed
     }
 
     /// The window was activated: the focused pane is looked at again, even one marked unread.
@@ -62,6 +139,7 @@ impl Viewed {
     /// "Mark unread": `session` needs the user again until it is viewed (see [`can_mark_unread`]).
     pub fn mark_unread(&mut self, session: &Session) {
         self.unread.insert(session.id, session.state_changed_at);
+        self.changed = true;
     }
 
     /// Notes an agent going quiet after work. Call before the sidebar applies `event`, so
@@ -76,7 +154,8 @@ impl Viewed {
                 && s.state == SessionState::Working
         });
         if event.state == SessionState::Idle && was_working {
-            self.quiet.insert(event.session_id, event.changed_at);
+            let before = self.quiet.insert(event.session_id, event.changed_at);
+            self.changed |= before != Some(event.changed_at);
         }
     }
 
@@ -559,5 +638,101 @@ mod tests {
             ..session(&api, SessionState::Idle, 1)
         };
         assert!(!can_mark_unread(&shell, &viewed));
+    }
+
+    /// A viewed state with every kind of memory: a seen done, a quiet idle agent, an unread
+    /// mark and a pending done, over `sessions` (which `needs_you` is asked about).
+    fn remembered() -> (Viewed, Vec<Session>) {
+        let api = project("api");
+        let seen = session(&api, SessionState::Done, 3);
+        let pending = session(&api, SessionState::Done, 4);
+        let marked = session(&api, SessionState::Idle, 5);
+        let mut quiet = session(&api, SessionState::Working, 6);
+        let mut viewed = Viewed::default();
+        viewed.view(&seen);
+        viewed.mark_unread(&marked);
+        viewed.apply(
+            &Event::SessionState(mkrew_protocol::SessionStateEvent {
+                session_id: quiet.id,
+                state: SessionState::Idle,
+                source: StateSource::Screen,
+                changed_at: 7,
+            }),
+            std::slice::from_ref(&quiet),
+        );
+        quiet.state = SessionState::Idle;
+        quiet.state_changed_at = 7;
+        (viewed, vec![seen, pending, marked, quiet])
+    }
+
+    #[test]
+    fn a_saved_state_answers_needs_you_like_the_live_one() {
+        let (viewed, sessions) = remembered();
+        let live: Vec<bool> = sessions.iter().map(|s| needs_you(s, &viewed)).collect();
+        assert_eq!(live, [false, true, true, true]);
+
+        let reloaded = Viewed::from_json(&viewed.to_json());
+        let after: Vec<bool> = sessions.iter().map(|s| needs_you(s, &reloaded)).collect();
+        assert_eq!(after, live);
+        // A later finish of the seen session still shows again.
+        let mut again = sessions[0].clone();
+        again.state_changed_at = 9;
+        assert!(needs_you(&again, &reloaded));
+    }
+
+    #[test]
+    fn saving_drops_the_sessions_that_are_gone() {
+        let (mut viewed, sessions) = remembered();
+        let dir = tempfile::tempdir().unwrap();
+        // Only the seen session and the marked one are still listed.
+        let live = [sessions[0].clone(), sessions[2].clone()];
+        viewed.save(&live, dir.path());
+
+        let reloaded = Viewed::load(dir.path());
+        assert!(!needs_you(&sessions[0], &reloaded), "still seen");
+        assert!(needs_you(&sessions[2], &reloaded), "still marked");
+        assert_eq!(reloaded.seen.len() + reloaded.unread.len(), 2);
+        assert!(
+            reloaded.quiet.is_empty(),
+            "the quiet agent is not listed any more"
+        );
+        assert!(viewed.quiet.is_empty(), "pruned in memory too");
+    }
+
+    #[test]
+    fn only_a_change_is_written() {
+        let api = project("api");
+        let done = session(&api, SessionState::Done, 3);
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(VIEWED_FILE);
+        let mut viewed = Viewed::default();
+        viewed.save(std::slice::from_ref(&done), dir.path());
+        assert!(!file.exists(), "nothing changed yet");
+
+        assert!(viewed.view(&done));
+        viewed.save(std::slice::from_ref(&done), dir.path());
+        assert!(file.exists());
+        std::fs::remove_file(&file).unwrap();
+        // Looking at the same state again changes nothing: no write.
+        viewed.activated();
+        assert!(!viewed.view(&done));
+        viewed.save(std::slice::from_ref(&done), dir.path());
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn a_missing_or_corrupt_file_is_an_empty_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join(VIEWED_FILE);
+        let api = project("api");
+        let done = session(&api, SessionState::Done, 3);
+        assert!(needs_you(&done, &Viewed::load(dir.path())));
+        for junk in ["", "not json", "[1,2]", "{\"seen\": {\"x\": 1}}"] {
+            std::fs::write(&file, junk).unwrap();
+            assert!(needs_you(&done, &Viewed::load(dir.path())), "{junk:?}");
+        }
+        // Unknown keys and absent maps are fine.
+        let partial = Viewed::from_json(&format!("{{\"seen\": {{\"{}\": 3}}, \"x\": 1}}", done.id));
+        assert!(!needs_you(&done, &partial));
     }
 }

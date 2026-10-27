@@ -18,6 +18,8 @@ pub(crate) struct CardContext<'a> {
     pub(crate) follow_up_focused: bool,
     /// Shortcut label of Run on the selected card.
     pub(crate) run_keys: String,
+    /// Shortcut label of Edit on the selected card.
+    pub(crate) edit_keys: String,
     pub(crate) conflicts: &'a Conflicts,
     pub(crate) run_with: Option<&'a RunWith>,
     pub(crate) fan_out: Option<&'a FanOutPicker>,
@@ -247,7 +249,15 @@ pub(crate) fn task_card(
                         // One step above the card's own `surface_raised`.
                         .hover(move |style| style.bg(rgb(edit_hover)))
                         .active(|style| style.opacity(opacity::ACTIVE))
-                        .tooltip(tooltip(theme, "Edit or delete this task", ""))
+                        .tooltip(tooltip(
+                            theme,
+                            "Edit or delete this task",
+                            if selected {
+                                cards.edit_keys.clone()
+                            } else {
+                                String::new()
+                            },
+                        ))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             // Not a click on the card (which would open its terminal).
                             cx.stop_propagation();

@@ -301,7 +301,7 @@ fn six_attached_floods_keep_the_ui_connection_responsive() {
 
     let mut sessions = Vec::new();
     for _ in 0..PANES {
-        let mut params = lifecycle::spawn_params(project.id, None, SessionKind::Agent);
+        let mut params = lifecycle::spawn_params(project.id, None, SessionKind::Agent, None);
         params.agent_profile = Some("flood".into());
         let spawned: SessionSpawnResult =
             block_on(connection.call(Request::SessionSpawn(params))).unwrap();

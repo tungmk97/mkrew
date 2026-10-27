@@ -1351,6 +1351,22 @@ impl GitView {
         Some(request)
     }
 
+    /// Shift+S / Shift+U on the list. Stage: every file of the selected file's group, else (no
+    /// selection, or a Staged file) every Unstaged and Untracked file. Unstage: every Staged
+    /// file. `None` when there is nothing to change.
+    pub fn stage_all_key(&self, stage: Stage) -> Option<StageRequest> {
+        match stage {
+            Stage::Unstage => self.group_change(Group::Staged),
+            Stage::Stage => self
+                .selected
+                .as_ref()
+                .map(|target| target.group)
+                .filter(|&group| Stage::of(group) == Some(Stage::Stage))
+                .and_then(|group| self.group_change(group))
+                .or_else(|| self.stage_all()),
+        }
+    }
+
     /// The next / previous file; in the History, past the expanded commit's first / last file
     /// the previous / next commit (its first file once listed).
     fn step_file(&mut self, by: isize) -> Requests {

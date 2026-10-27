@@ -1,6 +1,6 @@
 //! Command palette (Ctrl+Shift+P, SPEC §13): every keymap command that can act in the current
-//! view, with its title and shortcut, palette-only actions that have no key (Git fetch / push /
-//! discard, task "View changes", fan-out, broadcast, insert prompt), plus "Go to" workspace /
+//! view, with its title and shortcut, palette-only actions that have no key (task "View changes",
+//! "Merge back…", "Remove worktree…", fan-out, broadcast, insert prompt), plus "Go to" workspace /
 //! session / task items (the §13 quick open of those). Typing filters with a fuzzy subsequence match
 //! ranked by word starts and runs; Enter picks. Pure and tested headlessly; `main.rs` renders it and runs the pick.
 
@@ -10,6 +10,7 @@ use mkrew_core::settings::FeatureSettings;
 use mkrew_protocol::{Project, Session, SessionState, Task};
 use ulid::Ulid;
 
+use crate::board::CardKey;
 use crate::board::View;
 use crate::history;
 use crate::keymap::{Command, Keymap, KeymapError};
@@ -34,6 +35,8 @@ pub struct Context {
     pub discard: bool,
     /// The selected board card offers "View changes".
     pub task_changes: bool,
+    /// The selected board card offers "Merge back…" and "Remove worktree…".
+    pub worktree_task: bool,
     /// The selected board card offers "Run with several agents…".
     pub fan_out: bool,
     /// The active workspace has a live agent session.
@@ -53,10 +56,9 @@ pub struct Context {
 /// A palette-only action: no key is bound to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Extra {
-    GitFetch,
-    GitPush,
-    GitDiscard,
     ViewTaskChanges,
+    MergeBack,
+    RemoveWorktree,
     FanOut,
     Broadcast,
     InsertPrompt,
@@ -67,14 +69,18 @@ pub enum Extra {
     PhoneAccess,
     CheckUpdates,
     MarkUnread,
+    WorkspacePin,
+    WorkspaceExplorer,
+    WorkspaceDefaultAgent,
+    WorkspaceRemove,
+    WorkspaceMenu,
 }
 
 impl Extra {
-    pub const ALL: [Self; 14] = [
-        Self::GitFetch,
-        Self::GitPush,
-        Self::GitDiscard,
+    pub const ALL: [Self; 18] = [
         Self::ViewTaskChanges,
+        Self::MergeBack,
+        Self::RemoveWorktree,
         Self::FanOut,
         Self::Broadcast,
         Self::InsertPrompt,
@@ -85,14 +91,18 @@ impl Extra {
         Self::PhoneAccess,
         Self::CheckUpdates,
         Self::MarkUnread,
+        Self::WorkspacePin,
+        Self::WorkspaceExplorer,
+        Self::WorkspaceDefaultAgent,
+        Self::WorkspaceRemove,
+        Self::WorkspaceMenu,
     ];
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::GitFetch => "Git: Fetch",
-            Self::GitPush => "Git: Push",
-            Self::GitDiscard => "Git: Discard changes to selected file…",
             Self::ViewTaskChanges => "Task: View changes of selected task",
+            Self::MergeBack => "Task: Merge back selected task…",
+            Self::RemoveWorktree => "Task: Remove worktree of selected task…",
             Self::FanOut => "Agent: Run selected task with several agents…",
             Self::Broadcast => "Agent: Broadcast to agents…",
             Self::InsertPrompt => "Agent: Insert prompt…",
@@ -103,6 +113,11 @@ impl Extra {
             Self::PhoneAccess => "Global: Phone access…",
             Self::CheckUpdates => "Global: Check for updates",
             Self::MarkUnread => "Agent: Mark unread",
+            Self::WorkspacePin => "Workspace: Pin / Unpin",
+            Self::WorkspaceExplorer => "Workspace: Open in File Explorer",
+            Self::WorkspaceDefaultAgent => "Workspace: Set default agent…",
+            Self::WorkspaceRemove => "Workspace: Remove…",
+            Self::WorkspaceMenu => "Workspace: Open workspace menu",
         }
     }
 
@@ -110,9 +125,8 @@ impl Extra {
     pub fn available(self, context: &Context) -> bool {
         let in_view = |view| context.workspace && context.view == view;
         match self {
-            Self::GitFetch | Self::GitPush => in_view(View::Git),
-            Self::GitDiscard => in_view(View::Git) && context.discard,
             Self::ViewTaskChanges => in_view(View::Board) && context.task_changes,
+            Self::MergeBack | Self::RemoveWorktree => in_view(View::Board) && context.worktree_task,
             Self::FanOut => in_view(View::Board) && context.fan_out,
             Self::Broadcast => context.workspace && context.agents,
             // Into the focused agent pane's composer (opened if hidden); the focused agent
@@ -127,7 +141,12 @@ impl Extra {
                 in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
             }
             Self::RunShowTab => context.workspace && context.run_live,
-            Self::RunSetup => context.workspace,
+            Self::RunSetup
+            | Self::WorkspacePin
+            | Self::WorkspaceExplorer
+            | Self::WorkspaceDefaultAgent
+            | Self::WorkspaceRemove
+            | Self::WorkspaceMenu => context.workspace,
             Self::MarkUnread => context.markable,
             Self::PhoneAccess | Self::CheckUpdates => true,
         }
@@ -150,6 +169,9 @@ pub enum Action {
     GoTo(Target),
     /// The theme picker's row for `theme::THEMES[i]` (ADR 0078).
     Theme(usize),
+    /// "Agent: New <Profile> pane": a new pane with the profile at this position of the
+    /// shell's profile list (see [`agent_entries`]).
+    NewAgentPane(usize),
 }
 
 /// One palette line.
@@ -234,8 +256,23 @@ pub fn title(command: Command) -> String {
         Command::GitFocusCommit => "Git: Focus commit message".into(),
         Command::GitToggleDiffMode => "Git: Toggle Unified / Split diff".into(),
         Command::GitToggleViewed => "Git: Mark file as viewed / not viewed".into(),
+        Command::GitStageAll => "Git: Stage all (selected group, else every change)".into(),
+        Command::GitUnstageAll => "Git: Unstage all".into(),
+        Command::GitDiscard => "Git: Discard changes to selected file…".into(),
+        Command::GitFetch => "Git: Fetch".into(),
+        Command::GitPush => "Git: Push".into(),
         Command::NewTask => "Task: New task".into(),
         Command::RunTask => "Task: Run selected task".into(),
+        Command::Card(key) => match key {
+            CardKey::Up => "Board: Select card above".into(),
+            CardKey::Down => "Board: Select card below".into(),
+            CardKey::Left => "Board: Select card in the column to the left".into(),
+            CardKey::Right => "Board: Select card in the column to the right".into(),
+            CardKey::MoveLeft => "Board: Move selected card one column left".into(),
+            CardKey::MoveRight => "Board: Move selected card one column right".into(),
+            CardKey::Open => "Board: Open selected card (session, else edit)".into(),
+            CardKey::Edit => "Board: Edit selected task".into(),
+        },
         Command::RunStart => "Run: Start all".into(),
         Command::RunRestart => "Run: Restart all".into(),
         Command::RunStop => "Run: Stop all".into(),
@@ -327,7 +364,13 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitUnstage
         | Command::GitToggleDiffMode
         | Command::GitToggleViewed
+        | Command::GitStageAll
+        | Command::GitUnstageAll
+        | Command::GitFetch
+        | Command::GitPush
         | Command::GitFocusCommit => in_view(View::Git),
+        Command::GitDiscard => in_view(View::Git) && context.discard,
+        Command::Card(_) => in_view(View::Board),
     }
 }
 
@@ -374,6 +417,31 @@ pub fn theme_entries(current: &str) -> Vec<Entry> {
                     look.into()
                 },
             }
+        })
+        .collect()
+}
+
+/// "Agent: New <Profile> pane", one entry per installed agent profile (`agents`, the default
+/// first, see [`crate::lifecycle::pane_agents`]) where "New agent pane" is available. The
+/// default shows the key that starts it.
+pub fn agent_entries(
+    keymap: &Keymap,
+    context: &Context,
+    agents: &[crate::lifecycle::PaneAgent],
+) -> Vec<Entry> {
+    if !available(Command::SplitAgent, context) {
+        return Vec::new();
+    }
+    agents
+        .iter()
+        .map(|agent| Entry {
+            action: Action::NewAgentPane(agent.index),
+            title: format!("Agent: New {} pane", agent.name),
+            shortcut: if agent.default {
+                keymap.label(Command::SplitAgent)
+            } else {
+                String::new()
+            },
         })
         .collect()
 }

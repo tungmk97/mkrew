@@ -302,6 +302,29 @@ impl DiffMode {
     }
 }
 
+/// `[ui] sidebar`: how the workspace sidebar starts. The Toggle sidebar / Toggle compact
+/// sidebar commands write it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarMode {
+    /// Full width.
+    #[default]
+    Full,
+    /// The narrow icon rail.
+    Compact,
+    Hidden,
+}
+
+impl SidebarMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            SidebarMode::Full => "full",
+            SidebarMode::Compact => "compact",
+            SidebarMode::Hidden => "hidden",
+        }
+    }
+}
+
 /// `[ui] inspector_width` default, px (the UI clamps what it reads to its own limits).
 pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
 
@@ -328,6 +351,8 @@ pub struct UiSettings {
     pub inspector_width: u16,
     /// Width of the workspace sidebar, px (SPEC §10); dragging its edge saves it.
     pub sidebar_width: u16,
+    /// `[ui] sidebar`: full, compact rail or hidden at start; the sidebar toggles write it.
+    pub sidebar: SidebarMode,
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
@@ -349,6 +374,7 @@ impl Default for UiSettings {
             diff_wrap: true,
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
             sidebar_width: SIDEBAR_WIDTH_DEFAULT,
+            sidebar: SidebarMode::Full,
             reading_width: true,
             close_to_tray: true,
         }
@@ -502,6 +528,7 @@ pub fn template() -> &'static str {
      # Theme: system (follows the OS), light or dark; the title bar toggle writes it.\n\
      # Light / dark theme: a built-in name (Settings or \"Theme: Select theme…\" lists them).\n\
      # Session panel width in px (dragging its edge writes it; Mkrew keeps it 240–560).\n\
+     # Sidebar: full, compact (icon rail) or hidden at start; the sidebar toggles write it.\n\
      # Diff view: unified (one column) or split (old | new); the Git diff header toggle writes it.\n\
      # Diff wrap: long lines wrap (true) or are cut at the pane edge (false); the Wrap toggle writes it.\n\
      # Reading width: agent panes start narrow (about 120-140 columns, centered) or full width.\n\
@@ -515,6 +542,7 @@ pub fn template() -> &'static str {
      # diff_mode = \"unified\"\n\
      # diff_wrap = true\n\
      # inspector_width = 300\n\
+     # sidebar = \"full\"\n\
      # sidebar_width = 280\n\
      # reading_width = true\n\
      # close_to_tray = true\n\
@@ -767,6 +795,7 @@ push = true
                     diff_wrap: true,
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                     sidebar_width: SIDEBAR_WIDTH_DEFAULT,
+                    sidebar: SidebarMode::Full,
                     reading_width: true,
                     close_to_tray: false,
                 },
@@ -1086,6 +1115,28 @@ push = true
         // A negative or fractional width is a typed error, not a silent default.
         assert!(parse_err("[ui]\ninspector_width = -1").contains("invalid value"));
         assert!(parse_err("[ui]\ninspector_width = \"wide\"").contains("invalid type"));
+    }
+
+    #[test]
+    fn ui_sidebar_parses_defaults_to_full_and_round_trips_through_the_file() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!(ui("").sidebar, SidebarMode::Full);
+        assert_eq!(
+            ui("[ui]\nsidebar = \"compact\"").sidebar,
+            SidebarMode::Compact
+        );
+        assert_eq!(
+            ui("[ui]\nsidebar = \"hidden\"").sidebar,
+            SidebarMode::Hidden
+        );
+        assert!(parse_err("[ui]\nsidebar = \"tiny\"").contains("unknown variant `tiny`"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, template()).unwrap();
+        for mode in [SidebarMode::Compact, SidebarMode::Hidden, SidebarMode::Full] {
+            write_ui_value(&path, "sidebar", &format!("\"{}\"", mode.name())).unwrap();
+            assert_eq!(load(&path).unwrap().ui.sidebar, mode);
+        }
     }
 
     #[test]

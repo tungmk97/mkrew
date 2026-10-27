@@ -28,6 +28,7 @@ impl Shell {
         let reading_default = ui.reading_width;
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
+        let sidebar_mode = ui.sidebar;
         let prompts_dir = paths.prompts_dir();
         let config_dir = paths.config_dir.clone();
         // System mode follows the OS live (ADR 0027).
@@ -165,6 +166,8 @@ impl Shell {
             cx.notify();
         });
         let (painted, painted_rx) = async_channel::bounded(1);
+        // What the user saw before this start (A2): a corrupt or missing file is empty.
+        let viewed = Viewed::load(&paths.data_dir);
         let mut shell = Self {
             status: Status::Connecting,
             connection: None,
@@ -173,7 +176,6 @@ impl Shell {
             sidebar: Sidebar::default(),
             refreshing: false,
             refresh_again: false,
-            sidebar_error: None,
             workspace: None,
             tabs: HashMap::new(),
             loading_tabs: HashSet::new(),
@@ -187,6 +189,9 @@ impl Shell {
             painted,
             painted_rx,
             paths,
+            connect_gen: 0,
+            reconnect_attempts: 0,
+            reconnect_in: None,
             focus_handle,
             renaming: None,
             rename_focus,
@@ -225,10 +230,11 @@ impl Shell {
             run_reveal: None,
             ports: Ports::default(),
             agent_icons: HashMap::new(),
+            agent_profiles: Vec::new(),
             broadcast: None,
             ask: None,
             ask_web: false,
-            viewed: Viewed::default(),
+            viewed,
             desktop,
             attention: Tracker::default(),
             close_to_tray,
@@ -237,7 +243,7 @@ impl Shell {
             usages: Usages::default(),
             plans: Plans::default(),
             plan_error: None,
-            sidebar_layout: sidebar::Layout::default(),
+            sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
             inspector_open: false,
             thread: None,
             inspector_width,
@@ -346,10 +352,39 @@ impl Shell {
         shell
     }
 
-    /// Connects to the daemon (starting it if needed) off the UI thread, then feeds its frames
-    /// until the connection closes. Startup runs it; so do Retry / Reconnect on the failure
-    /// screens.
+    /// The user's Connect / Retry / Reconnect (and startup): connects now and restarts the
+    /// automatic retry backoff.
     pub(crate) fn connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.reconnect_attempts = 0;
+        self.start_connect(window, cx);
+    }
+
+    /// Waits [`mkrew_ui::connect::backoff`] after a failed or lost connect, then connects
+    /// again. One timer per failure (no per-frame work); a newer attempt (`connect_gen`, e.g.
+    /// the user's Reconnect) makes a pending timer a no-op, so attempts never overlap.
+    fn schedule_reconnect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let delay = mkrew_ui::connect::backoff(self.reconnect_attempts);
+        self.reconnect_attempts = self.reconnect_attempts.saturating_add(1);
+        self.reconnect_in = Some(delay);
+        let generation = self.connect_gen;
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = this.update_in(cx, |shell, window, cx| {
+                if shell.connect_gen == generation
+                    && matches!(shell.status, Status::Failed(_) | Status::Disconnected)
+                {
+                    shell.start_connect(window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Connects to the daemon (starting it if needed) off the UI thread, then feeds its frames
+    /// until the connection closes, then schedules an automatic retry.
+    fn start_connect(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.connect_gen += 1;
+        self.reconnect_in = None;
         self.status = Status::Connecting;
         cx.notify();
         let paths = self.paths.clone();
@@ -363,8 +398,9 @@ impl Shell {
             let connection = match connected {
                 Ok(connection) => Rc::new(connection),
                 Err(error) => {
-                    let _ = this.update(cx, |shell, cx| {
+                    let _ = this.update_in(cx, |shell, window, cx| {
                         shell.status = Status::Failed(format!("{error:#}"));
+                        shell.schedule_reconnect(window, cx);
                         cx.notify();
                     });
                     return;
@@ -376,6 +412,7 @@ impl Shell {
                 "connected to the daemon"
             );
             let loaded = this.update_in(cx, |shell, window, cx| {
+                shell.reconnect_attempts = 0;
                 shell.connection = Some(connection);
                 shell.refresh(window, cx);
                 shell.poll_phone(window, cx);
@@ -432,7 +469,11 @@ impl Shell {
                 shell.plan_error = None;
                 shell.broadcast = None;
                 shell.ask = None;
-                shell.task_dialog = None;
+                // Kept with its draft: `save_task` / `delete_task` do nothing without a
+                // connection, and an in-flight save is not waited for.
+                if let Some(dialog) = shell.task_dialog.as_mut() {
+                    dialog.busy = false;
+                }
                 shell.undo_dialog = None;
                 shell.worktree_dialog = None;
                 shell.compare = None;
@@ -440,7 +481,16 @@ impl Shell {
                 shell.turns_return = None;
                 shell.git_discard = None;
                 shell.git_base = None;
-                shell.add_workspace = None;
+                // Kept with its typed text (it cannot send without a connection); a clone in
+                // flight will never report back, so it stops waiting.
+                if let Some(dialog) = shell.add_workspace.as_mut()
+                    && dialog.cloning.take().is_some()
+                {
+                    dialog.error = Some(
+                        "The connection closed while cloning; check the workspace list once it is back."
+                            .into(),
+                    );
+                }
                 shell.phone_open = false;
                 shell.phone = Phone::default();
                 shell.history = None;
@@ -459,9 +509,14 @@ impl Shell {
                 shell.git.clear();
                 shell.git_summary = None;
                 // An open confirmation keeps the keyboard; it hands focus back when answered.
-                if !window.has_active_prompt() {
+                // A kept dialog (typed text survives) keeps it too.
+                if !window.has_active_prompt()
+                    && shell.task_dialog.is_none()
+                    && shell.add_workspace.is_none()
+                {
                     window.focus(&shell.focus_handle, cx);
                 }
+                shell.schedule_reconnect(window, cx);
                 cx.notify();
             });
         })
@@ -499,9 +554,10 @@ impl Shell {
                     Ok(listed) => {
                         shell.agent_icons = listed
                             .profiles
-                            .into_iter()
-                            .filter_map(|p| Some((p.id, p.icon?)))
+                            .iter()
+                            .filter_map(|p| Some((p.id.clone(), p.icon.clone()?)))
                             .collect();
+                        shell.agent_profiles = listed.profiles;
                     }
                     // Badges fall back to letters; the listing below is unaffected.
                     Err(error) => tracing::warn!("agent.profiles failed: {error:#}"),
@@ -863,22 +919,44 @@ impl Shell {
     /// One short sentence, plus optional detail shown smaller below it.
     pub(crate) fn status_line(&self) -> (SharedString, Option<SharedString>) {
         match &self.status {
+            Status::Connecting if self.reconnect_attempts > 0 => {
+                ("Reconnecting to the daemon…".into(), None)
+            }
             Status::Connecting => ("Connecting to the daemon…".into(), None),
             Status::Connected if self.sidebar.is_empty() => (
                 "No workspaces yet.".into(),
                 Some("Add a project folder or clone a repository to get started.".into()),
             ),
             Status::Connected => ("Opening the workspace…".into(), None),
-            Status::Disconnected => ("The daemon connection closed.".into(), None),
+            Status::Disconnected => (
+                "The daemon connection closed.".into(),
+                self.retry_note().map(Into::into),
+            ),
             Status::Failed(error) => (
                 "Cannot reach the daemon.".into(),
-                Some(error.clone().into()),
+                Some(
+                    match self.retry_note() {
+                        Some(note) => format!("{error}\n{note}"),
+                        None => error.clone(),
+                    }
+                    .into(),
+                ),
             ),
             Status::ListFailed(error) => (
                 "Cannot load the workspace.".into(),
                 Some(error.clone().into()),
             ),
         }
+    }
+
+    /// "Reconnecting in 5 s…" while an automatic retry is pending (set once per attempt, so
+    /// the text is static and nothing repaints while waiting).
+    fn retry_note(&self) -> Option<String> {
+        let wait = self.reconnect_in?;
+        Some(format!(
+            "Reconnecting automatically in {} s…",
+            wait.as_secs()
+        ))
     }
 
     /// The one action under the status line: Add workspace when there is none, Reconnect /

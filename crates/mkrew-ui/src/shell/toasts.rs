@@ -48,6 +48,29 @@ impl Shell {
             };
             let id = item.id;
             let hover = theme.hover;
+            let is_error = item.kind == toast::Kind::Error;
+            let text = item.text.clone();
+            let body = div()
+                .id(("toast-text", id))
+                .flex_1()
+                .min_w_0()
+                .line_clamp(theme::TOAST_MAX_LINES)
+                .text_size(font_size::BODY)
+                .text_color(rgb(theme.text))
+                .child(item.text.clone());
+            // An error's full text is often cut by the line clamp: a click copies all of it.
+            let body = if is_error {
+                body.cursor_pointer()
+                    .hover(move |style| style.bg(rgb(hover)))
+                    .tooltip(tooltip(theme, "Copy the error", ""))
+                    .on_click(cx.listener(move |shell, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                        shell.toast_info("Copied", cx);
+                    }))
+                    .into_any_element()
+            } else {
+                body.into_any_element()
+            };
             menu_panel(("toast", id), theme)
                 .w(theme::rems_px(theme::TOAST_WIDTH))
                 .flex_row()
@@ -55,16 +78,13 @@ impl Shell {
                 .gap(px(space::S))
                 .px(px(space::M))
                 .py(px(space::S))
+                // Hovering pauses the countdown; leaving restarts it (toast.rs).
+                .on_hover(cx.listener(move |shell, hovered: &bool, _, cx| {
+                    shell.toasts.set_hovered(id, *hovered, Instant::now());
+                    cx.notify();
+                }))
                 .child(icon_svg(glyph, theme::ICON_SIZE_SMALL, color))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .line_clamp(theme::TOAST_MAX_LINES)
-                        .text_size(font_size::BODY)
-                        .text_color(rgb(theme.text))
-                        .child(item.text.clone()),
-                )
+                .child(body)
                 .child(
                     div()
                         .id(("toast-close", id))

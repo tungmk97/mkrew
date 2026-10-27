@@ -346,8 +346,6 @@ struct Shell {
     refreshing: bool,
     /// Another refresh was asked for while one was in flight.
     refresh_again: bool,
-    /// Last failure of a sidebar action (adding a workspace), shown under its header.
-    sidebar_error: Option<String>,
     /// The workspace whose tabs are on screen.
     workspace: Option<Ulid>,
     /// Tabs per workspace, loaded when the workspace is first shown.
@@ -379,6 +377,12 @@ struct Shell {
     painted_rx: async_channel::Receiver<()>,
     /// Where the daemon is, for connecting again after a failure or a lost connection.
     paths: Paths,
+    /// Bumped by every connect attempt; a pending auto-retry timer from an older one is dropped.
+    connect_gen: u64,
+    /// Failed or lost connects since the last good one (0 = none), indexing the backoff.
+    reconnect_attempts: u32,
+    /// The wait before the next automatic retry, shown in the status line.
+    reconnect_in: Option<Duration>,
     /// Focused while no pane is, so window-level actions (Add workspace) still dispatch.
     focus_handle: FocusHandle,
     /// The tab or pane title being edited inline.
@@ -455,13 +459,15 @@ struct Shell {
     ports: Ports,
     /// Profile id → `icon` (ADR 0025), reloaded on every refresh.
     agent_icons: HashMap<String, String>,
+    /// The agent profiles of the last refresh: what "+ New" and the palette offer a new pane.
+    agent_profiles: Vec<mkrew_protocol::AgentProfileInfo>,
     /// The open "Broadcast to agents…" dialog (modal).
     broadcast: Option<Broadcast>,
     /// The open "Ask AI…" dialog (modal, ADR 0061).
     ask: Option<Ask>,
     /// Its "Web search" switch, kept for the next question (in memory only).
     ask_web: bool,
-    /// Done sessions already seen, so they leave the Inbox.
+    /// Finished sessions already seen, so they leave the Inbox; kept across restarts.
     viewed: Viewed,
     /// The OS around the window (ADR 0064): taskbar badge and flash, tray icon, hide / show.
     desktop: Desktop,

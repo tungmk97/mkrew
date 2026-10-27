@@ -319,7 +319,7 @@ impl Shell {
                 .tooltip(tooltip(theme, tip, ""))
                 .into_any_element(),
             None => icon_button("git-fetch", Icon::Download, theme)
-                .tooltip(tooltip(theme, tip, ""))
+                .tooltip(tooltip(theme, tip, self.keymap.label(Command::GitFetch)))
                 .on_click(cx.listener(move |shell, _, window, cx| {
                     shell.run_git_remote(project_id, Remote::Fetch, window, cx);
                 }))
@@ -373,7 +373,7 @@ impl Shell {
             theme,
         );
         push.flex_none()
-            .tooltip(tooltip(theme, tip, ""))
+            .tooltip(tooltip(theme, tip, self.keymap.label(Command::GitPush)))
             .on_click(cx.listener(move |shell, _, window, cx| {
                 shell.run_git_remote(project_id, Remote::Push, window, cx);
             }))

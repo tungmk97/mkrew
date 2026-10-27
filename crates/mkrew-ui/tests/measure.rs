@@ -229,7 +229,8 @@ fn startup_idle_cpu_and_memory_with_six_sessions() {
     .unwrap();
     let mut sessions = Vec::new();
     for _ in 0..PANES {
-        let mut params = lifecycle::spawn_params(project.id, Some(tab.id), SessionKind::Agent);
+        let mut params =
+            lifecycle::spawn_params(project.id, Some(tab.id), SessionKind::Agent, None);
         params.agent_profile = Some("fake".into());
         let spawned: SessionSpawnResult =
             block_on(connection.call(Request::SessionSpawn(params))).unwrap();

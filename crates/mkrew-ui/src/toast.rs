@@ -23,6 +23,8 @@ pub struct Toast {
     pub text: String,
     /// It is dropped by the first [`Toasts::expire`] at or after this time.
     pub expires: Instant,
+    /// The pointer is over it: it does not expire; leaving restarts the full time.
+    pub hovered: bool,
 }
 
 /// The shown toasts, oldest first.
@@ -54,6 +56,7 @@ impl Toasts {
             kind,
             text,
             expires,
+            hovered: false,
         });
         if self.items.len() > MAX_VISIBLE {
             self.items.remove(0);
@@ -67,10 +70,22 @@ impl Toasts {
         self.items.len() != before
     }
 
-    /// Drops what has expired by `now`. True when something went (the window needs a redraw).
+    /// The pointer entered (`true`) or left (`false`) toast `id`. Leaving restarts its time.
+    pub fn set_hovered(&mut self, id: u64, hovered: bool, now: Instant) {
+        if let Some(toast) = self.items.iter_mut().find(|toast| toast.id == id) {
+            if toast.hovered && !hovered {
+                toast.expires = now.checked_add(TOAST_DURATION).unwrap_or(now);
+            }
+            toast.hovered = hovered;
+        }
+    }
+
+    /// Drops what has expired by `now` (a hovered one stays). True when something went (the
+    /// window needs a redraw).
     pub fn expire(&mut self, now: Instant) -> bool {
         let before = self.items.len();
-        self.items.retain(|toast| toast.expires > now);
+        self.items
+            .retain(|toast| toast.hovered || toast.expires > now);
         self.items.len() != before
     }
 
@@ -175,5 +190,21 @@ mod tests {
         assert_eq!(texts(&toasts), ["b"]);
         toasts.push(Kind::Info, "c", base);
         assert_ne!(toasts.items()[1].id, a, "ids are never reused");
+    }
+
+    #[test]
+    fn a_hovered_toast_stays_and_leaving_restarts_the_full_time() {
+        let base = Instant::now();
+        let mut toasts = Toasts::default();
+        toasts.push(Kind::Error, "a", base);
+        let id = toasts.items()[0].id;
+        toasts.set_hovered(id, true, later(base, 1_000));
+        assert!(!toasts.expire(base + TOAST_DURATION * 10), "paused");
+        let left = base + TOAST_DURATION * 10;
+        toasts.set_hovered(id, false, left);
+        assert!(!toasts.expire(left + TOAST_DURATION - Duration::from_millis(1)));
+        assert!(toasts.expire(left + TOAST_DURATION));
+        // A late event for a gone toast is harmless.
+        toasts.set_hovered(id, false, left);
     }
 }

@@ -151,9 +151,23 @@ pub fn connect(paths: &Paths) -> anyhow::Result<Connection> {
     connected
 }
 
+/// How long to wait before automatic retry number `attempt` (0-based) after a failed or lost
+/// connection: 1 s, 2 s, 5 s, 10 s, then every 30 s.
+pub fn backoff(attempt: u32) -> Duration {
+    const STEPS: [u64; 4] = [1, 2, 5, 10];
+    Duration::from_secs(STEPS.get(attempt as usize).copied().unwrap_or(30))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backoff_grows_then_holds_at_30_seconds() {
+        let secs: Vec<u64> = (0..7).map(|n| backoff(n).as_secs()).collect();
+        assert_eq!(secs, [1, 2, 5, 10, 30, 30, 30]);
+        assert_eq!(backoff(u32::MAX).as_secs(), 30);
+    }
 
     /// Scripted outside world: `connect` fails until `up_after` polls after the spawn.
     #[derive(Default)]

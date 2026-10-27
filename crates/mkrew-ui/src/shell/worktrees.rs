@@ -543,7 +543,11 @@ impl Shell {
             Step::ConfirmDiscard(_) => {
                 buttons.push(
                     button("worktree-keep", "Keep files", theme, false)
-                        .tooltip(tooltip(theme, "Back to the list; nothing is discarded", ""))
+                        .tooltip(tooltip(
+                            theme,
+                            "Back to the list; nothing is discarded",
+                            "Esc",
+                        ))
                         .on_click(cx.listener(|shell, _, _, cx| {
                             if let Some(dialog) = shell.worktree_dialog.as_mut() {
                                 dialog.keep_files();

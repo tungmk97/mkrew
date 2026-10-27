@@ -13,6 +13,7 @@ fn context(view: View) -> Context {
         terminal: false,
         discard: false,
         task_changes: false,
+        worktree_task: false,
         fan_out: false,
         agents: false,
         agent_pane: false,
@@ -44,7 +45,7 @@ fn commands(context: &Context) -> Vec<Command> {
         .into_iter()
         .filter_map(|entry| match entry.action {
             Action::Run(command) => Some(command),
-            Action::Extra(_) | Action::GoTo(_) | Action::Theme(_) => None,
+            Action::Extra(_) | Action::GoTo(_) | Action::Theme(_) | Action::NewAgentPane(_) => None,
         })
         .collect()
 }
@@ -352,6 +353,25 @@ fn check_updates_is_listed_without_a_workspace() {
     assert_eq!(entry.title, "Global: Check for updates");
 }
 
+#[test]
+fn workspace_extras_need_an_active_workspace() {
+    let workspace = [
+        Extra::WorkspacePin,
+        Extra::WorkspaceExplorer,
+        Extra::WorkspaceDefaultAgent,
+        Extra::WorkspaceRemove,
+        Extra::WorkspaceMenu,
+    ];
+    let none = Context {
+        workspace: false,
+        ..context(View::Terminals)
+    };
+    for extra in workspace {
+        assert!(extra.available(&context(View::Terminals)), "{extra:?}");
+        assert!(!extra.available(&none), "{extra:?}");
+    }
+}
+
 fn extras(context: &Context) -> Vec<Extra> {
     entries(&Keymap::defaults(), context, &[], &[], &[])
         .into_iter()
@@ -359,7 +379,14 @@ fn extras(context: &Context) -> Vec<Extra> {
             Action::Extra(extra)
                 if !matches!(
                     extra,
-                    Extra::RunSetup | Extra::PhoneAccess | Extra::CheckUpdates
+                    Extra::RunSetup
+                        | Extra::PhoneAccess
+                        | Extra::CheckUpdates
+                        | Extra::WorkspacePin
+                        | Extra::WorkspaceExplorer
+                        | Extra::WorkspaceDefaultAgent
+                        | Extra::WorkspaceRemove
+                        | Extra::WorkspaceMenu
                 ) =>
             {
                 Some(extra)
@@ -372,26 +399,31 @@ fn extras(context: &Context) -> Vec<Extra> {
 #[test]
 fn palette_only_actions_follow_the_view_and_state() {
     assert_eq!(extras(&context(View::Terminals)), []);
-    assert_eq!(
-        extras(&context(View::Git)),
-        [Extra::GitFetch, Extra::GitPush]
-    );
+    assert_eq!(extras(&context(View::Git)), []);
     let git = Context {
         discard: true,
         task_changes: true,
+        worktree_task: true,
         fan_out: true,
         ..context(View::Git)
     };
-    assert_eq!(
-        extras(&git),
-        [Extra::GitFetch, Extra::GitPush, Extra::GitDiscard]
-    );
+    assert_eq!(extras(&git), [], "Git actions are commands now");
     let board = Context {
         discard: true,
         task_changes: true,
         ..context(View::Board)
     };
     assert_eq!(extras(&board), [Extra::ViewTaskChanges]);
+    let worktree = Context {
+        worktree_task: true,
+        ..context(View::Board)
+    };
+    assert_eq!(extras(&worktree), [Extra::MergeBack, Extra::RemoveWorktree]);
+    let elsewhere = Context {
+        worktree_task: true,
+        ..context(View::Terminals)
+    };
+    assert_eq!(extras(&elsewhere), []);
     let fan_out = Context {
         fan_out: true,
         ..context(View::Board)
@@ -460,10 +492,91 @@ fn palette_only_actions_follow_the_view_and_state() {
             Action::Extra(_) => 1,
             Action::GoTo(_) => 2,
             Action::Theme(_) => 3,
+            Action::NewAgentPane(_) => 4,
         })
         .collect();
     assert!(kinds.is_sorted(), "{kinds:?}");
     assert!(kinds.contains(&1) && kinds.contains(&2));
+}
+
+#[test]
+fn one_entry_per_agent_profile_starts_a_pane_with_it() {
+    use crate::lifecycle::pane_agents;
+    let profile = |id: &str, name: &str, kind, installed| mkrew_protocol::AgentProfileInfo {
+        id: id.into(),
+        name: name.into(),
+        kind,
+        command: id.into(),
+        icon: None,
+        installed,
+        ask: false,
+        ask_web: false,
+    };
+    let profiles = [
+        profile("claude", "Claude Code", SessionKind::Agent, true),
+        profile("pwsh", "PowerShell", SessionKind::Shell, true),
+        profile("gone", "Gone", SessionKind::Agent, false),
+        profile("codex", "Codex", SessionKind::Agent, true),
+    ];
+    let agents = pane_agents(&profiles, Some("codex"));
+    let keymap = Keymap::defaults();
+    let listed = agent_entries(&keymap, &context(View::Board), &agents);
+    let titles: Vec<&str> = listed.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Agent: New Codex pane", "Agent: New Claude Code pane"],
+        "installed agents only, the default first"
+    );
+    // Each entry carries the profile's position in the shell's list; the default shows its key.
+    assert_eq!(listed[0].action, Action::NewAgentPane(3));
+    assert_eq!(listed[1].action, Action::NewAgentPane(0));
+    assert_eq!(listed[0].shortcut, keymap.label(Command::SplitAgent));
+    assert_eq!(listed[1].shortcut, "");
+    // The query finds one by its name.
+    let mut palette = Palette::new(listed);
+    palette.insert("claude");
+    assert_eq!(palette.picked(), Some(Action::NewAgentPane(0)));
+
+    // Where "New agent pane" is not offered (no workspace, no tab) neither are they.
+    let none = Context {
+        workspace: false,
+        ..context(View::Board)
+    };
+    assert!(agent_entries(&keymap, &none, &agents).is_empty());
+    let no_tabs = Context {
+        tabs: 0,
+        ..context(View::Board)
+    };
+    assert!(agent_entries(&keymap, &no_tabs, &agents).is_empty());
+}
+
+#[test]
+fn git_and_board_key_commands_follow_the_view() {
+    let git = commands(&context(View::Git));
+    for command in [
+        Command::GitStageAll,
+        Command::GitUnstageAll,
+        Command::GitFetch,
+        Command::GitPush,
+    ] {
+        assert!(git.contains(&command), "{command:?}");
+    }
+    assert!(
+        !git.contains(&Command::GitDiscard),
+        "nothing discardable selected"
+    );
+    let discard = Context {
+        discard: true,
+        ..context(View::Git)
+    };
+    assert!(commands(&discard).contains(&Command::GitDiscard));
+    let board = commands(&context(View::Board));
+    for key in CardKey::ALL {
+        assert!(board.contains(&Command::Card(key)), "{key:?}");
+        assert!(!git.contains(&Command::Card(key)), "{key:?}");
+    }
+    assert!(!board.contains(&Command::GitFetch));
+    assert_eq!(title(Command::GitFetch), "Git: Fetch");
 }
 
 #[test]

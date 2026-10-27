@@ -2,8 +2,8 @@
 //! session, and when a workspace runs too many sessions. Pure and tested headlessly.
 
 use mkrew_protocol::{
-    Request, Session, SessionKind, SessionRenameParams, SessionSetColorParams, SessionSpawnParams,
-    SessionState, Task, TaskFanoutParams, TaskRunParams, TaskUpdateParams,
+    AgentProfileInfo, Request, Session, SessionKind, SessionRenameParams, SessionSetColorParams,
+    SessionSpawnParams, SessionState, Task, TaskFanoutParams, TaskRunParams, TaskUpdateParams,
 };
 use ulid::Ulid;
 
@@ -16,23 +16,56 @@ pub const RUNNING_WARN_ABOVE: usize = 12;
 const SPAWN_COLS: u16 = 80;
 const SPAWN_ROWS: u16 = 24;
 
-/// `session.spawn` for a new pane: an agent from the workspace's default profile or its default
-/// shell, started in the project folder (the daemon's cwd for every session of a project).
+/// `session.spawn` for a new pane: an agent from `profile` (`None` = the workspace's default
+/// profile of `kind`) started in the project folder (the daemon's cwd for every session of a
+/// project).
 pub fn spawn_params(
     project_id: Ulid,
     tab_id: Option<Ulid>,
     kind: SessionKind,
+    profile: Option<&str>,
 ) -> SessionSpawnParams {
     SessionSpawnParams {
         project_id,
         // `None` = the project's `default_agent` for an agent, its `default_shell` for a shell.
-        agent_profile: None,
+        agent_profile: profile.map(str::to_owned),
         kind,
         tab_id,
         title: None,
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
     }
+}
+
+/// One installed agent profile a new pane can start with (the "+ New" menu and the palette).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaneAgent {
+    /// Position in the profile list it was made from (what the palette's pick refers to).
+    pub index: usize,
+    pub id: String,
+    pub name: String,
+    pub icon: Option<String>,
+    /// The workspace's default agent: listed first, what Alt+Shift+A starts.
+    pub default: bool,
+}
+
+/// The installed agent profiles, the workspace's `default` first (profile order otherwise).
+pub fn pane_agents(profiles: &[AgentProfileInfo], default: Option<&str>) -> Vec<PaneAgent> {
+    let mut agents: Vec<PaneAgent> = profiles
+        .iter()
+        .enumerate()
+        .filter(|(_, profile)| profile.kind == SessionKind::Agent && profile.installed)
+        .map(|(index, profile)| PaneAgent {
+            index,
+            id: profile.id.clone(),
+            name: profile.name.clone(),
+            icon: profile.icon.clone(),
+            default: default == Some(profile.id.as_str()),
+        })
+        .collect();
+    // Stable: the others keep their order.
+    agents.sort_by_key(|agent| !agent.default);
+    agents
 }
 
 /// The `session.rename` for an edited pane title, trimmed; blank clears the title. `None`
@@ -223,12 +256,12 @@ mod tests {
     #[test]
     fn new_panes_use_the_default_profile_of_their_kind() {
         let (project, tab) = (Ulid::new(), Ulid::new());
-        let agent = spawn_params(project, Some(tab), SessionKind::Agent);
+        let agent = spawn_params(project, Some(tab), SessionKind::Agent, None);
         assert_eq!(agent.project_id, project);
         assert_eq!(agent.tab_id, Some(tab));
         assert_eq!(agent.agent_profile, None);
         assert_eq!(agent.kind, SessionKind::Agent);
-        let shell = spawn_params(project, None, SessionKind::Shell);
+        let shell = spawn_params(project, None, SessionKind::Shell, None);
         assert_eq!(shell.kind, SessionKind::Shell);
         assert_eq!(shell.agent_profile, None);
         assert!(shell.cols > 0 && shell.rows > 0);
@@ -237,6 +270,62 @@ mod tests {
         let run = run_params(task);
         assert_eq!(run.task_id, task);
         assert_eq!((run.cols, run.rows), (shell.cols, shell.rows));
+    }
+
+    #[test]
+    fn spawn_params_carry_the_picked_profile() {
+        let (project, tab) = (Ulid::new(), Ulid::new());
+        let picked = spawn_params(project, Some(tab), SessionKind::Agent, Some("codex"));
+        assert_eq!(picked.agent_profile.as_deref(), Some("codex"));
+        assert_eq!((picked.project_id, picked.tab_id), (project, Some(tab)));
+    }
+
+    fn profile(id: &str, kind: SessionKind, installed: bool) -> AgentProfileInfo {
+        AgentProfileInfo {
+            id: id.into(),
+            name: id.to_uppercase(),
+            kind,
+            command: id.into(),
+            icon: None,
+            installed,
+            ask: false,
+            ask_web: false,
+        }
+    }
+
+    #[test]
+    fn pane_agents_list_installed_agents_with_the_default_first() {
+        let profiles = [
+            profile("claude", SessionKind::Agent, true),
+            profile("pwsh", SessionKind::Shell, true),
+            profile("gone", SessionKind::Agent, false),
+            profile("codex", SessionKind::Agent, true),
+            profile("omp", SessionKind::Agent, true),
+        ];
+        let listed = |default| -> Vec<(usize, String, bool)> {
+            pane_agents(&profiles, default)
+                .into_iter()
+                .map(|a| (a.index, a.id, a.default))
+                .collect()
+        };
+        assert_eq!(
+            listed(Some("codex")),
+            [
+                (3, "codex".into(), true),
+                (0, "claude".into(), false),
+                (4, "omp".into(), false)
+            ]
+        );
+        // No default (or one that is not an installed agent): profile order, none marked.
+        assert_eq!(
+            listed(None),
+            [
+                (0, "claude".into(), false),
+                (3, "codex".into(), false),
+                (4, "omp".into(), false)
+            ]
+        );
+        assert!(listed(Some("gone")).iter().all(|(_, _, default)| !default));
     }
 
     #[test]
