@@ -292,6 +292,84 @@ impl Comments {
         self.head = Head::End;
     }
 
+    /// The threads of the loaded list that have lines (so they can be selected), in anchor
+    /// order: root id, lines, status.
+    fn anchored(&self) -> Vec<(CommentId, Selection, CommentStatus)> {
+        let List::Loaded(list) = &self.list else {
+            return Vec::new();
+        };
+        threads(list)
+            .into_iter()
+            .filter_map(|thread| {
+                let (start, end) = thread.root.start_line.zip(thread.root.end_line)?;
+                Some((thread.root.id, Selection { start, end }, thread.root.status))
+            })
+            .collect()
+    }
+
+    /// F8 (`forward`) / Shift+F8: selects the thread after / before the selected one (wrapping;
+    /// the first / last when none is selected), exactly like clicking its anchor. `None`
+    /// (nothing changes) without anchored threads.
+    pub fn step_thread(&mut self, forward: bool) -> Option<CommentId> {
+        let threads = self.anchored();
+        let len = threads.len();
+        if len == 0 {
+            return None;
+        }
+        let at = self
+            .selection
+            .and_then(|picked| threads.iter().position(|(_, lines, _)| *lines == picked));
+        let next = match (at, forward) {
+            (Some(at), true) => (at + 1) % len,
+            (Some(at), false) => (at + len - 1) % len,
+            (None, true) => 0,
+            (None, false) => len - 1,
+        };
+        let (root, lines, _) = threads[next];
+        // `pick` also resets `head` to the end, like a click on the anchor.
+        self.pick(lines.start, lines.end, false);
+        Some(root)
+    }
+
+    /// The selected thread: the one anchored on exactly the selected lines.
+    fn selected_thread(&self) -> Option<(CommentId, CommentStatus)> {
+        let picked = self.selection?;
+        self.anchored()
+            .into_iter()
+            .find(|(_, lines, _)| *lines == picked)
+            .map(|(root, _, status)| (root, status))
+    }
+
+    /// Ctrl+Alt+R: the thread to reply to (the Reply button is hidden on a resolved one).
+    pub fn reply_target(&self) -> Option<CommentId> {
+        self.selected_thread()
+            .filter(|(_, status)| *status != CommentStatus::Resolved)
+            .map(|(root, _)| root)
+    }
+
+    /// Ctrl+Alt+Enter: the selected thread and whether the press resolves it (`false` = it
+    /// reopens a resolved one), like its Resolve / Reopen button.
+    pub fn status_target(&self) -> Option<(CommentId, bool)> {
+        self.selected_thread()
+            .map(|(root, status)| (root, !can_reopen(status)))
+    }
+
+    /// The place of `root`'s thread among the children of the margin: after the error line
+    /// and the new-comment draft when those show. For scrolling it into view.
+    pub fn margin_index(&self, root: CommentId) -> Option<usize> {
+        let List::Loaded(list) = &self.list else {
+            return None;
+        };
+        let at = threads(list)
+            .iter()
+            .position(|thread| thread.root.id == root)?;
+        let draft = self
+            .draft
+            .as_ref()
+            .is_some_and(|draft| matches!(draft.target, Target::New(_)));
+        Some(at + usize::from(draft) + usize::from(self.error.is_some()))
+    }
+
     /// Shift+↓ / Shift+↑ over `units` (see [`pick::step`]); `start` is the unit picked when
     /// nothing is. `false` = there are no units.
     pub fn step_pick(&mut self, units: &[Unit], down: bool, start: usize) -> bool {
@@ -620,6 +698,101 @@ mod tests {
         comments.pick(3, 3, false);
         assert_eq!(comments.head_line(), Some(3));
         assert!(!comments.step_pick(&[], true, 0), "no units");
+    }
+
+    fn loaded(list: Vec<DocComment>) -> Comments {
+        let mut comments = Comments::new(Default::default());
+        comments.begin_list("PLAN.md");
+        comments.listed("PLAN.md", Ok(list));
+        comments
+    }
+
+    fn id(n: u128) -> CommentId {
+        CommentId(Ulid(n))
+    }
+
+    #[test]
+    fn step_thread_walks_the_anchored_threads_and_wraps() {
+        let mut comments = loaded(vec![
+            comment(1, None, Some((9, 9)), 1),
+            comment(2, None, Some((3, 4)), 2),
+            comment(3, None, None, 3),
+        ]);
+        // Nothing selected: F8 goes to the first, Shift+F8 to the last.
+        assert_eq!(comments.step_thread(true), Some(id(2)));
+        assert_eq!(comments.selection, Some(Selection { start: 3, end: 4 }));
+        assert_eq!(comments.step_thread(true), Some(id(1)));
+        assert_eq!(comments.step_thread(true), Some(id(2)), "wraps");
+        assert_eq!(comments.step_thread(false), Some(id(1)), "wraps back");
+        let mut fresh = loaded(vec![
+            comment(1, None, Some((9, 9)), 1),
+            comment(2, None, Some((3, 4)), 2),
+        ]);
+        assert_eq!(fresh.step_thread(false), Some(id(1)));
+    }
+
+    #[test]
+    fn step_thread_resets_the_head_like_a_click() {
+        let mut comments = loaded(vec![comment(1, None, Some((2, 4)), 1)]);
+        comments.head = Head::Start;
+        assert_eq!(comments.step_thread(true), Some(id(1)));
+        assert_eq!(comments.head, Head::End);
+    }
+
+    #[test]
+    fn step_thread_does_nothing_without_anchored_threads() {
+        assert_eq!(Comments::new(Default::default()).step_thread(true), None);
+        let mut no_lines = loaded(vec![comment(1, None, None, 1)]);
+        assert_eq!(no_lines.step_thread(true), None);
+        assert_eq!(no_lines.selection, None);
+        let mut other = loaded(vec![comment(1, None, Some((2, 2)), 1)]);
+        other.pick(7, 8, false);
+        // A selection that is no thread: F8 starts at the first thread.
+        assert_eq!(other.step_thread(true), Some(id(1)));
+    }
+
+    #[test]
+    fn reply_and_resolve_targets_follow_the_status() {
+        let mut open = loaded(vec![comment(1, None, Some((2, 2)), 1)]);
+        assert_eq!(open.reply_target(), None, "nothing selected");
+        open.pick(2, 2, false);
+        assert_eq!(open.reply_target(), Some(id(1)));
+        assert_eq!(open.status_target(), Some((id(1), true)), "Open resolves");
+
+        let mut resolved = comment(1, None, Some((2, 2)), 1);
+        resolved.status = CommentStatus::Resolved;
+        let mut done = loaded(vec![resolved]);
+        done.pick(2, 2, false);
+        assert_eq!(done.reply_target(), None, "no reply on a resolved thread");
+        assert_eq!(
+            done.status_target(),
+            Some((id(1), false)),
+            "Resolved reopens"
+        );
+    }
+
+    #[test]
+    fn the_margin_index_counts_the_children_before_the_thread() {
+        let mut comments = loaded(vec![
+            comment(1, None, Some((9, 9)), 1),
+            comment(2, None, Some((3, 4)), 2),
+        ]);
+        assert_eq!(comments.margin_index(id(2)), Some(0));
+        assert_eq!(comments.margin_index(id(1)), Some(1));
+        comments.error = Some("Cannot resolve".into());
+        assert_eq!(
+            comments.margin_index(id(2)),
+            Some(1),
+            "the error line comes first"
+        );
+        comments.pick(3, 4, false);
+        comments.start_quoted(Some("q".into()));
+        assert_eq!(
+            comments.margin_index(id(2)),
+            Some(2),
+            "so does the new-comment draft"
+        );
+        assert_eq!(comments.margin_index(id(99)), None);
     }
 
     #[test]

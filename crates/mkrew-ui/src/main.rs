@@ -432,6 +432,8 @@ struct Shell {
     settings_dialog: Option<SettingsDialog>,
     /// Scrolls its rows.
     settings_scroll: ScrollHandle,
+    /// Keeps the selected comment thread in view in the Docs / Git margin.
+    comments_scroll: ScrollHandle,
     /// The open workspace menu (Open in Zed, default agent).
     workspace_menu: Option<WorkspaceMenu>,
     /// The open right-click menu of the Files tree.

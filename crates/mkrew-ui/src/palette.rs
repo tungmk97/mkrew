@@ -247,6 +247,10 @@ pub fn title(command: Command) -> String {
         Command::SendComments => "Comments: Send comments to agent".into(),
         Command::PickDown => "Comments: Pick the next line or block (grow the pick down)".into(),
         Command::PickUp => "Comments: Pick the previous line or block (grow the pick up)".into(),
+        Command::NextComment => "Comments: Next comment thread".into(),
+        Command::PreviousComment => "Comments: Previous comment thread".into(),
+        Command::ReplyComment => "Comments: Reply to the selected thread".into(),
+        Command::ResolveComment => "Comments: Resolve or reopen the selected thread".into(),
         Command::ToggleIgnored => "Files: Toggle ignored files".into(),
         Command::SaveFile => "Files: Save file".into(),
         Command::FindInFile => "Files: Find in file".into(),
@@ -365,9 +369,14 @@ pub fn available(command: Command, context: &Context) -> bool {
         Command::RunStart => context.workspace && context.run_stopped,
         Command::RunRestart | Command::RunStop => context.workspace && context.run_live,
         Command::ToggleDocSource => in_view(View::Docs),
-        Command::AddComment | Command::SendComments | Command::PickDown | Command::PickUp => {
-            in_view(View::Docs) || in_view(View::Git)
-        }
+        Command::AddComment
+        | Command::SendComments
+        | Command::PickDown
+        | Command::PickUp
+        | Command::NextComment
+        | Command::PreviousComment
+        | Command::ReplyComment
+        | Command::ResolveComment => in_view(View::Docs) || in_view(View::Git),
         Command::ToggleIgnored
         | Command::SaveFile
         | Command::FindInFile

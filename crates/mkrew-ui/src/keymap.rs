@@ -182,6 +182,13 @@ pub enum Command {
     FocusSidebar,
     /// Board only: approve the selected Review card (its Approve button).
     ApproveCard,
+    /// Docs / Git: select the next / previous comment thread and scroll it into view.
+    NextComment,
+    PreviousComment,
+    /// Docs / Git: open the reply field of the selected thread.
+    ReplyComment,
+    /// Docs / Git: resolve (or reopen) the selected thread.
+    ResolveComment,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -314,6 +321,10 @@ impl Command {
             Command::ContextMenu,
             Command::FocusSidebar,
             Command::ApproveCard,
+            Command::NextComment,
+            Command::PreviousComment,
+            Command::ReplyComment,
+            Command::ResolveComment,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -412,6 +423,10 @@ impl Command {
             Command::ContextMenu => "context_menu".into(),
             Command::FocusSidebar => "focus_sidebar".into(),
             Command::ApproveCard => "approve_card".into(),
+            Command::NextComment => "next_comment".into(),
+            Command::PreviousComment => "previous_comment".into(),
+            Command::ReplyComment => "reply_comment".into(),
+            Command::ResolveComment => "resolve_comment".into(),
         }
     }
 
@@ -532,6 +547,10 @@ impl Command {
             Command::ContextMenu => "shift-f10".into(),
             Command::FocusSidebar => "alt-0".into(),
             Command::ApproveCard => "a".into(),
+            Command::NextComment => "f8".into(),
+            Command::PreviousComment => "shift-f8".into(),
+            Command::ReplyComment => "ctrl-alt-r".into(),
+            Command::ResolveComment => "ctrl-alt-enter".into(),
         }
     }
 
@@ -547,9 +566,14 @@ impl Command {
             Command::Find => Some(FIND_CONTEXT),
             Command::RunTask | Command::ApproveCard | Command::Card(_) => Some(BOARD_CONTEXT),
             Command::ToggleDocSource => Some(DOCS_CONTEXT),
-            Command::AddComment | Command::SendComments | Command::PickDown | Command::PickUp => {
-                Some(COMMENTS_CONTEXT)
-            }
+            Command::AddComment
+            | Command::SendComments
+            | Command::PickDown
+            | Command::PickUp
+            | Command::NextComment
+            | Command::PreviousComment
+            | Command::ReplyComment
+            | Command::ResolveComment => Some(COMMENTS_CONTEXT),
             Command::ToggleIgnored
             | Command::SaveFile
             | Command::FindInFile
@@ -1129,7 +1153,14 @@ mod tests {
         // Ctrl+Shift+E only toggles while Docs are shown; terminals still get it.
         assert_eq!(Command::ToggleDocSource.context(), Some(DOCS_CONTEXT));
         // Comments: in Docs, and on diff lines while the Git list has focus.
-        for command in [Command::AddComment, Command::SendComments] {
+        for command in [
+            Command::AddComment,
+            Command::SendComments,
+            Command::NextComment,
+            Command::PreviousComment,
+            Command::ReplyComment,
+            Command::ResolveComment,
+        ] {
             assert_eq!(command.context(), Some(COMMENTS_CONTEXT), "{command:?}");
             let predicate = gpui::KeyBindingContextPredicate::parse(COMMENTS_CONTEXT).unwrap();
             for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Files", false)]

@@ -218,6 +218,7 @@ impl Shell {
             phone_open: false,
             settings_dialog: None,
             settings_scroll: ScrollHandle::new(),
+            comments_scroll: ScrollHandle::new(),
             workspace_menu: None,
             file_menu: None,
             file_tab_menu: None,

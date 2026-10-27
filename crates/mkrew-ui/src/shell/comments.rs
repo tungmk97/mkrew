@@ -156,6 +156,59 @@ impl Shell {
         }
     }
 
+    /// F8 / Shift+F8: the next / previous thread is selected (its lines picked, like a click on
+    /// its anchor), scrolled into view in the doc or diff and in the margin.
+    pub(crate) fn step_comment(&mut self, forward: bool, cx: &mut Context<'_, Self>) {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+            return;
+        };
+        let Some(comments) = self.comments_mut(project_id, context) else {
+            return;
+        };
+        let Some(root) = comments.step_thread(forward) else {
+            return;
+        };
+        if let Some(at) = comments.margin_index(root) {
+            self.comments_scroll.scroll_to_item(at);
+        }
+        self.reveal_pick(project_id, context, cx);
+        cx.notify();
+    }
+
+    /// Ctrl+Alt+R: the reply field of the selected thread (the Reply button).
+    pub(crate) fn reply_selected_comment(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+            return;
+        };
+        let root = self
+            .comments_mut(project_id, context)
+            .and_then(|comments| comments.reply_target());
+        if let Some(root) = root {
+            self.start_reply(project_id, context, root, window, cx);
+        }
+    }
+
+    /// Ctrl+Alt+Enter: Resolve or Reopen on the selected thread (its button).
+    pub(crate) fn resolve_selected_comment(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(project_id), Some(context)) = (self.workspace, self.comment_context()) else {
+            return;
+        };
+        let target = self
+            .comments_mut(project_id, context)
+            .and_then(|comments| comments.status_target());
+        if let Some((root, resolve)) = target {
+            self.set_comment_status(project_id, context, root, resolve, window, cx);
+        }
+    }
+
     pub(crate) fn close_comment_draft(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let shown = self.workspace.zip(self.comment_context());
         if let Some(comments) = shown.and_then(|(id, context)| self.comments_mut(id, context)) {
@@ -401,6 +454,7 @@ impl Shell {
             .w(px(theme::DOC_MARGIN_WIDTH))
             .h_full()
             .overflow_y_scroll()
+            .track_scroll(&self.comments_scroll)
             .flex()
             .flex_col()
             .gap(px(space::S))

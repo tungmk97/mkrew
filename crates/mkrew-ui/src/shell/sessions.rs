@@ -540,6 +540,11 @@ impl Shell {
                 }
             }
             Command::RunTask if self.jira_side_shown() => {}
+            // Only bound while Docs are shown or the Git list has focus.
+            Command::NextComment => self.step_comment(true, cx),
+            Command::PreviousComment => self.step_comment(false, cx),
+            Command::ReplyComment => self.reply_selected_comment(window, cx),
+            Command::ResolveComment => self.resolve_selected_comment(window, cx),
             Command::ApproveCard if self.jira_side_shown() => {}
             Command::Card(key) if self.jira_side_shown() => self.jira_key(key, window, cx),
             Command::Card(key) => self.card_key(key, window, cx),
