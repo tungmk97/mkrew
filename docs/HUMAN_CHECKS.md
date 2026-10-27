@@ -33,7 +33,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Ctrl+Shift+2 on the Board with Jira set up switches Tasks / Jira.
   On the Jira list ↑ / ↓ move a ring, ← / → fold a List row or move Kanban columns, Enter opens the issue.
   Typing in the Jira filter and keys fields is not stolen.
-  Expected limit: after Show Board switches Jira to Tasks, a Jira field that still has focus may keep `a` and the arrows until it is clicked away.
+  After Show Board switches Jira to Tasks with a Jira field focused, `a` and the arrows act on the Board cards again without a click.
+  Type a reply in the peek while the Board is shown: letters like a and e type into the reply and no card changes.
+  Close a pane while its menu is open: the menu goes away and the keyboard returns to the pane.
 - [ ] **Comments:** in Docs and in the Git diff F8 / Shift+F8 select the next / previous thread and scroll the doc and the margin to it.
   Ctrl+Alt+R opens its reply field (nothing on a resolved thread), Ctrl+Alt+Enter resolves / reopens.
   In a comment draft none of them act.

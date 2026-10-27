@@ -745,7 +745,11 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         // A menu closed behind the keyboard's back (workspace switched, dialog opened, daemon
-        // event) must not leave it on the hidden menu: give it back to the pane.
+        // event) must not leave it on the hidden menu: give it back to the pane. A menu whose
+        // owner went away (no rows) draws nothing: close it the same way.
+        if self.menu_open() && self.open_menu_rows().is_none() {
+            self.dismiss_menus(window, cx);
+        }
         if !self.menu_open() && self.menu_focus.contains_focused(window, cx) {
             self.focus_pane(window, cx);
         }

@@ -55,6 +55,12 @@ impl Shell {
     ) {
         let view = self.jira.entry(project_id).or_default();
         view.source = source;
+        if source == Source::Tasks
+            && (self.jira_filter_focus.is_focused(window)
+                || self.jira_keys_focus.is_focused(window))
+        {
+            window.focus(&self.focus_handle, cx);
+        }
         if source == Source::Jira && view.load == Load::NotLoaded {
             self.load_jira(project_id, window, cx);
         }

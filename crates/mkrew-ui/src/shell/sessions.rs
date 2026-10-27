@@ -263,6 +263,12 @@ impl Shell {
             }
             self.focus_pane(window, cx);
         }
+        // View keys (Board, Docs, ...) while the peek's reply box has the keyboard: the box types
+        // them, and nothing closes the peek or acts on the view behind it.
+        if self.peek_focus.is_focused(window) && command.context().is_some() {
+            cx.propagate();
+            return;
+        }
         // A shortcut that acts ends the peek too (it restores the keyboard first, so a shortcut
         // typed in the peek still runs); its own shortcut toggles it below.
         if *command != Command::Peek {
