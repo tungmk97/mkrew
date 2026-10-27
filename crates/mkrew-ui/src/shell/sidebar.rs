@@ -375,8 +375,13 @@ impl Shell {
         let add_workspace_keys = self.keymap.label(Command::AddWorkspace);
         let view = self.sidebar.view(&self.viewed);
         let shown_in = view.shown_in(shown);
-        // ↑/↓ in the filter box move it; Enter opens it (`filter_key_down`).
-        let highlighted = self.sidebar.highlighted(&view.rows);
+        let filter_focused = self.filter_focus.is_focused(window);
+        // ↑/↓ in the filter box move it; Enter opens it (`filter_key_down`). Browse mode
+        // (Alt+0) shows it only while the box has the keyboard.
+        let highlighted = self
+            .sidebar
+            .highlighted(&view.rows)
+            .filter(|_| filter_focused || self.sidebar.filtering());
         let any_open = self.sidebar.any_expanded();
         let removable = self.sidebar.idle_agents_and_terminals().len();
         // Without workspaces: the title and `+` (the empty state below offers it too).
@@ -403,7 +408,6 @@ impl Shell {
                         })),
                 )
         });
-        let filter_focused = self.filter_focus.is_focused(window);
         let controls = (connected && !self.sidebar.is_empty()).then(|| {
             let filter = self.sidebar.filter();
             let bordered = theme.border;

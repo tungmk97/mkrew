@@ -954,3 +954,66 @@ fn the_layout_round_trips_through_its_saved_mode() {
         "hidden comes back as the rail"
     );
 }
+
+#[test]
+fn chips_step_and_wrap() {
+    assert_eq!(Chip::All.step(1), Chip::Working);
+    assert_eq!(Chip::NeedsYou.step(1), Chip::All);
+    assert_eq!(Chip::All.step(-1), Chip::NeedsYou);
+    assert_eq!(Chip::Working.step(-1), Chip::All);
+}
+
+#[test]
+fn step_index_stops_at_the_ends() {
+    assert_eq!(step_index(3, 1, 1), Some(2));
+    assert_eq!(step_index(3, 1, -1), Some(0));
+    assert_eq!(step_index(3, 2, 1), None);
+    assert_eq!(step_index(3, 0, -1), None);
+    assert_eq!(step_index(0, 0, 1), None);
+}
+
+#[test]
+fn browsing_highlights_the_active_row_and_walks_every_row() {
+    let (api, web) = (project("api"), project("web"));
+    let a = session(&api, 1, SessionState::Idle);
+    let w = session(&web, 1, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone(), web.clone()], vec![a.clone(), w.clone()]);
+    let viewed = Viewed::default();
+    let rows = sidebar.view(&viewed).rows;
+    assert_eq!(
+        sidebar.highlighted(&rows),
+        None,
+        "an empty box not browsing"
+    );
+
+    sidebar.browse_from(&rows, Some(w.id), None);
+    assert_eq!(sidebar.highlighted(&rows), Some(Target::Session(w.id)));
+    // Every row is a target while browsing: workspace, its session, next workspace, its session.
+    sidebar.move_highlight(&rows, -1);
+    assert_eq!(sidebar.highlighted(&rows), Some(Target::Workspace(web.id)));
+    sidebar.move_highlight(&rows, -1);
+    assert_eq!(sidebar.highlighted(&rows), Some(Target::Session(a.id)));
+
+    // The active workspace when no session is focused.
+    sidebar.browse_from(&rows, None, Some(api.id));
+    assert_eq!(sidebar.highlighted(&rows), Some(Target::Workspace(api.id)));
+
+    // Typing leaves browse mode: the filter rules apply again.
+    sidebar.filter_mut().insert("zzz");
+    assert_eq!(sidebar.highlighted(&sidebar.view(&viewed).rows), None);
+}
+
+#[test]
+fn collapsing_and_expanding_a_workspace_by_id() {
+    let api = project("api");
+    let a = session(&api, 1, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone()], vec![a.clone()]);
+    let viewed = Viewed::default();
+    assert_eq!(session_ids(&sidebar.view(&viewed).rows), [a.id]);
+    sidebar.set_expanded(api.id, false);
+    assert_eq!(session_ids(&sidebar.view(&viewed).rows), Vec::<Ulid>::new());
+    sidebar.set_expanded(api.id, true);
+    assert_eq!(session_ids(&sidebar.view(&viewed).rows), [a.id]);
+}

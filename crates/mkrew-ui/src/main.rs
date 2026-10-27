@@ -816,6 +816,7 @@ impl Render for Shell {
                     && shell.focus_handle.is_focused(window)
                 {
                     cx.stop_propagation();
+                    shell.sidebar.end_browse();
                     window.focus(&shell.filter_focus, cx);
                     cx.notify();
                 }

@@ -518,12 +518,49 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) {
         cx.stop_propagation();
-        if let step @ ("up" | "down") = event.keystroke.key.as_str() {
-            let rows = self.sidebar.view(&self.viewed).rows;
-            self.sidebar
-                .move_highlight(&rows, if step == "up" { -1 } else { 1 });
-            cx.notify();
-            return;
+        match event.keystroke.key.as_str() {
+            step @ ("up" | "down") => {
+                let rows = self.sidebar.view(&self.viewed).rows;
+                self.sidebar
+                    .move_highlight(&rows, if step == "up" { -1 } else { 1 });
+                cx.notify();
+                return;
+            }
+            // Tab / Shift+Tab walk the All / Working / Needs you chips (never typed). Ctrl+Tab
+            // stays the tab switch.
+            "tab" if !event.keystroke.modifiers.control && !event.keystroke.modifiers.alt => {
+                let by = if event.keystroke.modifiers.shift {
+                    -1
+                } else {
+                    1
+                };
+                self.sidebar.set_chip(self.sidebar.chip().step(by));
+                cx.notify();
+                return;
+            }
+            // With an empty box ← / → have no caret to move: they fold / unfold the
+            // highlighted row's workspace. With text they stay the caret's.
+            side @ ("left" | "right")
+                if self.sidebar.filter().is_empty()
+                    && !self.sidebar.filtering()
+                    && !event.keystroke.modifiers.modified() =>
+            {
+                let rows = self.sidebar.view(&self.viewed).rows;
+                let project_id = match self.sidebar.highlighted(&rows) {
+                    Some(sidebar::Target::Workspace(id)) => Some(id),
+                    Some(sidebar::Target::Session(id)) => self.project_of(id),
+                    None => None,
+                };
+                if let Some(project_id) = project_id {
+                    self.sidebar.set_expanded(project_id, side == "right");
+                    // The highlight stays on the workspace (its sessions may have gone).
+                    let rows = self.sidebar.view(&self.viewed).rows;
+                    self.sidebar.browse_from(&rows, None, Some(project_id));
+                }
+                cx.notify();
+                return;
+            }
+            _ => {}
         }
         let Some(key) = find_key(&event.keystroke) else {
             return;

@@ -176,6 +176,10 @@ pub enum Command {
     /// Open the menu a right-click would open on what has the keyboard (SPEC §13); pressed
     /// while a menu is open it closes it.
     ContextMenu,
+    /// Show the sidebar if hidden (the compact rail widens: it has no filter) and give its
+    /// filter the keyboard with the active row highlighted; again while it has the keyboard
+    /// gives it back to the pane.
+    FocusSidebar,
 }
 
 /// Key context of a focused terminal pane (`key_context` on its root element).
@@ -306,6 +310,7 @@ impl Command {
             Command::VoiceInput,
             Command::AskAi,
             Command::ContextMenu,
+            Command::FocusSidebar,
         ]);
         all.extend(CardKey::ALL.map(Command::Card));
         all
@@ -402,6 +407,7 @@ impl Command {
             Command::VoiceInput => "voice_input".into(),
             Command::AskAi => "ask_ai".into(),
             Command::ContextMenu => "context_menu".into(),
+            Command::FocusSidebar => "focus_sidebar".into(),
         }
     }
 
@@ -520,6 +526,7 @@ impl Command {
             Command::VoiceInput => "ctrl-shift-d".into(),
             Command::AskAi => "ctrl-shift-g".into(),
             Command::ContextMenu => "shift-f10".into(),
+            Command::FocusSidebar => "alt-0".into(),
         }
     }
 

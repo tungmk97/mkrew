@@ -105,6 +105,18 @@ impl Chip {
     }
 }
 
+impl Chip {
+    pub const ALL: [Chip; 3] = [Chip::All, Chip::Working, Chip::NeedsYou];
+
+    /// The chip `delta` places along All / Working / Needs you, wrapping (Tab / Shift+Tab).
+    pub fn step(self, delta: isize) -> Chip {
+        let at = Self::ALL.iter().position(|chip| *chip == self).unwrap_or(0);
+        // `ALL` has three entries, so the remainder is in range.
+        let next = (at as isize + delta).rem_euclid(Self::ALL.len() as isize) as usize;
+        Self::ALL[next]
+    }
+}
+
 /// An agent session in `state`. A shell's working/idle flips with every keystroke, so the
 /// sidebar never counts or marks it as working or idle.
 fn agent_in(session: &Session, state: SessionState) -> bool {
@@ -332,6 +344,9 @@ pub struct Sidebar {
     chip: Chip,
     /// Which target of the filtered list ↑/↓ in the filter box points at (0 = the first).
     highlight: usize,
+    /// Alt+0 put the filter in browse mode: with an empty box the highlight shows (on every
+    /// visible row, workspaces too). Typing or clearing the filter ends it.
+    browse: bool,
     /// Set once the first project list was loaded (decides the initial expansion).
     loaded: bool,
     /// Events applied since [`Sidebar::begin_load`]: the lists may predate them, so
@@ -432,16 +447,19 @@ impl Sidebar {
     pub fn filter_mut(&mut self) -> &mut Input {
         // The text changes the matches: the highlight starts again at the first.
         self.highlight = 0;
+        self.browse = false;
         &mut self.filter
     }
 
-    /// What Enter in the filter box opens: the highlighted session (the first match until ↑/↓
-    /// moves it), else the first workspace. None while the box is empty.
+    /// What Enter in the filter box opens: the highlighted row (the first match until ↑/↓
+    /// moves it). While browsing with an empty box any row can be highlighted; otherwise
+    /// None while the box is empty.
     pub fn highlighted(&self, rows: &[Row]) -> Option<Target> {
-        if self.filter.trim().is_empty() {
+        let empty = self.filter.trim().is_empty();
+        if empty && !self.browse {
             return None;
         }
-        let targets = targets(rows);
+        let targets = targets(rows, empty);
         targets
             .get(self.highlight.min(targets.len().saturating_sub(1)))
             .copied()
@@ -450,12 +468,39 @@ impl Sidebar {
     /// ↑ (`-1`) / ↓ (`1`) in the filter box: the highlight moves one target and stops at the
     /// ends (no wrap).
     pub fn move_highlight(&mut self, rows: &[Row], delta: isize) {
-        let last = targets(rows).len().saturating_sub(1);
+        let every_row = self.filter.trim().is_empty() && self.browse;
+        let last = targets(rows, every_row).len().saturating_sub(1);
         self.highlight = self
             .highlight
             .min(last)
             .saturating_add_signed(delta)
             .min(last);
+    }
+
+    /// Alt+0: browse mode with the highlight on `session`'s row, else `workspace`'s, else the
+    /// first row.
+    pub fn browse_from(&mut self, rows: &[Row], session: Option<Ulid>, workspace: Option<Ulid>) {
+        self.browse = true;
+        let all = targets(rows, true);
+        let at = |target: Target| all.iter().position(|t| *t == target);
+        self.highlight = session
+            .and_then(|id| at(Target::Session(id)))
+            .or_else(|| workspace.and_then(|id| at(Target::Workspace(id))))
+            .unwrap_or(0);
+    }
+
+    /// The filter box lost the keyboard without Esc: the next `/` starts from a plain box.
+    pub fn end_browse(&mut self) {
+        self.browse = false;
+    }
+
+    /// Opens or closes one workspace (← / → in the filter box).
+    pub fn set_expanded(&mut self, project_id: Ulid, open: bool) {
+        if open {
+            self.expanded.insert(project_id);
+        } else {
+            self.expanded.remove(&project_id);
+        }
     }
 
     pub fn chip(&self) -> Chip {
@@ -493,6 +538,7 @@ impl Sidebar {
 
     /// Drops the filter text and the chip (the compact rail draws neither control).
     pub fn clear_filter(&mut self) {
+        self.browse = false;
         self.filter.clear();
         self.chip = Chip::All;
     }
@@ -767,8 +813,19 @@ pub enum Target {
     Workspace(Ulid),
 }
 
-/// The visible session rows in order; workspaces only when no session is listed.
-fn targets(rows: &[Row]) -> Vec<Target> {
+/// The visible session rows in order; workspaces only when no session is listed. With
+/// `every_row` (browsing) both kinds, in screen order.
+fn targets(rows: &[Row], every_row: bool) -> Vec<Target> {
+    if every_row {
+        return rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Session(row) => Some(Target::Session(row.session_id)),
+                Row::Workspace(row) => Some(Target::Workspace(row.project_id)),
+                _ => None,
+            })
+            .collect();
+    }
     let sessions: Vec<Target> = rows
         .iter()
         .filter_map(|row| match row {
@@ -785,6 +842,13 @@ fn targets(rows: &[Row]) -> Vec<Target> {
             _ => None,
         })
         .collect()
+}
+
+/// The place `by` steps from `from` in a list of `len`, `None` past either end (no wrap).
+/// Move tab and Move workspace use it; the result is the final index
+/// (what [`drop_index`] gives a drag).
+pub fn step_index(len: usize, from: usize, by: isize) -> Option<usize> {
+    from.checked_add_signed(by).filter(|to| *to < len)
 }
 
 /// The item at `from` dragged onto `to` takes that slot; the new order as positions `1..=n`

@@ -58,6 +58,25 @@ impl Shell {
         self.save_sidebar_layout(cx);
     }
 
+    /// Alt+0: the sidebar's filter takes the keyboard with the active row highlighted. A
+    /// hidden sidebar is shown, and the compact rail (no filter box) widens first.
+    pub(crate) fn focus_sidebar(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.sidebar.is_empty() {
+            return;
+        }
+        if self.sidebar_layout.hidden() {
+            self.toggle_sidebar(window, cx);
+        }
+        if self.sidebar_layout.compact() {
+            self.toggle_compact_sidebar(window, cx);
+        }
+        let rows = self.sidebar.view(&self.viewed).rows;
+        self.sidebar
+            .browse_from(&rows, self.focused_session(), self.workspace);
+        window.focus(&self.filter_focus, cx);
+        cx.notify();
+    }
+
     /// Opens the Inbox entry after the focused pane's session (wrapping); nothing while the
     /// Inbox is empty. The key and the sidebar footer's Inbox state both land here.
     pub(crate) fn jump_next_inbox(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {

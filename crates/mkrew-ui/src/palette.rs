@@ -291,6 +291,7 @@ pub fn title(command: Command) -> String {
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
         Command::ContextMenu => "Global: Open context menu".into(),
+        Command::FocusSidebar => "Sidebar: Focus the filter".into(),
     }
 }
 
@@ -325,7 +326,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::QuickOpen
         | Command::ToggleInspector
         | Command::NewTask
-        | Command::ContextMenu => context.workspace,
+        | Command::ContextMenu
+        | Command::FocusSidebar => context.workspace,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,

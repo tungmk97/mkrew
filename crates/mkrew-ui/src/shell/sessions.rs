@@ -163,6 +163,15 @@ impl Shell {
             cx.propagate();
             return;
         }
+        // Alt+0 acts before the field guards below: it must work from the composer, a comment
+        // draft or the commit box. While the filter has the keyboard it gives it back.
+        if *command == Command::FocusSidebar {
+            if self.filter_focus.is_focused(window) {
+                self.sidebar.end_browse();
+                return self.focus_pane(window, cx);
+            }
+            return self.focus_sidebar(window, cx);
+        }
         // Same for the follow-up field while it has the keyboard, unless its card stopped
         // showing it (session exited, card moved on): then the shortcut acts as usual.
         if self.follow_up_focus.is_focused(window) {
@@ -435,7 +444,7 @@ impl Shell {
             // Handled at the top of `run`.
             Command::VoiceInput => {}
             Command::AskAi => self.open_ask(window, cx),
-            Command::ContextMenu => {}
+            Command::ContextMenu | Command::FocusSidebar => {}
             // Only bound while the Git list has focus.
             Command::GitToggleMode => self.git_key(git_view::Key::ToggleMode, window, cx),
             Command::GitToggleHistory => self.git_key(git_view::Key::ToggleHistory, window, cx),
