@@ -7,6 +7,7 @@ use mkrew_core::run::{MAX_COMMANDS, MAX_NAME_CHARS, RunError, normalize, parse_e
 use mkrew_protocol::{FsEntry, Project, ProjectUpdateParams, RunCommand};
 use ulid::Ulid;
 
+use crate::editor::Motion;
 use crate::task_dialog::DialogKey;
 use crate::text_box::{Input, TextBox};
 
@@ -64,11 +65,21 @@ pub struct Picker {
     pub dir: String,
     /// What `fs.list` answered (only folders when picking a folder); `None` while it runs.
     pub entries: Option<Result<Vec<FsEntry>, String>>,
+    /// The entry ↑ / ↓ picked, if any (a new listing clears it).
+    pub cursor: Option<usize>,
 }
 
 impl Picker {
     pub fn at_root(&self) -> bool {
         self.dir.is_empty()
+    }
+
+    /// The listed entries (none while loading or after an error).
+    pub fn listed_entries(&self) -> &[FsEntry] {
+        match &self.entries {
+            Some(Ok(entries)) => entries,
+            _ => &[],
+        }
     }
 }
 
@@ -81,11 +92,13 @@ pub enum Focus {
     Autostart,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Edited,
     Cancel,
     Save,
+    /// The picker shows another folder: `fs.list` it.
+    List(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +113,8 @@ pub struct RunSetup {
     pub run_after: bool,
     /// The open folder / env file picker; it covers the cards.
     pub picker: Option<Picker>,
+    /// The card last entered by the keyboard: it stays painted while `focus` is `Autostart`.
+    open: usize,
 }
 
 impl RunSetup {
@@ -117,19 +132,41 @@ impl RunSetup {
             error: None,
             run_after,
             picker: None,
+            open: 0,
         }
     }
 
     pub fn key(&mut self, key: DialogKey) -> Outcome {
-        if let Some(picker) = &self.picker {
-            match key {
-                DialogKey::Cancel => self.picker = None,
-                DialogKey::Enter | DialogKey::Save if picker.field == Field::Dir => {
-                    self.pick(None);
+        if self.picker.is_some() {
+            return match key {
+                DialogKey::Cancel => {
+                    self.picker = None;
+                    Outcome::Edited
                 }
-                _ => {}
-            }
-            return Outcome::Edited;
+                DialogKey::Move {
+                    motion: Motion::Down,
+                    ..
+                } => {
+                    self.picker_step(true);
+                    Outcome::Edited
+                }
+                DialogKey::Move {
+                    motion: Motion::Up, ..
+                } => {
+                    self.picker_step(false);
+                    Outcome::Edited
+                }
+                DialogKey::Move {
+                    motion: Motion::Right,
+                    ..
+                } => self.picker_open(),
+                DialogKey::Move {
+                    motion: Motion::Left,
+                    ..
+                } => self.browse_up().map_or(Outcome::Edited, Outcome::List),
+                DialogKey::Enter | DialogKey::Save => self.picker_enter(),
+                _ => Outcome::Edited,
+            };
         }
         match key {
             DialogKey::Cancel => Outcome::Cancel,
@@ -142,7 +179,7 @@ impl RunSetup {
                 _ => Outcome::Save,
             },
             DialogKey::SwitchField => {
-                self.focus = self.next_focus();
+                self.tab(true);
                 Outcome::Edited
             }
             // The caller reads the clipboard and calls `insert`, or copies the selection.
@@ -186,7 +223,7 @@ impl RunSetup {
             Field::Env => c.env.click(at, extend, clicks),
             field => line(c, field).click(at, extend, clicks),
         }
-        self.focus = Focus::Field(card, field);
+        self.set_focus(Focus::Field(card, field));
     }
 
     /// Opens the picker for `field` (`Dir` or `EnvFile`) of card `card`; returns the folder to
@@ -198,12 +235,13 @@ impl RunSetup {
             Field::EnvFile => workspace_dir(self.cards.get(card)?.dir.as_str()).unwrap_or_default(),
             _ => return None,
         };
-        self.focus = Focus::Field(card, field);
+        self.set_focus(Focus::Field(card, field));
         self.picker = Some(Picker {
             card,
             field,
             dir: dir.clone(),
             entries: None,
+            cursor: None,
         });
         Some(dir)
     }
@@ -213,7 +251,60 @@ impl RunSetup {
         let picker = self.picker.as_mut()?;
         picker.dir = dir.clone();
         picker.entries = None;
+        picker.cursor = None;
         Some(dir)
+    }
+
+    /// ↓ / ↑ in the picker: the next / previous entry (the first / last when there is no
+    /// cursor yet).
+    fn picker_step(&mut self, down: bool) {
+        let Some(picker) = self.picker.as_mut() else {
+            return;
+        };
+        let count = picker.listed_entries().len();
+        if count == 0 {
+            return;
+        }
+        picker.cursor = Some(match (picker.cursor, down) {
+            (None, true) => 0,
+            (None, false) => count - 1,
+            (Some(at), true) => (at + 1).min(count - 1),
+            (Some(at), false) => at.saturating_sub(1),
+        });
+    }
+
+    /// → in the picker: opens the folder under the cursor.
+    fn picker_open(&mut self) -> Outcome {
+        let folder = self.picker.as_ref().and_then(|picker| {
+            let entry = picker.listed_entries().get(picker.cursor?)?;
+            entry.is_dir.then(|| entry.path.clone())
+        });
+        folder
+            .and_then(|dir| self.browse(dir))
+            .map_or(Outcome::Edited, Outcome::List)
+    }
+
+    /// Enter in the picker. Picking a folder: the folder under the cursor, else the listed
+    /// one. Picking an env file: a file under the cursor is taken, a folder under it is opened,
+    /// nothing under it does nothing.
+    fn picker_enter(&mut self) -> Outcome {
+        let Some(picker) = self.picker.as_ref() else {
+            return Outcome::Edited;
+        };
+        let under = picker
+            .cursor
+            .and_then(|at| picker.listed_entries().get(at))
+            .map(|entry| (entry.path.clone(), entry.is_dir));
+        match (picker.field, under) {
+            (Field::Dir, Some((path, _))) => self.pick(Some(&path)),
+            (Field::Dir, None) => self.pick(None),
+            (_, Some((path, true))) => {
+                return self.browse(path).map_or(Outcome::Edited, Outcome::List);
+            }
+            (_, Some((path, false))) => self.pick(Some(&path)),
+            (_, None) => {}
+        }
+        Outcome::Edited
     }
 
     /// ↑ Up: the parent of the listed folder, never above the workspace root.
@@ -250,10 +341,11 @@ impl RunSetup {
         match (picker.field, path) {
             (Field::Dir, None) if picker.dir.is_empty() => card.dir = ".".into(),
             (Field::Dir, None) => card.dir = picker.dir.into(),
+            (Field::Dir, Some(path)) => card.dir = path.into(),
             (Field::EnvFile, Some(path)) => card.env_file = path.into(),
             _ => {}
         }
-        self.focus = Focus::Field(picker.card, picker.field);
+        self.set_focus(Focus::Field(picker.card, picker.field));
     }
 
     /// Typed or pasted text into the focused field; Space flips a focused checkbox.
@@ -284,7 +376,7 @@ impl RunSetup {
             return;
         }
         self.cards.push(empty_card());
-        self.focus = Focus::Field(self.cards.len() - 1, Field::Name);
+        self.set_focus(Focus::Field(self.cards.len() - 1, Field::Name));
     }
 
     /// The card holding the keyboard, if any; the dialog shows only its fields.
@@ -295,15 +387,24 @@ impl RunSetup {
         }
     }
 
+    /// The card whose fields and buttons are painted: the keyboard's, else the last one it was
+    /// in, so the forward Tab edge from "Start with the daemon" still reaches its Duplicate,
+    /// Remove and Browse. Scrolling follows [`Self::focused_card`].
+    pub fn shown_card(&self) -> Option<usize> {
+        self.focused_card()
+            .or((self.open < self.cards.len()).then_some(self.open))
+    }
+
     pub fn remove_card(&mut self, index: usize) {
         if index >= self.cards.len() {
             return;
         }
         self.cards.remove(index);
-        self.focus = match self.cards.len() {
+        let focus = match self.cards.len() {
             0 => Focus::Autostart,
             len => Focus::Field(index.min(len - 1), Field::Name),
         };
+        self.set_focus(focus);
     }
 
     /// Inserts a copy of card `index` right below it, named `<name> copy` (then `copy 2`, …,
@@ -319,7 +420,7 @@ impl RunSetup {
         let mut copy = original.clone();
         copy.name = self.free_copy_name(original.name.as_str().trim()).into();
         self.cards.insert(index + 1, copy);
-        self.focus = Focus::Field(index + 1, Field::Name);
+        self.set_focus(Focus::Field(index + 1, Field::Name));
     }
 
     /// `<base> copy`, `<base> copy 2`, …: the first name no card has, `base` cut so the whole
@@ -414,6 +515,70 @@ impl RunSetup {
             Focus::Exit(_) => Focus::Autostart,
         }
     }
+
+    /// Puts the keyboard on `focus`; a card it enters becomes the one the dialog keeps open.
+    fn set_focus(&mut self, focus: Focus) {
+        if let Focus::Field(i, _) | Focus::Exit(i) = focus {
+            self.open = i;
+        }
+        self.focus = focus;
+    }
+
+    /// Tab (`forward`) / Shift+Tab along the fields, the two checkboxes and back.
+    pub fn tab(&mut self, forward: bool) {
+        let focus = if forward {
+            self.next_focus()
+        } else {
+            self.prev_focus()
+        };
+        self.set_focus(focus);
+    }
+
+    /// Tab (`forward`) / Shift+Tab has no field left in that direction: the keyboard leaves the
+    /// fields for the buttons ([`crate::dialog_focus::nav`]). The picker has no fields.
+    pub fn at_edge(&self, forward: bool) -> bool {
+        if self.picker.is_some() {
+            return true;
+        }
+        match (self.focus, forward) {
+            (Focus::Autostart, true) => true,
+            (Focus::Autostart, false) => self.cards.is_empty(),
+            (Focus::Field(0, Field::Name), false) => true,
+            _ => false,
+        }
+    }
+
+    /// The keyboard came back to the fields from the buttons: Tab lands on the first field,
+    /// Shift+Tab on "Start with the daemon".
+    pub fn enter(&mut self, forward: bool) {
+        if self.picker.is_some() {
+            return;
+        }
+        let focus = if forward && !self.cards.is_empty() {
+            Focus::Field(0, Field::Name)
+        } else {
+            Focus::Autostart
+        };
+        self.set_focus(focus);
+    }
+
+    fn prev_focus(&self) -> Focus {
+        match self.focus {
+            Focus::Autostart => match self.cards.len() {
+                0 => Focus::Autostart,
+                count => Focus::Exit(count - 1),
+            },
+            Focus::Field(i, field) => {
+                let at = Field::ORDER.iter().position(|f| *f == field).unwrap_or(0);
+                match at.checked_sub(1) {
+                    Some(prev) => Focus::Field(i, Field::ORDER[prev]),
+                    None if i == 0 => Focus::Autostart,
+                    None => Focus::Exit(i - 1),
+                }
+            }
+            Focus::Exit(i) => Focus::Field(i, Field::Env),
+        }
+    }
 }
 
 fn empty_card() -> Card {
@@ -473,7 +638,6 @@ mod tests {
     use mkrew_protocol::{Project, RunCommand};
 
     use super::*;
-    use crate::editor::Motion;
 
     fn project(commands: Vec<RunCommand>) -> Project {
         Project {
@@ -854,5 +1018,126 @@ mod tests {
         setup.cards[0].dir = "../other".into();
         assert_eq!(setup.open_picker(0, Field::EnvFile).as_deref(), Some(""));
         assert_eq!(setup.error, None);
+    }
+
+    #[test]
+    fn the_last_open_card_stays_shown_while_the_keyboard_is_on_autostart() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.add_card();
+        setup.tab(true);
+        setup.tab(true);
+        setup.tab(true);
+        setup.tab(true);
+        setup.tab(true);
+        setup.tab(true);
+        assert_eq!(setup.focus, Focus::Autostart);
+        assert_eq!(setup.focused_card(), None);
+        assert_eq!(
+            setup.shown_card(),
+            Some(1),
+            "the last card the keyboard was in"
+        );
+        setup.tab(true);
+        setup.tab(false);
+        assert_eq!(setup.focus, Focus::Autostart);
+        assert_eq!(setup.shown_card(), Some(0), "its buttons stay Tab stops");
+        setup.remove_card(1);
+        setup.remove_card(0);
+        assert_eq!(setup.shown_card(), None, "no card left to show");
+    }
+
+    #[test]
+    fn shift_tab_walks_back_and_the_ends_leave_the_fields() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.add_card();
+        setup.focus = Focus::Field(0, Field::Name);
+        assert!(
+            setup.at_edge(false),
+            "Shift+Tab from the first field leaves"
+        );
+        assert!(!setup.at_edge(true));
+        setup.focus = Focus::Field(1, Field::Name);
+        setup.tab(false);
+        assert_eq!(setup.focus, Focus::Exit(0));
+        setup.tab(false);
+        assert_eq!(setup.focus, Focus::Field(0, Field::Env));
+        setup.focus = Focus::Autostart;
+        assert!(setup.at_edge(true), "Tab from the last stop leaves");
+        assert!(!setup.at_edge(false));
+        setup.tab(false);
+        assert_eq!(setup.focus, Focus::Exit(1));
+        setup.enter(true);
+        assert_eq!(
+            setup.focus,
+            Focus::Field(0, Field::Name),
+            "Tab from the last button"
+        );
+        setup.enter(false);
+        assert_eq!(
+            setup.focus,
+            Focus::Autostart,
+            "Shift+Tab from the first button"
+        );
+        // The picker has no fields: Tab always goes on to its buttons.
+        setup.open_picker(0, Field::Dir);
+        assert!(setup.at_edge(true) && setup.at_edge(false));
+    }
+
+    #[test]
+    fn the_picker_cursor_walks_the_entries_and_enter_takes_the_one_under_it() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        setup.open_picker(0, Field::Dir);
+        setup.listed("", Ok(vec![entry("EA-BE", true), entry("EA-FE", true)]));
+        let cursor = |setup: &RunSetup| setup.picker.as_ref().unwrap().cursor;
+        assert_eq!(cursor(&setup), None);
+        for _ in 0..3 {
+            setup.key(moved(Motion::Down, false));
+        }
+        assert_eq!(cursor(&setup), Some(1), "clamped to the last entry");
+        setup.key(moved(Motion::Up, false));
+        assert_eq!(cursor(&setup), Some(0));
+        // → opens the folder under the cursor; the new listing has no cursor yet.
+        assert_eq!(
+            setup.key(moved(Motion::Right, false)),
+            Outcome::List("EA-BE".into())
+        );
+        assert_eq!(cursor(&setup), None);
+        setup.listed("EA-BE", Ok(vec![entry("EA-BE/api", true)]));
+        // ← goes to the parent, and does nothing at the workspace root.
+        assert_eq!(
+            setup.key(moved(Motion::Left, false)),
+            Outcome::List(String::new())
+        );
+        assert_eq!(setup.key(moved(Motion::Left, false)), Outcome::Edited);
+        // Enter with the cursor on a folder takes that folder, not the listed one.
+        setup.listed("", Ok(vec![entry("EA-FE", true)]));
+        setup.key(moved(Motion::Down, false));
+        assert_eq!(setup.key(DialogKey::Enter), Outcome::Edited);
+        assert_eq!(setup.cards[0].dir, "EA-FE");
+        assert!(setup.picker.is_none());
+    }
+
+    #[test]
+    fn in_the_env_file_picker_enter_opens_a_folder_and_picks_a_file() {
+        let mut setup = RunSetup::new(&project(vec![be()]), false);
+        // The picker starts in the card's folder.
+        setup.open_picker(0, Field::EnvFile);
+        setup.listed(
+            "EA-BE",
+            Ok(vec![entry("EA-BE/api", true), entry("EA-BE/.env", false)]),
+        );
+        setup.key(moved(Motion::Down, false));
+        assert_eq!(
+            setup.key(DialogKey::Enter),
+            Outcome::List("EA-BE/api".into()),
+            "Enter on a folder opens it"
+        );
+        assert!(setup.picker.is_some());
+        setup.listed("EA-BE/api", Ok(vec![entry("EA-BE/api/.env", false)]));
+        setup.key(moved(Motion::Down, false));
+        assert_eq!(setup.key(DialogKey::Enter), Outcome::Edited);
+        assert_eq!(setup.cards[0].env_file, "EA-BE/api/.env");
+        assert!(setup.picker.is_none());
+        assert_eq!(setup.focus, Focus::Field(0, Field::EnvFile));
     }
 }

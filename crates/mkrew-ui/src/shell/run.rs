@@ -183,6 +183,7 @@ impl Shell {
         match outcome {
             run_setup::Outcome::Cancel => return self.close_run_setup(window, cx),
             run_setup::Outcome::Save => return self.save_run_setup(window, cx),
+            run_setup::Outcome::List(dir) => return self.list_run_picker(Some(dir), window, cx),
             run_setup::Outcome::Edited => {}
         }
         if let Some(i) = card {
