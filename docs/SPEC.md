@@ -1371,10 +1371,11 @@ Modal dialogs (ADR 0081): Tab and Shift+Tab move through the dialog's controls a
 The order is the dialog's text fields first, then its options (chips, checkboxes), then its buttons left to right.
 Enter or Space on a focused control clicks it; ← / → move between the chips of a row; Esc closes the dialog from anywhere in it.
 Tab is not in `keymap.toml`: like the keys of the confirm prompt it only means something inside a dialog.
-A destructive button (Discard changes, Remove worktree, Discard files) is never the first focus and does not run on the Enter that opened the dialog.
+A destructive button (Discard changes, Remove worktree, Discard files, Git Discard) is never the first focus and does not run on the Enter that opened the dialog.
 It runs when Tab moved onto it and Enter or Space is pressed; an auto-repeating key does nothing.
 Turns: D shows the changes since the selected turn.
-Broadcast: ↑ / ↓ pick a session, Space checks it.
+Broadcast: ↑ / ↓ move the keyboard into the session list and pick a session; Space checks it only while the list has the keyboard.
+Typing leaves the list, so a space can still be typed in the message.
 Run setup: Shift+Tab walks back; in its folder picker ↑ / ↓ move, → opens a folder, ← goes up, Enter takes the folder or env file under the cursor.
 
 Invalid or duplicate bindings: report the error and fall back to defaults for that entry. The
@@ -1514,7 +1515,8 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   opens `settings.toml` and `keymap.toml` in Zed.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
-- Focus ring (ADR 0081): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes. A click never shows it.
+- Focus ring (ADR 0081): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
+  A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
   Find matches (`status-needs-input` amber mixed into `bg`, text drawn in `text`):

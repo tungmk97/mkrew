@@ -23,6 +23,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 
 ### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0081, wave 2)
 
+- Every check in this entry is done in both dark and light.
 - [ ] **Focus ring (dark + light):** open the task dialog (palette: New task).
   Press Tab until each control has the keyboard: the title, the prompt, From prompt, every agent chip, Run in a worktree, Cancel, Create task, then the title again.
   Each control shows a 1 px ring in the text color; a mouse click on the same controls shows none.
@@ -31,7 +32,9 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   The Ask AI dialog's Agent and Web search rows do the same.
 - [ ] **Destructive confirmations:** open the Undo dialog of a Review card.
   No button has a ring and Enter does nothing.
-  Tab once: Cancel. Tab twice: Discard changes (red text, ring). Enter discards.
+  Tab once: Cancel.
+  Tab twice: Discard changes (red text, ring).
+  Enter discards.
   Repeat with Remove worktree, Discard files and Git Discard.
   Open each with the Enter key held a moment: nothing is clicked.
   Also check Tab and Esc after Discard... and after Keep files, and the confirm, busy, re-read cycle of the worktree dialog; Enter on the dialog itself does nothing.

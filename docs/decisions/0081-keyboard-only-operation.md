@@ -68,10 +68,11 @@ The work ships in four waves; each wave appends its section here.
 
 ### Destructive confirmations (replaces the rule of `undo_dialog.rs`)
 
-Before: Undo Discard, worktree Remove and Discard files, Git Discard and Compare Pick took only a click ("discarding takes an explicit click").
+Before: Undo Discard, worktree Remove and Discard files, and Git Discard took only a click ("discarding takes an explicit click").
 Now: they also run when Tab moved the keyboard onto the button and Enter or Space is pressed.
 They are never the first focus, and an auto-repeating Enter or Space is dropped before a control sees it (`dialog_focus::blocks_repeat`), like the held-key guard of the confirm prompt.
 The daemon still re-checks every destructive request (previews and fingerprints), so nothing else changed.
+Compare Pick only opens Merge back, so it is a plain Tab stop and not part of this rule.
 
 ### Consequences
 
