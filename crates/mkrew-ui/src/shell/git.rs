@@ -600,7 +600,10 @@ impl Shell {
         if event.keystroke.key == "enter"
             && !event.keystroke.modifiers.modified()
             && let Some(project_id) = self.workspace
-            && self.git.get(&project_id).is_some_and(|view| view.selected.is_some())
+            && self
+                .git
+                .get(&project_id)
+                .is_some_and(|view| view.selected.is_some())
         {
             cx.stop_propagation();
             return self.open_git_diff(project_id, window, cx);
