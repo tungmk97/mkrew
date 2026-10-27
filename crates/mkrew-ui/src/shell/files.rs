@@ -858,7 +858,7 @@ impl Shell {
         }
         for project_id in git {
             self.retarget_git(project_id, None, None);
-            if shown == Some(project_id) && self.view() == View::Git {
+            if shown == Some(project_id) && self.git_shown() {
                 self.refresh_git(project_id, window, cx);
             }
         }

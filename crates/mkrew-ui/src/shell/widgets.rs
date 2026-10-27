@@ -213,7 +213,7 @@ pub(crate) fn danger_button(
         .active(|style| style.opacity(opacity::ACTIVE))
 }
 
-/// Keyboard focus for the controls of a modal dialog (ADR 0084). gpui keeps the focus handle
+/// Keyboard focus for the controls of a modal dialog (ADR 0085). gpui keeps the focus handle
 /// of an element that has a tab index in its element state, so a control needs no field on
 /// `Shell`. Every control here is a `Stateful<Div>` ([`button`], [`secondary_button`],
 /// [`quiet_button`], [`danger_button`], [`icon_button`], [`segment`], chips, check rows).

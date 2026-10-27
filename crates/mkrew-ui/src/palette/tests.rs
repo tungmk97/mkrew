@@ -13,6 +13,8 @@ fn context(view: View) -> Context {
         file_tabs: 1,
         terminal: false,
         discard: false,
+        git: view == View::Diff,
+        diff: true,
         task_changes: false,
         worktree_task: false,
         fan_out: false,
@@ -203,7 +205,7 @@ fn availability_follows_the_view() {
         Command::Tab(2),
         Command::NextTab,
         Command::Workspace(2),
-        Command::ShowGit,
+        Command::ShowGitPanel,
         Command::ToggleInspector,
     ] {
         assert!(terminals.contains(&command), "{command:?}");
@@ -247,7 +249,7 @@ fn availability_follows_the_view() {
     });
     assert!(agent.contains(&Command::OpenComposer));
 
-    let git = commands(&context(View::Git));
+    let git = commands(&context(View::Diff));
     assert!(git.contains(&Command::GitStage));
     assert!(git.contains(&Command::AddComment));
     assert!(git.contains(&Command::PickUp));
@@ -349,7 +351,7 @@ fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
         View::Board,
         View::Docs,
         View::Editor,
-        View::Git,
+        View::Diff,
     ] {
         assert!(Extra::PhoneAccess.available(&context(view)), "{view:?}");
     }
@@ -556,13 +558,13 @@ fn tab_pane_workspace_and_agent_extras_follow_their_state() {
 #[test]
 fn palette_only_actions_follow_the_view_and_state() {
     assert_eq!(extras(&context(View::Terminals)), []);
-    assert_eq!(extras(&context(View::Git)), []);
+    assert_eq!(extras(&context(View::Diff)), []);
     let git = Context {
         discard: true,
         task_changes: true,
         worktree_task: true,
         fan_out: true,
-        ..context(View::Git)
+        ..context(View::Diff)
     };
     assert_eq!(extras(&git), [], "Git actions are commands now");
     let board = Context {
@@ -720,15 +722,17 @@ fn git_jira_and_global_extras_follow_their_state() {
         (
             Extra::GitChangeBase,
             Context {
+                git: true,
                 git_base: true,
-                ..context(View::Git)
+                ..context(View::Terminals)
             },
         ),
         (
             Extra::GitSwitchRepo,
             Context {
+                git: true,
                 git_repos: true,
-                ..context(View::Git)
+                ..context(View::Terminals)
             },
         ),
         (
@@ -778,7 +782,7 @@ fn git_jira_and_global_extras_follow_their_state() {
         assert!(extra.available(&on), "{extra:?} when its state holds");
         assert!(!extra.available(&context(on.view)), "{extra:?} without it");
     }
-    // The Git entries need the Git view, the Jira ones the Board.
+    // The Git entries need the Git list on screen, the Jira ones the Board.
     let wrong_view = Context {
         git_base: true,
         git_repos: true,
@@ -788,7 +792,8 @@ fn git_jira_and_global_extras_follow_their_state() {
     assert!(!Extra::GitSwitchRepo.available(&wrong_view));
     assert!(!Extra::JiraRefresh.available(&Context {
         jira: true,
-        ..context(View::Git)
+        git: true,
+        ..context(View::Diff)
     }));
     // The update and the toasts need no workspace.
     let none = Context {
@@ -853,7 +858,7 @@ fn run_entries_follow_each_commands_state() {
 
 #[test]
 fn git_and_board_key_commands_follow_the_view() {
-    let git = commands(&context(View::Git));
+    let git = commands(&context(View::Diff));
     for command in [
         Command::GitStageAll,
         Command::GitUnstageAll,
@@ -868,7 +873,7 @@ fn git_and_board_key_commands_follow_the_view() {
     );
     let discard = Context {
         discard: true,
-        ..context(View::Git)
+        ..context(View::Diff)
     };
     assert!(commands(&discard).contains(&Command::GitDiscard));
     let board = commands(&context(View::Board));
@@ -976,7 +981,7 @@ fn fuzzy_matches_subsequences_ignoring_case_and_spaces() {
 fn typing_filters_ranks_and_resets_the_pick() {
     let mut palette = Palette::new(entries(
         &Keymap::defaults(),
-        &context(View::Git),
+        &context(View::Diff),
         &[],
         &[],
         &[],
@@ -988,10 +993,10 @@ fn typing_filters_ranks_and_resets_the_pick() {
 
     palette.key(Key::Insert("vg".into()));
     assert_eq!(palette.selected, 0);
-    // "View: Git" (two word starts) beats later scattered matches.
-    assert_eq!(palette.picked(), Some(Action::Run(Command::ShowGit)));
+    // "View: Git panel" (two word starts) beats later scattered matches.
+    assert_eq!(palette.picked(), Some(Action::Run(Command::ShowGitPanel)));
     let rows = palette.rows();
-    assert_eq!(rows[0].entry.title, "View: Git");
+    assert_eq!(rows[0].entry.title, "View: Git panel");
     assert_eq!(rows[0].ranges, [0..1, 6..7]);
     assert_eq!(rows[0].entry.shortcut, "Ctrl+Shift+4");
 
@@ -1008,7 +1013,7 @@ fn typing_filters_ranks_and_resets_the_pick() {
     assert_eq!(palette.query(), "vg");
     palette.key(Key::Move(1));
     palette.pick(0);
-    assert_eq!(palette.picked(), Some(Action::Run(Command::ShowGit)));
+    assert_eq!(palette.picked(), Some(Action::Run(Command::ShowGitPanel)));
     palette.pick(999);
     assert_eq!(palette.selected, 0, "out of range ignored");
 
@@ -1018,6 +1023,26 @@ fn typing_filters_ranks_and_resets_the_pick() {
     palette.key(Key::Open);
     palette.key(Key::Close);
     assert_eq!(palette.query(), "vg");
+}
+
+#[test]
+fn diff_and_git_commands_follow_what_is_on_screen() {
+    let no_diff = Context {
+        diff: false,
+        ..context(View::Terminals)
+    };
+    assert!(!commands(&no_diff).contains(&Command::ShowDiff));
+    assert!(commands(&context(View::Terminals)).contains(&Command::ShowDiff));
+    // The Git tab in the panel next to the terminals: the Git keys act on its list.
+    let git_tab = Context {
+        git: true,
+        ..context(View::Terminals)
+    };
+    assert!(commands(&git_tab).contains(&Command::GitStage));
+    assert!(!commands(&context(View::Terminals)).contains(&Command::GitStage));
+    // Diff comments only where the diff is drawn.
+    assert!(!commands(&git_tab).contains(&Command::AddComment));
+    assert!(commands(&context(View::Diff)).contains(&Command::AddComment));
 }
 
 #[test]

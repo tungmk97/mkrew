@@ -19,7 +19,7 @@
 - §11 UI: per-session status
 - §12 UI: Markdown review
 - §12A UI: Files (tree and Editor)
-- §12B UI: Git view
+- §12B UI: Git (right panel tab and Diff view)
 - §13 UI: keyboard shortcuts
 - §14 UI: visual design system
 - §15 Non-functional requirements
@@ -338,7 +338,7 @@ v2 migrations 0008 (M11) and 0009 (M13) are listed in §20; `0010_session_interr
 `terminal_tab` (pinned workspaces, sessions and tabs lead their lists, §10).
 `0017_session_plan.sql` adds `session.plan_path TEXT` (the linked plan `.md`: relative to the project folder with `/` when inside, else absolute; NULL = none; ADR 0039).
 `0021_project_jira_keys.sql` adds `project.jira_keys TEXT` (JSON array of Jira project keys, NULL = none; §20I, ADR 0066).
-`0022_viewed_files.sql` adds table `viewed_file(project_id, worktree_task_id, repo, list, path, hash, marked_at)`, one row per file the user marked as viewed in the Git view (§12B, ADR 0065).
+`0022_viewed_files.sql` adds table `viewed_file(project_id, worktree_task_id, repo, list, path, hash, marked_at)`, one row per file the user marked as viewed in the Git tab (§12B, ADR 0065).
 
 Split-tree example (`terminal_tab.layout`): vertical split, right half split horizontally.
 `vertical` = children side by side (first left), `horizontal` = stacked (first on top); `ratio`
@@ -749,7 +749,7 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ ◈ ◧ A api ▾ ⎇ master [Terminals│Board│Git 3│Docs│Editor*]  (● 2 running :8080 ▾) ◷ ◐ ▯ ◨ [+ New ▾] ─ □ ✕ │
+│ ◈ ◧ A api ▾ ⎇ master [Terminals│Board│Docs│Editor*│Diff*]  (● 2 running :8080 ▾) ◷ ◐ ▯ ◨ [+ New ▾] ─ □ ✕ │
 ├──────────────┬────────────────────────────────────────────────────────────────────────┤
 │ [⌕ Filter… /]⇲+│ tab strip: [▣ ● tab ✕] [>_ ○ tab ✕] +    (● Working · 4s) 📖 Share ◫ ⋯ │
 │ [All│Working│Needs you]│                                                              │
@@ -764,7 +764,8 @@ title bar and shows the same bar under it, without window controls; ADR 0034):
 ```
 ADR 0054 simplified this screen: one place per piece of information, color for status only,
 empty things hidden, detail on hover / in menus. There is no status bar.
-The right panel (below) is a third column right of Terminals and the Editor while open.
+The right panel (below) is a third column right of Terminals, the Editor and the Diff while open.
+Its tab row is `[Files│Session│Git]`; `Editor*` and `Diff*` are in the view bar only while a file tab or a diff is open.
 
 - **Sidebar:** workspaces; expanding one lists its live sessions with status (§11); a session that
   exited leaves the list and its pane leaves its tab (ADR 0033; History keeps it).
@@ -833,16 +834,16 @@ The right panel (below) is a third column right of Terminals and the Editor whil
 - **Reorder:** drag a workspace card in the full sidebar to move it among the pinned or the
   unpinned workspaces (`project.update` `position`, the group numbered `1..=n`; ADR 0069), with
   the same drag look as tabs and rows; off while filtering and in the compact rail.
-- **Views per workspace:** Terminals, Board, Git, Docs, Editor (only while a file tab is open; Docs only with `[features] docs`).
+- **Views per workspace:** Terminals, Board, Docs (only with `[features] docs`), Editor (only while a file tab is open), Diff (only while a diff is open).
 - **Title bar** (44 px, ADR 0027, ADR 0034, ADR 0054), left to right: the Mkrew logo; the
   sidebar toggle `◧`; the workspace avatar + name ▾ (a dropdown of the workspaces, click
   switches, plus "Add workspace…") followed, muted, by `⎇ master` (one repository) or
   `⎇ N repos` (several; the only place this shows; the tooltip lists each repository's
   branch and HEAD; a workspace folder without `.git` but with child repositories shows the
-  children, ADR 0029; hidden when there is no repository; a click shows the Git view); the
-  views Terminals / Board / Git / Docs / Editor as a segmented control (tooltips show their
-  shortcuts, §13), the Git one with a neutral gray `N` badge (N = changed files summed over every
-  repository, hidden at 0); then, right-aligned, the Run pill, History (`◷`: finished sessions
+  children, ADR 0029; hidden when there is no repository; a click opens the Git tab and the diff); the
+  views Terminals / Board / Docs / Editor / Diff as a segmented control (tooltips show their
+  shortcuts, §13; Editor and Diff only while a file tab or a diff is open); then, right-aligned,
+  the Run pill, History (`◷`: finished sessions
   with their logs replayed read-only; **Resume** (Enter) continues the selected agent session's
   conversation in a new pane that gets the keyboard, ADR 0055), the theme toggle,
   the phone icon (`smartphone`, §14; a green dot while Phone access is on; the tooltip explains
@@ -850,7 +851,7 @@ The right panel (below) is a third column right of Terminals and the Editor whil
   outlined `+ New ▾` (one row per installed agent profile, the workspace's default first with ✓
   and Alt+Shift+A, then Shell with Alt+Shift+S; choosing a profile starts a pane with it), in every view (New's entries switch to
   Terminals first; they show Alt+Shift+A / Alt+Shift+S, §13). Every icon is gray (`text-muted`,
-  `text` on hover): color only for status. The git label and badge come from `git.repos`
+  `text` on hover): color only for status. The git label and the Git tab's count come from `git.repos`
   and one `git.status` per repository, asked for the shown workspace only, on a workspace switch
   and on its `git.changed`; no polling, nothing for hidden workspaces. Window: the empty part is
   the drag area. **Windows:** double-click maximizes or restores, ─ □ ✕ at the right (hovering
@@ -914,20 +915,20 @@ The right panel (below) is a third column right of Terminals and the Editor whil
   resize sends `session.resize` (nothing reflows its output). Agent panes start with
   `[ui] reading_width` (default `true`); the toggle holds per pane until restart. Shell and run
   panes are always full width.
-- **Right panel** (ADR 0038, ADR 0081): a column right of the Terminals and Editor views with
-  tabs `Files │ Session` (a click switches the tab). The title bar's `◨` and `Ctrl+Shift+Y` hide
-  and show it and keep the tab; from the Board, Docs or Git view the key shows Terminals with the
-  panel open. `[ui] right_panel` (`"files"`, `"session"` or `"hidden"`, default hidden) remembers
-  it across restarts. Drag its left edge to resize (240–560 px, one width for both tabs, saved as
+- **Right panel** (ADR 0038, ADR 0081, ADR 0084): a column right of the Terminals, Editor and Diff views with
+  tabs `Files │ Session │ Git` (a click switches the tab; the `Git` tab shows the changed count). The title bar's `◨` and `Ctrl+Shift+Y` hide
+  and show it and keep the tab; from the Board or Docs view the key shows Terminals with the
+  panel open. `[ui] right_panel` (`"files"`, `"session"`, `"git"` or `"hidden"`, default hidden) remembers
+  it across restarts. Drag its left edge to resize (240–560 px, one width for all three tabs, saved as
   `[ui] inspector_width` when the button is released); the terminals lose that width, so an agent
   redraws once. **Files tab:** the file tree of §12A. **Session tab:** the session of the active
-  tab's focused pane, also while the Editor is shown.
+  tab's focused pane, also while the Editor is shown. **Git tab:** the Git list (header, Working / Vs. base / History, filter, Changed by, changes, commit box); a file's diff shows in the Diff view (§12B).
   **Session card:** agent, title, state + time, the usage of §20E.3 (context
   share, tokens, cache, model; rows without data are left out), **Open transcript** (the agent's
   `.jsonl` in Zed; disabled until the daemon located it) and **Stop** (`session.kill`; a running
   agent asks first, a shell does not; the pane closes when the session exits, ADR 0033).
   **Changes card:** one line per repository with changes, `M 23 ?3` (modified paths, untracked
-  files) with **Review diff**, which opens the Git view on that repository (§12B); a workspace
+  files) with **Review diff**, which opens the Git tab and the diff of that repository (§12B); a workspace
   folder without `.git` still lists its child repositories (ADR 0029). Clean repositories have no
   line (`Working tree clean` when none changed); no repository, no card. The counts are the
   shown workspace's git summary, refreshed on `git.changed`.
@@ -976,7 +977,7 @@ The right panel (below) is a third column right of Terminals and the Editor whil
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
-- **Copy mode** (`Alt+Shift+C`, ADR 0084): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
+- **Copy mode** (`Alt+Shift+C`, ADR 0085): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
   While it is on the keys go to the UI, not the program, and the pane header (the tab bar for a single pane) shows `Copy mode` with the key hints.
   `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
   `v` / `Shift+V` start, switch or drop a character / line selection; entering copy mode clears a mouse selection.
@@ -985,7 +986,7 @@ The right panel (below) is a third column right of Terminals and the Editor whil
   Copy mode survives the pane losing focus.
   With copy mode on, voice text goes to the clipboard, not the terminal.
   Output that arrives meanwhile is held back (up to 1 MiB) so the view and the cursor stay on their text; leaving copy mode applies it and returns to the live screen.
-- **Link hints** (`Alt+Shift+O`, ADR 0084): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
+- **Link hints** (`Alt+Shift+O`, ADR 0085): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
   Typing a label opens that link exactly like Ctrl+Click; `Esc` or any other key cancels.
   Output is held back while the labels show (up to 1 MiB, like copy mode).
   Any key, a wheel scroll, a click or the pane losing focus ends the hints and applies the held output.
@@ -1093,7 +1094,7 @@ Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, comman
   highlighted by their fence language (syntect, as in the Editor); the text uses the doc
   typography of §14 (ADR 0021). ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust
   renderer, theme colors); a block that cannot be drawn shows its source and the reason.
-- **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0084) →
+- **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0085) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
   lines highlights them (ADR 0006; character selection in Docs and anchor-aligned cards are
@@ -1157,7 +1158,7 @@ Only edit this file. When done, for EACH comment run:
   on the shown tab. `git.changed` reads the shown tab; the others are read when shown. Tabs
   live in memory only; another worktree starts with none (and shows Terminals).
 - **Change gutter** (ADR 0047): right of each line number a thin bar marks how the line differs
-  from the file's text in the git index (what the Git view calls unstaged): added
+  from the file's text in the git index (what the Git tab calls unstaged): added
   (`diff-add-text`), changed (`diff-mod-text`), and a short `diff-del-text` mark at the top of
   the line after removed lines. It follows unsaved typing (recomputed with the highlight, 150 ms
   after typing stops; marks on lines edited since are hidden until then) and staging/committing
@@ -1212,7 +1213,11 @@ Only edit this file. When done, for EACH comment run:
   every match as one undo step. Replacing does not save. Esc closes the bar and returns to the
   editor.
 
-## §12B UI: Git view (inspired by Orca)
+## §12B UI: Git (right panel tab and Diff view)
+
+The Git tab of the right panel holds the header, Working / Vs. base / History, the filter and "Changed by", the list and the commit box, as wide as the panel (240-560 px; the filter row wraps).
+The `Diff` view holds the toolbar, unified / split, hunks, the comment margin and Send to agent, and is listed in the view bar only while a diff is open.
+A click or Enter opens it; `×`, `Esc` or an emptied list close it; a selection moving by itself keeps it open.
 
 All git actions are user-initiated; Mkrew never commits or switches branches by itself.
 The daemon shells out to `git` (porcelain v2, `-z` output) behind a `GitBackend` trait, so a
@@ -1223,9 +1228,9 @@ Windows (tens of ms, worse with antivirus), so:
   lookup and (Working mode) the staged/unstaged `git diff --numstat` for the +/− counts
   (ADR 0007); Against-base mode adds `merge-base` (cached until HEAD or base moves) and one
   numstat diff since it.
-- Refresh is triggered by the file watcher (debounced 300 ms) and when the view opens; never polled.
+- Refresh is triggered by the file watcher (debounced 300 ms) and when its tab or the Diff view comes on screen; never polled.
 - Diffs are computed per file on demand and cached by (path, mode, mtime/size, HEAD).
-- Never run git for workspaces whose Git view is not open, except the cheap status used for
+- Never run git for workspaces whose Git tab or Diff view is not on screen, except the cheap status used for
   sidebar markers (at most once per 2 s per workspace).
 
 - **Header:** with two or more repositories (`git.repos`, ADR 0029) a "Repo" chip row (the
@@ -1238,8 +1243,7 @@ Windows (tens of ms, worse with antivirus), so:
     - **Working changes:** uncommitted changes grouped Staged / Unstaged / Untracked.
     - **Against base:** everything on this branch vs base, from `git merge-base HEAD <base>` to the
       working tree — like a pull request diff.
-- **Changed-file list** (right of the diff, with the header and commit box) with +/− counts;
-  selecting one shows its diff.
+- **Changed-file list** (the Git tab) with +/− counts; selecting one shows its diff.
 - **Diff viewer:** unified or split (side-by-side), hunk navigation, collapsed unchanged regions, syntax
   highlighting. Diffs > 1 MB show a summary and "Open in Zed".
 - **Diff modes:** a Unified | Split toggle in the diff header (key `d`, §13) switches between one
@@ -1255,7 +1259,7 @@ Windows (tens of ms, worse with antivirus), so:
 - **Viewed files** (ADR 0065): each file row has a box (not in the History), the diff toolbar a
   "Viewed" button, key `v` (§13) and the palette "Git: Mark file as viewed / not viewed". A viewed
   row is dimmed and the selected viewed file's diff collapses to "Marked as viewed." with a
-  **Show diff** button. The side panel header shows `Viewed N/M` (M = every file of the shown
+  **Show diff** button. The Git tab's header shows `Viewed N/M` (M = every file of the shown
   list, whatever "Changed by" and the file filter hide). The daemon keeps each mark in SQLite
   with a hash of the file's diff text; it clears by itself as soon as that text changes or the
   file stops changing (checked with every status refresh). Staging a whole viewed file keeps the
@@ -1277,8 +1281,8 @@ Windows (tens of ms, worse with antivirus), so:
   parents (merges fork into a lane that ends at the fork point; lanes to commits past the 50
   run off the bottom), at most 8 lanes, colored from the workspace palette (no red or yellow);
   the expanded commit's files show its lanes running straight through.
-- **Task changes:** from a Review-column task card, "View changes" opens the Git view with the diff
-  from `task.checkpoint` to now (ties into M5).
+- **Task changes:** from a Review-column task card, "View changes" opens the Git tab and the diff from
+  `task.checkpoint` to now (ties into M5).
 - **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; Shift+↓ / Shift+↑ pick the first new-side line of the current hunk (`n` / `p` choose it), then grow or shrink the pick one line, across hunks, scrolled into view; as in
   ADR 0006) → comment, reusing the M6 comment system (`context = 'diff'`, anchored to new-side
   lines + quote = the picked lines shown; not in History). Threads are listed in a margin beside
@@ -1333,11 +1337,13 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Global | Ask AI: a question outside every project (§20H) | Ctrl+Shift+G |
 | Global | Focus the sidebar filter with the active row highlighted (shows the sidebar if hidden, widens the compact rail; again returns to the pane) | Alt+0 |
 | Global | Open the context menu of what has the keyboard (the menu a right-click opens: terminal pane, file tree cursor row, editor tab, sidebar row, Board card; else the workspace menu under the switcher); again closes it | Shift+F10 (the Menu key: bind `context_menu` in Settings) |
-| View | Toggle the right panel (Files / Session tabs; keeps the tab) | Ctrl+Shift+Y |
+| View | Toggle the right panel (Files / Session / Git tabs; keeps the tab) | Ctrl+Shift+Y |
 | Workspace | Jump to workspace 1–9 | Alt+1 … Alt+9 |
 | Workspace | Next / previous workspace | Ctrl+Alt+↓ / Ctrl+Alt+↑ |
 | Workspace | Add workspace (folder or clone) | Ctrl+Shift+K |
-| View | Terminals / Board / Git / Docs | Ctrl+Shift+1 / 2 / 4 / 5 |
+| View | Terminals / Board / Docs | Ctrl+Shift+1 / 2 / 5 |
+| View | Show Git panel (right panel, the Git list gets the keyboard; ADR 0084) | Ctrl+Shift+4 |
+| View | Show diff (only while a diff is open) | Ctrl+Shift+7 |
 | View | Show file tree (right panel, the tree gets the keyboard; ADR 0081) | Ctrl+Shift+3 |
 | View | Show editor (only while a file tab is open) | Ctrl+Shift+6 |
 | Inbox | Jump to next / previous item needing attention (sessions asking for input first, then newest first) | Ctrl+Shift+I / Ctrl+Alt+I |
@@ -1380,6 +1386,8 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Editor | Find / replace in the opened file (replace all: Ctrl+Alt+Enter in the bar) | Ctrl+F / Ctrl+H |
 | Editor | Close the active file tab (asks about unsaved text; ADR 0080) | Ctrl+W |
 | Git | Next / previous file | ↓ / ↑ (or j / k) |
+| Git | Open the selected file's diff | Enter |
+| Git | Close an open menu, else unselect the picked lines, else close the diff | Esc |
 | Git | Next / previous hunk | n / p |
 | Git | Stage / unstage selected file or hunk | s / u |
 | Git | Toggle Working changes / Against base | b |
@@ -1398,7 +1406,7 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Agent (v2) | Broadcast, prompts, follow in Zed, turns, fan-out, new pane of a chosen agent profile ("Agent: New <Profile> pane") | command palette only |
 | Task / Workspace | Merge back / remove worktree of the selected task; pin, open in File Explorer, set default agent, remove, workspace menu of the active workspace; tab pin / close others / close to the right, pane pin and reading width, workspace set default shell and move up / down, agent stop / open transcript / link plan / unlink plan (only with a linked plan) / improve prompt, run start / restart / stop of one command, Git change base (only in Against base) and switch repository, Jira all / mine, list / kanban and refresh, copy last error, dismiss notifications, History (needs a workspace), install update | command palette only (the menu items also by Shift+F10) |
 
-In the Editor and Git views the terminal never has focus, so single-key shortcuts are safe there.
+In the Editor, and while the Git list (or the diff, with the list hidden) has the keyboard, the terminal never has focus, so single-key shortcuts are safe there.
 Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A / S used to be
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
@@ -1417,7 +1425,7 @@ Esc closes the menu and gives the keyboard back.
 A held (auto-repeat) key does nothing.
 The Board's single keys stay with the menu while it is open.
 
-Modal dialogs (ADR 0084): Tab and Shift+Tab move through the dialog's controls and wrap inside it.
+Modal dialogs (ADR 0085): Tab and Shift+Tab move through the dialog's controls and wrap inside it.
 The order is the dialog's text fields first, then its options (chips, checkboxes), then its buttons left to right.
 Enter or Space on a focused control clicks it; ← / → move between the chips of a row; Esc closes the dialog from anywhere in it.
 Tab is not in `keymap.toml`: like the keys of the confirm prompt it only means something inside a dialog.
@@ -1567,7 +1575,7 @@ Tints (chip and pill fills) are a color at ~14 % (dark) / ~12 % (light) alpha.
   opens `settings.toml` and `keymap.toml` in Zed.
 - Density: one "comfortable" density in v1 (a compact option is backlog).
 - Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%.
-- Focus ring (ADR 0084): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
+- Focus ring (ADR 0085): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes.
   A click never shows it.
 - Derived tokens (accent mixed into `bg`): `pane-focus-border` #49518D / #A4AAE7;
   `terminal-selection-bg` #3A406B / #CFD2F0 (selected terminal text is drawn in `text`).
@@ -1919,7 +1927,7 @@ light_theme = "Mkrew Light" # §14; a built-in theme name, shown in Light mode /
 dark_theme = "Mkrew Dark"   # §14; shown in Dark mode / a dark OS
 diff_mode = "unified"       # §12B; "unified" | "split"; the Git diff header toggle writes it
 inspector_width = 300       # §10; px, the right panel's width (dragging its edge writes it; kept 240–560)
-right_panel = "hidden"      # §10; "files" | "session" | "hidden"; the right panel's toggle and tabs write it
+right_panel = "hidden"      # §10; "files" | "session" | "git" | "hidden"; the right panel's toggle and tabs write it
 sidebar_width = 280         # §10; px, the workspace sidebar's width (dragging its edge writes it; kept 200–480)
 close_to_tray = true        # §20J; Windows: ✕ hides the window to the tray icon (false: ✕ quits the UI)
 

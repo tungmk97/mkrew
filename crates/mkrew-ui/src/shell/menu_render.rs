@@ -1,5 +1,5 @@
 //! The one renderer of every popover menu, the key handler that goes with it and the focus
-//! rules (ADR 0084). Each menu builds `Rows`; a click and a key reach the same `action`.
+//! rules (ADR 0085). Each menu builds `Rows`; a click and a key reach the same `action`.
 
 use crate::*;
 

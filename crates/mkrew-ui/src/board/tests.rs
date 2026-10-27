@@ -11,33 +11,33 @@ fn each_view_maps_to_its_own_show_command() {
         [
             Command::ShowTerminals,
             Command::ShowBoard,
-            Command::ShowGit,
             Command::ShowDocs,
-            Command::ShowEditor
+            Command::ShowEditor,
+            Command::ShowDiff
         ]
     );
 }
 
 #[test]
-fn the_view_bar_lists_the_editor_only_with_open_files() {
-    let bar = |docs, editor| View::bar(docs, editor).collect::<Vec<_>>();
+fn the_view_bar_lists_the_editor_and_the_diff_only_while_open() {
+    let bar = |docs, editor, diff| View::bar(docs, editor, diff).collect::<Vec<_>>();
     assert_eq!(
-        bar(true, false),
-        [View::Terminals, View::Board, View::Git, View::Docs]
+        bar(true, false, false),
+        [View::Terminals, View::Board, View::Docs]
     );
     assert_eq!(
-        bar(true, true),
+        bar(true, true, true),
         [
             View::Terminals,
             View::Board,
-            View::Git,
             View::Docs,
-            View::Editor
+            View::Editor,
+            View::Diff
         ]
     );
     assert_eq!(
-        bar(false, true),
-        [View::Terminals, View::Board, View::Git, View::Editor]
+        bar(false, false, true),
+        [View::Terminals, View::Board, View::Diff]
     );
 }
 

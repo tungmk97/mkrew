@@ -34,7 +34,7 @@ Waves run in order 1, 2, 3, 4 on master: wave 1 has landed before this plan star
 - Pure logic gets unit tests (pattern: `crates/mkrew-ui/src/confirm.rs` tests). No test calls a real agent or the network. Do not write tests that pin wording, wiring or defaults.
 - Fast loop: `cargo test -p mkrew-ui <filter>`. Full verify at the end of the wave: `"C:/Program Files/Git/bin/bash.exe" scripts/verify.sh` (plain `bash` is WSL). On OOM or linker errors add `-j 2` to cargo.
 - Commits: Conventional Commits (`feat(ui): ...`), `git -c user.email=tungnv975@gmail.com commit`, stage only the task's files, never push, never touch CHANGELOG.md.
-- Docs for this wave: SPEC.md sections 13 and 14; append a section to `docs/decisions/0084-keyboard-only-operation.md` (wave 1 created it; re-check the number before writing); `docs/HUMAN_CHECKS.md` "To verify" entries for dark and light.
+- Docs for this wave: SPEC.md sections 13 and 14; append a section to `docs/decisions/0085-keyboard-only-operation.md` (wave 1 created it; re-check the number before writing); `docs/HUMAN_CHECKS.md` "To verify" entries for dark and light.
 - Markdown: one sentence per physical line; never the em dash character, use "-".
 - Destructive actions are never the default focus and never run on a bare Enter that opened the dialog; they run only when the keyboard was moved onto them (Tab) and then Enter or Space is pressed; auto-repeat does nothing.
 - Every focusable element shows a visible focus ring from `theme.rs` tokens, only while keyboard focused (`focus_visible`), in both themes.
@@ -63,7 +63,7 @@ Waves run in order 1, 2, 3, 4 on master: wave 1 has landed before this plan star
 | `crates/mkrew-ui/src/main.rs`, `shell/connection.rs` | import, dead-focus recovery in `render`, `run_picker_scroll` field |
 | `task_dialog.rs`, `broadcast.rs`, `run_setup.rs`, `settings_dialog.rs`, `turns_dialog.rs`, `undo_dialog.rs` | Pure dialog models: edge / enter, Space in the list, picker cursor, `d`, the new undo rule |
 | `shell/task_dialog.rs`, `ask_dialog.rs`, `send_dialog.rs`, `dialogs.rs`, `phone_access.rs`, `workspace_actions.rs`, `git_dialogs.rs`, `worktrees.rs`, `run.rs`, `settings.rs`, `history.rs`, `git_render.rs` | Make each dialog's controls focusable and route its keys through `dialog_nav` |
-| `docs/decisions/0084-keyboard-only-operation.md`, `docs/SPEC.md`, `docs/HUMAN_CHECKS.md` | Docs |
+| `docs/decisions/0085-keyboard-only-operation.md`, `docs/SPEC.md`, `docs/HUMAN_CHECKS.md` | Docs |
 
 Dialogs not touched: Confirm prompt (already works), command palette, quick open, prompt picker, History (they have no buttons that need Tab).
 `icon_button` and `segment` return `Stateful<Div>` too, so `DialogControl` covers them; no dialog uses them today (the only `icon_button` in a dialog file is the title bar's phone icon), so no call site changes.
@@ -84,7 +84,7 @@ Dialogs not touched: Confirm prompt (already works), command palette, quick open
 - [ ] **Step 1: Add the field** - in the `Theme` struct, right after `pub pane_focus_border: u32,`:
 
 ```rust
-    /// The ring of a keyboard-focused dialog control (ADR 0084): a 1 px border in the text
+    /// The ring of a keyboard-focused dialog control (ADR 0085): a 1 px border in the text
     /// color, so it reads on `surface` and on an accent button in every theme.
     pub focus_ring: u32,
 ```
@@ -156,7 +156,7 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): focus ring theme toke
 - [ ] **Step 1: Write the module with its tests first** - create `crates/mkrew-ui/src/dialog_focus.rs`:
 
 ```rust
-//! Keyboard rules for the controls of a modal dialog (ADR 0084): which key moves the focus,
+//! Keyboard rules for the controls of a modal dialog (ADR 0085): which key moves the focus,
 //! which keys a focused button takes, which auto-repeats are dropped. Pure and tested
 //! headlessly; `shell/focus.rs` applies them and `shell/widgets.rs` draws the ring.
 
@@ -400,7 +400,7 @@ Expected: PASS.
 - [ ] **Step 4: The extension trait** - in `shell/widgets.rs`, after `danger_button` and before `kbd`:
 
 ```rust
-/// Keyboard focus for the controls of a modal dialog (ADR 0084). gpui keeps the focus handle
+/// Keyboard focus for the controls of a modal dialog (ADR 0085). gpui keeps the focus handle
 /// of an element that has a tab index in its element state, so a control needs no field on
 /// `Shell`. Every control here is a `Stateful<Div>` ([`button`], [`secondary_button`],
 /// [`quiet_button`], [`danger_button`], [`icon_button`], [`segment`], chips, check rows).
@@ -906,7 +906,7 @@ This task changes the rule at `undo_dialog.rs:282`: discarding no longer "takes 
 
 ```rust
 /// Esc closes the dialog. Enter and Space on the dialog itself do nothing: discarding runs only
-/// from the focused "Discard changes" button, after Tab moved the keyboard onto it (ADR 0084).
+/// from the focused "Discard changes" button, after Tab moved the keyboard onto it (ADR 0085).
 pub fn cancels(keystroke: &Keystroke) -> bool {
     keystroke.key == "escape"
 }
@@ -2314,16 +2314,16 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): settings Reset, Fix i
 
 ---
 
-### Task 12: ADR 0084, SPEC and HUMAN_CHECKS
+### Task 12: ADR 0085, SPEC and HUMAN_CHECKS
 
 **Files:**
-- Modify: `docs/decisions/0084-keyboard-only-operation.md` (append a section; wave 1 created the file from `docs/decisions/0000-template.md`)
+- Modify: `docs/decisions/0085-keyboard-only-operation.md` (append a section; wave 1 created the file from `docs/decisions/0000-template.md`)
 - Modify: `docs/SPEC.md` (§13, §14)
 - Modify: `docs/HUMAN_CHECKS.md`
 
 **Interfaces:** none (docs).
 
-- [ ] **Step 1: ADR** - check that `docs/decisions/0084-keyboard-only-operation.md` exists (wave 1 creates it; if it does not, stop and tell the user wave 1 has not landed). Append at the end of the file:
+- [ ] **Step 1: ADR** - check that `docs/decisions/0085-keyboard-only-operation.md` exists (wave 1 creates it; if it does not, stop and tell the user wave 1 has not landed). Append at the end of the file:
 
 ```markdown
 
@@ -2365,7 +2365,7 @@ The daemon still re-checks every destructive request (previews and fingerprints)
 - [ ] **Step 2: SPEC §13** - append a paragraph to §13 after the paragraph that starts with "Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal" (find it by that text; do not reorder wave 1, 3 or 4 additions):
 
 ```markdown
-Modal dialogs (ADR 0084): Tab and Shift+Tab move through the dialog's controls and wrap inside it.
+Modal dialogs (ADR 0085): Tab and Shift+Tab move through the dialog's controls and wrap inside it.
 The order is the dialog's text fields first, then its options (chips, checkboxes), then its buttons left to right.
 Enter or Space on a focused control clicks it; ← / → move between the chips of a row; Esc closes the dialog from anywhere in it.
 Tab is not in `keymap.toml`: like the keys of the confirm prompt it only means something inside a dialog.
@@ -2379,13 +2379,13 @@ Run setup: Shift+Tab walks back; in its folder picker ↑ / ↓ move, → opens 
 - [ ] **Step 3: SPEC §14** - add a bullet after the "Focused pane: faint 1 px accent border; unfocused panes dimmed ~5%." bullet:
 
 ```markdown
-- Focus ring (ADR 0084): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes. A click never shows it.
+- Focus ring (ADR 0085): a dialog control that has the keyboard shows a 1 px border in `focus-ring` (the text color) over its own border, only while it was reached with the keyboard (`focus_visible`), in both themes. A click never shows it.
 ```
 
 - [ ] **Step 4: HUMAN_CHECKS** - under "To verify (non-blocking)", add the newest entry first:
 
 ```markdown
-### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0084, wave 2)
+### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0085, wave 2)
 
 - [ ] **Focus ring (dark + light):** open the task dialog (palette: New task). Press Tab until each control has the keyboard: the title, the prompt, From prompt, every agent chip, Run in a worktree, Cancel, Create task, then the title again. Each control shows a 1 px ring in the text color; a mouse click on the same controls shows none. Shift+Tab goes the other way.
 - [ ] **Chips:** with an agent chip focused press ← / → (moves along the row, stops at the ends) and Enter or Space (picks it). The Ask AI dialog's Agent and Web search rows do the same.
@@ -2399,8 +2399,8 @@ Run setup: Shift+Tab walks back; in its folder picker ↑ / ↓ move, → opens 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/decisions/0084-keyboard-only-operation.md docs/SPEC.md docs/HUMAN_CHECKS.md
-git -c user.email=tungnv975@gmail.com commit -m "docs(spec): keyboard-only dialogs, wave 2 (ADR 0084)"
+git add docs/decisions/0085-keyboard-only-operation.md docs/SPEC.md docs/HUMAN_CHECKS.md
+git -c user.email=tungnv975@gmail.com commit -m "docs(spec): keyboard-only dialogs, wave 2 (ADR 0085)"
 ```
 
 ---

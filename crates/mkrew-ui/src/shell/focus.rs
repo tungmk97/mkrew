@@ -121,8 +121,13 @@ impl Shell {
     }
 
     /// The views the right panel is drawn next to.
+    pub(crate) fn panel_view(&self) -> bool {
+        matches!(self.view(), View::Terminals | View::Editor | View::Diff)
+    }
+
+    /// The right panel is drawn.
     pub(crate) fn panel_shown(&self) -> bool {
-        self.right_panel.open && matches!(self.view(), View::Terminals | View::Editor)
+        self.right_panel.open && self.panel_view()
     }
 
     /// The right panel shows the file tree.
@@ -134,6 +139,17 @@ impl Shell {
     /// follows `git.changed` and refreshes when it comes back.
     pub(crate) fn files_on_screen(&self) -> bool {
         self.view() == View::Editor || self.file_tree_shown()
+    }
+
+    /// The right panel shows the Git list (header, changes or History, commit box).
+    pub(crate) fn git_panel_shown(&self) -> bool {
+        self.panel_shown() && self.right_panel.tab == PanelTab::Git
+    }
+
+    /// Some of the active workspace's Git is drawn (the panel's list or the diff), so it
+    /// follows `git.changed` and refreshes when it comes back (SPEC §12B).
+    pub(crate) fn git_shown(&self) -> bool {
+        self.view() == View::Diff || self.git_panel_shown()
     }
 
     /// The pane the Session tab describes: the active tab's focused pane, also while the

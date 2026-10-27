@@ -35,6 +35,11 @@ pub struct Context {
     pub terminal: bool,
     /// The Git view's selected file can be discarded (unstaged or untracked).
     pub discard: bool,
+    /// The active workspace's Git is on screen (the panel's Git tab or the Diff view): the
+    /// Git keys act.
+    pub git: bool,
+    /// The active workspace has an open diff (the Diff view exists).
+    pub diff: bool,
     /// The selected board card offers "View changes".
     pub task_changes: bool,
     /// The selected board card offers "Merge back…" and "Remove worktree…".
@@ -67,9 +72,9 @@ pub struct Context {
     pub composer_open: bool,
     /// The selected board card is in Review (`a` approves it).
     pub approve_card: bool,
-    /// Git view shows Against base.
+    /// The Git list shows Against base.
     pub git_base: bool,
-    /// Git view lists several repositories.
+    /// The Git list shows several repositories.
     pub git_repos: bool,
     /// The Board shows Jira.
     pub jira: bool,
@@ -261,8 +266,8 @@ impl Extra {
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates => true,
-            Self::GitChangeBase => in_view(View::Git) && context.git_base,
-            Self::GitSwitchRepo => in_view(View::Git) && context.git_repos,
+            Self::GitChangeBase => context.workspace && context.git && context.git_base,
+            Self::GitSwitchRepo => context.workspace && context.git && context.git_repos,
             Self::JiraMine | Self::JiraLayout | Self::JiraRefresh => {
                 in_view(View::Board) && context.jira
             }
@@ -364,7 +369,8 @@ pub fn title(command: Command) -> String {
         Command::ShowDocs => "View: Docs".into(),
         Command::ShowFileTree => "View: File tree".into(),
         Command::ShowEditor => "View: Editor".into(),
-        Command::ShowGit => "View: Git".into(),
+        Command::ShowGitPanel => "View: Git panel".into(),
+        Command::ShowDiff => "View: Diff".into(),
         Command::ToggleDocSource => "Docs: Toggle preview / source".into(),
         Command::AddComment => "Comments: Comment on selected lines".into(),
         Command::SendComments => "Comments: Send comments to agent".into(),
@@ -457,12 +463,13 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ShowBoard
         | Command::ShowTerminals
         | Command::ShowFileTree
-        | Command::ShowGit
+        | Command::ShowGitPanel
         | Command::QuickOpen
         | Command::ToggleInspector
         | Command::NewTask
         | Command::ContextMenu
         | Command::FocusSidebar => context.workspace,
+        Command::ShowDiff => context.workspace && context.diff,
         Command::ShowDocs => context.workspace && context.features.docs,
         Command::ShowEditor => context.workspace && context.file_tabs > 0,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
@@ -491,7 +498,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::SendSelection => {
-            in_view(View::Editor) || in_view(View::Git) || (on_panes && context.terminal)
+            in_view(View::Editor) || in_view(View::Diff) || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
         Command::ApproveCard => in_view(View::Board) && context.approve_card,
@@ -505,7 +512,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::NextComment
         | Command::PreviousComment
         | Command::ReplyComment
-        | Command::ResolveComment => in_view(View::Docs) || in_view(View::Git),
+        | Command::ResolveComment => in_view(View::Docs) || in_view(View::Diff),
         Command::MoveTabLeft | Command::MoveTabRight => {
             on_panes || (in_view(View::Editor) && context.file_tabs > 0)
         }
@@ -528,8 +535,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::GitUnstageAll
         | Command::GitFetch
         | Command::GitPush
-        | Command::GitFocusCommit => in_view(View::Git),
-        Command::GitDiscard => in_view(View::Git) && context.discard,
+        | Command::GitFocusCommit => context.workspace && context.git,
+        Command::GitDiscard => context.workspace && context.git && context.discard,
         Command::Card(_) => in_view(View::Board),
     }
 }

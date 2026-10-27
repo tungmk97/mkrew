@@ -1,4 +1,4 @@
-//! Keyboard rules for the controls of a modal dialog (ADR 0084): which key moves the focus,
+//! Keyboard rules for the controls of a modal dialog (ADR 0085): which key moves the focus,
 //! which keys a focused button takes, which auto-repeats are dropped. Pure and tested
 //! headlessly; `shell/focus.rs` applies them and `shell/widgets.rs` draws the ring.
 

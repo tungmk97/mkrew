@@ -414,6 +414,8 @@ impl Shell {
             }),
             terminal: terminal.is_some(),
             discard,
+            git: self.git_shown(),
+            diff: workspace.is_some_and(|id| self.diff_open(id)),
             worktree_task,
             task_changes,
             fan_out,
@@ -628,7 +630,7 @@ impl Shell {
         let workspace = self.workspace;
         match action {
             palette::Action::Run(command) => {
-                if self.view() == View::Git
+                if self.git_shown()
                     && command.context().is_some_and(|context| {
                         context == GIT_CONTEXT || context == COMMENTS_CONTEXT
                     })

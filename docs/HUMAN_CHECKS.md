@@ -21,7 +21,7 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
-### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0084)
+### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0085)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Alt+0 (dark + light):** from a terminal, then with the sidebar hidden, then with the compact rail: the sidebar shows (rail widens), the filter takes the keyboard, the active row is highlighted.
@@ -59,7 +59,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   The one ERROR line is the Windows DXGI debug-layer message (0x887A002D), unrelated to this wave.
   Dark and light both unseen.
 
-### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0084)
+### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0085)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Pick lines in Docs (dark + light):** Docs → a `.md`, nothing picked.
@@ -97,7 +97,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **AltGr layouts:** on a layout where Alt+Shift+C / O type a character, rebind `copy_mode` / `link_hints` in Settings → Keyboard and check the new keys.
   Not run (2026-10-27 smoke): needs an AltGr layout and a person at the keyboard.
 
-### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0084, wave 2)
+### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0085, wave 2)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Focus ring (dark + light):** open the task dialog (palette: New task).
@@ -138,8 +138,15 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Diagram dialog (merge with ADR 0083):** Expand a Mermaid diagram in a Markdown preview.
   Tab reaches Close and shows the ring, Enter closes it, Esc closes it, and the keyboard returns to the pane.
   Not run: needs a person at the keyboard.
+- [ ] **Git keys in the right panel (merge with ADR 0084):** Ctrl+Shift+4, then j / k, s / u, b, h, n / p, d, `w` and Shift+S / Shift+U act on the Git list.
+  With a diff shown, the same keys still act, also with the panel hidden.
+  Shift+↓ / Shift+↑ pick lines in the diff, Ctrl+Alt+M comments, F8 / Shift+F8 and Ctrl+Alt+R / Ctrl+Alt+Enter work on threads.
+  `w`, F8 and the Shift keys stay in the commit box, the filter and a comment draft.
+  Esc: clears the pick, then closes the diff.
+  Git By:, ⋯ and Repositories open with the keyboard in the 240 px panel; "Open in Git" in the worktree dialog takes Tab.
+  Not run: needs a person at the keyboard.
 
-### To verify - 2026-10-27 Keyboard context menus (ADR 0084, wave 1)
+### To verify - 2026-10-27 Keyboard context menus (ADR 0085, wave 1)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Selected row:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓.
@@ -173,6 +180,21 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Not automated:** the smoke run (2026-10-27) could not drive the real window, so no menu was driven by keyboard and every item above is unticked.
   Synthetic input is not used any more; a human does these checks.
   The Shift+F10 toggle is confirmed in code only: the binding is global, not in the `Menu` NoAction shield, and `Shell::run` closes the menu and does not reopen it.
+
+### To verify - 2026-10-27 Git in the right panel (ADR 0084)
+
+- [ ] **Git tab (dark + light):** `Files │ Session │ Git 3` fits the tab row; at 240 px the header, branch card, segments, filter (with "By:" wrapped) and commit box fit without clipping; the repo strip falls back to one tab when crowded.
+- [ ] **Diff view:** a click shows `Diff` in the view bar and the diff with its × at the toolbar's end; `Esc` / × hide it and Terminals shows; the diff card has the same frame as before.
+- [ ] **Keys with the panel hidden:** in the Diff view with the panel closed, `n` / `p` / `d` / `s` still act.
+- [ ] **Restart:** the panel comes back on the Git tab when left there.
+- [ ] **Filter with no match:** the diff closes on the next status refresh when the filter matches no file (Terminals shows); the keyboard stays in the filter / list.
+- [ ] **Repo chip / worktree with the diff open:** switching either keeps the Diff view open on the other repository's first file.
+- [ ] **Commit everything or discard the last file with the diff open:** the diff closes, Terminals shows live panes, the keyboard stays in the Git list so Shift+P pushes.
+- [ ] **`git.changed` with only the Git tab on screen (Terminals view):** the list updates.
+- [ ] **Entry points:** the Session Changes card "Review diff", the Review card "View changes", "Diff since", the worktree dialog "Open in Git" and the title-bar branch chip each open the Git tab and the diff.
+- [ ] **History:** clicking a commit shows its first file's diff; pick lines, comment, Send to agent work.
+- [ ] **Stage with `s`:** the diff stays on the file that moved.
+- [ ] **Palette:** "View: Git panel" always; "View: Diff" only with a diff open.
 
 ### To verify - 2026-10-27 Drag a tab or pane onto a pane to split it (SPEC §10)
 

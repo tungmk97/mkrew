@@ -325,7 +325,7 @@ impl SidebarMode {
     }
 }
 
-/// `[ui] right_panel`: the right panel next to Terminals / Editor at start, and its tab
+/// `[ui] right_panel`: the right panel next to Terminals / Editor / Diff at start, and its tab
 /// (SPEC §10). The panel toggle and its tab row write it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -334,6 +334,8 @@ pub enum RightPanelMode {
     Files,
     /// Open on the session cards.
     Session,
+    /// Open on the Git changes.
+    Git,
     #[default]
     Hidden,
 }
@@ -343,6 +345,7 @@ impl RightPanelMode {
         match self {
             RightPanelMode::Files => "files",
             RightPanelMode::Session => "session",
+            RightPanelMode::Git => "git",
             RightPanelMode::Hidden => "hidden",
         }
     }
@@ -370,13 +373,13 @@ pub struct UiSettings {
     /// `[ui] diff_wrap` (SPEC §12B): long diff lines wrap at the pane edge (else they are cut).
     /// The Git diff toolbar's Wrap toggle writes it.
     pub diff_wrap: bool,
-    /// Width of the right panel (Files / Session tabs), px (SPEC §10); dragging its edge saves it.
+    /// Width of the right panel (Files / Session / Git tabs), px (SPEC §10); dragging its edge saves it.
     pub inspector_width: u16,
     /// Width of the workspace sidebar, px (SPEC §10); dragging its edge saves it.
     pub sidebar_width: u16,
     /// `[ui] sidebar`: full, compact rail or hidden at start; the sidebar toggles write it.
     pub sidebar: SidebarMode,
-    /// `[ui] right_panel`: hidden, or open on the Files or Session tab at start.
+    /// `[ui] right_panel`: hidden, or open on the Files, Session or Git tab at start.
     pub right_panel: RightPanelMode,
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
@@ -1157,6 +1160,10 @@ push = true
             ui("[ui]\nright_panel = \"session\"").right_panel,
             RightPanelMode::Session
         );
+        assert_eq!(
+            ui("[ui]\nright_panel = \"git\"").right_panel,
+            RightPanelMode::Git
+        );
         assert!(parse_err("[ui]\nright_panel = \"left\"").contains("unknown variant `left`"));
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.toml");
@@ -1164,6 +1171,7 @@ push = true
         for mode in [
             RightPanelMode::Files,
             RightPanelMode::Session,
+            RightPanelMode::Git,
             RightPanelMode::Hidden,
         ] {
             write_ui_value(&path, "right_panel", &format!("\"{}\"", mode.name())).unwrap();

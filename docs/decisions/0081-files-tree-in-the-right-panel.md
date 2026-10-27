@@ -1,7 +1,7 @@
 # 0081 - Files tree in the right panel
 
 - Date: 2026-10-27
-- Status: accepted
+- Status: accepted; superseded in part by 0084
 - Milestone: M7
 
 ## Context
@@ -27,4 +27,4 @@ Tree rows drag onto panes and type `composer.file_ref` (agents) or the bare path
 
 Supersedes in part ADR 0050 (tree right of the editor) and ADR 0038 (the session panel is a tab, and no longer closed at every start).
 SPEC §10, §12A, §13, §20B.5 and the config sample change in the same commit.
-Moving Git into the panel is a follow-up (`GIT_PANEL_PROMPT.md`).
+Moving Git into the panel followed in ADR 0084.

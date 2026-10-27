@@ -280,7 +280,7 @@ impl UndoDialog {
 }
 
 /// Esc closes the dialog. Enter and Space on the dialog itself do nothing: discarding runs only
-/// from the focused "Discard changes" button, after Tab moved the keyboard onto it (ADR 0084).
+/// from the focused "Discard changes" button, after Tab moved the keyboard onto it (ADR 0085).
 pub fn cancels(keystroke: &Keystroke) -> bool {
     keystroke.key == "escape"
 }

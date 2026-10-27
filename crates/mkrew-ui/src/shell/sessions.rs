@@ -423,7 +423,7 @@ impl Shell {
                 }
                 // Git opens the selected changed file.
                 Some(project_id)
-                    if self.view() == View::Git
+                    if self.view() == View::Diff
                         && self
                             .git
                             .get(&project_id)
@@ -460,7 +460,12 @@ impl Shell {
                     self.show_view(View::Editor, window, cx);
                 }
             }
-            Command::ShowGit => self.show_view(View::Git, window, cx),
+            Command::ShowGitPanel => self.show_git_panel(window, cx),
+            Command::ShowDiff => {
+                if self.workspace.is_some_and(|id| self.diff_open(id)) {
+                    self.show_view(View::Diff, window, cx);
+                }
+            }
             Command::QuickOpen => self.open_quick_open(window, cx),
             Command::CommandPalette => self.open_palette(window, cx),
             Command::OpenSettings => self.open_settings_dialog(window, cx),

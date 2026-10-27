@@ -1,4 +1,4 @@
-# 0084 - Keyboard-only operation
+# 0085 - Keyboard-only operation
 
 - Date: 2026-10-27
 - Status: accepted
@@ -116,9 +116,19 @@ Expected limits: "File tree: Open file in a kept tab" from the palette does noth
 
 ## Merge with the files tree in the right panel (ADR 0081)
 
-- This ADR was numbered 0081 on the branch. Master took 0081 (files tree in the right panel), 0082 and 0083, so it is 0084 now.
+- This ADR was numbered 0081 on the branch. Master took 0081 (files tree in the right panel), 0082 and 0083, so it is 0085 now.
 - `View::Files` is gone. The tree is in the right panel, and the opened files are the Editor view.
 - The tree's own keys (`ToggleIgnored`, `OpenKept`) are in `FileTree`. Save, find and close are in `Editor`.
 - Shift+F10 opens the file row menu when the tree painted in the right panel has the keyboard. It opens the file tab menu when the Editor view is shown and neither the tree nor a pane has the keyboard.
 - The palette entry "Tabs: Move tab left / right" moves file tabs while the Editor view is shown.
 - The diagram dialog (ADR 0083) has a Tab stop on Close and the dialog guard like the other dialogs.
+
+## Merge with git in the right panel (ADR 0084)
+
+- This ADR was numbered 0084 for a while. Master took 0084 (git in the right panel), so it is 0085 now.
+- `View::Git` is gone. The Git list is in the right panel's Git tab, and the diff is the Diff view.
+- `GIT_CONTEXT` stays on the element that holds `git_focus`: the list in the panel, or the diff card while the panel is not drawn. So the Git single keys, Shift+↑/↓ picking and the comment-thread keys work in both places.
+- The header, filter, commit box and Repositories search stay outside `GIT_CONTEXT`; `Shell::run` still hands keys to the commit box.
+- Palette Git commands, "Git: Change base…" and "Git: Switch repository" are listed while the Git tab or the Diff view is on screen.
+- Shift+F10 on the Git list or the Diff view opens the workspace menu, as it did on the old Git view.
+- The worktree dialog button "Open in Git" is a Tab stop like the other dialog buttons.

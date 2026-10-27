@@ -1,4 +1,4 @@
-//! The model of a popover menu and what a key does in it (SPEC §13, ADR 0084). Pure and tested
+//! The model of a popover menu and what a key does in it (SPEC §13, ADR 0085). Pure and tested
 //! headlessly: `shell/menu_render.rs` draws it and applies the answers.
 
 use gpui::{Keystroke, SharedString};
@@ -496,7 +496,7 @@ mod tests {
         // Nothing focused, a filter with nothing highlighted, a tree without a cursor and
         // without a tab, a Board without a selected card, Docs and Git: the workspace menu.
         assert_eq!(owner(&Focus::default()), Owner::Workspace);
-        for view in [View::Terminals, View::Docs, View::Git] {
+        for view in [View::Terminals, View::Docs, View::Diff] {
             let focus = Focus {
                 view,
                 ..Focus::default()

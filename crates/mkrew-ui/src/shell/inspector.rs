@@ -1,4 +1,4 @@
-//! The right panel (file tree and session cards) and its title bar toggle.
+//! The right panel (file tree, session cards, Git list) and its title bar toggle.
 
 use crate::*;
 
@@ -10,17 +10,17 @@ impl Shell {
             return;
         }
         let mode_before = self.right_panel.mode();
-        let tree_before = if matches!(self.view(), View::Terminals | View::Editor) {
-            let before = self.files_on_screen();
+        let (tree_before, git_before) = if self.panel_view() {
+            let before = (self.files_on_screen(), self.git_shown());
             self.right_panel.open = !self.right_panel.open;
             before
         } else {
             self.right_panel.open = true;
             self.show_view(View::Terminals, window, cx);
-            // `show_view` refreshed the tree if it came on screen.
-            self.files_on_screen()
+            // `show_view` refreshed the tree / Git list if it came on screen.
+            (self.files_on_screen(), self.git_shown())
         };
-        self.panel_changed(tree_before, mode_before, window, cx);
+        self.panel_changed(tree_before, git_before, mode_before, window, cx);
     }
 
     /// A click on the panel's `Files` / `Session` tab.
@@ -30,9 +30,13 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let (tree_before, mode_before) = (self.files_on_screen(), self.right_panel.mode());
+        let (tree_before, git_before, mode_before) = (
+            self.files_on_screen(),
+            self.git_shown(),
+            self.right_panel.mode(),
+        );
         self.right_panel.show(tab);
-        self.panel_changed(tree_before, mode_before, window, cx);
+        self.panel_changed(tree_before, git_before, mode_before, window, cx);
     }
 
     /// Ctrl+Shift+3: the right panel on the file tree, which gets the keyboard; from a view
@@ -41,7 +45,7 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
-        if !matches!(self.view(), View::Terminals | View::Editor) {
+        if !self.panel_view() {
             self.show_view(View::Terminals, window, cx);
         }
         self.show_panel_tab(PanelTab::Files, window, cx);
@@ -51,12 +55,29 @@ impl Shell {
         }
     }
 
-    /// After the panel opened, closed or switched tab: a tree that came on screen
-    /// (`tree_before` was false) is refreshed, a hidden one gives the keyboard back, the grip
-    /// of a hidden panel ends its drag, and `[ui] right_panel` is saved.
+    /// Ctrl+Shift+4: the right panel on the Git tab, whose list gets the keyboard; from a
+    /// view without the panel, Terminals first.
+    pub(crate) fn show_git_panel(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(project_id) = self.workspace else {
+            return;
+        };
+        if !self.panel_view() {
+            self.show_view(View::Terminals, window, cx);
+        }
+        self.show_panel_tab(PanelTab::Git, window, cx);
+        // Without loaded tabs the Terminals view draws no panel: nothing to focus.
+        if self.view() != View::Terminals || self.tabs.contains_key(&project_id) {
+            window.focus(&self.git_focus, cx);
+        }
+    }
+
+    /// After the panel opened, closed or switched tab: a tree or Git list that came on screen
+    /// is refreshed, a hidden one gives the keyboard back, the grip of a hidden panel ends its
+    /// drag, and `[ui] right_panel` is saved.
     fn panel_changed(
         &mut self,
         tree_before: bool,
+        git_before: bool,
         mode_before: mkrew_core::settings::RightPanelMode,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -70,10 +91,29 @@ impl Shell {
                 self.refresh_files(project_id, window, cx);
             }
         } else if self.files_focus.is_focused(window) {
-            if self.view() == View::Editor {
-                window.focus(&self.file_editor_focus, cx);
+            self.focus_center(window, cx);
+        }
+        if self.git_shown()
+            && !git_before
+            && let Some(project_id) = self.workspace
+        {
+            self.refresh_git(project_id, window, cx);
+        }
+        // The Git tab went away under the keyboard: its list, filter field or commit box.
+        if !self.git_panel_shown()
+            && [
+                &self.git_focus,
+                &self.git_filter_focus,
+                &self.git_commit_focus,
+            ]
+            .into_iter()
+            .any(|focus| focus.is_focused(window))
+        {
+            if self.view() == View::Diff {
+                // The diff card holds `git_focus` itself.
+                window.focus(&self.git_focus, cx);
             } else {
-                self.focus_pane(window, cx);
+                self.focus_center(window, cx);
             }
         }
         let value = format!("\"{}\"", self.right_panel.mode().name());
@@ -84,6 +124,17 @@ impl Shell {
             self.settings_write_failed("the right panel", error, cx);
         }
         cx.notify();
+    }
+
+    /// The keyboard back to the center after the panel's focused tab went away: the editor
+    /// in the Editor view, else the focused pane. (In the Git / Diff view the diff card holds
+    /// `git_focus` itself: `git_shown` stays true there.)
+    fn focus_center(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.view() == View::Editor {
+            window.focus(&self.file_editor_focus, cx);
+        } else {
+            self.focus_pane(window, cx);
+        }
     }
 
     /// The edge was released: saves the dragged width as `[ui] inspector_width`.
@@ -150,9 +201,9 @@ impl Shell {
             .on_click(cx.listener(|shell, _, window, cx| shell.toggle_sidebar(window, cx)))
     }
 
-    /// The right panel (SPEC §10, §12A): `Files | Session` tabs, right of Terminals and the
-    /// Editor. Rendered only while open; it is a sibling of the panes, never inside the
-    /// terminal element.
+    /// The right panel (SPEC §10, §12A, §12B): `Files | Session | Git` tabs, right of
+    /// Terminals, the Editor and the diff. Rendered only while open; it is a sibling of the
+    /// panes, never inside the terminal element.
     pub(crate) fn render_right_panel(
         &self,
         project_id: Ulid,
@@ -192,14 +243,16 @@ impl Shell {
                 cx.listener(|shell, _, _, cx| shell.end_inspector_drag(cx)),
             );
         let tab = self.right_panel.tab;
+        let changed = self.git_summary().map_or(0, GitSummary::changed);
         let tabs = div()
             .flex_none()
             .p(px(space::S))
-            .child(
-                segmented(theme).children([PanelTab::Files, PanelTab::Session].map(|each| {
+            .child(segmented(theme).children(
+                [PanelTab::Files, PanelTab::Session, PanelTab::Git].map(|each| {
                     let title = match each {
                         PanelTab::Files => "Files",
                         PanelTab::Session => "Session",
+                        PanelTab::Git => "Git",
                     };
                     segment(
                         SharedString::from(format!("panel-{title}")),
@@ -211,8 +264,12 @@ impl Shell {
                         shell.show_panel_tab(each, window, cx);
                     }))
                     .child(title)
-                })),
-            );
+                    // The workspace's changed files over all repositories, hidden at 0.
+                    .when(each == PanelTab::Git && changed > 0, |el| {
+                        el.child(tinted_chip(changed.to_string(), theme.accent_text, theme))
+                    })
+                }),
+            ));
         let body = match tab {
             PanelTab::Files => self.render_file_tree(project_id, theme, window, cx),
             PanelTab::Session => {
@@ -259,6 +316,7 @@ impl Shell {
                     None => cards.size_full().into_any_element(),
                 }
             }
+            PanelTab::Git => self.render_git_panel(project_id, theme, window, cx),
         };
         div()
             .flex_none()
