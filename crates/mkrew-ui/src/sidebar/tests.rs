@@ -1017,3 +1017,19 @@ fn collapsing_and_expanding_a_workspace_by_id() {
     sidebar.set_expanded(api.id, true);
     assert_eq!(session_ids(&sidebar.view(&viewed).rows), [a.id]);
 }
+
+#[test]
+fn browsing_with_text_in_the_box_highlights_the_active_session() {
+    let api = project("api");
+    let first = session(&api, 1, SessionState::Idle);
+    let second = session(&api, 2, SessionState::Idle);
+    let mut sidebar = Sidebar::default();
+    sidebar.load(vec![api.clone()], vec![first.clone(), second.clone()]);
+    let viewed = Viewed::default();
+    sidebar.filter_mut().insert("api");
+    let rows = sidebar.view(&viewed).rows;
+    for id in [first.id, second.id] {
+        sidebar.browse_from(&rows, Some(id), Some(api.id));
+        assert_eq!(sidebar.highlighted(&rows), Some(Target::Session(id)));
+    }
+}

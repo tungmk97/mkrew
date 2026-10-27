@@ -572,7 +572,9 @@ impl Shell {
             }
             FindKey::Older | FindKey::Newer => {
                 let rows = self.sidebar.view(&self.viewed).rows;
-                match self.sidebar.highlighted(&rows) {
+                let target = self.sidebar.highlighted(&rows);
+                self.sidebar.end_browse();
+                match target {
                     Some(sidebar::Target::Session(id)) => self.open_session(id, window, cx),
                     Some(sidebar::Target::Workspace(id)) => {
                         self.activate_workspace(id, window, cx);

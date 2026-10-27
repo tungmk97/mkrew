@@ -451,15 +451,21 @@ impl Sidebar {
         &mut self.filter
     }
 
+    /// Every row (workspaces too) is a target only while the box is empty; with text only the
+    /// matching sessions are, whether or not browse mode is on.
+    fn every_row(&self) -> bool {
+        self.filter.trim().is_empty()
+    }
+
     /// What Enter in the filter box opens: the highlighted row (the first match until ↑/↓
     /// moves it). While browsing with an empty box any row can be highlighted; otherwise
     /// None while the box is empty.
     pub fn highlighted(&self, rows: &[Row]) -> Option<Target> {
-        let empty = self.filter.trim().is_empty();
-        if empty && !self.browse {
+        let every_row = self.every_row();
+        if every_row && !self.browse {
             return None;
         }
-        let targets = targets(rows, empty);
+        let targets = targets(rows, every_row);
         targets
             .get(self.highlight.min(targets.len().saturating_sub(1)))
             .copied()
@@ -468,7 +474,7 @@ impl Sidebar {
     /// ↑ (`-1`) / ↓ (`1`) in the filter box: the highlight moves one target and stops at the
     /// ends (no wrap).
     pub fn move_highlight(&mut self, rows: &[Row], delta: isize) {
-        let every_row = self.filter.trim().is_empty() && self.browse;
+        let every_row = self.every_row();
         let last = targets(rows, every_row).len().saturating_sub(1);
         self.highlight = self
             .highlight
@@ -481,7 +487,7 @@ impl Sidebar {
     /// first row.
     pub fn browse_from(&mut self, rows: &[Row], session: Option<Ulid>, workspace: Option<Ulid>) {
         self.browse = true;
-        let all = targets(rows, true);
+        let all = targets(rows, self.every_row());
         let at = |target: Target| all.iter().position(|t| *t == target);
         self.highlight = session
             .and_then(|id| at(Target::Session(id)))
