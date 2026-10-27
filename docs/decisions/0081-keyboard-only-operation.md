@@ -20,9 +20,9 @@ The work ships in four waves; each wave appends its section here.
 2. One menu model (`menu.rs`, pure and tested) and one renderer in the shell; each menu only builds rows. (Chosen for wave 1.)
 3. GPUI tab stops inside menus: arrows, type-ahead and swatches are not tab-stop behavior.
 
-## Decision
-
 ## Wave 1 - Keyboard context menus
+
+### Decision
 
 - Every popover menu (tab, layout, pane, share, workspace, file, file tab, Run, workspace switcher, "+ New", Run with, fan-out, Board card, and the Git By:, More and Repositories popovers) is a list of `MenuRow`s drawn by one renderer.
 - A click and a key call the same action, so they cannot diverge.
@@ -38,7 +38,7 @@ The work ships in four waves; each wave appends its section here.
 - The Board card gets a menu with its hover actions (Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with several agents…); the hover buttons stay.
 - Repositories search: ↑/↓ move the selection through the filtered rows; Enter shows the selected one.
 
-## Consequences
+### Consequences
 
 - SPEC §13 (Shift+F10, menu keys), §10 (popover menus, card menu) change.
 - `Shift+F10` no longer reaches a focused terminal; rebind `context_menu` in Settings → Keyboard if a program needs it.
