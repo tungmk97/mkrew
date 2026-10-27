@@ -2,6 +2,7 @@
 //! output frames, the pure grid → styled-runs layout, key → bytes encoding, the find bar, and
 //! the GPUI view.
 
+pub mod copy_mode;
 pub mod emulator;
 pub mod find;
 pub mod input;
