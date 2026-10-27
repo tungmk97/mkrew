@@ -21,6 +21,17 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
+### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0081)
+
+- Every check in this entry is done in both dark and light.
+- [ ] **Pick lines in Docs (dark + light):** Docs → a `.md`, nothing picked: Shift+↓ picks the first block in view (Preview) or line (Source), highlighted like a click; more Shift+↓ grows, Shift+↑ shrinks, the moved end scrolls into view; Esc clears; Ctrl+Alt+M opens the comment draft on it.
+- [ ] **Pick lines in the Git diff (dark + light, Unified + Split):** Git → a changed file with 2+ hunks: `n` then Shift+↓ picks the first new-side line of that hunk, Shift+↓ grows across the gap into the next hunk and scrolls; the pick bar sits under the last line; Esc clears; Ctrl+Alt+M comments, Ctrl+Shift+L sends.
+- [ ] **Text fields keep Shift+↑/↓:** in the Docs filter, a comment draft and the Git commit box (two lines typed), Shift+↑ / Shift+↓ select text and pick no lines.
+- [ ] **Copy mode (dark + light):** a shell pane with a few screens of output: Alt+Shift+C → block cursor, "Copy mode" chip with the key hints in the tab bar (single pane) or pane header (split). `h j k l`, `w b e`, `0 $`, `g G`, PgUp / PgDn move it; `v` / `V` select (selection color readable); `y` copies (paste elsewhere to check) and leaves; typing `x` in copy mode types nothing in the shell; while an agent keeps printing the view does not move, and leaving shows the live screen. Ctrl+Shift+F finds and moves the cursor; Ctrl+Shift+L sends the selection and ends copy mode.
+- [ ] **Voice in copy mode (dark + light):** with a selection in copy mode, the voice key puts the spoken text on the clipboard and does not type into the shell.
+- [ ] **Link hints (dark + light):** a pane showing a URL, a file path of the workspace and a path that does not exist: Alt+Shift+O → accent labels over the first two only; typing a label opens the URL in the browser / the file in Files at its line; Esc or another key cancels; with 30+ links two-letter labels appear and narrow as you type; with none the tab bar says "No links on screen." and clears after 3 s.
+- [ ] **AltGr layouts:** on a layout where Alt+Shift+C / O type a character, rebind `copy_mode` / `link_hints` in Settings → Keyboard and check the new keys.
+
 ### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0081, wave 2)
 
 - Every check in this entry is done in both dark and light.

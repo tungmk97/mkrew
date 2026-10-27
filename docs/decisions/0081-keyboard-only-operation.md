@@ -79,3 +79,25 @@ Compare Pick only opens Merge back, so it is a plain Tab stop and not part of th
 - SPEC §13 and §14 describe the dialog keys and the ring.
 - Turns: D shows the diff since the selected turn.
   Run setup: Shift+Tab walks back, and its picker takes ↑ ↓ → ← and Enter on the entry under the cursor.
+
+## Wave 3 - Picking by keyboard
+
+- Lines of a doc or diff are picked with `PickDown` / `PickUp` (`shift-down` / `shift-up`, key context `Docs || Git`) over the existing `comments::Selection`; no new selection type.
+- `pick::step` is pure over "units": source lines (Docs source), top-level blocks (Docs preview) and new-side diff lines (Git).
+  Nothing picked: the first line or block in view, in Git the first new-side line of the current hunk (`n` / `p` choose the hunk).
+  Picked: Shift+↓ moves the end that was last moved, Shift+↑ shrinks it, a single line grows towards the key's direction.
+  `Comments.head` remembers which end moves; a click resets it.
+- Shift+↑/↓ stays with a focused text field, a comment draft or the Files editor: the shell's `run` already hands every command to them, and the Git key context sits on the file list only.
+- Esc clears the pick in Docs (Git already did).
+- Terminal copy mode is `alacritty_terminal`'s vi mode (`Term::toggle_vi_mode`, `vi_motion`) on the focused pane's emulator, `copy_mode` = `alt-shift-c`.
+  While it is on, keys go to the UI and never to the PTY; the keys are not in `keymap.toml`.
+  Entering copy mode clears a mouse selection, so `v` starts at the cursor.
+  `y` / `Enter` copy the selection without the trailing newline of a line selection, so a paste into a shell never runs the line.
+  Sending the selection (`Ctrl+Shift+L`) ends copy mode in the source pane; losing focus alone keeps it.
+  The emulator holds incoming output back while copy mode (or link labels) is on, so the view and the cursor stay on their text; leaving applies it and returns to the live screen.
+  Held output is bounded (1 MiB); a flood above that is applied at once.
+- Link hints (`link_hints` = `alt-shift-o`) scan the visible rows with the same detection as Ctrl+Click and label each openable link: single letters first, then two letters, never a label that starts another.
+  The picked link opens through the `OpenLink` event of Ctrl+Click.
+  No link: a tab bar notice "No links on screen." that goes away after 3 seconds.
+- Consequence: `Alt+Shift+C` and `Alt+Shift+O` no longer reach a focused terminal (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
+- Out of scope: `Ctrl+Shift+L` in Docs (it sends from Files, the Git diff and terminals only, as before).

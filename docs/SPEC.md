@@ -963,6 +963,17 @@ The session panel (below) is a third column right of Terminals while open.
   not detected. Perf: the row text comes from the cached grid, for the hovered row only, while
   the key is held and the pointer moves to another cell; nothing runs while output is parsed
   or painted.
+- **Copy mode** (`Alt+Shift+C`, ADR 0081): keyboard selection in the focused pane, on `alacritty_terminal`'s vi mode.
+  While it is on the keys go to the UI, not the program, and the pane header (the tab bar for a single pane) shows `Copy mode` with the key hints.
+  `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
+  `v` / `Shift+V` start, switch or drop a character / line selection; entering copy mode clears a mouse selection.
+  `y` or `Enter` copy it (a trailing newline of a line selection is trimmed) and leave; `Ctrl+Shift+C` copies it too; `Ctrl+Shift+L` sends it to an agent's composer and leaves copy mode; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
+  `Esc` drops the selection, or leaves copy mode when there is none.
+  Output that arrives meanwhile is held back (up to 1 MiB) so the view and the cursor stay on their text; leaving copy mode applies it and returns to the live screen.
+- **Link hints** (`Alt+Shift+O`, ADR 0081): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
+  Typing a label opens that link exactly like Ctrl+Click; `Esc` or any other key cancels.
+  Output is held back while the labels show.
+  No link on screen: the tab bar says "No links on screen." for 3 seconds.
 - **Run pill** (ADR 0018, ADR 0054) in the title bar: while something runs a green pill
   `● 2 running :8080 :5180 ▾` (`run-pill-*` tokens; amber dot and `1/2 running` when some
   exited; a steady dot: a pulse would redraw the window for as long as a server runs, §15);
@@ -1066,7 +1077,7 @@ Off unless `[features] docs = true` (§20.0, ADR 0046): no Docs rail tab, comman
   highlighted by their fence language (syntect, as in the Files viewer); the text uses the doc
   typography of §14 (ADR 0021). ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust
   renderer, theme colors); a block that cannot be drawn shows its source and the reason.
-- **Comments:** pick lines (click a preview block or a source line, Shift+click extends) →
+- **Comments:** pick lines (click a preview block or a source line, Shift+click extends; Shift+↓ / Shift+↑ pick the first line or block in view, then grow or shrink the pick by one line or block, scrolled into view; Esc clears it; a text field keeps its own Shift+↑/↓, ADR 0081) →
   "Add comment". Anchored by line range + quoted text (the picked source lines). Threads with
   replies, resolve, reopen. Listed in the right margin in anchor order; clicking a thread's
   lines highlights them (ADR 0006; character selection in Docs and anchor-aligned cards are
@@ -1246,7 +1257,7 @@ Windows (tens of ms, worse with antivirus), so:
   the expanded commit's files show its lanes running straight through.
 - **Task changes:** from a Review-column task card, "View changes" opens the Git view with the diff
   from `task.checkpoint` to now (ties into M5).
-- **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; as in
+- **Diff comments → agent:** pick diff lines (click a new-side line, Shift+click extends; Shift+↓ / Shift+↑ pick the first new-side line of the current hunk (`n` / `p` choose it), then grow or shrink the pick one line, across hunks, scrolled into view; as in
   ADR 0006) → comment, reusing the M6 comment system (`context = 'diff'`, anchored to new-side
   lines + quote = the picked lines shown; not in History). Threads are listed in a margin beside
   the diff while the file has any (or lines are picked, a draft is open, or listing failed). "Send to agent" delivers them to the
@@ -1325,8 +1336,10 @@ On macOS, `Ctrl` becomes `Cmd` for global and tab commands.
 | Terminal | Copy / paste | Ctrl+Shift+C (or Ctrl+C while text is selected) / Ctrl+V or Ctrl+Shift+V |
 | Terminal / Files / Docs | Find in scrollback / in the opened file / filter the Docs list | Ctrl+Shift+F |
 | Terminal | Page up / down | Shift+PgUp / Shift+PgDn |
+| Terminal | Copy mode: select and copy with vi keys (§10) / label the links on screen and open one by typing its label (§10) | Alt+Shift+C / Alt+Shift+O |
 | Docs | Comment on selection | Ctrl+Alt+M |
 | Docs | Send comments to agent | Ctrl+Shift+S |
+| Docs / Git | Pick lines: the first line or block in view (Git: the current hunk's first line), then grow / shrink the pick one line or block (Esc clears; a text field keeps Shift+↑/↓) | Shift+↓ / Shift+↑ |
 | Docs | Toggle preview / source | Ctrl+Shift+E |
 | Zed | Open workspace or current file in Zed | Ctrl+Shift+Z |
 | Files | Expand/collapse, move | ← → ↑ ↓ |
@@ -1357,6 +1370,8 @@ Alt+Shift+A / Alt+Shift+S and F2 no longer reach a focused terminal (Alt+Shift+A
 ESC A / ESC S, a readline binding); rebind `split_agent` / `split_shell` / `rename_pane` in
 Settings → Keyboard if needed.
 Shift+F10 does not reach a focused terminal either; rebind `context_menu` if a program needs it.
+Alt+Shift+C and Alt+Shift+O no longer reach a focused terminal either (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
+The keys of copy mode (`h j k l w b e 0 $ g G v V y`, arrows, PgUp / PgDn, Enter, Esc) and the letters of link hints are not in `keymap.toml`.
 While a popover menu is open it has the keyboard (key context `Menu`, not in `keymap.toml`):
 ↑ / ↓ select the next / previous enabled row, wrapping.
 Home / End select the first / last.
