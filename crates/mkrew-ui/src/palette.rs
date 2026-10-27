@@ -234,6 +234,7 @@ pub fn title(command: Command) -> String {
         Command::OpenComposer => "Agent: Open the prompt composer".into(),
         Command::SendSelection => "Agent: Send selection to an agent".into(),
         Command::CopyMode => "Terminal: Copy mode (select and copy with the keyboard)".into(),
+        Command::LinkHints => "Terminal: Open a link by its label".into(),
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
@@ -345,7 +346,8 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::Paste
         | Command::PageUp
         | Command::PageDown
-        | Command::CopyMode => on_panes && context.terminal,
+        | Command::CopyMode
+        | Command::LinkHints => on_panes && context.terminal,
         Command::Find => {
             (on_panes && context.terminal) || in_view(View::Files) || in_view(View::Docs)
         }

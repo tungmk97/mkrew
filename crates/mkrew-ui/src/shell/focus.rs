@@ -254,6 +254,10 @@ impl Shell {
                 .detach();
                 cx.subscribe(&pane, |_, _, _: &CopyModeChanged, cx| cx.notify())
                     .detach();
+                cx.subscribe(&pane, |shell, _, _: &NoLinks, cx| {
+                    shell.show_tab_notice("No links on screen.", cx);
+                })
+                .detach();
                 shell.panes.insert(session, pane);
                 if shell.focused_session() == Some(session) {
                     shell.focus_pane(window, cx);

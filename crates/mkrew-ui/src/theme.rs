@@ -484,6 +484,9 @@ pub const PEEK_HOVER_DELAY: Duration = Duration::from_millis(300);
 /// How long a hover peek stays after the mouse left its row, so it can reach the popover.
 pub const PEEK_LEAVE_GRACE: Duration = Duration::from_millis(150);
 
+/// How long a one-line notice stays in the tab bar before it goes away by itself.
+pub const TAB_NOTICE_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// Max width of free-running text blocks (messages, details) so lines stay readable.
 pub const READABLE_WIDTH: f32 = 560.0;
 

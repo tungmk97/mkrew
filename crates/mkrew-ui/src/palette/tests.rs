@@ -195,6 +195,7 @@ fn availability_follows_the_view() {
         Command::Workspace(3),
         Command::Copy,
         Command::CopyMode,
+        Command::LinkHints,
         Command::RunTask,
         Command::GitStage,
         Command::ToggleDocSource,
@@ -214,6 +215,7 @@ fn availability_follows_the_view() {
     assert!(focused.contains(&Command::Copy));
     assert!(focused.contains(&Command::Find));
     assert!(focused.contains(&Command::CopyMode));
+    assert!(focused.contains(&Command::LinkHints));
     assert!(focused.contains(&Command::SendSelection));
     assert!(
         !terminals.contains(&Command::SendSelection),

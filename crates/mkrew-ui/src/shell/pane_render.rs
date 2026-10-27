@@ -212,6 +212,11 @@ impl Shell {
                     .clone()
                     .map(|error| notice(theme.text, format!("✕ {error}"))),
             )
+            .children(
+                self.tab_notice
+                    .clone()
+                    .map(|text| notice(theme.text_muted, text)),
+            )
             .when(
                 tabs.active().and_then(|tab| tab.zoomed()).is_some(),
                 |bar| {

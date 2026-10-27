@@ -34,6 +34,7 @@ use crate::keymap::{Command, Run, TERMINAL_CONTEXT};
 use crate::terminal::copy_mode::{CopyKey, copy_key};
 use crate::terminal::emulator::{CopyEnd, Emulator, Grid};
 use crate::terminal::find::{FindBar, FindKey, FindStatus, find_key};
+use crate::terminal::hints::{self, Typed};
 use crate::terminal::input::{KeyAction, is_copy_key, key_action, paste_bytes, wheel_bytes};
 use crate::terminal::layout::{Background, CellStyle, RowCache, cell_at, grid_size, layout_row};
 use crate::terminal::links::{self, Target};
@@ -75,6 +76,7 @@ pub struct TerminalPane {
     /// (the row is read again only when the pointer moves to another cell).
     hover_link: Option<HoverLink>,
     probed: Option<(usize, usize)>,
+    hints: Option<Hints>,
 }
 
 /// Ctrl+Click (Cmd+Click on macOS) on a link of the terminal: the shell opens it.
@@ -103,6 +105,12 @@ pub struct CopyModeChanged;
 
 impl EventEmitter<CopyModeChanged> for TerminalPane {}
 
+/// Link hints found no link on screen: the shell shows a notice.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NoLinks;
+
+impl EventEmitter<NoLinks> for TerminalPane {}
+
 /// The link under the pointer while Ctrl / Cmd is held: its row and cells, for the underline.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HoverLink {
@@ -110,6 +118,13 @@ struct HoverLink {
     start: usize,
     end: usize,
     open: OpenLink,
+}
+
+/// Link hints on screen (Alt+Shift+O): each link with its label, and the letters typed so far.
+struct Hints {
+    links: Vec<HoverLink>,
+    labels: Vec<String>,
+    typed: String,
 }
 
 /// Window position of the grid's top-left cell and the cell size.
@@ -184,6 +199,7 @@ impl TerminalPane {
             links: None,
             hover_link: None,
             probed: None,
+            hints: None,
         }
     }
 
@@ -235,6 +251,7 @@ impl TerminalPane {
     /// queue overflowed). The scrollback restarts from the snapshot's history (≤ 200 lines,
     /// ADR 0030). The caller notifies.
     pub fn load_snapshot(&mut self, snapshot: &ScreenSnapshot) {
+        self.hints = None;
         let copying = self.emulator.copy_mode();
         self.emulator = Emulator::from_snapshot(snapshot);
         if copying {
@@ -287,6 +304,11 @@ impl TerminalPane {
     /// exited pane (ADR 0022). Plain Ctrl+V pastes (ADR 0026). While copy mode is on every key
     /// is the UI's.
     fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.hints.is_some() {
+            cx.stop_propagation();
+            self.hint_key(event, cx);
+            return;
+        }
         if self.emulator.copy_mode() {
             cx.stop_propagation();
             self.copy_key_down(event, cx);
@@ -417,9 +439,14 @@ impl TerminalPane {
 
     /// The link at a cell, read from that row of the cached grid only.
     fn link_in(&self, row: usize, col: usize) -> Option<HoverLink> {
-        let base = self.links.as_ref()?;
         let cells = self.emulator.shared_grid().row_chars(row)?;
-        let link = links::link_at(&cells, col)?;
+        self.hover_link(row, links::link_at(&cells, col)?)
+    }
+
+    /// `link` of screen row `row` as something the shell can open: a URL, or a file of the
+    /// pane's folder (checked on disk).
+    fn hover_link(&self, row: usize, link: links::Link) -> Option<HoverLink> {
+        let base = self.links.as_ref()?;
         let open = match link.target {
             Target::Url(url) => OpenLink::Url(url),
             Target::Path { path, line } => OpenLink::File {
@@ -433,6 +460,71 @@ impl TerminalPane {
             end: link.end,
             open,
         })
+    }
+
+    /// Alt+Shift+O: labels every openable link of the visible rows (the grid is read once,
+    /// the disk once per path link) and holds the program's output back so the labels stay
+    /// under their links. No link: [`NoLinks`].
+    fn start_hints(&mut self, cx: &mut Context<'_, Self>) {
+        let grid = self.emulator.shared_grid();
+        let mut found = Vec::new();
+        for row in 0..grid.rows.len() {
+            let Some(cells) = grid.row_chars(row) else {
+                continue;
+            };
+            for link in links::links_in(&cells) {
+                found.extend(self.hover_link(row, link));
+            }
+        }
+        if found.is_empty() {
+            cx.emit(NoLinks);
+            return;
+        }
+        let labels = hints::labels(found.len());
+        found.truncate(labels.len());
+        self.clear_link(cx);
+        self.emulator.set_hold(true);
+        self.hints = Some(Hints {
+            links: found,
+            labels,
+            typed: String::new(),
+        });
+        cx.notify();
+    }
+
+    /// Drops the labels and lets held output in. The caller notifies.
+    fn stop_hints(&mut self) {
+        self.hints = None;
+        self.emulator.set_hold(false);
+    }
+
+    /// A key while labels show: a letter narrows or picks (the link opens exactly like
+    /// Ctrl+Click); Esc or any other key cancels. Nothing reaches the session.
+    fn hint_key(&mut self, event: &KeyDownEvent, cx: &mut Context<'_, Self>) {
+        let m = event.keystroke.modifiers;
+        let letter = (!m.control && !m.alt && !m.platform)
+            .then_some(event.keystroke.key_char.as_deref())
+            .flatten()
+            .map(str::to_lowercase);
+        let outcome = match (self.hints.as_mut(), letter) {
+            (Some(hints), Some(letter)) => {
+                hints.typed.push_str(&letter);
+                hints::typed(&hints.labels, &hints.typed)
+            }
+            _ => Typed::Nothing,
+        };
+        match outcome {
+            Typed::Narrow => {}
+            Typed::Pick(at) => {
+                let link = (self.hints.take()).and_then(|hints| hints.links.into_iter().nth(at));
+                self.stop_hints();
+                if let Some(link) = link {
+                    cx.emit(link.open);
+                }
+            }
+            Typed::Nothing => self.stop_hints(),
+        }
+        cx.notify();
     }
 
     /// Ctrl / Cmd held (or not) with the pointer at `position`: finds the link under it, or
@@ -555,6 +647,11 @@ impl TerminalPane {
 
     /// The terminal's own commands; all others go on to the window shell.
     fn run(&mut self, Run(command): &Run, window: &mut Window, cx: &mut Context<'_, Self>) {
+        // Any command but its own ends the labels: the keys that were typing them moved on.
+        if !matches!(command, Command::LinkHints) && self.hints.is_some() {
+            self.stop_hints();
+            cx.notify();
+        }
         let find_focused = self.find_focus.is_focused(window);
         match command {
             Command::Find => {
@@ -570,6 +667,7 @@ impl TerminalPane {
                 }
             }
             Command::CopyMode if !find_focused => self.toggle_copy_mode(cx),
+            Command::LinkHints if !find_focused => self.start_hints(cx),
             Command::Copy => {
                 self.copy_selection(cx);
             }
@@ -1113,6 +1211,55 @@ impl Element for TerminalElement {
                 size(cell_width * (link.end - link.start) as f32, thickness),
             );
             window.paint_quad(fill(underline, hsla(theme.accent)));
+        }
+        // Link hints: a label chip over the first cells of each link that still matches what
+        // was typed, outside the row cache. Copied out of the pane first: painting a shaped
+        // line needs `cx` mutably.
+        let chips: Vec<(usize, usize, String)> = self
+            .pane
+            .read(cx)
+            .hints
+            .as_ref()
+            .map(|hints| {
+                (hints.links.iter().zip(&hints.labels))
+                    .filter(|(link, label)| {
+                        link.row < grid.rows.len() && label.starts_with(&hints.typed)
+                    })
+                    .map(|(link, label)| (link.row, link.start, label.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (row, start, label) in chips {
+            let at = point(
+                origin.x + cell_width * start as f32,
+                origin.y + line_height * row as f32,
+            );
+            let chip = Bounds::new(
+                at,
+                size(cell_width * label.chars().count() as f32, line_height),
+            );
+            window.paint_quad(fill(chip, hsla(theme.accent)));
+            let style = CellStyle {
+                fg: theme.on_accent,
+                bg: theme.accent,
+                bold: true,
+                italic: false,
+                underline: false,
+            };
+            let run = text_run(
+                label.len(),
+                style,
+                &base_font,
+                theme.terminal_underline_thickness,
+            );
+            let shaped = text_system.shape_line(
+                SharedString::from(label),
+                font_size,
+                &[run],
+                Some(cell_width),
+            );
+            // A failed glyph paint only loses that glyph.
+            let _ = shaped.paint(at, line_height, TextAlign::Left, None, window, cx);
         }
         let pane = self.pane.read(cx);
         let (focus, marked) = (pane.focus_handle.clone(), pane.ime_marked.clone());

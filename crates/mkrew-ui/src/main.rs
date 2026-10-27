@@ -104,7 +104,7 @@ use mkrew_ui::tabs::{
 };
 use mkrew_ui::task_dialog::{self, DialogKey, Field, TaskDialog};
 use mkrew_ui::terminal::find::{FindKey, find_key};
-use mkrew_ui::terminal::view::{AttachFailed, CopyModeChanged, OpenLink, TerminalPane};
+use mkrew_ui::terminal::view::{AttachFailed, CopyModeChanged, NoLinks, OpenLink, TerminalPane};
 use mkrew_ui::text_box::{self, Input};
 use mkrew_ui::text_find::TextFind;
 use mkrew_ui::theme::{self, ActiveTheme, Theme, font_size, opacity, radius, space, weight};
@@ -374,6 +374,8 @@ struct Shell {
     pending_jump: Option<(Ulid, Ulid)>,
     /// Last failure of a tab action (new tab), shown in the tab bar.
     tab_error: Option<String>,
+    /// A one-line notice in the tab bar that goes away by itself (link hints found none).
+    tab_notice: Option<String>,
     /// The kind of pane `session.spawn` is starting (large agent exes can take seconds on a
     /// cold start): its buttons show a loading mark and further starts are ignored meanwhile.
     starting_pane: Option<SessionKind>,

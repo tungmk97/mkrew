@@ -114,4 +114,24 @@ impl Shell {
                 .into_any_element(),
         )
     }
+
+    /// A one-line notice in the tab bar (nothing went wrong, so no toast card); it goes away
+    /// by itself.
+    pub(crate) fn show_tab_notice(&mut self, text: &str, cx: &mut Context<'_, Self>) {
+        let text = text.to_owned();
+        self.tab_notice = Some(text.clone());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(theme::TAB_NOTICE_TIMEOUT)
+                .await;
+            let _ = this.update(cx, |shell, cx| {
+                if shell.tab_notice.as_deref() == Some(text.as_str()) {
+                    shell.tab_notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
 }

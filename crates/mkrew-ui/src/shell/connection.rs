@@ -190,6 +190,7 @@ impl Shell {
             early_tab_events: Vec::new(),
             reveal: None,
             tab_error: None,
+            tab_notice: None,
             starting_pane: None,
             router: Router::default(),
             panes: HashMap::new(),
