@@ -30,6 +30,7 @@ pub mod connect;
 pub mod context_menu;
 pub mod desktop;
 pub mod diagram;
+pub mod dialog_focus;
 pub mod doc_dialog;
 pub mod docs;
 pub mod editor;
