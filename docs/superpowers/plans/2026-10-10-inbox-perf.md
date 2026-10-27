@@ -1,100 +1,169 @@
-# Inbox 2026-10-10: Perf — UI Re-renders, Daemon Watcher and SQLite, Opt-in Turn Snapshots and Conflicts, Terminal Path Implementation Plan
+# Inbox 2026-10-10: Perf — UI Re-renders, Daemon Watcher and SQLite, Opt-in Features, Terminal Path, Working Marks Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** this plan is executed **incrementally, only the tasks the user ticked**. Read and follow `## Executor rules (incremental runs)` below before anything else; it overrides the per-task inbox-tick and ordering notes. REQUIRED SUB-SKILL: superpowers:subagent-driven-development (recommended) or superpowers:executing-plans, applied to the selected tasks only. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Handle the four new perf items in `docs/INBOX.md` (lines 115–141). Each one carries out the choices the user ticked in `docs/PERF_REVIEW.md`:
-- The UI stops re-rendering the whole window for data nobody sees, and stops recomputing the sidebar, the previews and the git summary on every frame or event.
-- The daemon stops sending empty or too-frequent `git.changed`, releases watchers nobody uses, and writes less to SQLite (less fsync, nothing that is never read, pruning).
-- Turn snapshots and conflict detection become opt-in (`[features]`, both off by default).
+> **Refreshed 2026-10-13 against HEAD `4cb293b`.** The 2026-10-10 version was never executed; since then `main.rs` was split into `crates/mkrew-ui/src/shell/*.rs`, the sidebar became a cached `SidebarView` (0606f04), terminal repaints are capped at 16 ms (95a8a6e), the Files editor caches its widest line (dd50ec3), the Markdown preview is virtual and built off-thread (42f3969), `[features] docs/turns` landed off by default (e0c245f, ADR 0046), the status bar was removed (ADR 0054), and phone access added a 1 s UI poll (ADR 0052/0053). Every task below was re-scanned against the current code: each starts with a `Refresh 2026-10-13` block saying what is still needed and what changed. Tasks 16–19 are new. **Nothing in this plan was compiled.** Execution waits for the user's review.
+
+## Bảng quyết định
+
+Plan này làm **dần dần**. Mỗi lần anh muốn làm thêm: tick ô ở cột **Quyết định** cho task anh chọn, rồi gọi executor (ví dụ: "chạy plan `docs/superpowers/plans/2026-10-10-inbox-perf.md`, chỉ những task đã tick"). Executor chỉ làm những dòng **đã tick một lựa chọn làm** và có **Trạng thái** = `chưa làm`. Xong task nào, nó ghi commit vào cột Trạng thái, nên lần chạy sau tự bỏ qua.
+
+- **Ô chưa tick = chưa quyết, không làm.** Cột Đề xuất chỉ để anh tham khảo.
+- Tick `Bỏ` / `Giữ` = không làm; executor ghi `bỏ` vào Trạng thái.
+- Muốn làm lại một task đã `bỏ`: đổi Trạng thái về `chưa làm` và tick lại.
+- Cột **Phụ thuộc** ghi task phải xong trước. Nếu anh tick một task mà task nó phụ thuộc chưa xong và chưa được tick, executor bỏ qua task đó và báo lại.
+
+Sắp theo thứ tự em đề xuất làm (lợi nhất trước); executor cũng chạy theo thứ tự này. Mức ảnh hưởng ước lượng từ đọc code, chưa đo; "vẽ lại cả app" = GPUI dựng lại toàn bộ cửa sổ (title bar, sidebar, tabs, pane header…), là nguồn giật chính khi agent chạy. **Cỡ**: S < 50 dòng, M 50-200, L > 200 (tính cả test).
+
+| Task | ID | Feature / chỗ tốn | Hiện tại ảnh hưởng app thế nào | Làm (sửa / xoá) thì được gì | Làm thì mất gì / rủi ro | Cỡ | Phụ thuộc | Đề xuất | Quyết định | Trạng thái |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 16 | A1+N1 | Chấm "working" động: chấm nhấp nháy 12 fps (tab, hàng workspace) + 3 chấm chạy 500 ms | **Nặng nhất.** Có 1 agent `working` đang hiện là cả app vẽ lại 12-14 lần/giây, suốt lúc agent chạy (gần như cả ngày). Gõ phím, cuộn, output terminal phải chen với các lần vẽ này | Hết vẽ lại theo animation; chỉ vẽ lại khi chữ thời gian đổi (1 lần/giây trong phút đầu, sau đó 1 lần/phút) | Không còn chuyển động: "working" kém nổi hơn, nhận biết bằng màu chấm + chữ `working · 12s`. Chấm màu tĩnh không tốn gì mỗi frame. Thay ADR/SPEC giao diện (ADR 0058) | M | — | **Làm** | [x] Làm - nhưng làm theo kiểu thay vì nhấp nháy thì mỗi status nên có chấm màu riêng để dễ nhìn - nếu không ảnh hưởng performance · [ ] Chỉ bỏ pulse · [ ] Giữ | chưa làm |
+| 1 | B1 | Event từ daemon (usage, turn, plan, ports, board, comment, conflict) | Mỗi event của **bất kỳ** session nào đều vẽ lại cả app, kể cả khi inspector đóng hoặc session ở workspace khác. 2-3 agent chạy = vài chục lần vẽ thừa mỗi phút | Chỉ vẽ lại khi dữ liệu đó đang hiện trên màn hình; dữ liệu vẫn cập nhật ngầm, mở lên là thấy số mới | Không mất tính năng. Rủi ro: sót một chỗ thì panel đó hiện số cũ đến lần vẽ kế tiếp (có test cho bảng quyết định vẽ lại) | L | — | **Làm** | [x] Làm · [ ] Bỏ | chưa làm |
+| 2 | B2 | Sidebar, số "N waiting", tìm session cho tab | Mỗi lần vẽ lại cả app (kể cả 12-14 lần/giây ở Task 16) sidebar lại sort, clone, format toàn bộ session; đếm waiting bằng cách clone cả danh sách | Sidebar chỉ tính lại khi dữ liệu đổi; mỗi lần vẽ rẻ hơn hẳn | Không mất tính năng. Rủi ro: quên đánh dấu "dirty" ở một chỗ thì sidebar hiện cũ (có test cho từng loại thay đổi) | L | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 17 | N2 | Phone access: vòng poll trạng thái | Cứ 5 s vẽ lại cả app suốt đời app, **kể cả khi tắt `[web]`** và không có gì đổi. Khi mở dialog Phone: mỗi giây chạy 2 lệnh `tailscale` | Hết vẽ lại thừa; dialog chỉ gọi `tailscale` 3 s/lần | Trạng thái trong dialog Phone cập nhật chậm hơn, tối đa 3 s | S | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 7 | A4+B7 | SQLite: lưu JSON thô của hook, `synchronous=FULL`, backup giữ khoá | Mỗi hook = 1 lần ghi + fsync đĩa; bảng `session_event` phình mãi (không ai đọc phần hook); lúc backup hằng ngày mọi request daemon phải chờ | Daemon ghi ít, không fsync mỗi commit; DB không phình (xoá event > 7 ngày, giữ `usage`); backup không chặn app | Mất JSON hook thô (không có code nào dùng). Mất điện / crash OS có thể mất vài giây dữ liệu cuối, DB không hỏng | M | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 8 | B5 | Watcher file → `git.changed` | Agent sửa file / `cargo build` → mỗi ≤ 2 s daemon gửi `git.changed` → UI chạy `git status` + vẽ lại. Watcher của project đã từng mở Git/Docs không bao giờ dừng | Ít `git status` và ít vẽ lại khi agent chạy; watcher không dùng thì được thả | Files/Git cập nhật chậm hơn, tối đa 5 s khi có agent `working`. Bump protocol 41: UI và daemon phải cùng bản | L | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 9 | B6 | Ghi `files_changed` vào SQLite | Mỗi đợt file đổi: 1 lần ghi DB cho mỗi session đang sống + đọc toàn bảng session | Chỉ ghi khi có file `.md` (Docs là nơi duy nhất đọc), không đọc DB mỗi đợt | Không mất gì thấy được: "changed by agent" trong Docs vẫn đúng | M | 8 | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 12 | A3 | Phát hiện conflict (2 agent sửa cùng file) | Mỗi đợt file đổi: đọc DB + ghi DB; UI dọn danh sách conflict ở **mọi** event. Luôn chạy, không có cách tắt | Config: mặc định tắt, tắt thì không tốn gì; bật lại được. Xoá hẳn: bớt ~600 dòng code | Mất cảnh báo khi 2 agent sửa cùng file trong cùng thư mục (hiếm nếu dùng worktree). Config thì bật lại được, xoá thì không | M | — | **Config** | [ ] Config · [ ] Xoá hẳn · [ ] Giữ | chưa làm |
+| 10 | A2 | Turn snapshots (đã tắt mặc định) | Khi `turns` tắt vẫn còn 1 chỗ: hook bắt đầu turn chờ hàng đợi snapshot → agent có thể bị chặn một chút đầu mỗi turn | Hook trả lời ngay khi `turns` tắt | Không mất gì | S | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 13 | B9 | Daemon quét màn hình để đoán trạng thái agent | Mỗi đợt output (tới 60 lần/giây/session, cả session chạy nền): hash cả màn hình + tạo chuỗi cho mọi dòng + chạy regex, dù chỉ cần 4 dòng cuối | Daemon bớt CPU rõ khi agent in nhiều output | Trạng thái `working` / `needs_input` hiện chậm hơn, tối đa 250 ms | L | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 14 | B10 | Terminal UI: scrollback 10.000 dòng/pane, grid cấp phát mới mỗi frame | RAM tăng theo số pane; resize/kéo chia pane phải reflow 10.000 dòng; mỗi frame có output cấp phát lại toàn bộ lưới ô | Ít RAM, kéo resize mượt hơn, bớt cấp phát mỗi frame | Cuộn ngược trong app được 5.000 dòng thay vì 10.000 (log trên đĩa vẫn đủ, `mk read` vẫn đọc được). Chạm code vẽ terminal | L | — | **Làm** | [ ] Làm · [ ] Giữ 10.000 · [ ] Bỏ | chưa làm |
+| 15 | B12 | Mở lại session đã thoát (History) | Replay tới 2 MiB log vào terminal mới → mở History của session dài bị khựng | Mở nhanh hơn (1 MiB, cắt đúng ranh giới dòng/escape) | Thấy ít lịch sử hơn khi mở lại (đầu log cũ không replay; file log vẫn còn) | M | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 3 | B3 | Docs tự đọc lại file đổi | Khi bật `[features] docs`: agent ghi file plan/spec là UI đọc + parse markdown + vẽ mermaid, kể cả khi Docs đang ẩn. Mặc định `docs` tắt nên đa số không bị | Docs ẩn thì chỉ đánh dấu cũ, mở ra mới đọc | Lúc mở lại Docs có thể thấy "Loading…" ngắn | M | — | Làm | [ ] Làm · [ ] Bỏ | chưa làm |
+| 6 | B8 | Poll `settings.toml` | Đọc thông tin file trên UI thread 2 lần/giây suốt đời app (rẻ, nhưng là một timer không bao giờ ngừng) | Bỏ timer; kiểm tra settings khi cửa sổ Mkrew được focus lại | Sửa `settings.toml` bằng Zed thì phải bấm về cửa sổ Mkrew mới thấy áp dụng (trước đây ≤ 0,5 s) | M | 3 | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 5 | B4 | Git summary ở title bar (branch, số file đổi) | Mỗi `git.changed` của workspace đang hiện chạy `git status` cho từng repo, bất kể đang ở view nào | Tối đa 1 lần / 2 s, luôn có lần cuối để số đúng | Badge Git có thể trễ tối đa 2 s | M | — | **Làm** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 18 | A5 | Sơ đồ Mermaid trong preview Markdown | Mỗi lần parse doc có sơ đồ: vẽ mỗi sơ đồ 2 lần (sáng + tối), không cache. Chạy nền, chỉ khi mở doc có mermaid | Vẽ 1 lần, cache theo nội dung; đổi theme mới vẽ lại | Đổi theme có khựng ngắn ở doc có sơ đồ. Đổi cấu trúc `Diagram`. Hôm 10/10 anh tick "Giữ" | L | — | Tuỳ anh, em nghiêng về **Bỏ** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 19 | N5 | Git History lane graph | Mỗi lần vẽ Git History quét tối đa 50 commit để tính độ rộng lane: gần như không tốn | Rẻ hơn chút | Không mất gì, cũng gần như không được gì | S | — | **Bỏ** | [ ] Làm · [ ] Bỏ | chưa làm |
+| 4 | A6 | Live preview `.md` trong Files | Đã sửa ở 42f3969: dựng ở luồng nền, mỗi lúc 1 bản, không ảnh hưởng UI nữa | Thêm debounce không được gì | Chữ "Rendering…" hiện lâu hơn | — | — | **Bỏ** (đã có hiệu quả tương đương) | — | bỏ (không có bước) |
+| 11 | A2 | UI ẩn tính năng turn khi tắt | Đã xong ở e0c245f: tắt `turns` thì không tốn gì phía UI | — | — | — | — | — | — | xong e0c245f |
+
+Nếu chỉ chọn một nhóm: **16 + 1 + 2 + 17**. Nhóm này bỏ gần hết số lần vẽ lại cả app khi agent đang chạy (nguồn giật chính). Phần còn lại chủ yếu giảm tải phía daemon.
+
+## Executor rules (incremental runs)
+
+These rules override anything in a task section about ordering or ticking the inbox.
+
+1. **Select.** A row of the decision table is selected when its `Quyết định` cell has a ticked "do" option (`[x] Làm`, `[x] Config`, `[x] Chỉ bỏ pulse`, `[x] Giữ 10.000`) **and** its `Trạng thái` is `chưa làm`. Nothing else runs: an unticked row is undecided, whatever `Đề xuất` says. A row ticked `Bỏ` / `Giữ` (12: `Giữ`; 16: `Giữ`) gets `Trạng thái` = `bỏ` and no work. Never change the user's ticks.
+2. **Order.** Run the selected rows top to bottom in the table's order. If none is selected, report that and stop.
+3. **Dependencies.** Before a row, check its `Phụ thuộc` column. If a dependency is neither `xong …` nor selected in this run (selected rows run earlier because the table order respects dependencies), skip the row, leave it `chưa làm`, and report "Task N skipped: needs Task M". Soft links have written fallbacks and are not dependencies:
+   - Task 12 puts its `features` guard in `Shell::reload_settings_if_changed` if Task 6 is done, otherwise in the settings reload in `shell/connection.rs`.
+   - Task 18 does the same with `redraw_diagrams`.
+   - Task 1's `conflicts_need_redraw` works whether or not Task 12 is done.
+   - Tasks 13, 14 and 15 share ADR 0057: the first of them to run creates it, the later ones append.
+   - The perf HUMAN_CHECKS section: the first task to run creates it (see Global Constraints), the later ones append.
+4. **Before each task.** Re-read the task's `Current state (investigated)` against the code; earlier tasks or other agents may have moved things. Re-check ADR, protocol and migration numbers (list `docs/decisions/`, read `PROTOCOL_VERSION`). Adapt names and lines, never the design. If the design no longer fits, stop that task and report why.
+5. **Options.**
+   - Task 16 `Chỉ bỏ pulse`: remove only the pulse (`status_dot`'s `pulse` / `id` params, `with_animation`, `PULSE_*`, the two callers). Keep the stepping dots and `status::redraw_due` unchanged, add no ADR 0058, and only edit SPEC/HUMAN_CHECKS lines that mention the pulse. Commit: `perf(ui): drop the working pulse animation`.
+   - Task 14 `Giữ 10.000`: do the grid-buffer part only. Leave `SCROLLBACK_LINES`, its tests, `stress.rs` `WARM_LINES` and the scrollback SPEC lines unchanged.
+   - Task 12 `Xoá hẳn`: this plan has no removal steps. Do not improvise; report "Task 12 needs a removal plan (ADR + SPEC)" and leave it `chưa làm`.
+6. **After each task.** Verify and commit as the task says (Global Constraints → Commits). Then set the row's `Trạng thái` to `xong <short hash>` in this plan; the plan file itself is not staged. On a failure you cannot fix, set it to `lỗi: <one line>` and stop the run.
+7. **Inbox.** Ignore a task's own "tick inbox line …" step. After a task, tick an inbox item `[~]` → `[x]` in `docs/INBOX.md` (never staged) when every task mapped to it (Inbox mapping below) is `xong …` or `bỏ`. Tasks 16–19 have no inbox line; leave INBOX alone for them.
+8. **CPU check.** Task 1's HUMAN_CHECKS bullet asks for CPU before and after. If Task 1 is selected, record the HEAD commit before it in the report so the user can build "before".
+9. **Report at the end.** List the rows run (commit), skipped (why) and set to `bỏ`, plus the HUMAN_CHECKS bullets added.
+
+**Goal:** Handle the perf items in `docs/INBOX.md` (items 11–14) plus the findings of the 2026-10-13 rescan:
+- The UI stops re-rendering the whole window for data nobody sees, for animations of working agents, and for unchanged phone status; it stops recomputing the sidebar and the git summary on every frame or event.
+- The daemon stops sending too-frequent `git.changed`, releases watchers nobody uses, and writes less to SQLite (less fsync, nothing that is never read, pruning).
+- Conflict detection becomes opt-in like turn snapshots already are (`[features]`, off by default).
 - The terminal path does less work: a rate-limited screen scan, a smaller scrollback, a reusable grid buffer, and a shorter log replay.
 
 **Architecture:**
-- Item 11 (Tasks 1–6, UI): a new pure `redraw` module decides from what the window draws (view, visible panes, focused session, inspector, sidebar mode, dialogs) whether a changed model needs a root render. Models always update; hidden data no longer re-renders the app. The sidebar view, the status bar's Inbox count and an id index are cached in `Sidebar` behind a revision counter (bumped on every mutating path) plus `Viewed::version`; time labels stay out of the cache. `Docs::apply(event, visible)` only marks a hidden doc stale. `FilesView::preview_step/preview_due` debounce the `.md` preview by 300 ms. `git_summary::Throttle` allows one summary refresh per 2 s, with a trailing refresh and an immediate one on a workspace switch. The 500 ms `settings.toml` poll becomes a check on window activation (ADR 0044). `Editor` keeps the widest-line index per text change.
-- Item 12 (Tasks 7–9, daemon + store): no raw `hook` rows; `synchronous=NORMAL`; the backup runs on its own connection instead of under the store mutex; `files_changed` / `edited` / `hook` rows older than 7 days are pruned (`usage` stays). `git.changed` is sent only for batches with real changes. A batch waits up to 5 s while a session is working (tracked in a new in-memory `Hub::working` map that also replaces the per-batch `list_sessions`). Kept watchers are released through a new `watch.release` request (protocol 38, ADR 0042). `files_changed` is written only for Markdown batches.
-- Item 13 (Tasks 10–12, settings + daemon + UI): `[features] turn_snapshots / conflict_detection` (both off) in the shared settings. The daemon reads them through `Hub::features()`, so a toggle applies from the next turn start or watcher batch. When off: no git snapshot, the turn-start hook is not held, and `record_edits` returns at once. The UI reads the same file where it already reloads settings and hides the Turns, Since-turn and Changed-by entries and conflict warnings. ADR 0041 and the SPEC record the new default.
-- Item 14 (Tasks 13–15, terminal): the daemon scans a session's screen at most 4×/s (`scan::ScanRate`, pure, injected clock, with a trailing scan so the last screen is always classified; a queued `session.send` bypasses it). It builds only the 4 rows the state machine reads. The UI scrollback drops to 5,000 lines and the grid is rebuilt into the previous frame's buffer with `Option<Box<[char]>>` zero-width chars. History replays the newest 1 MiB of a log from a pure, tested safe cut (`replay_start`). ADR 0043 records the limits.
+- Item 11 (Tasks 1–6, UI): a pure `redraw` module (`Shown`, `event_needs_redraw`, `conflicts_need_redraw`) decides from what the window draws whether a changed model needs a root render; models always update. `Sidebar` caches its view, the waiting count and an id index behind a revision counter plus `Viewed::version`. `Docs` marks a hidden doc stale (`take_stale`, `Shell::show_docs`). `git_summary::Throttle` allows one summary refresh per 2 s with a trailing refresh. `Shell::reload_settings_if_changed` runs on window activation instead of the 500 ms tick (ADR 0055 amends ADR 0024).
+- Item 12 (Tasks 7–9, daemon + store): no `hook` rows; `synchronous=NORMAL`; backup on its own connection; `hook` / `files_changed` / `edited` rows older than 7 days pruned (`usage` stays). `git.changed` only for batches with real changes; a batch waits up to 5 s while a session works (`Hub.working`); kept watchers released through `watch.release` (protocol 40 → 41, ADR 0056). `files_changed` written only for Markdown batches, from the in-RAM working list.
+- Item 13 (Tasks 10–12): `[features] turns` already exists; Task 10 closes its last gap. `[features] conflicts` (off) makes `record_edits` return at once and the UI skip `conflicts.apply/prune` (`SettingsHolder::features()`, `Hub::use_settings` / `Hub::features()`).
+- Item 14 (Tasks 13–15, terminal): `scan::ScanRate` (≤ 4 scans/s, trailing scan) and `Emulator::tail_to_cursor`; UI scrollback 5,000 and `GridCell.zerowidth: Option<Box<[char]>>` in a reused grid; `replay_start` in `crates/mkrew-core/src/log_tail.rs`, UI replay 1 MiB. ADR 0057.
+- New (Tasks 16–19): still working dot and time-label-driven `status::redraw_due` (ADR 0058; the "Starting agent" and "Transcribing" marks keep their dots as `loading_dots`); `Phone::polled -> bool`; single-theme Mermaid cache; optional `History.lanes`.
 
 **Tech Stack:** Rust 2024, GPUI (`gpui-pre =0.3.7`), alacritty_terminal 0.26, rusqlite, notify, serde, pulldown-cmark, mermaid-rs-renderer, insta. No new dependencies.
 
-**Spec:** `docs/SPEC.md`, cited per task (mainly §5, §7, §10, §12A, §12B, §20.0 and the turn/undo/conflict sections). Source of the choices: `docs/PERF_REVIEW.md` (IDs A2–A6, B1–B12; A1 and A5 are "Giữ", so they are not in this plan). Open questions are at the end, each with the default this plan uses.
+**Spec:** `docs/SPEC.md`, cited per task. Source of the choices: `docs/PERF_REVIEW.md` (IDs A1–A6, B1–B12) and the 2026-10-13 rescan (IDs N1, N2, N5). Open questions are at the end, each with the default this plan uses.
 
-**Order:** tasks run in number order. Tasks 3–5 edit `Shell::dispatch` arms after Task 1. Tasks 10–12 come after Tasks 7–9: they all touch `crates/mkrew-daemon/src/session.rs`, Task 12's off-test relies on Task 9's Markdown-only `files_changed`, and Task 10 reuses Task 8's `Hub` fields. Task 11 re-reads `[features]` where Task 6 moved the UI settings reload (window activation). Every task names what it consumes in its **Interfaces** block.
+**Order:** the decision table's row order is the execution order (dependencies first: 8 before 9, 3 before 6); an incremental run takes only the selected rows (see `## Executor rules (incremental runs)`). Hard dependencies: Task 6 calls `Shell::show_docs` from Task 3; Task 9 uses `Hub::set_working` / the `working` map from Task 8. Soft links with written fallbacks: Task 12 and Task 18 edit the settings reload that Task 6 moves to `Shell::reload_settings_if_changed`; Tasks 2 and 3 edit `Shell::dispatch` arms that Task 1 also edits (re-read the arm, no API from Task 1 is needed); Tasks 13–15 share ADR 0057. Every task names what it consumes in its **Interfaces** block.
 
 **Inbox mapping:**
 
 | Inbox line | Task |
 | --- | --- |
-| 115 `11. Perf: stop whole-app re-renders in the UI` | 1, 2, 3, 4, 5, 6 |
+| 115 `11. Perf: stop whole-app re-renders in the UI` | 1, 2, 3, 4 (dropped), 5, 6 |
 | 126 `12. Perf: daemon watcher, git.changed and SQLite` | 7, 8, 9 |
-| 132 `13. Perf: turn snapshots and conflict detection become opt-in` | 10, 11, 12 |
+| 132 `13. Perf: turn snapshots and conflict detection become opt-in` | 10, 11 (done), 12 |
 | 138 `14. Perf: terminal path (daemon scan, scrollback, replay)` | 13, 14, 15 |
+| none yet (proposed 2026-10-13; the user adds a line if accepted) | 16, 17, 18, 19 |
 
 ## Global Constraints
 
 - Windows native is first-class: ConPTY, named pipes, `PATHEXT`, `dunce` paths (AGENTS.md, SPEC §2.4).
 - "An agent is just a terminal command. No per-agent code in the core." (SPEC §2.1). Every agent difference lives in its TOML profile. There is no `match "claude"` anywhere in Rust code.
-- Every color, spacing, radius and font size comes from `crates/mkrew-ui/src/theme.rs` (SPEC §14).
+- Every color, spacing, radius, font size and duration comes from `crates/mkrew-ui/src/theme.rs` (SPEC §14).
 - No `unwrap`/`expect` outside tests unless provably infallible, with a comment saying why.
 - `thiserror` in libraries, `anyhow` with context in binaries, `tracing` for logs.
 - No test may call a real agent or the network.
-- Deviating from the spec requires an ADR in `docs/decisions/` and a SPEC update in the same change. ADR numbers in this plan: 0044 (Task 6, also amends ADR 0024), 0042 (Task 8), 0041 (Task 10; Task 12 amends it), 0043 (Task 13; Tasks 14–15 extend it). The numbers do not follow task order; that is intended. Before creating one, list `docs/decisions/` and take the next free number if the plan's number is taken (renumber the task's references).
-- **Protocol version:** only Task 8 changes the wire format (`watch.release`). It bumps `PROTOCOL_VERSION` (`crates/mkrew-protocol/src/lib.rs:16`, 37 today) to 38. No other task changes the protocol.
-- **Migrations:** none. Never delete a migration or a table.
+- Deviating from the spec requires an ADR in `docs/decisions/` and a SPEC update in the same change. ADR numbers in this plan: 0055 (Task 6, amends ADR 0024), 0056 (Task 8), 0057 (Task 13; Tasks 14–15 extend it), 0058 (Task 16). Task 12 amends ADR 0046, Task 18 amends ADR 0021. The highest existing ADR is 0054. Before creating one, list `docs/decisions/` and take the next free number if the plan's number is taken (renumber the task's references).
+- **Protocol version:** only Task 8 changes the wire format (`watch.release`). It bumps `PROTOCOL_VERSION` (`crates/mkrew-protocol/src/lib.rs:16`, 40 today) to 41. Check the number again before the bump; parallel branches have collided. After the bump, run `cargo build -p mkrew-cli -p mkrew-fakeagent --bins -j 4` before the daemon tests.
+- **Migrations:** none (latest is 0018). Never delete a migration or a table.
 - Few dependencies: add no new crates.
-- GPUI rule: set `.hover()` at most once per element (`button()`/`quiet_button()`/`row_action()`/`menu_item()` already set it). `group_hover` is a separate slot and is safe.
-- **User preference: never commit.** Leave every change uncommitted. The last step of each task prints the Conventional Commit message the user may use; do not run `git commit`.
-- Leave uncommitted human edits alone. Baseline is commit `e281607` plus the uncommitted `docs/INBOX.md`, `docs/PERF_REVIEW.md` and `docs/superpowers/specs/2026-10-10-ui-redesign-options.md`. Never touch `.github/workflows/*`, `packaging/`, `docs/BUILD_VI.md`, `design/`, `icon/`, `docs/superpowers/specs/`, `docs/PERF_REVIEW.md`, or the x11/wayland lines in `crates/mkrew-ui/Cargo.toml`.
+- GPUI rules: set `.hover()` at most once per element (`button()`/`quiet_button()`/`row_action()`/`menu_item()` already set it; `group_hover` is a separate slot). An element with `track_focus` grabs focus on any mouse down.
+- **Commits:** when a task passes verification, commit it with the Conventional Commit message its last step gives. Stage only that task's paths (`git add <paths>`), and only that task's hunks (`git add -p`) in files other tasks or the user also edit (`shell/connection.rs`, `session.rs`, `theme.rs`, `SPEC.md`, `HUMAN_CHECKS.md`). Never `git add -A` / `.`, never push, reset, checkout, stash or clean. Never stage `docs/INBOX.md`, `docs/PERF_REVIEW.md`, this plan, `.github/workflows/*`, `packaging/`, `docs/BUILD_VI.md`, `Cargo.toml`/`Cargo.lock`, or the x11/wayland lines in `crates/mkrew-ui/Cargo.toml`.
+- Other agents and the user edit the tree at the same time: re-read a file before editing it and leave hunks you did not write alone.
 - Never write files outside this repo. Edits to the user's own `<config>/mkrew/*` files (e.g. turning on `[features]`) are **user steps**, listed in HUMAN_CHECKS.
-- **Inbox:** the four lines already read `[~] … → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Task …`. When the last task of an item passes verification, change its line from `[~]` to `[x]` (see the mapping above) and leave the plan suffix as it is. A task's tick step that says "add the plan suffix" is already done.
-- **HUMAN_CHECKS:** Task 1 creates the section `### To verify — 2026-10-10 inbox: perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` directly above the first existing `### To verify —` heading. Every later task appends its bullets to the end of that section.
-- Verify on Windows with Git Bash: `& "C:\Program Files\Git\bin\bash.exe" scripts/verify.sh`. If rustc crashes on mkrew-ui test builds (STATUS_STACK_BUFFER_OVERRUN), run these three in order:
+- **Inbox:** items 11–14 already read `[~] … → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Task …`. When the last task of an item passes verification, change its line from `[~]` to `[x]` and leave the plan suffix as it is. Do not stage the inbox.
+- **HUMAN_CHECKS:** Task 1 creates the section `### To verify — 2026-10-13 perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` directly above the first existing `### To verify —` heading. Every later task appends its bullets to the end of that section; if a task runs before Task 1, it creates the section the same way.
+- Verify with `sh scripts/verify.sh` (in the omp shell `bash` is WSL). If rustc crashes on mkrew-ui test builds (STATUS_STACK_BUFFER_OVERRUN), run these three in order:
   1. `cargo fmt --all -- --check`
   2. `cargo clippy --workspace --all-targets -- -D warnings`
   3. `cargo test --workspace -j 4`
 - The C: drive is nearly full: no `cargo clean`, no extra target dirs, no downloads. Check free space before a full build.
 - If a build fails with "Access is denied" on an `.exe` (a running daemon or fake agent holds it), rename it to `*.locked-old.exe`. Never kill the user's sessions or the daemon.
 - `cargo insta` is not installed. Write accepted `.snap` files by hand.
-- `crates/mkrew-ui/src/main.rs` is ~18k lines: read ranges, never the whole file. Line numbers below are from 2026-10-10 and drift as tasks land. Re-find each function by name (`grep -n "fn dispatch"`).
+- `crates/mkrew-ui/src/main.rs` is ~20k lines and `impl Shell` lives in `src/shell/*.rs`: read ranges, never the whole file. Line numbers below are from 2026-10-13 and drift as tasks land. Re-find each function by name.
 - UI work cannot be unit-tested headless: pure logic gets tests; every visible change gets a HUMAN_CHECKS smoke line that the user runs with `cargo run -p mkrew-ui`.
 - Nothing in this plan was compiled while it was written. Where a task names an unverified name (it says so), check it against the code and adjust; do not invent a second convention.
 
 ## Review Focus
 
-1. **A `done` or `needs_input` of a session you are not looking at (other workspace, Docs open, sidebar hidden).** Expected: the status bar `N need you`, the sidebar dots and the OS notification still update at once. Only usage/turn/plan/ports/queue/board data of hidden surfaces skips the redraw, and it is current when shown. Pinned by Task 1 `state_changes_redraw_even_when_nothing_else_is_shown`, `usage_redraws_for_a_visible_pane_only`, `plan_needs_the_inspector_or_the_full_sidebar_and_the_focused_session`.
-2. **A prompt printed just after a screen scan, then silence.** Expected: the session still becomes `needs_input`, at the trailing scan ≤ 250 ms later, and a queued send never goes into a busy agent. Pinned by Task 13 `a_prompt_that_lands_inside_the_gap_is_classified_by_the_trailing_scan` and `a_flood_scans_at_most_four_times_a_second_and_the_last_batch_is_scanned`.
-3. **A session that worked for a week, then idles.** Expected: its token totals survive pruning (`usage` rows are never pruned), and a non-Markdown write by one agent still attributes the turn's files to the working agent. Pinned by Task 7 `events_past_a_week_are_pruned_but_recent_ones_and_usage_stay`, Task 9 `the_only_working_session_gets_the_batch_for_its_turn`, `a_batch_without_markdown_writes_no_event`.
-4. **`[features]` toggled while an agent is mid-turn, and a restore asked for while snapshots are off.** Expected: only turns that start afterwards get snapshots (no end snapshot without a start tree). A turn restore or "since turn" diff answers a clear `invalid_state` naming `turn_snapshots`, while a commit `since` still works. Conflict warnings clear at once when detection is switched off. Pinned by Task 10 `a_toggle_applies_from_the_next_turn`, `turn_snapshots_off_keeps_turns_but_takes_no_snapshot`, Task 12 `off_ignores_events_and_clears_warnings`, `conflict_detection_off_raises_no_conflict`.
-5. **Pin, rename, color, archive, collapse, filter typing or viewing a `done` pane while the sidebar cache is warm.** Expected: the next frame shows it, the status bar count ignores the filter, and `17m` labels keep moving without dirtying. Pinned by Task 2 `the_cached_view_equals_a_fresh_one_after_every_kind_of_mutation`, `a_filter_or_chip_change_invalidates_the_cache`, `viewing_a_done_session_updates_the_cached_counts`, `time_labels_come_from_the_clock_not_from_the_cache`.
+1. **A `done` or `needs_input` of a session you are not looking at (other workspace, Docs open, sidebar hidden).** Expected: the sidebar marks, the waiting count and the OS notification still update at once. Only usage/turn/plan/ports/queue/board/conflict data of hidden surfaces skips the redraw, and it is current when shown. Pinned by Task 1's `redraw` tests.
+2. **A prompt printed just after a screen scan, then silence.** Expected: the session still becomes `needs_input`, at the trailing scan ≤ 250 ms later, and a queued send never goes into a busy agent. Pinned by Task 13's `ScanRate` tests.
+3. **A session that worked for a week, then idles.** Expected: its token totals survive pruning (`usage` rows are never pruned), and a non-Markdown write by one agent still attributes the turn's files to the working agent. Pinned by Tasks 7 and 9.
+4. **`[features]` toggled while agents run.** Expected: `conflicts` off clears warnings at once and records nothing; `turns` off never holds the turn-start hook. Pinned by Tasks 10 and 12.
+5. **Pin, rename, color, archive, collapse, filter typing or viewing a `done` pane while the sidebar cache is warm.** Expected: the next frame shows it, the waiting count ignores the filter, and `17m` labels keep moving without dirtying. Pinned by Task 2.
+6. **A working agent with the window in front, no output (Task 16).** Expected: the root renders once per second during the first minute of the turn (label seconds), then once per minute; no animation frames. HUMAN_CHECKS covers the look; `status::redraw_due` tests pin the timing.
 
-Also pinned inside their tasks: a doc changed while Docs is hidden (Task 3), a Files `.md` typing burst (Task 4), a git change burst and a workspace switch (Task 5), a released watcher with a live session (Task 8), stale grid cells and zero-width chars (Task 14), and a log cut inside a char or an escape sequence (Task 15). How smooth the app feels, and CPU with 2–3 working agents before and after, cannot be unit-tested; Task 1's HUMAN_CHECKS line covers it.
+Also pinned inside their tasks: a doc changed while Docs is hidden (Task 3), a git change burst and a workspace switch (Task 5), a released watcher with a live session (Task 8), stale grid cells and zero-width chars (Task 14), a log cut inside a char or an escape sequence (Task 15), phone polls that change nothing (Task 17), a theme switch with a diagram on screen (Task 18). How smooth the app feels, and `mkrew-ui` CPU with 2–3 working agents before and after, cannot be unit-tested; Task 1's HUMAN_CHECKS line covers it.
 
 ---
 
 ### Task 1: Daemon events stop re-rendering the whole app (perf B1)
 
-Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B1 and the CPU check; do not tick yet, Task 6 ticks it). Spec: §10 (SPEC.md:685-859), §11 (:861-905), §15 (:1233-1246, Idle CPU row :1239). No SPEC change and no ADR: no observable behavior changes, only when the root re-renders.
+> **Refresh 2026-10-13:** still needed, redesigned against the current screen.
+> - Dispatch moved from `main.rs` to `shell/connection.rs:604`; `Shell::shown` goes there, the `use` stays in `main.rs`. `main.rs` no longer holds the sidebar markup.
+> - The status bar is gone (ADR 0054): usage / `ctx` are drawn only in pane headers, the session panel (inspector) and Board cards; the Inbox count is the sidebar footer, which state events already redraw (rules below).
+> - Ports are now drawn by the title bar Run pill (active workspace, every view) and the RUN group of the full sidebar (`shell/sidebar.rs:21`), not by workspace-row tooltips.
+> - The sidebar is `SidebarView`, which observes the Shell (`shell/sidebar_view.rs:17`), so one skipped `cx.notify()` also skips the sidebar re-render. `Shown` is built lazily, so a pure output batch (~60/s, `OUTPUT_FRAME`) allocates nothing.
+
+Inbox: `11. Perf: stop whole-app re-renders in the UI` (bullet B1 and the CPU check; do not tick yet, Task 6 ticks it). Spec: §10 (SPEC.md:685-859), §11 (:861-905), §15 (:1233-1246, Idle CPU row :1239). No SPEC change and no ADR: no observable behavior changes, only when the root re-renders.
 
 **Current state (investigated):**
-- `Shell::dispatch` (`main.rs:8421`) feeds each `Incoming::Event` to `board`, `turns`, `usages`, `plans`, `ports`, `composers`, `follow`, `sidebar`, `conflicts`, every workspace's `tabs`, then the docs/files/git handlers. Six of them end in an unconditional `cx.notify()` when their data changed: `board.apply` (also calls `drop_gone_targets`), `turns.apply`, `usages.apply`, `plans.apply`, `ports.apply`, `composers.apply`; and `conflicts.prune(...) || detected`. Each `apply` already returns "something shown changed", but nothing asks whether the changed thing is on screen. The root `Shell::render` then rebuilds title bar, sidebar, tabs, view, dialogs and status bar.
-- What each drawn surface reads (verified by grepping the field reads in `main.rs`):
-  - `usages`: pane header `usage::context_share` (`render_pane`, ~16912), status bar `status_agent_fields` for `focused_session()` (~9105), inspector `inspector::session_card` (~16290, focused only), Board cards via `BoardCtx.usages` (~10721, `Usages::task_total`).
-  - `turns`: pane header pill `pane_text::pill_text(.., self.turns.get(session))` (~16900). Nothing else (the Inbox card is gone, ADR from redesign Task 9).
-  - `composers` queue (`session.queue`): pane header `⧗ N queued` and the composer panel (~16789, ~17001), per pane.
-  - `plans`: sidebar progress bar for the selected row only (`session_row(.. progress ..)`, ~8765, full sidebar only: the compact rail draws no bar) and the inspector Plan card (`render_plan_card`, ~16191). Both are for the focused session.
-  - `ports`: pane title `run::pane_title(info, self.ports.get(..))` (~16875), the title-bar Run button label through `run_summary(project_id)` for the active workspace (`render_run_button`, ~10235), and the hover tooltip of every workspace row in the full sidebar (`run_summary` + `summary.tooltip()`, ~8756).
-  - `board` (`TaskUpdated` / `TaskDeleted`): Board view, the pane header breadcrumb folder (`pane_text::folder(.. self.board.task(..))`, ~16892) and the Files/Git worktree chooser (`target_chooser`, ~12243). The title bar, sidebar and status bar do not read it.
-  - `conflicts`: pane header badge (~16779) and Board cards (`BoardCtx.conflicts`). Nowhere else.
-  - `CommentUpdated` unconditionally notifies after updating `git` views' comments (~8490-8495); only the Git view of that project draws them (Docs re-lists in `doc_event`, Task 3's area). `AiGenerated` notifies unconditionally (~8506); it feeds the Git commit box and the pane composer.
-- Events the sidebar handles (`SessionState`, `SessionExited`, `SessionUpdated`, `SessionTerminalTitle`, `ProjectUpdated`; `Sidebar::apply` returns `Change::Redraw`) feed the sidebar dots, the status bar Inbox count, tab urgency and `Viewed`: `Shell::render` marks the focused pane viewed only because every state change re-renders (`self.viewed.view(session)`, ~20513). These MUST keep re-rendering; this task does not touch them. OS notifications are sent by the daemon, not the UI, so they cannot go stale here.
-- Every UI action that changes what is on screen (switch workspace / view / tab, toggle inspector, open a dialog) already calls `cx.notify()`. So a model that was updated silently while hidden is read fresh by the next render: skipping the notify for hidden data never shows stale values later.
-- `focused_session()` is `None` unless the view is Terminals. `tabs::on_screen(window_visible, Option<&Tabs>)` (`tabs.rs:444`) lists the visible panes (zoomed pane alone). `sidebar::Layout` has `hidden()` / `compact()`. `modal_open()` (`main.rs:4470`) is true for every dialog.
-- Tests: `mkrew-ui` unit tests live in `mod tests` of each module with a local `session(..)` fixture (`usage.rs:207`). `Event` structs: `SessionUsageEvent`, `SessionTurnEvent`, `SessionPlanEvent`, `SessionPortsEvent`, `SessionQueueEvent`, `TaskDeletedEvent`, `ConflictDetectedEvent`, `SessionStateEvent`, `SessionExitedEvent` (all in `mkrew-protocol/src/message.rs`).
-- Name clash: `main.rs` already imports `mkrew_ui::docs::Shown`. The new type is only used as `redraw::Shown` there.
+- `Shell::dispatch` (`shell/connection.rs:604`) feeds each `Incoming::Event` to `board` (:615), `turns` (:619), `usages` (:622), `plans` (:625), `ports` (:628), `composers` (:631), `follow`, `sidebar` (:643), `conflicts` (:650-653), every workspace's `tabs`, then the docs / files / git handlers. Six models end in an unconditional `cx.notify()` when their data changed: `board.apply` (also calls `drop_gone_targets`), `turns`, `usages`, `plans`, `ports`, `composers`; and `conflicts.prune(..) || detected`. `CommentUpdated` (:677) and `AiGenerated` (:695) also notify unconditionally. Each `apply` already returns "something shown changed"; nothing asks whether the changed thing is on screen. `Shell::render` (`main.rs:596`) then rebuilds title bar, view and dialogs, and `SidebarView` re-renders through its observer.
+- What each drawn surface reads (re-verified by grepping the field reads on 2026-10-13):
+  - `usages`: pane status `usage::context_share` (`pane_render.rs:577`, the tab bar for a single pane, the header among several), session panel `inspector::session_card` (`inspector.rs:341`, focused session only), Board cards `cards.usages.task_total` (`cards.rs:165`, `BoardCtx.usages` from `board.rs:530`). Nothing else: the status bar is gone.
+  - `turns`: pane status pill `pane_text::pill_text(.., self.turns.get(session))` (`pane_render.rs:549`). Nothing else.
+  - `composers` queue: pane status `⧗ N queued` (`pane_render.rs:567`) and the composer panel (`composer.rs:633`), per visible pane. `composers.apply` reacts to `SessionQueue` only.
+  - `plans`: the session panel Plan card (`inspector.rs:234`) and the selected sidebar row's progress bar (`shell/sidebar.rs:538`, full sidebar only; the compact rail draws no bar), both for the focused session. `plans.apply` also reacts to `SessionUpdated` (plan unlinked) and `SessionExited`, which already answer `true` below.
+  - `ports`: pane title (`pane_render.rs:723`), the title bar Run pill of the active workspace (`chrome.rs:148` → `run.rs:281`, `run_summary(project_id)` reads `ports`), and the RUN group of every open workspace of the full sidebar (`shell/sidebar.rs:27-37`, :137). The compact rail draws neither. `ports.apply` also drops ports on `SessionExited` (answers `true`).
+  - `board` (`TaskUpdated` / `TaskDeleted`): the Board (`shell/board.rs:501`), the pane status folder (`pane_render.rs:533`) and the Files / Git worktree chooser (`target_chooser`, `files_render.rs:189`, `git_render.rs:209`). The title bar and the sidebar do not read it. `drop_gone_targets` (`files.rs:772`) re-reads hidden views when they are shown, and a shown Files / Git view is covered by `tasks_drawn`, so it stays unconditional.
+  - `conflicts`: pane status badge (`pane_render.rs:552`) and Board cards (`cards.rs:180`). Nowhere else. `conflicts.prune` runs on every event (:651) and stays that way here: Task 12 gates it by `[features] conflict_detection`; this task only gates its notify, and the table below already covers it.
+  - `CommentUpdated`: only the Git views' comments (`connection.rs:673-676`); Docs re-lists in `doc_event` (Task 3's area). `AiGenerated` feeds the Git commit box and the pane composer.
+- Events the sidebar handles (`SessionState`, `SessionExited`, `SessionUpdated`, `SessionTerminalTitle`, `ProjectUpdated`; `Sidebar::apply` returns `Change::Redraw`, :643-648) feed the sidebar dots, the footer Inbox count (`shell/sidebar.rs:735`), tab urgency and `Viewed` (`Shell::render` marks the focused pane viewed, `main.rs:616-621`). These MUST keep re-rendering; this task does not touch them. OS notifications are sent by the daemon, not the UI.
+- Every UI action that changes what is on screen (switch workspace / view / tab, toggle inspector, open a dialog, window activation `connection.rs:40`) already calls `cx.notify()`. A model updated silently while hidden is read fresh by the next render.
+- `Shell::focused_session()` (`focus.rs:42`) is `None` unless the view is Terminals. `tabs::on_screen(window_visible, Option<&Tabs>)` (`tabs.rs:503`) lists the visible panes (a zoomed pane alone). `sidebar::Layout::hidden()` / `compact()` (`sidebar.rs:166-171`). `modal_open()` (`focus.rs:7`) is true for every dialog. `Shell::view()` (`workspace.rs:333`) reads Docs as Terminals while `[features] docs` is off (ADR 0046); `View::Docs` stays in the pure table and draws none of these models.
+- Tests: `mkrew-ui` unit tests live in `mod tests` of each module. `Event` structs: `SessionUsageEvent`, `SessionTurnEvent`, `SessionPlanEvent`, `SessionPortsEvent`, `SessionQueueEvent`, `TaskDeletedEvent`, `ConflictDetectedEvent`, `SessionStateEvent`, `SessionExitedEvent` (all in `mkrew-protocol/src/message.rs`, re-exported at the crate root). `Event` has 21 variants (`message.rs:336-404`); the match below lists all of them.
+- Name clash: `main.rs` already imports `mkrew_ui::docs::Shown` (:53) and `files_view::Shown` / `git_view::Shown` exist. The new type is only used as `redraw::Shown`.
 
 **Files:**
 - Create: `crates/mkrew-ui/src/redraw.rs` (`SidebarMode`, `Shown`, `event_needs_redraw`, `conflicts_need_redraw`, tests)
-- Modify: `crates/mkrew-ui/src/lib.rs` (`pub mod redraw;` after `pub mod quick_open;`)
-- Modify: `crates/mkrew-ui/src/main.rs` (`use mkrew_ui::redraw::{self, SidebarMode};`, new `Shell::shown`, `Shell::dispatch` model block and conflicts block)
+- Modify: `crates/mkrew-ui/src/lib.rs` (`pub mod redraw;` after `pub mod quick_open;`, line 59)
+- Modify: `crates/mkrew-ui/src/main.rs` (`use mkrew_ui::redraw::{self, SidebarMode};` after the `quick_open` use, line 83)
+- Modify: `crates/mkrew-ui/src/shell/connection.rs` (new `Shell::shown`, `Shell::dispatch` model block, conflicts block, comment and AI arms)
 - Modify: `docs/HUMAN_CHECKS.md` (creates the shared section)
 
 **Interfaces:**
@@ -113,12 +182,13 @@ Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B1 and t
   pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) -> bool
   pub fn conflicts_need_redraw(shown: &Shown) -> bool
   ```
+  and in the shell crate: `Shell::shown(&self, window: &Window) -> redraw::Shown`.
 - Consumes: `board::View`, `mkrew_protocol::{Event, Session}`, `tabs::on_screen`, `Shell::focused_session`, `Shell::modal_open`, `sidebar::Layout`.
-- Contract: `event_needs_redraw` is asked only after a model reported that its data changed. It answers "does the window draw this data now"; events owned by another handler (state, exit, tabs, docs, git) answer `true` so a future reader of the match sees they are not decided here.
+- Contract: `event_needs_redraw` is asked only after a model reported that its data changed. It answers "does the window draw this data now"; events owned by another handler (state, exit, tabs, docs, git) answer `true` so a future reader of the match sees they are not decided here. Task 12 later wraps `conflicts.prune` in the `conflict_detection` switch; `conflicts_need_redraw` stays the redraw rule for it.
 
 - [ ] **Step 1: Failing tests**
 
-Create `crates/mkrew-ui/src/redraw.rs` containing only the test module below, and in `lib.rs` add `pub mod redraw;` after `pub mod quick_open;`.
+Create `crates/mkrew-ui/src/redraw.rs` containing only the test module below, and in `lib.rs` add `pub mod redraw;` after `pub mod quick_open;` (it sorts before `router`).
 
 ```rust
 #[cfg(test)]
@@ -201,7 +271,7 @@ mod tests {
     fn nothing_shown(w: &World) -> Shown {
         Shown {
             workspace: Some(w.ws),
-            view: View::Docs,
+            view: View::Files,
             panes: Vec::new(),
             focused: None,
             inspector: false,
@@ -263,8 +333,8 @@ mod tests {
         event_needs_redraw(event, shown, &w.sessions)
     }
 
-    /// The focused pane's usage feeds the status bar, the inspector and its header; a session
-    /// of another tab or workspace feeds nothing on screen.
+    /// The focused pane's usage feeds the session panel and its pane status; a session of
+    /// another tab or workspace feeds nothing on screen.
     #[test]
     fn usage_redraws_for_a_visible_pane_only() {
         let w = world();
@@ -277,7 +347,7 @@ mod tests {
         assert!(redraws(&w, &s, &usage(w.b())));
     }
 
-    /// Board cards show the tokens of their task's session; the Docs view shows none.
+    /// Board cards show the tokens of their task's session; the Files view shows none.
     #[test]
     fn usage_redraws_the_board_of_the_shown_workspace_only() {
         let w = world();
@@ -285,7 +355,7 @@ mod tests {
         s.view = View::Board;
         assert!(redraws(&w, &s, &usage(w.b())));
         assert!(!redraws(&w, &s, &usage(w.c())), "another workspace's board is not drawn");
-        s.view = View::Docs;
+        s.view = View::Files;
         assert!(!redraws(&w, &s, &usage(w.b())));
     }
 
@@ -315,21 +385,21 @@ mod tests {
         assert!(redraws(&w, &s, &plan(w.a())), "the selected row's progress bar");
     }
 
-    /// A run's ports are in its pane title, in the Run button of the shown workspace and in
-    /// the hover tip of every workspace row of the full sidebar.
+    /// A run's ports are in its pane title, in the Run pill of the shown workspace (every
+    /// view) and in the RUN group of the full sidebar (every open workspace).
     #[test]
-    fn ports_show_in_the_run_button_and_the_full_sidebars_tips() {
+    fn ports_show_in_the_run_pill_and_the_full_sidebars_run_group() {
         let w = world();
         let mut s = nothing_shown(&w);
-        assert!(redraws(&w, &s, &ports(w.b())), "Run button of the shown workspace");
+        assert!(redraws(&w, &s, &ports(w.b())), "Run pill of the shown workspace");
         assert!(!redraws(&w, &s, &ports(w.c())), "other workspace, no sidebar rows");
         s.sidebar = SidebarMode::Compact;
-        assert!(!redraws(&w, &s, &ports(w.c())), "the rail has no run tip");
+        assert!(!redraws(&w, &s, &ports(w.c())), "the rail has no RUN group");
         s.sidebar = SidebarMode::Full;
-        assert!(redraws(&w, &s, &ports(w.c())), "its workspace row's tooltip");
+        assert!(redraws(&w, &s, &ports(w.c())), "its workspace's RUN group");
     }
 
-    /// The Inbox count, the sidebar dots and `Viewed` depend on these: never skipped.
+    /// The footer's Inbox count, the sidebar dots and `Viewed` depend on these: never skipped.
     #[test]
     fn state_changes_redraw_even_when_nothing_else_is_shown() {
         let w = world();
@@ -412,8 +482,8 @@ Put this above the test module in `redraw.rs`:
 //! turns, plan, ports, queue, board, conflicts) always keeps its data; the root only needs to
 //! redraw when the window draws that data now. Anything that changes what is on screen (a view,
 //! workspace, tab or inspector switch, a dialog) re-renders on its own, so data skipped while
-//! hidden is read fresh when it is shown. Pure and tested headlessly; `main.rs` builds
-//! [`Shown`] once per batch.
+//! hidden is read fresh when it is shown. The sidebar view observes the Shell, so a skipped
+//! notify skips it too. Pure and tested headlessly; `Shell::shown` builds [`Shown`].
 
 use mkrew_protocol::{Event, Session};
 use ulid::Ulid;
@@ -424,7 +494,7 @@ use crate::board::View;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarMode {
     Hidden,
-    /// The rail: no progress bar, no run tooltips.
+    /// The rail: no progress bar, no RUN group.
     Compact,
     Full,
 }
@@ -458,15 +528,15 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
             .find(|s| s.id == session_id)
             .map(|s| s.project_id)
     };
-    // The status bar and the inspector read the focused pane, the headers every visible one.
+    // The inspector reads the focused pane, the pane status every visible one.
     let on_pane = |id: Ulid| shown.focused == Some(id) || shown.panes.contains(&id);
     match event {
-        // Pane header, status bar, inspector; Board cards show their task's tokens.
+        // Pane status, session panel; Board cards show their task's tokens.
         Event::SessionUsage(e) => {
             on_pane(e.session_id)
                 || (shown.view == View::Board && project_of(e.session_id).is_some_and(in_workspace))
         }
-        // Pane header pill and `⧗ N queued`.
+        // Pane status pill and `⧗ N queued`.
         Event::SessionTurn(e) => on_pane(e.session_id),
         Event::SessionQueue(e) => on_pane(e.session_id),
         // Inspector Plan card, or the selected row's bar in the full sidebar.
@@ -474,7 +544,7 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
             shown.focused == Some(e.session_id)
                 && (shown.inspector || shown.sidebar == SidebarMode::Full)
         }
-        // Pane title, the Run button of the shown workspace, every row tip of the full sidebar.
+        // Pane title, the Run pill of the shown workspace, the RUN group of the full sidebar.
         Event::SessionPorts(e) => {
             on_pane(e.session_id)
                 || shown.sidebar == SidebarMode::Full
@@ -503,12 +573,12 @@ pub fn event_needs_redraw(event: &Event, shown: &Shown, sessions: &[Session]) ->
     }
 }
 
-/// Conflict warnings are drawn on Board cards and in pane headers.
+/// Conflict warnings are drawn on Board cards and in pane status.
 pub fn conflicts_need_redraw(shown: &Shown) -> bool {
     shown.modal || matches!(shown.view, View::Board | View::Terminals)
 }
 
-/// Tasks are read by the Board, the pane header breadcrumb and the Files / Git worktree chooser
+/// Tasks are read by the Board, the pane status folder and the Files / Git worktree chooser
 /// of the shown workspace.
 fn tasks_drawn(shown: &Shown, project_id: Ulid) -> bool {
     shown.workspace == Some(project_id)
@@ -524,13 +594,13 @@ Expected: PASS (9 tests).
 
 - [ ] **Step 3: Use it in `dispatch`**
 
-`main.rs`: next to the other `use mkrew_ui::…` lines (find with `grep -n "^use mkrew_ui::quick_open" crates/mkrew-ui/src/main.rs`), add in alphabetical place `use mkrew_ui::redraw::{self, SidebarMode};`.
+`main.rs`: after `use mkrew_ui::quick_open::{self, QuickOpen, Results};` (line 83) add `use mkrew_ui::redraw::{self, SidebarMode};`.
 
-Add this method right before `fn dispatch(` (line ~8420, after `send_peek`):
+`shell/connection.rs`: add this method right before `/// Routes a batch of incoming frames; returns whether a pane got new content.` (line 603, after `list_failed`). The shell modules take `View`, `on_screen` and the rest through `use crate::*`:
 
 ```rust
     /// What the window draws now, for [`redraw::event_needs_redraw`].
-    fn shown(&self, window: &Window) -> redraw::Shown {
+    pub(crate) fn shown(&self, window: &Window) -> redraw::Shown {
         let terminals = self.view() == View::Terminals;
         let tabs = self
             .workspace
@@ -559,20 +629,7 @@ In `dispatch`, replace
 ```rust
         let mut peek_changed = false;
         for incoming in batch {
-```
-with
-```rust
-        let mut peek_changed = false;
-        // One reading per batch. A batch that switches workspace or view (a notification click)
-        // notifies on its own, and the render after it reads every model, so a stale `shown`
-        // can only cost one redraw, never a stale screen.
-        let shown = self.shown(window);
-        for incoming in batch {
-```
-
-Replace
-
-```rust
+            if let Incoming::Event(event) = &incoming {
                 if self.board.apply(event) {
                     self.drop_gone_targets(window, cx);
                     cx.notify();
@@ -595,6 +652,15 @@ Replace
 ```
 with
 ```rust
+        let mut peek_changed = false;
+        // What the window draws, read once at the first event of the batch (an output-only
+        // batch, up to ~60/s, never needs it). A batch that switches workspace or view (a
+        // notification click) notifies on its own, and the render after it reads every model,
+        // so a stale `shown` can only cost one redraw, never a stale screen.
+        let mut shown_now: Option<redraw::Shown> = None;
+        for incoming in batch {
+            if let Incoming::Event(event) = &incoming {
+                let shown = &*shown_now.get_or_insert_with(|| self.shown(window));
                 // Every model keeps its data; the root only redraws what the window draws.
                 // `|=` (not `||`): each model must see the event.
                 let mut data_changed = false;
@@ -607,8 +673,7 @@ with
                 data_changed |= self.plans.apply(event);
                 data_changed |= self.ports.apply(event);
                 data_changed |= self.composers.apply(event);
-                if data_changed
-                    && redraw::event_needs_redraw(event, &shown, self.sidebar.sessions())
+                if data_changed && redraw::event_needs_redraw(event, shown, self.sidebar.sessions())
                 {
                     cx.notify();
                 }
@@ -625,14 +690,15 @@ Replace
 with
 ```rust
                 let detected = self.conflicts.apply(event);
-                // `prune` first: it must run on every event.
+                // `prune` first: it must run on every event (Task 12 gates it by the feature
+                // switch, not by what is shown).
                 let pruned = self.conflicts.prune(&self.board, self.sidebar.sessions());
-                if (pruned || detected) && redraw::conflicts_need_redraw(&shown) {
+                if (pruned || detected) && redraw::conflicts_need_redraw(shown) {
                     cx.notify();
                 }
 ```
 
-Replace the two unconditional notifies of the comment and AI arms:
+Replace the unconditional notifies of the comment and AI arms:
 
 ```rust
                     for view in self.git.values_mut() {
@@ -645,7 +711,7 @@ with
                     for view in self.git.values_mut() {
                         view.comments.apply_event(view.project_id, comment);
                     }
-                    if redraw::event_needs_redraw(event, &shown, self.sidebar.sessions()) {
+                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
                         cx.notify();
                     }
 ```
@@ -657,57 +723,69 @@ and
 with
 ```rust
                     self.composers.enhanced(done.generation_id, result);
-                    if redraw::event_needs_redraw(event, &shown, self.sidebar.sessions()) {
+                    if redraw::event_needs_redraw(event, shown, self.sidebar.sessions()) {
                         cx.notify();
                     }
 ```
-Do not touch the `sidebar.apply` match (`Change::Redraw` / `Refresh`), the `layout_changed` / `peek` notifies, or the docs/files/git handlers (Task 3).
+Do not touch the `sidebar.apply` match (`Change::Redraw` / `Refresh`), the `layout_changed` / `peek` notifies, or the docs / files / git handlers (Task 3).
 
 Compile check: `cargo check -p mkrew-ui -j 4`
-Expected: no errors.
+Expected: no errors. If the borrow checker rejects `shown` living across `self.drop_gone_targets(window, cx)` (it borrows only the local `shown_now`, so it should not), clone the `Shown` once per batch instead.
 
 - [ ] **Step 4: HUMAN_CHECKS (creates the shared section)**
 
-In `docs/HUMAN_CHECKS.md`, directly above the first `### To verify —` heading (find it with `grep -n "^### To verify" docs/HUMAN_CHECKS.md`; line 18 today, and above any section another plan of 2026-10-10 already put there), add:
+In `docs/HUMAN_CHECKS.md`, directly above the first `### To verify —` heading (find it with `grep -n "^### To verify" docs/HUMAN_CHECKS.md`; line 18 on 2026-10-13, and above any section another plan already put there), add:
 
 ```markdown
-### To verify — 2026-10-10 inbox: perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)
+### To verify — 2026-10-13 perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)
 
-- [ ] **Events only redraw what is shown (Task 1):** 2 workspaces, an agent in each, inspector open (`◨`) on workspace A's agent.
-  - Let workspace B's agent finish turns: A's status bar, ctx %, inspector and panes do not flicker, and still update live when A's own agent ends a turn (tokens and `ctx` change at once).
-  - Open the Board: a card's token total updates live when its agent ends a turn. Switch to Docs, let the agent end another turn, come back to Board: the total is current (nothing stale after a view switch).
-  - Link a plan (`.md` checklist) to the focused agent: its Plan card and the selected sidebar row's bar update live while you tick items; close the inspector, tick more, reopen it: current.
-  - Start a run command that prints a port: the title bar Run label shows `:PORT`; in the full sidebar, hover another workspace's row (a run live there) and the tip lists its ports.
-  - The `N need you` count, the sidebar state dots and the OS notifications still follow every agent, also with the window on another workspace, on Docs, and with the sidebar hidden. Focus a `done` pane: it leaves the count at once.
-- [ ] **CPU (Task 1 / item 11):** open Task Manager → Details → `mkrew.exe`, run 3 agents in `working` (long tasks) with the window visible on Terminals, and read CPU over 60 s. Before: build of the commit before this plan (copy its `target\release\mkrew.exe` aside first). After: the build after Task 6. Write the numbers here: before ___ % / after ___ % of one core. (The 500 ms working-dot tick, A1, stays, so the drop is the avoided full renders from other sessions' events, not the dots.)
+- [ ] **Events only redraw what is shown (Task 1):** 2 workspaces, an agent in each, session panel open (`◨`) on workspace A's agent, full sidebar.
+  - Let workspace B's agent finish turns: A's panes, `ctx` and the session panel do not flicker, and still update live when A's own agent ends a turn (tokens and `ctx` change at once).
+  - Open the Board: a card's token total updates live when its agent ends a turn. Switch to Files, let the agent end another turn, come back to Board: the total is current (nothing stale after a view switch).
+  - Link a plan (`.md` checklist) to the focused agent: its Plan card and the selected sidebar row's bar update live while you tick items; close the session panel, tick more, reopen it: current.
+  - Start a run command that prints a port: the title bar Run pill shows `:PORT`; in the full sidebar the RUN group of another expanded workspace shows its ports too.
+  - The footer `N need you` count, the sidebar state dots and the OS notifications still follow every agent, also with the window on another workspace, on Files, and with the compact rail. Focus a `done` pane: it leaves the count at once.
+- [ ] **CPU (Task 1 / item 11):** open Task Manager → Details → `mkrew.exe`, run 3 agents in `working` (long tasks) with the window visible on Terminals, and read CPU over 60 s. Before: build of the commit before this plan (copy its `target\release\mkrew.exe` aside first). After: the build after the last task of this plan. Write the numbers here: before ___ % / after ___ % of one core. (The 500 ms working-dot tick stays until Task 16, so the drop here is the avoided renders from other sessions' events.)
 ```
 
-- [ ] **Step 5: Verify and tick**
+- [ ] **Step 5: Verify and commit**
 
-Run: `cargo test -p mkrew-ui --lib redraw -j 4` (expect PASS), then the full verification (`bash scripts/verify.sh`, or fmt, clippy, `cargo test -j 2`). Do not tick inbox line 115 (Tasks 2–6 follow).
-Suggested message: `perf(ui): daemon events redraw the root only when the data is on screen`
+Run: `cargo test -p mkrew-ui --lib redraw -j 4` (expect PASS), then the full verification: `sh scripts/verify.sh`. If rustc crashes on mkrew-ui test builds, run in order: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`. Do not tick the inbox line (Tasks 2–6 follow).
+
+Commit (never push; if `git diff docs/HUMAN_CHECKS.md` shows hunks that are not this task's, stage only yours with `git add -p docs/HUMAN_CHECKS.md`):
+```
+git add crates/mkrew-ui/src/redraw.rs crates/mkrew-ui/src/lib.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/connection.rs docs/HUMAN_CHECKS.md
+git commit -m "perf(ui): daemon events redraw the root only when the data is on screen"
+```
 
 ---
 
 ### Task 2: Sidebar, Inbox count and tab bar stop recomputing every render (perf B2)
 
-Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B2; do not tick yet). Spec: §10 (SPEC.md:685-859), §11 (:861-905, the Inbox / "Needs you" definition). No SPEC change and no ADR: the rows, counts and texts are identical.
+> **Refresh 2026-10-13:** still needed, reworked around `SidebarView` (0606f04).
+> - 0606f04 stops pane output from laying out the sidebar, but `SidebarView` still re-runs `Sidebar::view` and `inbox_entries()` on every Shell notify: each 500 ms working tick, each event, each click. The cache therefore stays in `Sidebar` (the model, shared by the sidebar, its footer and the peek check), and `SidebarView::render` stays a thin wrapper; no change in `sidebar_view.rs`.
+> - The status bar is gone (ADR 0054): the Inbox count is read by `render_sidebar_footer` (`shell/sidebar.rs:735`), once per sidebar render, in both the full sidebar and the rail.
+> - Code moved: sidebar tests are `sidebar/tests.rs`, tab tests `tabs/tests.rs`, render code `shell/sidebar.rs` and `shell/pane_render.rs`. The old plan's `time_labels` test picked the wrong row (rows are newest first); fixed below.
+
+Inbox: `11. Perf: stop whole-app re-renders in the UI` (bullet B2; do not tick yet). Spec: §10 (SPEC.md:685-859), §11 (:861-905, the Inbox / "Needs you" definition). No SPEC change and no ADR: the rows, counts and texts are identical.
 
 **Current state (investigated):**
-- `Sidebar::view` (`sidebar.rs:452`) runs on every render: `grouped()` lowercases the filter, builds a `HashMap<Ulid, Vec<&Session>>`, filters by query (`matches` lowercases three fields per session) and sorts each workspace; then counts, `workspace_summary` `format!`s, and every row is built with cloned `String`s. `render_sidebar` (`main.rs:8577`) calls it once per render; `render_compact_sidebar` (`:8880`) calls it instead of it (never both); the pane-lifecycle check (`:8244`) calls it again per call.
-- `inbox_entries()` (`main.rs:8078`) = `inbox::entries(..)`: clones every needing session's strings and sorts, and the status bar (`render_status_bar`, `:8976`) only takes `.len()`. `inbox::entries` also leaves out sessions whose workspace is not listed (archived), so `len()` is not "sessions with `needs_you`".
-- `SessionRow` holds `state_changed_at`, not text; the right-column time (`17m`) is produced at draw time by `SessionRow::time_text(now_ms)`. `WorkspaceRow.summary` has counts, no time. So the cacheable part is already time-free, and `status::redraw_due` keeps repainting on the 500 ms tick without any cache dirtying.
-- `Viewed` (`inbox.rs:29`) changes during render: `Shell::render` calls `self.viewed.view(session)` for the focused pane before drawing, which flips that session's `needs_you`. It is an input of both the rows' chip count and the Inbox count, so the cache must key on it.
-- Inputs of the view and every mutation path in `Sidebar` (all are `&mut self` methods of `Sidebar`; fields are private): `load` (also replays events), `add_project`, `toggle`, `filter_mut` (hands out `&mut Input`), `set_chip`, `toggle_all`, `reveal`, `clear_filter`, `remove_session`, `set_title`, `set_color`, `update_session` (reached from `apply` for `SessionState`, `SessionExited`, `SessionUpdated` (pin, rename, plan link, color), `SessionTerminalTitle`), `upsert_project` (from `apply(ProjectUpdated)` and `add_project`: color, pin, rename, archive/hidden), `sort_projects`. `apply` for `SessionUsage` / `Turn` / `Plan` / `Ports` / `Queue` / `Edited` / `Tab*` / `Task*` returns `Change::None` and changes nothing the view reads: those must not dirty the cache.
-- Tab bar (`render_tab_bar`, `main.rs:16442-16444`): per tab `status::most_urgent(sessions, &tab.sessions())` does `sessions.iter().find` per pane, and `tabs::tab_kind(tab, sessions)` another `find`: O(panes × sessions) per frame. `Shell::render` (`:20514`), `render_status_bar` (`:9017`), `render_inspector` (`:16056`) and `render_pane` (`:16746`) each do one more `sidebar.sessions().iter().find(..)` per frame.
-- Tests: `sidebar.rs` `mod tests` has `project(name)`, `session(project, started_at, state)`, `workspace(row)`, `session_ids(rows)`; `inbox.rs` has `project`, `session(project, state, changed_at)`; `status.rs:210` and `tabs.rs:1037` pin `most_urgent` / `tab_kind` with slices. `crates/mkrew-ui/tests/lifecycle.rs:168` calls `sidebar.rows()`.
+- `Sidebar::view` (`sidebar.rs:~457`) runs on every `SidebarView` render: `grouped()` lowercases the filter, builds a `HashMap<Ulid, Vec<&Session>>`, filters by query (`matches` lowercases three fields per session) and sorts each workspace; then counts, `workspace_summary` `format!`s, and every row is built with cloned `String`s. `render_sidebar` (`shell/sidebar.rs:238`) and `render_compact_sidebar` (:680) call it once per render (never both); `peek.rs:181` calls it per peek check (user action).
+- `render_sidebar_footer` (`shell/sidebar.rs:728`, in both modes) does `self.inbox_entries().len()` (:735): `inbox::entries` clones every needing session's strings and sorts, only for `.len()`. `inbox::entries` also leaves out sessions whose workspace is not listed (archived), so `len()` is not "sessions with `needs_you`". `inbox_entries()` (`peek.rs:6`) stays for `jump_next_inbox` and the peek cycle (user actions).
+- `SessionRow` holds `state_changed_at`, not text; the right-column time (`17m`) is produced at draw time by `SessionRow::time_text(now_ms)` (`sidebar.rs:~255`), and `SidebarView::render` reads `status::now_ms()` per render. `WorkspaceRow.summary` has counts, no time. So the cacheable part is already time-free, and `status::redraw_due` (`connection.rs:102`) keeps notifying the Shell on the 500 ms tick without any cache dirtying.
+- `Viewed` (`inbox.rs:29`) changes during render: `Shell::render` calls `self.viewed.view(session)` for the focused pane (`main.rs:616-621`) before its child `SidebarView` renders in the same frame, and that flips the session's `needs_you`. It is an input of both the rows' chip count and the Inbox count, so the cache must key on it. A change of the focused pane or of window activation notifies the Shell, which notifies `SidebarView` through its observer.
+- Inputs of the view and every mutation path in `Sidebar` (all `&mut self` methods; fields are private): `load` (also replays events), `add_project`, `toggle`, `filter_mut` (hands out `&mut Input`), `set_chip`, `toggle_all`, `reveal`, `clear_filter`, `remove_session`, `set_title`, `set_color`, `update_session` (reached from `apply` for `SessionState`, `SessionExited`, `SessionUpdated` (pin, rename, plan link, color), `SessionTerminalTitle`), `upsert_project` (from `apply(ProjectUpdated)` and `add_project`: color, pin, rename, archive), `sort_projects` (only from `load` and `upsert_project`). `apply` for `SessionUsage` / `Turn` / `Plan` / `Ports` / `Queue` / `Edited` / `Tab*` / `Task*` returns `Change::None` and changes nothing the view reads: those must not dirty the cache.
+- Tab bar (`render_tab_bar`, `shell/pane_render.rs:48,51`): per tab `status::most_urgent(sessions, &tab.sessions())` does `sessions.iter().find` per pane, and `tabs::tab_kind(tab, sessions)` another `find`: O(panes × sessions) per render. Per-frame single lookups with `sidebar.sessions().iter().find(..)`: `pane_render.rs:23` (single pane of the tab bar), `pane_render.rs:428` (`pane_frame`), `shell/inspector.rs:99`, `main.rs:618` (`Shell::render`). Other `.iter().find` sites (`composer.rs`, `navigation.rs`, `tabs.rs`, `menus.rs`, `inspector.rs:448`) are user actions or open menus: leave them.
+- Tests: `sidebar/tests.rs` has `project(name)`, `session(project, started_at, state)` (`state_changed_at == started_at`), `workspace(row)`, `session_ids(rows)` and `use super::*`; `inbox.rs` `mod tests` has `project`, `session(project, state, changed_at)`; `status.rs:210` and `tabs/tests.rs:599` pin `most_urgent` / `tab_kind` with slices; `tests/lifecycle.rs:168,199` call `sidebar.rows()`.
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/inbox.rs` (`Viewed.version`, `Viewed::version`, `inbox::count`, tests)
-- Modify: `crates/mkrew-ui/src/sidebar.rs` (`rev`, caches, `view` → `Rc<View>`, `waiting`, `session`, `build`, `touch`, tests)
-- Modify: `crates/mkrew-ui/src/status.rs` (`most_urgent` takes a lookup, test call sites)
-- Modify: `crates/mkrew-ui/src/tabs.rs` (`tab_kind` takes a lookup, test call sites)
-- Modify: `crates/mkrew-ui/src/main.rs` (`render_sidebar`, `render_compact_sidebar`, `render_status_bar`, `render_tab_bar`, `render_inspector`, `render_pane`, `Shell::render`)
+- Modify: `crates/mkrew-ui/src/sidebar.rs` (`rev`, caches, `view` → `Rc<View>`, `waiting`, `session`, `build`, `touch`)
+- Modify: `crates/mkrew-ui/src/sidebar/tests.rs` (new tests)
+- Modify: `crates/mkrew-ui/src/status.rs` (`most_urgent` takes a lookup, its test)
+- Modify: `crates/mkrew-ui/src/tabs.rs`, `crates/mkrew-ui/src/tabs/tests.rs` (`tab_kind` takes a lookup, its test)
+- Modify: `crates/mkrew-ui/src/shell/sidebar.rs` (`render_sidebar`, `render_compact_sidebar`, `render_sidebar_footer`)
+- Modify: `crates/mkrew-ui/src/shell/pane_render.rs` (`render_tab_bar`, `pane_frame`), `crates/mkrew-ui/src/shell/inspector.rs` (`render_inspector`), `crates/mkrew-ui/src/main.rs` (`Shell::render`)
 - Modify: `docs/HUMAN_CHECKS.md` (append to the Task 1 section)
 
 **Interfaces:**
@@ -719,7 +797,7 @@ Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B2; do n
   // sidebar.rs
   impl Sidebar {
       pub fn view(&self, viewed: &Viewed) -> Rc<View>     // was: -> View
-      pub fn waiting(&self, viewed: &Viewed) -> usize     // the status bar's Inbox count
+      pub fn waiting(&self, viewed: &Viewed) -> usize     // the footer's Inbox count
       pub fn session(&self, id: Ulid) -> Option<&Session> // indexed, replaces per-frame `.iter().find`
   }
   // status.rs
@@ -728,14 +806,15 @@ Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B2; do n
   pub fn tab_kind<'a>(tab: &Tab, find: impl Fn(Ulid) -> Option<&'a Session>) -> TabKind
   ```
 - `View` gains `PartialEq, Eq` (tests compare a cached view with a fresh one).
-- How time stays correct: the cache never holds a time. `SessionRow` keeps `state_changed_at`; the draw calls `time_text(now)` every frame, and `status::redraw_due` on the 500 ms tick still decides when to repaint. Nothing about time dirties the cache.
+- How time stays correct: the cache never holds a time. `SessionRow` keeps `state_changed_at`; the draw calls `time_text(now)` every render, and `status::redraw_due` on the 500 ms tick still decides when the Shell notifies. Nothing about time dirties the cache.
+- `Sidebar` gains `RefCell` / `Rc` fields, so it is no longer `Sync`; it is only owned by `Shell` (GPUI entities need no `Send`), and the compile check in Step 5 proves nothing sends it across threads.
 
 - [ ] **Step 1: Failing tests**
 
-`inbox.rs` `mod tests`, at the end:
+`inbox.rs` `mod tests`, after `the_status_bar_names_the_inbox_state` (the last test):
 
 ```rust
-    /// The status bar's number is the Inbox's length, whatever the sidebar filter says:
+    /// The footer's number is the Inbox's length, whatever the sidebar filter says:
     /// needs input, unseen done; not seen done, working, exited, nor a workspace that is not
     /// listed (archived).
     #[test]
@@ -781,215 +860,223 @@ Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B2; do n
     }
 ```
 
-`sidebar.rs`: in `mod tests` change the `use mkrew_protocol::{SessionExitedEvent, SessionStateEvent};` line to
+`sidebar/tests.rs`: replace line 1 `use mkrew_protocol::{SessionExitedEvent, SessionStateEvent};` with
 
 ```rust
-    use mkrew_protocol::{
-        SessionExitedEvent, SessionPortsEvent, SessionStateEvent, SessionTerminalTitleEvent,
-    };
+use mkrew_protocol::{
+    SessionExitedEvent, SessionPortsEvent, SessionStateEvent, SessionTerminalTitleEvent,
+};
 ```
-and add at the end of `mod tests`:
+and add at the end of the file:
 
 ```rust
-    /// Two workspaces (api: a working, b idle; web: c done, titled "login"), all expanded.
-    fn fixture() -> (Sidebar, Vec<Project>, Vec<Session>) {
-        let (api, web) = (project("api"), project("web"));
-        let a = session(&api, 1_000, SessionState::Working);
-        let b = session(&api, 2_000, SessionState::Idle);
-        let mut c = session(&web, 3_000, SessionState::Done);
-        c.title = Some("login".into());
-        let mut sidebar = Sidebar::default();
-        sidebar.load(
-            vec![api.clone(), web.clone()],
-            vec![a.clone(), b.clone(), c.clone()],
-        );
-        (sidebar, vec![api, web], vec![a, b, c])
-    }
+/// Two workspaces (api: a working, b idle; web: c done, titled "login"), all expanded. Rows are
+/// newest first: `[api, b, a, web, c]`.
+fn cache_fixture() -> (Sidebar, Vec<Project>, Vec<Session>) {
+    let (api, web) = (project("api"), project("web"));
+    let a = session(&api, 1_000, SessionState::Working);
+    let b = session(&api, 2_000, SessionState::Idle);
+    let mut c = session(&web, 3_000, SessionState::Done);
+    c.title = Some("login".into());
+    let mut sidebar = Sidebar::default();
+    sidebar.load(
+        vec![api.clone(), web.clone()],
+        vec![a.clone(), b.clone(), c.clone()],
+    );
+    (sidebar, vec![api, web], vec![a, b, c])
+}
 
-    type Mutation = fn(&mut Sidebar, &[Project], &[Session]);
+type Mutation = fn(&mut Sidebar, &[Project], &[Session]);
 
-    /// Whatever changes what the sidebar shows (every `&mut` path of `Sidebar`, plus the
-    /// events it applies) is seen on the next `view`: the cached view always equals a fresh
-    /// compute, and so does the status bar's count.
-    #[test]
-    fn the_cached_view_equals_a_fresh_one_after_every_kind_of_mutation() {
-        // (name, whether the rows or counts visibly change, mutation)
-        let cases: Vec<(&str, bool, Mutation)> = vec![
-            ("state event", true, |s, _, ss| {
-                s.apply(&Event::SessionState(SessionStateEvent {
-                    session_id: ss[0].id,
-                    state: SessionState::NeedsInput,
-                    source: StateSource::Hook,
-                    changed_at: 9_000,
-                }));
-            }),
-            ("exit", true, |s, _, ss| {
-                s.apply(&Event::SessionExited(SessionExitedEvent {
-                    session_id: ss[0].id,
-                    exit_code: Some(0),
-                }));
-            }),
-            ("pin a session", true, |s, _, ss| {
-                s.apply(&Event::SessionUpdated(Box::new(Session {
-                    pinned: true,
-                    ..ss[1].clone()
-                })));
-            }),
-            ("rename by event", true, |s, _, ss| {
-                s.apply(&Event::SessionUpdated(Box::new(Session {
-                    title: Some("renamed".into()),
-                    ..ss[0].clone()
-                })));
-            }),
-            ("rename by reply", true, |s, _, ss| {
-                s.set_title(ss[0].id, Some("fix".into()));
-            }),
-            ("terminal title", true, |s, _, ss| {
-                s.apply(&Event::SessionTerminalTitle(SessionTerminalTitleEvent {
-                    session_id: ss[0].id,
-                    title: Some("vim".into()),
-                }));
-            }),
-            ("session color (not drawn in rows)", false, |s, _, ss| {
-                s.set_color(ss[0].id, Some("teal".into()));
-            }),
-            ("pin a workspace", true, |s, ps, _| {
-                s.apply(&Event::ProjectUpdated(Project {
-                    pinned: true,
-                    ..ps[1].clone()
-                }));
-            }),
-            ("workspace color", true, |s, ps, _| {
-                s.apply(&Event::ProjectUpdated(Project {
-                    color: Some("teal".into()),
-                    ..ps[0].clone()
-                }));
-            }),
-            ("hide (archive) a workspace", true, |s, ps, _| {
-                s.apply(&Event::ProjectUpdated(Project {
-                    archived: true,
-                    ..ps[1].clone()
-                }));
-            }),
-            ("collapse one", true, |s, ps, _| s.toggle(ps[0].id)),
-            ("collapse all", true, |s, _, _| s.toggle_all()),
-            ("chip", true, |s, _, _| s.set_chip(Chip::Working)),
-            ("filter text", true, |s, _, _| s.filter_mut().insert("login")),
-            ("remove a session", true, |s, _, ss| s.remove_session(ss[0].id)),
-            ("add a workspace", true, |s, _, _| s.add_project(project("new"))),
-            ("reload", true, |s, ps, ss| {
-                s.load(vec![ps[0].clone()], vec![ss[1].clone()]);
-            }),
-        ];
-        let viewed = Viewed::default();
-        for (name, changes, mutate) in cases {
-            let (mut sidebar, projects, sessions) = fixture();
-            let before = sidebar.view(&viewed);
-            mutate(&mut sidebar, &projects, &sessions);
-            let after = sidebar.view(&viewed);
-            assert_eq!(*after, sidebar.build(&viewed), "{name}: stale cached view");
-            assert_eq!(*before != *after, changes, "{name}: visible change");
-            assert_eq!(
-                sidebar.waiting(&viewed),
-                inbox::count(sidebar.projects(), sidebar.sessions(), &viewed),
-                "{name}: stale Inbox count"
-            );
-        }
-    }
-
-    /// A filter or chip change must not serve the old rows; an unchanged sidebar (and events it
-    /// ignores) reuses the very same view.
-    #[test]
-    fn a_filter_or_chip_change_invalidates_the_cache() {
-        let (mut sidebar, projects, sessions) = fixture();
-        let viewed = Viewed::default();
-        let all = sidebar.view(&viewed);
-        assert!(Rc::ptr_eq(&all, &sidebar.view(&viewed)), "no change: cache hit");
-        // Events the sidebar ignores (ports) leave the cache alone.
-        let ignored = Event::SessionPorts(SessionPortsEvent {
-            session_id: sessions[0].id,
-            ports: vec![3000],
-        });
-        assert_eq!(sidebar.apply(&ignored), Change::None);
-        assert!(Rc::ptr_eq(&all, &sidebar.view(&viewed)), "ignored event: cache hit");
-
-        sidebar.filter_mut().insert("login");
-        let narrowed = sidebar.view(&viewed);
-        assert!(!Rc::ptr_eq(&all, &narrowed));
-        assert_eq!(session_ids(&narrowed.rows), [sessions[2].id]);
-
-        sidebar.clear_filter();
-        assert_eq!(session_ids(&sidebar.view(&viewed).rows).len(), 3);
-        sidebar.set_chip(Chip::Working);
-        assert_eq!(session_ids(&sidebar.view(&viewed).rows), [sessions[0].id]);
-        // Revealing a workspace drops the chip and the query too.
-        sidebar.filter_mut().insert("zzz");
-        sidebar.reveal(projects[1].id);
-        assert_eq!(session_ids(&sidebar.view(&viewed).rows).len(), 3);
-    }
-
-    /// `17m` moves with the clock, the cached rows do not: the time is read per draw.
-    #[test]
-    fn time_labels_come_from_the_clock_not_from_the_cache() {
-        let (sidebar, _, _) = fixture();
-        let viewed = Viewed::default();
-        let first = sidebar.view(&viewed);
-        let Row::Session(row) = &first.rows[1] else {
-            panic!("expected the working session row");
-        };
-        assert_eq!(row.state, SessionState::Working);
-        // `state_changed_at` is 1_000 ms.
-        assert_eq!(row.time_text(91_000).as_deref(), Some("1m"));
-        assert_eq!(row.time_text(3_901_000).as_deref(), Some("1h 5m"));
-        assert!(Rc::ptr_eq(&first, &sidebar.view(&viewed)), "time did not dirty the cache");
-    }
-
-    /// Focusing a `done` pane (`Viewed::view` during render) takes it out of the chip and of the
-    /// status bar count at once: the cache keys on `Viewed`, not only on the sidebar.
-    #[test]
-    fn viewing_a_done_session_updates_the_cached_counts() {
-        let (sidebar, _, sessions) = fixture();
-        let mut viewed = Viewed::default();
+/// Whatever changes what the sidebar shows (every `&mut` path of `Sidebar`, plus the events it
+/// applies) is seen on the next `view`: the cached view always equals a fresh compute, and so
+/// does the footer's count.
+#[test]
+fn the_cached_view_equals_a_fresh_one_after_every_kind_of_mutation() {
+    // (name, whether the rows or counts visibly change, mutation)
+    let cases: &[(&str, bool, Mutation)] = &[
+        ("state event", true, |s, _, ss| {
+            s.apply(&Event::SessionState(SessionStateEvent {
+                session_id: ss[0].id,
+                state: SessionState::NeedsInput,
+                source: StateSource::Hook,
+                changed_at: 9_000,
+            }));
+        }),
+        ("exit", true, |s, _, ss| {
+            s.apply(&Event::SessionExited(SessionExitedEvent {
+                session_id: ss[0].id,
+                exit_code: Some(0),
+            }));
+        }),
+        ("pin a session", true, |s, _, ss| {
+            s.apply(&Event::SessionUpdated(Box::new(Session {
+                pinned: true,
+                ..ss[1].clone()
+            })));
+        }),
+        ("rename by event", true, |s, _, ss| {
+            s.apply(&Event::SessionUpdated(Box::new(Session {
+                title: Some("renamed".into()),
+                ..ss[0].clone()
+            })));
+        }),
+        ("rename by reply", true, |s, _, ss| {
+            s.set_title(ss[0].id, Some("fix".into()));
+        }),
+        ("terminal title", true, |s, _, ss| {
+            s.apply(&Event::SessionTerminalTitle(SessionTerminalTitleEvent {
+                session_id: ss[0].id,
+                title: Some("vim".into()),
+            }));
+        }),
+        ("session color (not drawn in rows)", false, |s, _, ss| {
+            s.set_color(ss[0].id, Some("teal".into()));
+        }),
+        ("pin a workspace", true, |s, ps, _| {
+            s.apply(&Event::ProjectUpdated(Project {
+                pinned: true,
+                ..ps[1].clone()
+            }));
+        }),
+        ("workspace color", true, |s, ps, _| {
+            s.apply(&Event::ProjectUpdated(Project {
+                color: Some("teal".into()),
+                ..ps[0].clone()
+            }));
+        }),
+        ("hide (archive) a workspace", true, |s, ps, _| {
+            s.apply(&Event::ProjectUpdated(Project {
+                archived: true,
+                ..ps[1].clone()
+            }));
+        }),
+        ("collapse one", true, |s, ps, _| s.toggle(ps[0].id)),
+        ("collapse all", true, |s, _, _| s.toggle_all()),
+        ("chip", true, |s, _, _| s.set_chip(Chip::Working)),
+        ("filter text", true, |s, _, _| {
+            s.filter_mut().insert("login");
+        }),
+        ("remove a session", true, |s, _, ss| s.remove_session(ss[0].id)),
+        ("add a workspace", true, |s, _, _| s.add_project(project("new"))),
+        ("reload", true, |s, ps, ss| {
+            s.load(vec![ps[0].clone()], vec![ss[1].clone()]);
+        }),
+    ];
+    let viewed = Viewed::default();
+    for (name, changes, mutate) in cases {
+        let (mut sidebar, projects, sessions) = cache_fixture();
+        let before = sidebar.view(&viewed);
+        mutate(&mut sidebar, &projects, &sessions);
+        let after = sidebar.view(&viewed);
+        assert_eq!(*after, sidebar.build(&viewed), "{name}: stale cached view");
+        assert_eq!(*before != *after, *changes, "{name}: visible change");
         assert_eq!(
-            (sidebar.view(&viewed).counts.needs_you, sidebar.waiting(&viewed)),
-            (1, 1)
-        );
-        viewed.view(&sessions[2]);
-        assert_eq!(
-            (sidebar.view(&viewed).counts.needs_you, sidebar.waiting(&viewed)),
-            (0, 0)
+            sidebar.waiting(&viewed),
+            inbox::count(sidebar.projects(), sidebar.sessions(), &viewed),
+            "{name}: stale Inbox count"
         );
     }
+}
 
-    /// The status bar counts the whole Inbox, not the sessions the filter text leaves.
-    #[test]
-    fn the_inbox_count_ignores_the_filter_text() {
-        let (mut sidebar, _, _) = fixture();
-        let viewed = Viewed::default();
-        sidebar.filter_mut().insert("zzz");
-        assert!(sidebar.view(&viewed).rows.is_empty());
-        assert_eq!(sidebar.view(&viewed).counts.needs_you, 0, "the chip follows the filter");
-        assert_eq!(sidebar.waiting(&viewed), 1, "the status bar does not");
-    }
+/// A filter or chip change must not serve the old rows; an unchanged sidebar (and events it
+/// ignores) reuses the very same view.
+#[test]
+fn a_filter_or_chip_change_invalidates_the_cache() {
+    let (mut sidebar, projects, sessions) = cache_fixture();
+    let viewed = Viewed::default();
+    let all = sidebar.view(&viewed);
+    assert!(Rc::ptr_eq(&all, &sidebar.view(&viewed)), "no change: cache hit");
+    // Events the sidebar ignores (ports) leave the cache alone.
+    let ignored = Event::SessionPorts(SessionPortsEvent {
+        session_id: sessions[0].id,
+        ports: vec![3000],
+    });
+    assert_eq!(sidebar.apply(&ignored), Change::None);
+    assert!(Rc::ptr_eq(&all, &sidebar.view(&viewed)), "ignored event: cache hit");
 
-    /// The id index follows every change of the session list.
-    #[test]
-    fn the_session_lookup_follows_the_list() {
-        let (mut sidebar, projects, sessions) = fixture();
-        let id = sessions[0].id;
-        assert_eq!(sidebar.session(id).map(|s| s.state), Some(SessionState::Working));
-        sidebar.apply(&Event::SessionExited(SessionExitedEvent {
-            session_id: id,
-            exit_code: None,
-        }));
-        assert_eq!(sidebar.session(id).map(|s| s.state), Some(SessionState::Exited));
-        sidebar.remove_session(sessions[1].id);
-        assert!(sidebar.session(sessions[1].id).is_none());
-        assert_eq!(sidebar.session(id).map(|s| s.id), Some(id), "indices shifted");
-        sidebar.load(vec![projects[0].clone()], vec![sessions[1].clone()]);
-        assert!(sidebar.session(id).is_none());
-        assert!(sidebar.session(sessions[1].id).is_some());
-    }
+    sidebar.filter_mut().insert("login");
+    let narrowed = sidebar.view(&viewed);
+    assert!(!Rc::ptr_eq(&all, &narrowed));
+    assert_eq!(session_ids(&narrowed.rows), [sessions[2].id]);
+
+    sidebar.clear_filter();
+    assert_eq!(session_ids(&sidebar.view(&viewed).rows).len(), 3);
+    sidebar.set_chip(Chip::Working);
+    assert_eq!(session_ids(&sidebar.view(&viewed).rows), [sessions[0].id]);
+    // Revealing a workspace drops the chip and the query too.
+    sidebar.filter_mut().insert("zzz");
+    sidebar.reveal(projects[1].id);
+    assert_eq!(session_ids(&sidebar.view(&viewed).rows).len(), 3);
+}
+
+/// `17m` moves with the clock, the cached rows do not: the time is read per draw.
+#[test]
+fn time_labels_come_from_the_clock_not_from_the_cache() {
+    let (sidebar, _, sessions) = cache_fixture();
+    let viewed = Viewed::default();
+    let first = sidebar.view(&viewed);
+    let working = first
+        .rows
+        .iter()
+        .find_map(|row| match row {
+            Row::Session(row) if row.session_id == sessions[0].id => Some(row),
+            _ => None,
+        })
+        .expect("the working session's row");
+    assert_eq!(working.state, SessionState::Working);
+    // `state_changed_at` is 1_000 ms.
+    assert_eq!(working.time_text(91_000).as_deref(), Some("1m"));
+    assert_eq!(working.time_text(3_901_000).as_deref(), Some("1h 5m"));
+    assert!(Rc::ptr_eq(&first, &sidebar.view(&viewed)), "time did not dirty the cache");
+}
+
+/// Focusing a `done` pane (`Viewed::view` during render) takes it out of the chip and of the
+/// footer count at once: the cache keys on `Viewed`, not only on the sidebar.
+#[test]
+fn viewing_a_done_session_updates_the_cached_counts() {
+    let (sidebar, _, sessions) = cache_fixture();
+    let mut viewed = Viewed::default();
+    assert_eq!(
+        (sidebar.view(&viewed).counts.needs_you, sidebar.waiting(&viewed)),
+        (1, 1)
+    );
+    viewed.view(&sessions[2]);
+    assert_eq!(
+        (sidebar.view(&viewed).counts.needs_you, sidebar.waiting(&viewed)),
+        (0, 0)
+    );
+}
+
+/// The footer counts the whole Inbox, not the sessions the filter text leaves.
+#[test]
+fn the_inbox_count_ignores_the_filter_text() {
+    let (mut sidebar, _, _) = cache_fixture();
+    let viewed = Viewed::default();
+    sidebar.filter_mut().insert("zzz");
+    assert!(sidebar.view(&viewed).rows.is_empty());
+    assert_eq!(sidebar.view(&viewed).counts.needs_you, 0, "the chip follows the filter");
+    assert_eq!(sidebar.waiting(&viewed), 1, "the footer does not");
+}
+
+/// The id index follows every change of the session list.
+#[test]
+fn the_session_lookup_follows_the_list() {
+    let (mut sidebar, projects, sessions) = cache_fixture();
+    let id = sessions[0].id;
+    assert_eq!(sidebar.session(id).map(|s| s.state), Some(SessionState::Working));
+    sidebar.apply(&Event::SessionExited(SessionExitedEvent {
+        session_id: id,
+        exit_code: None,
+    }));
+    assert_eq!(sidebar.session(id).map(|s| s.state), Some(SessionState::Exited));
+    sidebar.remove_session(sessions[1].id);
+    assert!(sidebar.session(sessions[1].id).is_none());
+    assert_eq!(sidebar.session(id).map(|s| s.id), Some(id), "indices shifted");
+    sidebar.load(vec![projects[0].clone()], vec![sessions[1].clone()]);
+    assert!(sidebar.session(id).is_none());
+    assert!(sidebar.session(sessions[1].id).is_some());
+}
 ```
 
 Run: `cargo test -p mkrew-ui --lib -j 4 -- sidebar:: inbox::`
@@ -1042,7 +1129,7 @@ impl Viewed {
 After `pub fn entries(..)` (before `/// The session "next Inbox entry"`), add:
 
 ```rust
-/// `entries(..).len()` without building the entries: the status bar's number.
+/// `entries(..).len()` without building the entries: the sidebar footer's number.
 pub fn count(projects: &[Project], sessions: &[Session], viewed: &Viewed) -> usize {
     sessions
         .iter()
@@ -1083,6 +1170,7 @@ In `Sidebar`, replace
 }
 
 impl Sidebar {
+    pub fn is_empty(&self) -> bool {
 ```
 with
 ```rust
@@ -1109,12 +1197,13 @@ struct CachedView {
 impl Sidebar {
     /// What [`Sidebar::view`] and [`Sidebar::session`] read changed: drop their caches.
     fn touch(&mut self) {
-        self.rev = self.rev.wrapping_add(1);
+        self.rev += 1;
     }
 
+    pub fn is_empty(&self) -> bool {
 ```
 
-Add `self.touch();` as the first statement of `toggle`, `filter_mut`, `set_chip`, `toggle_all`, `clear_filter` and `remove_session`, and as the last statement of `load` (after the `if !self.loaded { .. }` block):
+Add `self.touch();` as the first statement of `toggle`, `filter_mut`, `set_chip`, `toggle_all`, `clear_filter` and `remove_session`, and as the last statement of `load`:
 
 ```rust
     pub fn toggle(&mut self, project_id: Ulid) {
@@ -1172,63 +1261,53 @@ with
 
     /// A workspace the user just added: shown and expanded.
 ```
-(`reveal` and `add_project` reach `clear_filter` / `upsert_project`, which touch; `set_title` / `set_color` / `apply` reach `update_session`.)
+(`reveal` and `add_project` reach `clear_filter` / `upsert_project`, which touch; `set_title` / `set_color` / `apply` reach `update_session`; `sort_projects` runs only inside `load` / `upsert_project`.)
 
-In `update_session`, replace
-
-```rust
-            Some(session) => {
-                update(session);
-                Change::Redraw
-            }
-            None => Change::Refresh,
-        }
-    }
-
-    fn upsert_project(&mut self, project: Project) {
-```
-with
-```rust
-            Some(session) => {
-                update(session);
-                self.touch();
-                Change::Redraw
-            }
-            None => Change::Refresh,
-        }
-    }
-
-    fn upsert_project(&mut self, project: Project) {
-        self.touch();
-```
-Careful with the borrow: `update_session` holds `session` from `self.sessions.iter_mut()`; write it as
+Replace `update_session` and the head of `upsert_project`:
 
 ```rust
     fn update_session(&mut self, session_id: Ulid, update: impl FnOnce(&mut Session)) -> Change {
         match self.sessions.iter_mut().find(|s| s.id == session_id) {
             Some(session) => {
                 update(session);
+                Change::Redraw
             }
-            None => return Change::Refresh,
+            None => Change::Refresh,
         }
+    }
+
+    fn upsert_project(&mut self, project: Project) {
+        let existing = self.projects.iter().position(|p| p.id == project.id);
+```
+with
+```rust
+    fn update_session(&mut self, session_id: Ulid, update: impl FnOnce(&mut Session)) -> Change {
+        let Some(session) = self.sessions.iter_mut().find(|s| s.id == session_id) else {
+            return Change::Refresh;
+        };
+        update(session);
         self.touch();
         Change::Redraw
     }
-```
-(use this form instead of the snippet above; `session` is dropped before `self.touch()`).
 
-Replace the whole `view` fn and `rows` (the block from `/// Rows to show and the chip numbers, in one pass` through the end of `pub fn rows`) so that the old body becomes `build` and `view` is the cache:
+    fn upsert_project(&mut self, project: Project) {
+        self.touch();
+        let existing = self.projects.iter().position(|p| p.id == project.id);
+```
+
+Replace the head of `view` and the whole of `rows` (from `/// Rows to show and the chip numbers, in one pass …` through `pub fn rows`) so the old `view` body becomes `build`:
 
 ```rust
-    /// Rows to show and the chip numbers, cached until the sidebar or `viewed` changes (so the
-    /// two or three callers of one frame share one compute). Each workspace, then (if open, or
-    /// while a filter is active) its live sessions that pass the filter and the chip. While
-    /// filtering, workspaces without such a session are left out.
+    /// Rows to show and the chip numbers, cached until the sidebar or `viewed` changes: every
+    /// `SidebarView` render (each Shell notify, including the 500 ms working tick) shares one
+    /// compute. Each workspace, then (if open, or while a filter is active) its live sessions
+    /// that pass the filter and the chip. While filtering, workspaces without such a session
+    /// are left out.
     pub fn view(&self, viewed: &Viewed) -> Rc<View> {
         self.cached(viewed).0
     }
 
-    /// The status bar's Inbox count: [`inbox::count`], cached with the view. Not narrowed by the
+    /// The footer's Inbox count: [`inbox::count`], cached with the view. Not narrowed by the
     /// filter text or the chip.
     pub fn waiting(&self, viewed: &Viewed) -> usize {
         self.cached(viewed).1
@@ -1253,8 +1332,8 @@ Replace the whole `view` fn and `rows` (the block from `/// Rows to show and the
         (view, waiting)
     }
 
-    /// The session `id` (live or exited), found through an index that is rebuilt after any change
-    /// of the list: O(1) per frame instead of a scan per pane.
+    /// The session `id` (live or exited), found through an index that is rebuilt after any
+    /// change of the list: O(1) per frame instead of a scan per pane.
     pub fn session(&self, id: Ulid) -> Option<&Session> {
         let mut index = self.index.borrow_mut();
         if index.as_ref().is_none_or(|(rev, _)| *rev != self.rev) {
@@ -1276,13 +1355,15 @@ Replace the whole `view` fn and `rows` (the block from `/// Rows to show and the
         self.build(&Viewed::default()).rows
     }
 
-    /// One pass over the sessions (O(sessions) plus the newest-first sort inside each workspace).
+    /// One uncached pass over the sessions (O(sessions) plus the newest-first sort inside each
+    /// workspace).
     fn build(&self, viewed: &Viewed) -> View {
         let filtering = self.filtering();
-        // ... the body of the old `view` fn, unchanged ...
+        // ... the body of the old `view` fn, unchanged (`let mut counts = Counts::default();`
+        // down to `View { counts, rows }`) ...
     }
 ```
-For `build`, keep the old `view` body exactly (from `let filtering = self.filtering();` to `View { counts, rows }`), only moving it. Delete the old `pub fn view` header and the old `rows` fn.
+For `build`, keep the old `view` body exactly, only moved. Delete the old `pub fn view` header, its doc comment and the old `rows` fn.
 
 Run: `cargo test -p mkrew-ui --lib -j 4 -- sidebar:: inbox::`
 Expected: PASS (the new tests and all existing sidebar / inbox tests).
@@ -1331,7 +1412,7 @@ with
         );
 ```
 
-`tabs.rs`: replace
+`tabs.rs` (:530): replace
 
 ```rust
 pub fn tab_kind(tab: &Tab, sessions: &[Session]) -> TabKind {
@@ -1345,28 +1426,31 @@ with
 pub fn tab_kind<'a>(tab: &Tab, find: impl Fn(Ulid) -> Option<&'a Session>) -> TabKind {
     match tab.focused().and_then(find) {
 ```
-In `a_tab_shows_the_kind_of_its_focused_pane` replace the four calls: `tab_kind(tabs.active().unwrap(), &sessions)` → `tab_kind(tabs.active().unwrap(), |id| sessions.iter().find(|s| s.id == id))` (three times: the `Shell`, the `Agent("fake")` and the `empty` one), and `tab_kind(tabs.active().unwrap(), &[])` → `tab_kind(tabs.active().unwrap(), |_| None)`.
+`tabs/tests.rs`, `a_tab_shows_the_kind_of_its_focused_pane` (:599): after `let sessions = [agent, shell];` add `let find = |id: Ulid| sessions.iter().find(|s| s.id == id);` and replace the four calls: `tab_kind(tabs.active().unwrap(), &sessions)` → `tab_kind(tabs.active().unwrap(), find)` (twice: the `Shell` one and the `Agent("fake")` one), `tab_kind(tabs.active().unwrap(), &[])` → `tab_kind(tabs.active().unwrap(), |_| None)`, and `tab_kind(empty.active().unwrap(), &sessions)` → `tab_kind(empty.active().unwrap(), find)`.
 
 Run: `cargo test -p mkrew-ui --lib -j 4 -- status:: tabs::`
 Expected: PASS (unchanged behavior, new call shapes).
 
-- [ ] **Step 5: Wire `main.rs`**
+- [ ] **Step 5: Wire the shell**
 
-`render_sidebar`: `let view = self.sidebar.view(&self.viewed);` stays (now an `Rc<View>`; `view.counts.*` reads work). Replace `for row in view.rows {` with
+`shell/sidebar.rs`:
+- `render_sidebar` keeps `let view = self.sidebar.view(&self.viewed);` (:238, now an `Rc<View>`; the `view.counts.*` reads work). Replace `for row in view.rows {` (:518) with
 
 ```rust
-            // The cached rows are shared; the row builders take owned rows (their text moves into
-            // the elements), so each frame still clones the visible rows, not the sort, the
-            // HashMap, the lowercase and the summaries.
+            // The cached rows are shared; the row builders take owned rows (their text moves
+            // into the elements), so each render still clones the visible rows, but not the
+            // grouping, sort, lowercase, summaries and count.
             for row in view.rows.iter().cloned() {
 ```
-`render_compact_sidebar`: replace `for row in self.sidebar.view(&self.viewed).rows {` with `for row in self.sidebar.view(&self.viewed).rows.iter().cloned() {`.
+- `render_compact_sidebar`: replace `for row in self.sidebar.view(&self.viewed).rows {` (:680) with
 
-The check at `:8244` (`.view(&self.viewed).rows.iter().any(..)`) compiles unchanged.
+```rust
+        let view = self.sidebar.view(&self.viewed);
+        for row in view.rows.iter().cloned() {
+```
+- `render_sidebar_footer`: replace `let waiting = self.inbox_entries().len();` (:735) with `let waiting = self.sidebar.waiting(&self.viewed);`. Keep `inbox_entries()` for `jump_next_inbox` and the peek cycle (user actions, not per frame).
 
-`render_status_bar`: replace `let waiting = self.inbox_entries().len();` with `let waiting = self.sidebar.waiting(&self.viewed);`. Keep `inbox_entries()` for `jump_next_inbox` and the peek cycle (user actions, not per frame).
-
-`render_tab_bar`: replace
+`shell/pane_render.rs`, `render_tab_bar`: replace
 
 ```rust
                 let urgent = status::most_urgent(self.sidebar.sessions(), &tab.sessions());
@@ -1377,60 +1461,72 @@ with
 ```
 and `let icon = match tab_kind(tab, self.sidebar.sessions()) {` with `let icon = match tab_kind(tab, |id| self.sidebar.session(id)) {`.
 
-The per-frame single lookups: replace each of
-- `render_status_bar`: `.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id))` (after `.focused_session()`) → `.and_then(|id| self.sidebar.session(id))`
-- `render_inspector`: `.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));` → `.and_then(|id| self.sidebar.session(id));`
-- `render_pane`: `let info = self.sidebar.sessions().iter().find(|s| s.id == session);` → `let info = self.sidebar.session(session);`
-- `Shell::render`: `&& let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)` → `&& let Some(session) = self.sidebar.session(id)`
+Per-frame single lookups: replace each of
+- `pane_render.rs:23` (`render_tab_bar`, `single`): `.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));` → `.and_then(|id| self.sidebar.session(id));`
+- `pane_render.rs:428` (`pane_frame`): `let info = self.sidebar.sessions().iter().find(|s| s.id == session);` → `let info = self.sidebar.session(session);`
+- `shell/inspector.rs:99` (`render_inspector`): `.and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));` → `.and_then(|id| self.sidebar.session(id));`
+- `main.rs:618` (`Shell::render`): `&& let Some(session) = self.sidebar.sessions().iter().find(|s| s.id == id)` → `&& let Some(session) = self.sidebar.session(id)`
 
-Check nothing else used the old shapes: `grep -n "most_urgent(\|tab_kind(" crates/mkrew-ui/src/main.rs` must show only the two lines above.
+Check nothing else used the old shapes: `grep -n "most_urgent(\|tab_kind(" crates/mkrew-ui/src --include=*.rs -r` must show only the definitions, the two lines above and the tests. `shell/sidebar_view.rs` stays unchanged.
 
 Compile check: `cargo check -p mkrew-ui --all-targets -j 4`
 Expected: no errors (`tests/lifecycle.rs` still uses `sidebar.rows()`).
 
 - [ ] **Step 6: HUMAN_CHECKS**
 
-Append to the end of the `### To verify — 2026-10-10 inbox: perf (...)` section in `docs/HUMAN_CHECKS.md`:
+Append to the end of the `### To verify — 2026-10-13 perf (...)` section in `docs/HUMAN_CHECKS.md`:
 
 ```markdown
-- [ ] **Sidebar and Inbox count are current (Task 2):** with several workspaces and agents, in full and in compact sidebar:
-  - A session going `needs input` / `done` (also in another workspace, collapsed) changes `N need you` in the status bar and the `Needs you` chip at once; focusing a `done` pane takes it out of both at once.
+- [ ] **Sidebar and Inbox count are current (Task 2):** with several workspaces and agents, in the full sidebar and in the compact rail:
+  - A session going `needs input` / `done` (also in another workspace, collapsed) changes the footer `N need you` and the `Needs you` chip at once; focusing a `done` pane takes it out of both at once.
   - Pin / rename / change color of a session or a workspace, hide (archive) a workspace, collapse and expand, `Collapse all`: the rows change immediately.
-  - Type in the filter: rows narrow per keystroke, the chips narrow with it, but the status bar `N need you` does not change. Clear the filter: all rows are back.
+  - Type in the filter: rows narrow per keystroke, the chips narrow with it, but the footer `N need you` does not change. Clear the filter: all rows are back.
   - The `17m` times keep advancing (working and idle rows, once per minute after the first minute) without any other change.
   - Several tabs with many panes: each tab's status dot and icon (agent badge / `>_`) follow its panes.
 ```
 
-- [ ] **Step 7: Verify and tick**
+- [ ] **Step 7: Verify and commit**
 
-Run: `cargo test -p mkrew-ui --lib -j 4 -- sidebar:: inbox:: status:: tabs:: redraw::` (expect PASS), then `cargo test -p mkrew-ui --test lifecycle -j 2` (expect PASS), then the full verification (`bash scripts/verify.sh`, or fmt, clippy, `cargo test -j 2`). Do not tick inbox line 115 (Tasks 3–6 follow).
-Suggested message: `perf(ui): cache the sidebar rows, the Inbox count and session lookups until their inputs change`
+Run: `cargo test -p mkrew-ui --lib -j 4 -- sidebar:: inbox:: status:: tabs:: redraw::` (expect PASS), then `cargo test -p mkrew-ui --test lifecycle -j 2` (expect PASS), then the full verification: `sh scripts/verify.sh` (fallback if rustc crashes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Do not tick the inbox line (Tasks 3–6 follow).
+
+Commit (never push; stage only this task's hunks of `docs/HUMAN_CHECKS.md`, see Task 1):
+```
+git add crates/mkrew-ui/src/inbox.rs crates/mkrew-ui/src/sidebar.rs crates/mkrew-ui/src/sidebar/tests.rs crates/mkrew-ui/src/status.rs crates/mkrew-ui/src/tabs.rs crates/mkrew-ui/src/tabs/tests.rs crates/mkrew-ui/src/shell/sidebar.rs crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/inspector.rs crates/mkrew-ui/src/main.rs docs/HUMAN_CHECKS.md
+git commit -m "perf(ui): cache the sidebar rows, the Inbox count and session lookups until their inputs change"
+```
 
 ---
 
 ### Task 3: Docs is not re-read while it is hidden
 
-Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B3; do not tick yet). Spec: §12 (SPEC.md:924, re-anchoring on `doc.changed`), §7 event `doc.changed` (SPEC.md:574).
+> **Refresh 2026-10-13:** still needed, design unchanged. Docs is off by default (`[features] docs`, ADR 0046), so this only matters for users who switched it on, or who switched it off again after opening it (the per-workspace `Docs` stays in `Shell::docs`).
+> - `doc_event` moved to `shell/docs.rs:157-178`, `show_view` / `activate_workspace` to `shell/workspace.rs:343` / `:21`; `docs.rs` (`Docs::apply` :232, `select` :192, `read` :208) is unchanged since the old plan.
+> - `Shell::view()` (`shell/workspace.rs:333`) reads Docs as Terminals while `features.docs` is off, so `shown` in `doc_event` is already `None` then: the file is only marked stale.
+> - New edge the old plan did not have: `[features] docs` switched on by a settings reload while the workspace's stored view is Docs makes `view()` flip to Docs without `show_view`. Task 6 calls `show_docs` there (it needs this task's `show_docs`; do Task 3 before Task 6).
+
+Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B3; do not tick yet). Spec: §12 (SPEC.md:924, re-anchoring on `doc.changed`), §7 event `doc.changed` (SPEC.md:574), ADR 0046.
 
 **Current state (investigated):**
-- `main.rs` `Shell::doc_event` (~1736) runs for every `doc.changed` / `comment.updated`. It calls `docs.apply(event)` on EVERY workspace's `Docs` (`self.docs.values_mut()`), and for each `Reaction { reread: Some(file) }` it calls `read_doc` at once, whatever view is shown (the `shown` value is only used to gate `relist`). `read_doc` sends `doc.read`, then `Shown::new(&content)` on the background executor: markdown parse + syntect + mermaid ×2. An agent that writes a plan every few seconds therefore costs a full parse per write in a view nobody looks at.
-- `docs.rs` `Docs::apply` (~216) decides `reread` and already sets `self.doc = Doc::Loading` when the shown file is not the announced hash. `Docs::select` (~179) resets `changed_to`. `Docs::read` (~192) drops an answer whose hash differs from `changed_to` (so a late old read is ignored). `changed_to` stays set, so one later read of the newest hash is enough.
-- The pattern in Files/Git: `files_event` (~1969) and `git_event` (~2961) return early unless `self.workspace.filter(|_| self.view() == View::Files/Git)`. Hidden views are refreshed by their `show` path: `show_view` (~1559) calls `refresh_files` / `refresh_git` when `shown != view`, `activate_workspace` (~1247) calls them when `switched && self.view() == …`. Docs does the same for the LIST: `show_view` and `activate_workspace` call `load_docs`, and `doc_event` only relists `if reaction.relist && shown == Some(project_id)`. Only the re-read of the selected file is missing from that pattern.
-- Existing tests in `docs.rs` `mod tests` (helpers `changed(project, path, Some(hash))`, `shown(path, text, hash)`, `shown_hash(&docs)`) call `docs.apply(&event)` at lines ~455, 463, 467, 470, 486, 516, 517, 519.
+- `Shell::doc_event` (`shell/docs.rs:157`) runs for every `doc.changed` / `comment.updated` (called from `shell/connection.rs:670-671`). It calls `docs.apply(event)` on EVERY workspace's `Docs` (`self.docs.values_mut()`, :164-168), and for each `Reaction { reread: Some(file) }` it calls `read_doc` at once (:170-173), whatever view is shown (`shown`, :163, only gates `relist` at :174). `read_doc` (:115) sends `doc.read`, then `Shown::new(&content)` on the background executor (markdown parse + syntect + mermaid ×2). An agent that writes a plan every few seconds costs a full parse per write in a view nobody looks at.
+- `docs.rs` `Docs::apply` (:232) decides `reread` and already sets `self.doc = Doc::Loading` when the shown file is not the announced hash (:246-251). `Docs::select` (:192) resets `changed_to`. `Docs::read` (:208) drops an answer whose hash differs from `changed_to`, so a late old read is ignored; one later read of the newest hash is enough.
+- The pattern in Files/Git: `files_event` (`shell/files.rs:211`) returns early unless `self.view() == View::Files`; hidden views are refreshed by `show_view` (`shell/workspace.rs:361-375`) and `activate_workspace` (:42-50). Docs does it for the LIST (`load_docs` in both, and `doc_event` relists only `if reaction.relist && shown == Some(project_id)`). Only the re-read of the selected file is missing.
+- Other callers of `show_view(View::Docs)`: `shell/git.rs:811-812` (Review in Docs: `select_doc` first, then `show_view`; `select` clears the stale mark, so `show_docs` finds nothing) and `shell/sessions.rs:348` (`Command::ShowDocs`).
+- Tests in `docs.rs` `mod tests` (helpers `changed(project, path, Some(hash))` :385, `shown(path, text, hash)` :352, `shown_hash(&docs)` :393) call `docs.apply(&event)` at lines 491, 499, 503, 506, 522, 552, 553, 555.
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/docs.rs` (`Docs` field `stale`, `new`, `select`, `apply`, new `take_stale`, tests)
-- Modify: `crates/mkrew-ui/src/main.rs` (`doc_event`, new `show_docs`, `show_view`, `activate_workspace`)
+- Modify: `crates/mkrew-ui/src/shell/docs.rs` (`doc_event`, new `show_docs`)
+- Modify: `crates/mkrew-ui/src/shell/workspace.rs` (`show_view`, `activate_workspace`)
 - Modify: `docs/HUMAN_CHECKS.md` (append to the shared perf section)
 
 **Interfaces:**
 - Changes: `Docs::apply(&mut self, event: &Event, visible: bool) -> Reaction` (`visible` = this workspace's Docs is on screen). With `visible == false` a re-read is never returned; the file is remembered instead.
 - Produces: `Docs::take_stale(&mut self) -> Option<String>` (the selected file to read now that Docs is shown again; `None` after it was taken).
-- Produces: `Shell::show_docs(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>)` = `load_docs` + the stale re-read.
+- Produces: `Shell::show_docs(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>)` = `load_docs` + the stale re-read (`pub(crate)`, Task 6 calls it).
 
 - [ ] **Step 1: Failing tests**
 
-In `docs.rs` `mod tests`, change the existing calls to the new signature (they all test a shown Docs): `docs.apply(&changed(project, "a.md", Some("h1")))` → `docs.apply(&changed(project, "a.md", Some("h1")), true)`; the same `, true` at the lines of `Some("h2")`, `b.md`, `Ulid::new()`, `None`, `&comment(project)`, `&comment(Ulid::new())` and `&event(project, CommentContext::Diff)`. Then add at the end of the module (before the closing `}`):
+In `docs.rs` `mod tests`, change the existing calls to the new signature (they all test a shown Docs): add `, true` as a second argument of `docs.apply(…)` at lines 491, 499, 503, 506 (`Ulid::new()`), 522 (`None`), 552 (`&comment(project)`), 553 (`&comment(Ulid::new())`), 555 (`&event(project, CommentContext::Diff)`), e.g. `docs.apply(&changed(project, "a.md", Some("h1")), true)`. Then add at the end of the module (before the closing `}`):
 
 ```rust
     /// Hidden Docs: a change only marks the file stale (a read parses, highlights and draws
@@ -1477,6 +1573,19 @@ In `docs.rs` `mod tests`, change the existing calls to the new signature (they a
         assert_eq!(docs.doc, Doc::Deleted);
         assert_eq!(docs.take_stale(), None, "a deleted file is not read");
     }
+
+    /// A change that comes while Docs is shown reads at once and replaces an older mark.
+    #[test]
+    fn a_change_while_shown_reads_at_once_and_clears_the_mark() {
+        let project = Ulid::new();
+        let mut docs = Docs::new(project);
+        docs.select("a.md");
+        docs.read("a.md", Ok(shown("a.md", "a", "h1")));
+        docs.apply(&changed(project, "a.md", Some("h2")), false);
+        let shown_now = docs.apply(&changed(project, "a.md", Some("h3")), true);
+        assert_eq!(shown_now.reread.as_deref(), Some("a.md"));
+        assert_eq!(docs.take_stale(), None);
+    }
 ```
 
 Run: `cargo test -p mkrew-ui --lib docs::tests -j 4`
@@ -1484,14 +1593,14 @@ Expected: FAIL to compile (`apply` takes one argument, `take_stale` does not exi
 
 - [ ] **Step 2: Logic in `docs.rs`**
 
-`Docs`, after the `changed_to` field (end of the struct):
+`Docs`, after the `changed_to` field (end of the struct, :136):
 
 ```rust
     /// A `doc.changed` of the selected file came while Docs was hidden: it is read when Docs
     /// is shown again ([`Self::take_stale`]).
     stale: Option<String>,
 ```
-`Docs::new`, after `changed_to: None,`: `stale: None,`
+`Docs::new`, after `changed_to: None,` (:153): `stale: None,`
 
 `Docs::select`, replace
 ```rust
@@ -1558,14 +1667,14 @@ Add after `apply`:
         self.stale.take()
     }
 ```
-Update the module doc (line 3) wording: `` `doc.changed` re-reads the shown file and re-lists`` → `` `doc.changed` re-reads the shown file (when Docs is hidden: when it is shown again) and re-lists``.
+Module doc (lines 3-4 of `docs.rs`): `` `doc.changed` re-reads the shown file and re-lists; `comment.updated` `` → `` `doc.changed` re-reads the shown file (when Docs is hidden: when it is shown again) and re-lists; `comment.updated` `` (re-wrap the comment lines).
 
 Run: `cargo test -p mkrew-ui --lib docs::tests -j 4`
-Expected: PASS (new tests and the old ones with `true`).
+Expected: PASS (the three new tests and the old ones with `true`).
 
-- [ ] **Step 3: `main.rs`**
+- [ ] **Step 3: Shell**
 
-`doc_event`, replace
+`shell/docs.rs` `doc_event`, replace
 ```rust
             .map(|docs| (docs.project_id, docs.apply(event)))
             .collect();
@@ -1575,13 +1684,18 @@ with
             .map(|docs| (docs.project_id, docs.apply(event, shown == Some(docs.project_id))))
             .collect();
 ```
-Update its doc comment (`/// Follows \`doc.changed\` …`): `re-reads a shown file that changed` → `re-reads a changed file when its Docs is on screen (a hidden one reads it when shown again)`.
+Update its doc comment (:155-156): `re-reads a shown file that changed and re-lists the Docs view on screen (hidden ones re-list when shown again)` → `re-reads a changed file and re-lists when its Docs is on screen (a hidden one does both when shown again, \`show_docs\`)`.
 
-Add after `doc_event`:
+Add after `doc_event` (before `open_doc_in_zed`):
 ```rust
     /// Docs of `project_id` came on screen: re-lists its files and reads the selected one
     /// again when it changed while Docs was hidden.
-    fn show_docs(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
+    pub(crate) fn show_docs(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.load_docs(project_id, window, cx);
         let stale = self.docs.get_mut(&project_id).and_then(Docs::take_stale);
         if let Some(file_path) = stale {
@@ -1589,7 +1703,7 @@ Add after `doc_event`:
         }
     }
 ```
-`show_view`, replace
+`shell/workspace.rs` `show_view` (:361-363), replace
 ```rust
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);
@@ -1601,7 +1715,7 @@ with
             self.show_docs(project_id, window, cx);
         }
 ```
-`activate_workspace`, replace
+`activate_workspace` (:42-44), replace
 ```rust
         if switched && self.view() == View::Docs {
             self.load_docs(project_id, window, cx);
@@ -1613,302 +1727,63 @@ with
             self.show_docs(project_id, window, cx);
         }
 ```
-(`load_docs` keeps its other callers: the `doc_event` relist and its own `again`.)
+(`load_docs` keeps its other callers: the `doc_event` relist, its own `again`, the Retry button in `shell/docs.rs`.)
 
 Compile check: `cargo check -p mkrew-ui -j 4`
 Expected: no errors.
 
 - [ ] **Step 4: HUMAN_CHECKS**
 
-Append to the end of the section `### To verify — 2026-10-10 inbox: perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` in `docs/HUMAN_CHECKS.md`:
+Append to the end of the section `### To verify — 2026-10-13 perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` in `docs/HUMAN_CHECKS.md` (created by Task 1):
 
 ```markdown
-- [ ] **Docs while hidden (B3):** open a workspace's Docs on a plan file, switch to Terminals. Let an agent (or Zed) save that file several times → `mkrew-ui` CPU stays flat in Task Manager. Back to Docs → the page shows the latest content (a brief "Loading…" is fine) and comments still work. Also: change the file while another workspace is shown, then switch to the workspace and open Docs → latest content. A file that was deleted meanwhile shows the deleted notice.
+- [ ] **Docs while hidden (B3):** set `[features] docs = true` in `settings.toml`. Open a workspace's Docs on a plan file, switch to Terminals. Let an agent (or Zed) save that file several times → `mkrew-ui` CPU stays flat in Task Manager. Back to Docs → the page shows the latest content (a brief "Loading…" is fine) and comments still work. Also: change the file while another workspace is shown, then switch to the workspace and open Docs → latest content. A file that was deleted meanwhile shows the deleted notice.
 ```
 
-- [ ] **Step 5: Verify and tick**
+- [ ] **Step 5: Verify and commit**
 
-Run: `cargo test -p mkrew-ui --lib docs -j 4` (expect PASS), then the full verification. Do not tick inbox line 115 (Task 6 does).
-Suggested message: `perf(ui): Docs reads a changed file only when it is shown`
+Run: `cargo test -p mkrew-ui --lib docs -j 4` (expect PASS), then `sh scripts/verify.sh` (fallback if rustc crashes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Do not tick inbox line 115 (Task 6 does).
+Commit: `git add crates/mkrew-ui/src/docs.rs crates/mkrew-ui/src/shell/docs.rs crates/mkrew-ui/src/shell/workspace.rs` (plus the HUMAN_CHECKS hunk with `git add -p docs/HUMAN_CHECKS.md`, never the whole file if it holds others' edits), then `git commit -m "perf(ui): Docs reads a changed file only when it is shown"`. Never push.
 
 ---
 
-### Task 4: Markdown live preview in Files is debounced 300 ms
+### Task 4: Markdown live preview in Files is debounced 300 ms — DROPPED
 
-Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet A6; do not tick yet). Spec: §12A (SPEC.md:954-958, Files editor), ADR 0021 (preview).
+> **Refresh 2026-10-13:** already done in substance by 42f3969 and the background build in `shell/files.rs`; a 300 ms time debounce no longer buys anything and makes one thing worse. **No steps, no files, no commit.** The old `PreviewStep` / `preview_wait` / `PREVIEW_DELAY` design is not carried over.
+> - Inbox item 11 bullet A6 (docs/INBOX.md:123) says "300 ms debounce": when ticking item 11 in Task 6, reword it to "A6: dropped, the preview already builds off the UI thread, once per text" (Task 6 Step 6).
 
-**Current state (investigated):**
-- `files_view.rs`: `FilesView::preview_request` (~595) returns `Some((stamp, editor.text()))` as soon as the text moved on, once per stamp (`preview_asked`). `Stamp = (text_id, editor version)`; `stamp()` (~579). `preview_ready` (~610) already drops a page whose `text_id` is another or that is older than the page already stored (`preview.stamp >= stamp`), so a late build never replaces a newer one. This is the generation logic from redesign Task 21; it is reused as is. `open()` (~343) resets `preview` and `preview_asked`.
-- `main.rs` `Shell::build_preview` (~1944): calls `preview_request` and parses `Shown::from_text(&text)` on the background executor (syntect + mermaid ×2), then in `update_in` calls `preview_ready` and `build_preview` again (asks once more when the text changed meanwhile). It is called from `read_file` (~1934) after each read and from the Preview/Source toggle (~11287). Nothing calls it per keystroke while the editor shows: it runs on switching back to Preview. While Source is shown `previewing()` is false so no build. The cost lands when the user types in Source, toggles to Preview, and when Preview is shown and the file is re-read (agent edit, `git.changed` → `read_file`): each read that changes the text builds at once with no delay, and `preview_request` copies the whole text each time.
-- `file_edited` (~2407) already has a debounce for highlighting: `background.timer(theme::REHIGHLIGHT_DELAY)` (`theme.rs:166`, 150 ms) then re-checks the version in `highlight_request`. The same shape is reused for the preview.
-- Tests: `files_view.rs` `mod tests` has `opened(text)`, `page(text)`, `file_text(text)`, existing preview tests at ~1088-1156 (`markdown_opens_as_a_preview_that_is_parsed_once_per_text`, `a_late_preview_never_replaces_a_newer_one`).
+Inbox: line 115 (bullet A6). Spec: §12A (SPEC.md:954-958), ADR 0021.
 
-**Files:**
-- Modify: `crates/mkrew-ui/src/theme.rs` (`PREVIEW_DELAY`, after `REHIGHLIGHT_DELAY`)
-- Modify: `crates/mkrew-ui/src/files_view.rs` (`PreviewStep`, field `preview_wait`, `preview_step`, `preview_due`, tests)
-- Modify: `crates/mkrew-ui/src/main.rs` (`build_preview`, new `parse_preview`)
-- Modify: `docs/HUMAN_CHECKS.md` (append)
-
-**Interfaces:**
-- Produces: `theme::PREVIEW_DELAY: Duration` = 300 ms.
-- Produces: `files_view::PreviewStep { Idle, Build(Stamp, String), Wait(u64) }`.
-- Produces: `FilesView::preview_step(&mut self) -> PreviewStep` and `FilesView::preview_due(&mut self, wait: u64) -> Option<(Stamp, String)>`.
-- Consumes: `FilesView::preview_request`, `preview_ready` (unchanged). `preview_request` stays pub (existing tests use it).
-
-Decision (pure rule): the FIRST page of a text (no page stored, e.g. a file just opened) is built at once, because the pane would otherwise sit empty. Every later change waits: each change takes a new wait number (`preview_wait`), and when the 300 ms timer ends only the newest number builds. A timer of an older number does nothing. Typing 20 characters in a row therefore parses once, 300 ms after the last one.
-
-- [ ] **Step 1: Failing tests**
-
-In `files_view.rs` `mod tests`, after `a_late_preview_never_replaces_a_newer_one`, add:
-
-```rust
-    /// A file just opened has no page: it is built at once, once.
-    #[test]
-    fn the_first_page_of_a_file_is_built_at_once() {
-        let mut view = opened("# T\n");
-        let PreviewStep::Build(stamp, text) = view.preview_step() else {
-            panic!("expected a build");
-        };
-        assert_eq!(text, "# T\n");
-        assert_eq!(view.preview_step(), PreviewStep::Idle, "being built");
-        view.preview_ready(stamp, page(&text));
-        assert_eq!(view.preview_step(), PreviewStep::Idle, "current");
-    }
-
-    /// Edits after the first page wait; every later edit restarts the wait, and only the
-    /// last wait builds (one parse for a burst of typing).
-    #[test]
-    fn edits_after_the_first_page_build_once_after_the_last_change() {
-        let mut view = opened("a\n");
-        let PreviewStep::Build(first, _) = view.preview_step() else {
-            panic!("expected a build");
-        };
-        view.preview_ready(first, page("a\n"));
-        view.toggle_mode();
-        view.editor_mut().unwrap().insert("b");
-        view.toggle_mode();
-        let PreviewStep::Wait(one) = view.preview_step() else {
-            panic!("expected a wait");
-        };
-        view.toggle_mode();
-        view.editor_mut().unwrap().insert("c");
-        view.toggle_mode();
-        let PreviewStep::Wait(two) = view.preview_step() else {
-            panic!("expected a wait");
-        };
-        assert_ne!(one, two);
-        assert_eq!(view.preview_due(one), None, "superseded by a later edit");
-        let (stamp, text) = view.preview_due(two).expect("the last wait builds");
-        assert_eq!(text, "bca\n");
-        assert_eq!(view.preview_due(two), None, "asked once");
-        view.preview_ready(stamp, page(&text));
-        assert_eq!(view.preview_step(), PreviewStep::Idle);
-    }
-
-    /// A build that finishes after a newer page exists never replaces it, and a wait that
-    /// ends where nothing shows a preview builds nothing.
-    #[test]
-    fn a_wait_ends_without_a_build_when_the_preview_is_gone() {
-        let mut view = opened("a\n");
-        let PreviewStep::Build(first, _) = view.preview_step() else {
-            panic!("expected a build");
-        };
-        view.preview_ready(first, page("a\n"));
-        view.editor_mut().unwrap().insert("b");
-        let PreviewStep::Wait(wait) = view.preview_step() else {
-            panic!("expected a wait");
-        };
-        view.toggle_mode();
-        assert_eq!(view.mode, Mode::Source);
-        assert_eq!(view.preview_due(wait), None, "the editor is shown");
-        view.toggle_mode();
-        let PreviewStep::Wait(next) = view.preview_step() else {
-            panic!("expected a wait");
-        };
-        assert_eq!(view.preview_due(wait), None, "the old timer is superseded");
-        assert!(view.preview_due(next).is_some());
-        view.open("src/main.rs");
-        assert_eq!(view.preview_due(next), None, "another file replaced it");
-    }
-```
-
-Run: `cargo test -p mkrew-ui --lib files_view::tests::the_first_page files_view::tests::edits_after files_view::tests::a_wait_ends -j 4` (run each filter, or `cargo test -p mkrew-ui --lib files_view::tests::preview -j 4` after naming; use the three commands)
-Expected: FAIL to compile (`PreviewStep` does not exist).
-
-- [ ] **Step 2: `theme.rs` constant**
-
-After
-```rust
-pub const REHIGHLIGHT_DELAY: Duration = Duration::from_millis(150);
-```
-add:
-```rust
-
-/// A `.md` preview in Files is parsed again this long after its text last changed (the
-/// first page of a file is built at once).
-pub const PREVIEW_DELAY: Duration = Duration::from_millis(300);
-```
-
-- [ ] **Step 3: Logic in `files_view.rs`**
-
-After `pub type Stamp = (u64, u64);` add:
-
-```rust
-
-/// What the shell does about a `.md` preview that may be out of date ([`FilesView::preview_step`]).
-#[derive(Debug, PartialEq, Eq)]
-pub enum PreviewStep {
-    /// Nothing: no preview shown, the page is current, or one is being built for this text.
-    Idle,
-    /// Parse this text now: the file has no page yet, the pane would stay empty.
-    Build(Stamp, String),
-    /// A page of an older text is shown: wait [`crate::theme::PREVIEW_DELAY`], then call
-    /// [`FilesView::preview_due`] with this number. A later `Wait` makes it stale.
-    Wait(u64),
-}
-```
-In `FilesView` after `preview_asked: Option<Stamp>,` add:
-```rust
-    /// Number of the last wait handed out by [`Self::preview_step`]: only its timer builds.
-    preview_wait: u64,
-```
-In `FilesView::new` after `preview_asked: None,` add `preview_wait: 0,` (`open()` does not reset it: the numbers only grow, so an old timer never matches).
-
-After `preview_request` add:
-```rust
-    /// Decides what the shell does now about the preview (called after every read, mode
-    /// switch and page): the first page of a text is built at once, later ones after
-    /// [`crate::theme::PREVIEW_DELAY`] of quiet, so a burst of edits parses once.
-    pub fn preview_step(&mut self) -> PreviewStep {
-        if !self.previewing() {
-            return PreviewStep::Idle;
-        }
-        let Some(stamp) = self.stamp() else {
-            return PreviewStep::Idle;
-        };
-        let current = (self.preview.as_ref()).is_some_and(|preview| preview.stamp == stamp);
-        if current || self.preview_asked == Some(stamp) {
-            return PreviewStep::Idle;
-        }
-        if self.preview.is_none() {
-            return self
-                .preview_request()
-                .map_or(PreviewStep::Idle, |(stamp, text)| PreviewStep::Build(stamp, text));
-        }
-        self.preview_wait += 1;
-        PreviewStep::Wait(self.preview_wait)
-    }
-
-    /// The wait `wait` ended: the text to parse, unless a later change took a newer wait or
-    /// nothing shows a preview any more. Answer with [`Self::preview_ready`].
-    pub fn preview_due(&mut self, wait: u64) -> Option<(Stamp, String)> {
-        if wait != self.preview_wait {
-            return None;
-        }
-        self.preview_request()
-    }
-```
-Note: `preview()` returns `None` for a page of another text (a re-read replaced the text) while `self.preview` is still `Some`, so a re-read after the first page also waits 300 ms (shows "Rendering the preview…" meanwhile); this is the same burst case (agent saving a file over and over) and is intended.
-
-Run: `cargo test -p mkrew-ui --lib files_view::tests -j 4`
-Expected: PASS (new and existing preview tests).
-
-- [ ] **Step 4: `main.rs`**
-
-Replace the whole `build_preview` fn (from the doc comment `/// Parses the \`.md\` file of the Files view` to its closing `}`) with:
-
-```rust
-    /// Asks the Files view of `project_id` what its `.md` preview needs ([`files_view::PreviewStep`]):
-    /// the first page of a text is parsed at once, a change after it waits
-    /// [`theme::PREVIEW_DELAY`] of quiet. Parsing runs off the UI thread (highlighting and
-    /// Mermaid are slow) and asks again when the text changed while it ran.
-    fn build_preview(&mut self, project_id: Ulid, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(view) = self.files.get_mut(&project_id) else {
-            return;
-        };
-        let target = view.worktree_task_id;
-        match view.preview_step() {
-            files_view::PreviewStep::Idle => {}
-            files_view::PreviewStep::Build(stamp, text) => {
-                self.parse_preview(project_id, target, stamp, text, window, cx);
-            }
-            files_view::PreviewStep::Wait(wait) => {
-                let background = cx.background_executor().clone();
-                cx.spawn_in(window, async move |this, cx| {
-                    background.timer(theme::PREVIEW_DELAY).await;
-                    let _ = this.update_in(cx, |shell, window, cx| {
-                        let due = (shell.files_at(project_id, target))
-                            .and_then(|view| view.preview_due(wait));
-                        if let Some((stamp, text)) = due {
-                            shell.parse_preview(project_id, target, stamp, text, window, cx);
-                        }
-                    });
-                })
-                .detach();
-            }
-        }
-    }
-
-    /// Parses `text` for the preview of `stamp` on the background executor and stores the page
-    /// (a page of an older text or older than the stored one is dropped by `preview_ready`).
-    fn parse_preview(
-        &mut self,
-        project_id: Ulid,
-        target: Option<Ulid>,
-        stamp: files_view::Stamp,
-        text: String,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let background = cx.background_executor().clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let page = background
-                .spawn(async move { Shown::from_text(&text) })
-                .await;
-            let _ = this.update_in(cx, |shell, window, cx| {
-                if let Some(view) = shell.files_at(project_id, target) {
-                    view.preview_ready(stamp, page);
-                }
-                shell.build_preview(project_id, window, cx);
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-```
-No other caller changes (`read_file` and the Preview toggle call `build_preview` as before).
-
-Compile check: `cargo check -p mkrew-ui -j 4`
-Expected: no errors.
-
-- [ ] **Step 5: HUMAN_CHECKS**
-
-Append to the perf section in `docs/HUMAN_CHECKS.md`:
-
-```markdown
-- [ ] **Files `.md` preview debounce (A6):** open a long `.md` file in Files → its preview shows at once (no extra wait). Switch to Source, type quickly for a few seconds, switch back to Preview → the old page shows first and updates about 0.3 s after you stopped (not once per key, `mkrew-ui` CPU does not stay high while typing). Open a file with a mermaid block and edit it in Source → the diagram appears once after you stop. An agent saving the open file repeatedly → the preview follows without the window stalling.
-```
-
-- [ ] **Step 6: Verify and tick**
-
-Run: `cargo test -p mkrew-ui --lib files_view theme -j 4` (expect PASS), then the full verification. Do not tick inbox line 115 (Task 6 does).
-Suggested message: `perf(ui): Files markdown preview waits 300 ms after the last change`
+**Evidence (why a time debounce is not worth it now):**
+- **When a build can start.** `FilesView::preview_request` (`files_view.rs:627`) returns a text only if `previewing()` (:598: Preview mode AND `.md` AND a text) and the text moved on, once per stamp (`preview_asked`). Callers of `Shell::build_preview` (`shell/files.rs:181`): the end of `read_file` (:171) and the Preview/Source toggle (`shell/files_render.rs:301`). Nothing builds per keystroke: while Source is shown `previewing()` is false, and in Preview the editor is not editable. So a burst of typing never parses; the toggle back to Preview parses once (the old page stays on screen meanwhile, because `preview()` :618 only drops a page of another `text_id`, and edits keep the `text_id`).
+- **Where the cost lands.** The parse (`Shown::from_text`, syntect + mermaid ×2) runs on `cx.background_executor()` (`shell/files.rs:194-198`); the UI thread only stores the page (`preview_ready` :642, `shell/files.rs:199-205`) and the page is a virtual list (`preview.rs:119`, 42f3969). One request is in flight at a time; `build_preview` asks again after it answers only if the text moved on (stamp/`preview_asked`), and `preview_ready` drops a page older than the stored one (:643). That is the coalescing a debounce would add.
+- **Re-reads already skip equal text.** `FilesView::show` (`files_view.rs:439-469`): a re-read with the same hash keeps the text (no new `text_id`, no rebuild); unsaved text is never replaced. Only a real change on disk (an agent saving the open `.md` while Files is on screen, via `files_event` → `read_file`, rate-limited by the daemon's `git.changed` batching, SPEC.md:577) gives a new `text_id` and one build.
+- **A debounce would hurt.** After such a re-read the text has a new `text_id`, so `preview()` is `None` and the pane shows "Rendering the preview…" (`shell/docs.rs:620-621`). Waiting 300 ms first lengthens that flash on every agent save. The remaining cost (one background parse per distinct saved text, at most back to back) is bounded by parse time and off the UI thread.
+- **Not measured.** No CPU number exists for repeated agent saves of a big `.md` in Files Preview. If the HUMAN_CHECKS CPU check in Task 6 shows `mkrew-ui` busy in that case, the cheaper fix is in `diagram.rs` (PERF_REVIEW A5: render the current theme only, cache per block hash), not a timer here. Optional follow-up (not in this plan): keep the previous page on screen while the new one builds, to remove the flash.
 
 ---
 
 ### Task 5: Title/status bar git summary refresh is throttled to once per 2 s
 
+> **Refresh 2026-10-13:** still needed, design unchanged (pure `Throttle` in `git_summary.rs`). The busy/again coalescing in `load_git_summary` (`shell/git.rs:156-199`) is what the old plan already assumed; it does not rate limit.
+> - Code moved: event loop now `shell/connection.rs:679-688`, `Shell` fields `main.rs:499-504`, field init `shell/connection.rs:362-364`, `activate_workspace` `shell/workspace.rs:36-38`, `load_git_summary` `shell/git.rs:156`; `git_summary.rs` is unchanged apart from tests.
+> - The summary also feeds the Git view's dirty marker (`shell/git_render.rs:647-650`), the repo chooser (`shell/git_menus.rs:139,168`) and the inspector "Changes" card (`shell/inspector.rs:182`); they now lag up to 2 s behind `git.changed` (the Git view's own list still refreshes at once via `git_event`). HUMAN_CHECKS says so.
+> - `Shell` fields are in `main.rs`, the `Shell::new` initialiser in `shell/connection.rs`; imports come through `use crate::*` in the shell modules, so only `main.rs:63` changes.
+
 Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B4; do not tick yet). Spec: §10 (SPEC.md:746-750, title bar git chip and `Git N` badge), §7 event `git.changed` (SPEC.md:577).
 
 **Current state (investigated):**
-- `main.rs` event loop (~8496): for every `Event::GitChanged` it runs `files_event`, `git_event`, and when `changed.worktree_task_id.is_none() && self.workspace == Some(changed.project_id)` calls `load_git_summary(changed.project_id, …)` (~8503), whatever view is shown.
-- `Shell::load_git_summary` (~2669) is the single-flight loader from redesign Task 2: `git_summary_busy` / `git_summary_again`; its request is `git_summary_of` (~17277): `git.repos` + one `git.status` per repository. A change that arrives while one runs sets `git_summary_again` and reloads once when it answers. It is not rate limited: with `git.changed` every ~300 ms (SPEC.md:577) a busy agent keeps it running back to back.
-- Other callers of `load_git_summary`: `activate_workspace` (~1263, `switched || self.git_summary.is_none()`) and its own `shown != project_id` retry. Fields `git_summary`, `git_summary_busy`, `git_summary_again` at ~408-411, initialised at ~779-781.
-- `git_summary.rs` is the pure module (`RepoSummary`, `GitSummary`, `mod tests`), imported in `main.rs:60` as `use mkrew_ui::git_summary::{GitSummary, RepoSummary};`. The throttle goes there so it is tested headlessly. `status::now_ms() -> i64` (Unix ms) is the clock the shell already uses.
+- `shell/connection.rs:679-688`: for every `Event::GitChanged` it runs `files_event`, `git_event`, and when `changed.worktree_task_id.is_none() && self.workspace == Some(changed.project_id)` calls `self.load_git_summary(changed.project_id, window, cx)` (:686), whatever view is shown.
+- `Shell::load_git_summary` (`shell/git.rs:156`) is the single-flight loader: `git_summary_busy` / `git_summary_again`; its request is `git_summary_of` (`shell/git.rs:819`): `git.repos` + one `git.status` per repository. A change that arrives while one runs sets `git_summary_again` and reloads once when it answers; the UI is notified only if the summary differs (:179-186). It is not rate limited: with `git.changed` every ~300 ms (SPEC.md:577) a busy agent keeps it running back to back (a git process per repo each time).
+- Other callers of `load_git_summary`: `activate_workspace` (`shell/workspace.rs:36-38`, `switched || self.git_summary.is_none()`) and its own `shown != project_id` retry (`shell/git.rs:191-195`). Fields `git_summary`, `git_summary_busy`, `git_summary_again` at `main.rs:501-504`, initialised at `shell/connection.rs:362-364`; `git_summary = None` on reconnect (`shell/connection.rs:245`) and on a workspace switch (`shell/workspace.rs:34`), both followed by a load through `activate_workspace`.
+- `git_summary.rs` is the pure module (`RepoSummary`, `GitSummary`, `mod tests`), imported in `main.rs:63` as `use mkrew_ui::git_summary::{GitSummary, RepoSummary};`. The throttle goes there so it is tested headlessly. `status::now_ms() -> i64` (Unix ms) is the clock the shell uses (`use std::time::{Duration, Instant}` is at `main.rs:13`).
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/git_summary.rs` (`REFRESH_EVERY_MS`, `Due`, `Throttle`, tests)
-- Modify: `crates/mkrew-ui/src/main.rs` (import, field, init, `activate_workspace`, event loop, new `git_summary_due`)
+- Modify: `crates/mkrew-ui/src/main.rs` (import :63, field after :504)
+- Modify: `crates/mkrew-ui/src/shell/connection.rs` (field init after :364, event loop :686)
+- Modify: `crates/mkrew-ui/src/shell/workspace.rs` (`activate_workspace`)
+- Modify: `crates/mkrew-ui/src/shell/git.rs` (new `git_summary_due`, doc of `load_git_summary`)
 - Modify: `docs/HUMAN_CHECKS.md` (append)
 
 **Interfaces:**
@@ -1984,7 +1859,7 @@ Expected: FAIL to compile (`Throttle`, `Due`, `REFRESH_EVERY_MS` do not exist).
 
 - [ ] **Step 2: Logic in `git_summary.rs`**
 
-After the `impl GitSummary { … }` block and before `#[cfg(test)]` add:
+After the `impl GitSummary { … }` block (ends at :100) and before `#[cfg(test)]` (:102) add:
 
 ```rust
 /// The least time between two refreshes of the title bar git summary (perf B4).
@@ -2067,19 +1942,19 @@ impl Throttle {
 Run: `cargo test -p mkrew-ui --lib git_summary::tests -j 4`
 Expected: PASS.
 
-- [ ] **Step 3: `main.rs`**
+- [ ] **Step 3: Shell**
 
-Import (line ~60): replace `use mkrew_ui::git_summary::{GitSummary, RepoSummary};` with `use mkrew_ui::git_summary::{Due, GitSummary, RepoSummary, Throttle};`.
+`main.rs:63`: replace `use mkrew_ui::git_summary::{GitSummary, RepoSummary};` with `use mkrew_ui::git_summary::{Due, GitSummary, RepoSummary, Throttle};`.
 
-Field, after `git_summary_again: bool,`:
+`main.rs` field, after `git_summary_again: bool,` (:504):
 ```rust
     /// At most one summary refresh per 2 s while `git.changed` keeps coming; a trailing one
     /// always follows the last change (perf B4).
     git_summary_throttle: Throttle,
 ```
-Init, after `git_summary_again: false,`: `git_summary_throttle: Throttle::default(),`
+`shell/connection.rs` init, after `git_summary_again: false,` (:364): `git_summary_throttle: Throttle::default(),`
 
-`activate_workspace`, replace
+`shell/workspace.rs` `activate_workspace`, replace
 ```rust
         if switched || self.git_summary.is_none() {
             self.load_git_summary(project_id, window, cx);
@@ -2093,7 +1968,7 @@ with
             self.load_git_summary(project_id, window, cx);
         }
 ```
-Event loop, replace
+`shell/connection.rs` event loop (:686), replace
 ```rust
                         self.load_git_summary(changed.project_id, window, cx);
 ```
@@ -2102,7 +1977,7 @@ with
                         let due = self.git_summary_throttle.changed(status::now_ms());
                         self.git_summary_due(changed.project_id, due, window, cx);
 ```
-Add after `load_git_summary` (before `fn git_requests`):
+`shell/git.rs`, add after `load_git_summary` (before `git_requests`, :201):
 ```rust
     /// Does what the throttle decided for a `git.changed` of `project_id`: refresh the title
     /// bar summary now, or set the one trailing timer that refreshes it at the end of the
@@ -2136,7 +2011,7 @@ Add after `load_git_summary` (before `fn git_requests`):
         }
     }
 ```
-Update the doc of `load_git_summary`: `Asked on a workspace switch and on its \`git.changed\`` → `Asked on a workspace switch and (throttled, \`git_summary_due\`) on its \`git.changed\``.
+Update the doc of `load_git_summary` (:152-155): `Asked on a workspace switch and on its \`git.changed\`, never polled` → `Asked on a workspace switch and (throttled, \`git_summary_due\`) on its \`git.changed\`, never polled`.
 
 Compile check: `cargo check -p mkrew-ui -j 4`
 Expected: no errors.
@@ -2146,174 +2021,69 @@ Expected: no errors.
 Append to the perf section in `docs/HUMAN_CHECKS.md`:
 
 ```markdown
-- [ ] **Git summary throttle (B4):** in Terminals, with a shell in a repo run `1..30 | % { Add-Content t.txt $_; Start-Sleep -Milliseconds 300 }` → the title bar `Git N` badge and the branch chip update about every 2 s (not on every write), and the final count shows within about 2 s after the loop ends; `git.exe` processes in Task Manager no longer spawn continuously. Switch to another workspace → its branch and badge show at once. In the Git view, commit → the badge goes to the new count within about 2 s (it used to be immediate; the Git view's own list still updates at once).
+- [ ] **Git summary throttle (B4):** in Terminals, with a shell in a repo run `1..30 | % { Add-Content t.txt $_; Start-Sleep -Milliseconds 300 }` → the title bar `Git N` badge and the branch chip update about every 2 s (not on every write), and the final count shows within about 2 s after the loop ends; `git.exe` processes in Task Manager no longer spawn continuously. Switch to another workspace → its branch and badge show at once. In the Git view, commit → its own file list updates at once; the title bar badge, the Git view's dirty marker and the inspector "Changes" card follow within about 2 s (they used to be immediate).
 ```
 
-- [ ] **Step 5: Verify and tick**
+- [ ] **Step 5: Verify and commit**
 
-Run: `cargo test -p mkrew-ui --lib git_summary -j 4` (expect PASS), then the full verification. Do not tick inbox line 115 (Task 6 does).
-Suggested message: `perf(ui): refresh the title bar git summary at most once per 2 s`
+Run: `cargo test -p mkrew-ui --lib git_summary -j 4` (expect PASS), then `sh scripts/verify.sh` (fallback as in Task 3). Do not tick inbox line 115 (Task 6 does).
+Commit: `git add crates/mkrew-ui/src/git_summary.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/git.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/workspace.rs` (HUMAN_CHECKS hunk via `git add -p`), then `git commit -m "perf(ui): refresh the title bar git summary at most once per 2 s"`. Never push.
 
 ---
 
-### Task 6: No settings.toml poll; the Files editor width is cached
+### Task 6: No settings.toml poll; settings are checked on window activation
 
-Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullets B8 and B11, the last task of item 11; TICK it `[~]`/`[ ]` → `[x]`). Spec: §20.0 (SPEC.md:1503-1509), ADR 0024 (font settings, live reload), §12A (SPEC.md:954-958).
+> **Refresh 2026-10-13:** B8 still needed. **B11 is done** (dd50ec3) except one clone that is not worth removing: **no B11 steps remain**.
+> - The poll body is now in `shell/connection.rs:54-93` (status tick in `Shell::new`) and does more than before: it also applies `diff_wrap`, `reading_width` and `[features]` (`shell/connection.rs:76-87`, `sync_panes` when `features` changed). The new `reload_settings_if_changed` keeps all of that.
+> - New ADR number **0055** (old 0044), which amends ADR 0024 (check timing) and ADR 0046 ("Applies live" now means: when the window is activated).
+> - New step: when a reload switches `[features] docs` on while the workspace's stored view is Docs, call `show_docs` (Task 3) so the page and list load (otherwise `view()` flips to Docs with no `show_view`, and with Task 3 the file would stay `Loading`). Do Task 3 first.
+> - `open_settings` doc says "fonts apply on save (ADR 0024)": reworded.
 
-> **B11 is done** by `docs/superpowers/plans/2026-10-10-file-viewer-scroll.md` Task 3 (`Editor::longest_line`, `render_editor` borrows the theme). Skip the B11 steps and the B11 HUMAN_CHECKS line here; do only B8.
+Inbox: line 115 `11. Perf: stop whole-app re-renders in the UI` (bullet B8; the last task of item 11: tick it, see Step 6). Spec: §20.0 (SPEC.md:1618-1624, 1660-1664), ADR 0024 (font settings, live reload), ADR 0046.
+
+**B11 evidence (already done, nothing to plan):** `Editor::longest` (`editor.rs:111-113`, `longest_line()` :178, kept in `splice`) and the test `longest_line_is_the_widest_row_and_follows_edits` (`editor.rs:950`); `render_editor` uses `shown.editor.longest_line()` (`shell/files_render.rs:696-697`). The leftover `let row_theme = theme.clone();` at `shell/files_render.rs:131` is the FILE TREE list (not the editor) and is **dropped, not worth it**: `Theme` is ~70 `u32` tokens plus two font `Arc`s (`theme.rs:464-563`), cloned once per render of the Files view (not per row); `Shell::render` clones it too (`main.rs:597`) and `git_rows.rs:20` / `git_diff.rs:576` do the same. The list closure is `'static` (`cx.processor(move |…|)`) and `file_row(…, &row_theme, cx)` needs the theme and `cx` together, so it cannot borrow from `cx.theme()`; removing the clone would need an `Rc<Theme>` plumbing for no measurable gain.
 
 **Current state (investigated):**
-- B8: `main.rs` `Shell::new` (~522-575) spawns the status loop `cx.spawn_in(window, async move |this, cx| { let mut last = status::now_ms(); loop { background timer(theme::STATUS_TICK) …` and inside every 500 ms tick runs `std::fs::metadata(&shell.settings_file)…modified()` on the UI thread and compares with `shell.settings_modified` (field ~297, doc says "until the first status tick reads it"). On a change it runs `theme::reload(&shell.settings_file, &installed, &last, mode)`: `Ok(changed)` clears `settings_error`, sets the `theme::Fonts` global, `theme::refresh`, `cx.refresh_windows()`, and applies `diff_mode` from a second `mkrew_core::settings::load`; `Err(error)` sets `settings_error` and keeps the last good fonts/theme (palette lists it, §20.0). The first tick is also the first read (mtime `None` → `Some`), which reloads the already-loaded file once.
-- `observe_window_activation` exists (~513): `cx.observe_window_activation(window, |_, _, cx| cx.notify()).detach();` (the Inbox re-render on return). `window.is_window_active()` is used at ~20512.
-- Our own writes (`write_ui_value` for theme / inspector width / diff mode, ~4941-4993) change the mtime too; today the next tick re-loads the file and applies what we just wrote (no visible change). After this task the next activation does (also no visible change).
-- `theme::reload` has the test `a_broken_settings_file_keeps_the_last_settings_and_says_why` (theme.rs ~848): it already pins "broken file keeps the last good settings and reports `file:line:col`" and "unchanged: no redraw". That logic does not move.
-- SPEC §20.0 (SPEC.md:1506-1507) says: "The UI reads it the same way and re-reads it within 500 ms of a change (fonts apply live, ADR 0024)". ADR 0024 (`docs/decisions/0024-font-settings.md:26-27`) says it is "checked on the existing 500 ms status tick".
-- B11: `render_editor` (`main.rs` ~11641) computes `longest` per render: `lines.iter().enumerate().max_by_key(|(_, line)| editor::display_col(line, line.len()))` over the WHOLE file (a 2 MB file = hundreds of thousands of chars per frame), and `let row_theme = theme.clone();` (~11658) clones the whole `Theme` per render to move into the `uniform_list` closure. `editor.rs` `Editor::splice` (~482) is "the only text change" and bumps `version` (~492); there is no other place that replaces `lines`. `editor::display_col` (~529) and `TAB` (highlight.rs:25, `"    "`).
-- `mkrew-ui` `Editor` tests live in `editor.rs` `mod tests` (~625, `use super::*`, helper `type_chars`).
+- B8: `Shell::new` (`shell/connection.rs:49-112`) spawns the status loop `cx.spawn_in(window, async move |this, cx| { let mut last = status::now_ms(); loop { background timer(theme::STATUS_TICK) …` and inside every 500 ms tick runs `std::fs::metadata(&shell.settings_file)…modified()` on the UI thread (:55-59) and compares with `shell.settings_modified` (field `main.rs:350-351`, init `None` at `shell/connection.rs:288`). On a change it runs `theme::reload(&shell.settings_file, &installed, &last, mode)` (`theme.rs:449`): `Ok(changed)` clears `settings_error`, sets the `theme::Fonts` global, `theme::refresh`, `cx.refresh_windows()`, then a second `mkrew_core::settings::load` applies `diff_mode` (`apply_diff_mode`, `shell/workspace_actions.rs:412`), `diff_wrap`, `reading_default` and `features`; `Err(error)` sets `settings_error` and keeps the last good fonts/theme (the palette lists it first, `shell/navigation.rs:388`, §20.0).
+- Start-up: `main.rs:172-176` sets the `Fonts` global from the file; `Shell::new` reads `features`, `diff_mode`, `diff_wrap`, `reading_width` (:17-23). `settings_modified` starts `None`, so the FIRST tick reloads once; that first look also reports a broken file at start in the palette. Keep that: the first look must still happen.
+- `observe_window_activation` exists (`shell/connection.rs:40-41`): `cx.observe_window_activation(window, |_, _, cx| cx.notify()).detach();` (the Inbox re-render on return). `window.is_window_active()` is used at `main.rs:616`. The callback fires on activation and on deactivation.
+- Our own writes (`write_ui_value` for theme / inspector width / diff mode / diff wrap, `mkrew_core::settings::write_web_enabled` from the Phone access dialog, `shell/phone_access.rs:90`) change the mtime too; today the next tick re-loads the file and applies what we just wrote (no visible change). After this task the next activation does (also no visible change).
+- `theme::reload` has the test `a_broken_settings_file_keeps_the_last_settings_and_says_why` (`theme.rs:997`): it pins "broken file keeps the last good settings and reports `file:line:col`" and "unchanged: no redraw". That logic does not move.
+- Other timers are unrelated: the phone poll (`PHONE_TICK`, `shell/connection.rs:113-128`) reads `daemon.status`, not the file; the 500 ms status tick stays for the working dots / times (`status::redraw_due`).
+- SPEC §20.0 (SPEC.md:1621-1622): "The UI reads it the same way and re-reads it within 500 ms of a change (fonts apply live, ADR 0024)". ADR 0024 (`docs/decisions/0024-font-settings.md:26-27`): "checked on the existing 500 ms status tick". ADR 0046 (`:30-31`): "`docs` off: … Applies live." SPEC.md:1661 `docs = false  # … applies live`.
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/editor.rs` (`longest` field, `new`, `splice`, `widest_line`, `longest_line`, test)
-- Modify: `crates/mkrew-ui/src/main.rs` (`render_editor`, `Shell::new` activation observer and status loop, new `reload_settings_if_changed`, field docs)
-- Create: `docs/decisions/0044-settings-reload-on-activation.md`
-- Modify: `docs/SPEC.md` §20.0 (:1506-1507)
+- Modify: `crates/mkrew-ui/src/shell/workspace_actions.rs` (new `reload_settings_if_changed` before `open_settings`; `open_settings` doc)
+- Modify: `crates/mkrew-ui/src/shell/connection.rs` (activation observer, status loop)
+- Modify: `crates/mkrew-ui/src/main.rs` (field docs :347-351)
+- Create: `docs/decisions/0055-settings-reload-on-activation.md`
+- Modify: `docs/SPEC.md` §20.0 (:1621-1622)
 - Modify: `docs/decisions/0024-font-settings.md` (:26-27)
+- Modify: `docs/decisions/0046-feature-switches.md` (:31)
 - Modify: `docs/HUMAN_CHECKS.md` (append)
-- Modify: `docs/INBOX.md` (tick line 115)
+- Modify: `docs/INBOX.md` (tick line 115; edit only, see Step 6)
 
 **Interfaces:**
-- Produces: `Editor::longest_line(&self) -> usize` (index of the widest line in screen cells, kept per text version; lines are never empty so it is always a valid index).
 - Produces: `Shell::reload_settings_if_changed(&mut self, window: &mut Window, cx: &mut Context<'_, Self>)` (the former poll body, run at start and when the window is activated).
-- Consumes: `theme::reload`, `mkrew_core::settings::load` (unchanged).
+- Consumes: `theme::reload`, `mkrew_core::settings::load`, `Shell::apply_diff_mode`, `Shell::sync_panes`, `Shell::show_docs` (Task 3), `Shell::view()` (unchanged).
 
-- [ ] **Step 1: Failing test (B11)**
+No failing test: the activation callback is GPUI-only, and `theme::reload` carries the decision logic and its existing test.
 
-In `editor.rs` `mod tests`, add at the end:
+- [ ] **Step 1: `reload_settings_if_changed`**
 
-```rust
-    /// The widest row in screen cells (a tab is `TAB` cells, more than its one byte) follows
-    /// every edit and undo, so the render never scans the file again.
-    #[test]
-    fn longest_line_is_the_widest_row_and_follows_edits() {
-        let widest = |editor: &Editor| {
-            let line = &editor.lines()[editor.longest_line()];
-            display_col(line, line.len())
-        };
-        let tabs = 2 * TAB.len() + 1;
-        let mut editor = Editor::new("short\n\t\tx\n12345678\n");
-        assert_eq!(editor.longest_line(), 1, "two tabs and x are wider than 8 bytes");
-        assert_eq!(widest(&editor), tabs);
-        // A longer line typed at the end of the last row wins…
-        editor.set_cursor(Pos::new(2, 8), false);
-        editor.insert("9012345678");
-        assert_eq!((editor.longest_line(), widest(&editor)), (2, 18));
-        // …and undo gives the old widest row back.
-        assert!(editor.undo());
-        assert_eq!(widest(&editor), tabs);
-        // Cutting the widest row's text leaves the next widest.
-        editor.set_cursor(Pos::new(1, 0), false);
-        editor.set_cursor(Pos::new(1, 3), true);
-        editor.cut();
-        assert_eq!((editor.longest_line(), widest(&editor)), (2, 8));
-        // An empty file still has a line 0.
-        assert_eq!(Editor::new("").longest_line(), 0);
-    }
-```
-
-Run: `cargo test -p mkrew-ui --lib editor::tests::longest_line -j 4`
-Expected: FAIL to compile (`longest_line` does not exist).
-
-- [ ] **Step 2: Cache in `editor.rs`**
-
-`Editor` struct, after `version: u64,` add:
-```rust
-    /// Index of the widest line in screen cells ([`Self::longest_line`]), found when the text
-    /// changes instead of on every frame.
-    longest: usize,
-```
-`Editor::new`, replace
-```rust
-            .collect();
-        Editor {
-            lines,
-```
-with
-```rust
-            .collect::<Vec<String>>();
-        let longest = widest_line(&lines);
-        Editor {
-            lines,
-```
-and after `version: 0,` (inside the struct literal) add `longest,`.
-
-`Editor::splice`, after `self.version += 1;` add:
-```rust
-        // ponytail: one scan per text change (it was one per frame); update from the replaced
-        // lines only if typing in a 2 MB file ever feels slow.
-        self.longest = widest_line(&self.lines);
-```
-After `pub fn version(&self) -> u64 { self.version }` add:
-```rust
-
-    /// Index of the widest line in screen cells (tabs and multibyte chars differ from the
-    /// byte length), for the editor's horizontal scroll width.
-    pub fn longest_line(&self) -> usize {
-        self.longest
-    }
-```
-After `pub fn display_col` (a free fn, before `display_byte`) add:
-```rust
-/// Index of the widest of `lines` in screen cells ([`display_col`] of its end); ties go to the
-/// last one, an empty slice to 0.
-fn widest_line(lines: &[String]) -> usize {
-    lines
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, line)| display_col(line, line.len()))
-        .map_or(0, |(index, _)| index)
-}
-```
-
-Run: `cargo test -p mkrew-ui --lib editor -j 4`
-Expected: PASS.
-
-- [ ] **Step 3: `render_editor` uses the cache and borrows the theme**
-
-In `main.rs` `render_editor`, replace
-```rust
-        // Widest row in screen cells (tabs and multibyte chars differ from the byte length).
-        let longest = (lines.iter().enumerate())
-            .max_by_key(|(_, line)| editor::display_col(line, line.len()))
-            .map(|(index, _)| index);
-        let text_left = Rc::clone(&self.file_text_left);
-        let row_theme = theme.clone();
-```
-with
-```rust
-        // Widest row in screen cells, kept by the editor per text version.
-        let longest = Some(shown.editor.longest_line());
-        let text_left = Rc::clone(&self.file_text_left);
-```
-In the `cx.processor(move |shell, range: std::ops::Range<usize>, _, cx| {` closure, after
-```rust
-                let Some(shown) = view.shown() else {
-                    return Vec::new();
-                };
-```
-add `let theme = cx.theme();` and in the same closure replace the argument line `&row_theme,` (the last argument of `preview::code_row(`) with `theme,`.
-
-Compile check: `cargo check -p mkrew-ui -j 4`
-Expected: no errors. If the borrow checker rejects `cx.theme()` held across `cx.listener(...)` in that closure, keep the clone but make it once per closure call, not per render: `let theme = cx.theme().clone();` at the same spot (still no clone per frame of the whole list build when the list is not repainted); report which one was used.
-
-- [ ] **Step 4: B8: settings are checked when the window is activated**
-
-`main.rs`, new method (put it next to `open_settings`, before it):
+`shell/workspace_actions.rs`, new method before `open_settings` (:379):
 
 ```rust
-    /// Re-reads `settings.toml` when its mtime moved since the last look (ADR 0044). Run at
+    /// Re-reads `settings.toml` when its mtime moved since the last look (ADR 0055). Run at
     /// start and whenever the window is activated, never on a timer: a hand edit of fonts,
-    /// theme or `diff_mode` applies when the user comes back to the window. A broken file keeps
-    /// the last good settings and lists why in the palette (§20.0).
-    fn reload_settings_if_changed(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    /// theme, `diff_mode`, `diff_wrap`, `reading_width` or `[features]` applies when the
+    /// user comes back to the window. A broken file keeps the last good settings and lists
+    /// why in the palette (§20.0).
+    pub(crate) fn reload_settings_if_changed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         let modified = std::fs::metadata(&self.settings_file)
             .and_then(|m| m.modified())
             .ok();
@@ -2332,11 +2102,26 @@ Expected: no errors. If the borrow checker rejects `cx.theme()` held across `cx.
                     theme::refresh(mode, window, cx);
                     cx.refresh_windows();
                 }
-                // `theme::reload` only returns fonts and theme; a hand edit of `diff_mode`
-                // applies too (the file just parsed, so this second read only happens when
-                // it changed).
+                // `theme::reload` only returns fonts and theme; a hand edit of `diff_mode` /
+                // `diff_wrap` / `reading_width` / `[features]` applies too (the file just
+                // parsed, so this second read only happens when it changed).
                 if let Ok(settings) = mkrew_core::settings::load(&self.settings_file) {
                     self.apply_diff_mode(settings.ui.diff_mode);
+                    self.diff_wrap = settings.ui.diff_wrap;
+                    self.reading_default = settings.ui.reading_width;
+                    if self.features != settings.features {
+                        let docs_on = !self.features.docs && settings.features.docs;
+                        // `view()` may now map Docs to Terminals, or back.
+                        self.features = settings.features;
+                        self.sync_panes(window, cx);
+                        // A workspace left on Docs shows it again without `show_view`.
+                        if docs_on
+                            && let Some(project_id) = self.workspace
+                            && self.view() == View::Docs
+                        {
+                            self.show_docs(project_id, window, cx);
+                        }
+                    }
                 }
             }
             // The last good settings stay; the palette lists why (§20.0).
@@ -2345,16 +2130,22 @@ Expected: no errors. If the borrow checker rejects `cx.theme()` held across `cx.
         cx.notify();
     }
 ```
-`Shell::new`: replace
+`open_settings` doc (:379-380): `fonts apply on save (ADR 0024)` → `they apply when you come back to the window (ADR 0055)`.
+
+- [ ] **Step 2: Activation observer, first look, no poll**
+
+`shell/connection.rs`, replace (:39-41)
 ```rust
+        // Coming back to the window views the focused pane (a done session leaves the Inbox).
         cx.observe_window_activation(window, |_, _, cx| cx.notify())
             .detach();
 ```
 with
 ```rust
+        // Coming back to the window views the focused pane (a done session leaves the Inbox).
+        // Back from Zed after a hand edit of settings.toml: fonts, theme, diff and feature
+        // switches apply now (ADR 0055).
         cx.observe_window_activation(window, |shell, window, cx| {
-            // Back from Zed after a hand edit of settings.toml: fonts, theme and diff mode
-            // apply now (ADR 0044).
             if window.is_window_active() {
                 shell.reload_settings_if_changed(window, cx);
             }
@@ -2362,7 +2153,7 @@ with
         })
         .detach();
 ```
-Status loop: replace
+Status loop: replace (:49-51)
 ```rust
         cx.spawn_in(window, async move |this, cx| {
             let mut last = status::now_ms();
@@ -2372,15 +2163,16 @@ with
 ```rust
         cx.spawn_in(window, async move |this, cx| {
             let mut last = status::now_ms();
-            // The first look at settings.toml (the activation observer does the later ones).
+            // The first look at settings.toml (reports a broken file at start; the activation
+            // observer does the later ones).
             let _ = this.update_in(cx, |shell, window, cx| {
                 shell.reload_settings_if_changed(window, cx);
             });
             loop {
 ```
-and delete, inside the loop's `this.update_in(cx, |shell, window, cx| {` closure, the whole poll block from the comment `// ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows` through the `}` that closes `if modified != shell.settings_modified {` (the `cx.notify();` + `}` before `let sessions = shell.sidebar.sessions();`, about 32 lines). Keep `let sessions = shell.sidebar.sessions();` and everything after it unchanged. (If the closure then does not use `window`, keep it: `window.is_visible()` below uses it.)
+and delete, inside the loop's `this.update_in(cx, |shell, window, cx| {` closure, the whole poll block from the comment `// ponytail: mtime poll on the 500 ms tick; a file watcher if it ever shows` (:55) through the `}` that closes `if modified != shell.settings_modified {` (:93, the `cx.notify();` + `}` right before `let sessions = shell.sidebar.sessions();`; about 39 lines). Keep `let sessions = shell.sidebar.sessions();` and everything after it unchanged (`window` is still used by `window.is_visible()`).
 
-Field docs (~293-297): replace
+`main.rs` field docs (:347-351): replace
 ```rust
     /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed and polled for
     /// font changes (§20.0).
@@ -2390,33 +2182,35 @@ Field docs (~293-297): replace
 with
 ```rust
     /// `<config>/mkrew/settings.toml`, read when a composer `@` pick is typed and checked for
-    /// changes when the window is activated (§20.0, ADR 0044).
+    /// changes when the window is activated (§20.0, ADR 0055).
     settings_file: PathBuf,
     /// Its mtime at the last check (ADR 0024); `None` until the first check reads it.
 ```
 
 Compile check: `cargo check -p mkrew-ui -j 4`
-Expected: no errors (no unused variable warnings from the status loop).
+Expected: no errors, no unused-variable warnings from the status loop.
 Run: `cargo test -p mkrew-ui --lib theme::tests::a_broken_settings_file -j 4`
-Expected: PASS (the keep-the-last-good-settings behavior is unchanged; no new failing test for B8: the window activation callback is GPUI-only, and `theme::reload` carries the decision logic and its test).
+Expected: PASS (unchanged logic).
 
-- [ ] **Step 5: ADR 0044, SPEC and ADR 0024**
+- [ ] **Step 3: ADR 0055, SPEC, ADR 0024, ADR 0046**
 
-Create `docs/decisions/0044-settings-reload-on-activation.md`:
+Create `docs/decisions/0055-settings-reload-on-activation.md`:
 
 ```markdown
-# 0044 — The UI checks settings.toml when its window is activated, not every 500 ms
+# 0055 — The UI checks settings.toml when its window is activated, not every 500 ms
 
-- Date: 2026-10-10
+- Date: 2026-10-13
 - Status: accepted
 - Milestone: perf review (inbox item 11, B8)
+- Amends: ADR 0024 (when the file is checked), ADR 0046 ("applies live")
 
 ## Context
 
 ADR 0024 re-reads `settings.toml` when its mtime changes, checked on the 500 ms status tick.
 That is a `std::fs::metadata` call on the UI thread twice a second for the whole life of the
-app (`docs/PERF_REVIEW.md` B8). The file is hand-edited config: it changes while the user is in
-Zed or another editor, so the window is not in front when it happens.
+app (`docs/PERF_REVIEW.md` B8). The reload now also applies `diff_mode`, `diff_wrap`,
+`reading_width` and `[features]` (ADR 0046). The file is hand-edited config: it changes while
+the user is in Zed or another editor, so the Mkrew window is not in front when it happens.
 
 ## Options
 
@@ -2435,10 +2229,13 @@ watches its own config dir, 300 ms debounce).
 ## Consequences
 
 - SPEC §20.0: "re-reads it within 500 ms of a change" becomes "re-reads it when its window is
-  activated". ADR 0024 points here for the check.
+  activated". ADR 0024 and ADR 0046 point here for the check; "applies live" for the UI means
+  "when the window is activated".
 - A settings edit made while the Mkrew window stays in front (for example by a script) applies
-  at the next activation. The UI's own writes (theme toggle, inspector width, diff mode) need no
-  reload: the state is already applied.
+  at the next activation. The UI's own writes (theme toggle, inspector width, diff mode, Phone
+  access) need no reload: the state is already applied.
+- Switching `[features] docs` on while a workspace is left on Docs loads its list and file at
+  that reload.
 - HUMAN_CHECKS lists the check.
 ```
 
@@ -2451,7 +2248,8 @@ with
 ```
 `daemon.status` (`settings_error`) and by the palette like keymap errors. The UI reads it the
 same way at start and again each time its window is activated, if the file changed (no
-polling, ADR 0044): fonts, theme and `diff_mode` apply when you come back to the window. Palette
+polling, ADR 0055): fonts, theme, `diff_mode` and `[features]` apply when you come back to the
+window. Palette
 ```
 `docs/decisions/0024-font-settings.md`, replace
 ```
@@ -2459,80 +2257,99 @@ polling, ADR 0044): fonts, theme and `diff_mode` apply when you come back to the
 ```
 with
 ```
-`settings.toml` is re-read when its mtime changes, checked when the window is activated (ADR 0044; first version: the 500 ms status tick) —
+`settings.toml` is re-read when its mtime changes, checked when the window is activated (ADR 0055;
+first version: the 500 ms status tick) —
+```
+`docs/decisions/0046-feature-switches.md` (:30-31), replace
+```
+  workspace left on Docs shows Terminals. Applies live.
+```
+with
+```
+  workspace left on Docs shows Terminals. Applies live (the UI when its window is activated,
+  ADR 0055).
 ```
 
-- [ ] **Step 6: HUMAN_CHECKS**
+- [ ] **Step 4: HUMAN_CHECKS**
 
 Append to the perf section in `docs/HUMAN_CHECKS.md`:
 
 ```markdown
-- [ ] **Settings reload on activation (B8):** with Mkrew open, edit `settings.toml` in Zed (`[terminal] font_size = 16`, or `[ui] theme = "dark"`, or `diff_mode`), save, click back into the Mkrew window → the font size / theme / diff layout changes at once (it no longer changes while Zed is in front). Make the file invalid (`font_size = 4`), save, come back → nothing changes, the palette (Ctrl+Shift+P) lists `Settings error: settings.toml:…` first; fix it, come back → the error is gone. Start Mkrew with a hand-edited file → its fonts apply at start.
-- [ ] **Files editor (B11):** open a large file (≥ 1 MB) in Files and type, hold an arrow key, scroll → typing and scrolling feel smooth (no per-frame stall); the horizontal scroll width still fits the widest line (a very long line scrolls fully; after deleting it the width shrinks; a line with tabs scrolls as wide as it looks). Dark and light look the same as before.
-- [ ] **CPU before / after (item 11):** with 2–3 agents `working` and the window visible, read `mkrew-ui` CPU in Task Manager over one minute: before this plan (note the number from your last build) vs now. Write both numbers under this item in `docs/PERF_REVIEW.md` (end of the file) or here.
+- [ ] **Settings reload on activation (B8):** with Mkrew open, edit `settings.toml` in Zed (`[terminal] font_size = 16`, or `[ui] theme = "dark"`, or `diff_mode`), save, click back into the Mkrew window → the font size / theme / diff layout changes at once (it no longer changes while Zed is in front). Set `[features] docs = true`, save, come back → the Docs tab appears in the rail (and, if the workspace was left on Docs, its file list and page load). Make the file invalid (`font_size = 4`), save, come back → nothing changes, the palette (Ctrl+Shift+P) lists `Settings error: settings.toml:…` first; fix it, come back → the error is gone. Start Mkrew with a hand-edited file → its fonts apply at start; start it with an invalid file → the error is in the palette at once. Toggle the theme with the title bar button and open Phone access → no visible change on the next activation.
+- [ ] **CPU before / after (item 11):** with 2–3 agents `working` and the window visible, read `mkrew-ui` CPU in Task Manager over one minute: before this plan (note the number from your last build) vs now. Write both numbers under this item in `docs/PERF_REVIEW.md` (end of the file) or here. Also: an agent saving a large `.md` repeatedly while it is open in Files Preview → CPU stays low (if not, see Task 4 evidence: the cost would be in `diagram.rs`).
 ```
 
-- [ ] **Step 7: Verify and tick**
+- [ ] **Step 5: Verify**
 
-Run: `cargo test -p mkrew-ui --lib editor theme docs files_view git_summary -j 4` (expect PASS; or run each module filter separately), then the full verification.
-Tick `docs/INBOX.md` line 115: change `- [~] **11. Perf: stop whole-app re-renders in the UI**` (or `- [ ]`) to `- [x] **11. Perf: stop whole-app re-renders in the UI**` and, if it has no plan suffix, add ` → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Tasks 1–6` after `(perf B1, B2, B3, B4, B8, B11, A6)` like line 107.
-Suggested message: `perf(ui): check settings.toml on window activation and cache the editor width`
+Run: `cargo test -p mkrew-ui --lib docs git_summary theme editor -j 4` (module filters one by one if the single command takes only one filter), then `sh scripts/verify.sh` (fallback as in Task 3).
+
+- [ ] **Step 6: Tick the inbox and commit**
+
+`docs/INBOX.md` line 115: change `- [~] **11. Perf: stop whole-app re-renders in the UI**` to `- [x] **11. Perf: stop whole-app re-renders in the UI**` (the plan suffix is already there). Reword two bullets: B11 (:122) → `B11: Files editor caches the longest line width per text version (done in dd50ec3); the per-render \`Theme\` clone is kept (not worth it).`; A6 (:123) → `A6: dropped: the preview already builds off the UI thread, once per text (plan Task 4 evidence).` Edit it, but do NOT stage `docs/INBOX.md` (INBOX stays the user's).
+Commit: `git add crates/mkrew-ui/src/shell/workspace_actions.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/main.rs docs/decisions/0055-settings-reload-on-activation.md docs/decisions/0024-font-settings.md docs/decisions/0046-feature-switches.md docs/SPEC.md` (HUMAN_CHECKS hunk via `git add -p`), then `git commit -m "perf(ui): check settings.toml on window activation instead of polling"`. Never push.
 
 ---
 
 ### Task 7: SQLite writes: no `hook` events, `synchronous=NORMAL`, backup on its own connection, pruning
 
-Inbox: line 126 `12. Perf: daemon watcher, git.changed and SQLite` (bullets A4 and B7; do not tick yet). Spec: §5 (SPEC.md:251-257 table comment, :348 WAL line), §8 (SPEC.md:646 backups), §16 NFR table (:1242).
+> **Refresh 2026-10-13:** still needed (nothing of A4/B7 landed: `session.rs:1228-1239` still inserts `hook` rows, `mkrew-store/src/lib.rs:101-102` has no `synchronous`, `backup.rs:37` still copies under `hub.store()`). Changes vs the 2026-10-10 version:
+> - the daemon integration tests were split into `crates/mkrew-daemon/tests/daemon/{main,states,turns,docs,…}.rs`; the two `hook` tests are now in `states.rs:94` and `:185`;
+> - inbox line 129 says "remove the tests that only pin it": the `hook`-row assertions are deleted, not turned into "is empty" assertions; the `commits_use_synchronous_normal` test is dropped (it only pins a pragma default);
+> - the "backup while the store mutex is held" test holds the lock on a helper thread, not a `MutexGuard` across `.await` (clippy `await_holding_lock` fails `-D warnings`);
+> - SPEC / `session.rs` / `server.rs` line numbers re-read. Phone web (`crates/mkrew-cli/web/app.mjs`, `src/web/relay.rs`) and `mk` read no `session_event` rows (checked below).
+
+Inbox: line 126 `12. Perf: daemon watcher, git.changed and SQLite` (bullets A4 and B7; do not tick yet). Spec: §5 (SPEC.md:255-261 table comment, :352 WAL line), §8 (SPEC.md:652 backups), §15 NFR table (:1357).
 
 **Current state (investigated):**
-- A4. `Actor::on_hook` (`crates/mkrew-daemon/src/session.rs:1219`) builds `record = {agent, event, payload}` and calls `self.hub.store().insert_session_event(self.session.id, "hook", &record, at)` on EVERY `hook.report` (lines 1224-1235). `let at = crate::server::now_ms();` (1220) is only used by that insert.
+- A4. `Actor::on_hook` (`crates/mkrew-daemon/src/session.rs:1223`) builds `record = {agent, event, payload}` and calls `self.hub.store().insert_session_event(self.session.id, "hook", &record, at)` on EVERY `hook.report` (lines 1228-1239). `let at = crate::server::now_ms();` (1224) is only used by that insert. `report.agent` / `report.event` stay used by the `tracing::debug!` at :1227; `report.payload` by `edited_paths` (:1240).
 - Every reader of `session_event` (grep `session_events(` and `project_session_events(` over `crates`):
-  - `server/doc.rs:29` kind `files_changed` (`doc.list`, last 24 h, `docs::RECENT_MS`).
-  - `server/turn.rs:112` kind `edited` (`session.files`, `since_ms` = UI sends now − 24 h, `git_view.rs:750`).
-  - `server/turn.rs:143` kind `usage` with `since = 0` (`session.usage`: the newest usage of each session; totals survive restarts, SPEC §20E.3 :1775-1776).
-  - Tests only: `mkrew-store/src/tests.rs:345` and `:999`, `mkrew-daemon/tests/daemon.rs:959`, `:1002` (kind `hook`), `:1266` (`files_changed`), `:2184` writes a `usage` row.
-  - **No production code reads kind `hook`.** `state_changed` is never written either (only named in the migration comment `0001_init.sql:46` and SPEC :254).
-- Pruning: the two 24 h readers need rows at most 1 day old, so `files_changed`, `edited` and the old `hook` rows are safe to drop after 7 days. **`usage` is NOT pruned**: `session.usage` reads it with `since = 0` and the UI totals (inspector, status bar) need the newest usage row of every session, including sessions older than a week.
-- B7. `Store::open` (`crates/mkrew-store/src/lib.rs:98-105`) sets `journal_mode=WAL` (100) and `foreign_keys` (101); `synchronous` stays at the default FULL. `Store::backup_to` (:114) runs `VACUUM INTO` on the Store's own connection. `backup::run(store: &Store, …)` (`backup.rs:70`) is called from `backup::start` (:35-37) as `run(&hub.store(), &dir, now)`, so the global `Hub::store` mutex is held for the whole copy and every other request that needs the store waits. The check runs hourly (`EVERY`) in `spawn_blocking`; it also calls `attachment::cleanup`, which takes `hub.store()` per session dir.
-- `backup::start` is called from `server.rs:116-120` with `self.paths.backups_dir()` and `self.paths.attachments_dir()`; the database path is `Paths::db_file()` (`mkrew-core/src/paths.rs:57`).
-- Tests: `backup.rs` `mod tests` (`use super::*`, `NOON`, `names(dir)`); `mkrew-store/src/tests.rs` (helpers `open(&dir)`, `session(project_id, started_at)`; `backup_to_writes_a_readable_copy` at :61-74; `open_runs_migrations_and_enables_wal` at :36-47).
-- SPEC: :254 comment `state_changed|hook|files_changed|...`; :348 `SQLite runs in WAL mode.`; :646 `Backups: daily copy of mkrew.db …, keep 7`; :1242 `Data | SQLite WAL; daily DB backup, keep 7`. No statement about durability or `synchronous`. No ADR needed: no behavior in the SPEC is contradicted (the table stays, no migration).
+  - `server/doc.rs:29` kind `files_changed` (`doc.list`, last 24 h, `docs::RECENT_MS`, `doc.rs:26`).
+  - `server/turn.rs:112` kind `edited` (`session.files`; the UI sends `since_ms = now − 24 h`, `mkrew-ui/src/git_view.rs:764`).
+  - `server/turn.rs:143` kind `usage` with `since = 0` (`session.usage`: the newest usage of each session; totals survive restarts, SPEC §20E.3 :1913-1914).
+  - Tests only: `mkrew-store/src/tests.rs:334-345` and `:1043-1063` (store-level, any kind string), `mkrew-daemon/tests/daemon/states.rs:160`, `:203` (kind `hook`), `tests/daemon/main.rs:569` (`files_changed`, helper `changed_files`), `tests/daemon/turns.rs:178` writes a `usage` row.
+  - **No production code reads kind `hook`.** `state_changed` is never written either (only named in `0001_init.sql:46` and SPEC :258).
+  - Other consumers checked: `mk` (`crates/mkrew-cli/src/*`) talks `hook.report` / `session.read` / `session.wait` and never reads session events; the phone relay (`crates/mkrew-cli/src/web/relay.rs`) forwards requests and passes events through unchanged; `web/app.mjs:223-259` reacts to `session.state`, `session.exited`, `session.updated`, `session.terminal_title`, `project.updated`, `session.snapshot` only. Nothing there depends on `hook` rows.
+- Pruning: the 24 h readers need rows at most 1 day old, so `files_changed`, `edited` and the old `hook` rows are safe to drop after 7 days. **`usage` is NOT pruned**: `session.usage` reads it with `since = 0` and the UI totals (inspector) need the newest usage row of every session, including sessions older than a week.
+- B7. `Store::open` (`crates/mkrew-store/src/lib.rs:99-106`) sets `journal_mode=WAL` (101) and `foreign_keys` (102); `synchronous` stays at the default FULL. `Store::backup_to` (:113-122) runs `VACUUM INTO` on the Store's own connection. `backup::run(store: &Store, …)` (`backup.rs:70`) is called from `backup::start` (:34-37) as `run(&hub.store(), &dir, now)`, so the global `Hub::store` mutex is held for the whole copy and every other request that needs the store waits. The check runs hourly (`EVERY`; the first tick is immediate) in `spawn_blocking`; it also calls `attachment::cleanup`, which takes `hub.store()` per session dir.
+- `backup::start` is called from `server.rs:120-124` with `self.paths.backups_dir()` and `self.paths.attachments_dir()`; the database path is `Paths::db_file()` (`mkrew-core/src/paths.rs:57`).
+- Tests: `backup.rs` `mod tests` (`use super::*`, `NOON` :155, `names(dir)` :157; the two run-based tests at :192 and :216); `mkrew-store/src/tests.rs` (helpers `open(&dir)`, `session(project_id, started_at)`; `backup_to_writes_a_readable_copy` at :62-74).
+- SPEC: :258 comment `state_changed|hook|files_changed|...`; :352 `SQLite runs in WAL mode.`; :652 `Backups: daily copy of mkrew.db …, keep 7`; :1357 `Data | SQLite WAL; daily DB backup, keep 7`. No statement about durability or `synchronous`. No ADR needed: no behavior in the SPEC is contradicted (the table stays, no migration; latest migration is 0018).
 
 **Files:**
 - Modify: `crates/mkrew-store/src/lib.rs` (`Store::open`, replace `Store::backup_to` with free fn `backup`, add `Store::prune_session_events`)
 - Modify: `crates/mkrew-store/src/tests.rs`
 - Modify: `crates/mkrew-daemon/src/backup.rs` (`start`, `run`, new `prune_events`, tests)
-- Modify: `crates/mkrew-daemon/src/server.rs` (call of `backup::start`, :116)
+- Modify: `crates/mkrew-daemon/src/server.rs` (call of `backup::start`, :120)
 - Modify: `crates/mkrew-daemon/src/session.rs` (`Actor::on_hook`)
-- Modify: `crates/mkrew-daemon/tests/daemon.rs` (`hook_reports_drive_the_state_of_live_sessions_only`, `screen_only_profiles_record_hooks_but_ignore_them`)
-- Modify: `docs/SPEC.md` (:254, :348, :646, :1242), `docs/HUMAN_CHECKS.md` (append to the shared section)
+- Modify: `crates/mkrew-daemon/tests/daemon/states.rs` (`hook_reports_drive_the_state_of_live_sessions_only`, `screen_only_profiles_record_hooks_but_ignore_them`)
+- Modify: `docs/SPEC.md` (:258, :352, :652, :1357), `docs/HUMAN_CHECKS.md` (append to the shared perf section)
 
 **Interfaces:**
-- Produces: `mkrew_store::backup(db: &Path, to: &Path) -> Result<()>` (own connection; replaces `Store::backup_to`, whose only callers are `backup.rs:86` and the store tests).
+- Produces: `mkrew_store::backup(db: &Path, to: &Path) -> Result<()>` (own connection; replaces `Store::backup_to`, whose only callers are `backup.rs:86` and the store test).
 - Produces: `Store::prune_session_events(&self, kind: &str, before: i64, limit: usize) -> Result<usize>` (rows of `kind` with `at < before`, at most `limit`, returns how many were deleted).
 - Produces: `backup::run(db: &Path, dir: &Path, now_ms: i64) -> anyhow::Result<Option<PathBuf>>`, `backup::prune_events(hub: &Hub, now_ms: i64, chunk: usize) -> Result<usize, mkrew_store::StoreError>`, `backup::start(hub: Arc<Hub>, db: PathBuf, dir: PathBuf, attachments: PathBuf) -> JoinHandle<()>`.
 
 - [ ] **Step 1: Failing tests**
 
-`crates/mkrew-store/src/tests.rs`: add after `open_runs_migrations_and_enables_wal`:
+`crates/mkrew-store/src/tests.rs`: replace the test `backup_to_writes_a_readable_copy` (:61-74) with (same body, free function, db path):
 
 ```rust
-/// WAL + `synchronous=NORMAL`: a commit does not fsync the log (perf B7).
 #[test]
-fn commits_use_synchronous_normal() {
+fn backup_writes_a_readable_copy() {
     let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let db = dir.path().join("mkrew.db");
     let store = open(&dir);
-    let level: i64 = store
-        .conn
-        .pragma_query_value(None, "synchronous", |r| r.get(0))
-        .unwrap();
-    assert_eq!(level, 1, "0 = OFF, 1 = NORMAL, 2 = FULL");
+    let project = store.add_project(&repo, Some("repo")).unwrap();
+    let copy = dir.path().join("copy.db");
+    backup(&db, &copy).unwrap();
+    let restored = Store::open(&copy).unwrap();
+    assert_eq!(restored.list_projects().unwrap(), vec![project]);
+    // An existing copy is never overwritten.
+    assert!(backup(&db, &copy).is_err());
 }
-```
 
-Replace the test `backup_to_writes_a_readable_copy` (:61-74): rename it `backup_writes_a_readable_copy`, replace `store.backup_to(&copy).unwrap();` with `backup(&dir.path().join("mkrew.db"), &copy).unwrap();` and `assert!(store.backup_to(&copy).is_err());` with `assert!(backup(&dir.path().join("mkrew.db"), &copy).is_err());`. Then add after it:
-
-```rust
 /// The copy is made on its own connection: a writer in the middle of a transaction neither
 /// blocks it (WAL) nor leaks its uncommitted row into the copy.
 #[test]
@@ -2565,14 +2382,46 @@ fn backup_does_not_wait_for_a_writer_and_skips_its_uncommitted_rows() {
     assert!(restored.session_events(s.id, "files_changed").unwrap().is_empty());
     assert_eq!(store.session_events(s.id, "files_changed").unwrap().len(), 1);
 }
+
+/// Rows of the kind older than `before` go, oldest first, at most `limit` per call; other
+/// kinds and newer rows stay.
+#[test]
+fn prune_session_events_deletes_old_rows_of_one_kind_in_chunks() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir);
+    let p = store.add_project(dir.path(), None).unwrap();
+    let s = session(p.id, 1);
+    store.insert_session(&s).unwrap();
+    for at in [1, 2, 3, 10] {
+        store
+            .insert_session_event(s.id, "hook", &serde_json::json!({}), at)
+            .unwrap();
+    }
+    store
+        .insert_session_event(s.id, "usage", &serde_json::json!({}), 1)
+        .unwrap();
+
+    assert_eq!(store.prune_session_events("hook", 5, 2).unwrap(), 2);
+    assert_eq!(store.prune_session_events("hook", 5, 2).unwrap(), 1);
+    assert_eq!(store.prune_session_events("hook", 5, 2).unwrap(), 0);
+    let left: Vec<i64> = store
+        .session_events(s.id, "hook")
+        .unwrap()
+        .iter()
+        .map(|e| e.at)
+        .collect();
+    assert_eq!(left, [10]);
+    assert_eq!(store.session_events(s.id, "usage").unwrap().len(), 1);
+}
 ```
 
-`crates/mkrew-daemon/src/backup.rs` `mod tests`: add the imports and tests at the end of the module (before its closing `}`):
+`crates/mkrew-daemon/src/backup.rs` `mod tests`: add at the top of the module (below `use super::*;`) and the tests at its end (before the closing `}`):
 
 ```rust
     use std::sync::Arc;
 
     use mkrew_protocol::{Session, SessionKind, SessionState, StateSource};
+    use mkrew_store::Store;
     use ulid::Ulid;
 
     /// A hub whose store holds one session with a `session_event` row per `(kind, at)`.
@@ -2646,16 +2495,27 @@ fn backup_does_not_wait_for_a_writer_and_skips_its_uncommitted_rows() {
         assert_eq!(left(&hub, session, "usage"), [old, recent]);
     }
 
-    /// The hourly check writes today's backup without taking the store mutex: it is made
-    /// while another thread holds the lock (a long write), and only the pruning after it
-    /// waits for the lock.
+    /// The hourly check writes today's backup while another thread holds the store mutex (a
+    /// long write); only the pruning after it waits for the lock.
     #[tokio::test(flavor = "multi_thread")]
     async fn the_backup_is_written_while_the_store_mutex_is_held() {
         let data = tempfile::tempdir().unwrap();
         let db = data.path().join("mkrew.db");
         let hub = Arc::new(Hub::new(Store::open(&db).unwrap()));
         let dir = data.path().join("backups");
-        let guard = hub.store();
+
+        // A helper thread holds the lock (a `MutexGuard` must not live across an `.await`).
+        let (locked_tx, locked) = std::sync::mpsc::channel::<()>();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let hub = Arc::clone(&hub);
+            std::thread::spawn(move || {
+                let _guard = hub.store();
+                locked_tx.send(()).unwrap();
+                let _ = held.recv();
+            })
+        };
+        locked.recv().unwrap();
 
         let task = start(Arc::clone(&hub), db, dir.clone(), data.path().join("attachments"));
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -2666,53 +2526,24 @@ fn backup_does_not_wait_for_a_writer_and_skips_its_uncommitted_rows() {
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        drop(guard);
+        release.send(()).unwrap();
+        holder.join().unwrap();
         task.abort();
     }
 ```
 
-If `use super::*` no longer brings `Store` into scope after Step 3, add `use mkrew_store::Store;` to the same `mod tests`.
+`crates/mkrew-daemon/tests/daemon/states.rs`:
 
-`crates/mkrew-daemon/tests/daemon.rs`:
+In `hook_reports_drive_the_state_of_live_sessions_only` (:94) delete the block at :157-168 (from `let db = env.data_dir().join("mkrew.db");` through `assert_eq!(events[0].payload["payload"]["session_id"], "native-1");` and the blank line after it). Change the comment at :142 `// A known agent's unknown event is recorded but changes nothing.` to `// A known agent's unknown event changes nothing.`.
 
-In `hook_reports_drive_the_state_of_live_sessions_only`, replace
+Rename `screen_only_profiles_record_hooks_but_ignore_them` (:185) to `screen_only_profiles_take_the_native_id_but_ignore_hook_states` and delete its last block (:200-205, `let db = …; let events = Store::open(&db)….session_events(id, "hook")….unwrap(); assert_eq!(events.len(), 1);`), keeping the two state assertions and the `native_session_id` assertion before it. (`Store` is still used by `changed_files` in `main.rs`; the daemon tests keep their `use super::*`.)
 
-```rust
-    let db = env.data_dir().join("mkrew.db");
-    let events = Store::open(&db)
-        .unwrap()
-        .session_events(id, "hook")
-        .unwrap();
-    let names: Vec<&str> = events
-        .iter()
-        .map(|e| e.payload["event"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["needs_input", "busy", "thinking", "done"]);
-    assert_eq!(events[0].payload["agent"], "fake");
-    assert_eq!(events[0].payload["payload"]["session_id"], "native-1");
-```
-
-with
-
-```rust
-    // Raw hook payloads are not stored any more (perf A4); the state and the native id above
-    // are what a report changes.
-    let db = env.data_dir().join("mkrew.db");
-    let events = Store::open(&db)
-        .unwrap()
-        .session_events(id, "hook")
-        .unwrap();
-    assert!(events.is_empty(), "{events:?}");
-```
-
-Rename `screen_only_profiles_record_hooks_but_ignore_them` to `screen_only_profiles_take_the_native_id_but_ignore_hook_states` and delete its last block (the `let db = …; let events = Store::open(&db)….session_events(id, "hook")….unwrap(); assert_eq!(events.len(), 1);`), keeping the two state assertions and the `native_session_id` assertion before it.
-
-Run: `cargo test -p mkrew-store -j 4 commits_use_synchronous_normal` (left 2, right 1) and `cargo test -p mkrew-store -p mkrew-daemon --no-run -j 4`
-Expected: FAIL: `commits_use_synchronous_normal` asserts 2 vs 1; the backup and prune tests fail to compile (`backup`, `prune_session_events`, `prune_events`, `EVENT_KEEP_MS`, the new `start` signature do not exist).
+Run: `cargo test -p mkrew-store -p mkrew-daemon --no-run -j 4`
+Expected: FAIL to compile (`backup`, `prune_session_events`, `prune_events`, `EVENT_KEEP_MS`, the new `start` signature do not exist).
 
 - [ ] **Step 2: Store: `synchronous`, own-connection backup, prune**
 
-`crates/mkrew-store/src/lib.rs`, `Store::open`: replace
+`crates/mkrew-store/src/lib.rs`, `Store::open` (:99-106): replace
 
 ```rust
         conn.pragma_update(None, "foreign_keys", true)?;
@@ -2728,9 +2559,9 @@ with
         conn.pragma_update(None, "synchronous", "NORMAL")?;
 ```
 
-and in its doc comment replace `enables WAL and runs migrations.` with `enables WAL (synchronous NORMAL) and runs migrations.`.
+and in its doc comment (:98) replace `enables WAL and runs migrations.` with `enables WAL (synchronous NORMAL) and runs migrations.`.
 
-Delete `Store::backup_to` (the doc comment `/// Writes a consistent copy of the database to `path` (`VACUUM INTO`, safe while in use).` through its closing `}`, lines 112-121) and add this free function after the `impl Store { … }` block that contains it ends, next to the other free fns (e.g. directly above `fn user_version`; find it with `grep -n "^fn user_version" crates/mkrew-store/src/lib.rs`):
+Delete `Store::backup_to` (the doc comment `/// Writes a consistent copy of the database to `path` (`VACUUM INTO`, safe while in use).` through its closing `}`, lines 113-122) and add this free function directly above `fn user_version` (`grep -n "^fn user_version" crates/mkrew-store/src/lib.rs`, :1219):
 
 ```rust
 /// Writes a consistent copy of the database file `db` to `to` (`VACUUM INTO`). It opens a
@@ -2749,7 +2580,7 @@ pub fn backup(db: &Path, to: &Path) -> Result<()> {
 }
 ```
 
-In `impl Store`, after `project_session_events` (ends near :914, `.collect()` `}`), add:
+In `impl Store`, after `project_session_events` (starts :889; add below its closing `}`), add:
 
 ```rust
     /// Deletes up to `limit` `session_event` rows of `kind` older than `before` (ms), oldest
@@ -2765,14 +2596,16 @@ In `impl Store`, after `project_session_events` (ends near :914, `.collect()` `}
     }
 ```
 
+(`params!` is already imported in this file; check with `grep -n "params!" crates/mkrew-store/src/lib.rs | head -1` and add `params` to the `use rusqlite::{…}` list if not.)
+
 Run: `cargo test -p mkrew-store -j 4`
-Expected: PASS (all store tests).
+Expected: PASS (all store tests). If `backup_does_not_wait_for_a_writer…` fails with `database is locked`, `VACUUM INTO` needed a write lock here: drop the `BEGIN IMMEDIATE` half of that test (keep the plain copy) and say so in the Open questions row.
 
 - [ ] **Step 3: Daemon: backup without the mutex, pruning in the hourly check**
 
 `crates/mkrew-daemon/src/backup.rs`:
 
-Replace `use mkrew_store::Store;` with nothing (delete the line; production code no longer uses it). After `const DAY_MS: i64 = 24 * 60 * 60 * 1000;` add:
+Delete the production line `use mkrew_store::Store;` (:14; the tests import it themselves, Step 1). After `const DAY_MS: i64 = 24 * 60 * 60 * 1000;` add:
 
 ```rust
 /// `session_event` kinds nobody reads once they are a day old (`doc.list` and `session.files`
@@ -2785,7 +2618,7 @@ const EVENT_KEEP_MS: i64 = 7 * DAY_MS;
 const PRUNE_CHUNK: usize = 5_000;
 ```
 
-Replace the doc comment and signature of `start`:
+Replace the doc comment and signature of `start` (:26-28):
 
 ```rust
 /// Checks for today's backup now and then every [`EVERY`]; each check also deletes old
@@ -2803,7 +2636,7 @@ with
 pub fn start(hub: Arc<Hub>, db: PathBuf, dir: PathBuf, attachments: PathBuf) -> JoinHandle<()> {
 ```
 
-Replace
+Replace (:34-44)
 
 ```rust
             let (hub, dir, attachments) = (Arc::clone(&hub), dir.clone(), attachments.clone());
@@ -2841,7 +2674,7 @@ with
             let (backed_up, pruned, cleaned) = match done {
 ```
 
-and after the `match backed_up { … }` block add:
+and after the `match backed_up { … }` block (:51-55) add:
 
 ```rust
             match pruned {
@@ -2851,7 +2684,7 @@ and after the `match backed_up { … }` block add:
             }
 ```
 
-Replace `run`'s doc and signature and its `backup_to` call:
+Replace `run`'s doc and signature (:68-70):
 
 ```rust
 /// Copies the database to today's file unless it already exists, then prunes to [`KEEP`].
@@ -2864,6 +2697,8 @@ pub fn run(store: &Store, dir: &Path, now_ms: i64) -> anyhow::Result<Option<Path
 /// [`KEEP`]. Returns the file it created, if any.
 pub fn run(db: &Path, dir: &Path, now_ms: i64) -> anyhow::Result<Option<PathBuf>> {
 ```
+
+and its copy call (:85-87):
 
 ```rust
         store
@@ -2902,16 +2737,16 @@ pub fn prune_events(
 }
 ```
 
-Existing tests in this module: in `one_backup_per_day_and_the_newest_seven_are_kept` and `a_leftover_partial_file_is_replaced` replace `let store = Store::open(&data.path().join("mkrew.db")).unwrap();` with
+Existing tests in this module (`one_backup_per_day_and_the_newest_seven_are_kept` :192, `a_leftover_partial_file_is_replaced` :216): replace `let store = Store::open(&data.path().join("mkrew.db")).unwrap();` with
 
 ```rust
         let db = data.path().join("mkrew.db");
         Store::open(&db).unwrap();
 ```
 
-and every `run(&store, ` with `run(&db, ` (`grep -n "run(&store" crates/mkrew-daemon/src/backup.rs`). Add `use mkrew_store::Store;` at the top of `mod tests` if it is not in scope.
+and every `run(&store, ` with `run(&db, ` (`grep -n "run(&store" crates/mkrew-daemon/src/backup.rs`: :197, :201, :205, :223).
 
-`crates/mkrew-daemon/src/server.rs`: replace
+`crates/mkrew-daemon/src/server.rs:120-124`: replace
 
 ```rust
         let backups = backup::start(
@@ -2933,7 +2768,7 @@ Expected: PASS (`events_past_a_week_are_pruned_but_recent_ones_and_usage_stay`, 
 
 - [ ] **Step 4: Stop writing `hook` events (A4)**
 
-`crates/mkrew-daemon/src/session.rs`, `Actor::on_hook`: replace the doc comment
+`crates/mkrew-daemon/src/session.rs`, `Actor::on_hook` (:1221-1258): replace the doc comment
 
 ```rust
     /// Records the report as a `hook` session event, takes the agent's session id and lets
@@ -2953,7 +2788,7 @@ with
         let native = agent.native_session_id(&report.payload);
 ```
 
-and delete this block:
+and delete this block (:1228-1239):
 
 ```rust
         let record = serde_json::json!({
@@ -2970,64 +2805,72 @@ and delete this block:
         }
 ```
 
-Verify before deleting: `grep -rn '"hook"' crates --include=*.rs` shows only the profile `StateMode` serde name, `source_str`/`parse_source` (`StateSource::Hook`), the fake-agent scenario `action = "hook"` and the tests edited in Step 1.
+Verify before deleting: `grep -rn '"hook"' crates --include=*.rs` shows only the profile `StateMode` serde name (`mkrew-core/src/profile.rs:91`), `source_str`/`parse_source` (`StateSource::Hook`), the fake-agent scenario `action = "hook"`, store-level tests that use `"hook"` as an arbitrary kind (`mkrew-store/src/tests.rs`), and the `states.rs` blocks deleted in Step 1.
 
 Run: `cargo test -p mkrew-daemon --test daemon -j 4 hook_reports_drive screen_only_profiles_take`
-Expected: PASS.
+Expected: PASS (build `cargo build -p mkrew-cli -p mkrew-fakeagent -j 4` first if the bins are stale).
 
 - [ ] **Step 5: SPEC**
 
-- `docs/SPEC.md:254`: replace `-- state_changed|hook|files_changed|...` with `-- files_changed|edited|usage|... (hook reports are not stored)`.
-- `:348`: replace `SQLite runs in WAL mode. Schema changes` with `SQLite runs in WAL mode with `synchronous=NORMAL` (a commit is not fsynced: an OS crash or power cut can lose the last few commits, never corrupt the file). Events of kinds `files_changed` and `edited` older than 7 days are deleted by the hourly maintenance check (§8); `usage` events are kept, `session.usage` needs them. Schema changes`.
-- `:646`: replace `daily copy of `mkrew.db` to `<data>/mkrew/backups/`, keep 7.` with `daily copy of `mkrew.db` to `<data>/mkrew/backups/` (`VACUUM INTO` on its own connection, not under the daemon's store lock), keep 7. The same hourly check deletes old session events (§5).`
-- `:1242`: replace `SQLite WAL; daily DB backup, keep 7` with `SQLite WAL (`synchronous=NORMAL`); daily DB backup, keep 7`.
+- `docs/SPEC.md:258`: replace `-- state_changed|hook|files_changed|...` with `-- files_changed|edited|usage|... (hook reports are not stored)`.
+- `:352`: replace `SQLite runs in WAL mode. Schema changes` with `SQLite runs in WAL mode with `synchronous=NORMAL` (a commit is not fsynced: an OS crash or power cut can lose the last few commits, never corrupt the file). Events of kinds `files_changed` and `edited` older than 7 days are deleted by the hourly maintenance check (§8); `usage` events are kept, `session.usage` needs them. Schema changes`.
+- `:652`: replace `daily copy of `mkrew.db` to `<data>/mkrew/backups/`, keep 7.` with `daily copy of `mkrew.db` to `<data>/mkrew/backups/` (`VACUUM INTO` on its own connection, not under the daemon's store lock), keep 7. The same hourly check deletes old session events (§5).`
+- `:1357`: replace `SQLite WAL; daily DB backup, keep 7` with `SQLite WAL (`synchronous=NORMAL`); daily DB backup, keep 7`.
 
 - [ ] **Step 6: HUMAN_CHECKS**
 
-Append to the end of the section `### To verify — 2026-10-10 inbox: perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` (Task 1 created it):
+Append to the end of the section `### To verify — 2026-10-13 perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` (Task 1 created it):
 
 ```markdown
-- [ ] **SQLite after the perf change:** start the app with a database that has a few weeks of use. After the first hour (or a restart: the check runs at startup) open `mkrew.db` with `sqlite3`: `select kind, count(*) from session_event group by kind;` has no `hook` rows older than 7 days, and no `files_changed` / `edited` rows older than 7 days; `usage` rows of old sessions are still there and the inspector / status bar still show their token totals. While an agent works, `select count(*) from session_event where kind='hook';` does not grow. Today's file in `backups/` opens in `sqlite3` and lists your sessions; during the backup (start the app, immediately click around) the UI does not freeze.
+- [ ] **SQLite after the perf change:** start the app with a database that has a few weeks of use. After the first hour (or a restart: the check runs at startup) open `mkrew.db` with `sqlite3`: `select kind, count(*) from session_event group by kind;` has no `hook` rows older than 7 days, and no `files_changed` / `edited` rows older than 7 days; `usage` rows of old sessions are still there and the session panel still shows their token totals. While an agent works, `select count(*) from session_event where kind='hook';` does not grow. Today's file in `backups/` opens in `sqlite3` and lists your sessions; during the backup (start the app, immediately click around) the UI does not freeze.
 ```
 
-- [ ] **Step 7: Verify and tick**
+- [ ] **Step 7: Verify and commit**
 
-Run: `cargo test -p mkrew-store -p mkrew-daemon -j 4` (expect PASS), then the full verification. Do not tick inbox line 126 yet (Tasks 8 and 9 follow).
-Suggested message: `perf(daemon): no hook events, synchronous=NORMAL, backup off the store lock, prune old events`
+Run: `cargo test -p mkrew-store -p mkrew-daemon -j 4` (expect PASS), then `sh scripts/verify.sh` (fallback if rustc crashes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Do not tick inbox line 126 yet (Tasks 8 and 9 follow).
+Commit: `git add crates/mkrew-store/src/lib.rs crates/mkrew-store/src/tests.rs crates/mkrew-daemon/src/backup.rs crates/mkrew-daemon/src/server.rs crates/mkrew-daemon/src/session.rs crates/mkrew-daemon/tests/daemon/states.rs docs/SPEC.md docs/HUMAN_CHECKS.md` (`session.rs`, `server.rs`, `SPEC.md`, `HUMAN_CHECKS.md` are shared with other tasks: if the tree holds hunks that are not this task's, stage this task's with `git add -p <path>`). Never push.
+Message: `perf(daemon): no hook events, synchronous=NORMAL, backup off the store lock, prune old events`
 
 ---
 
 ### Task 8: Watcher: `git.changed` only for real changes, 5 s cap while working, release kept watchers
 
-Inbox: line 126 (bullet B5; do not tick yet). Spec: §7 (SPEC.md:509 `session.ports` row, :535-536 `doc.*` rows, :577 `git.changed`, :605), §8, §12B (SPEC.md:1005), ADR 0042 (new).
+> **Refresh 2026-10-13:** still needed (`watch.rs:18` `MAX_DELAY` is 2 s only, `session.rs:662-676` sends `GitChanged` for every batch, nothing clears `ProjectWatch::kept`). Changes vs the 2026-10-10 version:
+> - protocol bump is **40 → 41** (`mkrew-protocol/src/lib.rs:16`), ADR **0056** (was 0042); latest ADR on disk is 0054, 0055 is reserved for Task 6;
+> - the UI moved into `crates/mkrew-ui/src/shell/*.rs`: `Shell` fields stay in `main.rs` (`git_summary_busy` :503) but their initializer is in `shell/connection.rs:363`, and the four call sites are `shell/workspace.rs` (`show_view` :343, `activate_workspace` :21), `shell/files.rs:59` (`refresh_files`) and `shell/git.rs:94` (`refresh_git`); `Shell::view()` (`workspace.rs:333`) already maps Docs to Terminals while `[features] docs` is off;
+> - protocol tests moved to `crates/mkrew-protocol/src/message/tests.rs` (`sid()` :21, `every_m1_request_round_trips` :79, `SessionPorts` line :242); `message.rs:19-23` needs `WatchReleaseParams` in its `use crate::files::{…}` list (missing in the old plan);
+> - `Hub::working_sessions` moved to Task 9 (private and unused until then: `-D warnings` would fail Task 8's clippy);
+> - phone access (ADR 0052) checked: `mk web` relays requests and events unchanged, `web/app.mjs` ignores `git.changed` and never sends `fs.*` / `git.*` / `doc.*`, so it neither depends on the 2 s cadence nor keeps watchers; `Hello` takes `PROTOCOL_VERSION` from the crate, so the bump needs no relay change.
+
+Inbox: line 126 (bullet B5; do not tick yet). Spec: §7 (SPEC.md:513 `session.ports` row, :539-540 `doc.*` rows, :581 `git.changed`), §12B (SPEC.md:1075), ADR 0056 (new).
 
 **Current state (investigated):**
-- `watch::watch` (`crates/mkrew-daemon/src/watch.rs:135-149`) starts one `RecursiveMode::Recursive` watcher over the project root. Every event path goes to `debounce` (:153), which filters afterwards with `Filter::relative_with` (`.git`, `node_modules`, `target`, `.gitignore`) and `Filter::is_git_state` (`HEAD`, `index`, `packed-refs`, `refs/…` of the root or of a direct child `.git`). The recursion itself cannot be narrowed without losing events of nested `.gitignore`d trees that `notify` has no exclude API for (`notify` 8 has no per-directory exclusion); the filtering stays, and a `.git`-only storm already costs no `stat` (`relative_with` skips `is_dir` for ignored dirs).
-- `debounce` already sends nothing for an empty batch: `if !batch.is_empty() || git { on_batch(…) }` (:183). The review's "ALWAYS sends `GitChanged`" is the closure in `Hub::watch` (`session.rs:659-672`): `on_batch` runs only for a non-empty batch, but it broadcasts `Event::GitChanged` for any batch, including one with `files` empty and `git == false`. That cannot happen today, so this is not the leak; the real waste is a batch that reports only files the UI cannot care about is still non-empty. It is: each non-empty batch (a changed file, or a git-state file) sends `git.changed`, at most every `MAX_DELAY` = 2 s while files keep changing (an agent writing all the time ⇒ a `git status` per UI client every 2 s). The send condition is therefore made explicit (`files` non-empty or `git`), and the cap is raised while an agent works.
-- `MAX_DELAY` (`watch.rs:18`, 2 s) is read in `debounce` (`let deadline = tokio::time::Instant::now() + MAX_DELAY;`). The only user of the constant outside `watch.rs` is a comment in `tests/daemon.rs:1483` (`two_sessions_editing_one_file_raise_a_conflict`).
-- Where `working` is known: `Actor::set_state` (`session.rs:1326`) is the single place a session's state is assigned (`self.session.state = state;`). The Hub keeps no state per session (only the store row, which `files_changed` reads with `list_sessions`). This task adds `Hub::working: Mutex<HashMap<Ulid, Ulid>>` (session → project), updated in `set_state`, used by the watcher's delay and by Task 9.
-- Kept watchers: `Hub::watch` (`session.rs:645`) stores `ProjectWatch { _watch, kept }` in `Hub::watches`; `kept |= true` by `keep_watched` (project; callers `server/doc.rs:86` `watched_project` for `doc.list`/`doc.read`, `server/target.rs:131-137` `watched_target` for `fs.list`/`fs.read`/`fs.find`/`git.status`…) and `keep_worktree_watched` (task worktree, key = task id; same `watched_target`). Nothing clears `kept`: only `unwatch_worktree` (task worktree removal, `server/task_worktree.rs:90`) and `unwatch_idle_project` (last session exit, only when not kept) remove a watch.
-- How the UI shows a view: `Shell::show_view` (`crates/mkrew-ui/src/main.rs:1559`) sets `self.views[project]`, and for Docs / Files / Git calls `load_docs` (`doc.list`), `refresh_files` (`fs.list`), `refresh_git` (`git.status`) when it was not already shown; `activate_workspace` (:1246) does the same on a workspace switch; `set_files_target` (:1795) and `retarget_git` (:2589, followed by `refresh_git`) change the task-worktree target. The title bar summary (`load_git_summary` :2669 → `git.status` through `git_summary_of`, :17277) also calls `git.status` for the shown workspace, so a shown workspace always keeps its project watcher alive (needed: the title bar follows `git.changed`).
-- Existing protocol has no request that says a view closed (`Request` variants: no `view.*`, `watch.*`; `session.ports` / `session.usage` take `ProjectRef`). `ProjectRef { project_id }` (`mkrew-protocol/src/files.rs:14`) cannot name a worktree target, so a new request is needed: `watch.release`. That is the protocol bump 37 → 38 (`PROTOCOL_VERSION`, `mkrew-protocol/src/lib.rs:16`).
-- Existing tests: `watch.rs` `mod tests` (`debounce_batches_until_quiet_and_caps_the_delay`, `debounce_flags_git_state_changes_without_files`, `watcher_reports_project_changes_but_not_ignored_ones`, `start_paused` virtual time); `session.rs` `mod tests` (`use super::*`, only pacer / flood tests, no Hub fixture); `message.rs` `every_m1_request_round_trips` (:1729) and `sid()` (:1671).
+- `watch::watch` (`crates/mkrew-daemon/src/watch.rs:135-149`) starts one `RecursiveMode::Recursive` watcher over the project root. Every event path goes to `debounce` (:153), which filters afterwards with `Filter::relative_with` (`.git`, `node_modules`, `target`, `.gitignore`; Markdown is kept even when git-ignored, :73-75) and `Filter::is_git_state` (`HEAD`, `index`, `packed-refs`, `refs/…` of the root or of a direct child `.git`). `notify` 8 has no per-directory exclude, so the recursion stays; a `.git`-only storm already costs no `stat` (`relative_with` returns before `is_dir` for ignored dirs).
+- `debounce` already delivers nothing for an empty batch: `if !batch.is_empty() || git { on_batch(…) }` (:183). The closure in `Hub::watch` (`session.rs:663-676`) sends `Event::GitChanged` for every delivered batch; today a delivered batch always has files or `git`, so this is not a leak, but the send condition is made explicit. The real cost is the cadence: a non-empty batch is cut at most every `MAX_DELAY` = 2 s while files keep changing (an agent writing all the time ⇒ a `git status` per UI client every 2 s; the UI re-asks on `git.changed`, `shell/connection.rs:679-688`).
+- `MAX_DELAY` (`watch.rs:18`, 2 s) is read in `debounce` (`let deadline = tokio::time::Instant::now() + MAX_DELAY;`, :174). The only user outside `watch.rs` is a comment in `tests/daemon/docs.rs:152` (`two_sessions_editing_one_file_raise_a_conflict`).
+- Where `working` is known: `Actor::set_state` (`session.rs:1330`) is the single place a session's state is assigned (`self.session.state = state;`, :1332); the exit goes through it too (`finish`, :1511, after the session left `live`, :1485). The Hub keeps no per-session state (the store row is what `files_changed` reads with `list_sessions`, :731). This task adds `Hub::working: Mutex<HashMap<Ulid, Ulid>>` (session → project), updated in `set_state`, used by the watcher's delay and by Task 9.
+- Kept watchers: `Hub::watch` (`session.rs:649`) stores `ProjectWatch { _watch, kept }` (struct :189) in `Hub::watches`; `kept |= true` by `keep_watched` (:621; callers `server/doc.rs:87` `watched_project` for `doc.list`/`doc.read`, `server/target.rs:134` `watched_target` for `fs.list`/`fs.read`/`fs.find`/`git.status`…) and `keep_worktree_watched` (:629, key = task id, same `watched_target`, `target.rs:137`). Nothing clears `kept`: only `unwatch_worktree` (:635, task worktree removal, `server/task_worktree.rs`) and `unwatch_idle_project` (:692, last session exit, only when not kept) remove a watch.
+- How the UI shows a view: `Shell::show_view` (`shell/workspace.rs:343`) sets `self.views[project]`, and for Docs / Files / Git calls `load_docs` (`doc.list`), `refresh_files` (`fs.list`), `refresh_git` (`git.status`) when it was not already shown; `activate_workspace` (`workspace.rs:21`) does the same on a workspace switch (`open_session`, `run.rs:69/100` set `views` to Terminals and then call it); `set_files_target` (`shell/files.rs:26`, ends in `refresh_files`) and `retarget_git` (`shell/git.rs:71`; callers `set_git_target`, `set_git_repo`, `review_diff`, each followed by `refresh_git` or `show_view`) change the task-worktree target. The title-bar summary (`load_git_summary`, `git.rs:156`) asks `git.status` for the shown workspace, so a shown workspace always keeps its project watcher alive (needed: the title bar follows `git.changed`). The Quick-open dialog's `fs.find` on a worktree target (`navigation.rs:14`) also keeps that worktree watcher; the UI does not track it (it stays until the daemon stops, as today).
+- Existing protocol has no request that says a view closed (`Request` variants: no `view.*`, `watch.*`; `session.ports` / `session.usage` take `ProjectRef`). `ProjectRef { project_id }` (`mkrew-protocol/src/files.rs:14`) cannot name a worktree target, so a new request is needed: `watch.release` (protocol 40 → 41).
+- Existing tests: `watch.rs` `mod tests` (`debounce_batches_until_quiet_and_caps_the_delay` :313, `debounce_flags_git_state_changes_without_files` :400, `watcher_reports_project_changes_but_not_ignored_ones` :433, `start_paused` virtual time); `session.rs` `mod tests` (:1591, `use super::*`, only pacer / flood tests, no Hub fixture); `message/tests.rs` (`every_m1_request_round_trips` :79, `sid()` :21, `request_wire_shape_matches_spec` :48, `param_less_requests_omit_params` :67).
 
 **Files:**
 - Modify: `crates/mkrew-daemon/src/watch.rs` (`MAX_DELAY_WORKING`, `max_delay`, `watch`, `debounce`, tests)
-- Modify: `crates/mkrew-daemon/src/session.rs` (`Hub` fields + `new`, `set_working`, `has_working`, `release_watch`, `Hub::watch`, `Actor::set_state`, tests)
-- Modify: `crates/mkrew-daemon/src/server.rs` (dispatch arm), `crates/mkrew-daemon/src/server/target.rs` (`watch_release`)
-- Modify: `crates/mkrew-protocol/src/files.rs` (`WatchReleaseParams`), `crates/mkrew-protocol/src/message.rs` (`Request::WatchRelease`, `GitChanged` doc, tests), `crates/mkrew-protocol/src/lib.rs` (`PROTOCOL_VERSION`)
-- Create: `crates/mkrew-ui/src/watches.rs`; Modify: `crates/mkrew-ui/src/lib.rs` (`pub mod watches;`), `crates/mkrew-ui/src/main.rs` (`Shell.watch_needs`, `Shell::sync_watches`, four call sites)
-- Modify: `crates/mkrew-daemon/tests/daemon.rs` (comment at :1483)
-- Create: `docs/decisions/0042-release-kept-watchers.md`
+- Modify: `crates/mkrew-daemon/src/session.rs` (`Hub` fields + `new`, `set_working`, `has_working`, `release_watch`, `Hub::watch`, `Actor::set_state`, docs, tests)
+- Modify: `crates/mkrew-daemon/src/server.rs` (dispatch arm :437), `crates/mkrew-daemon/src/server/target.rs` (`watch_release`)
+- Modify: `crates/mkrew-protocol/src/files.rs` (`WatchReleaseParams`), `crates/mkrew-protocol/src/message.rs` (import, `Request::WatchRelease`, `GitChanged` doc), `crates/mkrew-protocol/src/message/tests.rs`, `crates/mkrew-protocol/src/lib.rs` (`PROTOCOL_VERSION`)
+- Create: `crates/mkrew-ui/src/watches.rs`; Modify: `crates/mkrew-ui/src/lib.rs` (`pub mod watches;`), `crates/mkrew-ui/src/main.rs` (`use mkrew_ui::watches;`, `Shell.watch_needs`), `crates/mkrew-ui/src/shell/connection.rs` (initializer), `crates/mkrew-ui/src/shell/workspace.rs` (`sync_watches`, two call sites), `crates/mkrew-ui/src/shell/files.rs`, `crates/mkrew-ui/src/shell/git.rs` (call sites)
+- Modify: `crates/mkrew-daemon/tests/daemon/docs.rs` (comment at :151-152)
+- Create: `docs/decisions/0056-release-kept-watchers.md`
 - Modify: `docs/SPEC.md`, `docs/HUMAN_CHECKS.md`
 
 **Interfaces:**
 - Produces: `watch::MAX_DELAY_WORKING: Duration` (5 s), `watch::max_delay(working: bool) -> Duration`, `watch::watch(root: &Path, max_delay: impl Fn() -> Duration + Send + 'static, on_batch: impl Fn(Batch) + Send + 'static) -> notify::Result<Watch>`.
-- Produces: `Hub::set_working(&self, id: Ulid, project_id: Ulid, working: bool)`, `Hub::has_working(&self, project_id: Ulid) -> bool`, `Hub::working_sessions(&self, project_id: Ulid) -> Vec<Ulid>`, `Hub::release_watch(&self, project_id: Ulid, worktree_task_id: Option<Ulid>)`.
-- Produces: `mkrew_protocol::WatchReleaseParams { project_id: Ulid, worktree_task_id: Option<Ulid> }` and `Request::WatchRelease(WatchReleaseParams)` (wire `watch.release`, result `null`). `PROTOCOL_VERSION` = 38.
+- Produces: `Hub::set_working(&self, id: Ulid, project_id: Ulid, working: bool)` (private, `fn`), `Hub::has_working(&self, project_id: Ulid) -> bool` (private), `Hub::release_watch(&self, project_id: Ulid, worktree_task_id: Option<Ulid>)` (pub). Task 9 adds `Hub::working_sessions(&self, project_id: Ulid) -> Vec<Ulid>` on top of the same `working` map.
+- Produces: `mkrew_protocol::WatchReleaseParams { project_id: Ulid, worktree_task_id: Option<Ulid> }` and `Request::WatchRelease(WatchReleaseParams)` (wire `watch.release`, result `null`). `PROTOCOL_VERSION` = 41.
 - Produces (UI): `watches::Needs::of(workspace: Option<Ulid>, view: View, files: Option<Ulid>, git: Option<Ulid>) -> Needs`, `Needs::released(&self, now: &Needs) -> Vec<WatchReleaseParams>`.
 
-- [ ] **Step 1: Failing tests (watch.rs)**
+- [ ] **Step 1: Failing tests (watch.rs, Hub, protocol)**
 
 In `crates/mkrew-daemon/src/watch.rs` `mod tests`, add at the end (before the closing `}`):
 
@@ -3116,12 +2959,12 @@ In `crates/mkrew-daemon/src/watch.rs` `mod tests`, add at the end (before the cl
     }
 ```
 
-In the same `mod tests`, update the three existing call sites for the new signatures:
-- in `debounce_batches_until_quiet_and_caps_the_delay` replace `tokio::spawn(debounce(Filter::new(&root), rx, move |batch: Batch| {` with `tokio::spawn(debounce(Filter::new(&root), rx, || MAX_DELAY, move |batch: Batch| {`;
-- in `debounce_flags_git_state_changes_without_files` replace `tokio::spawn(debounce(Filter::new(&root), rx, move |batch| {` with `tokio::spawn(debounce(Filter::new(&root), rx, || MAX_DELAY, move |batch| {`;
-- in `watcher_reports_project_changes_but_not_ignored_ones` replace `let _watch = watch(&root, move |batch| {` with `let _watch = watch(&root, || MAX_DELAY, move |batch| {`.
+Update the three existing call sites in the same `mod tests`:
+- `debounce_batches_until_quiet_and_caps_the_delay` (:318): replace `tokio::spawn(debounce(Filter::new(&root), rx, move |batch: Batch| {` with `tokio::spawn(debounce(Filter::new(&root), rx, || MAX_DELAY, move |batch: Batch| {`;
+- `debounce_flags_git_state_changes_without_files` (:405): replace `tokio::spawn(debounce(Filter::new(&root), rx, move |batch| {` with `tokio::spawn(debounce(Filter::new(&root), rx, || MAX_DELAY, move |batch| {`;
+- `watcher_reports_project_changes_but_not_ignored_ones` (:442): replace `let _watch = watch(&root, move |batch| {` with `let _watch = watch(&root, || MAX_DELAY, move |batch| {`.
 
-Hub tests: in `crates/mkrew-daemon/src/session.rs` `mod tests` (ends with `a_session_floods_past_the_bytes_of_one_window`), add at the end:
+Hub tests: in `crates/mkrew-daemon/src/session.rs` `mod tests` (:1591; ends with `a_session_floods_past_the_bytes_of_one_window`), add at the end:
 
 ```rust
     fn hub() -> (tempfile::TempDir, Arc<Hub>, Ulid) {
@@ -3183,48 +3026,66 @@ Hub tests: in `crates/mkrew-daemon/src/session.rs` `mod tests` (ends with `a_ses
         hub.release_watch(project, Some(Ulid::new()));
         hub.release_watch(Ulid::new(), None);
     }
-```
 
-Protocol tests: in `crates/mkrew-protocol/src/message.rs` `every_m1_request_round_trips`, after the line `Request::SessionPorts(ProjectRef { project_id: sid() }),` (:1892) add:
-
-```rust
-            Request::WatchRelease(WatchReleaseParams {
-                project_id: sid(),
-                worktree_task_id: Some(sid()),
-            }),
-```
-
-and in the same `mod tests`, after `param_less_requests_omit_params`, add:
-
-```rust
-    /// `worktree_task_id` may be left out: the project's own watcher.
+    /// `set_working` tracks per project; two sessions of one project count once they stop.
     #[test]
-    fn watch_release_without_a_worktree_means_the_project_folder() {
-        let wire = json!({
-            "type": "request", "id": 3, "method": "watch.release",
-            "params": {"project_id": sid().to_string()}
-        });
-        let Message::Request { request, .. } = serde_json::from_value(wire).unwrap() else {
-            panic!("a request");
-        };
-        assert_eq!(
-            request,
-            Request::WatchRelease(WatchReleaseParams {
-                project_id: sid(),
-                worktree_task_id: None,
-            })
-        );
+    fn has_working_follows_the_sessions_of_each_project() {
+        let (_dir, hub, project) = hub();
+        let (a, b, other) = (Ulid::new(), Ulid::new(), Ulid::new());
+        assert!(!hub.has_working(project));
+        hub.set_working(a, project, true);
+        hub.set_working(b, project, true);
+        assert!(hub.has_working(project));
+        assert!(!hub.has_working(other));
+        hub.set_working(a, project, false);
+        assert!(hub.has_working(project), "b still works");
+        hub.set_working(b, project, false);
+        assert!(!hub.has_working(project));
     }
 ```
 
-(If `Message::Request` has other field names, mirror the shape used by `request_wire_shape_matches_spec` at :1698; read it first with `read crates/mkrew-protocol/src/message.rs:1698-1716`.)
+(`hub()` is a plain `Hub::new`; it needs no runtime, so the last test is a plain `#[test]`.)
+
+Protocol tests: in `crates/mkrew-protocol/src/message/tests.rs` `every_m1_request_round_trips`, after the line `Request::SessionPorts(ProjectRef { project_id: sid() }),` (:242) add:
+
+```rust
+        Request::WatchRelease(WatchReleaseParams {
+            project_id: sid(),
+            worktree_task_id: Some(sid()),
+        }),
+```
+
+and after `param_less_requests_omit_params` (:67-76) add:
+
+```rust
+/// `worktree_task_id` may be left out: the project's own watcher.
+#[test]
+fn watch_release_without_a_worktree_means_the_project_folder() {
+    let wire = json!({
+        "type": "request", "id": 3, "method": "watch.release",
+        "params": {"project_id": sid().to_string()}
+    });
+    let Message::Request { request, .. } = serde_json::from_value(wire).unwrap() else {
+        panic!("a request");
+    };
+    assert_eq!(
+        request,
+        Request::WatchRelease(WatchReleaseParams {
+            project_id: sid(),
+            worktree_task_id: None,
+        })
+    );
+}
+```
+
+(The module is `use super::*;` of `message.rs`, so `WatchReleaseParams` comes from the import added in Step 4.)
 
 Run: `cargo test -p mkrew-daemon --lib watch -j 4` and `cargo test -p mkrew-protocol -j 4`
-Expected: FAIL to compile (`max_delay`, new `debounce`/`watch` signatures, `release_watch`, `WatchReleaseParams`, `WatchRelease` do not exist).
+Expected: FAIL to compile (`max_delay`, new `debounce`/`watch` signatures, `release_watch`, `set_working`, `has_working`, `WatchReleaseParams`, `WatchRelease` do not exist).
 
 - [ ] **Step 2: `watch.rs`: delay by working state**
 
-After `pub const MAX_DELAY: Duration = Duration::from_secs(2);` add:
+After `pub const MAX_DELAY: Duration = Duration::from_secs(2);` (:18) add:
 
 ```rust
 /// [`MAX_DELAY`] while a session of the project is `working`: an agent writes files all the
@@ -3237,7 +3098,7 @@ pub fn max_delay(working: bool) -> Duration {
 }
 ```
 
-Replace the doc comment and signature of `watch`:
+Replace the doc comment and signature of `watch` (:130-135):
 
 ```rust
 /// reported too (T5.6 attributes such paths like files). Non-UTF-8 paths are skipped. Must run
@@ -3258,9 +3119,9 @@ pub fn watch(
 ) -> ::notify::Result<Watch> {
 ```
 
-Replace `tokio::spawn(debounce(Filter::new(root), rx, on_batch));` with `tokio::spawn(debounce(Filter::new(root), rx, max_delay, on_batch));`.
+Replace `tokio::spawn(debounce(Filter::new(root), rx, on_batch));` (:147) with `tokio::spawn(debounce(Filter::new(root), rx, max_delay, on_batch));`.
 
-Replace the `debounce` doc comment and signature:
+Replace the `debounce` doc comment and signature (:151-157):
 
 ```rust
 /// Collects paths until [`QUIET`] passes without a change (or [`MAX_DELAY`] since the first
@@ -3285,13 +3146,11 @@ async fn debounce(
 ) {
 ```
 
-and replace `let deadline = tokio::time::Instant::now() + MAX_DELAY;` with `let deadline = tokio::time::Instant::now() + max_delay();`.
-
-Also replace the module doc's first sentence in line 1-2 only if it says "with live sessions": leave.
+and replace `let deadline = tokio::time::Instant::now() + MAX_DELAY;` (:174) with `let deadline = tokio::time::Instant::now() + max_delay();`.
 
 - [ ] **Step 3: Hub: working map, delay, release**
 
-`crates/mkrew-daemon/src/session.rs`, `Hub` struct: after the `watches` field (the line `watches: Mutex<HashMap<Ulid, ProjectWatch>>,`) add:
+`crates/mkrew-daemon/src/session.rs`, `Hub` struct: after the `watches` field (:79, `watches: Mutex<HashMap<Ulid, ProjectWatch>>,`) add:
 
 ```rust
     /// Sessions in `working` (any kind) and their project, kept by `Actor::set_state`: the
@@ -3300,9 +3159,9 @@ Also replace the module doc's first sentence in line 1-2 only if it says "with l
     working: Mutex<HashMap<Ulid, Ulid>>,
 ```
 
-In `Hub::new`, after `watches: Mutex::default(),` add `working: Mutex::default(),`.
+In `Hub::new` (:320), after `watches: Mutex::default(),` add `working: Mutex::default(),`.
 
-After `unwatch_worktree` add:
+After `unwatch_worktree` (:635-638) add:
 
 ```rust
     /// A client closed the view that kept the watcher of project `project_id` (or of the
@@ -3336,26 +3195,30 @@ After `unwatch_worktree` add:
     fn has_working(&self, project_id: Ulid) -> bool {
         lock(&self.working).values().any(|&p| p == project_id)
     }
-
-    /// The sessions of the project in `working`, from memory.
-    fn working_sessions(&self, project_id: Ulid) -> Vec<Ulid> {
-        lock(&self.working)
-            .iter()
-            .filter(|&(_, &p)| p == project_id)
-            .map(|(&id, _)| id)
-            .collect()
-    }
 ```
 
-Lock order: `release_watch` takes `watches`, drops it, then `unwatch_idle_project` takes `watches` then `live`: the documented order holds. `unwatch_worktree` needs no `kept` change: the worktree watch is only ever kept.
+Lock order: `release_watch` takes `watches`, drops it (temporary), then `unwatch_idle_project` takes `watches` then `live`: the documented order holds. `unwatch_worktree` needs no `kept` change: the worktree watch is only ever kept.
 
-Update the `ProjectWatch` doc (:186-188) from `so it stays watched after its last session exits, until the daemon stops (HUMAN_CHECKS T6.4).` to `so it stays watched after its last session exits, until the client releases it (`watch.release`, ADR 0042) or the daemon stops (HUMAN_CHECKS T6.4).`; and the docs of `keep_watched` (:615-616) and `keep_worktree_watched` (:621-623): replace `until the daemon stops` with `until released (`Hub::release_watch`) or the daemon stops`.
+Doc updates: `ProjectWatch` (:186-188) from `so it stays watched after its last session exits, until the daemon stops (HUMAN_CHECKS T6.4).` to `so it stays watched after its last session exits, until the client releases it (`watch.release`, ADR 0056) or the daemon stops (HUMAN_CHECKS T6.4).`; `keep_watched` (:619-620) and `keep_worktree_watched` (:625-628): replace `until the daemon stops` with `until released (`Hub::release_watch`) or the daemon stops`.
 
-`Hub::watch`: replace
+`Hub::watch` (:662-676): replace
 
 ```rust
         let hub = Arc::downgrade(self);
         let started = watch::watch(root, move |batch| {
+            if let Some(hub) = hub.upgrade() {
+                if !batch.files.is_empty() {
+                    hub.file_index.invalidate(key);
+                    if worktree_task_id.is_none() {
+                        hub.files_changed(project_id, &batch.files);
+                    }
+                }
+                let _ = hub.events.send(Event::GitChanged(GitChangedEvent {
+                    project_id,
+                    worktree_task_id,
+                }));
+            }
+        });
 ```
 
 with
@@ -3371,20 +3234,13 @@ with
             )
         };
         let started = watch::watch(root, max_delay, move |batch| {
-```
-
-and make the send condition explicit: replace
-
-```rust
-                let _ = hub.events.send(Event::GitChanged(GitChangedEvent {
-                    project_id,
-                    worktree_task_id,
-                }));
-```
-
-with
-
-```rust
+            if let Some(hub) = hub.upgrade() {
+                if !batch.files.is_empty() {
+                    hub.file_index.invalidate(key);
+                    if worktree_task_id.is_none() {
+                        hub.files_changed(project_id, &batch.files);
+                    }
+                }
                 // `watch` only delivers a batch that has files or a git-state change.
                 if !batch.files.is_empty() || batch.git {
                     let _ = hub.events.send(Event::GitChanged(GitChangedEvent {
@@ -3392,20 +3248,25 @@ with
                         worktree_task_id,
                     }));
                 }
+            }
+        });
 ```
 
-`Actor::set_state`: after `self.session.state = state;` add
+`Actor::set_state` (:1330-1332): after `self.session.state = state;` add
 
 ```rust
-        self.hub
-            .set_working(self.session.id, self.session.project_id, state == SessionState::Working);
+        self.hub.set_working(
+            self.session.id,
+            self.session.project_id,
+            state == SessionState::Working,
+        );
 ```
 
-The `Hub::watch` doc (`Every batch also broadcasts `git.changed`: a reported file or the git state changed.`) stays true.
+The `Hub::watch` doc (`Every batch also broadcasts `git.changed`: a reported file or the git state changed.`, :641-642) stays true.
 
 - [ ] **Step 4: Protocol and daemon request**
 
-`crates/mkrew-protocol/src/files.rs`, after `ProjectRef`:
+`crates/mkrew-protocol/src/files.rs`, after `ProjectRef` (:12-16):
 
 ```rust
 /// Params of `watch.release`.
@@ -3418,30 +3279,30 @@ pub struct WatchReleaseParams {
 }
 ```
 
-`message.rs`, in `Request` after the `SessionPorts(ProjectRef),` variant:
+`message.rs`: add `WatchReleaseParams` to the `use crate::files::{…}` list (:19-23; after `ProjectRef`). In `Request`, after the `SessionPorts(ProjectRef),` variant (:256) add:
 
 ```rust
     /// Returns nothing (`null`): the client closed the view (Docs, Files, Git, title bar) that
     /// kept the project's file watcher — or, with `worktree_task_id`, that task worktree's —
-    /// running. The watcher stops unless a session of the project is live (SPEC §8, ADR 0042).
+    /// running. The watcher stops unless a session of the project is live (SPEC §8, ADR 0056).
     #[serde(rename = "watch.release")]
     WatchRelease(WatchReleaseParams),
 ```
 
-Update the `GitChanged` doc (:368) from `(debounced, ≤ once per 300 ms; SPEC §12B)` to `(debounced: 300 ms quiet, at most 2 s after the first change, 5 s while a session of the project is working; never sent for a batch with nothing to report; SPEC §12B)`.
+Update the `GitChanged` doc (:368) from `The git state of a workspace changed (debounced, ≤ once per 300 ms; SPEC §12B).` to `The git state of a workspace changed (debounced: 300 ms quiet, at most 2 s after the first change, 5 s while a session of the project is working; never sent for a batch with nothing to report; SPEC §12B).`
 
-`lib.rs:16`: `pub const PROTOCOL_VERSION: u32 = 37;` → `= 38;`. Check nothing else hard-codes 37: `grep -rn "\b37\b" crates --include=*.rs` (only `paint.rs` ANSI `37`, unrelated).
+`lib.rs:16`: `pub const PROTOCOL_VERSION: u32 = 40;` → `= 41;`. Nothing else hard-codes 40: `grep -rn "protocol 40\|PROTOCOL_VERSION: u32" crates docs` shows only this constant (every client and the daemon tests use the constant).
 
-`server.rs`, next to `Request::SessionPorts(params) => {…}` (:433) add the arm:
+`server.rs`, next to `Request::SessionPorts(params) => {…}` (:437-439) add the arm:
 
 ```rust
             Request::WatchRelease(params) => (self.watch_release(params), After::Continue),
 ```
 
-`server/target.rs`: change the import `use mkrew_protocol::{ErrorCode, Outcome, Project};` to `use mkrew_protocol::{ErrorCode, Outcome, Project, WatchReleaseParams};` and `use super::{Daemon, store_outcome, task_dir};` to `use super::{Daemon, ok, store_outcome, task_dir};`; at the end of `impl Daemon` (after `watched_target`) add:
+`server/target.rs`: change `use mkrew_protocol::{ErrorCode, Outcome, Project};` (:7) to `use mkrew_protocol::{ErrorCode, Outcome, Project, WatchReleaseParams};` and `use super::{Daemon, store_outcome, task_dir};` (:10) to `use super::{Daemon, ok, store_outcome, task_dir};`; at the end of `impl Daemon` (after `watched_target`) add:
 
 ```rust
-    /// `watch.release`: the client left the view that kept this watcher (ADR 0042).
+    /// `watch.release`: the client left the view that kept this watcher (ADR 0056).
     pub(super) fn watch_release(&self, params: WatchReleaseParams) -> Outcome {
         self.hub
             .release_watch(params.project_id, params.worktree_task_id);
@@ -3457,10 +3318,10 @@ Expected: PASS (all `watch`, `session`, `backup` unit tests; the round-trip test
 Create `crates/mkrew-ui/src/watches.rs`:
 
 ```rust
-//! Which daemon file watchers this window still needs (SPEC §8, ADR 0042). The daemon keeps a
+//! Which daemon file watchers this window still needs (SPEC §8, ADR 0056). The daemon keeps a
 //! project's watcher after Docs / Files / Git asked for it; [`Needs::released`] names the ones
 //! to give back with `watch.release` when the window stops showing what needed them. Pure and
-//! tested headlessly; `main.rs` sends the requests.
+//! tested headlessly; `shell/workspace.rs` sends the requests.
 
 use std::collections::BTreeSet;
 
@@ -3559,29 +3420,31 @@ mod tests {
 }
 ```
 
-(`Ulid(n)` constructs from a `u128`, as `git_view.rs` tests do. The `View` enum is `crate::board::View`.)
+(`Ulid(n)` constructs from a `u128`, as `git_view/tests.rs` does; `View` is `crate::board::View`, variants Board / Terminals / Docs / Files / Git.)
 
-`crates/mkrew-ui/src/lib.rs`: add `pub mod watches;` in alphabetical position among the `pub mod` lines (after the last one starting before `w`, e.g. after `pub mod tabs;`/`pub mod terminal;`).
+`crates/mkrew-ui/src/lib.rs`: add `pub mod watches;` between `pub mod voice;` (:78) and `pub mod workspace_menu;` (:79).
 
 `crates/mkrew-ui/src/main.rs`:
-- `Shell` struct: after the field `git_summary_busy: bool,` (:410) add `/// The watchers the daemon keeps for what this window shows (`watches`).` and `watch_needs: watches::Needs,`; in `Shell::new`'s initializer, after `git_summary_busy: false,` (:780) add `watch_needs: watches::Needs::default(),`. Add `watches` to the `use mkrew_ui::{…}` list that already imports `run`, `board`, … (`grep -n "^use mkrew_ui" crates/mkrew-ui/src/main.rs`), and `WatchReleaseParams`-free: the requests are built with `Request::WatchRelease(params)` (`Request` is already imported).
-- New method, after `show_view`'s closing brace (before `/// `doc.list` for the Docs view`):
+- add `use mkrew_ui::watches;` after `use mkrew_ui::voice;` (:103);
+- `Shell` struct: after the field `git_summary_again: bool,` (:504) add
+  ```rust
+      /// The watchers the daemon keeps for what this window shows (`watches`).
+      watch_needs: watches::Needs,
+  ```
+`crates/mkrew-ui/src/shell/connection.rs`, the `Shell` initializer: after `git_summary_again: false,` (:364) add `watch_needs: watches::Needs::default(),`. (`shell/*.rs` start with `use crate::*;`, which brings `watches`, `Request`, `Outcome`, `Ulid` and `View` in.)
+
+`crates/mkrew-ui/src/shell/workspace.rs`: new method after `show_view`'s closing brace (before the final `}` of the `impl`, :380-381):
 
 ```rust
     /// Gives the daemon back the file watchers this window no longer shows anything for
     /// (`watch.release`, [`watches`]). Cheap: it compares two small sets.
-    fn sync_watches(&mut self, cx: &mut Context<'_, Self>) {
-        let target = |views: Option<Option<Ulid>>| views.flatten();
-        let files = target(
-            self.workspace
-                .and_then(|id| self.files.get(&id))
-                .map(|view| view.worktree_task_id),
-        );
-        let git = target(
-            self.workspace
-                .and_then(|id| self.git.get(&id))
-                .map(|view| view.worktree_task_id),
-        );
+    pub(crate) fn sync_watches(&mut self, cx: &mut Context<'_, Self>) {
+        let files = (self.workspace)
+            .and_then(|id| self.files.get(&id))
+            .and_then(|view| view.worktree_task_id);
+        let git = (self.workspace)
+            .and_then(|id| self.git.get(&id))
+            .and_then(|view| view.worktree_task_id);
         let needs = watches::Needs::of(self.workspace, self.view(), files, git);
         let released = self.watch_needs.released(&needs);
         self.watch_needs = needs;
@@ -3603,60 +3466,67 @@ mod tests {
     }
 ```
 
-  (Simplify the `target` closure if rustc/clippy prefers: `self.workspace.and_then(|id| self.files.get(&id)).and_then(|view| view.worktree_task_id)` is the same value.)
-- Call it where the shown view, workspace or worktree target changes:
-  - `show_view`: replace
-    ```rust
-        if shown != view {
-            self.sync_panes(window, cx);
-            cx.notify();
-        }
-    }
-    ```
-    with
-    ```rust
-        self.sync_watches(cx);
-        if shown != view {
-            self.sync_panes(window, cx);
-            cx.notify();
-        }
-    }
-    ```
-  - `activate_workspace`: replace its last lines `        self.sync_panes(window, cx);\n        cx.notify();\n    }` (the ones after `self.refresh_git(project_id, window, cx);\n        }` inside `if switched && self.view() == View::Git`) by prefixing `self.sync_watches(cx);` before `self.sync_panes(window, cx);`.
-  - `refresh_files` (:1828): first line of the body `self.sync_watches(cx);` (covers `set_files_target`, which ends in `refresh_files`).
-  - `refresh_git` (:2612): first line of the body `self.sync_watches(cx);` (covers `retarget_git` callers: `set_git_target`, the repo chooser, `open_worktree` path, `show_git_since`).
-  All four are ordinary `&mut self` methods that already take `cx`. A release is sent after the request that re-asks (a later `fs.list`/`git.status`/`doc.list` re-keeps it), so the order against the new view's request does not matter: each keep happens after the view shows.
+(Same shape as the `session.unqueue` spawn at `shell/composer.rs:388`.)
+
+Call it where the shown view, workspace or worktree target changes:
+- `show_view` (`workspace.rs:343-380`): replace its tail
+
+  ```rust
+          if shown != view {
+              self.sync_panes(window, cx);
+              cx.notify();
+          }
+      }
+  ```
+  with
+  ```rust
+          self.sync_watches(cx);
+          if shown != view {
+              self.sync_panes(window, cx);
+              cx.notify();
+          }
+      }
+  ```
+- `activate_workspace` (`workspace.rs:21-53`): add `self.sync_watches(cx);` as the line before its final `self.sync_panes(window, cx);` (:51). `open_session` and the run-tab paths set `views` and then call it, so they are covered.
+- `refresh_files` (`shell/files.rs:59`): first line of the body `self.sync_watches(cx);` (covers `set_files_target`, which ends in `refresh_files`).
+- `refresh_git` (`shell/git.rs:94`): first line of the body `self.sync_watches(cx);` (covers `set_git_target`, `set_git_repo`; `review_diff` goes through `show_view`).
+
+All four are ordinary `&mut self` methods that already take `cx`. A release is sent before any later request that re-asks (requests go out in call order, `client.rs:164`), and a view that is shown again asks again (`fs.list` / `git.status` / `doc.list` re-keep the watcher), so the order against the new view's request cannot lose a keep.
 
 Run: `cargo test -p mkrew-ui --lib watches -j 4` then `cargo check -p mkrew-ui -j 4`
 Expected: PASS and no errors.
 
 - [ ] **Step 6: Existing integration test comment, ADR, SPEC**
 
-`crates/mkrew-daemon/tests/daemon.rs:1482-1483` (`two_sessions_editing_one_file_raise_a_conflict`): replace
+`crates/mkrew-daemon/tests/daemon/docs.rs:151-152` (`two_sessions_editing_one_file_raise_a_conflict`): replace
+
 ```
     // The first spinner lets the project watcher start (it starts after the first spawn); the
     // second keeps the session `working` until the batch landed (≤ `watch::MAX_DELAY` = 2 s).
 ```
+
 with
+
 ```
     // The first spinner lets the project watcher start (it starts after the first spawn); the
     // second keeps the session `working` until the batch landed (300 ms quiet; a continuous
     // stream would wait ≤ `watch::MAX_DELAY_WORKING`).
 ```
 
-Create `docs/decisions/0042-release-kept-watchers.md` (template `0000-template.md`):
+Run `ls docs/decisions | tail -5` first; create `docs/decisions/0056-release-kept-watchers.md` (template `0000-template.md`; 0056 is fixed by the plan contract, 0055 belongs to Task 6):
 
 ```markdown
-# 0042 — Release kept file watchers when their view closes
+# 0056 — Release kept file watchers when their view closes
 
-- Date: 2026-10-10
+- Date: 2026-10-13
 - Status: accepted
 - Milestone: none (perf review, inbox item 12)
 
 ## Context
 
-- SPEC §7 says `doc.list`, `doc.read`, and (HUMAN_CHECKS T6.4 / T7) `fs.*` and `git.status` "keep the project watched until the daemon stops". A project the user looked at once keeps a recursive watcher for the whole daemon lifetime, and every batch makes each UI client re-run `git status` (perf review B5).
+- SPEC §7 says `doc.list`, `doc.read`, and (HUMAN_CHECKS T6.4 / T7.4) `fs.*` and `git.status` keep the project watched until the daemon stops. A project the user looked at once keeps a recursive watcher for the whole daemon lifetime, and every batch makes each UI client re-run `git status` (perf review B5).
 - There is no request that says a view closed; `ProjectRef` cannot name a task worktree.
+- A phone (`mk web`, ADR 0052) is a second client of the daemon, but its page never sends `fs.*`, `git.*` or `doc.*`, so it keeps no watcher.
 
 ## Options
 
@@ -3666,59 +3536,73 @@ Create `docs/decisions/0042-release-kept-watchers.md` (template `0000-template.m
 
 ## Decision
 
-Option 3: `watch.release { project_id, worktree_task_id? }` (protocol 38). The daemon clears the `kept` flag of the project watcher and stops it unless a session of the project is live (its exit then drops it as before); a worktree watcher is stopped at once. The UI keeps the shown workspace's project watcher (the title bar summary follows `git.changed`) and a worktree watcher only while its Files / Git view is shown. There is no reference counting: the app has one UI window.
+Option 3: `watch.release { project_id, worktree_task_id? }` (protocol 41). The daemon clears the `kept` flag of the project watcher and stops it unless a session of the project is live (its exit then drops it as before); a worktree watcher is stopped at once. The UI keeps the shown workspace's project watcher (the title bar summary follows `git.changed`) and a worktree watcher only while its Files / Git view is shown. There is no reference counting: the app has one UI window.
 
 ## Consequences
 
-- SPEC §7: new `watch.release` row, `doc.*` rows say "until released or the daemon stops", `git.changed` debounce text; §8 note. Protocol 37 → 38.
-- A second UI client that still shows a released workspace loses `git.changed` for it until its next `fs.*` / `git.status` / `doc.*` request re-keeps it. Acceptable: only one UI exists; revisit with a ref count if multi-window arrives.
-- HUMAN_CHECKS T6.4 note updated.
+- SPEC §7: new `watch.release` row, `doc.*` rows say "until released or the daemon stops", `git.changed` debounce text; §12B note. Protocol 40 → 41.
+- A second desktop UI window that still shows a released workspace would lose `git.changed` for it until its next `fs.*` / `git.status` / `doc.*` request re-keeps it. Acceptable: only one UI window exists; revisit with a ref count if multi-window arrives.
+- The Quick-open dialog's `fs.find` on a worktree keeps that worktree watched and is not released until the daemon stops (as before).
+- HUMAN_CHECKS T5.5, T6.4 and T7.4 notes updated.
 ```
 
-SPEC edits:
-- Add after the `session.ports` row (:509):
-  `| `watch.release` | `project_id`, `worktree_task_id?` | ok (`null`) — the UI no longer shows that workspace (or task worktree) and gives back the file watcher that `doc.*`, `fs.*` and `git.status` keep running; it stops unless a session of the project is live. A later request of those kinds keeps it again (ADR 0042) |`
-- `:535` and `:536`: replace `Keeps the project watched for `doc.changed` until the daemon stops` with `Keeps the project watched for `doc.changed` until released (`watch.release`) or the daemon stops`; replace `Also keeps the project watched` with `Also keeps the project watched (until released)`.
-- `:577`: replace `workspace git state changed (debounced, ≤ once per 300 ms)` with `workspace git state changed (debounced: 300 ms quiet, at most 2 s after the first change, 5 s while a session of the project is working; a batch with nothing to report after filtering sends nothing)`.
-- `:1005`: replace `Refresh is triggered by the file watcher (debounced 300 ms)` with `Refresh is triggered by the file watcher (debounced 300 ms, §7 `git.changed`)`.
+SPEC edits (`docs/SPEC.md`; line numbers of 2026-10-13):
+- Add after the `session.ports` row (:513):
+  `| `watch.release` | `project_id`, `worktree_task_id?` | ok (`null`) — the UI no longer shows that workspace (or task worktree) and gives back the file watcher that `doc.*`, `fs.*` and `git.status` keep running; it stops unless a session of the project is live. A later request of those kinds keeps it again (ADR 0056) |`
+- `:539` and `:540`: replace `Keeps the project watched for `doc.changed` until the daemon stops` with `Keeps the project watched for `doc.changed` until released (`watch.release`) or the daemon stops`; replace `Also keeps the project watched` with `Also keeps the project watched (until released)`.
+- `:581`: replace `workspace git state changed (debounced, ≤ once per 300 ms)` with `workspace git state changed (debounced: 300 ms quiet, at most 2 s after the first change, 5 s while a session of the project is working; a batch with nothing to report after filtering sends nothing)`.
+- `:1075`: replace `Refresh is triggered by the file watcher (debounced 300 ms)` with `Refresh is triggered by the file watcher (debounced 300 ms, §7 `git.changed`)`.
 
-- [ ] **Step 7: HUMAN_CHECKS**
+`docs/HUMAN_CHECKS.md` (re-read each spot; text of 2026-10-13):
+- `:2130-2131` (T5.5): replace `Batches = 300 ms quiet, at\n  most 2 s;` with `Batches = 300 ms quiet, at\n  most 2 s (5 s while a session of the project is `working`, ADR 0056);`.
+- `:2205-2208` (T6.4): replace `and it then stays until the\n  daemon stops — even after the last session exits (one watcher per project ever opened in\n  the Docs view; no unwatch on client disconnect / archive).` with `and it then stays until the UI gives it back\n  (`watch.release`, ADR 0056: that workspace is no longer shown) or the daemon stops — even after\n  the last session exits (no unwatch on client disconnect / archive).`
+- `:2326` (T7.4): replace `` `git.status` keeps the project watched until the daemon stops (like docs). `` with `` `git.status` keeps the project watched until released or the daemon stops (like docs, ADR 0056). ``
+
+- [ ] **Step 7: HUMAN_CHECKS (new bullets)**
 
 Append to the end of the shared perf section:
 
 ```markdown
-- [ ] **Watchers stop with their view:** start the daemon with `MKREW_LOG=debug`. Add a second workspace B. In B open Docs, then switch to workspace A with no sessions in B: the log shows `watch released` and `stopped watching project files` for B. Open the Git view of a task worktree, then switch to Terminals: `watch released` with that task id. Come back to Git / Docs / Files: they refresh and follow changes again (edit a file outside the app: the Git list updates).
+- [ ] **Watchers stop with their view:** start the daemon with `MKREW_LOG=debug`. Add a second workspace B. In B open Files or Git (the Docs view only exists with `[features] docs = true`), then switch to workspace A with no sessions in B: the log shows `watch released` and `stopped watching project files` for B. Open the Git view of a task worktree, then switch to Terminals: `watch released` with that task id. Come back to Git / Files: they refresh and follow changes again (edit a file outside the app: the Git list updates).
 - [ ] **`git.changed` rate:** with one agent `working` and writing files, the Git view and the title bar git summary refresh about every 5 s (not every 2 s); once the agent is idle, the next change shows within about 0.5 s. A `git fetch` / commit from outside still shows within ~0.5 s with no agent working. Touching only `.git/objects` (a background `git gc`) changes nothing on screen.
-- [ ] **Old UI, new daemon:** after the protocol bump (38) an old `mkrew-ui` gets `version_mismatch` and asks to restart the daemon (expected, SPEC §7).
+- [ ] **Old UI, new daemon:** after the protocol bump (41) an old `mkrew-ui` gets `version_mismatch` and asks to restart the daemon (expected, SPEC §7). A running `mk web` (phone) must be restarted too: it greets with the protocol of its own build.
 ```
 
-- [ ] **Step 8: Verify and tick**
+- [ ] **Step 8: Verify and commit**
 
-Run: `cargo test -p mkrew-protocol -p mkrew-daemon -p mkrew-ui --lib -j 4` (expect PASS), then `cargo test -p mkrew-daemon --test daemon -j 4 two_sessions_editing file_watcher_records` (expect PASS), then the full verification. Do not tick inbox line 126 yet (Task 9 follows).
-Suggested message: `perf(daemon): 5 s watcher cap while working, release kept watchers (protocol 38)`
+Run: `cargo build -p mkrew-cli -p mkrew-fakeagent -j 4` (protocol changed: the daemon tests use these bins), then `cargo test -p mkrew-protocol -p mkrew-daemon -p mkrew-ui --lib -j 4` (expect PASS), then `cargo test -p mkrew-daemon --test daemon -j 4 two_sessions_editing file_watcher_records` (expect PASS), then `sh scripts/verify.sh` (fallback if rustc crashes on mkrew-ui test builds: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Do not tick inbox line 126 yet (Task 9 follows).
+Commit: `git add crates/mkrew-daemon/src/watch.rs crates/mkrew-daemon/src/session.rs crates/mkrew-daemon/src/server.rs crates/mkrew-daemon/src/server/target.rs crates/mkrew-daemon/tests/daemon/docs.rs crates/mkrew-protocol/src/files.rs crates/mkrew-protocol/src/message.rs crates/mkrew-protocol/src/message/tests.rs crates/mkrew-protocol/src/lib.rs crates/mkrew-ui/src/watches.rs crates/mkrew-ui/src/lib.rs crates/mkrew-ui/src/main.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/workspace.rs crates/mkrew-ui/src/shell/files.rs crates/mkrew-ui/src/shell/git.rs docs/decisions/0056-release-kept-watchers.md docs/SPEC.md docs/HUMAN_CHECKS.md` (shared files: `session.rs`, `main.rs`, `shell/*.rs`, `SPEC.md`, `HUMAN_CHECKS.md` may hold other tasks' hunks: stage only this task's with `git add -p <path>`). Never push.
+Message: `perf(daemon): 5 s watcher cap while working, release kept watchers (protocol 41)`
 
 ---
 
 ### Task 9: `files_changed` writes only for Markdown, and no `list_sessions` per batch
 
-Inbox: line 126 (bullet B6; this is the last task of item 12: tick `[~]`→`[x]`, and append ` → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Tasks 7–9` to the item title like item 10 does at line 107). Spec: §12 Docs (SPEC.md:535 `doc.list`), §20C item 4 (SPEC.md:1669-1671), HUMAN_CHECKS T5.6.
+> **Refresh 2026-10-13:** still needed (`session.rs:711-750` still inserts one `files_changed` row per live session for every batch and calls `store.list_sessions` per batch). Changes vs the 2026-10-10 version:
+> - integration tests moved to `crates/mkrew-daemon/tests/daemon/{main,states,turns}.rs` (`changed_files` and `answer_after_watcher_saw_notes` are in `main.rs:565` / `:638`);
+> - `Hub::working_sessions` is defined here (Task 8 keeps only `set_working` / `has_working`, see Task 8's refresh note);
+> - `Filter::relative_with` now reports Markdown even when git-ignored (`watch.rs:73-75`), so ignored `.md` batches still reach Docs "changed by": no code change, HUMAN_CHECKS T6.4 (:2209) already says so;
+> - `[features] docs` is off by default (ADR 0046), so under defaults nothing reads `files_changed` at all; the daemon keeps recording Markdown batches anyway so switching Docs on later still shows recent "changed by" (see Open questions); the `done · N files` summary and turn files still work for any file type because `Command::TurnFiles` does not use the event;
+> - SPEC line numbers are now :539 and :1807-1809; the inbox tick is an edit of `docs/INBOX.md` that is NOT staged (agents never commit INBOX).
+
+Inbox: line 126 (bullet B6; this is the last task of item 12: tick `[~]`→`[x]`; the title already carries `→ plan: … Task 7, 8, 9`). Spec: §12 Docs (SPEC.md:539 `doc.list`), §20C item 4 (SPEC.md:1807-1809), HUMAN_CHECKS T5.5/T5.6/T6.4.
 
 **Current state (investigated):**
-- `Hub::files_changed` (`crates/mkrew-daemon/src/session.rs:707-746`), called by the project watcher for every non-empty batch (`:663-665`, not for worktree watchers): (1) `docs_changed` (:750) reads and hashes each changed `.md` on the watcher task (only when the batch has a `.md` path, `docs::is_markdown`); (2) collects the live sessions of the project from `Hub::live` (in memory); (3) inserts one `files_changed` session event per live session, **for every batch**, with all paths; (4) calls `store.list_sessions(Some(project_id))` and keeps those `Working` and live; (5) if exactly one is working: `record_edits` (conflict tracker) and `Command::TurnFiles(paths)` to it.
-- The only reader of `files_changed` is `Daemon::doc_list` (`server/doc.rs:29`) → `docs::doc_files` (`docs.rs:109`), which keeps only `is_markdown` paths (`:122`) for "last changed by" (`DocFile.last_session_id` / `last_changed_at`; UI: `main.rs:3768` for the comment send target). `session.files` reads `edited` events (hook edits), not `files_changed`. Integration tests read it through `changed_files` (`tests/daemon.rs:1262`), used by `file_watcher_records_changed_files_of_live_sessions_except_ignored_ones` (:1276), by `answer_after_watcher_saw_notes` (:2002, which waits for `notes.txt`) and by `docs_are_listed_read_and_external_edits_reanchor_comments` (:1339, `last_session_id` of `notes/todo.md` at :1420).
-- Task 8 added `Hub::working: Mutex<HashMap<session, project>>`, `Hub::set_working`, `Hub::working_sessions(project_id)` (kept by `Actor::set_state`), which has the same content as the old `list_sessions` + `state == Working` filter, minus the SQLite read. Nothing else is needed: `Hub::live` already holds the live session ids.
+- `Hub::files_changed` (`crates/mkrew-daemon/src/session.rs:711-750`), called by the project watcher for every non-empty batch (`:667-669`, not for worktree watchers): (1) `docs_changed` (:754) reads and hashes each changed `.md` on the watcher task (only when the batch has a `.md` path, `docs::is_markdown`); (2) collects the live sessions of the project from `Hub::live` (in memory); (3) inserts one `files_changed` session event per live session, **for every batch**, with all paths; (4) calls `store.list_sessions(Some(project_id))` and keeps those `Working` and live; (5) if exactly one is working: `record_edits` (conflict tracker) and `Command::TurnFiles(paths)` to it.
+- The only reader of `files_changed` is `Daemon::doc_list` (`server/doc.rs:29`) → `docs::doc_files` (`docs.rs:109`), which keeps only `is_markdown` paths for "last changed by" (`DocFile.last_session_id` / `last_changed_at`; UI comment send target). `session.files` reads `edited` events (hook edits) and turn rows, not `files_changed` (`server/turn.rs:104-115`). Integration tests read it through `changed_files` (`tests/daemon/main.rs:565`), used by `file_watcher_records_changed_files_of_live_sessions_except_ignored_ones` (`states.rs:335`), by `answer_after_watcher_saw_notes` (`main.rs:638`, waits for `notes.txt`; callers `turns.rs:38`, `:246`) and by `docs_are_listed_read_and_external_edits_reanchor_comments` (`docs.rs:9`, `last_session_id` of `notes/todo.md`).
+- Task 8 adds `Hub::working: Mutex<HashMap<session, project>>`, `Hub::set_working` (kept by `Actor::set_state`), which has the same content as the old `list_sessions` + `state == Working` filter, minus the SQLite read. Nothing else is needed: `Hub::live` already holds the live session ids. This task adds the reader `Hub::working_sessions`.
 - `docs_changed` reads the changed `.md` files on the watcher task. The review flags it, but its output (`doc.changed` + comment re-anchoring) is a feature with its own HUMAN_CHECKS (T6.4) and runs only for `.md` paths; moving it off the task is not part of this change (the read is bounded: ≤ 2 MiB, only paths of the batch).
-- `Command::TurnFiles` and `record_edits` do not depend on the `files_changed` event; a non-`.md` batch must still reach them (HUMAN_CHECKS T5.6, turn files: `a_turn_that_edits_two_files_reports_both` expects the watcher-seen `notes` file in the turn).
-- Item 13 (T10–T12) will also touch this function: see "Anchors shared with item 13" after Task 9.
+- `Command::TurnFiles` and `record_edits` do not depend on the `files_changed` event; a non-`.md` batch must still reach them (HUMAN_CHECKS T5.6, turn files: `a_turn_that_edits_two_files_reports_both` expects the watcher-seen `notes` file in the turn, `turns.rs:8`). `record_edits` (`session.rs:874`) still calls `list_sessions` (:887), but only after a conflict was found, not per batch: unchanged.
+- Item 13 (Tasks 10–12: feature gates) also touches this function; anchor on the quoted text, not on lines.
 
 **Files:**
-- Modify: `crates/mkrew-daemon/src/session.rs` (`Hub::files_changed`; tests)
-- Modify: `crates/mkrew-daemon/tests/daemon.rs` (`file_watcher_records_changed_files_of_live_sessions_except_ignored_ones`, `answer_after_watcher_saw_notes`, `a_turn_that_edits_two_files_reports_both`, the second turn test near :2216)
-- Modify: `docs/SPEC.md` (:535, :1669-1671), `docs/HUMAN_CHECKS.md` (T5.6 note + shared section), `docs/INBOX.md` (tick line 126)
+- Modify: `crates/mkrew-daemon/src/session.rs` (`Hub::working_sessions`, `Hub::files_changed`; tests)
+- Modify: `crates/mkrew-daemon/tests/daemon/states.rs` (`file_watcher_records_changed_files_of_live_sessions_except_ignored_ones`), `crates/mkrew-daemon/tests/daemon/main.rs` (`answer_after_watcher_saw_notes`), `crates/mkrew-daemon/tests/daemon/turns.rs` (`a_turn_that_edits_two_files_reports_both`, `a_hook_turn_start_is_snapshotted_before_the_agent_edits`)
+- Modify: `docs/SPEC.md` (:539, :1807-1809), `docs/HUMAN_CHECKS.md` (T5.5 note + shared section), `docs/INBOX.md` (tick line 126, not staged)
 
 **Interfaces:**
-- Consumes (Task 8): `Hub::set_working(&self, id: Ulid, project_id: Ulid, working: bool)`, `Hub::working_sessions(&self, project_id: Ulid) -> Vec<Ulid>`.
-- Produces: no new items; `fn files_changed(&self, project_id: Ulid, paths: &[String])` keeps its signature.
+- Consumes (Task 8): `Hub::set_working(&self, id: Ulid, project_id: Ulid, working: bool)`, the `working` map.
+- Produces: `Hub::working_sessions(&self, project_id: Ulid) -> Vec<Ulid>` (private); `fn files_changed(&self, project_id: Ulid, paths: &[String])` keeps its signature.
 
 - [ ] **Step 1: Failing tests (session.rs)**
 
@@ -3820,7 +3704,7 @@ In `crates/mkrew-daemon/src/session.rs` `mod tests`, below the Task 8 helpers (`
 
     /// The one working session is the editor of every batch (also one with no Markdown); the
     /// others are not told. Two working: nobody is blamed; when one stops working
-    /// (`set_state`), the other is the editor.
+    /// (`set_working`), the other is the editor.
     #[tokio::test]
     async fn the_only_working_session_gets_the_batch_for_its_turn() {
         let mut f = fixture(&[SessionState::Idle, SessionState::Working]);
@@ -3845,9 +3729,9 @@ In `crates/mkrew-daemon/src/session.rs` `mod tests`, below the Task 8 helpers (`
     }
 ```
 
-(`Session`, `SessionKind`, `StateSource` come from `use mkrew_protocol::{…}` at the top of `session.rs`; `SessionState` too. If `Session` is not imported in the parent, add it to the test module's `use`.)
+(`Session`, `SessionKind`, `SessionState`, `StateSource` come from the `use mkrew_protocol::{…}` at the top of `session.rs` (:16-21); `Command::TurnFiles(Vec<String>)` is the variant the actor handles at :1121. If a name is missing from the parent's imports, add it to the test module's `use`.)
 
-`crates/mkrew-daemon/tests/daemon.rs`, `file_watcher_records_changed_files_of_live_sessions_except_ignored_ones` (:1276-1311): rename it `file_watcher_records_only_markdown_files_of_live_sessions_except_ignored_ones`; replace
+`crates/mkrew-daemon/tests/daemon/states.rs`, `file_watcher_records_changed_files_of_live_sessions_except_ignored_ones` (:335-370): rename it `file_watcher_records_only_markdown_files_of_live_sessions_except_ignored_ones`; replace
 
 ```rust
     for dir in ["src", "target", "node_modules"] {
@@ -3865,16 +3749,32 @@ with
     // Ignored writes first: once `notes/todo.md` is recorded, their batch has been handled too.
     // `src/lib.rs` is watched but not Markdown: Docs is the only reader, so it is not recorded.
 ```
-replace `["target/a.o", "node_modules/b.js", "debug.log", "src/lib.rs"]` with `["target/a.o", "node_modules/b.js", "debug.log", "src/lib.rs", "notes/todo.md"]`, and in the wait and assertion replace the three occurrences of `src/lib.rs` (`.contains("src/lib.rs")`, `"src/lib.rs never recorded"`, `BTreeSet::from(["src/lib.rs".to_owned()])`) with `notes/todo.md`.
+replace `["target/a.o", "node_modules/b.js", "debug.log", "src/lib.rs"]` with `["target/a.o", "node_modules/b.js", "debug.log", "src/lib.rs", "notes/todo.md"]`, and replace the three occurrences of `src/lib.rs` in the wait and the assertion (`.contains("src/lib.rs")`, `"src/lib.rs never recorded"`, `BTreeSet::from(["src/lib.rs".to_owned()])`) with `notes/todo.md`.
 
-Turn tests that waited for the watcher through `files_changed` must now wait on a Markdown file: in `answer_after_watcher_saw_notes` (:2002-2009) and its doc comment replace `notes.txt` with `notes.md` (three places: the comment, `.contains("notes.txt")`, `"notes.txt never recorded"`); in `a_turn_that_edits_two_files_reports_both` replace `path = \"notes.txt\"` with `path = \"notes.md\"` in the scenario string (:2020), and in its assertions replace `// `notes.txt` was written without a hook: only the file watcher saw it.` / `["a.rs", "notes.txt", "src/b.rs"]` with `notes.md` (`["a.rs", "notes.md", "src/b.rs"]`); in the second turn test (:2230, :2265) replace `path = \"notes.txt\"` with `path = \"notes.md\"` and `("notes.txt", Some(1), Some(0))` with `("notes.md", Some(1), Some(0))`. Do not touch the other `notes.txt` uses (:2333-2378 write the file directly; :6286-6293 plan linking).
+Turn tests that waited for the watcher through `files_changed` must now wait on a Markdown file:
+- `tests/daemon/main.rs:636-641` (`answer_after_watcher_saw_notes`) and its doc comment: replace `notes.txt` with `notes.md` (three places: the doc comment line 637, `.contains("notes.txt")`, `"notes.txt never recorded"`).
+- `tests/daemon/turns.rs`, `a_turn_that_edits_two_files_reports_both` (:8): in the scenario string (:14) replace `path = \"notes.txt\"` with `path = \"notes.md\"`; in the assertions (:53-54) replace the comment `// `notes.txt` was written without a hook: only the file watcher saw it.` with the same text naming `notes.md`, and `["a.rs", "notes.txt", "src/b.rs"]` with `["a.rs", "notes.md", "src/b.rs"]`.
+- `turns.rs`, `a_hook_turn_start_is_snapshotted_before_the_agent_edits` (:208): in the scenario (:225) replace `path = \"notes.txt\"` with `path = \"notes.md\"`, and in the counts assertion (:260) `("notes.txt", Some(1), Some(0))` with `("notes.md", Some(1), Some(0))` (sorted order stays `a.txt` < `notes.md`). The other `notes.txt` uses in `turns.rs` (:329 onward) write the file from the test itself and do not wait on the watcher: leave them.
 
 Run: `cargo test -p mkrew-daemon --lib session::tests::a_batch -j 4 -- --nocapture` and `cargo test -p mkrew-daemon --lib the_only_working -j 4`
-Expected: `a_batch_without_markdown_writes_no_event` and `a_markdown_batch_is_recorded…` FAIL (the first finds a row per session; the second finds all three paths), `the_only_working_session_gets_the_batch_for_its_turn` PASSES against today's code only if `list_sessions` reports the same states: the fixture stores `Working` in the row and in the map, so it passes before and after (it pins that the in-memory list replaces the store read; after Step 2 `list_sessions` is gone from this path).
+Expected: compiles once Task 8 is in (`set_working` comes from it). `a_batch_without_markdown_writes_no_event` and `a_markdown_batch_is_recorded…` FAIL (the first finds a row per session; the second finds all three paths). `the_only_working_session_gets_the_batch_for_its_turn` PASSES against today's code (the fixture stores `Working` in the row and in the map): it pins that the in-memory list replaces the store read.
 
 - [ ] **Step 2: `files_changed`: Markdown only, working list from memory**
 
-`crates/mkrew-daemon/src/session.rs`: replace the whole of `Hub::files_changed`, from its doc comment
+`crates/mkrew-daemon/src/session.rs`: after `Hub::has_working` (Task 8) add:
+
+```rust
+    /// The sessions of the project in `working`, from memory.
+    fn working_sessions(&self, project_id: Ulid) -> Vec<Ulid> {
+        lock(&self.working)
+            .iter()
+            .filter(|&(_, &p)| p == project_id)
+            .map(|(&id, _)| id)
+            .collect()
+    }
+```
+
+Replace the whole of `Hub::files_changed`, from its doc comment (:707)
 
 ```rust
     /// Records a debounced batch of changed files on every live session of the project
@@ -3884,7 +3784,7 @@ Expected: `a_batch_without_markdown_writes_no_event` and `a_markdown_batch_is_re
     fn files_changed(&self, project_id: Ulid, paths: &[String]) {
 ```
 
-through its closing `}` (the line before `/// [`Hub::doc_seen`] for each changed Markdown file.`), with:
+through its closing `}` (the line before `/// [`Hub::doc_seen`] for each changed Markdown file.`, :750), with:
 
 ```rust
     /// Handles a debounced batch of changed files of the project. The Markdown ones are
@@ -3934,471 +3834,82 @@ through its closing `}` (the line before `/// [`Hub::doc_seen`] for each changed
     }
 ```
 
-`SessionState` stays imported (used elsewhere in the file). `Store::list_sessions` is no longer called here.
+`SessionState` stays imported (used elsewhere in the file). `Store::list_sessions` is no longer called per batch.
 
 Run: `cargo test -p mkrew-daemon --lib -j 4`
 Expected: PASS (the three new tests included).
 
 - [ ] **Step 3: Integration tests**
 
-Run: `cargo test -p mkrew-daemon --test daemon -j 4 file_watcher_records_only docs_are_listed a_turn_that_edits two_sessions_editing`
+Run: `cargo build -p mkrew-cli -p mkrew-fakeagent -j 4`, then `cargo test -p mkrew-daemon --test daemon -j 4 file_watcher_records_only docs_are_listed a_turn_that_edits a_hook_turn_start two_sessions_editing`
 Expected: PASS. `docs_are_listed_read_and_external_edits_reanchor_comments` is the Docs "changed by" proof: the agent writes `notes/todo.md` and `doc.list` still reports `last_session_id == the working session`. `two_sessions_editing_one_file_raise_a_conflict` proves `record_edits` still runs for non-Markdown `shared.txt` without a `files_changed` row.
 
 - [ ] **Step 4: SPEC and HUMAN_CHECKS**
 
 `docs/SPEC.md`:
-- `:535` (`doc.list`): replace `md files in `files_changed` session events of the last 24 h` with `md files in `files_changed` session events of the last 24 h (the daemon records a watcher batch there only when it has a Markdown path, on every live session of the project)`.
-- `:1669-1671` (§20C item 4): replace `sessions that have `files_changed`/hook edits in this project in the last 24 h` with `sessions that have hook edits (`edited` events) or turn files in this project in the last 24 h`. Check first with `read docs/SPEC.md:1669-1671` that the text still matches; the data source is `session.files` (`edited` events and turn files), not `files_changed`, so this corrects the sentence.
+- `:539` (`doc.list`): replace `md files in `files_changed` session events of the last 24 h` with `md files in `files_changed` session events of the last 24 h (the daemon records a watcher batch there only when it has a Markdown path, on every live session of the project)` (Task 8 edited the end of the same row; the two substrings do not overlap).
+- `:1807-1809` (§20C item 4): replace `sessions that have `files_changed`/hook edits in this project in the last 24 h` with `sessions that have hook edits (`edited` events) or turn files in this project in the last 24 h`. Check first with `read docs/SPEC.md:1805-1810` that the text still matches; the data source is `session.files` (`edited` events and turn files), not `files_changed`, so this corrects the sentence.
 
-`docs/HUMAN_CHECKS.md` (T5.6 area, the line `/`-separated, relative) on EVERY live session of the project (attribution is T5.6).` at ~:1780-1781): replace `Each batch becomes a `files_changed` session event (`{"paths": [...]}`,` … `on EVERY live session of the project` with `Each batch that has a Markdown file becomes a `files_changed` session event (`{"paths": [...]}` with only its Markdown paths,` … `on EVERY live session of the project`; other batches write no row (Docs is the only reader). Read the three lines (`read docs/HUMAN_CHECKS.md:1778-1782`) and keep the rest of the sentence.
+`docs/HUMAN_CHECKS.md`: T5.5 (`:2132-2133`, read `docs/HUMAN_CHECKS.md:2130-2134` first): replace `Each batch becomes a `files_changed` session event (`{"paths": [...]}`,\n  `/`-separated, relative) on EVERY live session of the project (attribution is T5.6).` with `Each batch that has a Markdown file becomes a `files_changed` session event (`{"paths": [...]}`\n  with only its Markdown paths, `/`-separated, relative) on EVERY live session of the project\n  (attribution is T5.6); other batches write no row (Docs is the only reader).` Keep the rest of the sentence ("Review SHOULD left open: …").
 
 Append to the end of the shared perf section:
 
 ```markdown
-- [ ] **Docs "changed by" still works:** with one agent working, have it write a new `notes/todo.md` (not matching the review globs). Docs lists it, and its "changed by" / the comment "send to agent" default points at that agent's session. Have the agent edit only `.rs` files: Docs shows nothing new, Git "Changed by" (hook edits) and the turn's file list still show them, and with two agents editing the same file a conflict warning still appears. In `sqlite3 mkrew.db`: `select count(*) from session_event where kind='files_changed' and payload not like '%.md%';` does not grow while the agent edits source files (rows written before this change excepted).
+- [ ] **Docs "changed by" still works (needs `[features] docs = true`):** with one agent working, have it write a new `notes/todo.md` (not matching the review globs). Docs lists it, and its "changed by" / the comment "send to agent" default points at that agent's session. Have the agent edit only `.rs` files: Docs shows nothing new, Git "Changed by" (hook edits) and the turn's file list (`✓ Done · N files`) still show them, and with two agents editing the same file a conflict warning still appears. In `sqlite3 mkrew.db`: `select count(*) from session_event where kind='files_changed' and payload not like '%.md%';` does not grow while the agent edits source files (rows written before this change excepted).
 ```
 
-- [ ] **Step 5: Verify and tick**
+- [ ] **Step 5: Verify, tick, commit**
 
-Run: `cargo test -p mkrew-daemon -p mkrew-store -j 4` (expect PASS), then the full verification. Tick inbox line 126 `[~]`→`[x]` (all of A4, B5, B6, B7 done; item 12 title gets ` → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Tasks 7–9`).
-Suggested message: `perf(daemon): record files_changed only for Markdown batches, in-memory working sessions`
+Run: `cargo test -p mkrew-daemon -p mkrew-store -j 4` (expect PASS), then `sh scripts/verify.sh` (fallback if rustc crashes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Tick inbox line 126 `[~]`→`[x]` in `docs/INBOX.md` (all of A4, B5, B6, B7 done); do not stage INBOX.
+Commit: `git add crates/mkrew-daemon/src/session.rs crates/mkrew-daemon/tests/daemon/states.rs crates/mkrew-daemon/tests/daemon/main.rs crates/mkrew-daemon/tests/daemon/turns.rs docs/SPEC.md docs/HUMAN_CHECKS.md` (shared files: stage only this task's hunks with `git add -p <path>` if others' changes are in the tree). Never push.
+Message: `perf(daemon): record files_changed only for Markdown batches, in-memory working sessions`
 
 ---
 
-### Task 10: `[features]` settings and opt-in turn snapshots (daemon, ADR 0041)
+### Task 10: Opt-in turn snapshots (daemon) — done by e0c245f; one small gap left
 
-Inbox: line 132 `13. Perf: turn snapshots and conflict detection become opt-in` (bullets "New settings", "Off = zero cost" for A2, "Changes default spec behavior → ADR + SPEC"; do not tick yet). Spec: §20.0 (SPEC.md:1501-1536), §20A.3 (:1563-1568), §20C (:1645-1686), M11 checklist (:1442-1443), §10 pane header (:885).
+> **Refresh 2026-10-13:** mostly done by e0c245f (ADR 0046). Reduced from 10 steps to 3. Dropped: the `turn_snapshots` / `conflict_detection` names (the switch is `[features] turns`), `Hub::features()`, `Job::Start.snapshot`, the `invalid_state` changes in `server/turn.rs` / `server/git.rs`, ADR 0041 (0041 is taken). The switch is read once **when a session starts**, not at each turn; ADR 0046 chose that, so there is no per-turn hot toggle (a toggle applies to new sessions). Left: the turn-start hook still waits for the recorder queue; `Recorder::snapshot` still hops to `spawn_blocking` when off.
 
-**Current state (investigated; line numbers are from 2026-10-10, re-find every symbol by name; item 12 (T7–T9) already changed `session.rs`, nothing below depends on those edits):**
-- `mkrew_core::settings::Settings` (`crates/mkrew-core/src/settings.rs:16`) has `notify, awake, composer, zed, ui, terminal`. Every section is a struct with `#[derive(Debug, Clone, PartialEq, Eq, Deserialize)] #[serde(default, deny_unknown_fields)]` and a hand-written `impl Default`. `Settings` itself derives `Default`. `template()` (:269) is the commented `settings.toml`; the test `the_template_parses_to_the_defaults_commented_or_not` (:505) uncomments every `# key = value` line and expects `Settings::default()`. `full_file_parses` (:403) builds a full `Settings` literal, so a new field must be added there. `missing_file_is_defaults` (:359) asserts defaults per section.
-- Daemon: `SettingsHolder` (`crates/mkrew-daemon/src/settings.rs`) holds the last good `Settings`; `reload()` runs from the config-dir watcher (debounce `QUIET` 300 ms). `Daemon::new` (`server.rs:86`) builds `Hub::new(store)` and then `SettingsHolder::load(paths.settings_file())`. `Hub` (`session.rs`, `impl Hub { pub fn new(store: Store) -> Self`) has no access to settings.
-- Turn start path: `Shell`-independent. In `session.rs` the actor's `fn track_turn(&mut self, state: SessionState)` turns a state change into `turns::Job::Start { n, at, reply: self.hook_reply.take() }` (the hook's reply sender moves into the job) or `turns::Job::End { turn, snapshot: state != SessionState::NeedsInput }`, and sends it to the session's `turns::record` task. `turns.rs` `Recorder::start` calls `self.snapshot(turn_ref(..))` (copy index, `git add -A -- :/`, `write-tree`, `update-ref`, per-project lock in `snapshot.rs`) and then `drop(reply)` in `record`; so the hook waits for the git work and for every earlier queued job. `Recorder::end` takes the end snapshot only when the turn has a start tree (`(Some(_), true)`) and counts lines with `git diff --numstat` in `counted` (no trees → `added`/`removed` = `None`, which is already the non-git behaviour).
-- Requests that need snapshots: `turn.restore_preview` and `turn.restore` (`server/turn.rs` `restore_target`, which already answers `invalid_state` "turn N of session S has no snapshot…" when `start_tree` is missing); `git.status` / `git.diff` with a `since` that is a tree (`server/git.rs` passes `&|| hub.snapshots.tree(..)` to `git_view::status` / `git_view::diff`, called only for `Target::Tree`). `task.undo*` uses `task.checkpoint` (HEAD), not snapshots, and stays as it is. `delete_expired_refs` (startup) only deletes old refs: it stays, so refs left from an earlier "on" period still expire.
-- Existing tests that need snapshots on: `turns.rs` tests (5, helper `hub(base, in_git)` and `Running::start`), `tests/daemon.rs` `a_hook_turn_start_is_snapshotted_before_the_agent_edits`, `turns_are_listed_previewed_and_restored`, `hook_edits_are_announced_attributed_and_diffed_since_a_turn`, `worktree_tasks_run_and_resume_in_their_own_worktree` (its `TurnRestorePreview` → `InvalidState` check is about the worktree; keep its meaning by turning snapshots on). `tests/daemon.rs` has `Env` (config dir `<dir>/config`, `MKREW_CONFIG_DIR`), `Env::write_profile`, `client.hook(..)`, `client.wait_event_where(..)`, `error_code(..)`, and a `git(&repo, &[..])` helper.
+Inbox: line 132 `13. Perf: turn snapshots and conflict detection become opt-in` (bullets "Off = zero cost"; do not tick yet). Spec: §20.0, §20C (SPEC.md ~1780-1796).
 
-**Decision (what still happens with snapshots off):**
+**Done already (verified in the code at HEAD 4cb293b):**
 
-| Part | Off |
+| Part | Where |
 | --- | --- |
-| Turn counting (`mkrew_core::turn::TurnTracker`), `turn` rows (`start_turn` / `end_turn`), `session.turn` events with file paths, the pane-header summary `✓ Done · 3 files · 4m` | **kept** (no git needed); `added` / `removed` are `None` |
-| Git snapshot at start/end, `refs/mkrew/turns/*`, `git diff --numstat`, per-project snapshot lock | **gone** |
-| Hook reply of a turn-start hook | answered at once: the reply is not moved into the recorder job, so the actor drops it when `on_hook` returns |
-| `turn.list` | answers (rows without trees) |
-| `turn.restore_preview`, `turn.restore`, `git.status` / `git.diff` with a tree `since` | `invalid_state`: `turn snapshots are off: set [features] turn_snapshots = true in settings.toml` |
-| `git.status` / `git.diff` with a commit `since`, `task.undo*` | unchanged |
-| Toggle | read at each turn start (`Hub::features()`); a turn keeps the decision it started with (a turn that started with a snapshot still takes its end snapshot after a switch to off; one that started without never does); a switch applies from the next turn |
-| Known corner | a turn that ended at `needs_input` with a start tree, followed by a start while off, keeps no end tree or line counts |
+| `FeatureSettings { docs, turns }`, `Settings.features`, template lines, tests | `crates/mkrew-core/src/settings.rs:33-41`, template `:421-425` |
+| Daemon reads `[features] turns` when a session starts | `server.rs:865` `turn_snapshots: self.settings.current().features.turns` → `SpawnSpec.turn_snapshots` (`session.rs:301`, destructured `:367`) → `turns::record(.., turn_snapshots, jobs)` (`session.rs:511-518`) |
+| Off = no git at all: `in_git: (!snapshots).then_some(false)` makes `Recorder::snapshot` return `None`, so no `git add`/`write-tree`/`update-ref`, no `refs/mkrew/turns/*`, no snapshot lock, and `counted` skips `git diff --numstat` (both trees `None`) | `turns.rs:54-55`, `:151-161`, `:180-187` |
+| Off still records: turn rows, `session.turn` with file paths (`added`/`removed` `None`), the `Done · 3 files · 4m` summary | `turns.rs:87-120` (`start_turn`, `end_turn`, `Event::SessionTurn`); files via `Command::TurnFiles` (`session.rs:746`, `:1121`) and `turns.add_files` (`session.rs:1246`) |
+| `turn.restore_preview` / `turn.restore` with no start tree answer `invalid_state` ("turn N of session S has no snapshot (not a git repo, or older than 7 days)") | `server/turn.rs:163-188` (`restore_target`) |
+| `delete_expired_refs` still runs at startup, so refs of an earlier "on" period still expire | `turns.rs:221` |
+| Tests: recorder with snapshots off (`turns_outside_git_or_with_snapshots_off_have_no_trees_or_counts`, `turns.rs:467`), three daemon tests run with `env.enable_turns()` (`tests/daemon/main.rs:110`, `tests/daemon/turns.rs:210,282,401`) | |
+
+**Gaps (only these remain):**
+1. The hook of a turn start still waits when off. `Actor::track_turn` (`session.rs:1355-1360`) moves `self.hook_reply.take()` into `Job::Start`; the recorder drops it after `recorder.start` (`turns.rs:61-64`). Off, that wait is not git, but it is the recorder queue, a `spawn_blocking` hop and the `start_turn` SQLite write under the store mutex. `server.rs:1460` (`hook_report`) holds the agent's hook until then.
+2. `Recorder::snapshot` (`turns.rs:151`) calls `spawn_blocking` even when `in_git == Some(false)` (twice per turn: start and end).
+
+Not gaps (decided): `turn.restore*` message does not name the setting (see Open questions); `git.status` / `git.diff` with a tree `since` are unchanged (a tree only exists for a turn that was snapshotted, and the UI offers it only from the Turns dialog); `task.undo*` uses the HEAD checkpoint and stays.
 
 **Files:**
-- Modify: `crates/mkrew-core/src/settings.rs` (`FeatureSettings`, `Settings.features`, `template()`, tests)
-- Modify: `crates/mkrew-daemon/src/settings.rs` (`SettingsHolder::features`, test)
-- Modify: `crates/mkrew-daemon/src/session.rs` (`Hub.settings`, `Hub::use_settings`, `Hub::features`, `track_turn`)
-- Modify: `crates/mkrew-daemon/src/turns.rs` (`Job::Start.snapshot`, `start_job`, `Recorder::start`, tests)
-- Modify: `crates/mkrew-daemon/src/server.rs` (`Daemon::new`)
-- Modify: `crates/mkrew-daemon/src/server/turn.rs` (`restore_target`), `crates/mkrew-daemon/src/server/git.rs` (`git_status`, `git_diff`, `view_outcome`)
-- Modify: `crates/mkrew-daemon/tests/daemon.rs` (`Env::write_settings`, four existing tests, one new test)
-- Create: `docs/decisions/0041-optin-turn-snapshots-and-conflicts.md`
-- Modify: `docs/SPEC.md` (§20.0, §20A.3, §20C, M11 checklist, §10), `docs/HUMAN_CHECKS.md`
+- Modify: `crates/mkrew-daemon/src/session.rs` (`Actor.turn_snapshots`, `track_turn`)
+- Modify: `crates/mkrew-daemon/src/turns.rs` (`Recorder::snapshot`)
+- Modify: `docs/SPEC.md` (§20C.1, the sentence at ~1793)
 
 **Interfaces:**
-- Produces: `mkrew_core::settings::FeatureSettings { pub turn_snapshots: bool, pub conflict_detection: bool }` (`Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize`), `Settings.features: FeatureSettings`.
-- Produces: `SettingsHolder::features(&self) -> FeatureSettings`.
-- Produces: `Hub::use_settings(&self, settings: Arc<SettingsHolder>)` (set once) and `Hub::features(&self) -> FeatureSettings` (defaults until `use_settings`).
-- Produces: `turns::start_job(n: u32, at: i64, snapshot: bool, hook_reply: &mut Option<oneshot::Sender<()>>) -> Job`; `Job::Start { n, at, snapshot, reply }`.
-- Protocol: no wire change (`PROTOCOL_VERSION` is whatever T8 left, 38; this task does not bump it). No migration.
-- T11 and T12 consume `Settings.features`.
+- Produces: nothing public. `Job::Start` keeps its shape (`n`, `at`, `reply`).
 
-- [ ] **Step 1: Failing tests (core + daemon settings holder)**
+- [ ] **Step 1: Do not hold the hook when snapshots are off**
 
-`crates/mkrew-core/src/settings.rs`, `mod tests`, after `full_file_parses`:
+`crates/mkrew-daemon/src/session.rs`, `struct Actor`: after the field `hook_reply: Option<oneshot::Sender<()>>,` (doc `/// The reply of the hook being handled; a turn it starts keeps it until the snapshot.`) add:
 
 ```rust
-    #[test]
-    fn features_are_off_until_switched_on() {
-        let features = |src: &str| parse(Path::new("s.toml"), src).unwrap().features;
-        assert_eq!(
-            features(""),
-            FeatureSettings {
-                turn_snapshots: false,
-                conflict_detection: false
-            }
-        );
-        let snapshots = features("[features]\nturn_snapshots = true\n");
-        // One switch does not move the other.
-        assert!(snapshots.turn_snapshots && !snapshots.conflict_detection);
-        let conflicts = features("[features]\nconflict_detection = true");
-        assert!(conflicts.conflict_detection && !conflicts.turn_snapshots);
-        assert!(
-            parse_err("[features]\nturn_snapshot = true\n").contains("unknown field `turn_snapshot`")
-        );
-        assert!(parse_err("[features]\nturn_snapshots = 3\n").contains("invalid type"));
-    }
+    /// `[features] turns` when the session started: only then a turn start holds its hook.
+    turn_snapshots: bool,
 ```
 
-In `missing_file_is_defaults`, after the `assert!(settings.awake.keep_awake);` line add:
+In the `Actor { … }` literal (where `hook_reply: None,` is, ~`:544`), after `hook_reply: None,` add `turn_snapshots,` (`turn_snapshots` is a `bool`, still in scope: `turns::record(.., turn_snapshots, jobs)` took a copy).
 
-```rust
-        assert_eq!(settings.features, FeatureSettings::default());
-        assert!(!settings.features.turn_snapshots && !settings.features.conflict_detection);
-```
-
-In `full_file_parses`, in the TOML text after the `[terminal]` section (before the closing `"#;`) add:
-
-```toml
-
-[features]
-turn_snapshots = true
-conflict_detection = true
-```
-
-and in the expected `Settings { .. }` literal, after the `terminal: FontSettings { .. },` field add:
-
-```rust
-                features: FeatureSettings {
-                    turn_snapshots: true,
-                    conflict_detection: true,
-                },
-```
-
-`crates/mkrew-daemon/src/settings.rs`, `mod tests`, after `bad_file_at_start_means_defaults_and_an_error`:
-
-```rust
-    /// Hot reload (SPEC §20.0): the switches follow the file, a broken file keeps the last good ones.
-    #[test]
-    fn feature_switches_follow_the_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.toml");
-        let holder = SettingsHolder::load(path.clone());
-        assert_eq!(holder.features(), FeatureSettings::default());
-
-        std::fs::write(&path, "[features]\nturn_snapshots = true\n").unwrap();
-        holder.reload();
-        assert!(holder.features().turn_snapshots);
-        assert!(!holder.features().conflict_detection);
-
-        std::fs::write(&path, "[features]\nturn_snapshots = 3\n").unwrap();
-        holder.reload();
-        assert!(holder.features().turn_snapshots, "last good settings kept");
-
-        std::fs::write(&path, "").unwrap();
-        holder.reload();
-        assert_eq!(holder.features(), FeatureSettings::default());
-    }
-```
-
-Run: `cargo test -p mkrew-core --lib settings -j 4` and `cargo test -p mkrew-daemon --lib -j 4 -- settings::`
-Expected: FAIL to compile (`FeatureSettings`, `features` do not exist).
-
-- [ ] **Step 2: `FeatureSettings` in core**
-
-`crates/mkrew-core/src/settings.rs`, in `pub struct Settings`, after the field `pub terminal: FontSettings,` add:
-
-```rust
-    /// `[features]`: costly extras that are off until asked for (ADR 0041).
-    pub features: FeatureSettings,
-```
-
-After `impl Default for ZedSettings { … }` (before `/// `[ui]` / `[terminal]` font.`) add:
-
-```rust
-/// `[features]` (SPEC §20.0, ADR 0041): parts that cost git or CPU on every turn / file change.
-/// Both are off by default; the daemon and the UI read them like the other keys.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct FeatureSettings {
-    /// §20C: a git snapshot at every agent turn start and end. Needed by "Turns…", "Restore
-    /// before turn n", "Since turn…" and "Changed by".
-    pub turn_snapshots: bool,
-    /// §7 `conflict.detected`: warn when two sessions edit the same file within 60 s.
-    pub conflict_detection: bool,
-}
-```
-
-`template()`: replace the last two lines
-
-```
-     [terminal]\n\
-     # font_family = \"\"\n\
-     # font_size = 13\n"
-```
-
-with
-
-```
-     [terminal]\n\
-     # font_family = \"\"\n\
-     # font_size = 13\n\
-     \n\
-     # Costly extras, off by default (ADR 0041): git snapshots at every agent turn (Turns,\n\
-     # Restore before a turn, Since turn, Changed by) and two-session file conflict warnings.\n\
-     [features]\n\
-     # turn_snapshots = false\n\
-     # conflict_detection = false\n"
-```
-
-`crates/mkrew-daemon/src/settings.rs`: change the import to `use mkrew_core::settings::{self, FeatureSettings, Settings, SettingsError};` and in `impl SettingsHolder`, after `pub fn current(&self) -> Settings { … }`:
-
-```rust
-    /// The `[features]` switches of the last good settings (`Copy`: no clone of the strings).
-    pub fn features(&self) -> FeatureSettings {
-        self.lock().settings.features
-    }
-```
-
-Run: `cargo test -p mkrew-core --lib settings -j 4` and `cargo test -p mkrew-daemon --lib -j 4 -- settings::`
-Expected: PASS (the template test still passes: both lines default to `false`).
-
-- [ ] **Step 3: Failing tests (turn recorder)**
-
-`crates/mkrew-daemon/src/turns.rs`, `mod tests`:
-
-(a) imports: add `use crate::settings::SettingsHolder;`.
-
-(b) replace the helper `fn hub(base: &tempfile::TempDir, in_git: bool) -> (PathBuf, Arc<Hub>, Ulid, Ulid) {` with a thin wrapper plus the old body renamed, so the five existing tests keep snapshots on:
-
-```rust
-    /// Snapshots on, like the tests below were written for.
-    fn hub(base: &tempfile::TempDir, in_git: bool) -> (PathBuf, Arc<Hub>, Ulid, Ulid) {
-        let (dir, hub, project, session, _) =
-            hub_with(base, in_git, "[features]\nturn_snapshots = true\n");
-        (dir, hub, project, session)
-    }
-```
-
-and rename the old function to `fn hub_with(base: &tempfile::TempDir, in_git: bool, settings: &str) -> (PathBuf, Arc<Hub>, Ulid, Ulid, Arc<SettingsHolder>) {`. Its doc comment stays; its last line `(dir.clone(), Arc::new(Hub::new(store)), project, session)` becomes:
-
-```rust
-        let hub = Arc::new(Hub::new(store));
-        let file = base.join("settings.toml");
-        std::fs::write(&file, settings).unwrap();
-        let holder = Arc::new(SettingsHolder::load(file));
-        hub.use_settings(Arc::clone(&holder));
-        (dir.clone(), hub, project, session, holder)
-```
-
-(c) in `impl Running`, replace `async fn start(&self, n: u32, at: i64)` with:
-
-```rust
-        /// Starts turn `n` with a start snapshot and waits for it.
-        async fn start(&self, n: u32, at: i64) {
-            self.start_with(n, at, true).await;
-        }
-
-        /// Starts turn `n` and waits until the recorder dropped the reply.
-        async fn start_with(&self, n: u32, at: i64, snapshot: bool) {
-            let (reply, done) = oneshot::channel();
-            let reply = Some(reply);
-            let job = Job::Start { n, at, snapshot, reply };
-            self.jobs.send(job).unwrap();
-            assert!(done.await.is_err(), "the reply is dropped, never sent");
-        }
-```
-
-(delete the old body of `start`).
-
-(d) new tests at the end of `mod tests`:
-
-```rust
-    #[tokio::test]
-    async fn with_snapshots_off_a_turn_has_no_trees_refs_or_counts() {
-        let dir = tempfile::tempdir().unwrap();
-        let (root, hub, project, session, _) = hub_with(&dir, true, "");
-        let mut events = hub.events.subscribe();
-        let recorder = run(&hub, project, session, &root);
-
-        recorder.start_with(1, 10, false).await;
-        std::fs::write(root.join("a.txt"), "1\nx\n").unwrap();
-        recorder.end(ended(1, 10, 20, &["a.txt"]), true);
-        recorder.finish().await;
-
-        // The turn is still counted, stored and announced; only git is skipped.
-        let turn = hub.store().get_turn(session, 1).unwrap();
-        assert_eq!((turn.start_tree, turn.end_tree), (None, None));
-        assert_eq!((turn.started_at, turn.ended_at), (10, Some(20)));
-        assert_eq!(turn.files, [file("a.txt", None, None)]);
-        let Ok(Event::SessionTurn(event)) = events.recv().await else {
-            panic!("no session.turn");
-        };
-        assert_eq!((event.n, event.ended_at), (1, 20));
-        assert_eq!(event.files, [file("a.txt", None, None)]);
-        assert_eq!(git(&root, &["for-each-ref", "refs/mkrew"]), "");
-    }
-
-    /// The hook of a turn start is held for the snapshot only when snapshots are on.
-    #[test]
-    fn the_hook_reply_is_held_for_the_snapshot_only_when_on() {
-        let (reply, mut waiting) = oneshot::channel::<()>();
-        let mut hook = Some(reply);
-        let job = start_job(1, 10, false, &mut hook);
-        assert!(matches!(job, Job::Start { snapshot: false, reply: None, .. }));
-        // Still with the caller, which drops it when the hook is handled: the hook is answered.
-        assert!(hook.is_some());
-        drop(hook);
-        assert!(waiting.try_recv().is_err());
-
-        let (reply, _waiting) = oneshot::channel::<()>();
-        let mut hook = Some(reply);
-        let job = start_job(2, 20, true, &mut hook);
-        assert!(matches!(job, Job::Start { snapshot: true, reply: Some(_), .. }));
-        assert!(hook.is_none(), "the recorder owns the reply until the snapshot exists");
-    }
-
-    /// A switch in settings.toml applies from the next turn start, not retroactively.
-    #[tokio::test]
-    async fn a_toggle_applies_from_the_next_turn() {
-        let dir = tempfile::tempdir().unwrap();
-        let (root, hub, project, session, holder) = hub_with(&dir, true, "");
-        let recorder = run(&hub, project, session, &root);
-        let start = |n: u32| {
-            let mut none = None;
-            start_job(n, i64::from(n) * 10, hub.features().turn_snapshots, &mut none)
-        };
-
-        recorder.jobs.send(start(1)).unwrap();
-        std::fs::write(dir.path().join("settings.toml"), "[features]\nturn_snapshots = true\n")
-            .unwrap();
-        holder.reload();
-        // Turn 1 started while off; its end never snapshots, even when on by now.
-        recorder.end(ended(1, 10, 15, &["a.txt"]), true);
-        recorder.jobs.send(start(2)).unwrap();
-        recorder.end(ended(2, 20, 25, &[]), true);
-        recorder.finish().await;
-
-        let first = hub.store().get_turn(session, 1).unwrap();
-        let second = hub.store().get_turn(session, 2).unwrap();
-        assert_eq!((first.start_tree, first.end_tree), (None, None));
-        assert!(second.start_tree.is_some() && second.end_tree.is_some());
-        assert_eq!(
-            git(&root, &["for-each-ref", "--format=%(refname)", "refs/mkrew"]),
-            format!("{}\n{}", turn_ref(session, 2), turn_end_ref(session, 2))
-        );
-    }
-```
-
-Run: `cargo test -p mkrew-daemon --lib -j 4 -- turns::`
-Expected: FAIL to compile (`start_job`, `Job::Start.snapshot`, `use_settings`, `features` do not exist).
-
-- [ ] **Step 4: Gate the recorder and the hook wait**
-
-`crates/mkrew-daemon/src/turns.rs`: replace the `Job::Start` variant
-
-```rust
-    /// Turn `n` started at `at`; `reply` is dropped once the start snapshot is taken (a
-    /// `hook.report` that started the turn is answered then).
-    Start {
-        n: u32,
-        at: i64,
-        reply: Option<oneshot::Sender<()>>,
-    },
-```
-
-with
-
-```rust
-    /// Turn `n` started at `at`; `reply` is dropped once the start snapshot is taken (a
-    /// `hook.report` that started the turn is answered then). `snapshot` = `[features]
-    /// turn_snapshots` was on when the turn started (ADR 0041): off, nothing touches git and
-    /// there is no reply to wait for.
-    Start {
-        n: u32,
-        at: i64,
-        snapshot: bool,
-        reply: Option<oneshot::Sender<()>>,
-    },
-```
-
-After `enum Job` add:
-
-```rust
-/// The job for turn `n` starting at `at`. With `snapshot` a hook reply in `hook_reply` moves
-/// into it (answered once the start snapshot exists); without, it stays with the caller, who
-/// drops it when the hook is handled, so the hook never waits for git.
-pub fn start_job(
-    n: u32,
-    at: i64,
-    snapshot: bool,
-    hook_reply: &mut Option<oneshot::Sender<()>>,
-) -> Job {
-    Job::Start {
-        n,
-        at,
-        snapshot,
-        reply: if snapshot { hook_reply.take() } else { None },
-    }
-}
-```
-
-In `record`, replace
-
-```rust
-            Job::Start { n, at, reply } => {
-                recorder.start(n, at).await;
-                drop(reply);
-            }
-```
-
-with
-
-```rust
-            Job::Start {
-                n,
-                at,
-                snapshot,
-                reply,
-            } => {
-                recorder.start(n, at, snapshot).await;
-                drop(reply);
-            }
-```
-
-In `impl Recorder`, replace
-
-```rust
-    async fn start(&mut self, n: u32, at: i64) {
-        let tree = self.snapshot(turn_ref(self.session, n)).await;
-```
-
-with
-
-```rust
-    async fn start(&mut self, n: u32, at: i64, snapshot: bool) {
-        let tree = if snapshot {
-            self.snapshot(turn_ref(self.session, n)).await
-        } else {
-            None
-        };
-```
-
-(`end` needs no change: it snapshots only when the turn has a start tree.)
-
-`crates/mkrew-daemon/src/session.rs`:
-- Imports (next to the other `use crate::…` lines, ~34): `use crate::settings::SettingsHolder;` and add `FeatureSettings` to the core imports: `use mkrew_core::settings::FeatureSettings;`.
-- In `pub struct Hub`, right after `pub snapshots: Snapshots,` (doc: `/// Turn snapshots (SPEC §20C.1), one at a time per project.`):
-
-```rust
-    /// The daemon's settings, for `[features]` (ADR 0041); set once by [`Hub::use_settings`].
-    settings: std::sync::OnceLock<Arc<SettingsHolder>>,
-```
-
-- In `Hub::new`, after `snapshots: Snapshots::default(),`: `settings: std::sync::OnceLock::new(),`
-- In `impl Hub`, after `pub fn store(&self) -> MutexGuard<'_, Store> { … }`:
-
-```rust
-    /// Where `[features]` come from; the daemon calls it once. Without it (unit tests of other
-    /// parts) every feature is off, the default.
-    pub fn use_settings(&self, settings: Arc<SettingsHolder>) {
-        let _ = self.settings.set(settings);
-    }
-
-    /// The current `[features]`; the settings holder hot-reloads, so each call sees a toggle.
-    pub fn features(&self) -> FeatureSettings {
-        self.settings
-            .get()
-            .map_or_else(FeatureSettings::default, |settings| settings.features())
-    }
-```
-
-- In `fn track_turn`, replace
+In `fn track_turn`, replace
 
 ```rust
             Some(TurnEvent::Started(n)) => turns::Job::Start {
@@ -4411,15 +3922,256 @@ with
 with
 
 ```rust
-            // Read at every start: a toggle in settings.toml applies from the next turn
-            // (ADR 0041). Off, the hook reply stays in `hook_reply` and is dropped when the hook
-            // is handled, so the agent is not held up.
-            Some(TurnEvent::Started(n)) => turns::start_job(
+            Some(TurnEvent::Started(n)) => turns::Job::Start {
                 n,
                 at,
-                self.hub.features().turn_snapshots,
-                &mut self.hook_reply,
-            ),
+                // Off (ADR 0046): nothing to wait for. The reply stays in `hook_reply` and is
+                // dropped when `on_hook` returns, so the agent is not held up.
+                reply: if self.turn_snapshots {
+                    self.hook_reply.take()
+                } else {
+                    None
+                },
+            },
+```
+
+Update the doc of `Command::Hook` (`session.rs:238-240`): `reply` is dropped once handled; for a hook that started a turn, after its start snapshot (SPEC §20C.1) — add ` (only with turn snapshots on)`.
+
+- [ ] **Step 2: No thread hop when there is no git**
+
+`crates/mkrew-daemon/src/turns.rs`, `Recorder::snapshot`: first statement of the body (before `let hub = Arc::clone(&self.hub);`):
+
+```rust
+        // Outside git, or snapshots off (`record` sets `in_git` to `Some(false)`): nothing to do.
+        if self.in_git == Some(false) {
+            return None;
+        }
+```
+
+The existing test `turns_outside_git_or_with_snapshots_off_have_no_trees_or_counts` (`turns.rs:467`) covers both cases; a unit test of the hook reply would only test the wiring, so there is none. `Command::Hook` ordering is exercised by the daemon tests that run with `enable_turns()` and by every hook test with turns off.
+
+- [ ] **Step 3: SPEC, verify, commit**
+
+`docs/SPEC.md` §20C.1, in the sentence that starts `For a hook turn start (`UserPromptSubmit`) the `hook.report` reply is sent after the snapshot`, add after `so the agent has not edited yet`: ` (with `[features] turns` off there is no snapshot, so the reply is not held)`.
+
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- turns::` (expect PASS), then `sh scripts/verify.sh` (fallback: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Do not tick inbox line 132 (Task 12 does).
+
+```
+git add crates/mkrew-daemon/src/turns.rs docs/SPEC.md
+git add -p crates/mkrew-daemon/src/session.rs   # only the Actor.turn_snapshots / track_turn hunks (other tasks edit this file)
+git commit -m "perf(daemon): a turn-start hook is not held while turn snapshots are off"
+```
+
+---
+
+### Task 11: The UI hides turn features when snapshots are off — already done by e0c245f
+
+> **Refresh 2026-10-13:** already done by e0c245f (ADR 0046); no steps left. The old plan's `palette::Context.turn_snapshots`, `GitView::turn_features_off`, `Shell::apply_features` for turns and the pane-header `pane-turns` button are not needed: the Turns entry points are now `[features] turns`-gated, and Undo-turn / Since-turn are reachable only through the Turns dialog.
+
+Evidence (HEAD 4cb293b):
+- State: `Shell.features` (`crates/mkrew-ui/src/main.rs:529-530`), read in `Shell::new` (`shell/connection.rs:17-18,378`) and re-read with the other settings (`shell/connection.rs:57-86`, `shell.features = settings.features` + `sync_panes`).
+- "Turns…": the tab strip `⋯` menu item is built only `.when(agent && self.features.turns, …)` (`shell/menus.rs:409`); the palette entry `Extra::Turns` needs `context.features.turns` (`palette.rs:124-125`); `Context.features` is filled in `open_palette`. There is no keymap command for Turns. The pane header has no Turns button any more (`pane-turns` does not exist; "Turns…" lives in the `⋯` menu, SPEC §10 ~924).
+- Test: `palette/tests.rs:28` `features_off_hide_docs_and_turns`.
+- Undo dialog for turns (`UndoDialog::for_turn`, `undo_dialog.rs:179`): only called by `Shell::restore_before_turn` (`shell/history.rs:160`), which runs only from the Turns dialog. The "Undo task" dialog (checkpoint based) is separate and stays.
+- Git view "Since turn" (`Since::turn`, `git_view.rs:139`): only created by `Shell::diff_since_turn` (`shell/history.rs:187`), again only from the Turns dialog. A task's "since" (`board.rs:54`, `Origin::Task`) is not a turn feature and stays.
+- "Changed by" (`git_menus.rs:413` `git_changed_by`, `shell/git.rs:360` `load_session_files`) is **not** hidden and should not be: its data is `session.files`, built from `files_changed` / hook `edited` session events (SPEC §20C.4), not from snapshots, so it works with `turns = false`. Hiding it was in the 2026-10-10 inbox bullet only because it was assumed to need snapshots. See Open questions.
+- Not done on purpose: closing an open Turns dialog / turn Restore / "Since turn" listing when `turns` is switched off while they are open. They keep working (the trees exist for 7 days), the next open is blocked by the hidden entry points. Add only if reported (`ponytail:`).
+
+---
+
+### Task 12: Conflict detection is opt-in — `[features] conflicts` (daemon and UI)
+
+> **Refresh 2026-10-13:** still needed, rewritten. Changes vs 2026-10-10: (1) the switch is `[features] conflicts = false`, named like `docs` / `turns` (was `conflict_detection`), and ADR 0046 is **amended** (was new ADR 0041, now taken); (2) `[features]` already exists, so the task adds one field, not the whole section; (3) the daemon `Hub` has no settings access yet, so this task adds `SettingsHolder::features()`, `Hub::use_settings` / `Hub::features()` (the old Task 10 plumbing, minus the turn parts); (4) the UI is a plain `if self.features.conflicts` guard in `shell/connection.rs` plus clearing the warnings on a switch-off (no `Conflicts::track`, which only wrapped two calls); (5) test moved from a timing-based daemon test to a unit test of `record_edits`.
+
+Inbox: line 132 (bullet "Off = zero cost" for A3 and "Off = UI hides … conflict warnings"; **tick it `[~]`→`[x]`**, last task of item 13). Spec: §7 events (SPEC.md:577), M5 checklist (:1484), §10 pane header (:924), §20.0 (:1660), ADR 0046.
+
+**Current state (investigated at HEAD 4cb293b; item 12 (T7–T9) edits `session.rs` too, so re-find by name):**
+- Daemon `session.rs`: `Hub.conflicts: Mutex<HashMap<Ulid, conflict::Tracker<Ulid>>>` (`:85`). `fn record_edits(&self, project_id, paths: &[String], editor: Ulid, at: i64)` (`:874`) has two callers: `files_changed` (`:744`, watcher batch, only when exactly one session of the project is `working`) and `hook_edits` (`:862`, hook-reported edits). It locks the tracker, `prune`s, `edit`s each path, and only on an overlap reads `store().list_sessions(Some(project_id))` (`:887`) and broadcasts `Event::ConflictDetected`. `unwatch_idle_project` (`:704`) drops the project's tracker. `files_changed` still needs its `working` list for `Command::TurnFiles` (turn summaries) and `hook_edits` still writes the `edited` event (for "Changed by"), so only `record_edits` is gated; its lock, tracker and the overlap query are the cost.
+- The daemon `Hub` has no settings. `Daemon::new` (`server.rs:88-101`) builds `Hub::new(store)` and then `SettingsHolder::load(paths.settings_file())` as a separate `Arc`. Other `Hub::new` callers are tests only (`turns.rs:315`, `notify.rs:302`, `awake.rs:369`).
+- **How the daemon re-reads settings today:** `Daemon::serve` (`server.rs:109`) starts `settings::watch(Arc<SettingsHolder>)` → `watch_file` on the config dir (non-recursive, file-name filter, editors' temp+rename safe) → `debounce` `QUIET` = 300 ms (`daemon/settings.rs:15,95-142`) → `SettingsHolder::reload()` (`:46`): a good file replaces the state, a bad one keeps the last good settings and sets `error()` (shown in `daemon.status.settings_error`, `server.rs:484`). Consumers read at use time: `notify.rs:71` `settings.current().notify` per state event, `awake.rs:48` per loop, `web.rs:80,141,163` `settings.current().web.enabled` plus `settings.changed().await` (a single-waiter `Notify`, owned by the `mk web` supervisor: do not wait on it elsewhere). `[features] turns` is read only at session start (`server.rs:865`). `current()` clones the whole `Settings` (strings), so a per-batch read should use a `Copy` accessor.
+- **How the UI re-reads settings today:** `Shell::new` reads the file once (`shell/connection.rs:17`); the 500 ms status tick compares the file mtime (`:57-60`), runs `theme::reload`, then reads the file again and applies `diff_mode`, `diff_wrap`, `reading_width` and `features` (`:76-86`, `if shell.features != settings.features { shell.features = settings.features; shell.sync_panes(..) }`). **Task 6 (ADR 0055) moves this poll to window activation: anchor on the line `if shell.features != settings.features {`, wherever Task 6 left it.**
+- UI: `Conflicts` (`crates/mkrew-ui/src/conflicts.rs`) is applied on **every** event: `shell/connection.rs:650-653` `let detected = self.conflicts.apply(event); if self.conflicts.prune(..) || detected { cx.notify(); }`, and after each list refresh `:491-493` `shell.conflicts.prune(..)`. Badges render from `Shell.conflicts` (`shell/cards.rs:180` `for_task`, `shell/pane_render.rs:552` `for_session`, `widgets.rs:633` `conflict_badge`), so an empty `Conflicts` is already "no warning UI"; nothing in the render code changes.
+- `tests/daemon/docs.rs:148` `two_sessions_editing_one_file_raise_a_conflict` (two writers, then hook edits of `src/hooked.rs`) needs the switch on. `Env` (`tests/daemon/main.rs`) has `enable_turns()` (`:110`) writing `settings.toml` into `<dir>/config`.
+- Other consumers of `Event::ConflictDetected`: only the UI (`conflicts.rs`) and the protocol round-trip test; `mk` and `mk web` do not use it.
+
+**Files:**
+- Modify: `crates/mkrew-core/src/settings.rs` (`FeatureSettings.conflicts`, `template()`, `full_file_parses`)
+- Modify: `crates/mkrew-daemon/src/settings.rs` (`SettingsHolder::features`)
+- Modify: `crates/mkrew-daemon/src/session.rs` (`Hub.settings`, `use_settings`, `features`, `record_edits`, unit test)
+- Modify: `crates/mkrew-daemon/src/server.rs` (`Daemon::new`)
+- Modify: `crates/mkrew-daemon/tests/daemon/main.rs` (`Env::write_settings`), `crates/mkrew-daemon/tests/daemon/docs.rs` (the conflict test)
+- Modify: `crates/mkrew-ui/src/shell/connection.rs` (event handler, list refresh, settings reload), `crates/mkrew-ui/src/palette/tests.rs` (struct literal)
+- Modify: `docs/decisions/0046-feature-switches.md`, `docs/SPEC.md`, `docs/HUMAN_CHECKS.md`, `docs/INBOX.md`
+
+**Interfaces:**
+- Produces: `FeatureSettings.conflicts: bool` (default `false`).
+- Produces: `SettingsHolder::features(&self) -> FeatureSettings` (`Copy`).
+- Produces: `Hub::use_settings(&self, settings: Arc<SettingsHolder>)` (set once; the daemon calls it) and `Hub::features(&self) -> FeatureSettings` (defaults until `use_settings`; hot: it follows `reload()`). Later tasks may use `Hub::features()`.
+- Protocol: no wire change (`PROTOCOL_VERSION` stays 40, Task 8 bumps it to 41). No migration.
+
+- [ ] **Step 1: Failing test and fixture updates**
+
+`crates/mkrew-daemon/src/session.rs`, `mod tests`, at the end:
+
+```rust
+    /// `[features] conflicts` (ADR 0046): off, overlapping edits are neither tracked nor
+    /// announced; a hot reload to on applies to the next edits.
+    #[test]
+    fn overlapping_edits_are_announced_only_while_conflicts_is_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub = Hub::new(Store::open(&dir.path().join("mkrew.db")).unwrap());
+        let file = dir.path().join("settings.toml");
+        let settings = Arc::new(SettingsHolder::load(file.clone()));
+        hub.use_settings(Arc::clone(&settings));
+        let mut events = hub.events.subscribe();
+        let (project, a, b) = (Ulid::new(), Ulid::new(), Ulid::new());
+        let paths = ["src/a.rs".to_owned()];
+
+        hub.record_edits(project, &paths, a, 0);
+        hub.record_edits(project, &paths, b, 1_000);
+        assert!(events.try_recv().is_err(), "off: nothing is announced");
+        assert!(lock(&hub.conflicts).is_empty(), "off: no tracker was created");
+
+        std::fs::write(&file, "[features]\nconflicts = true\n").unwrap();
+        settings.reload();
+        hub.record_edits(project, &paths, a, 2_000);
+        hub.record_edits(project, &paths, b, 3_000);
+        let Ok(Event::ConflictDetected(found)) = events.try_recv() else {
+            panic!("no conflict.detected");
+        };
+        assert_eq!(found.path, "src/a.rs");
+    }
+```
+
+(`Store`, `Event`, `Ulid`, `Arc`, `lock` come from `use super::*;`; add `use crate::settings::SettingsHolder;` to the top-level imports of `session.rs` in Step 3, which the test then sees too.)
+
+`crates/mkrew-core/src/settings.rs`, `mod tests`, `full_file_parses` (the TOML at ~`:569` and the literal at ~`:606`): change the `[features]` text to
+
+```toml
+[features]
+docs = true
+conflicts = true
+```
+
+and the literal to
+
+```rust
+                features: FeatureSettings {
+                    docs: true,
+                    turns: false,
+                    conflicts: true,
+                },
+```
+
+`crates/mkrew-ui/src/palette/tests.rs:20-23`: the `FeatureSettings { docs: true, turns: true }` literal gets `conflicts: false,` (it does not read it).
+
+`crates/mkrew-daemon/tests/daemon/main.rs`: replace `enable_turns` (`:109-114`) with
+
+```rust
+    /// `settings.toml` of the daemon's config dir. Before `start`, or later for a hot reload.
+    fn write_settings(&self, toml: &str) {
+        let dir = self.dir.path().join("config");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.toml"), toml).unwrap();
+    }
+
+    /// `[features] turns = true`: sessions take turn snapshots (ADR 0046).
+    fn enable_turns(&self) {
+        self.write_settings("[features]\nturns = true\n");
+    }
+```
+
+`crates/mkrew-daemon/tests/daemon/docs.rs`, `two_sessions_editing_one_file_raise_a_conflict`: directly after `let env = Env::new();` add
+
+```rust
+    env.write_settings("[features]\nconflicts = true\n");
+```
+
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- session::tests::overlapping_edits`
+Expected: FAIL to compile (`use_settings`, `FeatureSettings.conflicts` do not exist).
+
+- [ ] **Step 2: `conflicts` in core**
+
+`crates/mkrew-core/src/settings.rs`, `pub struct FeatureSettings`: after `pub turns: bool,` add
+
+```rust
+    /// Two sessions editing one file within a minute: `conflict.detected` (SPEC §7) and the
+    /// ⚠ badge on cards and pane headers.
+    pub conflicts: bool,
+```
+
+`template()`: replace the `[features]` block (`:421-425`)
+
+```
+     # Optional modules, off by default. docs: the Docs view. turns: the agent's turn\n\
+     # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
+     [features]\n\
+     # docs = false\n\
+     # turns = false\n\
+```
+
+with
+
+```
+     # Optional modules, off by default. docs: the Docs view. turns: the agent's turn\n\
+     # snapshots and its Turns… dialog (applies to sessions started after the change).\n\
+     # conflicts: a warning when two sessions edit the same file within a minute.\n\
+     [features]\n\
+     # docs = false\n\
+     # turns = false\n\
+     # conflicts = false\n\
+```
+
+(the test `the_template_parses_to_the_defaults_commented_or_not` still passes: the new line defaults to `false`.)
+
+Run: `cargo test -p mkrew-core --lib settings -j 4` (expect PASS).
+
+- [ ] **Step 3: Daemon: settings access and the gate**
+
+`crates/mkrew-daemon/src/settings.rs`: change the import to `use mkrew_core::settings::{self, FeatureSettings, Settings, SettingsError};` and after `pub fn current(&self) -> Settings { … }` add
+
+```rust
+    /// The `[features]` switches of the last good settings (`Copy`: no clone of the strings).
+    pub fn features(&self) -> FeatureSettings {
+        self.lock().settings.features
+    }
+```
+
+`crates/mkrew-daemon/src/session.rs`:
+- Imports: `use crate::settings::SettingsHolder;` (next to the other `use crate::…` lines) and `use mkrew_core::settings::FeatureSettings;`.
+- `pub struct Hub`, right after `pub snapshots: Snapshots,`:
+
+```rust
+    /// The daemon's settings, for `[features]` (ADR 0046); set once by [`Hub::use_settings`].
+    settings: std::sync::OnceLock<Arc<SettingsHolder>>,
+```
+
+- `Hub::new`, after `snapshots: Snapshots::default(),`: `settings: std::sync::OnceLock::new(),`
+- `impl Hub`, after `pub fn store(&self) -> MutexGuard<'_, Store> { … }`:
+
+```rust
+    /// Where `[features]` come from; the daemon calls it once. Without it (unit tests of other
+    /// parts) every switch is off, the default.
+    pub fn use_settings(&self, settings: Arc<SettingsHolder>) {
+        let _ = self.settings.set(settings);
+    }
+
+    /// The current `[features]`. The holder re-reads `settings.toml` after each change
+    /// (debounced 300 ms), so each call sees a switch made since the last one.
+    pub fn features(&self) -> FeatureSettings {
+        self.settings
+            .get()
+            .map_or_else(FeatureSettings::default, |settings| settings.features())
+    }
+```
+
+- `fn record_edits`, first statement (before `let found: Vec<(String, Vec<Ulid>)> = {`):
+
+```rust
+        // Off by default (ADR 0046): no tracker lock, no session query, no `conflict.detected`.
+        if !self.features().conflicts {
+            return;
+        }
 ```
 
 `crates/mkrew-daemon/src/server.rs`, `Daemon::new`: replace
@@ -4444,754 +4196,12 @@ with
             settings,
 ```
 
-Run: `cargo test -p mkrew-daemon --lib -j 4 -- turns:: settings::`
-Expected: PASS (the five old recorder tests run with snapshots on; three new ones pass).
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- session::tests::overlapping_edits` (expect PASS), then `cargo test -p mkrew-daemon --test daemon -j 4 -- two_sessions_editing_one_file_raise_a_conflict` (expect PASS; needs the built `mkrew-fakeagent`, like its neighbours: build the `mkrew-cli` and `mkrew-fakeagent` bins first).
 
-- [ ] **Step 5: Requests that need a snapshot answer a clear error**
+- [ ] **Step 4: UI skips the work and clears the warnings**
 
-`crates/mkrew-daemon/src/server/turn.rs`: after `use crate::undo;` add
-
-```rust
-/// What the requests that need turn snapshots answer while `[features] turn_snapshots` is off.
-pub(super) const SNAPSHOTS_OFF: &str =
-    "turn snapshots are off: set [features] turn_snapshots = true in settings.toml";
-```
-
-and as the first statement of `fn restore_target(&self, turn: &TurnRef) -> Result<RestoreTarget, Outcome> {` add:
-
-```rust
-        if !self.hub.features().turn_snapshots {
-            return Err(Outcome::error(ErrorCode::InvalidState, SNAPSHOTS_OFF));
-        }
-```
-
-(`turn_restore_preview` and `turn_restore` both go through `restore_target`; the `confirm` check of `turn_restore` still answers first.)
-
-`crates/mkrew-daemon/src/server/git.rs`:
-- imports: `use super::turn::SNAPSHOTS_OFF;` next to `use super::{Daemon, ok, store_outcome};` (declare `mod turn;` is already in `server.rs`; if it is private to `server`, `pub(super) const` is reachable from the sibling module).
-- `git_status`: replace `&|| hub.snapshots.tree(&*hub.git, id, &dir),` with
-
-```rust
-                &|| tree_snapshot(&hub, id, &dir),
-```
-
-- `git_diff`: replace `let snapshot = || hub.snapshots.tree(&*hub.git, id, &dir);` with `let snapshot = || tree_snapshot(&hub, id, &dir);`
-- add the helper next to `view_outcome`:
-
-```rust
-/// The snapshot a "since turn" tree is compared with. Off (ADR 0041) it fails with
-/// `Unsupported`, which `view_outcome` answers as `invalid_state`; a commit `since` never calls it.
-fn tree_snapshot(hub: &crate::session::Hub, project: Ulid, dir: &Path) -> std::io::Result<String> {
-    if !hub.features().turn_snapshots {
-        return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, SNAPSHOTS_OFF));
-    }
-    hub.snapshots.tree(&*hub.git, project, dir)
-}
-```
-
-- `view_outcome`: replace the arm
-
-```rust
-        Ok(Err(ViewError::Git(e))) => {
-            Outcome::error(ErrorCode::Internal, format!("{method} failed: {e}"))
-        }
-```
-
-with
-
-```rust
-        Ok(Err(ViewError::Git(e))) if e.kind() == std::io::ErrorKind::Unsupported => {
-            Outcome::error(ErrorCode::InvalidState, e.to_string())
-        }
-        Ok(Err(ViewError::Git(e))) => {
-            Outcome::error(ErrorCode::Internal, format!("{method} failed: {e}"))
-        }
-```
-
-Check the actual `view_outcome` match at `server/git.rs` (~:358-376): place the new arm before the existing `Ok(Err(ViewError::Git(e)))` arm. Note: a `since` tree whose diff is already cached (`GitCache.diffs`, keyed by target + stamp) can still answer from the cache after a switch to off; it expires with the next change of the file.
-
-- [ ] **Step 6: Integration test (real git, fake agent) + keep the old snapshot tests on**
-
-`crates/mkrew-daemon/tests/daemon.rs`:
-- In `impl Env`, after `fn write_profile(&self, id: &str, toml: &str) { … }` add:
-
-```rust
-    /// `settings.toml` of the daemon's config dir. Before `start`, or later for a hot reload.
-    fn write_settings(&self, toml: &str) {
-        let dir = self.dir.path().join("config");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("settings.toml"), toml).unwrap();
-    }
-```
-
-- Existing tests that need snapshots: directly after `let env = Env::new();` in `a_hook_turn_start_is_snapshotted_before_the_agent_edits`, `turns_are_listed_previewed_and_restored`, `hook_edits_are_announced_attributed_and_diffed_since_a_turn` and `worktree_tasks_run_and_resume_in_their_own_worktree` add:
-
-```rust
-    env.write_settings("[features]\nturn_snapshots = true\n");
-```
-
-- New test after `turns_are_listed_previewed_and_restored`:
-
-```rust
-/// ADR 0041: by default no snapshot, no ref and no wait; turns still exist; what needs a tree
-/// answers `invalid_state`; switching the setting on applies from a later turn.
-#[test]
-fn turn_snapshots_off_keeps_turns_but_takes_no_snapshot() {
-    let env = Env::new();
-    let repo = env.repo();
-    git(&repo, &["init", "-q", "-b", "main"]);
-    git(&repo, &["config", "core.autocrlf", "false"]);
-    std::fs::write(repo.join("a.txt"), "one\n").unwrap();
-    git(&repo, &["add", "."]);
-    git(&repo, &["commit", "-q", "-m", "one"]);
-    let scenario = env.dir.path().join("idle.toml");
-    std::fs::write(&scenario, "[[step]]\naction = \"sleep\"\nms = 60000\n").unwrap();
-    env.write_fake_profile_as(
-        "editor",
-        &format!("['--scenario', '{}']", scenario.display()),
-    );
-    let path = env.dir.path().join("config/agents/editor.toml");
-    let profile = std::fs::read_to_string(&path).unwrap();
-    env.write_profile(
-        "editor",
-        &profile.replace("mode = \"screen\"", "mode = \"hook\""),
-    );
-    let (_daemon, mut client) = env.start();
-    let project = client.add_project(&repo);
-    let spawned: SessionSpawnResult = client.spawn(&project, "editor").into_result().unwrap();
-    let id = spawned.session_id;
-    let hook = |client: &mut Client, event: &str| {
-        client
-            .hook(id, "fake", event, Value::Null)
-            .into_result::<()>()
-            .unwrap();
-    };
-    let refs = || git(&repo, &["for-each-ref", "refs/mkrew"]);
-    let turns = |client: &mut Client| -> Vec<Turn> {
-        client
-            .call(Request::TurnList(SessionRef { session_id: id }))
-            .into_result()
-            .unwrap()
-    };
-
-    hook(&mut client, "busy");
-    std::fs::write(repo.join("a.txt"), "two\n").unwrap();
-    hook(&mut client, "done");
-    client
-        .wait_event_where(|e| matches!(e, Event::SessionTurn(t) if t.session_id == id && t.n == 1));
-    assert_eq!(refs(), "", "no snapshot ref while off");
-    let listed = turns(&mut client);
-    assert_eq!(listed.len(), 1);
-    assert_eq!((listed[0].start_tree.as_deref(), listed[0].end_tree.as_deref()), (None, None));
-
-    // Restore and "since turn" (a tree) are refused with the reason; a commit `since` works.
-    let refused = |client: &mut Client, request: Request| match client
-        .call(request)
-        .into_result::<serde_json::Value>()
-    {
-        Err(ResponseError::Daemon(body)) => {
-            assert_eq!(body.code, ErrorCode::InvalidState);
-            assert!(body.message.contains("turn_snapshots"), "{}", body.message);
-        }
-        other => panic!("expected a refusal, got {other:?}"),
-    };
-    refused(&mut client, Request::TurnRestorePreview(TurnRef { session_id: id, n: 1 }));
-    let tree = git(&repo, &["rev-parse", "HEAD^{tree}"]);
-    let since = |since: &str| {
-        Request::GitStatus(GitStatusParams {
-            project_id: project.id,
-            worktree_task_id: None,
-            repo: None,
-            mode: GitMode::Base,
-            since: Some(since.to_owned()),
-        })
-    };
-    refused(&mut client, since(&tree));
-    let head = git(&repo, &["rev-parse", "HEAD"]);
-    let status: GitStatus = client.call(since(&head)).into_result().unwrap();
-    assert_eq!(status.merge_base.as_deref(), Some(head.as_str()));
-
-    // Hot reload: the setting applies from a later turn start (the watcher is debounced).
-    env.write_settings("[features]\nturn_snapshots = true\n");
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        hook(&mut client, "busy");
-        if !refs().is_empty() {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the setting was not picked up");
-        hook(&mut client, "done");
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    let listed = turns(&mut client);
-    assert!(listed.first().unwrap().start_tree.is_none(), "the first turn stays unsnapshotted");
-    assert!(listed.last().unwrap().start_tree.is_some());
-    client.stop();
-}
-```
-
-Run: `cargo test -p mkrew-daemon --test daemon -j 4 -- turn_snapshots_off a_hook_turn_start turns_are_listed hook_edits_are worktree_tasks_run_and_resume`
-Expected: PASS (needs the built `mkrew-fakeagent`, like the neighbouring tests).
-
-- [ ] **Step 7: ADR 0041**
-
-Create `docs/decisions/0041-optin-turn-snapshots-and-conflicts.md`:
-
-```markdown
-# 0041 — Turn snapshots and conflict detection are opt-in
-
-- Date: 2026-10-10
-- Status: accepted
-- Milestone: none (outside the milestone loop; perf review `docs/PERF_REVIEW.md` A2, A3, inbox item 13)
-
-## Context
-
-- SPEC §20C.1 snapshots the working tree at the start and the end of every turn of every agent:
-  copy the git index, `git add -A -- :/`, `git write-tree`, `git update-ref`, plus `git diff
-  --numstat`; about 4–7 git processes per turn (~50 ms each on Windows), one at a time per
-  project. A hook that starts a turn waits for the snapshot, so the agent is held up. Refs pile up
-  in `refs/mkrew/turns` for 7 days.
-- §7 `conflict.detected`: every file-watcher batch runs the editor tracker and a session list
-  query, and the UI prunes its warnings on every event.
-- The review says most users use neither "Turns… / Restore before turn", "Since turn…" and
-  "Changed by", nor the two-agents-one-file warning, but all of them pay for it.
-- Deleting both (the review's "Xoá gồm", ~3,100 lines, protocol `turn.*`) loses features the user
-  may still want and breaks the wire contract and the `turn` table (migrations are never deleted).
-
-## Options
-
-1. Delete both features. Cheapest to run, but it throws away reviewed, tested code and the
-   per-turn undo.
-2. Make them cheaper (async queue, throttle). The hook no longer waits, but every turn still
-   costs git and refs; conflict tracking still costs a query per batch.
-3. Settings, off by default, hot-reloaded: `[features] turn_snapshots`, `conflict_detection`.
-   (Chosen.)
-
-## Decision
-
-- `settings.toml` gets `[features]` with `turn_snapshots = false` and `conflict_detection =
-  false` (SPEC §20.0). The daemon reads them at every turn start / watcher batch through its
-  settings holder, so a toggle needs no restart; the UI reads the same file.
-- Turn snapshots off: no snapshot, no `refs/mkrew/turns` ref, no `git diff --numstat`, and the
-  hook of a turn start is answered at once. Turns are still counted and stored, `session.turn`
-  is still sent with its file paths (no `added` / `removed`), and the pane-header summary stays.
-  `turn.restore_preview`, `turn.restore` and `git.status` / `git.diff` with a tree `since` answer
-  `invalid_state` naming the setting. The UI hides Turns…, Restore before a turn, Diff since,
-  Since turn and Changed by.
-- A turn keeps the decision it started with: a toggle applies from the next turn.
-- `task.undo` is not affected (it uses the task checkpoint, ADR 0005).
-
-## Consequences
-
-- SPEC §20.0 (settings list and a `[features]` paragraph), §20A.3, §20C.1–§20C.4, the M11
-  checklist and §10 (pane header) are updated in the same change. The wire is unchanged
-  (`PROTOCOL_VERSION` is not bumped by this change); the `turn` table stays.
-- Default behaviour changes for existing users: after the update there is no per-turn undo until
-  `turn_snapshots = true`. The first start with the old refs still deletes expired ones.
-- A turn that ended at `needs_input` with a start snapshot, followed by a start while the setting
-  is off, keeps no end tree or line counts.
-- A cached "since turn" diff can still be answered for a short time after a switch to off.
-```
-
-- [ ] **Step 8: SPEC**
-
-`docs/SPEC.md`:
-- §20.0 toml block: after
-
-```toml
-[zed]
-follow_debounce_ms = 1500   # §20C.4
-
-```
-
-add
-
-```toml
-[features]
-turn_snapshots = false      # §20C: a git snapshot at every agent turn (Turns…, Restore before a turn, Since turn, Changed by); ADR 0041
-conflict_detection = false  # §7 conflict.detected and the card / pane warning; ADR 0041
-
-```
-
-- §20.0, right after the closing ```` ``` ```` of that block (:1536) add:
-
-```markdown
-**`[features]`** (ADR 0041): costly extras, off by default. The daemon re-reads them like the other
-keys; a switch applies from the next turn (`turn_snapshots`) or the next watcher batch
-(`conflict_detection`). The UI hides what a switched-off feature drives.
-```
-
-- §20A.3 (:1565-1566): replace `From M11 each\n   file also carries `added`/`removed` (numstat between the turn's start and end snapshots).` with `From M11, with\n   `[features] turn_snapshots` on (ADR 0041), each file also carries `added`/`removed` (numstat between the turn's start and end snapshots); off, they are absent and the rest is unchanged.`
-- §20C.1 (:1647), before `**Turn snapshots.**` text starts, change `1. **Turn snapshots.** At each turn start` to `1. **Turn snapshots.** Only with `[features] turn_snapshots = true` (default off, ADR 0041; a switch applies from the next turn; off = no snapshot, no `refs/mkrew/turns` ref, the hook reply is not held). At each turn start`.
-- §20C.2 (after the sentence `` `turn.restore` uses the same fingerprint check as `task.undo`. ``) add: ` With turn snapshots off, "Turns…" is hidden and `turn.restore_preview` / `turn.restore` answer `invalid_state`.`
-- §20C.3 (after `Header shows `Since turn 3 of claude #2`.`) add: ` Hidden with turn snapshots off; `git.status` / `git.diff` with a tree `since` answer `invalid_state` (a commit `since` still works).`
-- §20C.4 (after `(data: `session.files`, below).`) add: ` Hidden with turn snapshots off.`
-- §20C protocol table: after the row `| `git.status` / `git.diff` (changed) | `since` also accepts a tree id | as before |` add the paragraph below the table: `With `[features] turn_snapshots` off: `turn.list` still answers (rows without trees); `turn.restore_preview`, `turn.restore` and a tree `since` answer `invalid_state`.`
-- M11 checklist (:1442-1443): replace `- [ ] A turn snapshot is taken at each turn start without changing` with `- [ ] With `[features] turn_snapshots = true` a turn snapshot is taken at each turn start without changing`.
-- §10 (:885): replace `and an agent's "Follow in Zed" and "Turns…"; the status` with `and an agent's "Follow in Zed" and "Turns…" (only with `[features] turn_snapshots` on, ADR 0041); the status`.
-
-- [ ] **Step 9: HUMAN_CHECKS**
-
-In `docs/HUMAN_CHECKS.md`, at the end of the section `### To verify — 2026-10-10 inbox: perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` (the blank line above the next `### To verify —` heading), append:
-
-```markdown
-- [ ] **Turn snapshots off (default), item 13:** rebuild and restart the daemon. In a git workspace
-  run an agent with hooks (claude) through 2 turns that edit a file. In a terminal:
-  `git for-each-ref refs/mkrew` prints nothing; the agent is not delayed at the start of a turn
-  (compare with the setting on); the pane header still says `✓ Done · 1 file · 40s`.
-- [ ] **Turn snapshots on:** add `[features]` / `turn_snapshots = true` to `settings.toml` and save
-  (no restart). The next turn creates `refs/mkrew/turns/<session>/<n>` (`git for-each-ref refs/mkrew`);
-  the turn that was running keeps no snapshot. Back to `false`: no new refs from the next turn on.
-```
-
-- [ ] **Step 10: Verify and tick**
-
-Run: `cargo test -p mkrew-core --lib settings -j 4`, `cargo test -p mkrew-daemon --lib -j 4 -- settings:: turns::`, `cargo test -p mkrew-daemon --test daemon -j 4 -- turn_snapshots_off a_hook_turn_start turns_are_listed hook_edits_are worktree_tasks_run_and_resume` (expect PASS), then the full verification. Do not tick inbox line 132 yet (Tasks 11 and 12 follow).
-Suggested message: `feat(daemon): turn snapshots are opt-in via [features] turn_snapshots (ADR 0041)`
-
----
-
-### Task 11: The UI hides turn features when snapshots are off
-
-Inbox: line 132 (bullets "Off = UI hides what depends on it": Turns dialog, Undo dialog for turns, Git view "since turn", "Changed by"; do not tick yet). Spec: §20C.2–§20C.4 (SPEC.md:1659-1671), §10 (:885), §20.0 (:1501-1536), ADR 0041.
-
-**Current state (investigated; main.rs line numbers from 2026-10-10, re-find by name):**
-- Pane header (`Shell::render_pane`, the `.children(info.map(|info| { … }))` block, ~:16778): the `turns` element is `(info.kind == SessionKind::Agent).then(|| div().id("pane-turns-{session}") … .child(button_frame("pane-follow", …)).child(quiet_button("pane-turns", "Turns…", …)))`. Follow in Zed stays; only the `pane-turns` button depends on snapshots.
-- Palette: `Extra::Turns` ("Agent: Turns…", `palette.rs`) is in `Extra::ALL`; `Extra::available` shows it with `InsertPrompt` / `FollowInZed` when `in_view(View::Terminals) && context.tabs > 0 && context.agent_pane`. `palette::Context` (Copy) is built in `Shell::open_palette` (~:4273). There is **no keymap command** for Turns (`keymap.rs` has none), so only the palette entry exists.
-- `Shell::open_turns` (~:5918) opens `turns_dialog`; the Turns dialog's "Diff since" runs `diff_since_turn` (→ `show_git_since` with `Since::turn(..)`) and "Restore before" runs `restore_before_turn` (→ `UndoDialog::for_turn`, `undo_dialog.target == undo_dialog::Target::Turn(_)`). The `undo_dialog` is also the "Undo task" dialog (`Target::Task`, checkpoint based): that one stays.
-- Git view: `GitView.since: Option<Since>` with `Origin::Turn { session_id, n }` or `Origin::Task(_)`; `GitView.changed_by: ChangedBy { asked, files, session }`; `Shell::load_session_files` (~:2868) calls `session.files` after every status; `Shell::git_changed_by` (~:12389) renders the "Changed by" chips from `view.changers(sessions)`. The inspector (session panel) has no "Changed by"; the only one is this Git file-list filter row.
-- The UI reads settings with `mkrew_core::settings::load(&settings_file).unwrap_or_default()` (`Shell::new` ~:494, `open_composer` ~:4101, `toggle_follow` ~:5872). The 500 ms poll in the status tick compares the file mtime and calls `theme::reload` then `shell.apply_diff_mode(settings.ui.diff_mode)`. **T6 (B8) moves this reload from the 500 ms tick to `observe_window_activation`**; the anchor is the call `shell.apply_diff_mode(settings.ui.diff_mode);` wherever T6 left it (inside the reload block that reads `mkrew_core::settings::load(&shell.settings_file)`).
-
-**Files:**
-- Modify: `crates/mkrew-ui/src/palette.rs` (`Context.turn_snapshots`, `Extra::available`, tests)
-- Modify: `crates/mkrew-ui/src/git_view.rs` (`GitView::turn_features_off`, test)
-- Modify: `crates/mkrew-ui/src/main.rs` (`Shell.features`, `Shell::new`, `apply_features`, reload call, palette context, `load_session_files`, `git_changed_by`, `open_turns`, pane header)
-- Modify: `docs/HUMAN_CHECKS.md`
-
-**Interfaces:**
-- Consumes: `mkrew_core::settings::FeatureSettings` (T10).
-- Produces: `palette::Context { …, pub turn_snapshots: bool }`; `GitView::turn_features_off(&mut self) -> Requests`; `Shell::apply_features(&mut self, features: FeatureSettings, window: &mut Window, cx: &mut Context<'_, Self>)`.
-
-- [ ] **Step 1: Failing tests**
-
-`crates/mkrew-ui/src/palette.rs`, `mod tests`: in `fn context(view: View) -> Context {` add `turn_snapshots: true,` after `agent_pane: false,`. After the existing test that asserts `extras(&agent_pane)` add:
-
-```rust
-    /// "Agent: Turns…" needs turn snapshots (ADR 0041); the other agent entries do not.
-    #[test]
-    fn turns_entry_needs_turn_snapshots() {
-        let on = Context {
-            agent_pane: true,
-            ..context(View::Terminals)
-        };
-        let off = Context {
-            turn_snapshots: false,
-            ..on
-        };
-        assert!(Extra::Turns.available(&on));
-        assert!(!Extra::Turns.available(&off));
-        assert!(Extra::InsertPrompt.available(&off) && Extra::FollowInZed.available(&off));
-    }
-```
-
-`crates/mkrew-ui/src/git_view.rs`, `mod tests`, after `changed_by_keeps_only_the_sessions_files`:
-
-```rust
-    /// Turn snapshots switched off while the view lists "since turn" or filters "Changed by":
-    /// both go away (back to the working changes); a task's "since" is not a turn feature.
-    #[test]
-    fn turn_features_off_leaves_since_turn_and_changed_by() {
-        let sessions = [session(1, None, 1, SessionState::Idle)];
-        let mut view = loaded();
-        view.changed_by.session = Some(Ulid(1));
-        view.changed_by.files = SessionFiles::from([(Ulid(1), vec!["a.txt".into()])]);
-        view.show_since(Since::turn(&sessions[0], &sessions, 3, "tree".into()));
-        assert_eq!(view.section(), Section::Since);
-
-        let requests = view.turn_features_off();
-        assert_eq!(view.section(), Section::Working);
-        assert!(requests.status, "the working changes are listed again");
-        assert_eq!(view.changed_by, ChangedBy::default());
-
-        let task = task_changes("abc");
-        view.show_since(task.clone());
-        assert_eq!(view.turn_features_off(), Requests::default());
-        assert_eq!(view.section(), Section::Since);
-        assert_eq!(view.since, Some(task));
-    }
-```
-
-Run: `cargo test -p mkrew-ui --lib -j 4 -- palette::tests::turns_entry git_view::tests::turn_features_off`
-Expected: FAIL to compile (`Context.turn_snapshots`, `turn_features_off` do not exist).
-
-- [ ] **Step 2: Palette and Git view logic**
-
-`palette.rs`: in `pub struct Context`, after `pub agent_pane: bool,` add:
-
-```rust
-    /// `[features] turn_snapshots` is on (ADR 0041): "Agent: Turns…" needs it.
-    pub turn_snapshots: bool,
-```
-
-In `Extra::available`, replace
-
-```rust
-            Self::InsertPrompt | Self::Turns | Self::FollowInZed => {
-                in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
-            }
-```
-
-with
-
-```rust
-            Self::InsertPrompt | Self::FollowInZed => {
-                in_view(View::Terminals) && context.tabs > 0 && context.agent_pane
-            }
-            Self::Turns => {
-                in_view(View::Terminals)
-                    && context.tabs > 0
-                    && context.agent_pane
-                    && context.turn_snapshots
-            }
-```
-
-(also update the comment above it: `the focused agent pane's "Turns…" (needs turn snapshots) and "Follow in Zed"`.)
-
-`git_view.rs`, in `impl GitView`, after `pub fn filter_changed_by(…)`:
-
-```rust
-    /// Turn snapshots were switched off (ADR 0041): "Changed by" no longer filters, and a
-    /// "since turn" listing (shown or kept behind the History) goes back to the working changes.
-    /// A task's "since" stays: it is a commit, not a turn snapshot.
-    pub fn turn_features_off(&mut self) -> Requests {
-        self.changed_by = ChangedBy::default();
-        let turn = matches!(
-            self.since.as_ref().map(|since| since.origin),
-            Some(Origin::Turn { .. })
-        );
-        if turn {
-            let shown = self.section() == Section::Since;
-            self.since = None;
-            if shown {
-                self.select_none();
-                return self.list(GitMode::Working, None);
-            }
-        }
-        self.filtered()
-    }
-```
-
-Run: `cargo test -p mkrew-ui --lib -j 4 -- palette::tests git_view::tests::turn_features_off`
-Expected: PASS.
-
-- [ ] **Step 3: Shell state and the reads**
-
-`crates/mkrew-ui/src/main.rs`:
-- Imports: add `use mkrew_core::settings::FeatureSettings;` to the `use mkrew_core::…` group.
-- `Shell` struct: after `settings_error: Option<String>,` (doc `/// Why the last read of `settings_file` failed; listed in the palette (§20.0).`) add:
-
-```rust
-    /// `[features]` of the settings file (ADR 0041): read at start and with the other settings.
-    features: FeatureSettings,
-```
-
-- `Shell::new`: replace
-
-```rust
-        // A broken settings file keeps the defaults, like the other reads here.
-        let ui = mkrew_core::settings::load(&settings_file)
-            .unwrap_or_default()
-            .ui;
-```
-
-with
-
-```rust
-        // A broken settings file keeps the defaults, like the other reads here.
-        let settings = mkrew_core::settings::load(&settings_file).unwrap_or_default();
-        let features = settings.features;
-        let ui = settings.ui;
-```
-
-and in the `Self { … }` literal, after `settings_error: None,` add `features,`.
-- The reload (where T6 left `shell.apply_diff_mode(settings.ui.diff_mode);`): directly after that line add
-
-```rust
-                                    shell.apply_features(settings.features, window, cx);
-```
-
-(the closure already has `window` and `cx`; a broken file leaves `Err`, so the last good features stay).
-- Next to `fn apply_diff_mode`, add:
-
-```rust
-    /// `[features]` was (re)read (ADR 0041). Switching turn snapshots off closes what depends on
-    /// them: the Turns dialog, a turn's Restore, "Since turn" and "Changed by" in every Git view.
-    /// Switching conflict detection off clears the warnings (T12 reads `features` too).
-    fn apply_features(
-        &mut self,
-        features: FeatureSettings,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if self.features == features {
-            return;
-        }
-        self.features = features;
-        if !features.turn_snapshots {
-            let restoring = self
-                .undo_dialog
-                .as_ref()
-                .is_some_and(|dialog| matches!(dialog.target, undo_dialog::Target::Turn(_)));
-            let closing = restoring || self.turns_dialog.is_some();
-            if restoring {
-                self.undo_dialog = None;
-            }
-            self.turns_dialog = None;
-            self.turns_return = None;
-            if closing {
-                self.focus_pane(window, cx);
-            }
-            let projects: Vec<Ulid> = self.git.keys().copied().collect();
-            for project_id in projects {
-                let requests = self.git_view(project_id).turn_features_off();
-                self.git_requests(project_id, requests, window, cx);
-            }
-        }
-        cx.notify();
-    }
-```
-
-- Palette context in `open_palette`: after `agent_pane: self.focused_agent().is_some(),` add `turn_snapshots: self.features.turn_snapshots,`.
-- `fn load_session_files(`: first statement of the body (before `let Some(connection) = …`): 
-
-```rust
-        // "Changed by" needs turn snapshots (ADR 0041): no `session.files` call without them.
-        if !self.features.turn_snapshots {
-            return;
-        }
-```
-
-- `fn git_changed_by(` (it is `&self`): first statement `if !self.features.turn_snapshots { return None; }` (before `let changers = view.changers(self.sidebar.sessions());`).
-- `fn open_turns(`: first statement `if !self.features.turn_snapshots { return; }`.
-- Pane header: before `.children(info.map(|info| {` is not editable; inside that closure, before `let turns = (info.kind == SessionKind::Agent).then(|| {` add `let turn_snapshots = self.features.turn_snapshots;`, and replace the whole `.child(\n quiet_button("pane-turns", "Turns…", theme, theme.surface_raised) … })),\n )` expression (the second `.child(` of the `pane-turns-{session}` div) with:
-
-```rust
-                        .when(turn_snapshots, |el| {
-                            el.child(
-                                quiet_button("pane-turns", "Turns…", theme, theme.surface_raised)
-                                    .px(px(space::XS))
-                                    .py_0()
-                                    .text_size(font_size::META)
-                                    .tooltip(tooltip(
-                                        theme,
-                                        "The agent's turns: restore the files to before one",
-                                        "",
-                                    ))
-                                    .on_click(cx.listener(move |shell, _, window, cx| {
-                                        shell.open_turns(session, window, cx);
-                                    })),
-                            )
-                        })
-```
-
-Build check only here (no cargo run): `cargo check -p mkrew-ui -j 4` expected clean; GPUI rendering is not testable headless, the decisions are in `Extra::available` and `GitView::turn_features_off` (tested above).
-
-- [ ] **Step 4: SPEC**
-
-`docs/SPEC.md` was updated for the UI parts in T10 Step 8 (§10, §20C.2–§20C.4). Add in §20C.2, after the sentence added there: ` The palette's "Agent: Turns…" is hidden too; a switch to off (re-read when the window gets focus) closes an open Turns dialog and Restore, and returns a "Since turn" or "Changed by" listing to the working changes.`
-
-- [ ] **Step 5: HUMAN_CHECKS**
-
-At the end of the perf section in `docs/HUMAN_CHECKS.md` append:
-
-```markdown
-- [ ] **UI with turn snapshots off (default), item 13:** open a workspace with an agent pane. The pane
-  header shows `Follow in Zed` but no `Turns…`; the palette has `Agent: Insert prompt…` and
-  `Agent: Follow in Zed` but no `Agent: Turns…`; the Git view has no `Changed by` row. The board's
-  `Undo task` and a Review card's `View changes` still work.
-- [ ] **UI with turn snapshots on:** set `[features] turn_snapshots = true`, save, click back into the
-  window: `Turns…` appears in the pane header and the palette, the Turns dialog lists turns with
-  `Diff since` and `Restore before`, `Changed by` shows in the Git view after the next change. Set it
-  to `false` with the Turns dialog or a `Since turn` Git listing open, click the window: the dialog
-  closes and the Git view goes back to the working changes.
-```
-
-- [ ] **Step 6: Verify and tick**
-
-Run: `cargo test -p mkrew-ui --lib -j 4 -- palette:: git_view::` (expect PASS), then the full verification. Do not tick inbox line 132 yet (Task 12 follows).
-Suggested message: `feat(ui): hide Turns, Since turn and Changed by while turn snapshots are off`
-
----
-
-### Task 12: Conflict detection is opt-in (daemon and UI)
-
-Inbox: line 132 (bullet "Off = zero cost" for A3 and "Off = UI hides … conflict warnings"; **tick it `[~]`→`[x]`**, last task of item 13). Spec: §7 events (SPEC.md:573), M5 checklist (:1369), §20.0 (:1501-1536), ADR 0041.
-
-**Current state (investigated; line numbers from 2026-10-10; item 12 (T7–T9) rewrote parts of `files_changed`, so anchor on names and quoted text, not lines):**
-- Daemon `session.rs`: `Hub.conflicts: Mutex<HashMap<Ulid, conflict::Tracker<Ulid>>>`. `fn record_edits(&self, project_id: Ulid, paths: &[String], editor: Ulid, at: i64)` has two callers: `files_changed` (watcher batch, when exactly one session of the project is `working`) and `hook_edits` (hook-reported edits). It prunes and updates the tracker; when there is an overlap it reads the sessions of the project from the store (item 12 B6 moves `files_changed` to the in-memory session list; this overlap read in `record_edits` is the one that remains) and broadcasts `Event::ConflictDetected`. `unwatch_idle_project` removes the project's tracker. `files_changed` still needs its `working` list for `Command::TurnFiles` (turn summaries), so only `record_edits` is gated. A single guard at the top of `record_edits` covers both callers.
-- UI `main.rs` (`Shell::apply_event`, ~:8466): `let detected = self.conflicts.apply(event); if self.conflicts.prune(&self.board, self.sidebar.sessions()) || detected { cx.notify(); }` on **every** event; and after a list refresh (~:898) `shell.conflicts.prune(&shell.board, shell.sidebar.sessions());`. The badge renders (`conflict_badge`, board cards `cards.conflicts.for_task`, pane header `self.conflicts.for_session`) read `Shell.conflicts`, so an empty `Conflicts` is already "no conflict UI".
-- `crates/mkrew-ui/src/conflicts.rs`: `Conflicts { list }`, `apply(&Event) -> bool`, `prune(&Board, &[Session]) -> bool`, tests with helpers `task`, `session`, `detected`, `updated`.
-- `tests/daemon.rs` `two_sessions_editing_one_file_raise_a_conflict` runs two `writer` agents that write `shared.txt` and then hook edits of `src/hooked.rs`. Helper `changed_files(&env, id)` reads the `files_changed` session events from the DB: **after item 12 (B6) it records only batches with a `.md` file**, so the new off-test writes `shared.md` instead of `shared.txt`. `Env::write_settings` comes from T10; `client.events` (a `Vec<Event>` of everything pushed so far) is readable in this file.
-- T10 added `Hub::features()` and `Shell.features` / `apply_features` (T11); T12 uses both.
-
-**Files:**
-- Modify: `crates/mkrew-daemon/src/session.rs` (`record_edits`)
-- Modify: `crates/mkrew-daemon/tests/daemon.rs` (`two_sessions_editing_one_file_raise_a_conflict`, new test)
-- Modify: `crates/mkrew-ui/src/conflicts.rs` (`Conflicts::track`, test)
-- Modify: `crates/mkrew-ui/src/main.rs` (event handler, list refresh, `apply_features`)
-- Modify: `docs/SPEC.md` (§7 row, M5 checklist), `docs/decisions/0041-optin-turn-snapshots-and-conflicts.md` (Consequences), `docs/HUMAN_CHECKS.md`, `docs/INBOX.md`
-
-**Interfaces:**
-- Consumes: `Hub::features() -> FeatureSettings` (T10), `Shell.features` (T11).
-- Produces: `Conflicts::track(&mut self, enabled: bool, event: Option<&Event>, board: &Board, sessions: &[Session]) -> bool` (on: `apply` the event if any, then `prune`; off: forget every warning; returns whether the shown warnings changed).
-- Protocol: no wire change. No migration.
-
-- [ ] **Step 1: Failing tests**
-
-`crates/mkrew-ui/src/conflicts.rs`, `mod tests`, at the end:
-
-```rust
-    /// Off (the default, ADR 0041): events are not kept, nothing is pruned, and switching it
-    /// off clears what was shown.
-    #[test]
-    fn off_ignores_events_and_clears_warnings() {
-        let project = Ulid::new();
-        let mut board = Board::default();
-        board.load(Vec::new());
-        let (sa, sb) = (session(None, project), session(None, project));
-        let sessions = vec![sa.clone(), sb.clone()];
-        let found = detected(project, "a.rs", &[&sa, &sb]);
-        let mut conflicts = Conflicts::default();
-
-        assert!(!conflicts.track(false, Some(&found), &board, &sessions));
-        assert!(conflicts.for_session(sa.id).is_empty());
-
-        assert!(conflicts.track(true, Some(&found), &board, &sessions));
-        assert_eq!(conflicts.for_session(sa.id), ["a.rs"]);
-        assert_eq!(conflicts.for_session(sb.id), ["a.rs"]);
-
-        // Switched off: the warnings go once; a second call has nothing to report.
-        assert!(conflicts.track(false, None, &board, &sessions));
-        assert!(conflicts.for_session(sa.id).is_empty());
-        assert!(!conflicts.track(false, None, &board, &sessions));
-    }
-```
-
-`crates/mkrew-daemon/tests/daemon.rs`:
-
-(a) in `two_sessions_editing_one_file_raise_a_conflict`, directly after `let env = Env::new();` add:
-
-```rust
-    env.write_settings("[features]\nconflict_detection = true\n");
-```
-
-(b) new test after it. Same two-writer scenario, but the file is `shared.md` (so item 12's `files_changed` event proves the batch was processed) and the setting stays off:
-
-```rust
-/// ADR 0041: by default two sessions editing one file raise no `conflict.detected`, from the
-/// watcher or from hook edits.
-#[test]
-fn conflict_detection_off_raises_no_conflict() {
-    let env = Env::new();
-    let repo = env.repo();
-    let scenario = env.dir.path().join("writer.toml");
-    std::fs::write(
-        &scenario,
-        "[[step]]\naction = \"spinner\"\ntext = \"reading\"\nms = 500\n\n\
-         [[step]]\naction = \"write_file\"\npath = \"shared.md\"\ncontent = \"x\"\n\n\
-         [[step]]\naction = \"spinner\"\ntext = \"thinking\"\nms = 3000\n\n\
-         [[step]]\naction = \"ask\"\n",
-    )
-    .unwrap();
-    env.write_fake_profile_as(
-        "writer",
-        &format!("['--scenario', '{}']", scenario.display()),
-    );
-    let (_daemon, mut client) = env.start();
-    let project = client.add_project(&repo);
-    let run = |client: &mut Client, title: &str| {
-        let task: Task = client
-            .call(create_task(&project, title, Some("writer")))
-            .into_result()
-            .unwrap();
-        let spawned: SessionSpawnResult = client.call(run_task(task.id)).into_result().unwrap();
-        client.wait_state(spawned.session_id, SessionState::NeedsInput);
-        spawned.session_id
-    };
-    let (a, b) = (run(&mut client, "A"), run(&mut client, "B"));
-
-    // The watcher batch with `shared.md` was handled: it is recorded for the session.
-    let deadline = Instant::now() + TIMEOUT;
-    while !changed_files(&env, b).contains("shared.md") {
-        assert!(Instant::now() < deadline, "the watcher batch never arrived");
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    // Hook edits of one file by both sessions (the second call returns after the first was
-    // handled, so an event would be in `client.events` by now).
-    let edit = |path: &str| json!({"tool_input": {"file_path": path}});
-    for session in [a, b] {
-        client
-            .hook(session, "fake", "PostToolUse", edit("src/hooked.rs"))
-            .into_result::<()>()
-            .unwrap();
-    }
-    client.call(Request::DaemonStatus).into_result::<serde_json::Value>().unwrap();
-    assert!(
-        !client.events.iter().any(|e| matches!(e, Event::ConflictDetected(_))),
-        "{:?}",
-        client.events
-    );
-    client.stop();
-}
-```
-
-(if the request is named differently, use any cheap request the file already sends, e.g. the one `wait_error` uses for `daemon.status`; it only has to make the client read pending events.)
-
-Run: `cargo test -p mkrew-ui --lib -j 4 -- conflicts::tests::off_ignores` and `cargo test -p mkrew-daemon --test daemon -j 4 -- conflict`
-Expected: the UI test FAILS to compile (`track` does not exist). The daemon `…raise_a_conflict` test (setting on) passes already; `conflict_detection_off_raises_no_conflict` FAILS (an event arrives) until Step 2.
-
-- [ ] **Step 2: Daemon gate**
-
-`crates/mkrew-daemon/src/session.rs`, `fn record_edits(&self, project_id: Ulid, paths: &[String], editor: Ulid, at: i64) {`: before `let found: Vec<(String, Vec<Ulid>)> = {` insert:
-
-```rust
-        // Off by default (ADR 0041): no tracker, no session query, no `conflict.detected`.
-        if !self.features().conflict_detection {
-            return;
-        }
-```
-
-Run: `cargo test -p mkrew-daemon --test daemon -j 4 -- two_sessions_editing_one_file_raise_a_conflict conflict_detection_off`
-Expected: PASS (both).
-
-- [ ] **Step 3: UI `Conflicts::track` and its callers**
-
-`crates/mkrew-ui/src/conflicts.rs`, in `impl Conflicts`, after `pub fn prune(…)`:
-
-```rust
-    /// One event (or, with `None`, a list refresh) for the warnings. `enabled` is `[features]
-    /// conflict_detection` (ADR 0041): off, no event is kept, nothing is pruned (no work per
-    /// event) and warnings left from an earlier "on" are forgotten. Returns whether the shown
-    /// warnings changed.
-    pub fn track(
-        &mut self,
-        enabled: bool,
-        event: Option<&Event>,
-        board: &Board,
-        sessions: &[Session],
-    ) -> bool {
-        if !enabled {
-            let shown = !self.list.is_empty();
-            self.list.clear();
-            return shown;
-        }
-        let detected = event.is_some_and(|event| self.apply(event));
-        self.prune(board, sessions) || detected
-    }
-```
-
-`crates/mkrew-ui/src/main.rs`:
-- In the event handler replace
+`crates/mkrew-ui/src/shell/connection.rs`:
+- Event handler (`dispatch`, ~`:649-653`): replace
 
 ```rust
                 // After the board and sidebar, so a task leaving Running clears its warning.
@@ -5205,17 +4215,16 @@ with
 
 ```rust
                 // After the board and sidebar, so a task leaving Running clears its warning.
-                // Off (the default, ADR 0041): nothing is tracked or pruned per event.
-                let enabled = self.features.conflict_detection;
-                if self
-                    .conflicts
-                    .track(enabled, Some(event), &self.board, self.sidebar.sessions())
-                {
-                    cx.notify();
+                // Off (the default, ADR 0046): the daemon sends none; nothing is pruned per event.
+                if self.features.conflicts {
+                    let detected = self.conflicts.apply(event);
+                    if self.conflicts.prune(&self.board, self.sidebar.sessions()) || detected {
+                        cx.notify();
+                    }
                 }
 ```
 
-- After the list refresh, replace
+- After the list refresh (~`:490-493`): replace
 
 ```rust
                 shell
@@ -5226,85 +4235,125 @@ with
 with
 
 ```rust
-                let enabled = shell.features.conflict_detection;
-                shell
-                    .conflicts
-                    .track(enabled, None, &shell.board, shell.sidebar.sessions());
+                if shell.features.conflicts {
+                    shell
+                        .conflicts
+                        .prune(&shell.board, shell.sidebar.sessions());
+                }
 ```
 
-- In `apply_features` (T11), after the `if !features.turn_snapshots { … }` block and before `cx.notify();` add:
+- Settings reload (anchor `if shell.features != settings.features {`, ~`:82`): add as the first statement inside that block
 
 ```rust
-        // Off clears the warnings; on starts again with the next `conflict.detected`.
-        self.conflicts.track(
-            features.conflict_detection,
-            None,
-            &self.board,
-            self.sidebar.sessions(),
-        );
+                                        // Off clears what was shown; on starts again with the
+                                        // next `conflict.detected` (not persisted, SPEC §7).
+                                        if !settings.features.conflicts {
+                                            shell.conflicts = Conflicts::default();
+                                        }
 ```
 
-Run: `cargo test -p mkrew-ui --lib -j 4 -- conflicts::tests` (expect PASS), `cargo check -p mkrew-ui -j 4` (expect clean).
+(`Conflicts` is imported in `main.rs:50`; `connection.rs` has `use crate::*;`. The `cx.notify()` after the reload block repaints the cards and pane headers.)
 
-- [ ] **Step 4: SPEC and ADR**
+No UI unit test: this is wiring (an `if` and a reset); `Conflicts::apply` / `prune` are unchanged and keep their tests (`conflicts.rs` tests).
+
+Run: `cargo check -p mkrew-ui -j 4` (expect clean).
+
+- [ ] **Step 5: ADR 0046 amendment, SPEC, HUMAN_CHECKS, inbox**
+
+`docs/decisions/0046-feature-switches.md`:
+- Title line stays. After `- Status: accepted` add `- Amended: 2026-10-13 (`conflicts` switch; perf review `docs/PERF_REVIEW.md` A3, inbox item 13)`.
+- Context, append: 
+
+```markdown
+- Conflict detection (SPEC §7 `conflict.detected`, M5) runs for every file-watcher batch and every
+  hook edit: a tracker lock and, on an overlap, a session query; the UI applies and prunes its
+  warnings on every event. Most runs have one agent at a time, so it is cost without use.
+```
+
+- Options, item 2: change to ``2. A `[features]` table: `docs` gates the UI; `turns` gates the UI and the daemon's snapshots; `conflicts` gates the daemon's edit tracker and the UI's warnings. (Chosen.)``
+- Decision, `[features]` line: ``- `[features] docs = false`, `turns = false`, `conflicts = false` (defaults). The session panel gets no switch.`` and append the bullet:
+
+```markdown
+- `conflicts` off: the daemon's `record_edits` returns at once (no tracker, no session query, no
+  `conflict.detected`); the UI does not apply or prune warnings per event and shows no ⚠ badge on
+  cards or pane headers. Applies live: the daemon reads the switch at every watcher batch / hook
+  edit, the UI when it re-reads the settings; switching off clears the warnings shown.
+```
+
+- Consequences, append:
+
+```markdown
+- Default behavior changes for existing users: the M5 conflict warning is gone until `conflicts =
+  true`. SPEC §7, §10, §20.0 and the M5 checklist say so.
+- `conflicts` is the only switch the daemon reads live through `Hub::features()`; `turns` is still
+  read when a session starts.
+```
 
 `docs/SPEC.md`:
-- §7 events table, replace the row `| `conflict.detected` | two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids` |` with `| `conflict.detected` | two sessions edited the same file within 60 s (M5), only with `[features] conflict_detection = true` (default off, ADR 0041): `project_id`, `path`, `session_ids`, `task_ids` |`.
-- M5 checklist: replace `- [ ] Two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards.` with `- [ ] With `[features] conflict_detection = true`: two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards; off (default), neither.`
+- §7 events table (`:577`): replace `two sessions edited the same file within 60 s (M5): `project_id`, `path`, `session_ids`, `task_ids`` with `two sessions edited the same file within 60 s (M5), only with `[features] conflicts = true` (default off, ADR 0046): `project_id`, `path`, `session_ids`, `task_ids``.
+- M5 checklist (`:1484`): replace `- [ ] Two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards.` with `- [ ] With `[features] conflicts = true`: two sessions in one project edit the same file within 60 s → `conflict.detected`, UI warns on both cards; off (default), neither.`
+- §10 pane header (`:924`): `a conflict warning,` → `a conflict warning (only with `[features] conflicts = true`, ADR 0046),`.
+- §20.0 toml block: after the `turns = false …` line (`:1662`) add `conflicts = false           # §7 conflict.detected and the ⚠ badge on cards and pane headers; applies live`.
 
-`docs/decisions/0041-optin-turn-snapshots-and-conflicts.md`, Consequences: append
-
-```markdown
-- Conflict detection off (the default): the daemon keeps no editor tracker, runs no session query
-  for it and sends no `conflict.detected`; the UI does not prune warnings per event and shows no
-  card or pane warning. §7 and the M5 checklist say so. Warnings already shown are cleared when
-  the setting is switched off.
-```
-
-- [ ] **Step 5: HUMAN_CHECKS and inbox**
-
-At the end of the perf section in `docs/HUMAN_CHECKS.md` append:
+`docs/HUMAN_CHECKS.md`:
+- Section `### To verify — 2026-10-11 feature switches (ADR 0046)`, after the **Turns** bullet (`:223-225`) add:
 
 ```markdown
-- [ ] **Conflict warning off (default), item 13:** two agents in one workspace both edit `shared.txt`
-  (use two fake or real agents). No `⚠ Conflict` badge on the cards or pane headers, and
-  `mk events` (or the daemon log at `MKREW_LOG=info`) has no `conflict detected` line.
-- [ ] **Conflict warning on:** add `[features]` / `conflict_detection = true`, save, click back into
-  the window, repeat: the `⚠ Conflict: shared.txt` badge shows on both cards and panes, and `Dismiss`
-  clears it. Set it back to `false`: the badges disappear at once and no new ones appear.
+- [ ] **Conflicts off (default), item 13:** two agents in one workspace both edit `shared.txt`
+  (two fake or real agents). No `⚠ Conflict` badge on the cards or the pane headers, and the
+  daemon log (`MKREW_LOG=info`) has no `conflict detected` line.
+- [ ] **Conflicts on:** add `[features]` / `conflicts = true`, save (no restart), repeat: the
+  `⚠ Conflict: shared.txt` badge shows on both cards and panes, `Dismiss` clears it. Set it back
+  to `false`: the badges disappear within ~1 s (the UI re-reads the file) and no new ones appear.
 ```
 
-`docs/INBOX.md` line 132: change `- [~] **13. Perf: turn snapshots and conflict detection become opt-in**` to `- [x] **13. Perf: turn snapshots and conflict detection become opt-in**` (if it still reads `- [ ]`, set `[x]`; the plan link is added by the plan owner).
+- The T5.7 item (`:1180`): change `Run two tasks in one workspace whose agents edit the same file` to `With `[features] conflicts = true`, run two tasks in one workspace whose agents edit the same file`.
 
-- [ ] **Step 6: Verify and tick**
+`docs/INBOX.md` line 132: change `- [~] **13. Perf: turn snapshots and conflict detection become opt-in**` to `- [x] **13. Perf: turn snapshots and conflict detection become opt-in**`, and rewrite the "New settings" bullet's suggestion to say the switches are `[features] turns` (done in e0c245f) and `[features] conflicts` (the plan link stays; the plan owner edits the rest).
 
-Run: `cargo test -p mkrew-ui --lib -j 4 -- conflicts:: palette:: git_view::`, `cargo test -p mkrew-daemon --test daemon -j 4 -- conflict two_sessions_editing turn_snapshots_off` (expect PASS), then the full verification. This task ticks inbox line 132 `[~]`→`[x]`.
-Suggested message: `feat: conflict detection is opt-in via [features] conflict_detection (ADR 0041)`
+- [ ] **Step 6: Verify and commit**
+
+Run: `cargo test -p mkrew-core --lib settings -j 4`, `cargo test -p mkrew-daemon --lib -j 4 -- session:: settings::`, `cargo test -p mkrew-ui --lib -j 4 -- conflicts:: palette::`, `cargo test -p mkrew-daemon --test daemon -j 4 -- two_sessions_editing_one_file_raise_a_conflict hook_edits_are` (expect PASS), then `sh scripts/verify.sh` (fallback: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). This task ticks inbox line 132.
+
+```
+git add crates/mkrew-core/src/settings.rs crates/mkrew-daemon/src/settings.rs crates/mkrew-daemon/src/server.rs crates/mkrew-daemon/tests/daemon/main.rs crates/mkrew-daemon/tests/daemon/docs.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/palette/tests.rs docs/decisions/0046-feature-switches.md docs/SPEC.md docs/HUMAN_CHECKS.md
+git add -p crates/mkrew-daemon/src/session.rs   # only the Hub.settings / use_settings / features / record_edits / test hunks
+git commit -m "feat: conflict detection is opt-in via [features] conflicts (ADR 0046)"
+```
+
+(INBOX.md is not committed by the agent: the rule is never to commit INBOX; leave the edit for the user.)
 
 ---
 
 ### Task 13: Daemon screen scan builds 4 lines, at most 4 scans/s per session (perf B9)
 
-Inbox: line 138 `14. Perf: terminal path (daemon scan, scrollback, replay)` (bullet B9; do not tick yet). Spec: §6 (SPEC.md:441-456), §8 (:619-626), ADR 0015 (`docs/decisions/0015-visible-change-is-activity.md`), ADR 0003 (state source). New ADR 0043.
+> **Refresh 2026-10-13:** still needed, nothing of it landed (`crates/mkrew-daemon/src/session.rs:1203-1214` still hashes the screen and builds every row on every batch; `emulator.rs:113` `lines_to_cursor` unchanged). Changes vs 2026-10-10:
+> - ADR number is now **0057** (0043 is taken); date 2026-10-13.
+> - Daemon e2e tests moved to `crates/mkrew-daemon/tests/daemon/{states,io,runs}.rs` (one `daemon` test binary; run them with `-- <filters>`); the ports test is `run_sessions_report_the_ports_they_print`.
+> - `Actor::on_output` is now also fed by the flood path (`waiting` batch + `Pacer`, `session.rs:1053-1060`) and `drain_after_exit` (`:1533`); both call `on_output`, so the one throttle covers them. The flood pacing (ADR 0002) limits how often a flooding session reaches `on_output`; it does not limit the scan of a normal busy agent (≤ 60 batches/s), so this task is still needed.
+> - The SPEC lines moved (§6 ends :460, §8 fan-out :631-632); the HUMAN_CHECKS perf section may not exist yet (Task 1 creates it).
 
-**Current state (investigated):**
-- `Actor::on_output` (`crates/mkrew-daemon/src/session.rs`, ~1180-1215) runs for every output batch of every live session, background ones included (≤ 60/s). It calls `Emulator::text_fingerprint()` (SipHash over every cell of the screen). Only when the hash changed does it call `Actor::screen_lines()` = `Emulator::lines_to_cursor()` (`daemon/src/emulator.rs`, ~113): one `String` per row from the top to the cursor row, then `Actor::scan_ports(&lines)` and `StateMachine::on_output(Instant::now(), &lines)`.
-- The state machine reads only the last `PATTERN_TAIL_LINES = 4` non-blank rows (`crates/mkrew-core/src/state.rs:21`; `StateMachine::needs_input` trims, drops blanks, takes 4). The `tick` branch of `Actor::run` (`sleep_until(tick_at)`) also builds the full text.
-- Other consumers of the full text: only `Actor::scan_ports` (a run session's port list; `self.ports.is_some()` only). Not users: `session.read` uses `Emulator::last_lines` (whole visible screen, own code), the terminal title uses `Emulator::take_title`, peek and attach use `snapshot()`.
-- `Actor::deliver()` is called at the end of every `on_output`. `SendQueue::on_output` clears `in_flight`, then `deliver()` pops the next text if `can_deliver(self.session.state)`. Today the state flips to `working` synchronously in the same call before `deliver()`. A throttled scan would leave a stale `idle` there and deliver the second queued text into a busy agent. So a non-empty queue must bypass the throttle (`ScanRate::on_output(now, urgent)` below).
-- Hooks do NOT cover the scan (checked, so the scan stays; reasons in Open questions): `mkrew_core::hook` maps Claude `UserPromptSubmit`→busy, `Notification` (permission/elicitation)→needs_input, `Stop`→done; Codex only `agent-turn-complete`→done; omp/copilot map busy/needs_input/done. No hook reports `idle`: `working→idle` is the screen going quiet (`StateMachine::tick`). Profiles `claude.toml` / `codex.toml` carry screen patterns (`'❯ 1\. Yes'`, `'(?i)allow command'`) the hooks do not replace, and the daemon cannot tell whether the user ran `mk integration install` (no daemon code reads it). No shipped profile has `mode = "hook"`.
-- `mod` list in `crates/mkrew-daemon/src/lib.rs` is alphabetical (`mod plan; mod server;`). `session.rs` has `mod tests` with a pure-logic style (`OutputRate`, `Pacer` tests with `Instant::now()` plus `ms(n)` offsets).
-- Daemon e2e `tests/daemon.rs`: `fake_agent_session_reaches_needs_input_and_is_killed` (the fake agent prints a prompt then goes silent, so it needs the trailing scan), `send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish`, `a_queued_text_removed_while_working_is_never_typed`.
-- Line numbers in `session.rs` shift after items 12 and 13 (Tasks 7-12 edit this file). Anchors below are quoted from the code, not line numbers.
+Inbox: line 138 `14. Perf: terminal path (daemon scan, scrollback, replay)` (bullet B9; do not tick yet). Spec: §6 (SPEC.md:447-460), §8 (:625-632), ADR 0015 (`docs/decisions/0015-visible-change-is-activity.md`), ADR 0003 (state source). New ADR 0057.
+
+**Current state (investigated 2026-10-13):**
+- `Actor::on_output` (`crates/mkrew-daemon/src/session.rs:1184-1219`) runs for every output batch of every live session, background ones included (≤ 60/s). After the log write, DSR reply, title and attachments it calls `Emulator::text_fingerprint()` (`emulator.rs:134`, SipHash over every cell). Only when the hash changed (`:1206-1207`) it calls `Actor::screen_lines()` (`:1323`) = `Emulator::lines_to_cursor()` (`emulator.rs:113`): one `String` per row from the top to the cursor row, then `Actor::scan_ports(&lines)` (`:1413`, returns at once unless `self.ports.is_some()`, i.e. a run session) and `StateMachine::on_output(Instant::now(), &lines)`.
+- The state machine reads only the last `PATTERN_TAIL_LINES = 4` non-blank rows (`crates/mkrew-core/src/state.rs:21`; `needs_input` at `:144-163` trims, drops blanks, takes 4). The `tick` branch of `Actor::run` (`session.rs:1156-1163`, `sleep_until(tick_at)`, only armed while `Working`) also builds the full text.
+- Other consumers of the full text: only `Actor::scan_ports`. Not users: `session.read` uses `Emulator::last_lines` (own code), the terminal title `Emulator::take_title`, peek/attach `snapshot()`.
+- `Actor::deliver()` runs at the end of every `on_output` (`:1218`) and in the tick branch. `SendQueue::on_output` clears `in_flight`, then `deliver()` pops the next text if `can_deliver(self.session.state)`. A throttled scan would leave a stale `idle` there and deliver the second queued text into a busy agent, so a non-empty queue must bypass the throttle (`ScanRate::on_output(now, urgent)`).
+- Hooks still do NOT cover the scan (re-checked; reasons in Open questions): no shipped profile has `mode = "hook"` (`agents/*.toml`: claude, codex, copilot, omp are `hook+screen`; the rest `screen`); no hook reports `idle`; Claude/Codex profiles carry patterns (`'❯ 1\. Yes'`, `'(?i)allow command'`) hooks do not replace; the daemon cannot tell whether the user ran `mk integration install`.
+- `mod` list in `crates/mkrew-daemon/src/lib.rs:6-32` is alphabetical (`mod plan;` `mod server;` at :19-20). `session.rs` has `mod tests` (:1590) in pure-logic style with `ms(n)` helper.
+- `mkrew_core` exports `StateConfig`, `StateMachine`, `StateMode` at the crate root (`lib.rs:28-33`); `PATTERN_TAIL_LINES` is `mkrew_core::state::PATTERN_TAIL_LINES`.
+- Daemon e2e that must keep passing: `tests/daemon/states.rs` `fake_agent_session_reaches_needs_input_and_is_killed` (the fake agent prints a prompt then goes silent: needs the trailing scan); `tests/daemon/io.rs` `send_while_working_is_queued_until_the_agent_asks_and_wait_sees_it_finish`, `a_queued_text_removed_while_working_is_never_typed`, `exiting_with_queued_texts_announces_an_empty_queue`; `tests/daemon/runs.rs` `run_sessions_report_the_ports_they_print`.
+- Line numbers in `session.rs` shift when Tasks 7-12 land (they edit this file). Anchors below are quoted from the code.
 
 **Files:**
 - Create: `crates/mkrew-daemon/src/scan.rs` (`ScanRate`, `SCAN_GAP`, tests)
-- Create: `docs/decisions/0043-terminal-path-limits.md`
+- Create: `docs/decisions/0057-terminal-path-limits.md`
 - Modify: `crates/mkrew-daemon/src/lib.rs` (`mod scan;`)
 - Modify: `crates/mkrew-daemon/src/emulator.rs` (`lines_to_cursor`, new `tail_to_cursor`, `cursor_row`, `row_chars`, `row_text`; tests)
 - Modify: `crates/mkrew-daemon/src/session.rs` (`Actor` field `scan`, `Actor::run` branch, `on_output`, new `scan_screen`, `screen_tail`, `finish`)
 - Modify: `crates/mkrew-core/src/state.rs` (doc of `PATTERN_TAIL_LINES` only)
-- Modify: `docs/SPEC.md` §6 (:453-456), §8 (:625-626)
+- Modify: `docs/SPEC.md` §6 (after :460), §8 (:631-632)
 - Modify: `docs/HUMAN_CHECKS.md` (append to the shared perf section)
 
 **Interfaces:**
@@ -5361,7 +4410,7 @@ In `crates/mkrew-daemon/src/emulator.rs` `mod tests`, after `lines_stop_at_the_c
 Create `crates/mkrew-daemon/src/scan.rs` containing only the tests (the type does not exist yet):
 
 ```rust
-//! Rate limit of the per-session screen scan (ADR 0043). Pure: the caller passes `now`.
+//! Rate limit of the per-session screen scan (ADR 0057). Pure: the caller passes `now`.
 
 #[cfg(test)]
 mod tests {
@@ -5489,14 +4538,14 @@ mod tests {
 }
 ```
 
-In `crates/mkrew-daemon/src/lib.rs`, after `mod plan;` add `mod scan;`.
+In `crates/mkrew-daemon/src/lib.rs`, between `mod plan;` and `mod server;` add `mod scan;`.
 
-Run: `cargo test -p mkrew-daemon --lib scan::tests emulator::tests::the_tail -j 4`
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- scan::tests emulator::tests::the_tail`
 Expected: FAIL to compile (`ScanRate`, `SCAN_GAP`, `tail_to_cursor` do not exist).
 
 - [ ] **Step 2: `Emulator::tail_to_cursor`**
 
-`crates/mkrew-daemon/src/emulator.rs`: replace the whole `lines_to_cursor` method (from `/// Visible lines from the top of the screen down to the cursor row, trailing blanks` through its closing `}`, the `.collect()` of the `(0..=last).map(...)` chain) with:
+`crates/mkrew-daemon/src/emulator.rs`: replace the whole `lines_to_cursor` method (from `/// Visible lines from the top of the screen down to the cursor row, trailing blanks` through its closing `}`, `emulator.rs:111-129`) with:
 
 ```rust
     /// Visible lines from the top of the screen down to the cursor row, trailing blanks
@@ -5546,10 +4595,10 @@ Expected: FAIL to compile (`ScanRate`, `SCAN_GAP`, `tail_to_cursor` do not exist
     }
 ```
 
-`crates/mkrew-core/src/state.rs`, in the doc of `PATTERN_TAIL_LINES`, replace `The daemon passes the screen up to the cursor row.` with `The daemon builds only these rows (\`Emulator::tail_to_cursor\`) of the screen up to the cursor row.`
+`crates/mkrew-core/src/state.rs:20`, in the doc of `PATTERN_TAIL_LINES`, replace `The daemon passes the screen up to the cursor row.` with `The daemon builds only these rows (\`Emulator::tail_to_cursor\`) of the screen up to the cursor row.`
 
-Run: `cargo test -p mkrew-daemon --lib emulator::tests -j 4`
-Expected: PASS (`the_tail_is_what_the_full_text_fed_the_state_machine`, and the existing `lines_stop_at_the_cursor_row`, `scrolled_output_keeps_the_visible_screen`).
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- emulator::tests`
+Expected: PASS (`the_tail_is_what_the_full_text_fed_the_state_machine`, and the existing `lines_stop_at_the_cursor_row`, `last_lines_skip_blank_rows_and_keep_order`, the scrolled-screen test).
 
 - [ ] **Step 3: `ScanRate`**
 
@@ -5558,7 +4607,7 @@ Expected: PASS (`the_tail_is_what_the_full_text_fed_the_state_machine`, and the 
 ```rust
 use std::time::{Duration, Instant};
 
-/// Two scans of one session are at least this far apart: at most 4 a second (ADR 0043).
+/// Two scans of one session are at least this far apart: at most 4 a second (ADR 0057).
 pub const SCAN_GAP: Duration = Duration::from_millis(250);
 
 /// When a session's screen is scanned: right away after a quiet gap, else once the gap since
@@ -5617,18 +4666,18 @@ impl ScanRate {
 }
 ```
 
-Run: `cargo test -p mkrew-daemon --lib scan::tests -j 4`
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- scan::tests`
 Expected: PASS (5 tests).
 
 - [ ] **Step 4: Wire it into the actor**
 
 `crates/mkrew-daemon/src/session.rs`:
 
-(a) After `use crate::emulator::Emulator;` add:
+(a) After `use crate::launch;` (alphabetical with the other `crate::` uses; `use crate::emulator::Emulator;` is at :30) add:
 ```rust
 use crate::scan::{SCAN_GAP, ScanRate};
 ```
-and next to the other `mkrew_core` use lines add a separate line (do not edit the existing `use mkrew_core::{…}` line, items 12/13 touch it):
+and next to the other `mkrew_core` use lines add a separate line (do not edit the existing `use mkrew_core::{AgentProfile, …}` line, other tasks touch it):
 ```rust
 use mkrew_core::state::PATTERN_TAIL_LINES;
 ```
@@ -5641,22 +4690,22 @@ use mkrew_core::state::PATTERN_TAIL_LINES;
 with
 ```rust
     screen_print: Option<u64>,
-    /// At most one screen scan per [`SCAN_GAP`], plus a trailing one (ADR 0043).
+    /// At most one screen scan per [`SCAN_GAP`], plus a trailing one (ADR 0057).
     scan: ScanRate,
     /// `session.send` texts waiting for the session to be ready.
 ```
 
-(c) In the `Actor { … }` literal in `Hub::start`, replace `            screen_print: None,` with
+(c) In the `Actor { … }` literal in `Hub::spawn` (:527-547), replace `            screen_print: None,` with
 ```rust
             screen_print: None,
             scan: ScanRate::new(SCAN_GAP),
 ```
 
-(d) `Actor::run`: after the `let tick_at = self.machine.next_deadline().map(tokio::time::Instant::from_std);` statement add:
+(d) `Actor::run`: after the `let tick_at = self.machine.next_deadline().map(tokio::time::Instant::from_std);` statement (:1026-1029) add:
 ```rust
             let scan_at = self.scan.deadline().map(tokio::time::Instant::from_std);
 ```
-In the `tokio::select!`, replace the tick branch
+In the `tokio::select!`, replace the tick branch head
 ```rust
                 () = sleep_until(tick_at), if tick_at.is_some() => {
                     let lines = self.screen_lines();
@@ -5696,7 +4745,7 @@ with
 ```
 with
 ```rust
-        // The screen work runs at most every `SCAN_GAP` (ADR 0043). A waiting `session.send`
+        // The screen work runs at most every `SCAN_GAP` (ADR 0057). A waiting `session.send`
         // needs the current state when `deliver()` runs below, so it scans every batch.
         let now = Instant::now();
         if self.scan.on_output(now, !self.queue.is_empty()) {
@@ -5704,7 +4753,7 @@ with
         }
 ```
 
-(f) Replace the method `fn screen_lines(&self) -> Vec<String> { … }` (the whole method, 5 lines) with:
+(f) Replace the method `fn screen_lines(&self) -> Vec<String> { … }` (:1323-1328) with:
 ```rust
     /// Every row up to the cursor: only [`Actor::scan_ports`] of a run session needs it.
     fn screen_lines(&self) -> Vec<String> {
@@ -5745,7 +4794,7 @@ with
     }
 ```
 
-(g) `Actor::finish`: replace
+(g) `Actor::finish` (:1479): replace
 ```rust
     fn finish(mut self, exit_code: Option<i32>) {
         if let Err(e) = self.log.flush() {
@@ -5769,17 +4818,17 @@ Expected: no errors, no new warnings (`screen_lines` is still used by `scan_scre
 
 - [ ] **Step 5: Daemon e2e still holds**
 
-Run: `cargo test -p mkrew-daemon --test daemon fake_agent_session_reaches_needs_input -j 4` then `cargo test -p mkrew-daemon --test daemon send_while_working a_queued_text_removed exiting_with_queued -j 4`
-Expected: PASS (the prompt is found by the trailing scan; queued texts still go one at a time because a non-empty queue scans every batch).
+Run: `cargo test -p mkrew-daemon --test daemon -j 4 -- fake_agent_session_reaches_needs_input send_while_working a_queued_text_removed exiting_with_queued run_sessions_report_the_ports`
+Expected: PASS (the prompt is found by the trailing scan; queued texts still go one at a time because a non-empty queue scans every batch; a run that prints its port and exits at once still reports it, via the scan in `finish`). Build `mkrew-fakeagent` first if the harness needs it (`cargo build -p mkrew-fakeagent -p mkrew-cli -j 4`).
 
-- [ ] **Step 6: ADR 0043 and SPEC**
+- [ ] **Step 6: ADR 0057 and SPEC**
 
-Create `docs/decisions/0043-terminal-path-limits.md`:
+Create `docs/decisions/0057-terminal-path-limits.md`:
 
 ```markdown
-# 0043 — Terminal path limits: screen scan rate, UI scrollback, log replay
+# 0057 — Terminal path limits: screen scan rate, UI scrollback, log replay
 
-- Date: 2026-10-10
+- Date: 2026-10-13
 - Status: accepted
 - Milestone: post-M13 perf (docs/PERF_REVIEW.md B9, B10, B12)
 
@@ -5817,30 +4866,30 @@ Opening an exited session in History replays its log into a new emulator.
   unaffected.
 ```
 
-`docs/SPEC.md` §6: after the sentence ending `…gives garbage.` (:456) add a new paragraph:
+`docs/SPEC.md` §6: after the sentence ending `…gives garbage.` (:460) add a new paragraph:
 
 ```markdown
 The daemon scans a session's screen at most 4 times a second (a scan after the last output
 closes the gap, so the final screen is always classified) and the state machine reads only the
 last 4 non-blank rows up to the cursor; a state shown by the screen can therefore appear up to
-250 ms after the output (ADR 0043). A session with a queued `session.send` is scanned on every
+250 ms after the output (ADR 0057). A session with a queued `session.send` is scanned on every
 output.
 ```
 
-§8 (:625-626): replace
+§8 (:631-632): replace
 ```markdown
 - Output fan-out per chunk: emulator → state detector, session log file (buffered writer),
   attached clients (binary frames, §7).
 ```
 with
 ```markdown
-- Output fan-out per chunk: emulator → state detector (at most 4 scans/s per session, ADR 0043),
+- Output fan-out per chunk: emulator → state detector (at most 4 scans/s per session, ADR 0057),
   session log file (buffered writer), attached clients (binary frames, §7).
 ```
 
 - [ ] **Step 7: HUMAN_CHECKS**
 
-Append to the end of the section `### To verify — 2026-10-10 inbox: perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)` in `docs/HUMAN_CHECKS.md` (after its last bullet, before the next `### To verify —` heading):
+Append to the end of the perf section (`### To verify — 2026-10-13 perf (plan docs/superpowers/plans/2026-10-10-inbox-perf.md)`; Task 1 creates it above the first `### To verify —` heading, create it the same way if it is still missing) in `docs/HUMAN_CHECKS.md`, after its last bullet:
 
 ```markdown
 - [ ] **Terminal path, screen scan (T13):** restart the daemon. With claude (hooks off, patterns only) and a fake agent or a shell in the other two panes:
@@ -5851,31 +4900,42 @@ Append to the end of the section `### To verify — 2026-10-10 inbox: perf (plan
   - Task Manager: the daemon's CPU with three agents `working` is lower than before (note the numbers here).
 ```
 
-- [ ] **Step 8: Verify and tick**
+- [ ] **Step 8: Verify and commit**
 
-Run: `cargo test -p mkrew-daemon --lib scan emulator -j 4` and `cargo test -p mkrew-core state -j 4` (expect PASS), then the full verification (`scripts/verify.sh`). Do not tick inbox line 138 yet (Tasks 14 and 15 follow).
-Suggested message: `perf(daemon): scan the screen at most 4 times a second and build only the 4 lines the state machine reads`
+Run: `cargo test -p mkrew-daemon --lib -j 4 -- scan emulator` and `cargo test -p mkrew-core state -j 4` (expect PASS), then `sh scripts/verify.sh` (fallback if rustc crashes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Do not tick inbox line 138 yet (Tasks 14 and 15 follow).
+
+```
+git add crates/mkrew-daemon/src/scan.rs crates/mkrew-daemon/src/lib.rs crates/mkrew-daemon/src/emulator.rs crates/mkrew-daemon/src/session.rs crates/mkrew-core/src/state.rs docs/decisions/0057-terminal-path-limits.md docs/SPEC.md docs/HUMAN_CHECKS.md
+git commit -m "perf(daemon): scan the screen at most 4 times a second and build only the 4 lines the state machine reads"
+```
+(`session.rs`, `lib.rs`, `SPEC.md` and `HUMAN_CHECKS.md` are shared with other tasks: if another task's hunks are uncommitted there, use `git add -p` for these four and stage only this task's hunks.)
 
 ---
 
 ### Task 14: UI scrollback 5,000 lines and a reusable terminal grid (perf B10)
 
-Inbox: line 138 (bullet B10; do not tick yet). Spec: §10 terminal rendering (SPEC.md:808-818), ADR 0030 (`docs/decisions/0030-snapshot-carries-history.md`), ADR 0043.
+> **Refresh 2026-10-13:** still needed (`crates/mkrew-ui/src/terminal/emulator.rs:26` is still 10_000; `grid()` still allocates `vec![vec![blank; cols]; rows]` with a `Vec<char>` per cell, `:357-405`). Changes vs 2026-10-10:
+> - ADR 0057 (not 0043). SPEC §10 line is now `SPEC.md:850`.
+> - 95a8a6e (`OUTPUT_FRAME` = 16 ms, `main.rs:128`, used in `shell/connection.rs:174-197`) already caps how often a flooding pane is fed and so how often `grid()` is rebuilt (≤ ~60/s per window). The per-rebuild cost (rows × cols cells, a `Vec` per row and per zero-width cell) is unchanged by it, so the buffer reuse stays; it only has to cope with a grid rebuilt once per frame, which it does: the painter's `Prepainted.grid: Arc<Grid>` (`view.rs:839-840, 915-916`) is dropped when the frame ends, before the next feed.
+> - The old Task 14 test and doc anchors are re-based on the current `emulator.rs`/`layout.rs`/`stress.rs` lines; `tests/stress.rs` (`WARM_LINES`) now needs the new scrollback number.
 
-**Current state (investigated):**
-- `crates/mkrew-ui/src/terminal/emulator.rs`: `const SCROLLBACK_LINES: usize = 10_000;` (used in `Emulator::new` as `scrolling_history` and by three tests through the constant, so they follow the new value). The comment in `view_point` says `the history 10k lines`.
-- `Emulator::grid()` builds `vec![vec![blank; cols]; screen_lines]` (a new `Vec` per row; every `GridCell` holds `zerowidth: Vec<char>`), then overwrites every cell from `renderable_content().display_iter`. `shared_grid()` calls it inside `last_grid.get_or_insert_with` once per change, and `Emulator::changed()` (called by every `&mut self` method: `advance`, `resize`, scroll, selection, search) sets `last_grid` to `None`.
-- Consumers of the grid cell type: `Grid::to_text` and `Grid::row_chars` (same file); `layout.rs` (`layout_row`: `!cell.zerowidth.is_empty()`; `is_blank`; `push_text`: `segment.text.extend(cell.zerowidth.iter())`; `CachedRow { cells: Vec<GridCell> }` + `RowCache::row` compare `self.cells == cells` and `cells.to_vec()`); `view.rs` (`Prepainted.grid: Arc<Grid>`; paint loop over `grid.rows`; `Pane::link_at` uses `shared_grid().row_chars(row)`); `links.rs` takes `&[char]` from `row_chars` (does not see the cell type); `find.rs` tests read `rows[0][0].found`; selection and copy use alacritty's `selection_to_string`, not the grid; tests `tests/terminal_runs.rs` (`grid.rows`, `layout_row`) and `tests/stress.rs` (`pane.grid().to_text()`). `crates/spike-term` has its own copy: not touched.
-- Painting holds an `Arc<Grid>` (`Prepainted`) only for the duration of a frame, so by the next change `last_grid` is normally the sole owner and `Arc::try_unwrap` succeeds.
-- SPEC §10 (:809) says `scrollback (UI-side, 10,000 lines, only for attached panes)`. `HUMAN_CHECKS.md` mentions the 10k scrollback only in old, historical records (not edited). ADR 0030's option 2 mentions "10,000 lines each" as a rejected option (not edited).
+Inbox: line 138 (bullet B10; do not tick yet). Spec: §10 terminal rendering (SPEC.md:849-859), ADR 0030 (`docs/decisions/0030-snapshot-carries-history.md`), ADR 0057.
+
+**Current state (investigated 2026-10-13):**
+- `crates/mkrew-ui/src/terminal/emulator.rs:26`: `const SCROLLBACK_LINES: usize = 10_000;` (used in `Emulator::new` as `scrolling_history`, and by tests at `:671`, `:722`, `:724` through the constant, so they follow the new value). The comment in `view_point` (`:346`) says `the history 10k lines`.
+- `Emulator::grid()` (`:357-405`) builds `vec![vec![blank; cols]; screen_lines]` (a new `Vec` per row; every `GridCell` holds `zerowidth: Vec<char>`, `:36`), then overwrites every cell from `renderable_content().display_iter`. `shared_grid()` (`:352`) calls it inside `last_grid.get_or_insert_with` once per change, and `Emulator::changed()` (`:143`, called by every `&mut self` method: `advance`, `resize`, scroll, selection, search) sets `last_grid` to `None`.
+- Consumers of the cell type: `Grid::to_text` (`:86`) and `Grid::row_chars` (`:96`, returns `Vec<char>` of base chars, not zero-width ones); `layout.rs` (`layout_row` `:58`: `!cell.zerowidth.is_empty()` at `:83`; `is_blank` `:107-109`; `push_text` `:111-114`: `segment.text.extend(cell.zerowidth.iter())`; `CachedRow { cells: Vec<GridCell> }` `:296` + `RowCache::row` compares `self.cells == cells` and `cells.to_vec()` at `:354`); `view.rs` (`Prepainted.grid: Arc<Grid>` `:839-840`, taken from `shared_grid()` at `:915-916`; `Pane::link_at` `:359-361` uses `shared_grid().row_chars(row)`); `links.rs` takes `&[char]` and never sees the cell type; `find.rs` tests read `.found`; selection and copy use alacritty's `selection_to_string`, not the grid; tests `tests/terminal_runs.rs` (`grid.rows`, `layout_row`) and `tests/stress.rs` (`pane.grid().to_text()`). No file outside `terminal/` constructs `GridCell { … }` (grep `GridCell \{` finds only `emulator.rs`).
+- Painting holds an `Arc<Grid>` (`Prepainted`) only for the duration of a frame, so by the next change `last_grid` is normally the sole owner and `Arc::try_unwrap` succeeds; `link_at` clones it only inside one call.
+- SPEC §10 (`SPEC.md:850`) says `scrollback (UI-side, 10,000 lines, only for attached panes),`. `tests/stress.rs:48-49` has `WARM_LINES = 10_100` with the comment `(the UI emulator keeps 10,000)`. HUMAN_CHECKS mentions the 10k scrollback only in old, historical records (not edited). ADR 0030's option 2 mentions "10,000 lines each" as a rejected option (not edited). SPEC §20-notes `the 10k-line history` (HUMAN_CHECKS.md ~:1915, a historical implementation note) is not edited.
 - `Cursor` and `Grid` do not derive `Default` today.
 - Chosen type: `Option<Box<[char]>>` (`None` for ~every cell: no allocation, 16 bytes; the field cannot be `Some(empty)`), with an accessor `zerowidth() -> &[char]` so consumers stay one-liners.
 
 **Files:**
 - Modify: `crates/mkrew-ui/src/terminal/emulator.rs` (`SCROLLBACK_LINES`, `GridCell`, `Cursor`/`Grid` derives, `Grid::to_text`, `Emulator` field `spare`, `new`, `changed`, `shared_grid`, `grid`, new `fill_grid`, comment in `view_point`, tests)
 - Modify: `crates/mkrew-ui/src/terminal/layout.rs` (`layout_row`, `is_blank`, `push_text`, test)
-- Modify: `docs/SPEC.md` §10 (:809)
-- Modify: `docs/decisions/0043-terminal-path-limits.md` (append bullets)
+- Modify: `crates/mkrew-ui/tests/stress.rs` (`WARM_LINES`, its comment)
+- Modify: `docs/SPEC.md` §10 (:850)
+- Modify: `docs/decisions/0057-terminal-path-limits.md` (append bullets)
 - Modify: `docs/HUMAN_CHECKS.md` (append to the shared perf section)
 
 **Interfaces:**
@@ -5962,7 +5022,7 @@ Inbox: line 138 (bullet B10; do not tick yet). Spec: §10 terminal rendering (SP
     }
 ```
 
-`crates/mkrew-ui/src/terminal/layout.rs` `mod tests`, after the helper `fn row(…)`'s first dependent test (any place after `fn style`):
+`crates/mkrew-ui/src/terminal/layout.rs` `mod tests`, after the helper `fn style` (:379-387):
 
 ```rust
     /// A base char with zero-width chars is shaped as one cluster (its own segment), so the
@@ -5981,7 +5041,7 @@ Inbox: line 138 (bullet B10; do not tick yet). Spec: §10 terminal rendering (SP
     }
 ```
 
-Run: `cargo test -p mkrew-ui --lib terminal -j 4`
+Run: `cargo test -p mkrew-ui --lib -j 4 -- terminal`
 Expected: FAIL to compile (`GridCell::zerowidth()` does not exist).
 
 - [ ] **Step 2: Cell type without a `Vec` per cell**
@@ -6020,13 +5080,24 @@ impl GridCell {
 ```
 `#[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct Cursor` → `#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]`; `#[derive(Clone, Debug, PartialEq)] pub struct Grid` → `#[derive(Clone, Debug, Default, PartialEq)]`.
 
-In `Grid::to_text` replace `.chain(cell.zerowidth.iter().copied())` with `.chain(cell.zerowidth().iter().copied())`.
+In `Grid::to_text` replace `.flat_map(|cell| std::iter::once(cell.c).chain(cell.zerowidth.iter().copied()))` with `.flat_map(|cell| std::iter::once(cell.c).chain(cell.zerowidth().iter().copied()))`.
 
 `layout.rs`: in `layout_row` replace `|| !cell.zerowidth.is_empty() {` with `|| !cell.zerowidth().is_empty() {`; in `is_blank` replace `cell.zerowidth.is_empty()` with `cell.zerowidth().is_empty()`; in `push_text` replace `segment.text.extend(cell.zerowidth.iter());` with `segment.text.extend(cell.zerowidth().iter());`.
 
+`crates/mkrew-ui/tests/stress.rs:48-49`: replace
+```rust
+/// A pane fed this many lines has a full scrollback (the UI emulator keeps 10,000) and screen.
+const WARM_LINES: usize = 10_100;
+```
+with
+```rust
+/// A pane fed this many lines has a full scrollback (the UI emulator keeps 5,000) and screen.
+const WARM_LINES: usize = 5_100;
+```
+
 - [ ] **Step 3: Rebuild into the released buffer**
 
-`emulator.rs`, struct `Emulator`: after the `last_grid` field add
+`emulator.rs`, struct `Emulator`: after the `last_grid` field (:124) add
 ```rust
     /// The previous grid when [`Emulator::changed`] found no one painting it: the next
     /// [`Emulator::shared_grid`] rebuilds into its buffers instead of allocating rows x cols
@@ -6053,7 +5124,7 @@ with
         }
     }
 ```
-Replace `shared_grid` (its 3-line body) with
+Replace `shared_grid` (:351-355, doc comment kept) body with
 ```rust
     pub fn shared_grid(&self) -> Arc<Grid> {
         let mut last = self.last_grid.borrow_mut();
@@ -6064,7 +5135,7 @@ Replace `shared_grid` (its 3-line body) with
         }))
     }
 ```
-Replace the whole `pub fn grid(&self) -> Grid { … }` (from `pub fn grid(&self) -> Grid {` to its closing `}`, ending with `Grid { cols, rows, cursor }`) with:
+Replace the whole `pub fn grid(&self) -> Grid { … }` (:357-405, from `pub fn grid(&self) -> Grid {` to its closing `}`, ending with `Grid { cols, rows, cursor }`) with:
 
 ```rust
     /// A freshly built snapshot of the visible screen ([`Emulator::shared_grid`] reuses
@@ -6132,21 +5203,23 @@ Replace the whole `pub fn grid(&self) -> Grid { … }` (from `pub fn grid(&self)
         }
     }
 ```
-(The body lines of the old `grid()` that this replaces are the same logic: blank cell, `display_iter` overwrite, cursor, `visible_matches` / `current_match` marks. Only the target changed from local `rows` to `grid.rows` and the allocations went away.)
+(The body of the old `grid()` that this replaces is the same logic: blank cell, `display_iter` overwrite, cursor, `visible_matches` / `current_match` marks. Only the target changed from local `rows` to `grid.rows` and the per-frame allocations went away.)
 
-Run: `cargo test -p mkrew-ui --lib terminal -j 4`
+Run: `cargo test -p mkrew-ui --lib -j 4 -- terminal`
 Expected: PASS (the four new emulator tests, the layout test, and the existing `shared_grid_is_rebuilt_after_every_change`, `selection_marks_cells_and_copies_text`, `history_is_capped_at_the_scrollback_limit`, find tests). Then `cargo test -p mkrew-ui --test terminal_runs -j 4` (expect PASS, snapshot unchanged: the grid content is identical).
 
 - [ ] **Step 4: SPEC and ADR**
 
-`docs/SPEC.md` :809, replace `scrollback (UI-side, 10,000 lines, only for attached panes),` with `scrollback (UI-side, 5,000 lines, only for attached panes; ADR 0043),`.
+`docs/SPEC.md:850`, replace `scrollback (UI-side, 10,000 lines, only for attached panes),` with `scrollback (UI-side, 5,000 lines, only for attached panes; ADR 0057),`.
 
-`docs/decisions/0043-terminal-path-limits.md`: after the `- **Screen scan (B9).** …` bullet in `## Decision` add:
+`docs/decisions/0057-terminal-path-limits.md`: after the `- **Screen scan (B9).** …` bullet in `## Decision` add:
 ```markdown
 - **UI scrollback (B10).** 10,000 lines per pane become 5,000 (RAM and resize reflow grow with the
   history); the log on disk still keeps everything. A `GridCell` keeps its zero-width chars in an
   `Option<Box<[char]>>` instead of a `Vec<char>`, and `Emulator::shared_grid` rebuilds into the
-  buffers of the previous frame when the painter released it.
+  buffers of the previous frame when the painter released it. The repaint cap of one fed batch per
+  16 ms frame (`OUTPUT_FRAME`) is unchanged: it bounds how often the grid is rebuilt, this bounds
+  what a rebuild costs.
 ```
 and after the last bullet of `## Consequences` add:
 ```markdown
@@ -6166,41 +5239,53 @@ Append to the end of the perf section in `docs/HUMAN_CHECKS.md`:
   - With six panes flooding (the stress setup of T2.9) the UI memory is lower than with 10,000 lines (note the numbers).
 ```
 
-- [ ] **Step 6: Verify and tick**
+- [ ] **Step 6: Verify and commit**
 
-Run: `cargo test -p mkrew-ui --lib terminal -j 4` and `cargo test -p mkrew-ui --test terminal_runs --test stress -j 4` (expect PASS), then the full verification. Do not tick inbox line 138 yet (Task 15 follows).
-Suggested message: `perf(ui): 5,000-line pane scrollback and a terminal grid that reuses its buffer without a Vec per cell`
+Run: `cargo test -p mkrew-ui --lib -j 4 -- terminal` and `cargo test -p mkrew-ui --test terminal_runs --test stress -j 4` (expect PASS; the memory/timing asserts of `stress` apply in release only), then `sh scripts/verify.sh` (fallback as in Task 13). Do not tick inbox line 138 yet (Task 15 follows).
+
+```
+git add crates/mkrew-ui/src/terminal/emulator.rs crates/mkrew-ui/src/terminal/layout.rs crates/mkrew-ui/tests/stress.rs docs/SPEC.md docs/decisions/0057-terminal-path-limits.md docs/HUMAN_CHECKS.md
+git commit -m "perf(ui): 5,000-line pane scrollback and a terminal grid that reuses its buffer without a Vec per cell"
+```
+(`SPEC.md` and `HUMAN_CHECKS.md` are shared: `git add -p` if other tasks' hunks are uncommitted.)
 
 ---
 
 ### Task 15: History replays only the last 1 MiB of a log, from a safe boundary (perf B12)
 
-Inbox: line 138 (bullet B12; ticks `[~]`→`[x]`: the last task of item 14). Spec: §8 session logs (SPEC.md:645), notes (SPEC.md:1825-1829), ADR 0030, ADR 0043.
+> **Refresh 2026-10-13:** still needed. Changes vs 2026-10-10:
+> - `read_tail` and `Tail` moved to **`crates/mkrew-core/src/log_tail.rs`** (c71282f); the desktop (`crates/mkrew-ui/src/shell/history.rs:321`) and `mk web` (`crates/mkrew-cli/src/web/relay.rs:97`, `TAIL_BYTES = 512 KiB`, line 40) both call it. The safe-cut function `replay_start` and its tests therefore go into `mkrew-core` and fix both callers; only the cap constant `history::TAIL_BYTES` (UI, `history.rs:12`, 2 MiB → 1 MiB) stays in the UI. The web relay keeps 512 KiB (it is already below the new cap); only its stale comment (`relay.rs:39`, "the desktop History dialog shows 2 MiB") changes.
+> - ADR 0057 (not 0043). SPEC.md has no History-replay note (the old "SPEC :1826/:1829" text lives in `docs/HUMAN_CHECKS.md` implementation notes at :2178-2182 and the T5.9 check at :1193); those wordings are edited there, and SPEC §15's History row (`SPEC.md:1359`) gets the cap.
+> - `read_tail` still drops only up to the first `\n` of a cut stream (`log_tail.rs:42-44`): the no-line-break bug is still there.
 
-**Current state (investigated; the review's premise is out of date):**
-- The review says opening an exited session replays ~10 MB (`terminal/view.rs:134-135`). `TerminalPane::replay(session, log: &[u8], …)` only does `Emulator::new(cols, rows)` + `emulator.advance(log)` with whatever bytes it is given. Its only caller, `Shell::select_history` (`main.rs`), already reads `history::read_tail(&history.files, history::TAIL_BYTES)` off the UI thread, and `crates/mkrew-ui/src/history.rs` has `pub const TAIL_BYTES: u64 = 2 * 1024 * 1024;`. So today it replays at most **2 MiB**, not 10 MB. This task lowers the cap to 1 MiB (the inbox's ~1 MB).
-- The daemon does not serve the log bytes: `Request::SessionHistory` (`daemon/src/server.rs`) returns only the paths (`session_log::files`: `<id>.log.1`, `<id>.log`; rotation at 5 MB, `ROTATE_AT_BYTES`), and `read_tail` opens them in the UI process. No protocol change.
-- `read_tail` reads from the end (`seek(len - left)`), so only the cap is read. When cut it drops everything up to the first `\n` of the joined bytes (`bytes.iter().position(|&byte| byte == b'\n')`, `bytes.drain(..=newline)`). `\n` never occurs inside a UTF-8 multibyte char, so the char boundary and the escape sequences are safe. **Bug:** when the cut tail has no `\n` at all (a TUI that repaints with cursor moves), nothing is dropped and the replay starts mid-sequence or mid-char. The fix is a pure fn `replay_start` with fallbacks.
-- No SGR reset is needed: every replay is a fresh `Emulator::new`, which starts with default attributes, and the cut drops whole lines before the start. Modes set before the cut (alt screen `ESC[?1049h`) are lost; SPEC :1826-1827 already documents that a session ending on the alternate screen shows its last screen with little scrollback.
-- ADR 0030: attach snapshots carry the daemon's ≤ 200 history lines, "older output is in the History dialog (session log)". Consistent: History stays the place for old output, now the newest 1 MiB; the dialog's note (`Older output is left out; mk session history <id> prints all of it.`) already points to the full log.
-- Existing tests in `history.rs`: `read_tail_joins_the_parts_and_cuts_at_a_line_break` and `a_replayed_tail_shows_the_sessions_last_screen` (cut inside an escape sequence: stays valid).
-- "Log write blocking on the session task" (review): `Actor::on_output` calls `SessionLog::write` (a `BufWriter` with the default 8 KiB buffer) on the session's async task, so each 8 KiB triggers a blocking `write` syscall and rotation does `flush` + `rename` + `open` there. Not cheap and safe to fix (see Open questions): not changed here.
-- `SPEC.md` :1826 says `newest 2 MiB only, starting after the first line break past the cut` and :1829 `a 2 MiB log may stall one frame`; `HUMAN_CHECKS.md` :845 says `A log > 2 MB shows the "Older output is left out" note.`
+Inbox: line 138 (bullet B12; ticks `[~]`→`[x]`: the last task of item 14). Spec: §8 session logs, §15 (SPEC.md:1359), ADR 0030, ADR 0052 (web relay), ADR 0057.
+
+**Current state (investigated 2026-10-13; the review's premise is out of date):**
+- The review says opening an exited session replays ~10 MB. `TerminalPane::replay(session, log: &[u8], …)` only builds an `Emulator` and feeds it whatever bytes it is given. Its caller `Shell::load_history_log` (`crates/mkrew-ui/src/shell/history.rs:299-366`) already reads `mkrew_core::log_tail::read_tail(&history.files, history::TAIL_BYTES)` on `background_executor` (off the UI thread), and `crates/mkrew-ui/src/history.rs:12` has `pub const TAIL_BYTES: u64 = 2 * 1024 * 1024;`. Today it replays at most **2 MiB**, not 10 MB. This task lowers the cap to 1 MiB (the inbox's ~1 MB).
+- The daemon does not serve the log bytes: `Request::SessionHistory` returns only the paths (`<id>.log.1`, `<id>.log`; rotation at 5 MB), and `read_tail` opens them in the client process. No protocol change.
+- `read_tail` (`crates/mkrew-core/src/log_tail.rs:20-46`) reads from the end (`seek(len - left)`), so only the cap is read. When cut it drops everything up to the first `\n` of the joined bytes (`:42-44`). `\n` never occurs inside a UTF-8 multibyte char, so the char boundary and the escape sequences are safe. **Bug:** when the cut tail has no `\n` at all (a TUI that repaints with cursor moves), nothing is dropped and the replay starts mid-sequence or mid-char. The fix is a pure fn `replay_start` with fallbacks. Existing test: `read_tail_joins_the_parts_and_cuts_at_a_line_break` (`log_tail.rs:53`), stays valid.
+- No SGR reset is needed: every replay is a fresh emulator with default attributes, and the cut drops whole lines before the start. Modes set before the cut (alt screen `ESC[?1049h`) are lost; the HUMAN_CHECKS T5.9 note (:2179-2181) already documents that a session ending on the alternate screen shows its last screen with little scrollback.
+- ADR 0030: attach snapshots carry the daemon's ≤ 200 history lines, "older output is in the History dialog (session log)". Consistent: History stays the place for old output, now the newest 1 MiB; the dialog's note (`shell/history.rs:684`, `Older output is left out; mk session history {} prints all of it.`) already points to the full log.
+- UI test `a_replayed_tail_shows_the_sessions_last_screen` (`crates/mkrew-ui/src/history.rs:301-313`): the cut lands inside an escape sequence of the old part with a line break after it; stays valid.
+- "Log write blocking on the session task" (review): `Actor::on_output` calls `SessionLog::write` (a `BufWriter` with the default 8 KiB buffer) on the session's async task. Not cheap and safe to fix (see Open questions): not changed here.
+- Wording to update: `docs/HUMAN_CHECKS.md:1193` `A log > 2 MB shows the "Older output is left out" note.`; `:2179` `newest 2 MiB only, starting after the first line break past the cut;`; `:2182` `(a 2 MiB log may stall one frame)`. (Line 2182's "stall one frame" remark is now stale in its own right: the read is off the UI thread; only the replay `advance` runs on it.)
 
 **Files:**
-- Modify: `crates/mkrew-ui/src/history.rs` (`TAIL_BYTES`, new `replay_start`, `read_tail`, tests)
-- Modify: `docs/SPEC.md` (:1826, :1829 notes)
-- Modify: `docs/decisions/0043-terminal-path-limits.md` (append bullets)
-- Modify: `docs/HUMAN_CHECKS.md` (:845 wording; append to the shared perf section)
-- Modify: `docs/INBOX.md` (tick line 138)
+- Modify: `crates/mkrew-core/src/log_tail.rs` (new `replay_start`, `read_tail` cut, tests)
+- Modify: `crates/mkrew-ui/src/history.rs` (`TAIL_BYTES`)
+- Modify: `crates/mkrew-cli/src/web/relay.rs` (comment at :39 only)
+- Modify: `docs/SPEC.md` (§15 History row, :1359)
+- Modify: `docs/decisions/0057-terminal-path-limits.md` (append bullets)
+- Modify: `docs/HUMAN_CHECKS.md` (:1193, :2179, :2182 wording; append to the shared perf section)
+- Modify: `docs/INBOX.md` (tick line 138; left uncommitted, INBOX is never part of a task commit)
 
 **Interfaces:**
-- Produces: `pub fn replay_start(bytes: &[u8]) -> usize` in `crates/mkrew-ui/src/history.rs`.
-- Changes: `pub const TAIL_BYTES: u64` = 1 MiB. `read_tail(files: &[PathBuf], limit: u64) -> io::Result<Tail>` keeps its signature.
+- Produces: `pub fn replay_start(bytes: &[u8]) -> usize` in `crates/mkrew-core/src/log_tail.rs` (`mkrew_core::log_tail::replay_start`).
+- Changes: `pub const TAIL_BYTES: u64` (UI) = 1 MiB. `read_tail(files: &[PathBuf], limit: u64) -> io::Result<Tail>` keeps its signature.
 
 - [ ] **Step 1: Failing tests**
 
-`crates/mkrew-ui/src/history.rs` `mod tests`, after `read_tail_joins_the_parts_and_cuts_at_a_line_break`:
+`crates/mkrew-core/src/log_tail.rs` `mod tests`, after `read_tail_joins_the_parts_and_cuts_at_a_line_break`:
 
 ```rust
     #[test]
@@ -6270,35 +5355,26 @@ Inbox: line 138 (bullet B12; ticks `[~]`→`[x]`: the last task of item 14). Spe
     }
 
     #[test]
-    fn a_big_log_replays_at_most_a_mebibyte_of_whole_lines() {
+    fn a_big_log_is_read_as_whole_lines_within_the_limit() {
         let dir = tempfile::tempdir().unwrap();
         let log = dir.path().join("s.log");
         std::fs::write(&log, b"0123456789abcdef\r\n".repeat(200_000)).unwrap();
-        let tail = read_tail(&[log], TAIL_BYTES).unwrap();
+        let limit = 1024 * 1024;
+        let tail = read_tail(&[log], limit).unwrap();
         assert!(tail.cut);
         let len = tail.bytes.len() as u64;
-        assert!(len <= TAIL_BYTES && len > TAIL_BYTES - 64, "{len} bytes");
+        assert!(len <= limit && len > limit - 64, "{len} bytes");
         assert!(tail.bytes.starts_with(b"0123456789abcdef"));
     }
 ```
-Byte check: `b"\x82\xac rest\nnext"` is 2 + 5 + 1 = 8 bytes before `next`; `b"x\x1b[1my\nz"`: x, ESC, `[`, `1`, `m`, y, `\n` = 7; `b"1;32mgreen"` = 10 bytes before the ESC.
+Byte check: `b"\x82\xac rest\nnext"` is 2 + 5 + 1 = 8 bytes before `next`; `b"x\x1b[1my\nz"`: x, ESC, `[`, `1`, `m`, y, `\n` = 7; `b"1;32mgreen"` = 10 bytes before the ESC; the 31-byte log of the third test minus its first 5 bytes (`ESC [ 1 m b`) is the 26 bytes `old` + ESC`[0m` + ` long line no break`.
 
-Run: `cargo test -p mkrew-ui --lib history -j 4`
-Expected: FAIL to compile (`replay_start` does not exist; `a_big_log…` would also fail at 2 MiB).
+Run: `cargo test -p mkrew-core --lib -j 4 -- log_tail`
+Expected: FAIL to compile (`replay_start` does not exist).
 
 - [ ] **Step 2: Cap and safe boundary**
 
-`history.rs`: replace
-```rust
-/// Most log bytes replayed (the newest ones); `mk session history <id>` prints all of it.
-pub const TAIL_BYTES: u64 = 2 * 1024 * 1024;
-```
-with
-```rust
-/// Most log bytes replayed (the newest ones, ADR 0043); `mk session history <id>` prints all of it.
-pub const TAIL_BYTES: u64 = 1024 * 1024;
-```
-Replace the doc comment and head of `read_tail`:
+`crates/mkrew-core/src/log_tail.rs`: replace the doc comment and head of `read_tail` (:17-19)
 ```rust
 /// Reads the last `limit` bytes of `files` as one stream. A cut stream starts after its first
 /// line break, so the replay does not begin inside an escape sequence. A file that is gone
@@ -6343,29 +5419,43 @@ with
         bytes.drain(..replay_start(&bytes));
     }
 ```
+Update the module doc if it names the cap (it does not; `//!` stays).
 
-Run: `cargo test -p mkrew-ui --lib history -j 4`
-Expected: PASS (the four new tests; the existing `read_tail_joins_the_parts_and_cuts_at_a_line_break` and `a_replayed_tail_shows_the_sessions_last_screen` are unchanged and pass).
+`crates/mkrew-ui/src/history.rs:11-12`: replace
+```rust
+/// Most log bytes replayed (the newest ones); `mk session history <id>` prints all of it.
+pub const TAIL_BYTES: u64 = 2 * 1024 * 1024;
+```
+with
+```rust
+/// Most log bytes replayed (the newest ones, ADR 0057); `mk session history <id>` prints all of it.
+pub const TAIL_BYTES: u64 = 1024 * 1024;
+```
+
+`crates/mkrew-cli/src/web/relay.rs:39`: replace `(the desktop History dialog shows 2 MiB)` with `(the desktop History dialog shows 1 MiB)`. The value `TAIL_BYTES = 512 * 1024` stays.
+
+Run: `cargo test -p mkrew-core --lib -j 4 -- log_tail` and `cargo test -p mkrew-ui --lib -j 4 -- history`
+Expected: PASS (the four new core tests; the existing `read_tail_joins_the_parts_and_cuts_at_a_line_break` and the UI `a_replayed_tail_shows_the_sessions_last_screen` are unchanged and pass).
 
 - [ ] **Step 3: SPEC, ADR, HUMAN_CHECKS wording**
 
-`docs/SPEC.md`: at :1826 replace `newest 2 MiB only, starting after the first line break past the cut;` with `newest 1 MiB only (ADR 0043), starting after the first line break past the cut (at the first escape sequence when there is none);`. At :1829 replace `(a 2 MiB log may stall one frame)` with `(a 1 MiB log may stall one frame)`.
+`docs/SPEC.md:1359`, replace `| History | per-session output log, rotated at 5 MB |` with `| History | per-session output log, rotated at 5 MB; the History dialog replays its newest 1 MiB (ADR 0057) |`.
 
-`docs/decisions/0043-terminal-path-limits.md`: after the `- **UI scrollback (B10).** …` bullet add:
+`docs/decisions/0057-terminal-path-limits.md`: after the `- **UI scrollback (B10).** …` bullet add:
 ```markdown
 - **History replay (B12).** Opening an exited session replays the newest 1 MiB of its log (was
   2 MiB; the review's "10 MB" was the rotated log size, the UI already cut at 2 MiB). The cut
   starts after the first line break, else at the first ESC, so the emulator never starts inside a
-  char or an escape sequence. Older output stays in the log (`mk session history`), as ADR 0030
+  char or an escape sequence (`mkrew_core::log_tail::replay_start`, shared with `mk web`, which
+  keeps its own 512 KiB cap). Older output stays in the log (`mk session history`), as ADR 0030
   says for output beyond the daemon's 200 history lines.
 ```
 and after the last bullet of `## Consequences` add:
 ```markdown
-- SPEC notes (T5.x History) say 1 MiB. History shows the newest 1 MiB; the dialog's note points
-  to `mk session history` for the rest.
+- History shows the newest 1 MiB; the dialog's note points to `mk session history` for the rest.
 ```
 
-`docs/HUMAN_CHECKS.md` :845, replace `A log > 2 MB shows the "Older output is left out" note.` with `A log > 1 MB shows the "Older output is left out" note.`
+`docs/HUMAN_CHECKS.md`: at :1193 replace `A log > 2 MB shows the "Older output is left out" note.` with `A log > 1 MB shows the "Older output is left out" note.`; at :2179 replace `newest 2 MiB only, starting after the first line break past the cut;` with `newest 1 MiB only (ADR 0057), starting after the first line break past the cut (at the first escape sequence when there is none);`; at :2182 replace `(a 2 MiB log may stall one frame)` with `(a 1 MiB log may stall one frame)`.
 
 - [ ] **Step 4: HUMAN_CHECKS**
 
@@ -6377,10 +5467,1041 @@ Append to the end of the perf section in `docs/HUMAN_CHECKS.md`:
   - A short session (a few KB) replays completely with no note. A full-screen TUI session (claude or omp) shows its last screen without garbage at the top.
 ```
 
-- [ ] **Step 5: Verify and tick**
+- [ ] **Step 5: Verify, tick and commit**
 
-Run: `cargo test -p mkrew-ui --lib history -j 4` (expect PASS), then the full verification. This is the last task of item 14: in `docs/INBOX.md` change line 138 `- [ ] **14. Perf: terminal path (daemon scan, scrollback, replay)**` (or `[~]`) to `- [x] **14. Perf: terminal path (daemon scan, scrollback, replay)** → plan: docs/superpowers/plans/2026-10-10-inbox-perf.md Tasks 13-15`.
-Suggested message: `perf(ui): History replays the newest 1 MiB of a session log from a safe boundary`
+Run: `cargo test -p mkrew-core --lib -j 4 -- log_tail`, `cargo test -p mkrew-ui --lib -j 4 -- history` and `cargo test -p mkrew-cli -j 4 -- web` (expect PASS), then `sh scripts/verify.sh` (fallback as in Task 13). This is the last task of item 14: in `docs/INBOX.md` change line 138 `- [~] **14. Perf: terminal path (daemon scan, scrollback, replay)**` to `- [x] **14. Perf: terminal path (daemon scan, scrollback, replay)**` (the `→ plan: …Task 13, 14, 15` suffix stays). Do not commit INBOX.
+
+```
+git add crates/mkrew-core/src/log_tail.rs crates/mkrew-ui/src/history.rs crates/mkrew-cli/src/web/relay.rs docs/SPEC.md docs/decisions/0057-terminal-path-limits.md docs/HUMAN_CHECKS.md
+git commit -m "perf(ui): History replays the newest 1 MiB of a session log from a safe boundary"
+```
+(`SPEC.md` and `HUMAN_CHECKS.md` are shared: `git add -p` if other tasks' hunks are uncommitted.)
+
+---
+
+### Task 16: A working agent shows a still dot: no pulse, no stepping dots (perf A1 + N1, ADR 0058)
+
+> **Refresh 2026-10-13:** NEW task, written from the 2026-10-13 rescan. **A proposal that needs the user's OK before anyone executes it:** on 2026-10-10 he ticked `Giữ` for A1 (`docs/PERF_REVIEW.md:27`; `docs/INBOX.md:116` says "A1 (working dots) stays as is"). The 12 fps pulse (N1) was added after that tick (ADR 0054, tab dot and sidebar workspace pill) and costs 12 whole-window renders per second for as long as a working agent's tab or workspace row is on screen, about 24× the 500 ms dots. If he keeps `Giữ`, drop this task; the rest of the plan does not depend on it.
+> - The pulse is removed outright (`status_dot`'s `pulse` / `id` params, `with_animation`, `PULSE_*`).
+> - The working mark everywhere (pane pill, cards, inspector, peek, send dialog, sidebar row) becomes one still dot in the working color; the elapsed text next to it (`working · 2m`) is the "alive" signal.
+> - `status::redraw_due` treats Working like Idle: it redraws only when the elapsed label changes (each second for the first minute, then each minute).
+> - The "Starting agent" button and the voice "Transcribing" marker keep their stepping dots (they last seconds); the helper is renamed `loading_dots` because Working no longer uses it. See Open questions.
+> - **User decision 2026-10-14 (ticked `Làm` with a note):** instead of motion, every status gets its own clearly distinct still dot color, so states are told apart at a glance. Use the existing per-state tokens (`sidebar::status_color`: `status_working`, `status_needs_input`, `status_done`, `status_exited`; dark and light in `theme.rs`) for every still dot this task draws, filled, not hollow, for Working. Before Step 3, check where a state is drawn hollow or in a neutral color (Idle is a hollow ring today, `status_dot(.., hollow)`); if Idle has no own token, add `status_idle` to `Theme` (dark + light, muted, distinguishable from the other four) and use it. A still colored dot has no per-frame cost (no animation, no timer), so this does not change the perf result. Add the color check to Step 7's HUMAN_CHECKS bullet (each state's dot is distinct in dark and light).
+
+Inbox: none yet (proposed 2026-10-13; the user adds a line if accepted). Spec: §10 (SPEC.md:726-727 workspace pill, :795-797 tab dot), §11 (:910-916 status table, :942), §14 principle 5 (:1238-1240), §20G voice (:1947), §15 idle CPU (:1354); ADR 0054 (:30-33 says working dots pulse), ADR 0027 (:61). New ADR 0058.
+
+**Current state (investigated):**
+- Pulse: `status_dot(id, color, hollow, pulse)` (`shell/widgets.rs:718-746`) wraps the dot in `with_animation(Animation::new(theme::PULSE_PERIOD).repeat_synced().with_easing(pulsating_between(..)).with_max_fps(theme::PULSE_FPS), ..)` when `pulse`. Tokens: `theme.rs:916-918` (`PULSE_PERIOD`, `PULSE_MIN_OPACITY`) and `:922-923` (`PULSE_FPS = 12.0`, whose comment says "each redraw renders the window"). Imports: `widgets.rs:4` `use gpui::{Animation, AnimationExt, pulsating_between};` (no other use in the crate).
+- `pulse = true` callers: the tab dot (`Shell::tab_dot`, `shell/pane_render.rs:785-810`, the `SessionState::Working if urgent.kind == SessionKind::Agent` arm, used at `:122-129`) and the sidebar workspace pill (`shell/sidebar.rs:885-890`). `pulse = false` callers: `shell/sidebar.rs:123`, `shell/run.rs:339`, `:413-418`, `shell/phone_access.rs:156`.
+- Stepping dots: `status::WORKING_DOTS` / `status::working_dot(now)` (`status.rs:13-29`, one lit per `theme::STATUS_TICK` = 500 ms, `theme.rs:67`) and `widgets::working_dots(now, color)` (`shell/widgets.rs:698-716`). Users: `status_mark` Working branch (`widgets.rs:681-696`; callers `cards.rs:330`, `:733`, `inspector.rs:391`, `pane_render.rs:934` via `status_pill`, `peek.rs:525`, `send_dialog.rs:362`), `mark_slot` (`shell/sidebar.rs:1242-1272`, one dot blinking on `working_dot(now) == 0`; caller `:1234`), `starting_button` (`pane_render.rs:838-860`; callers `chrome.rs:450`, `pane_render.rs:311`), `voice_status` Transcribing (`sidebar.rs:845`).
+- Redraw: the status loop (`shell/connection.rs:48-112`) wakes every 500 ms and notifies the root when `status::redraw_due(sessions, last, now)` (`status.rs:108-117`: `Working => true`, `Idle =>` label changed). `due` also includes `starting_pane.is_some()` and `transcribing` (`connection.rs:100-101`); those stay.
+- Elapsed labels of a Working session: `status::time(state, changed_at, now)` (`status.rs:50-53`) returns `format_duration(now - changed_at)` for Working and Idle alike. It is shown by `status::text` (`working · 2m`: pane pill `pane_render.rs`, cards `cards.rs:331`, inspector `inspector.rs:71`, peek `peek.rs:544`, send dialog `send_dialog.rs:388`, fan-out `fanout.rs:86`) and by the sidebar row's time (`sidebar.rs:261`). Hover ages are computed when the tooltip opens. `format_duration` changes each second below 60 s, then each minute: the same cadence Idle already uses.
+- `SessionState::Working`'s glyph is `"•••"` (`sidebar.rs:40`), now only reached through `status::icon` in places that skip Working (`sidebar.rs:1104` `!working`, `mark_slot`, `status_mark`), so it only documents the SPEC table. The phone web UI has its own mark (`mkrew-cli/web/model.mjs:5`); not touched.
+- SPEC already rejects a pulse for the Run pill (`SPEC.md:879`; `run.rs:336` comment).
+
+**Files:**
+- Modify: `crates/mkrew-ui/src/status.rs` (`redraw_due`, rename `WORKING_DOTS`/`working_dot` → `LOADING_DOTS`/`loading_dot`, docs, tests)
+- Modify: `crates/mkrew-ui/src/sidebar.rs` (`status_display` Working glyph)
+- Modify: `crates/mkrew-ui/src/theme.rs` (delete `PULSE_*`; token docs)
+- Modify: `crates/mkrew-ui/src/shell/widgets.rs` (`status_mark`, `loading_dots`, `status_dot`, import)
+- Modify: `crates/mkrew-ui/src/shell/pane_render.rs`, `shell/sidebar.rs`, `shell/run.rs`, `shell/phone_access.rs`, `shell/cards.rs`, `shell/inspector.rs`, `shell/peek.rs`, `shell/send_dialog.rs`, `shell/connection.rs` (comment), `board.rs` (comment)
+- Modify: `docs/SPEC.md`, `docs/HUMAN_CHECKS.md`, `docs/decisions/0054-simplified-terminals-screen.md`, `docs/decisions/0027-calm-redesign.md`
+- Create: `docs/decisions/0058-static-working-marks.md`
+
+**Interfaces:**
+- Changes: `widgets::status_dot(color: u32, hollow: bool) -> gpui::Div` (no `id`, no `pulse`).
+- Changes: `widgets::status_mark(state, theme)` (no `now`); `widgets::loading_dots(now, color)` (renamed from `working_dots`); `status::loading_dot`, `status::LOADING_DOTS` (renamed); `Shell::tab_dot` returns `Option<(u32, bool)>`; `pane_render::status_pill(session, pill, theme)` (no `now`); `sidebar::mark_slot(mark, theme)` (no `now`).
+- Removes: `theme::PULSE_PERIOD`, `PULSE_MIN_OPACITY`, `PULSE_FPS`.
+- Behavior: `status::redraw_due` is true only when a Working or Idle session's `status::time` label differs between `last_ms` and `now_ms`.
+
+- [ ] **Step 1: Failing test**
+
+In `status.rs` `mod tests`, replace `redraws_only_when_the_shown_status_changes` with:
+
+```rust
+    #[test]
+    fn redraws_only_when_the_shown_status_changes() {
+        let tick = theme::STATUS_TICK.as_millis() as i64;
+        let still = [
+            session(SessionState::Done, 0),
+            session(SessionState::NeedsInput, 0),
+            session(SessionState::Exited, 0),
+        ];
+        assert!(!redraw_due(&still, 0, 600 * SEC));
+
+        // Working and idle show a time: each second under a minute, then only when the
+        // minute changes. Nothing else moves while an agent works (ADR 0058).
+        for state in [SessionState::Working, SessionState::Idle] {
+            let sessions = [session(state, 0)];
+            assert!(redraw_due(&sessions, 4 * SEC + 600, 5 * SEC + 100), "{state:?}");
+            assert!(!redraw_due(&sessions, 5 * SEC + 100, 5 * SEC + 600), "{state:?}");
+            assert!(!redraw_due(&sessions, 90 * SEC, 90 * SEC + tick), "{state:?}");
+            assert!(redraw_due(&sessions, 119 * SEC + 800, 120 * SEC + 300), "{state:?}");
+        }
+    }
+```
+
+Rename the existing test `working_dots_take_turns_one_per_tick` to `loading_dots_take_turns_one_per_tick`, and its calls `working_dot(..)` to `loading_dot(..)` (same assertions).
+
+Run: `cargo test -p mkrew-ui --lib status::tests -j 4`
+Expected: FAIL (`loading_dot` does not exist; the Working case of `redraw_due` is still `true` every tick).
+
+- [ ] **Step 2: `status.rs` and the glyph**
+
+`status.rs` lines 1-3 module doc: replace `working dots, elapsed/idle time` with `working/idle time`. Replace lines 13-14 and 24-34 with:
+
+```rust
+/// Dots of the loading mark (a pane being started, a voice transcription): one is lit per
+/// [`theme::STATUS_TICK`]. Working sessions show a still dot instead (ADR 0058).
+pub const LOADING_DOTS: usize = 3;
+```
+```rust
+/// The lit dot of the loading mark at `now_ms`: steps on the status tick.
+pub fn loading_dot(now_ms: i64) -> usize {
+    let step = theme::STATUS_TICK.as_millis().max(1) as i64;
+    (now_ms.max(0) / step) as usize % LOADING_DOTS
+}
+
+/// The state's glyph; `working` is a still dot.
+pub fn icon(state: SessionState) -> &'static str {
+    status_display(state).icon
+}
+```
+Replace `redraw_due` (lines 105-117) with:
+
+```rust
+/// Whether the status display changed between `last_ms` and `now_ms` (checked every
+/// [`theme::STATUS_TICK`]): a working or idle session's time text changes once per second,
+/// then once per minute. Nothing animates (ADR 0058).
+pub fn redraw_due(sessions: &[Session], last_ms: i64, now_ms: i64) -> bool {
+    sessions.iter().any(|s| {
+        time(s.state, s.state_changed_at, last_ms) != time(s.state, s.state_changed_at, now_ms)
+    })
+}
+```
+`sidebar.rs:40`: `SessionState::Working => ("•••", "working"),` → `SessionState::Working => ("●", "working"),`.
+
+- [ ] **Step 3: Widgets**
+
+In `shell/widgets.rs` delete line 4 (`use gpui::{Animation, AnimationExt, pulsating_between};`). Replace `status_mark`, `working_dots` and `status_dot` (lines 679-746) with:
+
+```rust
+/// A session's status mark (SPEC §11): one still dot while working, else the glyph. Fixed
+/// width, so rows with different states line up.
+pub(crate) fn status_mark(state: SessionState, theme: &Theme) -> gpui::AnyElement {
+    let color = sidebar::status_color(theme, state);
+    let mark = div()
+        .flex_none()
+        .w(theme::rems_px(theme::STATUS_MARK_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center();
+    if state != SessionState::Working {
+        return mark
+            .text_color(rgb(color))
+            .child(status::icon(state))
+            .into_any_element();
+    }
+    mark.child(status_dot(color, false)).into_any_element()
+}
+
+/// The loading mark: three dots taking turns, lit per [`theme::STATUS_TICK`] (a pane being
+/// started, a voice transcription: both last seconds, ADR 0058).
+pub(crate) fn loading_dots(now: i64, color: gpui::Rgba) -> gpui::Div {
+    let lit = status::loading_dot(now);
+    div()
+        .flex()
+        .items_center()
+        .gap(theme::rems_px(theme::STATUS_DOT_GAP))
+        .children((0..status::LOADING_DOTS).map(move |i| {
+            div()
+                .size(theme::rems_px(theme::STATUS_DOT))
+                .rounded_full()
+                .bg(color)
+                .opacity(if i == lit {
+                    opacity::FULL
+                } else {
+                    opacity::STATUS_DOT_DIM
+                })
+        }))
+}
+
+/// A round status dot: filled in `color`, or `hollow` (a ring: idle, stopped). Always still: a
+/// looping animation renders the whole window for as long as it is on screen (ADR 0058).
+pub(crate) fn status_dot(color: u32, hollow: bool) -> gpui::Div {
+    div()
+        .flex_none()
+        .size(theme::rems_px(theme::STATUS_DOT_LARGE))
+        .rounded_full()
+        .when(hollow, |el| {
+            el.border(px(theme::BORDER_WIDTH)).border_color(rgb(color))
+        })
+        .when(!hollow, |el| el.bg(rgb(color)))
+}
+```
+
+- [ ] **Step 4: Callers**
+
+`shell/pane_render.rs`:
+- `:122-129` becomes
+  ```rust
+                    .children(dot.map(|(color, hollow)| status_dot(color, hollow)))
+  ```
+- `tab_dot` (`:782-810`): doc line becomes `/// A tab's status dot from its most urgent pane: amber needs input, red exited, accent while an agent works, green for done or a live run process, else a hollow ring (idle, starting). `(color, hollow)`; `None` for an empty tab.`; return type `Option<(u32, bool)>`; the arms become
+  ```rust
+        Some(match urgent.state {
+            SessionState::NeedsInput => (theme.status_needs_input, false),
+            SessionState::Exited => (theme.status_exited, false),
+            SessionState::Working if urgent.kind == SessionKind::Agent => {
+                (theme.status_working, false)
+            }
+            _ if run_live => (theme.status_done, false),
+            SessionState::Done => (theme.status_done, false),
+            _ => (theme.status_idle, true),
+        })
+  ```
+- `starting_button` (`:837-860`): `working_dots(now, rgb(color))` → `loading_dots(now, rgb(color))`; doc: `with the loading dots`.
+- `status_pill` (`:908-936`): drop the `now: i64` parameter and the call becomes `.child(status_mark(state, theme))`; its caller `:551` becomes `status_pill(info, pill, theme)`.
+
+`shell/sidebar.rs`:
+- `:123` → `.child(status_dot(color, hollow))` (if `id` is then unused in that function, drop it; rustc says).
+- `:845` → `loading_dots(status::now_ms(), rgb(theme.text_muted))`.
+- `:885-890` → `.child(status_dot(theme.status_working, false))` (drop the `SharedString::from(format!("workspace-working-{project_id}"))` id). Doc of `workspace_row` (`:857-859`): `(pulsing dot)` → `(still dot)`.
+- `mark_slot` (`:1239-1272`) becomes
+  ```rust
+/// A sidebar row's state mark in a narrow fixed slot (empty without a mark), so agent chips
+/// stay in one column without pushing the rows in: one still dot while working, else the
+/// state glyph.
+fn mark_slot(mark: Option<SessionState>, theme: &Theme) -> gpui::AnyElement {
+    let slot = div()
+        .flex_none()
+        .w(theme::rems_px(theme::SIDEBAR_MARK_WIDTH))
+        .flex()
+        .items_center()
+        .justify_center();
+    let Some(state) = mark else {
+        return slot.into_any_element();
+    };
+    let color = rgb(sidebar::status_color(theme, state));
+    if state != SessionState::Working {
+        return slot
+            .text_size(font_size::META)
+            .text_color(color)
+            .child(status::icon(state))
+            .into_any_element();
+    }
+    slot.child(
+        div()
+            .size(theme::rems_px(theme::STATUS_DOT))
+            .rounded_full()
+            .bg(color),
+    )
+    .into_any_element()
+}
+  ```
+  and its caller `:1234` → `mark_slot(row.mark(), theme)` (`now` is still used by `session_tip` in `compact_session_row`).
+
+`shell/run.rs`: `:339` → `status_dot(dot, false)`; `:413-418` → `.child(status_dot(color, hollow))`. `shell/phone_access.rs:156` → `status_dot(theme.status_done, false)`. `shell/cards.rs:330` → `status_mark(session.state, theme)`, `:733` → `status_mark(session.state, theme)`; `inspector.rs:391`, `peek.rs:525`, `send_dialog.rs:362` the same (`choice.state`). If a `now` parameter or binding is then unused in one of those functions (the inspector's session card is the likely one), remove it up the call chain; `-D warnings` shows each.
+
+Comments: `shell/connection.rs:48` `// Spinner and elapsed/idle times move on their own (§11).` → `// Elapsed/idle times and the loading dots move on their own (§11).`; `board.rs:511` `(session spinners are covered by [`status::redraw_due`])` → `(session times are covered by [`status::redraw_due`])`.
+
+- [ ] **Step 5: Tokens**
+
+`theme.rs`: delete `PULSE_PERIOD`, `PULSE_MIN_OPACITY` (lines 916-918 with their doc line) and `PULSE_FPS` (922-923 with its doc line); the `READING_WIDTH` doc and constant (919-921) stay. Doc edits: `:75` → `/// Diameter of one dot of the loading mark and of the sidebar's still working dot (SPEC §11).`; `:77` → `/// Gap between the dots of the loading mark.`; `:82` → `/// The sidebar's narrower mark slot: one still dot while working, else the glyph.`; `:139` → `/// The unlit dots of the loading mark.`
+
+Compile check: `cargo check -p mkrew-ui --all-targets -j 4` Expected: no errors, no unused `now` / `SharedString` / `Duration` warnings (fix any it names). Run: `cargo test -p mkrew-ui --lib status::tests -j 4` Expected: PASS.
+
+- [ ] **Step 6: ADR 0058, SPEC, older ADR notes**
+
+Create `docs/decisions/0058-static-working-marks.md`:
+
+```markdown
+# 0058 — A working agent shows a still dot
+
+- Date: 2026-10-13
+- Status: proposed (accepted when the user OKs it; he ticked `Giữ` for perf A1 on 2026-10-10)
+- Milestone: perf review (A1, N1)
+
+## Context
+
+ADR 0027 replaced the pulsing dot with three dots stepping on the 500 ms status tick, and ADR
+0054 added a 12 fps pulse to the tab dot and the sidebar workspace pill. Every animation frame
+renders the whole window (`theme.rs` said so itself). While any agent works, the UI rendered 2
+times a second for the dots and 12 times a second for the pulse, all day, against SPEC §15's
+idle CPU budget. The run pill already has a still dot for this reason (ADR 0018).
+
+## Options
+
+1. Keep both (today). Most lively; 14 renders per second.
+2. Drop the pulse, keep the stepping dots. 2 renders per second.
+3. A still dot in the working color; only the elapsed text moves, once per second for the first
+   minute, then once per minute (as for idle time). Nothing animates.
+
+## Decision
+
+Option 3. `status_dot` has no pulse; the `working` mark, the sidebar slot and the tab dot are
+still dots. `status::redraw_due` redraws when a working or idle session's time text changes. The
+loading marks (a pane being started, a voice transcription) keep three stepping dots: they last
+seconds and the status tick already runs for them.
+
+## Consequences
+
+- SPEC §10, §11, §14 and §20G say so; ADR 0054 and ADR 0027 point here.
+- A still dot says "working" less loudly than motion; the `working · 12s` text next to it is the
+  live signal (never color alone, §11).
+- gpui's missing reduce-motion query no longer matters for these marks.
+- Reverting is local: `status_dot` and `status_mark`.
+```
+
+`docs/SPEC.md` (replace the fragment on each line):
+- `:727` `` `● 1 working` pill (pulsing dot) `` → `` `● 1 working` pill (a still dot) ``
+- `:796` `pulsing accent while an` → `accent while an`
+- `:913` the whole row → `| working | ● a still dot in the working color (no animation, ADR 0058) | elapsed time |`
+- `:942` `(a pill, pulsing dot)` → `(a pill, still dot)`
+- `:1239-1240` `Small, slow working dots.` → `Nothing loops while an agent works: its mark is a still dot and its time text moves (ADR 0058).`
+- `:1947` `the `working`\n   dots and `Transcribing`` → `the loading\n   dots and `Transcribing``
+
+`docs/decisions/0054-simplified-terminals-screen.md:30-33`: replace `Working dots (sidebar pill, tab dot) do pulse\n  (`with_animation`, which gpui draws still under reduce-motion); an agent that works prints\n  output anyway.` with `Working dots (sidebar pill, tab dot) pulsed in this ADR; ADR 0058 made them still.`
+
+`docs/decisions/0027-calm-redesign.md:61-62`: append to the bullet `(a GPUI animation redraws the whole window every frame); ADR 0058 later made the working mark a still dot too`.
+
+- [ ] **Step 7: HUMAN_CHECKS**
+
+Edit the old checks that describe motion: `docs/HUMAN_CHECKS.md:130-131` (`one blinking dot in a narrow slot` → `one still dot in a narrow slot`), `:751-753` (replace the whole `**Working dots:**` bullet with the new one below), `:789` (`its `••• N` count steps` → `its `● N working` pill shows the count`), `:748`, `:785`, `:1092` (`three dots` / `the three dots take turns` → `a still dot`), `:1984-1989` (T3.6: `every tick while a session works (4-frame spinner), for idle only when its time text changes` → `for a working or idle session only when its time text changes (each second, then each minute; ADR 0058)`; drop the sentence `gpui has no reduce-motion query, so the spinner always turns (slow enough to pass; revisit if gpui adds one).`). Then run Grep `three dots|••• |blinking dot|4-frame spinner` over `docs/HUMAN_CHECKS.md` and fix what is left in the same way (history sections that describe old behavior may stay).
+
+Append to the perf `### To verify —` section (created by Task 1; if it is missing, insert it above the first `### To verify —` heading):
+
+```markdown
+- [ ] **Still working marks (A1, N1, ADR 0058):** start 2 agents that work for a minute+. In the sidebar row, the workspace `● 2 working` pill, the tab dot, the pane pill, the Inbox / board cards and the inspector, a working agent shows one steady dot in the working color (nothing pulses or steps) next to `working · 12s`; the text still counts seconds, then minutes. Idle `○`, needs input `?` amber, done `✓` look as before. Dark and light. A pane being started shows `Starting agent` with three stepping dots; a voice transcription shows the dots and `Transcribing`.
+- [ ] **CPU (A1, N1):** with 2-3 agents `working` and the window visible, `mkrew-ui` CPU in Task Manager over one minute is lower than before this task (before: dots 2 renders/s plus the 12 fps pulse).
+```
+
+- [ ] **Step 8: Verify**
+
+Run: `sh scripts/verify.sh` (omp shell; `bash` is WSL). Fallback if rustc crashes: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`. Expected: PASS.
+
+- [ ] **Step 9: Commit**
+
+```
+git add crates/mkrew-ui/src/status.rs crates/mkrew-ui/src/sidebar.rs crates/mkrew-ui/src/theme.rs crates/mkrew-ui/src/board.rs crates/mkrew-ui/src/shell/widgets.rs crates/mkrew-ui/src/shell/pane_render.rs crates/mkrew-ui/src/shell/sidebar.rs crates/mkrew-ui/src/shell/run.rs crates/mkrew-ui/src/shell/phone_access.rs crates/mkrew-ui/src/shell/cards.rs crates/mkrew-ui/src/shell/inspector.rs crates/mkrew-ui/src/shell/peek.rs crates/mkrew-ui/src/shell/send_dialog.rs crates/mkrew-ui/src/shell/connection.rs docs/SPEC.md docs/HUMAN_CHECKS.md docs/decisions/0054-simplified-terminals-screen.md docs/decisions/0027-calm-redesign.md docs/decisions/0058-static-working-marks.md
+git commit -m "perf(ui): working agents show a still dot, no pulse or stepping dots"
+```
+Stage only the hunks this task made in files other tasks also edit (`connection.rs`, `HUMAN_CHECKS.md`, `SPEC.md`); never `-A` / `.`. Do not push.
+
+---
+
+### Task 17: The phone poll renders only on a change, and Tailscale is read every 3 s (perf N2)
+
+> **Refresh 2026-10-13:** NEW task from the rescan (finding N2); not in `docs/PERF_REVIEW.md`, so no earlier tick of the user to override.
+> - The Phone access poll (ADR 0053, added after the 2026-10-10 plan) wakes the UI thread every second for the app's whole life and ends every poll with an unconditional `cx.notify()`: a full root render every 5 s forever, even with `[web] enabled = false` and nothing changed.
+> - `Phone::polled` returns whether anything the title bar icon or the dialog shows changed; the shell notifies only then.
+> - While the dialog is open the two `tailscale` processes run every 3 s instead of every 1 s (still every tick while a Start / Stop click waits for the daemon).
+
+Inbox: none yet (proposed 2026-10-13; the user adds a line if accepted). Spec: §10 title bar phone icon, ADR 0053 (`docs/decisions/0053-phone-access-ui.md`), §15 idle CPU.
+
+**Current state (investigated):**
+- `shell/connection.rs:113-128`: a loop sleeps `theme::PHONE_TICK` (1 s, `theme.rs:72`) and calls `shell.poll_phone` when `shell.phone.due(Instant::now(), shell.phone_open)`. `Phone::due` (`phone_dialog.rs:277-283`): `open || last_poll.is_none_or(|last| now - last >= theme::PHONE_POLL_IDLE)` (5 s, `theme.rs:73`). Other callers of `poll_phone`: the dialog opening (`phone_access.rs:20`), after Start / Stop (`:98`), the first load (`connection.rs:169`).
+- `Shell::poll_phone` (`shell/phone_access.rs:44-80`): `daemon.status` always; when the dialog is open also `Local::read` on the background executor (`phone_dialog.rs:194-208`: `tailscale::serve_status()` then `tailscale::dns_name()`: two process spawns) and the `web_token` file. The answer lands in `Phone::polled(web, local, now, colors)` (`phone_dialog.rs:297-341`) and `cx.notify()` follows unconditionally (`phone_access.rs:76`).
+- What `polled` changes: `polling`, `copied` (the "Copy link" label says "Copied" until the next poll, `:218`), `pending` (Start / Stop wait), `daemon`, and with `local`: `serve`, `host`, `token`, `link`. What is visible: `running()` (title bar icon), `status_row`, `serve_row`, `link_block`, `link`, `pending()`, `copied`.
+- `polled` has no return value; tests call it as a statement (`phone_dialog.rs` tests: `polled_on`, `:474-519`, `:542`).
+- `Daemon`, `Serve`, `Setup` derive `PartialEq` (`phone_dialog.rs:19, 27, 38`); `WebStatus` derives `PartialEq`.
+
+**Files:**
+- Modify: `crates/mkrew-ui/src/phone_dialog.rs` (`polled`, `due`, tests)
+- Modify: `crates/mkrew-ui/src/theme.rs` (`PHONE_POLL_OPEN`, docs)
+- Modify: `crates/mkrew-ui/src/shell/phone_access.rs` (notify only on change)
+
+**Interfaces:**
+- Changes: `Phone::polled(&mut self, web, local, now, colors) -> bool` (true when anything visible changed).
+- Produces: `theme::PHONE_POLL_OPEN: Duration = 3 s`.
+- Behavior: `Phone::due(now, open)`: closed, every `PHONE_POLL_IDLE`; open, every `PHONE_POLL_OPEN`; open while a Start / Stop click waits (`pending` is set), on every tick. `PHONE_TICK` (the loop's wake) stays 1 s: waking without a poll renders nothing.
+
+- [ ] **Step 1: Failing tests**
+
+In `phone_dialog.rs` `mod tests` add (they use the existing `web`, `local`, `token`, `COLORS`):
+
+```rust
+    #[test]
+    fn a_poll_that_changes_nothing_says_so() {
+        let t0 = Instant::now();
+        let mut phone = Phone::default();
+        assert!(phone.polled(Ok(web(true, true, None)), None, t0, COLORS), "loading -> known");
+        assert!(!phone.polled(Ok(web(true, true, None)), None, t0, COLORS));
+        assert!(phone.polled(Ok(web(true, false, None)), None, t0, COLORS), "mk web stopped");
+        assert!(phone.polled(Err("pipe closed".into()), None, t0, COLORS));
+        assert!(
+            !phone.polled(Err("pipe closed".into()), None, t0, COLORS),
+            "the same failure again"
+        );
+    }
+
+    #[test]
+    fn the_dialogs_own_readings_count_only_when_they_differ() {
+        let t0 = Instant::now();
+        let mut phone = Phone::default();
+        let on = |phone: &mut Phone, local: Local| {
+            phone.polled(Ok(web(true, true, None)), Some(local), t0, COLORS)
+        };
+        let host = Some("pc.tail1.ts.net");
+        assert!(on(&mut phone, local(host, Some(token("a1")))), "first answer");
+        assert!(!on(&mut phone, local(host, Some(token("a1")))), "same host and token");
+        assert!(on(&mut phone, local(host, Some(token("b2")))), "a new token");
+        assert!(on(&mut phone, local(host, None)), "the token file is gone");
+        assert!(on(&mut phone, local(None, None)), "Tailscale lost its name");
+        let missing = Local {
+            serve: Serve::Missing,
+            host: host.map(str::to_owned),
+            token: None,
+        };
+        assert!(on(&mut phone, missing), "serve state and host changed");
+    }
+
+    #[test]
+    fn clearing_copied_and_ending_the_wait_are_visible_changes() {
+        let t0 = Instant::now();
+        let mut phone = Phone::default();
+        let link = || Some(local(Some("pc.tail1.ts.net"), Some(token("a1"))));
+        phone.polled(Ok(web(true, true, None)), link(), t0, COLORS);
+        assert!(phone.copy_link().is_some());
+        assert!(phone.polled(Ok(web(true, true, None)), link(), t0, COLORS), "Copied -> Copy link");
+        assert!(!phone.polled(Ok(web(true, true, None)), link(), t0, COLORS));
+        // A click waits for the daemon to agree; the wait ends by timeout with the daemon
+        // unchanged, which is still something to show.
+        phone.written(false, t0);
+        let later = t0 + Duration::from_secs(1);
+        assert!(!phone.polled(Ok(web(true, true, None)), None, later, COLORS), "still waiting");
+        let timeout = t0 + PENDING_TIMEOUT;
+        assert!(phone.polled(Ok(web(true, true, None)), None, timeout, COLORS));
+        assert_eq!(phone.pending(), None);
+    }
+
+    #[test]
+    fn polls_are_spaced_by_what_each_costs() {
+        let t0 = Instant::now();
+        let mut phone = Phone::default();
+        assert!(phone.due(t0, false) && phone.due(t0, true), "never polled");
+        assert!(phone.begin_poll(t0));
+        let just_before = |every: Duration| t0 + every - Duration::from_millis(1);
+        // Closed: the title bar icon only.
+        assert!(!phone.due(just_before(theme::PHONE_POLL_IDLE), false));
+        assert!(phone.due(t0 + theme::PHONE_POLL_IDLE, false));
+        // Open: Tailscale is two process runs.
+        assert!(!phone.due(just_before(theme::PHONE_POLL_OPEN), true));
+        assert!(phone.due(t0 + theme::PHONE_POLL_OPEN, true));
+        // Waiting for the daemon to agree with a Start / Stop click: every tick.
+        phone.written(true, t0);
+        assert!(phone.due(t0, true));
+        assert!(!phone.due(t0, false), "closed: the tick is not faster");
+    }
+```
+
+Run: `cargo test -p mkrew-ui --lib phone_dialog::tests -j 4`
+Expected: FAIL to compile (`polled` returns `()`, `PHONE_POLL_OPEN` does not exist).
+
+- [ ] **Step 2: `theme.rs`**
+
+Replace `theme.rs:69-73` with:
+
+```rust
+/// The Phone access poll clock (ADR 0053): the loop wakes every [`PHONE_TICK`] and polls when
+/// `Phone::due`: closed, `daemon.status` alone every [`PHONE_POLL_IDLE`] (it keeps the title
+/// bar icon true); open, also Tailscale (two process runs) every [`PHONE_POLL_OPEN`], and on
+/// every tick while a Start / Stop click waits for the daemon.
+pub const PHONE_TICK: Duration = Duration::from_secs(1);
+pub const PHONE_POLL_IDLE: Duration = Duration::from_secs(5);
+pub const PHONE_POLL_OPEN: Duration = Duration::from_secs(3);
+```
+
+- [ ] **Step 3: `Phone::due` and `Phone::polled`**
+
+`phone_dialog.rs`, replace `due` (`:277-283`):
+
+```rust
+    /// The loop's tick: how long since the last poll decides (see [`theme::PHONE_POLL_OPEN`]).
+    pub fn due(&self, now: Instant, open: bool) -> bool {
+        let every = match (open, self.pending) {
+            (false, _) => theme::PHONE_POLL_IDLE,
+            // A click waits for the daemon to agree: look at every tick.
+            (true, Some(_)) => Duration::ZERO,
+            (true, None) => theme::PHONE_POLL_OPEN,
+        };
+        self.last_poll
+            .is_none_or(|last| now.duration_since(last) >= every)
+    }
+```
+
+Replace `polled` (`:295-341`):
+
+```rust
+    /// A poll answered: `web` from `daemon.status`, `local` only when the dialog is open.
+    /// `colors` = `#rrggbb` of `qr_dark` / `qr_light`. Returns whether anything the title bar
+    /// icon or the dialog shows changed: the caller renders only then.
+    pub fn polled(
+        &mut self,
+        web: Result<WebStatus, String>,
+        local: Option<Local>,
+        now: Instant,
+        colors: (&str, &str),
+    ) -> bool {
+        self.polling = false;
+        // "Copied" lasts until the next poll: clearing it is a visible change.
+        let mut changed = std::mem::take(&mut self.copied);
+        let daemon = match web {
+            Ok(web) => {
+                if let Some((wanted, since)) = self.pending
+                    && (web.enabled == wanted || now.duration_since(since) >= PENDING_TIMEOUT)
+                {
+                    self.pending = None;
+                    changed = true;
+                }
+                Daemon::Known(web)
+            }
+            Err(error) => Daemon::Failed(error),
+        };
+        changed |= self.daemon != daemon;
+        self.daemon = daemon;
+        let Some(local) = local else {
+            return changed;
+        };
+        changed |= self.serve != local.serve
+            || self.host != local.host
+            || self.token != local.token;
+        self.serve = local.serve;
+        self.host = local.host;
+        self.token = local.token;
+        // Every poll lands here: render the QR code again only for another link (a changed
+        // host or token is already counted above).
+        let text = match (&self.host, &self.token) {
+            (Some(host), Some(token)) => Some(phone::link(host, token)),
+            _ => None,
+        };
+        if self.link.as_ref().map(|link| &link.text) != text.as_ref() {
+            self.link = text.map(|text| {
+                let image = phone::qr_svg(&text, colors.0, colors.1).map(|svg| {
+                    Arc::new(gpui::Image::from_bytes(
+                        gpui::ImageFormat::Svg,
+                        svg.into_bytes(),
+                    ))
+                });
+                Link { text, image }
+            });
+        }
+        changed
+    }
+```
+
+- [ ] **Step 4: Notify only on change**
+
+`shell/phone_access.rs:68-77` becomes:
+
+```rust
+            let _ = this.update(cx, |shell, cx| {
+                let (dark, light) = {
+                    let theme = cx.theme();
+                    (theme::hex(theme.qr_dark), theme::hex(theme.qr_light))
+                };
+                // A poll that found nothing new renders nothing (perf N2).
+                let changed = shell
+                    .phone
+                    .polled(web, local, Instant::now(), (&dark, &light));
+                if changed {
+                    cx.notify();
+                }
+            });
+```
+and the doc of `poll_phone` (`:41-43`) gets the sentence `The window renders only when the answer changed something.`
+
+Compile check: `cargo check -p mkrew-ui --all-targets -j 4` Expected: no errors. Run: `cargo test -p mkrew-ui --lib phone_dialog::tests -j 4` Expected: PASS (the older tests ignore the new return value).
+
+- [ ] **Step 5: HUMAN_CHECKS**
+
+Append to the perf `### To verify —` section:
+
+```markdown
+- [ ] **Phone access poll (N2, ADR 0053):** open "Phone access" with Tailscale running and `[web]` on: the rows and the QR are right as before. Quit Tailscale, wait: the Tailscale row turns to "Install and sign in to Tailscale first" within a few seconds (it was 1 s, now about 3 s); start it again, same. Press Start / Stop: the row still shows "Starting…" then `● On` within about a second of the daemon agreeing. Press Copy link: it reads "Copied" until the next poll (≤ 3 s), then "Copy link". With the dialog closed and `[web] enabled = false`, `mkrew-ui` CPU is flat at idle (no render every 5 s).
+```
+
+- [ ] **Step 6: Verify**
+
+Run: `sh scripts/verify.sh` (fallback: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```
+git add crates/mkrew-ui/src/phone_dialog.rs crates/mkrew-ui/src/theme.rs crates/mkrew-ui/src/shell/phone_access.rs docs/HUMAN_CHECKS.md
+git commit -m "perf(ui): the phone poll renders only on a change and reads Tailscale every 3 s"
+```
+Stage only this task's hunks in `theme.rs` and `HUMAN_CHECKS.md`. Do not push.
+
+---
+
+### Task 18: Mermaid draws only the current appearance and caches by block text (perf A5)
+
+> **Refresh 2026-10-13:** NEW task (proposal for the A5 `Sửa` option). **Needs the user's OK:** on 2026-10-10 he ticked `Giữ` for A5 (`docs/PERF_REVIEW.md:55`), i.e. do nothing. The cost is still there after the Markdown work: `Shown::from_text` runs `diagram::render` for every mermaid block on every parse (Docs re-read on `doc.changed`; Files preview after each text change, one build in flight), and `draw` lays out and renders each block twice (light and dark), with no cache. If he keeps `Giữ`, drop this task.
+> - Today both appearances are drawn into one `Diagram { light, dark, width, height }` and `Diagram::image(theme)` picks one at render time (`diagram.rs:17-31`, `preview.rs:413`). The pair exists only so a theme switch needs no redraw.
+> - New: one drawing per block for `Shown`'s appearance, kept in a process-wide cache keyed by (hash of the block text, dark). Unchanged blocks are free on every re-parse; a new keystroke redraws only the edited block.
+> - A theme switch (toggle, OS appearance, `settings.toml`) builds the shown Docs page and Files preview again, only when they contain a diagram; drawings seen before come from the cache. A page without diagrams is never rebuilt.
+> - The Files preview build (Task 4 was dropped, nothing to wait for) and the virtual preview (42f3969) are unchanged; `FilesView::preview_request` gains the appearance.
+
+Inbox: none yet (proposed 2026-10-13; the user adds a line if accepted). Spec: §12 (SPEC.md:968-970 mermaid), §12A (:1029-1040 Markdown preview), §14, ADR 0021 (`docs/decisions/0021-docs-preview-rendering.md:30-44`).
+
+**Current state (investigated):**
+- `diagram.rs:33-65`: `render(source)` → `catch_unwind(draw)`; `draw` parses once, then per appearance runs `compute_layout` + `render_svg` + `measure_svg_dimensions` and wraps both SVGs in `Arc<Image>`; width/height are the larger of the two. `Diagram::image(theme)` picks `theme.dark` (`theme.rs:561` doc "picks diagram images"). No cache.
+- Callers: `docs::Shown::from_text` (`docs.rs:73-95`) inserts `diagram::render(text)` per mermaid block into `Shown.diagrams: HashMap<u32, Result<Diagram, String>>` (key = the block's first source line). `Shown::new(&DocContent)` (`:64-69`) wraps it. Built on the background executor by `Shell::read_doc` (`shell/docs.rs:115-153`, `Shown::new(&content)`) and `Shell::build_preview` (`shell/files.rs:181-208`, `Shown::from_text(&text)`), both off the UI thread. Also `tests/docs_view.rs:108`, `docs.rs:352-353` (test helper), `preview.rs:723-724`, `files_view/tests.rs:190-192`.
+- Render: `preview::block` (`preview.rs:236-249`) draws `diagram_view(diagram, theme)` (`:401-420`, `img(diagram.image(theme))`) or the error with the source.
+- Theme changes: `theme::refresh(mode, window, cx)` at `workspace_actions.rs:399-401` (`toggle_theme`), `connection.rs:28-31` (OS appearance) and `connection.rs:70-71` (settings reload). Nothing re-parses a page today.
+- Files preview state: `FilesView::preview_request` / `preview_ready` / `preview_asked: Option<Stamp>` (`files_view.rs:160, 627-651`), `MdPreview { stamp, shown }` (`:110-113`); `build_preview` re-asks after every ready (`shell/files.rs:203`).
+- `Docs` (`docs.rs:116-137`) has pub `selected: Option<String>` and `doc: Doc`; `Docs::read` replaces the page (`:208-221`).
+
+**Files:**
+- Modify: `crates/mkrew-ui/src/diagram.rs` (one appearance, cache, tests)
+- Modify: `crates/mkrew-ui/src/docs.rs` (`Shown.dark`, `Shown::new/from_text(.., dark)`, `Shown::stale_diagrams`, `Docs::redraw_for`, tests)
+- Modify: `crates/mkrew-ui/src/preview.rs` (`diagram_view`, test helper)
+- Modify: `crates/mkrew-ui/src/files_view.rs` and `files_view/tests.rs` (`preview_request(dark)`, `preview_ready`)
+- Modify: `crates/mkrew-ui/src/shell/docs.rs`, `shell/files.rs`, `shell/connection.rs`, `shell/workspace_actions.rs`
+- Modify: `crates/mkrew-ui/tests/docs_view.rs`
+- Modify: `docs/SPEC.md`, `docs/decisions/0021-docs-preview-rendering.md`, `docs/HUMAN_CHECKS.md`
+
+**Interfaces:**
+- Changes: `diagram::render(source: &str, dark: bool) -> Result<Diagram, String>`; `Diagram { image: Arc<Image>, width, height }` (no `light` / `dark`, no `image(theme)`).
+- Changes: `docs::Shown::new(content: &DocContent, dark: bool)`, `Shown::from_text(text: &str, dark: bool)`; new field `Shown.dark: bool` ("the appearance its diagrams were drawn for"); `Shown::stale_diagrams(&self, dark) -> bool` (it has diagrams and was drawn for the other appearance).
+- Produces: `Docs::redraw_for(&self, dark) -> Option<&str>` (the selected file when its page must be built again); `FilesView::preview_request(&mut self, dark: bool)`; `Shell::redraw_diagrams(&mut self, window, cx)`.
+- Cache: `static CACHE` in `diagram.rs`, (hash of block text, dark) → `Result<Diagram, String>`, emptied when it holds 64 entries. Errors are cached too (a crash is not repeated on every re-parse).
+
+- [ ] **Step 1: Failing tests**
+
+`diagram.rs` `mod tests`: replace `flowcharts_draw_in_both_appearances_and_bad_sources_say_why` and adapt the pie test:
+
+```rust
+    const FLOW: &str = "flowchart LR\n  A[Plan] --> B{Review}\n  B -->|ok| C[Ship]\n";
+
+    fn svg(image: &Arc<Image>) -> String {
+        String::from_utf8(image.bytes.clone()).unwrap()
+    }
+
+    #[test]
+    fn flowcharts_draw_in_the_asked_appearance_and_bad_sources_say_why() {
+        let dark = render(FLOW, true).unwrap();
+        let light = render(FLOW, false).unwrap();
+        assert!(dark.width > 0.0 && dark.height > 0.0);
+        assert!(svg(&dark.image).contains(&format!("#{:06X}", Theme::dark().surface)));
+        assert!(svg(&light.image).contains(&format!("#{:06X}", Theme::light().surface)));
+        assert_ne!(dark.image, light.image);
+        let bad = render("flowchart LR\n  A -->", false).unwrap_err();
+        assert!(bad.contains("A -->"), "{bad}");
+    }
+
+    #[test]
+    fn a_block_is_drawn_once_per_appearance() {
+        let first = render(FLOW, false).unwrap();
+        let again = render(FLOW, false).unwrap();
+        assert!(Arc::ptr_eq(&first.image, &again.image), "cached by text and appearance");
+        let other = render(FLOW, true).unwrap();
+        assert!(!Arc::ptr_eq(&first.image, &other.image));
+        let edited = render(&format!("{FLOW}  C --> D\n"), false).unwrap();
+        assert!(!Arc::ptr_eq(&first.image, &edited.image), "another text, another drawing");
+        // A bad source is remembered too.
+        assert_eq!(render("flowchart LR\nA[/]\n", false), render("flowchart LR\nA[/]\n", false));
+    }
+```
+`renderer_crashes_become_a_reason` becomes `render("flowchart LR\nA[/]\n", false)`. In `pie_labels_read_on_every_slice_and_outside_in_both_appearances` replace the drawing part:
+
+```rust
+        // A 3 % slice has its label outside, on the label box.
+        for (dark, theme) in [(true, Theme::dark()), (false, Theme::light())] {
+            let svg = svg(&render("pie\n  \"A\": 95\n  \"B\": 3\n", dark).unwrap().image);
+            let first = format!("#{:06X}", theme.workspace_colors[0]);
+            assert!(svg.contains(&first), "slices in this appearance's colors");
+            let label_box = format!("ry=\"2\" fill=\"#{:06X}\" stroke=\"none\"", theme.text);
+            assert!(svg.contains(&label_box), "outside label box");
+        }
+```
+
+`docs.rs` `mod tests`: change the helper to `Shown::new(&content(path, text, hash), false)`, update `mermaid_blocks_are_drawn_and_other_code_is_not` as is (it uses the helper), and add:
+
+```rust
+    #[test]
+    fn a_page_with_diagrams_is_built_again_for_the_other_appearance() {
+        let doc = "```mermaid\ngraph TD\n  A --> B\n```\n";
+        let mut docs = Docs::new(Ulid::new());
+        docs.selected = Some("a.md".into());
+        docs.read("a.md", Ok(Shown::new(&content("a.md", doc, "h"), false)));
+        assert_eq!(docs.redraw_for(false), None);
+        assert_eq!(docs.redraw_for(true), Some("a.md"));
+        docs.read("a.md", Ok(Shown::new(&content("a.md", doc, "h"), true)));
+        assert_eq!(docs.redraw_for(true), None);
+        // Nothing drawn, nothing to draw again.
+        docs.read("a.md", Ok(Shown::new(&content("a.md", "# T\n", "h2"), false)));
+        assert_eq!(docs.redraw_for(true), None);
+    }
+```
+
+`files_view/tests.rs`: `page(text)` becomes `docs::Shown::from_text(text, false)`; every `view.preview_request()` becomes `view.preview_request(false)`. Add:
+
+```rust
+#[test]
+fn a_preview_with_diagrams_is_built_again_for_the_other_appearance() {
+    let mut view = opened("```mermaid\ngraph TD\n  A --> B\n```\n");
+    let (stamp, text) = view.preview_request(false).unwrap();
+    view.preview_ready(stamp, docs::Shown::from_text(&text, false));
+    assert_eq!(view.preview_request(false), None, "current");
+    let (again, same_text) = view.preview_request(true).expect("drawn for light, shown dark");
+    assert_eq!((again, &same_text), (stamp, &text));
+    assert_eq!(view.preview_request(true), None, "asked once while it is built");
+    view.preview_ready(again, docs::Shown::from_text(&same_text, true));
+    assert_eq!(view.preview_request(true), None);
+
+    // A page without a diagram looks the same in both appearances.
+    let mut plain = opened("a\n");
+    let (stamp, text) = plain.preview_request(false).unwrap();
+    plain.preview_ready(stamp, docs::Shown::from_text(&text, false));
+    assert_eq!(plain.preview_request(true), None);
+}
+```
+
+Run: `cargo test -p mkrew-ui --lib diagram::tests docs::tests files_view -j 4`
+Expected: FAIL to compile (new signatures).
+
+- [ ] **Step 2: `diagram.rs`**
+
+Replace the module doc (lines 1-4), imports, `Diagram`, `render` and `draw` (lines 1-65) with:
+
+```rust
+//! Mermaid diagrams of the Docs preview (SPEC §12, ADR 0021): ```mermaid blocks drawn to SVG
+//! by `mermaid-rs-renderer` (pure Rust, no browser) in the theme's colors for one appearance,
+//! shown with `gpui::img`. Drawings are cached by (block text, appearance), so a re-parse
+//! redraws only the blocks that changed. Slow the first time (it loads the system fonts):
+//! run it off the UI thread.
+
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+
+use gpui::{Image, ImageFormat};
+use mermaid_rs_renderer::ir::DiagramKind;
+use mermaid_rs_renderer::{
+    LayoutConfig, compute_layout, measure_svg_dimensions, parse_mermaid_strict, render_svg,
+};
+
+use crate::theme::{self, Theme, hex};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Diagram {
+    pub image: Arc<Image>,
+    /// Natural size, in px.
+    pub width: f32,
+    pub height: f32,
+}
+
+/// Most drawings kept; the cache is emptied when it is full.
+// ponytail: clear-all at 64 entries (an SVG is tens of KB); an LRU if redrawing after a clear
+// ever shows in a profile.
+const CACHE_MAX: usize = 64;
+
+type Key = (u64, bool);
+
+static CACHE: LazyLock<Mutex<HashMap<Key, Result<Diagram, String>>>> = LazyLock::new(Mutex::default);
+
+/// Draws `source` for the dark or the light appearance; `Err` says why it cannot be drawn
+/// (shown above its source). Asked again for the same text and appearance, it is the cached
+/// drawing.
+pub fn render(source: &str, dark: bool) -> Result<Diagram, String> {
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    let key = (hasher.finish(), dark);
+    if let Some(drawn) = lock().get(&key) {
+        return drawn.clone();
+    }
+    // The renderer panics on some half-typed sources (e.g. `A[/]`); this runs on a gpui
+    // background thread, where a panic aborts the whole UI. Not drawn under the lock: the
+    // first drawing loads the system fonts and takes seconds.
+    let drawn = std::panic::catch_unwind(AssertUnwindSafe(|| draw(source, dark)))
+        .unwrap_or_else(|_| Err("the diagram renderer crashed on this source".to_owned()));
+    let mut cache = lock();
+    if cache.len() >= CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(key, drawn.clone());
+    drawn
+}
+
+fn lock() -> std::sync::MutexGuard<'static, HashMap<Key, Result<Diagram, String>>> {
+    CACHE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn draw(source: &str, dark: bool) -> Result<Diagram, String> {
+    let parsed = parse_mermaid_strict(source).map_err(|error| error.to_string())?;
+    let config = LayoutConfig::default();
+    // Some layouts (pie, journey, mindmap) bake the theme's colors in.
+    let theme = if dark { Theme::dark() } else { Theme::light() };
+    let colors = colors(&theme, parsed.graph.kind);
+    let layout = compute_layout(&parsed.graph, &colors, &config);
+    let size = measure_svg_dimensions(&layout, &config, None);
+    let svg = render_svg(&layout, &colors, &config);
+    Ok(Diagram {
+        image: Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes())),
+        width: size.width,
+        height: size.height,
+    })
+}
+```
+(`colors` and `token_color` below stay.) In `theme.rs:561` change the doc `/// Dark appearance (picks diagram images, ADR 0021).` to `/// Dark appearance (the diagrams are drawn for it, ADR 0021).`
+
+- [ ] **Step 3: `docs.rs` and the callers of `Shown`**
+
+`docs.rs`: `use crate::diagram::{self, Diagram};` stays. In `Shown` add after `diagrams`:
+
+```rust
+    /// The appearance the diagrams were drawn for (their colors differ).
+    pub dark: bool,
+```
+Replace `Shown::new` / `from_text` (`:63-96`) with:
+
+```rust
+impl Shown {
+    pub fn new(content: &DocContent, dark: bool) -> Shown {
+        Shown {
+            hash: content.hash.clone(),
+            ..Shown::from_text(&content.content, dark)
+        }
+    }
+
+    /// A text parsed for the preview, with `hash` empty; its diagrams are drawn for `dark`
+    /// (cached per block text, [`diagram::render`]). The Files view parses its editor's
+    /// text, which is not a `DocContent`.
+    pub fn from_text(text: &str, dark: bool) -> Shown {
+        let blocks = markdown::parse(text);
+        let mut code = HashMap::new();
+        let mut diagrams = HashMap::new();
+        markdown::walk(&blocks, &mut |block| {
+            if let BlockKind::Code { lang, text } = &block.kind {
+                code.insert(block.lines.start, highlight::fenced(lang.as_deref(), text));
+                if lang
+                    .as_deref()
+                    .is_some_and(|lang| lang.eq_ignore_ascii_case("mermaid"))
+                {
+                    diagrams.insert(block.lines.start, diagram::render(text, dark));
+                }
+            }
+        });
+        Shown {
+            hash: String::new(),
+            lines: source_lines(text),
+            blocks,
+            code,
+            diagrams,
+            dark,
+        }
+    }
+
+    /// Whether the page has diagrams drawn for the other appearance: it is built again when
+    /// the theme switches. A page without diagrams looks the same in both.
+    pub fn stale_diagrams(&self, dark: bool) -> bool {
+        self.dark != dark && !self.diagrams.is_empty()
+    }
+}
+```
+In `impl Docs`, after `read`:
+
+```rust
+    /// The selected file when its page has to be built again for `dark` (the theme switched).
+    pub fn redraw_for(&self, dark: bool) -> Option<&str> {
+        match (&self.doc, &self.selected) {
+            (Doc::Shown(shown), Some(path)) if shown.stale_diagrams(dark) => Some(path),
+            _ => None,
+        }
+    }
+```
+Callers: `shell/docs.rs:136-139` → add `let dark = cx.theme().dark;` before `let background = ...` and `Shown::new(&content, dark)`; `tests/docs_view.rs:108` → `Shown::new(&content, false)`; `preview.rs:724` → `Rc::new(Shown::from_text(text, false))`.
+
+`preview.rs` `diagram_view`: `img(diagram.image(theme))` → `img(Arc::clone(&diagram.image))` (add `use std::sync::Arc;` if missing; `theme` is still used for the card colors).
+
+- [ ] **Step 4: `files_view.rs`**
+
+`preview_asked: Option<Stamp>` (`:160`) → `preview_asked: Option<(Stamp, bool)>`, with the doc `/// The stamp and appearance a build was last asked for.` Replace `preview_request` and `preview_ready` (`:624-651`) with:
+
+```rust
+    /// The text to parse for the preview, once per text and appearance: `None` when no preview
+    /// is shown, the page is current, or one is being built for this text. A page whose
+    /// diagrams were drawn for the other appearance is built again (`dark` = the theme now).
+    /// The shell parses it off the UI thread and answers with [`Self::preview_ready`].
+    pub fn preview_request(&mut self, dark: bool) -> Option<(Stamp, String)> {
+        if !self.previewing() {
+            return None;
+        }
+        let stamp = self.stamp()?;
+        let current = (self.preview.as_ref()).is_some_and(|preview| {
+            preview.stamp == stamp && !preview.shown.stale_diagrams(dark)
+        });
+        if current || self.preview_asked == Some((stamp, dark)) {
+            return None;
+        }
+        self.preview_asked = Some((stamp, dark));
+        Some((stamp, self.shown()?.editor.text()))
+    }
+
+    /// The page built for `stamp`. Dropped when another text replaced the one it was built
+    /// from, or when a newer page is already here (builds can finish out of order). The same
+    /// text drawn for the other appearance replaces the page.
+    pub fn preview_ready(&mut self, stamp: Stamp, shown: docs::Shown) {
+        let newer = (self.preview.as_ref()).is_some_and(|preview| {
+            preview.stamp > stamp || (preview.stamp == stamp && preview.shown.dark == shown.dark)
+        });
+        if stamp.0 != self.text_id || newer {
+            return;
+        }
+        self.preview = Some(MdPreview {
+            stamp,
+            shown: Rc::new(shown),
+        });
+        // The build for this text came back; a build for a newer edit may still run.
+        if self.preview_asked.is_some_and(|(asked, _)| asked == stamp) {
+            self.preview_asked = None;
+        }
+    }
+```
+`files_view.rs:361-362` (`self.preview_asked = None;`) stays.
+
+- [ ] **Step 5: `shell/files.rs`, `redraw_diagrams` and the three theme sites**
+
+`Shell::build_preview` (`shell/files.rs:181-208`): at the top `let dark = cx.theme().dark;`, `view.preview_request(dark)`, and `.spawn(async move { Shown::from_text(&text, dark) })`.
+
+In `shell/docs.rs`, after `read_doc`, add:
+
+```rust
+    /// The appearance changed (the toggle, the OS, `settings.toml`): the shown Docs page and
+    /// Files preview that contain Mermaid diagrams are built again for it. Drawings made
+    /// before come from the cache; pages without diagrams are left alone.
+    pub(crate) fn redraw_diagrams(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let dark = cx.theme().dark;
+        let reads: Vec<(Ulid, String)> = self
+            .docs
+            .iter()
+            .filter_map(|(project_id, docs)| {
+                docs.redraw_for(dark).map(|path| (*project_id, path.to_owned()))
+            })
+            .collect();
+        for (project_id, path) in reads {
+            self.read_doc(project_id, path, window, cx);
+        }
+        let views: Vec<Ulid> = self.files.keys().copied().collect();
+        for project_id in views {
+            self.build_preview(project_id, window, cx);
+        }
+    }
+```
+Call it right after `theme::refresh`:
+- `workspace_actions.rs:399-401`: `theme::refresh(mode, window, cx); self.redraw_diagrams(window, cx); cx.notify();`
+- `connection.rs:28-31`: `cx.observe_window_appearance(window, |shell, window, cx| { theme::refresh(cx.theme().mode, window, cx); shell.redraw_diagrams(window, cx); cx.notify(); })`
+- `connection.rs:70`: after `theme::refresh(mode, window, cx);` add `shell.redraw_diagrams(window, cx);` If Task 6 has landed, this reload lives in `Shell::reload_settings_if_changed` (`shell/workspace_actions.rs`); add the call after its `theme::refresh` instead.
+
+Compile check: `cargo check -p mkrew-ui --all-targets -j 4`. Expected: no errors. Run: `cargo test -p mkrew-ui --lib diagram::tests -j 4`, then `cargo test -p mkrew-ui --lib docs::tests -j 4`, then `cargo test -p mkrew-ui --lib files_view -j 4`, then `cargo test -p mkrew-ui --test docs_view -j 4`. Expected: PASS (the mermaid tests take a few seconds in debug: system fonts).
+
+- [ ] **Step 6: SPEC, ADR 0021, HUMAN_CHECKS**
+
+`docs/SPEC.md:969-970`: `` ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust\n  renderer, theme colors); `` → `` ```` ```mermaid ```` blocks are drawn as diagrams (pure Rust\n  renderer, for the current appearance only, cached per block text; a theme switch draws the shown page's diagrams again); ``.
+
+`docs/decisions/0021-docs-preview-rendering.md`, in the Mermaid addendum replace `one layout per\n  appearance (some layouts bake the colors in), in `Shown::new`` with `one layout for the\n  current appearance (some layouts bake the colors in; cached by block text and appearance,\n  a theme switch builds the shown page again, 2026-10-13), in `Shown::new``.
+
+Append to the perf `### To verify —` section:
+
+```markdown
+- [ ] **Mermaid, one appearance (A5):** open a `.md` with 2-3 mermaid blocks in Docs and in Files (Preview), dark. Diagrams show in dark colors. Switch the theme (palette `Toggle theme`, or the title bar button): the page redraws in light colors within a moment (a few seconds the first time), scroll position kept; switch back: instant. Edit one block in Files Source and go back to Preview (or pause typing in the split preview): only that block takes a moment, the others stay. A broken block still shows its source and the reason. A `.md` without diagrams does not flicker on a theme switch.
+- [ ] **Memory (A5):** with 3 diagrams open and the theme switched twice, the UI process stays under 150 MB.
+```
+
+- [ ] **Step 7: Verify**
+
+Run: `sh scripts/verify.sh` (fallback: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```
+git add crates/mkrew-ui/src/diagram.rs crates/mkrew-ui/src/docs.rs crates/mkrew-ui/src/preview.rs crates/mkrew-ui/src/files_view.rs crates/mkrew-ui/src/files_view/tests.rs crates/mkrew-ui/src/theme.rs crates/mkrew-ui/src/shell/docs.rs crates/mkrew-ui/src/shell/files.rs crates/mkrew-ui/src/shell/connection.rs crates/mkrew-ui/src/shell/workspace_actions.rs crates/mkrew-ui/tests/docs_view.rs docs/SPEC.md docs/decisions/0021-docs-preview-rendering.md docs/HUMAN_CHECKS.md
+git commit -m "perf(ui): draw Mermaid for the current theme only and cache drawings by text"
+```
+Stage only this task's hunks in files other tasks also edit (`files_view.rs`, `shell/files.rs`, `shell/docs.rs`, `connection.rs`, `theme.rs`, `SPEC.md`, `HUMAN_CHECKS.md`). Do not push.
+
+---
+
+### Task 19: The Git History's graph width is counted once per log (perf N5, optional, lowest priority)
+
+> **Refresh 2026-10-13:** NEW task from the rescan (finding N5), **reduced in scope after checking the code; recommend skipping it unless a profile shows the Git view.**
+> - The rescan said `list_rows()` is "built about twice per render". It is not: `shell/git.rs:539` is the key handler (`git_key`, once per key press), and the render builds the rows once (`shell/git_render.rs:26`) and passes them to `git_list` (`shell/git_rows.rs:7-16`). Only `graph_lanes()` (`git_rows.rs:22`) is called per render too, and it scans at most 50 graph rows (the History lists the last 50 commits, `git_history.rs:1`).
+> - A cache of `list_rows` "per load" is not safe to add cheaply: its result depends on `status`, `mode`, `since`, `filter`, `changed_by`, `collapsed` and the whole `History` (commits, selected, detail), and the shell writes several of those pub fields directly (`shell/git_render.rs:111` `filter.clear()`, `git_diff.rs:704`, the filter input, `collapsed` toggles). A stale list would show wrong files. See Open questions.
+> - Kept here: the width is computed when the log is loaded, which is the only place `History.graph` is assigned.
+
+Inbox: none yet (proposed 2026-10-13; the user adds a line if accepted). Spec: §12B (Git view History, lane graph); no SPEC change.
+
+**Current state (investigated):**
+- `History { commits, graph: Vec<GraphRow>, selected, detail }` (`git_history.rs:27-35`); `graph` is assigned only in `History::logged` (`:76` `git_graph::layout`, `:64` cleared when a first load fails).
+- `GitView::graph_lanes` (`git_view.rs:1097-1102`) = `git_graph::lanes(&history.graph)` per call; callers: `shell/git_rows.rs:22` (render) and tests (`git_view/tests.rs:999`).
+- `GitView::list_rows` (`git_view.rs:1024-1095`): see the refresh block; its History branch clones up to 50 commits and graph rows, the Working branch clones the changed files.
+
+**Files:**
+- Modify: `crates/mkrew-ui/src/git_history.rs` (`lanes` field, `logged`, test)
+- Modify: `crates/mkrew-ui/src/git_view.rs` (`graph_lanes`)
+
+**Interfaces:**
+- Produces: `History.lanes: usize` (the width of `graph` in lanes, `git_graph::lanes`), set by `logged`.
+- Changes: `GitView::graph_lanes` returns `history.lanes` (same value, no scan).
+
+- [ ] **Step 1: Failing test**
+
+In `git_history.rs` `mod tests` add:
+
+```rust
+    #[test]
+    fn the_graph_width_is_counted_when_the_log_loads() {
+        let mut history = History::default();
+        assert_eq!(history.lanes, 0);
+        let mut merge = commit("m");
+        merge.parents = vec!["a".into(), "b".into()];
+        history.logged(Ok(vec![merge, commit("b"), commit("a")]));
+        assert_eq!(history.lanes, git_graph::lanes(&history.graph));
+        assert!(history.lanes > 1, "a merge needs two lanes");
+        history.logged(Ok(vec![commit("a")]));
+        assert_eq!(history.lanes, 1);
+        let mut failed = History::default();
+        failed.logged(Err("not a repo".into()));
+        assert_eq!(failed.lanes, 0);
+    }
+```
+
+Run: `cargo test -p mkrew-ui --lib git_history::tests -j 4`
+Expected: FAIL to compile (`History.lanes` does not exist).
+
+- [ ] **Step 2: Implement**
+
+`git_history.rs`: in `History` add `/// Width of [`Self::graph`] in lanes (0 for none), counted when the log loads.` `pub lanes: usize,` after `graph`; `Default` gets `lanes: 0,`; in `logged`, the failure branch adds `self.lanes = 0;` after `self.graph.clear();`, and the success path becomes
+```rust
+        self.graph = git_graph::layout(&commits);
+        self.lanes = git_graph::lanes(&self.graph);
+```
+`git_view.rs:1097-1102`:
+```rust
+    /// Width of the History's graph column in lanes (0 outside the History).
+    pub fn graph_lanes(&self) -> usize {
+        self.history.as_ref().map_or(0, |history| history.lanes)
+    }
+```
+(`use crate::git_graph::{self, GraphCell, GraphRow}` in `git_view.rs:25` keeps its other uses; if `git_graph::` is no longer used there, drop it from the import: rustc says.)
+
+Run: `cargo test -p mkrew-ui --lib git_history::tests -j 4` and `cargo test -p mkrew-ui --lib git_view -j 4`
+Expected: PASS (`git_view/tests.rs:999` still expects 2 lanes).
+
+- [ ] **Step 3: Verify**
+
+Run: `sh scripts/verify.sh` (fallback: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`). Expected: PASS. No HUMAN_CHECKS line: nothing visible changes.
+
+- [ ] **Step 4: Commit**
+
+```
+git add crates/mkrew-ui/src/git_history.rs crates/mkrew-ui/src/git_view.rs
+git commit -m "perf(ui): count the Git history graph width when the log loads"
+```
+Stage only this task's hunks in `git_view.rs`. Do not push.
 
 ---
 
@@ -6389,33 +6510,66 @@ Suggested message: `perf(ui): History replays the newest 1 MiB of a session log 
 | Area (Tn) | Question | Options | Default used |
 | --- | --- | --- | --- |
 | T1 | While any dialog is open, should hidden-model events still redraw? (dialogs such as compare / history / task editor read models not audited) | a) yes, keep today's behavior; b) audit each dialog | a) `Shown.modal` forces `true` |
-| T1 | Window minimized: `panes` is empty, so pane-only data skips the redraw; the restore re-renders (`observe_window_visibility`). Gate everything on `window.is_visible()`? | a) no, leave; b) also skip all redraws while minimized | a) leave (not in the item) |
+| T1 | Window minimized: `panes` is empty, so pane-only data skips the redraw; the restore re-renders (`observe_window_visibility`, `connection.rs:35`). Gate everything on `window.is_visible()`? | a) no, leave; b) also skip all redraws while minimized | a) leave (not in the item) |
 | T1 | Terminal-title and other sidebar-owned events (`SessionTerminalTitle`, `SessionUpdated`) still always redraw; narrow them to expanded workspaces? | a) keep (Inbox / dots / `Viewed` depend on them); b) narrow later | a) keep |
-| T1 | The HUMAN_CHECKS section is also created by the redesign plan's Task 1 (above the first `### To verify —` heading). | a) insert this one directly above the first heading at execution time; b) merge | a) |
-| T2 | Row builders take owned rows, so the draw still clones the visible rows each frame (strings), though the sort / HashMap / lowercase / `format!` are cached. Change `workspace_row` / `session_row` / compact variants to `&Row`? | a) leave (text moves into elements anyway); b) change signatures | a) leave |
+| T1 | The HUMAN_CHECKS section `### To verify — 2026-10-13 perf (…)` is created by this task above the first `### To verify —` heading; other plans of the day add their own sections there. | a) insert directly above the first heading at execution time; b) merge into another section | a) |
+| T1 | Ports in the full sidebar redraw for any session of any workspace (the RUN group draws only open, unfiltered workspaces). Narrow to open workspaces? | a) keep (a port line is rare); b) add `expanded` to `Shown` | a) keep |
+| T1 | A pane output flood still re-renders the Shell root (only the sidebar is cached, 0606f04); this task does not change that. Cache more of the Shell? | a) out of scope; b) later item | a) out of scope |
+| T2 | Row builders take owned rows, so the sidebar render still clones the visible rows each time (strings), though the sort / HashMap / lowercase / `format!` / count are cached. Change `workspace_row` / `session_row` / compact variants to `&Row`? | a) leave (text moves into elements anyway); b) change signatures | a) leave |
 | T2 | `most_urgent` / `tab_kind` signatures change (lookup closure instead of a slice); their tests change shape, not behavior. | a) change (clean cutover); b) keep slice overloads | a) change |
-| T4 | After a re-read that replaces the text (agent edit) the preview shows "Rendering the preview…" for the 300 ms wait; the first page of a file is built at once | a) wait on re-read too b) build re-reads at once (no debounce for the agent-save burst) | a) |
-| T5 | After a commit in the Git view the title badge can lag up to 2 s (Git view's own list is immediate) | a) accept b) also call `git_summary_throttle.refreshed` + load on Git-view actions | a) |
-| T6 | B8 changes SPEC §20.0 ("within 500 ms" → on activation); needs the ADR | ADR 0044 (item 11 slot), SPEC and ADR 0024 edited in the same task | ADR 0044 |
-| T6 | `render_editor`: `cx.theme()` borrow inside the `uniform_list` processor may not compile | borrow; else clone once per closure call | borrow, fallback documented in Step 3 |
+| T2 | The cache lives in `Sidebar` (model), not in `SidebarView`: the footer count, the peek check and the tests read the same cache and `SidebarView::render` stays a wrapper. | a) in `Sidebar`; b) in `SidebarView` (the footer and tests could not share it) | a) |
+| T2 | `Sidebar` becomes `!Sync` (`RefCell` / `Rc`). It is only owned by `Shell`; if a later change needs it on another thread, the cache must move to `Mutex` / `Arc`. | a) accept; b) `Mutex` / `Arc` now | a) accept |
+| Docs hidden (T3) | Re-read a changed doc while Docs is hidden? | (a) mark stale, read once when shown; (b) keep reading (today) | (a) `Docs::stale` + `show_docs` |
+| Files `.md` preview (T4) | Add a 300 ms time debounce to the Files preview build? | (a) drop: build is already off-thread, one in flight, once per text, equal-hash re-reads skipped; (b) debounce 300 ms (longer "Rendering the preview…" flash after every agent save) | (a) dropped, no code |
+| Git summary (T5) | How often may the title bar git summary refresh? | (a) at most once per 2 s, trailing so the last change always shows; (b) only while Git/Files/inspector is open; (c) every `git.changed` (today) | (a) pure `Throttle`, 2 s |
+| Settings reload (T6) | When does the UI re-read `settings.toml`? | (a) at start and on window activation (ADR 0055); (b) poll every 500 ms (today); (c) file watcher | (a) |
+| Files tree theme clone (T6) | Remove `row_theme = theme.clone()` (`shell/files_render.rs:131`)? | (a) keep: one ~70-token clone per render, list closure is `'static`, same pattern in git_rows/git_diff/root render; (b) `Rc<Theme>` plumbing | (a) keep, dropped from plan |
 | T7 | Which `session_event` kinds may be pruned? | a) all kinds older than 7 days; b) only `hook`, `files_changed`, `edited` | b: `usage` rows are read with `since = 0` by `session.usage` (UI totals) and must outlive a week |
+| T7 | `synchronous=NORMAL` can lose the last commits on an OS crash or power cut (never corrupts the file). Accept? | a) NORMAL (inbox item 12); b) keep FULL | a; documented in SPEC §5, no pragma test (it would only pin a default) |
+| T7 | Old `hook` rows already in users' databases. | a) pruned after 7 days with the other kinds (`hook` stays in `PRUNED_KINDS`); b) one-off `DELETE` at start | a: no migration, no extra code path |
+| T7 | A4 tests: inbox says "remove the tests that only pin it". | a) delete the `hook`-row assertions; b) assert the rows are absent | a |
+| T7 | The `backup::start` signature gains the db path (`Paths::db_file()`); `Store::backup_to` is removed. | a) free fn `mkrew_store::backup`; b) keep `backup_to` and open a second `Store` | a |
+| T7 | `VACUUM INTO` on its own connection while another connection holds `BEGIN IMMEDIATE` (store test). Needs a write lock? | a) no, WAL snapshot read (test as written); b) it blocks | a; if the test fails with `database is locked`, drop the open-writer half and keep the plain-copy test |
 | T8 | The review says the watcher "ALWAYS" sends `GitChanged`; in code `debounce` already drops empty batches. Is more needed? | a) only make the send condition explicit; b) also stop watching ignored dirs at the OS level (`notify` has no exclude, would need per-directory non-recursive watches) | a (the `.git`/`target` storm already costs no `stat`; b is a bigger design) |
 | T8 | "Any agent `working`" for the 5 s cap: only `SessionKind::Agent`, or every kind? | a) agents only; b) any session kind (what `files_changed` attribution always did) | b: one `working` map shared with T9's attribution; a shell printing output counts as working |
-| T8 | A closed view needs a new request (`watch.release`) → protocol 38 + ADR 0042; no existing request fits (`ProjectRef` cannot name a worktree). | a) new request; b) daemon idle timeout; c) keep as is | a |
-| T8 | A second UI client would lose a watcher the first released. | a) no ref count (one window); b) ref count per client | a |
+| T8 | A closed view needs a new request (`watch.release`) → protocol 41 + ADR 0056; no existing request fits (`ProjectRef` cannot name a worktree). | a) new request; b) daemon idle timeout; c) keep as is | a |
+| T8 | A second desktop UI window would lose a watcher the first released. The phone page (`mk web`) is a second client but never keeps watchers. | a) no ref count (one window); b) ref count per client | a |
+| T8 | The Quick-open dialog's `fs.find` keeps a worktree watcher that the UI does not release. | a) leave (stays until the daemon stops, as today); b) include the dialog's target in `Needs` | a: rare, bounded by the number of task worktrees |
+| T8 | `Hub::working_sessions` in Task 8 or 9? | a) Task 8 (old plan): private and unused until Task 9, so clippy `-D warnings` fails Task 8; b) Task 9 | b |
 | T9 | `docs_changed` still reads and hashes each changed `.md` on the watcher task (review B6 second half). | a) leave it (bounded, feature with HUMAN_CHECKS T6.4); b) move to `spawn_blocking` | a: not in the inbox line; separate change if it shows in a profile |
+| T9 | `[features] docs` is off by default (ADR 0046): nothing reads `files_changed` then. Skip recording and `docs_changed` while it is off? | a) keep recording Markdown batches (switching Docs on later still has "changed by"); b) gate on the setting (daemon would need `Hub` to read settings, owned by the feature-switch tasks) | a |
 | T9 | Turn tests used `notes.txt` + `files_changed` as their "watcher saw it" barrier. | a) switch the scenarios to `notes.md`; b) add another barrier | a |
-| T7 | The `backup::start` signature gains the db path (`Paths::db_file()`); `Store::backup_to` is removed. | a) free fn `mkrew_store::backup`; b) keep `backup_to` and open a second `Store` | a |
-| T10 | With snapshots off, is `turn.list` still answered? | answer with rows without trees / refuse | answer (turn rows and `session.turn` are kept; the UI hides the list anyway) |
-| T10 | Hook-turn wait: drop the reply in `track_turn` or make the recorder drop it first? | gate in `track_turn` (no wait for queued jobs) / gate only in `Recorder::start` | gate in `track_turn` via `turns::start_job`, so the hook never waits behind a queued end snapshot |
-| T10 | `Hub` needs settings access; how? | `Hub::new(store, settings)` (touches 4 test callers) / `OnceLock` set by `Daemon::new` | `OnceLock` + `use_settings`; no features until set (tests of other parts see off) |
-| T11 | The Undo dialog is also "Undo task" (checkpoint based, no snapshots). Hide it entirely? | hide only the turn flavour (`Target::Turn`) / hide both | hide only the turn flavour; `task.undo` does not need snapshots |
-| T11 | The inbox names an inspector "Changed by"; the inspector has none, only the Git file-list filter row has. | hide that row (done) / add nothing | hide the Git row, nothing in the inspector |
-| T11 | When the setting is switched on while the Git view is open, "Changed by" appears only after the next status refresh. | trigger a refresh on switch / leave | leave (next `git.changed` or showing the view again refreshes it) |
-| T12 | `files_changed` events are written only for `.md` batches after item 12; the off-test relies on that. | write the file as `shared.md` (done) / poll another signal | `shared.md`; if T9 lands differently, poll any recorded batch of the session |
-| Hooks vs scan (T13) | Skip the scan for agents with hooks? | (a) skip when `mode` includes `hook`; (b) keep; (c) skip only for a hypothetical `mode = "hook"` | (b) keep. No hook reports `idle` (it is the screen going quiet), Codex hooks report only `done`, Claude's patterns (`❯ 1\. Yes`) are not replaced by hooks, and the daemon cannot tell whether the user ran `mk integration install`. No shipped profile uses `mode = "hook"`, so (c) saves nothing today. |
+| Turn snapshots (T10) | Should the hook of a turn start be answered at once when `[features] turns` is off? | Yes (one `if` in `track_turn`) / leave (the wait is a queue hop + one SQLite write, no git) | Yes |
+| Turn snapshots (T10) | Should `[features] turns` be hot per turn (`Hub::features()` read at each turn start, old plan) instead of read at session start (ADR 0046)? | Per session start (today) / per turn | Per session start; not changed, ADR 0046 decided it |
+| Turn snapshots (T10) | Should `turn.restore*` name the setting when there is no snapshot ("…set `[features] turns = true`")? | Keep the generic "no snapshot (not a git repo, or older than 7 days)" / name the setting | Keep; the UI hides the entry points, only `mk`/raw clients see the message |
+| UI turn features (T11) | "Changed by" in the Git view was listed to be hidden with snapshots off. It reads `session.files` (watcher + hook events), not snapshots. Hide it with `turns = false`? | Keep visible / hide with `turns` | Keep visible |
+| UI turn features (T11) | On `turns` switched off while the Turns dialog, a turn Restore or a "Since turn" listing is open: close it? | Leave open (works, trees live 7 days) / close and return to working changes | Leave open |
+| Conflicts (T12) | Name of the switch | `conflicts` (like `docs`, `turns`) / `conflict_detection` | `[features] conflicts` |
+| Conflicts (T12) | Apply live in the daemon (a `Hub` read at each watcher batch / hook edit) or at session start like `turns`? | Live (needs `Hub::use_settings`) / per session | Live, as the inbox asks ("hot-reloaded") |
+| Conflicts (T12) | Clear the daemon tracker when switched off? | Leave (entries older than 60 s expire on the next edit; a project's tracker is dropped when it is unwatched) / clear | Leave |
+| Conflicts (T12) | UI: add `Conflicts::track(enabled, ..)` or plain `if features.conflicts` guards? | Guards (two `if`s, a reset on switch-off) / new method with a unit test | Guards |
+| Hooks vs scan (T13) | Skip the scan for agents with hooks? | (a) skip when `mode` includes `hook`; (b) keep; (c) skip only for a hypothetical `mode = "hook"` | (b) keep. No hook reports `idle` (it is the screen going quiet), Codex hooks report only `done`, Claude's patterns (`❯ 1\. Yes`) are not replaced by hooks, and the daemon cannot tell whether the user ran `mk integration install`. No shipped profile uses `mode = "hook"` (`agents/*.toml`), so (c) saves nothing today. |
 | Scan gap (T13) | Is 250 ms (4 scans/s) right? A state can show up to 250 ms late. | 100 / 250 / 500 ms | 250 ms (`scan::SCAN_GAP`) as the inbox says ~4/s. |
+| Flood path (T13) | A flooding session already reaches `on_output` only via the `Pacer` turn (ADR 0002). Is the scan throttle still needed? | (a) yes, a normal busy agent sends ≤ 60 batches/s and never floods; (b) drop the throttle and keep only the 4-row build | (a): the throttle sits in `on_output`, so flood batches, exit drains and normal batches share it. |
+| Grid reuse vs OUTPUT_FRAME (T14) | 95a8a6e already caps feeds at one per 16 ms frame; is buffer reuse still worth it? | (a) yes, it removes rows × cols cell and per-cell `Vec` allocations per rebuilt frame; (b) only lower the scrollback | (a), together with 5,000 lines. The reuse falls back to a fresh grid whenever the painter still holds the previous `Arc<Grid>`. |
+| Web replay cap (T15) | `mk web` replays 512 KiB while the desktop now replays 1 MiB. Align them? | (a) leave 512 KiB (phone, ADR 0052); (b) share one constant in `mkrew-core` | (a); only the stale comment changes. `replay_start` lives in `mkrew_core::log_tail` and fixes both callers. |
 | Premise (T15) | The review says History replays ~10 MB; the code already cuts at 2 MiB (`history::TAIL_BYTES`). | Lower to 1 MiB (done); or only document | Lowered to 1 MiB; the review's number was the log rotation size (5 MB × 2). |
-| SGR reset (T15) | Prepend `ESC[0m` to a cut replay? | Add / not | Not added: each replay is a fresh `Emulator` with default attributes and whole lines are dropped before the start. |
-| Alt screen (T15) | A cut can drop the `ESC[?1049h` of a TUI session, so its replay paints on the main screen. | Scan back for the last `?1049h`/`?1049l` and prepend it / leave | Leave (SPEC :1826-1827 already documents the limitation). |
+| SGR reset (T15) | Prepend `ESC[0m` to a cut replay? | Add / not | Not added: each replay is a fresh emulator with default attributes and whole lines are dropped before the start. |
+| Alt screen (T15) | A cut can drop the `ESC[?1049h` of a TUI session, so its replay paints on the main screen. | Scan back for the last `?1049h`/`?1049l` and prepend it / leave | Leave (HUMAN_CHECKS T5.9 note already documents the limitation). |
 | Log write blocking (T15) | `SessionLog::write` (`BufWriter`, 8 KiB) writes on the session's async task. | (a) leave; (b) `BufWriter::with_capacity(64 KiB)` in `session_log::open` (one line, 8× fewer syscalls, but the log of a live session lags up to 64 KiB for `session.history`); (c) a writer thread fed by a channel (changes flush/rotate/exit ordering, needs its own task) | (a) leave: (b) changes what a live History shows, (c) is not cheap. Decide with item 12's SQLite/IO work. |
+| INBOX tick (T15) | Task 15 ticks inbox line 138, but INBOX is never part of a task commit. | (a) edit the file, leave it uncommitted; (b) skip the tick | (a). |
+| Area (Tn) | Question | Options | Default used |
+| T16 | The user ticked `Giữ` for A1 on 2026-10-10; the 12 fps pulse (N1) was added after that. Is a still working dot OK? | a) still dot, redraw on time-label change only (this task); b) keep the stepping dots, drop only the pulse (2 renders/s); c) keep both (today, 14 renders/s) | a), as a proposal; the task runs only after his OK. b) is Steps 1-2 without the `status_mark` / `mark_slot` / `redraw_due` changes |
+| T16 | The "Starting agent" button and the voice "Transcribing" marker use the stepping dots (`pane_render.rs:838`, `sidebar.rs:845`); the status tick runs for them (`connection.rs:100-101`). | a) keep the dots (seconds long); b) a still dot too, then `loading_dots`, `status::loading_dot`, `LOADING_DOTS`, `STATUS_DOT_GAP`, `STATUS_DOT_DIM` and the two `due` terms in `connection.rs` go (about 30 lines) | a) keep, renamed `loading_dots` |
+| T16 | A still dot says "working" less loudly than motion. Is the elapsed text enough? | a) text carries it (`working · 12s` moves each second for a minute); b) a brighter ring or glyph for Working | a) |
+| T16 | Working still redraws the window once per second for the first minute of each turn (label seconds), then once per minute. | a) accept (same as Idle); b) show the elapsed label in minutes only | a) |
+| T17 | Poll `daemon.status` and Tailscale together every 3 s while the dialog is open, or split them (status every tick, Tailscale every 3 s)? | a) one `due` for both, every tick while a Start / Stop click waits; b) two clocks | a) (simpler; the wait for a click is the only case that needs speed) |
+| T17 | `PHONE_TICK` still wakes the loop every second for the app's life (no render, no poll). | a) leave; b) wake every 5 s when the dialog is closed | a) (a wake that finds `due` false costs nothing visible) |
+| T17 | The title bar phone icon (always on) still polls `daemon.status` every 5 s with `[web]` off. | a) keep (it shows `✕ Not running` / enabled state); b) stop polling when `[web]` was never enabled | a) (renders nothing now unless it changed) |
+| T18 | The user ticked `Giữ` for A5 on 2026-10-10. | a) do the `Sửa` option (one appearance + cache) as a proposal; b) keep both appearances | a), only after his OK |
+| T18 | A theme switch builds the shown Docs page and Files preview again (only when they contain a diagram). A page shown while another workspace's Docs is hidden is rebuilt too. | a) rebuild every Docs page with stale diagrams now; b) only the visible view, others when shown | a) (a switch is rare, drawings are cached; b) needs Task 3's stale flag) |
+| T18 | A theme switch within the few hundred ms of a doc read in flight lands a page for the old appearance and nothing rebuilds it until the next switch or doc change. (Files re-asks after every build, so it converges.) | a) accept; b) `update_in` + `redraw_for` check after `docs.read` in `read_doc` | a) |
+| T18 | The cache is a process-wide `static` cleared at 64 entries, keyed by a 64-bit `DefaultHasher` of the block text. | a) this; b) an LRU; c) key by the text itself | a) (a collision would show another block's drawing; 2^-64 per pair) |
+| T18 | `Shown::new` / `from_text` take `dark`; the build threads read `cx.theme().dark` before spawning. | a) a parameter; b) a global read of the active theme inside the background task | a) (explicit, testable) |
+| T19 | `list_rows()` is rebuilt once per render (not twice, see the refresh block). Cache it? | a) no, only the lane width per load (this task); b) a cache keyed by a revision number bumped in every `&mut GitView` method and every direct write of `filter` / `collapsed` / `changed_by`; c) `Rc` rows (`ListRow::Commit { commit: Rc<Commit>, .. }`) so clones are cheap | a); b) is fragile (pub fields written from `shell/git_render.rs:111` and `git_diff.rs`), c) is a bigger change for 50 rows. Revisit only with a profile of the Git view |
+| T19 | Is the task worth doing at all? | a) do (3 lines, tested); b) skip, nothing measurable | a) as optional; skipping loses nothing |
