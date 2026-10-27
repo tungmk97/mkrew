@@ -131,7 +131,7 @@ impl Shell {
 
     /// The `All | Mine` click: saves `[jira] mine` and searches the workspace again. A settings
     /// file that does not parse keeps the choice for this run (toast, §20.0).
-    fn set_jira_mine(
+    pub(crate) fn set_jira_mine(
         &mut self,
         project_id: Ulid,
         mine: bool,
@@ -149,7 +149,7 @@ impl Shell {
 
     /// The `List | Kanban` click: saves `[jira] layout` (a settings file that does not parse
     /// keeps the choice for this run, toast §20.0). The loaded issues stay.
-    fn set_jira_layout(&mut self, layout: JiraLayout, cx: &mut Context<'_, Self>) {
+    pub(crate) fn set_jira_layout(&mut self, layout: JiraLayout, cx: &mut Context<'_, Self>) {
         self.jira_layout = layout;
         if let Err(error) = mkrew_core::settings::write_jira_layout(&self.settings_file, layout) {
             self.settings_write_failed("the Jira layout", error, cx);

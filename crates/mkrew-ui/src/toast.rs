@@ -32,6 +32,7 @@ pub struct Toast {
 pub struct Toasts {
     next_id: u64,
     items: Vec<Toast>,
+    last_error: Option<String>,
 }
 
 impl Toasts {
@@ -39,6 +40,9 @@ impl Toasts {
     /// of stacking a copy (a failure that repeats); past [`MAX_VISIBLE`] the oldest goes.
     pub fn push(&mut self, kind: Kind, text: impl Into<String>, now: Instant) {
         let text = text.into();
+        if kind == Kind::Error {
+            self.last_error = Some(text.clone());
+        }
         // Overflow of an `Instant` is not reachable in practice; if it ever were, the toast
         // would just hide at the next tick.
         let expires = now.checked_add(TOAST_DURATION).unwrap_or(now);
@@ -91,6 +95,17 @@ impl Toasts {
 
     pub fn items(&self) -> &[Toast] {
         &self.items
+    }
+
+    /// The text of the newest error toast shown this run, kept after the toast hid ("Copy last
+    /// error").
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
+
+    /// "Dismiss notifications": every toast goes.
+    pub fn clear(&mut self) {
+        self.items.clear();
     }
 }
 
@@ -206,5 +221,35 @@ mod tests {
         assert!(toasts.expire(left + TOAST_DURATION));
         // A late event for a gone toast is harmless.
         toasts.set_hovered(id, false, left);
+    }
+
+    #[test]
+    fn the_last_error_outlives_its_toast() {
+        let base = Instant::now();
+        let mut toasts = Toasts::default();
+        assert_eq!(toasts.last_error(), None);
+        toasts.push(Kind::Info, "Copied", base);
+        assert_eq!(toasts.last_error(), None, "an info toast is not an error");
+        toasts.push(Kind::Error, "Cannot save the theme", base);
+        toasts.push(Kind::Error, "Cannot push", base);
+        assert_eq!(toasts.last_error(), Some("Cannot push"));
+        toasts.expire(base + TOAST_DURATION);
+        assert!(toasts.items().is_empty());
+        assert_eq!(
+            toasts.last_error(),
+            Some("Cannot push"),
+            "kept after it hid"
+        );
+    }
+
+    #[test]
+    fn clear_drops_every_toast() {
+        let base = Instant::now();
+        let mut toasts = Toasts::default();
+        toasts.push(Kind::Error, "a", base);
+        toasts.push(Kind::Info, "b", base);
+        toasts.clear();
+        assert!(toasts.items().is_empty());
+        assert_eq!(toasts.last_error(), Some("a"));
     }
 }

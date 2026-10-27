@@ -23,6 +23,17 @@ impl Shell {
         }
     }
 
+    /// The repository tabs show for `project_id` (two or more repositories, no task worktree):
+    /// what "Switch repository…" needs.
+    pub(crate) fn git_repos_listed(&self, project_id: Ulid) -> bool {
+        self.git
+            .get(&project_id)
+            .is_some_and(|view| view.worktree_task_id.is_none())
+            && self.git_repos.get(&project_id).is_some_and(|repos| {
+                !git_view::repo_choices(repos, self.workspace_name(project_id)).is_empty()
+            })
+    }
+
     /// The repository tabs of a multi-repo workspace (ADR 0029): the shown one underlined in
     /// the accent, an amber dot on each with uncommitted changes, and a chevron opening the
     /// Repositories menu. When the tabs would not fit, only the shown one is a tab. Hidden

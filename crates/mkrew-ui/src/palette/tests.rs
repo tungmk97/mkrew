@@ -28,6 +28,12 @@ fn context(view: View) -> Context {
         plan_linked: false,
         composer_open: false,
         approve_card: false,
+        git_base: false,
+        git_repos: false,
+        jira: false,
+        last_error: false,
+        toast: false,
+        update_ready: false,
         features: FeatureSettings {
             docs: true,
             turns: true,
@@ -53,7 +59,11 @@ fn commands(context: &Context) -> Vec<Command> {
         .into_iter()
         .filter_map(|entry| match entry.action {
             Action::Run(command) => Some(command),
-            Action::Extra(_) | Action::GoTo(_) | Action::Theme(_) | Action::NewAgentPane(_) => None,
+            Action::Extra(_)
+            | Action::GoTo(_)
+            | Action::Theme(_)
+            | Action::NewAgentPane(_)
+            | Action::RunCommand(..) => None,
         })
         .collect()
 }
@@ -399,11 +409,12 @@ fn extras(context: &Context) -> Vec<Extra> {
         Extra::WorkspaceRemove,
         Extra::WorkspaceMenu,
     ];
-    const ALWAYS: [Extra; 4] = [
+    const ALWAYS: [Extra; 5] = [
         Extra::TabPin,
         Extra::WorkspaceDefaultShell,
         Extra::WorkspaceMoveUp,
         Extra::WorkspaceMoveDown,
+        Extra::History,
     ];
     entries(&Keymap::defaults(), context, &[], &[], &[])
         .into_iter()
@@ -639,6 +650,7 @@ fn palette_only_actions_follow_the_view_and_state() {
             Action::GoTo(_) => 2,
             Action::Theme(_) => 3,
             Action::NewAgentPane(_) => 4,
+            Action::RunCommand(..) => 5,
         })
         .collect();
     assert!(kinds.is_sorted(), "{kinds:?}");
@@ -694,6 +706,143 @@ fn one_entry_per_agent_profile_starts_a_pane_with_it() {
         ..context(View::Board)
     };
     assert!(agent_entries(&keymap, &no_tabs, &agents).is_empty());
+}
+
+#[test]
+fn git_jira_and_global_extras_follow_their_state() {
+    let gated = [
+        (
+            Extra::GitChangeBase,
+            Context {
+                git_base: true,
+                ..context(View::Git)
+            },
+        ),
+        (
+            Extra::GitSwitchRepo,
+            Context {
+                git_repos: true,
+                ..context(View::Git)
+            },
+        ),
+        (
+            Extra::JiraMine,
+            Context {
+                jira: true,
+                ..context(View::Board)
+            },
+        ),
+        (
+            Extra::JiraLayout,
+            Context {
+                jira: true,
+                ..context(View::Board)
+            },
+        ),
+        (
+            Extra::JiraRefresh,
+            Context {
+                jira: true,
+                ..context(View::Board)
+            },
+        ),
+        (
+            Extra::CopyLastError,
+            Context {
+                last_error: true,
+                ..context(View::Terminals)
+            },
+        ),
+        (
+            Extra::DismissToasts,
+            Context {
+                toast: true,
+                ..context(View::Terminals)
+            },
+        ),
+        (
+            Extra::InstallUpdate,
+            Context {
+                update_ready: true,
+                ..context(View::Terminals)
+            },
+        ),
+    ];
+    for (extra, on) in gated {
+        assert!(extra.available(&on), "{extra:?} when its state holds");
+        assert!(!extra.available(&context(on.view)), "{extra:?} without it");
+    }
+    // The Git entries need the Git view, the Jira ones the Board.
+    let wrong_view = Context {
+        git_base: true,
+        git_repos: true,
+        ..context(View::Board)
+    };
+    assert!(!Extra::GitChangeBase.available(&wrong_view));
+    assert!(!Extra::GitSwitchRepo.available(&wrong_view));
+    assert!(!Extra::JiraRefresh.available(&Context {
+        jira: true,
+        ..context(View::Git)
+    }));
+    // The update and the toasts need no workspace.
+    let none = Context {
+        workspace: false,
+        update_ready: true,
+        toast: true,
+        ..context(View::Board)
+    };
+    assert!(Extra::InstallUpdate.available(&none) && Extra::DismissToasts.available(&none));
+    // History is the title bar button: it needs a workspace.
+    assert!(Extra::History.available(&context(View::Board)));
+    assert!(!Extra::History.available(&Context {
+        workspace: false,
+        ..context(View::Board)
+    }));
+}
+
+#[test]
+fn run_entries_follow_each_commands_state() {
+    use crate::run::{Row, RowState, RunAction, Summary};
+    let row = |name: &str, state| Row {
+        name: name.into(),
+        state,
+        session_id: None,
+        ports: Vec::new(),
+    };
+    let summary = Summary {
+        rows: vec![
+            row("api", RowState::Running(SessionState::Working)),
+            row("web", RowState::Stopped),
+            row("db", RowState::Exited),
+        ],
+        stray: 0,
+    };
+    let listed: Vec<(String, Action)> = run_entries(&summary)
+        .into_iter()
+        .map(|entry| (entry.title, entry.action))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            (
+                "Run: Restart api".to_owned(),
+                Action::RunCommand(RunAction::Restart, 0)
+            ),
+            (
+                "Run: Stop api".to_owned(),
+                Action::RunCommand(RunAction::Stop, 0)
+            ),
+            (
+                "Run: Start web".to_owned(),
+                Action::RunCommand(RunAction::Start, 1)
+            ),
+            (
+                "Run: Start db".to_owned(),
+                Action::RunCommand(RunAction::Start, 2)
+            ),
+        ]
+    );
+    assert!(run_entries(&Summary::default()).is_empty());
 }
 
 #[test]

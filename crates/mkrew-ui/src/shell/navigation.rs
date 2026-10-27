@@ -414,6 +414,14 @@ impl Shell {
                 !self.jira_side_shown()
                     && self.board.approve_target(self.selected_card, id).is_some()
             }),
+            git_base: workspace
+                .and_then(|id| self.git.get(&id))
+                .is_some_and(|view| view.section() == git_view::Section::Base),
+            git_repos: workspace.is_some_and(|id| self.git_repos_listed(id)),
+            jira: self.jira_side_shown(),
+            last_error: self.toasts.last_error().is_some(),
+            toast: !self.toasts.items().is_empty(),
+            update_ready: self.update.is_some() && !self.updating,
             features: self.features,
         };
         let mut entries = palette::settings_error(&self.keymap, self.settings_error.as_deref());
@@ -430,6 +438,9 @@ impl Shell {
             &context,
             &self.pane_agents(),
         ));
+        if workspace.is_some() {
+            entries.extend(palette::run_entries(&run_state));
+        }
         self.restore_theme_pick(window, cx);
         self.workspace_menu = None;
         self.palette = Some(Palette::new(entries));
@@ -609,6 +620,23 @@ impl Shell {
             }
             palette::Action::Extra(Extra::PhoneAccess) => self.open_phone_access(window, cx),
             palette::Action::Extra(Extra::CheckUpdates) => self.check_updates(true, window, cx),
+            palette::Action::Extra(Extra::CopyLastError) => self.copy_last_error(cx),
+            palette::Action::Extra(Extra::DismissToasts) => {
+                self.toasts.clear();
+                cx.notify();
+            }
+            palette::Action::Extra(Extra::InstallUpdate) => self.start_update(window, cx),
+            palette::Action::RunCommand(action, index) => {
+                let Some(project_id) = workspace else {
+                    return;
+                };
+                // The row is resolved now: a command removed meanwhile is simply not found.
+                let name =
+                    (self.run_summary(project_id).rows.get(index)).map(|row| row.name.clone());
+                if let Some(name) = name {
+                    self.run_action(project_id, action, Some(name), window, cx);
+                }
+            }
             palette::Action::Extra(extra) => {
                 let Some(project_id) = workspace else {
                     return;
@@ -746,6 +774,26 @@ impl Shell {
                             self.mark_unread(session, cx);
                         }
                     }
+                    Extra::GitChangeBase => self.open_git_base(project_id, window, cx),
+                    Extra::GitSwitchRepo => self.open_git_menu(GitMenu::Repos, window, cx),
+                    Extra::JiraMine => {
+                        self.set_jira_mine(project_id, !self.jira_mine, window, cx);
+                    }
+                    Extra::JiraLayout => {
+                        let other = match self.jira_layout {
+                            mkrew_core::settings::JiraLayout::List => {
+                                mkrew_core::settings::JiraLayout::Kanban
+                            }
+                            mkrew_core::settings::JiraLayout::Kanban => {
+                                mkrew_core::settings::JiraLayout::List
+                            }
+                        };
+                        self.set_jira_layout(other, cx);
+                    }
+                    Extra::JiraRefresh => self.load_jira(project_id, window, cx),
+                    Extra::History => self.show_history(project_id, window, cx),
+                    // Handled above: they need no workspace.
+                    Extra::CopyLastError | Extra::DismissToasts | Extra::InstallUpdate => {}
                     // Handled above: it needs no workspace.
                     Extra::PhoneAccess => self.open_phone_access(window, cx),
                     Extra::CheckUpdates => self.check_updates(true, window, cx),

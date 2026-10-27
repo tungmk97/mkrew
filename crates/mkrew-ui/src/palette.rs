@@ -65,6 +65,18 @@ pub struct Context {
     pub composer_open: bool,
     /// The selected board card is in Review (`a` approves it).
     pub approve_card: bool,
+    /// Git view shows Against base.
+    pub git_base: bool,
+    /// Git view lists several repositories.
+    pub git_repos: bool,
+    /// The Board shows Jira.
+    pub jira: bool,
+    /// An error toast was shown this run.
+    pub last_error: bool,
+    /// A toast is shown.
+    pub toast: bool,
+    /// An update is ready to install.
+    pub update_ready: bool,
     /// `[features]` (ADR 0046): Docs and Turns entries are listed only when on.
     pub features: FeatureSettings,
 }
@@ -103,10 +115,19 @@ pub enum Extra {
     AgentLinkPlan,
     AgentUnlinkPlan,
     AgentImprove,
+    GitChangeBase,
+    GitSwitchRepo,
+    JiraMine,
+    JiraLayout,
+    JiraRefresh,
+    CopyLastError,
+    DismissToasts,
+    History,
+    InstallUpdate,
 }
 
 impl Extra {
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 40] = [
         Self::ViewTaskChanges,
         Self::MergeBack,
         Self::RemoveWorktree,
@@ -138,6 +159,15 @@ impl Extra {
         Self::AgentLinkPlan,
         Self::AgentUnlinkPlan,
         Self::AgentImprove,
+        Self::GitChangeBase,
+        Self::GitSwitchRepo,
+        Self::JiraMine,
+        Self::JiraLayout,
+        Self::JiraRefresh,
+        Self::CopyLastError,
+        Self::DismissToasts,
+        Self::History,
+        Self::InstallUpdate,
     ];
 
     pub fn title(self) -> &'static str {
@@ -173,6 +203,15 @@ impl Extra {
             Self::AgentLinkPlan => "Agent: Link plan…",
             Self::AgentUnlinkPlan => "Agent: Unlink plan",
             Self::AgentImprove => "Agent: Improve prompt",
+            Self::GitChangeBase => "Git: Change base…",
+            Self::GitSwitchRepo => "Git: Switch repository…",
+            Self::JiraMine => "Jira: Toggle All / Mine",
+            Self::JiraLayout => "Jira: Toggle List / Kanban",
+            Self::JiraRefresh => "Jira: Refresh",
+            Self::CopyLastError => "Global: Copy last error",
+            Self::DismissToasts => "Global: Dismiss notifications",
+            Self::History => "Global: History…",
+            Self::InstallUpdate => "Global: Install update",
         }
     }
 
@@ -220,6 +259,15 @@ impl Extra {
             }
             Self::AgentImprove => in_view(View::Terminals) && context.composer_open,
             Self::PhoneAccess | Self::CheckUpdates => true,
+            Self::GitChangeBase => in_view(View::Git) && context.git_base,
+            Self::GitSwitchRepo => in_view(View::Git) && context.git_repos,
+            Self::JiraMine | Self::JiraLayout | Self::JiraRefresh => {
+                in_view(View::Board) && context.jira
+            }
+            Self::CopyLastError => context.last_error,
+            Self::DismissToasts => context.toast,
+            Self::History => context.workspace,
+            Self::InstallUpdate => context.update_ready,
         }
     }
 }
@@ -243,6 +291,9 @@ pub enum Action {
     /// "Agent: New <Profile> pane": a new pane with the profile at this position of the
     /// shell's profile list (see [`agent_entries`]).
     NewAgentPane(usize),
+    /// Run: Start / Restart / Stop `<command>`: the `usize`-th command of the active workspace's
+    /// Run summary (like `NewAgentPane`).
+    RunCommand(crate::run::RunAction, usize),
 }
 
 /// One palette line.
@@ -548,6 +599,29 @@ pub fn agent_entries(
             },
         })
         .collect()
+}
+
+/// "Run: Start / Restart / Stop <command>", one group per command of the workspace in Run menu
+/// order (a running command offers Restart and Stop, any other Start), like the Run menu's
+/// row buttons. The `usize` is the row's place in `summary`, resolved again when picked.
+pub fn run_entries(summary: &crate::run::Summary) -> Vec<Entry> {
+    use crate::run::{RowState, RunAction};
+    let mut entries = Vec::new();
+    for (index, row) in summary.rows.iter().enumerate() {
+        let actions: &[(RunAction, &str)] = if matches!(row.state, RowState::Running(_)) {
+            &[(RunAction::Restart, "Restart"), (RunAction::Stop, "Stop")]
+        } else {
+            &[(RunAction::Start, "Start")]
+        };
+        for &(action, verb) in actions {
+            entries.push(Entry {
+                action: Action::RunCommand(action, index),
+                title: format!("Run: {verb} {}", row.name),
+                shortcut: String::new(),
+            });
+        }
+    }
+    entries
 }
 
 /// The palette's entries: "Go to" every session that needs input first, then the available
