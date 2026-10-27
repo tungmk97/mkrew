@@ -213,6 +213,7 @@ impl Shell {
             file_menu: None,
             file_tab_menu: None,
             tab_menu: None,
+            card_menu: None,
             menu_focus: cx.focus_handle(),
             menu_return: None,
             menu_selected: None,

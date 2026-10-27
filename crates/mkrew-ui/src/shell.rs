@@ -32,7 +32,7 @@ mod send_dialog;
 
 mod ask_dialog;
 mod attention;
-mod board;
+pub(crate) mod board;
 mod composer;
 mod connection;
 mod dialogs;

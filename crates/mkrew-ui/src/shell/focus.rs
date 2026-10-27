@@ -41,6 +41,7 @@ impl Shell {
         self.new_menu = false;
         self.run_with = None;
         self.fan_out = None;
+        self.card_menu = None;
         self.git_menu = None;
         self.menu_return = None;
         self.menu_selected = None;

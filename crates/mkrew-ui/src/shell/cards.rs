@@ -23,6 +23,8 @@ pub(crate) struct CardContext<'a> {
     pub(crate) conflicts: &'a Conflicts,
     pub(crate) run_with: Option<&'a RunWith>,
     pub(crate) fan_out: Option<&'a FanOutPicker>,
+    /// The keyboard state of the open picker (see [`render_menu`]).
+    pub(crate) menu: MenuState<'a>,
     pub(crate) usages: &'a Usages,
     pub(crate) sessions: &'a [Session],
     /// Profile icons by id, for the agent chip (see [`Shell::agent_badge`]).
@@ -396,8 +398,7 @@ pub(crate) fn task_card(
                     ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         cx.stop_propagation();
-                        shell.selected_card = Some(task_id);
-                        shell.open_undo_dialog(task_id, window, cx);
+                        shell.card_do(task_id, CardDo::Undo, window, cx);
                     }))
                 });
                 let changes = can_view_changes.then(|| {
@@ -416,8 +417,7 @@ pub(crate) fn task_card(
                     ))
                     .on_click(cx.listener(move |shell, _, window, cx| {
                         cx.stop_propagation();
-                        shell.selected_card = Some(task_id);
-                        shell.view_task_changes(task_id, window, cx);
+                        shell.card_do(task_id, CardDo::Changes, window, cx);
                     }))
                 });
                 // The worktree's two actions (SPEC §20E.1), hover-shown like Undo.
@@ -427,24 +427,23 @@ pub(crate) fn task_card(
                             "card-merge",
                             "Merge back…",
                             "Merge back: merge the task's branch into your checkout",
-                            worktree_dialog::Kind::Merge,
+                            CardDo::Merge,
                         ),
                         (
                             "card-remove-worktree",
                             "Remove worktree…",
                             "Remove worktree: delete its folder (an unmerged branch is kept)",
-                            worktree_dialog::Kind::Remove,
+                            CardDo::RemoveWorktree,
                         ),
                     ]
-                    .map(|(id, text, tip, kind)| {
+                    .map(|(id, text, tip, what)| {
                         quiet_button(id, text, theme, edit_hover)
                             .opacity(opacity::HIDDEN)
                             .group_hover(group.clone(), |style| style.opacity(opacity::FULL))
                             .tooltip(tooltip(theme, tip, ""))
                             .on_click(cx.listener(move |shell, _, window, cx| {
                                 cx.stop_propagation();
-                                shell.selected_card = Some(task_id);
-                                shell.open_worktree_dialog(kind, task_id, window, cx);
+                                shell.card_do(task_id, what, window, cx);
                             }))
                     })
                 });
@@ -486,8 +485,7 @@ pub(crate) fn task_card(
                         ))
                         .on_click(cx.listener(move |shell, _, window, cx| {
                             cx.stop_propagation();
-                            shell.selected_card = Some(task_id);
-                            shell.open_compare(task_id, window, cx);
+                            shell.card_do(task_id, CardDo::Compare, window, cx);
                         }))
                 });
                 el.child(
@@ -542,44 +540,34 @@ pub(crate) fn run_with_button(
     // An open picker already closed on this mouse down (outside it): the click reopens it.
     .on_click(cx.listener(move |shell, _, window, cx| {
         cx.stop_propagation();
-        shell.open_run_with(task_id, window, cx);
+        shell.card_do(task_id, CardDo::RunWith, window, cx);
     }));
     let Some(menu) = menu else {
         return div().child(button);
     };
-    let agents = agent_rows(
+    div().child(button).child(render_menu(
+        cards.menu,
+        "run-with-menu",
+        run_with_rows(menu, current),
+        None,
+        Place::Dropdown,
+        theme,
+        cx,
+    ))
+}
+
+/// The "Run with…" picker: the agent profiles (`current` checked); picking one changes the
+/// task's agent and runs it.
+pub(crate) fn run_with_rows(menu: &RunWith, current: Option<&str>) -> Rows {
+    let task_id = menu.task_id;
+    let mut rows: Rows = vec![MenuRow::Heading("Run with".into())];
+    rows.extend(agent_menu_rows(
         &menu.agents,
         SessionKind::Agent,
         current,
-        "run-with",
-        theme,
-        cx,
-        move |shell, agent, window, cx| {
-            // Not a click on the card under the menu (which would open its terminal).
-            cx.stop_propagation();
-            shell.run_task_with(task_id, agent, window, cx);
-        },
-    );
-    let panel = menu_panel("run-with-menu", theme)
-        .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-            shell.run_with = None;
-            cx.notify();
-        }))
-        .child(
-            div()
-                .px(px(space::S))
-                .pt(px(space::XS))
-                .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
-                .child("Run with"),
-        )
-        .children(agents);
-    div().child(button).child(deferred(
-        anchored()
-            .snap_to_window_with_margin(px(space::S))
-            .child(div().pt(px(space::XS)).child(panel)),
-    ))
+        move |shell, agent, window, cx| shell.run_task_with(task_id, agent, window, cx),
+    ));
+    rows
 }
 
 /// "Several agents…" on a Todo / Review card (SPEC §20E.2), next to "Run with…" and shown the
@@ -609,130 +597,85 @@ pub(crate) fn fan_out_button(
     ))
     .on_click(cx.listener(move |shell, _, window, cx| {
         cx.stop_propagation();
-        shell.open_fan_out(task_id, window, cx);
+        shell.card_do(task_id, CardDo::FanOut, window, cx);
     }));
     let Some(menu) = menu else {
         return div().child(button);
     };
+    div().child(button).child(render_menu(
+        cards.menu,
+        "fan-out-menu",
+        fan_out_rows(menu),
+        None,
+        Place::Dropdown,
+        theme,
+        cx,
+    ))
+}
+
+/// The "Run with several agents…" picker: one tick row per agent profile (Space or Enter
+/// ticks, the menu stays), then the run row (Enter runs). Past the maximum the unticked rows
+/// are disabled.
+pub(crate) fn fan_out_rows(menu: &FanOutPicker) -> Rows {
+    let mut rows: Rows = vec![MenuRow::Heading("Run with several agents".into())];
     let choices = match &menu.agents {
         Agents::Loaded(profiles) => {
             workspace_menu::agent_choices(profiles, SessionKind::Agent, None)
         }
         _ => Vec::new(),
     };
-    let rows = if choices.is_empty() {
+    if choices.is_empty() {
         // Loading, the error or the empty hint; there is nothing to tick.
-        agent_rows(
+        rows.extend(agent_menu_rows(
             &menu.agents,
             SessionKind::Agent,
             None,
-            "fan-out",
-            theme,
-            cx,
             |_, _, _, _| {},
+        ));
+        return rows;
+    }
+    if choices.len() < TaskFanoutParams::MIN_PROFILES {
+        rows.push(MenuRow::Note(
+            "Needs at least 2 agent profiles. Add one to the profiles folder.".into(),
+        ));
+        return rows;
+    }
+    rows.extend(choices.into_iter().map(|choice| {
+        let picked = menu.is_picked(&choice.id);
+        let blocked = !picked && menu.is_full();
+        let agent = choice.id;
+        MenuItem::new(
+            choice.label,
+            act(move |shell, _, _| {
+                if let Some(menu) = shell.fan_out.as_mut() {
+                    menu.toggle(&agent);
+                }
+            }),
         )
-    } else if choices.len() < TaskFanoutParams::MIN_PROFILES {
-        vec![
-            div()
-                .px(px(space::S))
-                .py(px(space::XS))
-                .text_size(font_size::META)
-                .text_color(rgb(theme.text_muted))
-                .child("Needs at least 2 agent profiles. Add one to the profiles folder.")
-                .into_any_element(),
-        ]
-    } else {
-        choices
-            .into_iter()
-            .map(|choice| {
-                let picked = menu.is_picked(&choice.id);
-                let blocked = !picked && menu.is_full();
-                let id = SharedString::from(format!("fan-out-{}", choice.id));
-                let agent = choice.id;
-                menu_item(id, theme)
-                    .child(
-                        div()
-                            .w(px(space::M))
-                            .text_color(rgb(theme.accent))
-                            .child(if picked { "✓" } else { "" }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .when(picked, |el| {
-                                el.text_color(rgb(theme.text))
-                                    .font_weight(FontWeight(weight::MEDIUM))
-                            })
-                            .child(choice.label),
-                    )
-                    .when(blocked, |el| el.opacity(opacity::DISABLED).cursor_default())
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        // Not a click on the card under the menu (which would open its terminal).
-                        cx.stop_propagation();
-                        if let Some(menu) = shell.fan_out.as_mut() {
-                            menu.toggle(&agent);
-                            cx.notify();
-                        }
-                    }))
-                    .into_any_element()
-            })
-            .collect()
-    };
-    let label = menu.button_label();
-    let run = div()
-        .id("fan-out-run")
-        .flex()
-        .items_center()
-        .px(px(space::S))
-        .py(px(space::XS))
-        .rounded(px(radius::SMALL))
-        .text_size(font_size::BODY)
-        .bg(rgb(theme.accent))
-        .text_color(rgb(theme.on_accent))
-        .child(label);
-    let run = if menu.request().is_some() {
-        run.cursor_pointer()
-            .hover(|style| style.opacity(opacity::HOVER))
-            .active(|style| style.opacity(opacity::ACTIVE))
-            .on_click(cx.listener(|shell, _, window, cx| {
-                cx.stop_propagation();
-                shell.run_fan_out(window, cx);
-            }))
-    } else {
-        run.opacity(opacity::DISABLED)
-    };
-    let panel = menu_panel("fan-out-menu", theme)
-        .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-            shell.fan_out = None;
-            cx.notify();
-        }))
-        .child(
-            div()
-                .px(px(space::S))
-                .pt(px(space::XS))
-                .text_size(font_size::META)
-                .font_weight(FontWeight(weight::MEDIUM))
-                .text_color(rgb(theme.text_muted))
-                .child("Run with several agents"),
+        .toggle()
+        .checked(picked)
+        .enabled(!blocked)
+        .row()
+    }));
+    rows.push(MenuRow::Separator);
+    let run = menu.request();
+    rows.push(
+        MenuItem::new(
+            menu.button_label(),
+            act({
+                let run = run.clone();
+                move |shell, window, cx| {
+                    if let Some(params) = run.clone() {
+                        shell.run_fan_out(params, window, cx);
+                    }
+                }
+            }),
         )
-        .children(rows)
-        .child(
-            div()
-                .flex()
-                .justify_end()
-                .px(px(space::S))
-                .pt(px(space::S))
-                .pb(px(space::XS))
-                .child(run),
-        );
-    div().child(button).child(deferred(
-        anchored()
-            .snap_to_window_with_margin(px(space::S))
-            .child(div().pt(px(space::XS)).child(panel)),
-    ))
+        .tone(Tone::Accent)
+        .enabled(run.is_some())
+        .row(),
+    );
+    rows
 }
 
 /// One child on a group card (SPEC §20E.2): its status icon, agent and state.
@@ -806,10 +749,12 @@ pub(crate) fn card_action(
         .tooltip(tooltip(theme, tip, keys))
         .on_click(cx.listener(move |shell, _, window, cx| {
             cx.stop_propagation();
-            shell.selected_card = Some(task_id);
             match action {
-                CardAction::Run => shell.run_task(task_id, window, cx),
-                CardAction::Approve => shell.approve_task(task_id, window, cx),
+                CardAction::Run => {
+                    shell.selected_card = Some(task_id);
+                    shell.run_task(task_id, window, cx);
+                }
+                CardAction::Approve => shell.card_do(task_id, CardDo::Approve, window, cx),
             }
         }))
 }

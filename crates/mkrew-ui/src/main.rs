@@ -121,6 +121,7 @@ use tracing_subscriber::EnvFilter;
 use ulid::Ulid;
 
 mod shell;
+use shell::board::*;
 use shell::cards::*;
 use shell::files_render::*;
 use shell::git_diff::*;
@@ -319,6 +320,13 @@ struct FileTabMenu {
     position: gpui::Point<gpui::Pixels>,
 }
 
+/// The menu of a Board card (SPEC §10): its hover buttons as rows, for the keyboard.
+struct CardMenu {
+    task_id: Ulid,
+    /// Window position: the card's bottom-left.
+    position: gpui::Point<gpui::Pixels>,
+}
+
 /// The open popover of the Git view's side panel or diff toolbar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GitMenu {
@@ -429,6 +437,8 @@ struct Shell {
     file_tab_menu: Option<FileTabMenu>,
     /// The open tab menu (Pin, Split right / down, Rename, Close).
     tab_menu: Option<TabMenu>,
+    /// The open menu of a Board card (Shift+F10 on the selected card).
+    card_menu: Option<CardMenu>,
     /// Focused while a popover menu is open (any menu, opened by mouse or keyboard): its key
     /// context is `Menu` and [`Shell::menu_key_down`] drives the rows.
     menu_focus: FocusHandle,
@@ -951,6 +961,12 @@ impl Render for Shell {
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),
+                    )
+                    .children(
+                        self.card_menu
+                            .as_ref()
+                            .filter(|_| self.view() == View::Board && !self.modal_open())
+                            .map(|menu| self.render_card_menu(menu, &theme, cx)),
                     )
                     .children(self.render_toasts(&theme, cx))
                     .children(self.render_voice_pill(&theme, cx)),

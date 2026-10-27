@@ -300,6 +300,7 @@ impl Shell {
             || self.new_menu
             || self.run_with.is_some()
             || self.fan_out.is_some()
+            || self.card_menu.is_some()
             || self.git_menu.is_some()
     }
 
@@ -337,6 +338,15 @@ impl Shell {
         }
         if self.new_menu {
             return Some(self.new_menu_rows());
+        }
+        if let Some(menu) = &self.card_menu {
+            return Some(self.card_menu_rows(menu));
+        }
+        if let Some(menu) = &self.run_with {
+            return Some(run_with_rows(menu, None));
+        }
+        if let Some(menu) = &self.fan_out {
+            return Some(fan_out_rows(menu));
         }
         None
     }

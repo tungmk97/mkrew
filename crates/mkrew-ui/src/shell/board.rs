@@ -2,7 +2,138 @@
 
 use crate::*;
 
+/// What a card's buttons and its menu do; both call [`Shell::card_do`], so a click and a key
+/// never diverge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CardDo {
+    Approve,
+    Undo,
+    Changes,
+    Merge,
+    RemoveWorktree,
+    Compare,
+    RunWith,
+    FanOut,
+}
+
 impl Shell {
+    /// A card's action (button or menu row): the card becomes the selected one first, so
+    /// Ctrl+Enter and the palette act on it.
+    pub(crate) fn card_do(
+        &mut self,
+        task_id: Ulid,
+        what: CardDo,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.selected_card = Some(task_id);
+        match what {
+            CardDo::Approve => self.approve_task(task_id, window, cx),
+            CardDo::Undo => self.open_undo_dialog(task_id, window, cx),
+            CardDo::Changes => self.view_task_changes(task_id, window, cx),
+            CardDo::Merge => {
+                self.open_worktree_dialog(worktree_dialog::Kind::Merge, task_id, window, cx);
+            }
+            CardDo::RemoveWorktree => {
+                self.open_worktree_dialog(worktree_dialog::Kind::Remove, task_id, window, cx);
+            }
+            CardDo::Compare => self.open_compare(task_id, window, cx),
+            CardDo::RunWith => self.open_run_with(task_id, window, cx),
+            CardDo::FanOut => self.open_fan_out(task_id, window, cx),
+        }
+    }
+
+    /// The card as the board draws it (its flags decide which actions show).
+    fn card_of(&self, task_id: Ulid) -> Option<Card> {
+        let project_id = self.board.task(task_id)?.project_id;
+        let default_agent = (self.sidebar.projects().iter())
+            .find(|project| project.id == project_id)
+            .and_then(|project| project.default_agent.as_deref());
+        self.board
+            .columns(project_id, default_agent, self.sidebar.sessions())
+            .into_iter()
+            .flat_map(|column| column.cards)
+            .find(|card| card.task_id == task_id)
+    }
+
+    /// Approve, Undo…, Changes, Merge back…, Remove worktree…, Compare…, Run with…, Run with
+    /// several agents…: each shown when its hover button would be.
+    pub(crate) fn card_menu_rows(&self, menu: &CardMenu) -> Rows {
+        let task_id = menu.task_id;
+        let Some(card) = self.card_of(task_id) else {
+            return vec![MenuRow::Note("This card is gone.".into())];
+        };
+        let idle = !self.starting.contains(&task_id);
+        let row = |label: &'static str, what: CardDo| {
+            MenuItem::new(
+                label,
+                act(move |shell, window, cx| shell.card_do(task_id, what, window, cx)),
+            )
+            .row()
+        };
+        let mut rows: Rows = Vec::new();
+        if card.action() == Some(board::CardAction::Approve) {
+            rows.push(row("Approve", CardDo::Approve));
+        }
+        if card.can_undo() {
+            rows.push(row("Undo…", CardDo::Undo));
+        }
+        if card.can_view_changes() {
+            rows.push(row("Changes", CardDo::Changes));
+        }
+        if card.manages_worktree() {
+            rows.push(row("Merge back…", CardDo::Merge));
+            rows.push(row("Remove worktree…", CardDo::RemoveWorktree));
+        }
+        if card.can_compare() {
+            rows.push(row("Compare…", CardDo::Compare));
+        }
+        if card.can_run_with() && idle {
+            rows.push(row("Run with…", CardDo::RunWith));
+        }
+        if card.can_fan_out() && idle {
+            rows.push(row("Run with several agents…", CardDo::FanOut));
+        }
+        if rows.is_empty() {
+            rows.push(MenuRow::Note("No actions for this card.".into()));
+        }
+        rows
+    }
+
+    pub(crate) fn render_card_menu(
+        &self,
+        menu: &CardMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        render_menu(
+            self.menu_state(),
+            "card-menu",
+            self.card_menu_rows(menu),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
+        )
+    }
+
+    /// Opens the menu of `task_id`'s card at `position` (its bottom-left).
+    #[expect(
+        dead_code,
+        reason = "first caller is the Shift+F10 command (wave 1, Task 10)"
+    )]
+    pub(crate) fn open_card_menu(
+        &mut self,
+        task_id: Ulid,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.begin_menu(window, cx);
+        self.card_menu = Some(CardMenu { task_id, position });
+        self.finish_menu(window.last_input_was_keyboard(), window, cx);
+    }
+
     /// A card was dropped into the `status` column right before `before` (`None` = at the
     /// end): `task.move` it (and renumber the column if its gap collapsed). Each reply is
     /// shown at once, without waiting for the `task.updated` echo.
@@ -168,9 +299,10 @@ impl Shell {
             return;
         };
         self.selected_card = Some(task_id);
+        self.begin_menu(window, cx);
         self.run_with = Some(RunWith::new(task_id));
-        self.fan_out = None;
-        cx.notify();
+        let by_keyboard = window.last_input_was_keyboard();
+        self.finish_menu(by_keyboard, window, cx);
         let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
         cx.spawn_in(window, async move |this, cx| {
             let agents = match listed.await {
@@ -185,6 +317,9 @@ impl Shell {
                     .filter(|menu| menu.task_id == task_id)
                 {
                     menu.agents = agents;
+                    if by_keyboard {
+                        shell.menu_select_after("Run with");
+                    }
                     cx.notify();
                 }
             });
@@ -273,9 +408,10 @@ impl Shell {
             return;
         };
         self.selected_card = Some(task_id);
+        self.begin_menu(window, cx);
         self.fan_out = Some(FanOutPicker::new(task_id));
-        self.run_with = None;
-        cx.notify();
+        let by_keyboard = window.last_input_was_keyboard();
+        self.finish_menu(by_keyboard, window, cx);
         let listed = connection.call::<AgentProfilesResult>(Request::AgentProfiles);
         cx.spawn_in(window, async move |this, cx| {
             let agents = match listed.await {
@@ -290,6 +426,9 @@ impl Shell {
                     .filter(|menu| menu.task_id == task_id)
                 {
                     menu.agents = agents;
+                    if by_keyboard {
+                        shell.menu_select_after("Run with several agents");
+                    }
                     cx.notify();
                 }
             });
@@ -297,14 +436,15 @@ impl Shell {
         .detach();
     }
 
-    /// The picker's run button (SPEC §20E.2): `task.fanout` with the ticked agents; the daemon
+    /// The picker's run row (SPEC §20E.2): `task.fanout` with the ticked agents; the daemon
     /// creates and runs one child task each, and moves the card to Running. A failure shows on
     /// the board.
-    pub(crate) fn run_fan_out(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(params) = self.fan_out.as_ref().and_then(FanOutPicker::request) else {
-            return;
-        };
-        self.fan_out = None;
+    pub(crate) fn run_fan_out(
+        &mut self,
+        params: TaskFanoutParams,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         cx.notify();
         let Some(connection) = self.connection.clone() else {
             return;
@@ -618,6 +758,7 @@ impl Shell {
             conflicts: &self.conflicts,
             run_with: self.run_with.as_ref(),
             fan_out: self.fan_out.as_ref(),
+            menu: self.menu_state(),
             usages: &self.usages,
             sessions: self.sidebar.sessions(),
             agent_icons: &self.agent_icons,
