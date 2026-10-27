@@ -72,6 +72,12 @@ impl Shell {
         let Some(key) = task_dialog::dialog_key(&event.keystroke) else {
             return;
         };
+        // A control has the keyboard: the hidden field takes nothing but Esc / Ctrl+Enter.
+        if self.dialog_control_focused(window)
+            && !matches!(key, DialogKey::Cancel | DialogKey::Save)
+        {
+            return;
+        }
         let paste = (key == DialogKey::Paste)
             .then(|| cx.read_from_clipboard().and_then(|item| item.text()))
             .flatten();
@@ -251,6 +257,7 @@ impl Shell {
     pub(crate) fn render_task_dialog(
         &self,
         dialog: &TaskDialog,
+        window: &Window,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
@@ -268,6 +275,8 @@ impl Shell {
                 .text_color(rgb(theme.text_muted))
                 .child(text)
         };
+        // A button holding the keyboard means no field is: only one focus indicator at a time.
+        let text_focused = self.dialog_focus.is_focused(window);
         let field = |id: &'static str, which: Field, placeholder: &'static str| {
             let input = match which {
                 Field::Title => &dialog.title,
@@ -278,7 +287,7 @@ impl Shell {
                 id,
                 input,
                 placeholder,
-                dialog.field == which,
+                dialog.field == which && text_focused,
                 theme,
                 cx,
                 move |shell, caret| {

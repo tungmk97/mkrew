@@ -837,7 +837,7 @@ impl Render for Shell {
                     .children(
                         self.task_dialog
                             .as_ref()
-                            .map(|dialog| self.render_task_dialog(dialog, &theme, cx)),
+                            .map(|dialog| self.render_task_dialog(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.undo_dialog

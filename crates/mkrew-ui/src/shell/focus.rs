@@ -25,6 +25,12 @@ impl Shell {
             || self.settings_dialog.is_some()
     }
 
+    /// A dialog control (a button, a chip) has the keyboard, not the dialog's own text: the
+    /// dialog's text fields must neither show a caret nor take keys.
+    pub(crate) fn dialog_control_focused(&self, window: &Window) -> bool {
+        !self.dialog_focus.is_focused(window)
+    }
+
     /// Drops an auto-repeating Enter / Space while a control has the keyboard: gpui clicks a
     /// focused control on the release of an Enter / Space it saw pressed, so the Enter that
     /// opened a dialog, held a moment too long, must not click what has focus
