@@ -222,11 +222,11 @@ impl Shell {
 /// What follows the pointer during a reorder drag: the item's title on a raised chip, starting
 /// just left of the pointer wherever the item was grabbed.
 pub(crate) struct DragChip {
-    style: PopupStyle,
-    accent: u32,
-    title: SharedString,
+    pub(crate) style: PopupStyle,
+    pub(crate) accent: u32,
+    pub(crate) title: SharedString,
     /// Where the pointer grabbed the item, from its top-left corner.
-    offset: Point<Pixels>,
+    pub(crate) offset: Point<Pixels>,
 }
 
 impl Render for DragChip {

@@ -471,12 +471,24 @@ impl Shell {
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
+        let accent_border = theme.accent;
         div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
+            // Always there, so the drop ring never shifts the content.
+            .border(px(theme::BORDER_WIDTH))
+            .border_color(gpui::transparent_black())
+            .drag_over::<DraggedPath>(move |style, _, _, _| style.border_color(rgb(accent_border)))
+            .on_drop(
+                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
+                    if shell.workspace == Some(dragged.project_id) {
+                        shell.drop_tree_path(session, dragged, window, cx);
+                    }
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {

@@ -896,6 +896,16 @@ pub(crate) struct FileRowState<'a> {
     pub(crate) focused: bool,
 }
 
+/// Payload of a file tree row dragged onto a pane (ADR 0081): its path relative to the
+/// tree's root.
+#[derive(Debug, Clone)]
+pub(crate) struct DraggedPath {
+    pub(crate) project_id: Ulid,
+    pub(crate) path: String,
+    pub(crate) is_dir: bool,
+    pub(crate) name: SharedString,
+}
+
 /// One Files tree row: indented by depth, a chevron on folders, the name (muted when
 /// ignored), and on the right the git marker letter (files) or a dot (folders with changes).
 /// Every row is one body line high (the tree is a uniform list).
@@ -943,6 +953,8 @@ pub(crate) fn file_row(
         GitMarker::Untracked => ("?", theme.diff_add_text, "Untracked"),
     });
     let path = entry.path.clone();
+    let style = PopupStyle::of(theme);
+    let accent = theme.accent;
     let (menu_path, is_dir) = (entry.path.clone(), entry.is_dir);
     // The border is always there (so rows never shift); it only shows as the focus ring.
     let ring: gpui::Hsla = if at_cursor && state.focused {
@@ -1018,6 +1030,22 @@ pub(crate) fn file_row(
                     .tooltip(tooltip(theme, "Contains changes", "")),
             )
         })
+        .on_drag(
+            DraggedPath {
+                project_id,
+                path: entry.path.clone(),
+                is_dir: entry.is_dir,
+                name: entry.name.clone().into(),
+            },
+            move |dragged, offset, _, cx| {
+                cx.new(|_| DragChip {
+                    style: style.clone(),
+                    accent,
+                    title: dragged.name.clone(),
+                    offset,
+                })
+            },
+        )
         .on_click(
             cx.listener(move |shell, event: &gpui::ClickEvent, window, cx| {
                 let how = if event.click_count() == 2 {

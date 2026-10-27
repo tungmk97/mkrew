@@ -77,9 +77,7 @@ impl Shell {
         }
     }
 
-    /// Files dropped from the OS on `session`'s pane (§20B.5): into its composer draft while
-    /// the composer is shown, else typed into the terminal. No Enter either way. A modal dialog
-    /// covers the panes, so a drop on it types nothing.
+    /// Files dropped from the OS on `session`'s pane (§20B.5): their absolute paths.
     pub(crate) fn drop_paths(
         &mut self,
         session: Ulid,
@@ -87,25 +85,55 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.modal_open() {
-            return;
-        }
         let paths: Vec<String> = paths
             .paths()
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect();
         let text = composer::typed_paths(paths.iter().map(String::as_str));
-        if text.is_empty() {
+        self.type_into_pane(session, &text, window, cx);
+    }
+
+    /// A file tree row dropped on `session`'s pane (§20B.5, ADR 0081): `composer.file_ref`
+    /// on an agent, the bare relative path on a shell.
+    pub(crate) fn drop_tree_path(
+        &mut self,
+        session: Ulid,
+        dragged: &DraggedPath,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let agent = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent);
+        // A missing or broken settings file types the default form (the daemon reports it).
+        let template = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .composer
+            .file_ref;
+        let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
+        self.type_into_pane(session, &text, window, cx);
+    }
+
+    /// Types a drop into `session`'s pane: into its composer draft while the composer is
+    /// shown, else into the terminal; no Enter either way. A modal dialog covers the panes,
+    /// so a drop on it types nothing.
+    pub(crate) fn type_into_pane(
+        &mut self,
+        session: Ulid,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.modal_open() || text.is_empty() {
             return;
         }
         if let Some(tabs) = self.active_tabs_mut() {
             tabs.focus(session);
         }
         if self.composers.shown(session).is_some() {
-            self.composer_typed(session, &text, window, cx);
+            self.composer_typed(session, text, window, cx);
         } else if let Some(pane) = self.panes.get(&session).cloned() {
-            pane.update(cx, |pane, cx| pane.type_text(&text, cx));
+            pane.update(cx, |pane, cx| pane.type_text(text, cx));
             self.focus_pane(window, cx);
         }
         cx.notify();
