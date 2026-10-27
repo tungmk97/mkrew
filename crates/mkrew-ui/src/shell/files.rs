@@ -44,6 +44,7 @@ impl Shell {
             .insert(project_id, FilesView::new(project_id, target));
         self.files_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.refresh_files(project_id, window, cx);
+        self.follow_file_tabs(project_id, window, cx);
     }
 
     /// Lists the root and open folders of the Files view of `project_id` again and re-reads
@@ -203,14 +204,15 @@ impl Shell {
         .detach();
     }
 
-    /// Follows `git.changed` in the Files view on screen (hidden ones refresh when shown).
+    /// Follows `git.changed` in the Editor or the tree on screen (hidden ones refresh when
+    /// shown).
     pub(crate) fn files_event(
         &mut self,
         event: &Event,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(project_id) = self.workspace.filter(|_| self.view() == View::Files) else {
+        let Some(project_id) = self.workspace.filter(|_| self.files_on_screen()) else {
             return;
         };
         let Some(view) = self.files.get_mut(&project_id) else {
@@ -239,6 +241,12 @@ impl Shell {
         if view.file() != before.as_deref() {
             // A file click lists nothing; only the read matters.
             return self.file_tab_shown(project_id, requests.read, window, cx);
+        }
+        // Clicking the file that is already the active tab still brings the Editor up.
+        if self.view() != View::Editor
+            && self.files.get(&project_id).and_then(|view| view.file()) == Some(path)
+        {
+            self.show_view(View::Editor, window, cx);
         }
         self.files_requests(project_id, requests, window, cx);
     }
@@ -638,7 +646,7 @@ impl Shell {
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
-        self.show_view(View::Files, window, cx);
+        self.show_view(View::Editor, window, cx);
         self.leave_files(project_id, paths, then, window, cx);
         true
     }
@@ -843,7 +851,8 @@ impl Shell {
         for project_id in files {
             self.files
                 .insert(project_id, FilesView::new(project_id, None));
-            if shown == Some(project_id) && self.view() == View::Files {
+            self.follow_file_tabs(project_id, window, cx);
+            if shown == Some(project_id) && self.files_on_screen() {
                 self.refresh_files(project_id, window, cx);
             }
         }

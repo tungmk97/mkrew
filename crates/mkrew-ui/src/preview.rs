@@ -22,6 +22,7 @@ use crate::comments::Selection;
 use crate::diagram::Diagram;
 use crate::docs::{Shown, gutter};
 use crate::highlight::{Code, Token};
+use crate::icons::{self, Icon};
 use crate::markdown::{Align, Block, BlockKind, Item, Row, Run, Style};
 use crate::preview_select;
 use crate::scrollbar::{self, Source};
@@ -473,7 +474,7 @@ fn block_in(
                 None => code(text, theme.text, theme),
             };
             match shown.diagrams.get(&start) {
-                Some(Ok(diagram)) => diagram_view(diagram, theme).into_any_element(),
+                Some(Ok(diagram)) => diagram_view(diagram, start, theme).into_any_element(),
                 Some(Err(error)) => div()
                     .flex()
                     .flex_col()
@@ -645,10 +646,21 @@ fn code_block(lang: Option<&str>, code: &Code, pick: Option<&Pick>, theme: &Them
         )
 }
 
+/// Asks the window to show `0` large, in a dialog (the ⤢ on a diagram card).
+#[derive(Debug, Clone, PartialEq, gpui::Action)]
+#[action(namespace = mkrew, no_json)]
+pub struct ExpandDiagram(pub Diagram);
+
 /// A drawn Mermaid diagram on a bordered card, at its natural size, at most as wide as the
-/// preview.
-fn diagram_view(diagram: &Diagram, theme: &Theme) -> gpui::Div {
+/// preview; "Expand" on hover shows it large ([`ExpandDiagram`]). `start` is its first source
+/// line (the button's id).
+fn diagram_view(diagram: &Diagram, start: u32, theme: &Theme) -> gpui::Div {
+    let group = SharedString::from(format!("diagram-{start}"));
+    let expanded = diagram.clone();
+    let (hover, text) = (theme.hover, theme.text);
     div()
+        .group(group.clone())
+        .relative()
         .flex()
         .justify_center()
         .p(px(space::M))
@@ -664,6 +676,39 @@ fn diagram_view(diagram: &Diagram, theme: &Theme) -> gpui::Div {
                 .max_w_full()
                 .when(diagram.height > 0.0, |img| {
                     img.aspect_ratio(diagram.width / diagram.height)
+                }),
+        )
+        .child(
+            div()
+                .id(("diagram-expand", start as usize))
+                .absolute()
+                // Bottom: the Files preview's ✎ sits at the block's top-right.
+                .bottom(px(space::XS))
+                .right(px(space::XS))
+                .flex()
+                .items_center()
+                .gap(px(space::XS))
+                .px(px(space::S))
+                .py(px(space::XS))
+                .rounded(px(radius::SMALL))
+                .bg(rgb(theme.surface_raised))
+                .text_size(font_size::META)
+                .text_color(rgb(theme.text_muted))
+                .cursor_pointer()
+                .opacity(theme::opacity::HIDDEN)
+                .group_hover(group, |style| style.opacity(theme::opacity::FULL))
+                .hover(move |style| style.bg(rgb(hover)).text_color(rgb(text)))
+                .child(icons::icon_svg(
+                    Icon::Maximize2,
+                    theme::ICON_SIZE_SMALL,
+                    theme.text_muted,
+                ))
+                .child("Expand")
+                // Not a press on the page (text selection) or a pick of the block (Docs).
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(Box::new(ExpandDiagram(expanded.clone())), cx);
                 }),
         )
 }

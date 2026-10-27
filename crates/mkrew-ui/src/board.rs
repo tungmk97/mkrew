@@ -28,8 +28,8 @@ pub enum View {
     Terminals,
     /// The Markdown review (SPEC §12).
     Docs,
-    /// The file tree and read-only viewer (SPEC §12A).
-    Files,
+    /// The opened files' tabs and editor (SPEC §12A); the tree is in the right panel.
+    Editor,
     /// Changed files and their diffs (SPEC §12B).
     Git,
 }
@@ -38,17 +38,24 @@ impl View {
     pub const ALL: [View; 5] = [
         View::Terminals,
         View::Board,
-        View::Files,
         View::Git,
         View::Docs,
+        View::Editor,
     ];
+
+    /// The view bar's views: Docs while `[features] docs` is on, Editor while files are open.
+    pub fn bar(docs: bool, editor: bool) -> impl Iterator<Item = View> {
+        View::ALL
+            .into_iter()
+            .filter(move |&view| (view != View::Docs || docs) && (view != View::Editor || editor))
+    }
 
     pub fn title(self) -> &'static str {
         match self {
             View::Board => "Board",
             View::Terminals => "Terminals",
             View::Docs => "Docs",
-            View::Files => "Files",
+            View::Editor => "Editor",
             View::Git => "Git",
         }
     }
@@ -60,7 +67,7 @@ impl View {
             View::Board => Command::ShowBoard,
             View::Terminals => Command::ShowTerminals,
             View::Docs => Command::ShowDocs,
-            View::Files => Command::ShowFiles,
+            View::Editor => Command::ShowEditor,
             View::Git => Command::ShowGit,
         }
     }

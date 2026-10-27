@@ -325,6 +325,29 @@ impl SidebarMode {
     }
 }
 
+/// `[ui] right_panel`: the right panel next to Terminals / Editor at start, and its tab
+/// (SPEC §10). The panel toggle and its tab row write it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RightPanelMode {
+    /// Open on the file tree.
+    Files,
+    /// Open on the session cards.
+    Session,
+    #[default]
+    Hidden,
+}
+
+impl RightPanelMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            RightPanelMode::Files => "files",
+            RightPanelMode::Session => "session",
+            RightPanelMode::Hidden => "hidden",
+        }
+    }
+}
+
 /// `[ui] inspector_width` default, px (the UI clamps what it reads to its own limits).
 pub const INSPECTOR_WIDTH_DEFAULT: u16 = 300;
 
@@ -347,12 +370,14 @@ pub struct UiSettings {
     /// `[ui] diff_wrap` (SPEC §12B): long diff lines wrap at the pane edge (else they are cut).
     /// The Git diff toolbar's Wrap toggle writes it.
     pub diff_wrap: bool,
-    /// Width of the session panel right of Terminals, px (SPEC §10); dragging its edge saves it.
+    /// Width of the right panel (Files / Session tabs), px (SPEC §10); dragging its edge saves it.
     pub inspector_width: u16,
     /// Width of the workspace sidebar, px (SPEC §10); dragging its edge saves it.
     pub sidebar_width: u16,
     /// `[ui] sidebar`: full, compact rail or hidden at start; the sidebar toggles write it.
     pub sidebar: SidebarMode,
+    /// `[ui] right_panel`: hidden, or open on the Files or Session tab at start.
+    pub right_panel: RightPanelMode,
     /// `[ui] reading_width`: agent panes start at reading width (≈ 120–140 columns, centered);
     /// each pane's Reading width toggle overrides it until restart. Shell panes are full width.
     pub reading_width: bool,
@@ -375,6 +400,7 @@ impl Default for UiSettings {
             inspector_width: INSPECTOR_WIDTH_DEFAULT,
             sidebar_width: SIDEBAR_WIDTH_DEFAULT,
             sidebar: SidebarMode::Full,
+            right_panel: RightPanelMode::Hidden,
             reading_width: true,
             close_to_tray: true,
         }
@@ -544,6 +570,7 @@ pub fn template() -> &'static str {
      # inspector_width = 300\n\
      # sidebar = \"full\"\n\
      # sidebar_width = 280\n\
+     # right_panel = \"hidden\"\n\
      # reading_width = true\n\
      # close_to_tray = true\n\
      \n\
@@ -796,6 +823,7 @@ push = true
                     inspector_width: INSPECTOR_WIDTH_DEFAULT,
                     sidebar_width: SIDEBAR_WIDTH_DEFAULT,
                     sidebar: SidebarMode::Full,
+                    right_panel: RightPanelMode::Hidden,
                     reading_width: true,
                     close_to_tray: false,
                 },
@@ -1115,6 +1143,32 @@ push = true
         // A negative or fractional width is a typed error, not a silent default.
         assert!(parse_err("[ui]\ninspector_width = -1").contains("invalid value"));
         assert!(parse_err("[ui]\ninspector_width = \"wide\"").contains("invalid type"));
+    }
+
+    #[test]
+    fn right_panel_parses_defaults_to_hidden_and_round_trips() {
+        let ui = |src: &str| parse(Path::new("s.toml"), src).unwrap().ui;
+        assert_eq!(ui("").right_panel, RightPanelMode::Hidden);
+        assert_eq!(
+            ui("[ui]\nright_panel = \"files\"").right_panel,
+            RightPanelMode::Files
+        );
+        assert_eq!(
+            ui("[ui]\nright_panel = \"session\"").right_panel,
+            RightPanelMode::Session
+        );
+        assert!(parse_err("[ui]\nright_panel = \"left\"").contains("unknown variant `left`"));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        std::fs::write(&path, template()).unwrap();
+        for mode in [
+            RightPanelMode::Files,
+            RightPanelMode::Session,
+            RightPanelMode::Hidden,
+        ] {
+            write_ui_value(&path, "right_panel", &format!("\"{}\"", mode.name())).unwrap();
+            assert_eq!(load(&path).unwrap().ui.right_panel, mode);
+        }
     }
 
     #[test]

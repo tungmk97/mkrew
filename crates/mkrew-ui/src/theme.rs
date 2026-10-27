@@ -348,8 +348,14 @@ pub const PANE_CONFLICT_MAX_FRACTION: f32 = 0.5;
 /// Width of the Docs view's file list.
 pub const DOC_LIST_WIDTH: f32 = 240.0;
 
-/// Max width of the rendered Markdown preview, so lines stay readable.
-pub const DOC_PREVIEW_MAX_WIDTH: f32 = 720.0;
+/// Max width of the rendered Markdown preview: wide enough for tables and diagrams, still a
+/// readable line (≈ 120 characters of body text).
+pub const DOC_PREVIEW_MAX_WIDTH: f32 = 960.0;
+
+/// An expanded Mermaid diagram (its dialog takes `HISTORY_DIALOG_FRACTION` of the window) is
+/// drawn at most this many times its natural size: gpui rasterizes SVGs at 2x, so it stays
+/// sharp up to there.
+pub const DIAGRAM_ZOOM_MAX: f32 = 2.0;
 
 /// Width of the bar left of a Markdown quote.
 pub const DOC_QUOTE_BAR_WIDTH: f32 = 2.0;
@@ -366,9 +372,6 @@ pub const SEND_SESSIONS_HEIGHT: f32 = 200.0;
 /// Height of the Docs "View changes" diff (it scrolls past that); the dialog is as wide as
 /// the undo one.
 pub const CHANGES_DIFF_HEIGHT: f32 = 420.0;
-
-/// Width of the Files view's tree.
-pub const FILE_TREE_WIDTH: f32 = 280.0;
 
 /// Indent per folder level in the Files tree.
 pub const FILE_TREE_INDENT: f32 = space::M;
@@ -689,7 +692,7 @@ pub struct Theme {
     pub qr_light: u32,
     /// Faint accent border of the focused split pane (accent halfway to `bg`, SPEC §14).
     pub pane_focus_border: u32,
-    /// The ring of a keyboard-focused dialog control (ADR 0081): a 1 px border in the text
+    /// The ring of a keyboard-focused dialog control (ADR 0084): a 1 px border in the text
     /// color, so it reads on `surface` and on an accent button in every theme.
     pub focus_ring: u32,
     /// Background of selected terminal cells (accent mixed into `bg`, text stays readable).

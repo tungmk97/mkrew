@@ -478,12 +478,21 @@ impl Shell {
         let reading = info.is_some_and(|info| self.reading_on(info));
         let color = (info.and_then(|info| info.color.as_deref()))
             .and_then(|name| theme.workspace_color(name));
-        div()
+        let accent_border = theme.accent;
+        let frame = div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
             .bg(rgb(theme.terminal_bg))
+            .on_drop(
+                cx.listener(move |shell, dragged: &DraggedPath, window, cx| {
+                    if shell.workspace == Some(dragged.project_id) {
+                        shell.drop_tree_path(session, dragged, window, cx);
+                    }
+                }),
+            );
+        self.pane_drop_target(frame, session, cx)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |shell, _, window, cx| {
@@ -556,6 +565,19 @@ impl Shell {
                         .border_color(rgb(border)),
                 )
             })
+            // The drop ring: an overlay, so the terminal keeps its size and the pointer.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(radius::MEDIUM))
+                    .border(px(theme::BORDER_WIDTH))
+                    .border_color(gpui::transparent_black())
+                    .drag_over::<DraggedPath>(move |style, _, _, _| {
+                        style.border_color(rgb(accent_border))
+                    }),
+            )
+            .children(self.pane_drop_overlay(session, theme, cx))
             .when_some(voice_ring, |el, color| {
                 el.child(
                     div()
@@ -832,7 +854,7 @@ impl Shell {
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
         let session = info.id;
-        div()
+        let header = div()
             .flex_none()
             .flex()
             .items_center()
@@ -863,8 +885,8 @@ impl Shell {
                 cx.listener(move |shell, event: &MouseDownEvent, window, cx| {
                     shell.open_pane_menu(session, event.position, window, cx);
                 }),
-            )
-            .into_any_element()
+            );
+        self.draggable_pane(header, info, theme)
     }
 
     /// A tab's status dot from its most urgent pane: amber needs input, red exited, a pulsing

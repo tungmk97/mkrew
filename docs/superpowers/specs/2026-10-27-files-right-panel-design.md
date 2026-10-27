@@ -65,7 +65,7 @@ Out (YAGNI; may come later):
 
 - **Source:** every tree row (file or folder) is draggable with gpui `on_drag`, carrying
   `DraggedPath { project_id, path, is_dir }` (`path` relative to the tree's root, `/`-separated).
-  The drag preview is the row's icon and name, styled like a dragged tab or card.
+  The drag preview is the row's name on the shared drag chip (the same look as dragged tabs and cards).
 - **Target:** the whole pane (header, terminal, composer), as for OS drops (§20B.5).
   The pane uses plain `on_drop::<DraggedPath>`: an in-app drag is mouse-driven, so the OLE keyboard-modality bug that `drop_catcher` works around does not apply.
   While dragged over, the pane shows an accent ring (`drag_over`, theme tokens only).

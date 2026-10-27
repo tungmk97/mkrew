@@ -32,10 +32,11 @@ impl Shell {
     /// unless the panel is open on an agent with a native id.
     pub(crate) fn sync_thread(&mut self, cx: &mut Context<'_, Self>) {
         let session = self
-            .focused_session()
+            .panel_session()
             .and_then(|id| self.sidebar.sessions().iter().find(|s| s.id == id));
         let profile = session.map(|s| s.agent_profile.clone());
-        match inspector::wanted_thread(self.inspector_open, session) {
+        let wanted = self.panel_shown() && self.right_panel.tab == PanelTab::Session;
+        match inspector::wanted_thread(wanted, session) {
             None => {
                 if self.thread.take().is_some() {
                     cx.notify();

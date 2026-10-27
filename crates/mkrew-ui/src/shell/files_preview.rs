@@ -5,6 +5,37 @@ use crate::*;
 use mkrew_ui::files_view::{BlockEditOutcome, StaleEdit};
 
 impl Shell {
+    /// Preview ↔ Source of the active Markdown tab (the Preview / Source switch, Ctrl+Shift+V).
+    /// Nothing for other files.
+    pub(crate) fn toggle_file_preview(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(tab) = self.active_file_tab(project_id) else {
+            return;
+        };
+        let editable = tab
+            .shown()
+            .is_some_and(|shown| !shown.code.binary && !shown.code.too_large);
+        if !(tab.is_markdown() && editable) {
+            return;
+        }
+        tab.toggle_mode();
+        self.build_preview(project_id, window, cx);
+        // The find fields are not drawn in Preview: give the keyboard back.
+        if (self.files.get(&project_id))
+            .and_then(FilesView::tab)
+            .is_some_and(FileTab::previewing)
+            && (self.file_find_focus.is_focused(window)
+                || self.file_replace_focus.is_focused(window))
+        {
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
     /// A `.md` file of the Files view as the Docs preview: the page of the editor's text
     /// (unsaved edits included), selectable.
     pub(crate) fn render_md_preview(

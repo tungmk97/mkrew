@@ -1,4 +1,4 @@
-# 0081 - Keyboard-only operation
+# 0084 - Keyboard-only operation
 
 - Date: 2026-10-27
 - Status: accepted
@@ -30,7 +30,7 @@ The work ships in four waves; each wave appends its section here.
 - Keys: ↑/↓ and Home/End select enabled rows, ←/→ move on a swatch row, Enter and Space run the row, a letter selects the next row starting with it, Esc closes.
 - A held key does nothing, so the key that opened a menu cannot pick a row.
 - Closing (Esc, an action, a click outside, any bound command) gives the keyboard back to what had it before.
-- New command `context_menu` (`Shift+F10`, global) opens the menu a right-click would open on what has the keyboard (terminal pane, Files cursor row, active file tab, sidebar filter row, selected Board card), else the workspace menu under the title bar's switcher.
+- New command `context_menu` (`Shift+F10`, global) opens the menu a right-click would open on what has the keyboard (terminal pane, file tree cursor row, active file tab, sidebar filter row, selected Board card), else the workspace menu under the title bar's switcher.
   Pressed again it closes the menu.
 - Board keys are shielded while a menu is open: `Keymap::key_bindings` adds `NoAction` bindings in context `Menu` for plain and Shift-only keys of context-limited commands.
 - The workspace menu floats at an anchor instead of dropping inside the sidebar row.
@@ -87,7 +87,7 @@ Compare Pick only opens Merge back, so it is a plain Tab stop and not part of th
   Nothing picked: the first line or block in view, in Git the first new-side line of the current hunk (`n` / `p` choose the hunk).
   Picked: Shift+↓ moves the end that was last moved, Shift+↑ shrinks it, a single line grows towards the key's direction.
   `Comments.head` remembers which end moves; a click resets it.
-- Shift+↑/↓ stays with a focused text field, a comment draft or the Files editor: the shell's `run` already hands every command to them, and the Git key context sits on the file list only.
+- Shift+↑/↓ stays with a focused text field, a comment draft or the Editor: the shell's `run` already hands every command to them, and the Git key context sits on the file list only.
 - Esc clears the pick in Docs (Git already did).
 - Terminal copy mode is `alacritty_terminal`'s vi mode (`Term::toggle_vi_mode`, `vi_motion`) on the focused pane's emulator, `copy_mode` = `alt-shift-c`.
   While it is on, keys go to the UI and never to the PTY; the keys are not in `keymap.toml`.
@@ -104,12 +104,21 @@ Compare Pick only opens Merge back, so it is a plain Tab stop and not part of th
   The picked link opens through the `OpenLink` event of Ctrl+Click.
   No link: a tab bar notice "No links on screen." that goes away after 3 seconds.
 - Consequence: `Alt+Shift+C` and `Alt+Shift+O` no longer reach a focused terminal (`ESC C`, `ESC O`); rebind `copy_mode` / `link_hints` in Settings → Keyboard if a program needs them.
-- Out of scope: `Ctrl+Shift+L` in Docs (it sends from Files, the Git diff and terminals only, as before).
+- Out of scope: `Ctrl+Shift+L` in Docs (it sends from the Editor, the Git diff and terminals only, as before).
 
 ## Wave 4 - Single actions
 
 Ten commands and about 40 palette entries cover the actions that had no key: focus sidebar (`alt-0`), approve card (`a`), next / previous comment (`f8`, `shift-f8`), reply / resolve comment (`ctrl-alt-r`, `ctrl-alt-enter`), move tab (`ctrl-shift-pageup`, `ctrl-shift-pagedown`), diff wrap (`w`), open kept (`alt-enter`).
 Each key calls the function the mouse handler calls, so a click and a key cannot diverge.
-Keys a text field also uses are bound in a view context (`Board`, `Git`, `Files`, `Docs || Git`) and `Shell::run` hands them to a focused field (`jira_*`, `comment_*`, `git_commit_*`); `OpenKept` also acts only while the tree has the keyboard.
+Keys a text field also uses are bound in a view context (`Board`, `Git`, `FileTree`, `Editor`, `Docs || Git`) and `Shell::run` hands them to a focused field (`jira_*`, `comment_*`, `git_commit_*`); `OpenKept` is bound in `FileTree` and acts only while the tree painted in the right panel has the keyboard.
 Decisions: Alt+0 widens the compact rail because the rail has no filter box and saves the layout like Ctrl+Alt+B; in the sidebar filter ←/→ fold rows only while the box is empty; the Board key context is on over the Jira list so the `Card` keys reach it (Kanban cards are not scrolled into view, the same known limit as Board cards); "Run: Start / Restart / Stop <command>" entries carry the command's index in the Run summary and resolve it when picked, like "Agent: New <Profile> pane"; "Agent: Unlink plan" is listed only when a plan is linked, and "Global: History…" needs an active workspace (it is the title bar button's function).
-Expected limits: "Files: Open file in a kept tab" from the palette does nothing while the editor has the keyboard (the key has the same gate); "Git: Change base…" is listed only in Against base.
+Expected limits: "File tree: Open file in a kept tab" from the palette does nothing while the editor has the keyboard (the key has the same gate); "Git: Change base…" is listed only in Against base.
+
+## Merge with the files tree in the right panel (ADR 0081)
+
+- This ADR was numbered 0081 on the branch. Master took 0081 (files tree in the right panel), 0082 and 0083, so it is 0084 now.
+- `View::Files` is gone. The tree is in the right panel, and the opened files are the Editor view.
+- The tree's own keys (`ToggleIgnored`, `OpenKept`) are in `FileTree`. Save, find and close are in `Editor`.
+- Shift+F10 opens the file row menu when the tree painted in the right panel has the keyboard. It opens the file tab menu when the Editor view is shown and neither the tree nor a pane has the keyboard.
+- The palette entry "Tabs: Move tab left / right" moves file tabs while the Editor view is shown.
+- The diagram dialog (ADR 0083) has a Tab stop on Close and the dialog guard like the other dialogs.

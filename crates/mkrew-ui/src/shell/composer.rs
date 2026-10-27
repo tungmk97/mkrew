@@ -229,9 +229,9 @@ impl Shell {
             });
         // The shown view's pick first (one picked earlier elsewhere may linger).
         let views = if self.view() == View::Git {
-            [View::Git, View::Files]
+            [View::Git, View::Editor]
         } else {
-            [View::Files, View::Git]
+            [View::Editor, View::Git]
         };
         let selection = views
             .into_iter()
@@ -245,7 +245,7 @@ impl Shell {
         }
     }
 
-    /// The lines picked in `project_id`'s Files view (one line, §12A) or Git diff (new side):
+    /// The lines picked in `project_id`'s Editor view (one line, §12A) or Git diff (new side):
     /// the file, first and last line, and their text (§20B.4).
     pub(crate) fn picked_lines(
         &self,
@@ -253,7 +253,7 @@ impl Shell {
         view: View,
     ) -> Option<(String, u32, u32, String)> {
         match view {
-            View::Files => {
+            View::Editor => {
                 let files = self.files.get(&project_id)?;
                 let (Some(path), Some(shown)) = (files.file(), files.shown()) else {
                     return None;

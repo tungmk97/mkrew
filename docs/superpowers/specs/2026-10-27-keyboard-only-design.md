@@ -2,7 +2,7 @@
 
 - Date: 2026-10-27
 - Status: split into 4 waves approved in chat, awaiting spec review
-- ADR to write with wave 1: `docs/decisions/0081-keyboard-only-operation.md` (covers all four waves; each later wave appends its section)
+- ADR to write with wave 1: `docs/decisions/0084-keyboard-only-operation.md` (covers all four waves; each later wave appends its section)
 - SPEC sections touched: §13 (shortcuts), §14 (focus ring), §12 / §12B (line picking), §10 (sidebar, terminal)
 
 ## Goal
@@ -138,7 +138,7 @@ Handles of controls come from `window.use_keyed_state(element_id, ..)`, so a but
 Today Undo Discard, worktree Remove / Discard, Git Discard and Compare Pick take only a click ("discarding takes an explicit click", `undo_dialog.rs:282`).
 New rule: they also run when the keyboard was moved onto the button (Tab) and Enter or Space is pressed.
 They are never the initial focus, and the held-key guard of the confirm prompt applies (auto-repeat does nothing).
-ADR 0081 records this change.
+ADR 0084 records this change.
 
 ### Dialogs covered
 
@@ -271,7 +271,7 @@ Fix tooltips that miss their key while the action has one: hunk Stage / Unstage 
 - §14: the focus ring tokens and the rule "focus ring only while keyboard focused".
 - §12 / §12B: Shift+↑/↓ picks lines.
 - §10: copy mode and link hints in the terminal; the card menu on the Board.
-- ADR 0081: keyboard-only operation, including the destructive-confirmation change from wave 2.
+- ADR 0084: keyboard-only operation, including the destructive-confirmation change from wave 2.
 
 ## Refinements found while planning (2026-10-27)
 

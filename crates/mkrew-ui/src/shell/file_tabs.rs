@@ -1,10 +1,10 @@
-//! Files view tabs (SPEC §12A, ADR 0080): switching, closing (unsaved text is asked about
+//! Editor view tabs (SPEC §12A, ADR 0080): switching, closing (unsaved text is asked about
 //! first), pinning. The strip and its menu are drawn in `file_tabs_render`.
 
 use crate::*;
 
 impl Shell {
-    /// The shown tab of `project_id`'s Files view.
+    /// The shown tab of `project_id`'s Editor view.
     pub(crate) fn active_file_tab(&mut self, project_id: Ulid) -> Option<&mut FileTab> {
         self.files.get_mut(&project_id)?.tab_mut()
     }
@@ -42,6 +42,31 @@ impl Shell {
         let requests = Requests { list: vec![], read };
         self.files_requests(project_id, requests, window, cx);
         self.build_preview(project_id, window, cx);
+        self.follow_file_tabs(project_id, window, cx);
+    }
+
+    /// The Editor view comes with the first open file and leaves with the last one (closed,
+    /// or another worktree started the files over). Only for the shown workspace.
+    pub(crate) fn follow_file_tabs(
+        &mut self,
+        project_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.workspace != Some(project_id) {
+            // Hidden workspace: just never keep an Editor without tabs.
+            if !self.has_file_tabs(project_id) && self.views.get(&project_id) == Some(&View::Editor)
+            {
+                self.views.insert(project_id, View::Terminals);
+            }
+            return;
+        }
+        let stored = self.views.get(&project_id).copied().unwrap_or_default();
+        match (self.has_file_tabs(project_id), stored == View::Editor) {
+            (true, false) => self.show_view(View::Editor, window, cx),
+            (false, true) => self.show_view(View::Terminals, window, cx),
+            _ => {}
+        }
     }
 
     /// A click on a tab (`Kept` for a double click), or any open of a file: its tab shows.
@@ -57,7 +82,7 @@ impl Shell {
         self.file_tab_shown(project_id, read, window, cx);
     }
 
-    /// Ctrl+Tab / Ctrl+Shift+Tab in the Files view.
+    /// Ctrl+Tab / Ctrl+Shift+Tab in the Editor view.
     pub(crate) fn cycle_file_tab(
         &mut self,
         project_id: Ulid,
@@ -69,7 +94,7 @@ impl Shell {
         self.file_tab_shown(project_id, read, window, cx);
     }
 
-    /// Ctrl+Alt+1–9 in the Files view.
+    /// Ctrl+Alt+1–9 in the Editor view.
     pub(crate) fn nth_file_tab(
         &mut self,
         project_id: Ulid,
@@ -104,7 +129,7 @@ impl Shell {
         self.leave_files(project_id, paths, then, window, cx);
     }
 
-    /// Ctrl+W / Ctrl+Shift+W in the Files view.
+    /// Ctrl+W / Ctrl+Shift+W in the Editor view.
     pub(crate) fn close_active_file_tab(
         &mut self,
         project_id: Ulid,

@@ -29,6 +29,8 @@ pub struct Context {
     pub workspaces: usize,
     /// Terminal tabs of the active workspace.
     pub tabs: usize,
+    /// The active workspace's open file tabs.
+    pub file_tabs: usize,
     /// A terminal pane had the keyboard (copy, paste, find… act on it).
     pub terminal: bool,
     /// The Git view's selected file can be discarded (unstaged or untracked).
@@ -360,7 +362,8 @@ pub fn title(command: Command) -> String {
         Command::ShowBoard => "View: Board".into(),
         Command::ShowTerminals => "View: Terminals".into(),
         Command::ShowDocs => "View: Docs".into(),
-        Command::ShowFiles => "View: Files".into(),
+        Command::ShowFileTree => "View: File tree".into(),
+        Command::ShowEditor => "View: Editor".into(),
         Command::ShowGit => "View: Git".into(),
         Command::ToggleDocSource => "Docs: Toggle preview / source".into(),
         Command::AddComment => "Comments: Comment on selected lines".into(),
@@ -373,12 +376,13 @@ pub fn title(command: Command) -> String {
         Command::ResolveComment => "Comments: Resolve or reopen the selected thread".into(),
         Command::MoveTabLeft => "Tabs: Move tab left".into(),
         Command::MoveTabRight => "Tabs: Move tab right".into(),
-        Command::ToggleIgnored => "Files: Toggle ignored files".into(),
-        Command::OpenKept => "Files: Open file in a kept tab".into(),
-        Command::SaveFile => "Files: Save file".into(),
-        Command::FindInFile => "Files: Find in file".into(),
-        Command::ReplaceInFile => "Files: Replace in file".into(),
-        Command::CloseFileTab => "Files: Close tab".into(),
+        Command::ToggleIgnored => "File tree: Toggle ignored files".into(),
+        Command::OpenKept => "File tree: Open file in a kept tab".into(),
+        Command::SaveFile => "Editor: Save file".into(),
+        Command::FindInFile => "Editor: Find in file".into(),
+        Command::ReplaceInFile => "Editor: Replace in file".into(),
+        Command::CloseFileTab => "Editor: Close tab".into(),
+        Command::ToggleFilePreview => "Editor: Toggle preview / source".into(),
         Command::QuickOpen => "Files: Quick open file".into(),
         Command::GitToggleMode => "Git: Toggle Working changes / Against base".into(),
         Command::GitToggleHistory => "Git: Toggle History".into(),
@@ -418,7 +422,7 @@ pub fn title(command: Command) -> String {
         Command::ToggleFullScreen => "Global: Toggle full screen".into(),
         Command::ToggleSidebar => "Global: Toggle sidebar".into(),
         Command::ToggleCompactSidebar => "Global: Toggle compact sidebar".into(),
-        Command::ToggleInspector => "View: Toggle session panel".into(),
+        Command::ToggleInspector => "View: Toggle right panel".into(),
         Command::VoiceInput => "Global: Voice input (start / stop)".into(),
         Command::AskAi => "Global: Ask AI…".into(),
         Command::ContextMenu => "Global: Open context menu".into(),
@@ -452,7 +456,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::OpenInZed
         | Command::ShowBoard
         | Command::ShowTerminals
-        | Command::ShowFiles
+        | Command::ShowFileTree
         | Command::ShowGit
         | Command::QuickOpen
         | Command::ToggleInspector
@@ -460,6 +464,7 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ContextMenu
         | Command::FocusSidebar => context.workspace,
         Command::ShowDocs => context.workspace && context.features.docs,
+        Command::ShowEditor => context.workspace && context.file_tabs > 0,
         Command::NextTab | Command::PreviousTab => context.workspace && context.tabs > 1,
         Command::Tab(n) => context.workspace && usize::from(n) <= context.tabs,
         Command::SplitRight
@@ -482,11 +487,11 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::CopyMode
         | Command::LinkHints => on_panes && context.terminal,
         Command::Find => {
-            (on_panes && context.terminal) || in_view(View::Files) || in_view(View::Docs)
+            (on_panes && context.terminal) || in_view(View::Editor) || in_view(View::Docs)
         }
         Command::OpenComposer => on_panes && context.agent_pane,
         Command::SendSelection => {
-            in_view(View::Files) || in_view(View::Git) || (on_panes && context.terminal)
+            in_view(View::Editor) || in_view(View::Git) || (on_panes && context.terminal)
         }
         Command::RunTask => in_view(View::Board),
         Command::ApproveCard => in_view(View::Board) && context.approve_card,
@@ -502,14 +507,14 @@ pub fn available(command: Command, context: &Context) -> bool {
         | Command::ReplyComment
         | Command::ResolveComment => in_view(View::Docs) || in_view(View::Git),
         Command::MoveTabLeft | Command::MoveTabRight => {
-            on_panes || (in_view(View::Files) && context.tabs > 0)
+            on_panes || (in_view(View::Editor) && context.file_tabs > 0)
         }
-        Command::ToggleIgnored
-        | Command::OpenKept
-        | Command::SaveFile
+        Command::ToggleIgnored | Command::OpenKept => context.workspace,
+        Command::SaveFile
         | Command::FindInFile
         | Command::ReplaceInFile
-        | Command::CloseFileTab => in_view(View::Files),
+        | Command::CloseFileTab
+        | Command::ToggleFilePreview => in_view(View::Editor),
         Command::GitToggleMode
         | Command::GitToggleHistory
         | Command::GitNextHunk

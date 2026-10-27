@@ -29,6 +29,7 @@ impl Shell {
         let inspector_width = inspector::saved_width(ui.inspector_width);
         let sidebar_width = sidebar::saved_width(ui.sidebar_width);
         let sidebar_mode = ui.sidebar;
+        let right_panel = inspector::RightPanel::from_mode(ui.right_panel);
         let prompts_dir = paths.prompts_dir();
         let config_dir = paths.config_dir.clone();
         // System mode follows the OS live (ADR 0027).
@@ -261,7 +262,7 @@ impl Shell {
             plans: Plans::default(),
             plan_error: None,
             sidebar_layout: sidebar::Layout::from_mode(sidebar_mode),
-            inspector_open: false,
+            right_panel,
             thread: None,
             inspector_width,
             inspector_dragging: false,
@@ -290,6 +291,7 @@ impl Shell {
             follow_up_scroll: ScrollHandle::new(),
             composers: Composers::default(),
             drop_hover: None,
+            pane_drop: None,
             composer_focus: cx.focus_handle(),
             ime_marked: Rc::default(),
             typing_target: Rc::default(),
@@ -347,6 +349,7 @@ impl Shell {
             history: None,
             history_pane: None,
             doc_dialog: None,
+            diagram_dialog: None,
             quick_open: None,
             quick_open_scroll: ScrollHandle::new(),
             palette: None,
@@ -517,6 +520,7 @@ impl Shell {
                 shell.history = None;
                 shell.history_pane = None;
                 shell.doc_dialog = None;
+                shell.diagram_dialog = None;
                 shell.quick_open = None;
                 shell.restore_theme_pick(window, cx);
                 shell.palette = None;

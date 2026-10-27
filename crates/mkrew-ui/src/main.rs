@@ -53,6 +53,7 @@ use mkrew_ui::composer::{self, Composers, Draft};
 use mkrew_ui::conflicts::{self, Conflicts};
 use mkrew_ui::context_menu::{LayoutMenu, PaneMenu, TabMenu};
 use mkrew_ui::desktop::{Desktop, TrayEvent};
+use mkrew_ui::diagram::Diagram;
 use mkrew_ui::dialog_focus::{self, Nav};
 use mkrew_ui::doc_dialog::{self, Changes, DocDialog, SendDialog};
 use mkrew_ui::docs::{Doc, Docs, Files, Mode, Shown};
@@ -73,11 +74,11 @@ use mkrew_ui::history::{self, HistoryDialog, Listing, Log};
 use mkrew_ui::icons::{self, Icon, icon_svg};
 use mkrew_ui::ime;
 use mkrew_ui::inbox::{self, Entry, Jump, Viewed};
-use mkrew_ui::inspector;
+use mkrew_ui::inspector::{self, PanelTab};
 use mkrew_ui::jira_board::{JiraView, Load, Source};
 use mkrew_ui::keymap::{
-    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, FILES_CONTEXT,
-    GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
+    self as keymap, BOARD_CONTEXT, COMMENTS_CONTEXT, Command, DOCS_CONTEXT, EDITOR_CONTEXT,
+    FILE_TREE_CONTEXT, GIT_CONTEXT, Keymap, KeymapError, MENU_CONTEXT, Run,
 };
 use mkrew_ui::lifecycle::{self, CloseAction, CloseChoice, RunWith};
 use mkrew_ui::menu::{self as menu_model, Dot, Lead, MenuItem, MenuKey, MenuRow, Tone};
@@ -95,7 +96,7 @@ use mkrew_ui::run_setup::{self, RunSetup};
 use mkrew_ui::scrollbar;
 use mkrew_ui::settings_dialog::{self, SettingsDialog};
 use mkrew_ui::sidebar::{self, Change, Row, SessionRow, Sidebar, WorkspaceRow};
-use mkrew_ui::split::{Axis, Divider, Preset};
+use mkrew_ui::split::{Axis, Divider, Preset, drop_axis};
 use mkrew_ui::status;
 use mkrew_ui::stt;
 use mkrew_ui::tabs::{
@@ -130,6 +131,7 @@ use shell::git_menus::*;
 use shell::git_rows::*;
 use shell::menu_render::*;
 use shell::menus::*;
+use shell::pane_drop::*;
 use shell::pane_render::*;
 use shell::reorder::*;
 use shell::sidebar::*;
@@ -565,6 +567,8 @@ struct Shell {
     /// The pane under an OS file drag (§20B.5), tracked without GPUI's hover check: gpui-pre
     /// 0.3.7 keeps keyboard modality during OLE drags, so `on_drop` misses drops after typing.
     drop_hover: Option<(Ulid, ExternalPaths)>,
+    /// Where the tab or pane dragged over a pane would split it (stale once no drag is active).
+    pane_drop: Option<PaneDrop>,
     /// Focused while the focused pane's composer takes keys.
     composer_focus: FocusHandle,
     /// Composing IME chars typed into the focused field so far (see `mkrew_ui::ime`).
@@ -576,8 +580,9 @@ struct Shell {
     composer_scroll: ScrollHandle,
     /// The view shown per workspace (Terminals when not set).
     views: HashMap<Ulid, View>,
-    /// The session panel right of Terminals is open (closed at every start; SPEC §10).
-    inspector_open: bool,
+    /// The right panel (Files / Session tabs) next to Terminals and the Editor; from
+    /// `[ui] right_panel`, written by its toggle and tab row (SPEC §10, ADR 0081).
+    right_panel: inspector::RightPanel,
     /// The session panel's Thread section (ADR 0057): the shown session's reading. `None`
     /// while the panel is closed or shows no agent with a native id.
     thread: Option<ThreadWatch>,
@@ -598,13 +603,13 @@ struct Shell {
     comment_focus: FocusHandle,
     /// The Files view of every workspace it was shown for.
     files: HashMap<Ulid, FilesView>,
-    /// Focused while a Files view is shown, so arrow keys move its tree cursor.
+    /// Focused while the right panel's tree has the keyboard, so arrow keys move its cursor.
     files_focus: FocusHandle,
     /// Keeps the Files tree cursor in view.
     files_scroll: UniformListScrollHandle,
     /// Keeps the active Files tab in view in the tab strip.
     file_tabs_scroll: ScrollHandle,
-    /// The Files viewer's find field (outside `FILES_CONTEXT`'s arrow keys).
+    /// The Editor's find field (outside `EDITOR_CONTEXT`'s arrow keys).
     file_find_focus: FocusHandle,
     /// The Files find bar's replace field.
     file_replace_focus: FocusHandle,
@@ -695,6 +700,8 @@ struct Shell {
     history_pane: Option<Entity<TerminalPane>>,
     /// The open Docs "Send to agent" / "View changes" dialog (modal).
     doc_dialog: Option<DocDialog>,
+    /// The Mermaid diagram of a Markdown preview shown large (modal).
+    diagram_dialog: Option<Diagram>,
     /// The open quick open finder (modal).
     quick_open: Option<QuickOpen>,
     /// Keeps the quick open pick in view.
@@ -805,10 +812,11 @@ impl Render for Shell {
                 el.key_context(BOARD_CONTEXT)
             })
             .when(self.view() == View::Docs, |el| el.key_context(DOCS_CONTEXT))
-            .when(self.view() == View::Files, |el| {
-                el.key_context(FILES_CONTEXT)
+            .when(self.view() == View::Editor, |el| {
+                el.key_context(EDITOR_CONTEXT)
             })
             .on_action(cx.listener(Self::run))
+            .on_action(cx.listener(Self::expand_diagram))
             // `/` focuses the sidebar filter while nothing else has the keyboard (a terminal or
             // a field keeps its `/`).
             .on_key_down(cx.listener(|shell, event: &KeyDownEvent, window, cx| {
@@ -927,6 +935,11 @@ impl Render for Shell {
                         DocDialog::Changes(changes) => self.render_changes(changes, &theme, cx),
                     }))
                     .children(
+                        self.diagram_dialog
+                            .as_ref()
+                            .map(|diagram| self.render_diagram_dialog(diagram, &theme, cx)),
+                    )
+                    .children(
                         self.quick_open
                             .as_ref()
                             .map(|open| self.render_quick_open(open, &theme, cx)),
@@ -975,7 +988,7 @@ impl Render for Shell {
                         (self.file_menu.as_ref())
                             .filter(|menu| {
                                 self.workspace == Some(menu.project_id)
-                                    && self.view() == View::Files
+                                    && self.file_tree_shown()
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_menu(menu, &theme, cx)),
@@ -984,7 +997,7 @@ impl Render for Shell {
                         (self.file_tab_menu.as_ref())
                             .filter(|menu| {
                                 self.workspace == Some(menu.project_id)
-                                    && self.view() == View::Files
+                                    && self.view() == View::Editor
                                     && !self.modal_open()
                             })
                             .map(|menu| self.render_file_tab_menu(menu, &theme, cx)),

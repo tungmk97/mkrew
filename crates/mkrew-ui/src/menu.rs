@@ -1,4 +1,4 @@
-//! The model of a popover menu and what a key does in it (SPEC §13, ADR 0081). Pure and tested
+//! The model of a popover menu and what a key does in it (SPEC §13, ADR 0084). Pure and tested
 //! headlessly: `shell/menu_render.rs` draws it and applies the answers.
 
 use gpui::{Keystroke, SharedString};
@@ -393,9 +393,9 @@ pub struct Focus {
     /// The sidebar filter has the keyboard and highlights this row.
     pub sidebar_row: Option<Target>,
     pub files_tree_focused: bool,
-    /// The Files tree's cursor row and whether it is a folder.
+    /// The file tree's cursor row and whether it is a folder.
     pub files_cursor: Option<(String, bool)>,
-    /// The active Files tab.
+    /// The active file tab of the Editor view.
     pub file_tab: Option<String>,
     /// The Board's selected card, when this workspace has it.
     pub card: Option<Ulid>,
@@ -419,7 +419,7 @@ pub fn owner(focus: &Focus) -> Owner {
         };
     }
     match focus.view {
-        View::Files => focus
+        View::Editor => focus
             .file_tab
             .clone()
             .map_or(Owner::Workspace, Owner::FileTab),
@@ -450,7 +450,7 @@ mod tests {
         };
         assert_eq!(owner(&filter), Owner::SidebarRow(Target::Workspace(id(2))));
         let tree = Focus {
-            view: View::Files,
+            view: View::Editor,
             files_tree_focused: true,
             files_cursor: Some(("src".into(), true)),
             file_tab: Some("README.md".into()),
@@ -504,7 +504,7 @@ mod tests {
             assert_eq!(owner(&focus), Owner::Workspace);
         }
         let bare_tree = Focus {
-            view: View::Files,
+            view: View::Editor,
             files_tree_focused: true,
             ..Focus::default()
         };
@@ -514,7 +514,7 @@ mod tests {
             ..Focus::default()
         };
         assert_eq!(owner(&board), Owner::Workspace);
-        // A tab of the Files view does not own the keyboard while another view is shown.
+        // A file tab does not own the keyboard while another view is shown.
         let hidden_tab = Focus {
             view: View::Terminals,
             file_tab: Some("a".into()),

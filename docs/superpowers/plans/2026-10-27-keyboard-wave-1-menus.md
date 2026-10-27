@@ -22,7 +22,7 @@ Each existing `render_*_menu` is cut down to a `*_rows()` builder; `Command::Con
 - Keys that only mean something inside a menu (↑/↓, Home/End, ←/→, Enter, Space, Esc, letters) are NOT in `keymap.toml`.
 - Closing a menu (Esc, an action, a click outside, any bound command) refocuses the element that had the keyboard before the menu opened.
 - A held (auto-repeat) key does nothing in a menu, so the key that opened it cannot pick a row.
-- Docs: `docs/decisions/0081-keyboard-only-operation.md` is created by this wave from `docs/decisions/0000-template.md` (waves 2-4 append sections; re-check `docs/decisions/` for the next free number before writing it, `0081` is expected). SPEC §13 and §10 are updated in the same wave. `docs/HUMAN_CHECKS.md` gets a "To verify" entry for dark and light. Never touch `CHANGELOG.md`.
+- Docs: `docs/decisions/0084-keyboard-only-operation.md` is created by this wave from `docs/decisions/0000-template.md` (waves 2-4 append sections; re-check `docs/decisions/` for the next free number before writing it, `0084` is expected). SPEC §13 and §10 are updated in the same wave. `docs/HUMAN_CHECKS.md` gets a "To verify" entry for dark and light. Never touch `CHANGELOG.md`.
 - Markdown: one sentence per physical line; never the em dash character, use "-".
 - Commits: Conventional Commits (`feat(ui): ...`), `git -c user.email=tungnv975@gmail.com commit`, stage only the task's files, never push.
 - Other waves run after this one on master. Files they also edit (`shell/widgets.rs`, `shell/focus.rs`, `shell/chrome.rs`, `main.rs` imports, `git_render.rs`): re-locate code by the quoted text in this plan, not by line numbers.
@@ -62,7 +62,7 @@ Each existing `render_*_menu` is cut down to a `*_rows()` builder; `Command::Con
 | `crates/mkrew-ui/src/shell/git_menus.rs`, `git_diff.rs`, `git.rs` | Git By:, More, Repositories popovers on the renderer; Repositories ↑/↓. |
 | `crates/mkrew-ui/src/keymap.rs`, `palette.rs`, `shell/sessions.rs` | `MENU_CONTEXT`, menu shield bindings, `Command::ContextMenu`. |
 | `crates/mkrew-ui/src/main.rs`, `shell.rs`, `shell/connection.rs`, `shell/focus.rs` | New `Shell` fields, imports, `close_menus`, render sites. |
-| `docs/decisions/0081-keyboard-only-operation.md` (new), `docs/SPEC.md`, `docs/HUMAN_CHECKS.md` | Docs. |
+| `docs/decisions/0084-keyboard-only-operation.md` (new), `docs/SPEC.md`, `docs/HUMAN_CHECKS.md` | Docs. |
 
 ---
 
@@ -89,7 +89,7 @@ Each existing `render_*_menu` is cut down to a `*_rows()` builder; `Command::Con
 Create `crates/mkrew-ui/src/menu.rs`:
 
 ```rust
-//! The model of a popover menu and what a key does in it (SPEC §13, ADR 0081). Pure and tested
+//! The model of a popover menu and what a key does in it (SPEC §13, ADR 0084). Pure and tested
 //! headlessly: `shell/menu_render.rs` draws it and applies the answers.
 
 use gpui::{Keystroke, SharedString};
@@ -938,7 +938,7 @@ Create `crates/mkrew-ui/src/shell/menu_render.rs` (anchors are added in Task 6, 
 
 ```rust
 //! The one renderer of every popover menu, the key handler that goes with it and the focus
-//! rules (ADR 0081). Each menu builds `Rows`; a click and a key reach the same `action`.
+//! rules (ADR 0084). Each menu builds `Rows`; a click and a key reach the same `action`.
 
 use crate::*;
 
@@ -3996,19 +3996,19 @@ git -c user.email=tungnv975@gmail.com commit -m "feat(ui): Shift+F10 opens the c
 
 ---
 
-### Task 11: ADR 0081, SPEC §13 / §10, HUMAN_CHECKS, verify and smoke run
+### Task 11: ADR 0084, SPEC §13 / §10, HUMAN_CHECKS, verify and smoke run
 
 **Files:**
-- Create: `docs/decisions/0081-keyboard-only-operation.md`
+- Create: `docs/decisions/0084-keyboard-only-operation.md`
 - Modify: `docs/SPEC.md` (§13 table `~:1299` and note `~:1352-1355`; §10 Board bullet `~:862`; §11 pane menu bullet `~:1032`; §10 tab menu `~:882`; §12A right-click menu `~:1161-1168`)
 - Modify: `docs/HUMAN_CHECKS.md:24` (new entry above the first "To verify" entry)
 
 - [ ] **Step 1: Create the ADR**
 
-Check `docs/decisions/` for the next free number (expected `0081`), then create `docs/decisions/0081-keyboard-only-operation.md`:
+Check `docs/decisions/` for the next free number (expected `0084`), then create `docs/decisions/0084-keyboard-only-operation.md`:
 
 ```markdown
-# 0081 - Keyboard-only operation
+# 0084 - Keyboard-only operation
 
 - Date: 2026-10-27
 - Status: accepted
@@ -4098,7 +4098,7 @@ The Board's single keys stay with the menu while it is open.
 Insert above the first `### To verify` entry of `docs/HUMAN_CHECKS.md` (the "Voice recording animation" one):
 
 ```markdown
-### To verify - 2026-10-27 Keyboard context menus (ADR 0081, wave 1)
+### To verify - 2026-10-27 Keyboard context menus (ADR 0084, wave 1)
 
 - [ ] **Selected row in both themes:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓; the selected row has the `selected` fill and stays readable in dark and light, including the swatch ring (accent) on the color rows.
 - [ ] **Shift+F10 per owner, dark and light:** terminal pane (menu under the pane header), Files tree cursor row, Files editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher). Check that each menu sits at the owner's bottom-left and that Esc returns typing to where you were (the terminal types again).
@@ -4145,8 +4145,8 @@ Record in `docs/HUMAN_CHECKS.md` (the "Not automated" line of the entry from Ste
 - [ ] **Step 7: Commit**
 
 ```bash
-git add docs/decisions/0081-keyboard-only-operation.md docs/SPEC.md docs/HUMAN_CHECKS.md
-git -c user.email=tungnv975@gmail.com commit -m "docs: ADR 0081, SPEC and human checks for keyboard context menus"
+git add docs/decisions/0084-keyboard-only-operation.md docs/SPEC.md docs/HUMAN_CHECKS.md
+git -c user.email=tungnv975@gmail.com commit -m "docs: ADR 0084, SPEC and human checks for keyboard context menus"
 ```
 
 ---
@@ -4160,7 +4160,7 @@ git -c user.email=tungnv975@gmail.com commit -m "docs: ADR 0081, SPEC and human 
 - `Command::ContextMenu`, owner table, anchors from prepaint bounds (`canvas`, the pattern of `preview.rs` and `field.rs`; `on_children_prepainted` is not needed because every owner is a single element): Tasks 6 and 10.
 - Card menu with the hover buttons' actions: Task 8.
 - Repositories ↑/↓: Task 9.
-- ADR 0081, SPEC §13 / §10 (and §11, §12A mentions), HUMAN_CHECKS, smoke: Task 11.
+- ADR 0084, SPEC §13 / §10 (and §11, §12A mentions), HUMAN_CHECKS, smoke: Task 11.
 
 **Placeholder scan.** No TBD / TODO; every step shows code or an exact edit with the quoted text to find. Steps that say "same as the first" (the four sidebar `open_workspace_menu` callers, Task 6 Step 4) name the exact closure shapes in the two preceding bullets.
 

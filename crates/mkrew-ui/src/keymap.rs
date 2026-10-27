@@ -93,18 +93,22 @@ pub enum Command {
     PickDown,
     /// Docs / Git: the same upwards; shrinks a pick that was grown down.
     PickUp,
-    /// Show the active workspace's file tree and viewer.
-    ShowFiles,
-    /// Files only: show or hide git-ignored files in the tree.
+    /// Open the right panel on the file tree and give it the keyboard.
+    ShowFileTree,
+    /// Show the Editor view (the opened files) while a file is open.
+    ShowEditor,
+    /// Tree only: show or hide git-ignored files in the tree.
     ToggleIgnored,
-    /// Files only: save the opened file (Ctrl+S, ADR 0028).
+    /// Editor only: save the opened file (Ctrl+S, ADR 0028).
     SaveFile,
-    /// Files only: open the find bar over the opened file (Ctrl+F).
+    /// Editor only: open the find bar over the opened file (Ctrl+F).
     FindInFile,
-    /// Files only: open the find bar with its replace row (Ctrl+H).
+    /// Editor only: open the find bar with its replace row (Ctrl+H).
     ReplaceInFile,
-    /// Files only: close the active tab, asking about unsaved text (Ctrl+W).
+    /// Editor only: close the active tab, asking about unsaved text (Ctrl+W).
     CloseFileTab,
+    /// Editor only: switch a Markdown file between its rendered preview and its source.
+    ToggleFilePreview,
     /// Show the active workspace's Git view.
     ShowGit,
     /// Git only: switch between Working changes and Against base.
@@ -134,7 +138,7 @@ pub enum Command {
     GitFetch,
     /// Git only: push the shown repository's branch.
     GitPush,
-    /// Fuzzy-find a file of the active workspace and open it in the Files view.
+    /// Fuzzy-find a file of the active workspace and open it in the Editor view.
     QuickOpen,
     /// Open the new task dialog for the active workspace.
     NewTask,
@@ -189,13 +193,13 @@ pub enum Command {
     ReplyComment,
     /// Docs / Git: resolve (or reopen) the selected thread.
     ResolveComment,
-    /// Move the active terminal tab (the active file tab in Files) one place left / right,
+    /// Move the active terminal tab (the active file tab in the Editor) one place left / right,
     /// within its pinned / unpinned group.
     MoveTabLeft,
     MoveTabRight,
     /// Git only: wrap long diff lines or cut them at the edge (the Wrap button).
     GitToggleWrap,
-    /// Files only: open the tree's cursor file in a kept tab (Enter opens a transient one).
+    /// Tree only: open the tree's cursor file in a kept tab (Enter opens a transient one).
     OpenKept,
 }
 
@@ -208,8 +212,11 @@ pub const BOARD_CONTEXT: &str = "Board";
 /// Key context of the window while a Docs view is shown.
 pub const DOCS_CONTEXT: &str = "Docs";
 
-/// Key context of the window while a Files view is shown.
-pub const FILES_CONTEXT: &str = "Files";
+/// Key context of the window while the Editor view is shown.
+pub const EDITOR_CONTEXT: &str = "Editor";
+
+/// Key context of the file tree in the right panel while it has the keyboard.
+pub const FILE_TREE_CONTEXT: &str = "FileTree";
 
 /// Key context of the Git view's changed-file list while it has focus (so its single-key
 /// shortcuts never reach a text field).
@@ -221,8 +228,8 @@ pub const COMMENTS_CONTEXT: &str = "Docs || Git";
 /// Key context of an open popover menu (`Shell::menu_focus`).
 pub const MENU_CONTEXT: &str = "Menu";
 
-/// Find: in a terminal's scrollback, the Files view's opened file, and the Docs list filter.
-pub const FIND_CONTEXT: &str = "Terminal || Files || Docs";
+/// Find: in a terminal's scrollback, the Editor's opened file, and the Docs list filter.
+pub const FIND_CONTEXT: &str = "Terminal || Editor || Docs";
 
 /// The GPUI action every binding dispatches. A terminal pane handles [`Command::Paste`] and
 /// propagates the rest to the window shell.
@@ -289,12 +296,14 @@ impl Command {
             Command::SendComments,
             Command::PickDown,
             Command::PickUp,
-            Command::ShowFiles,
+            Command::ShowFileTree,
+            Command::ShowEditor,
             Command::ToggleIgnored,
             Command::SaveFile,
             Command::FindInFile,
             Command::ReplaceInFile,
             Command::CloseFileTab,
+            Command::ToggleFilePreview,
             Command::ShowGit,
             Command::GitToggleMode,
             Command::GitToggleHistory,
@@ -394,12 +403,14 @@ impl Command {
             Command::SendComments => "send_comments".into(),
             Command::PickDown => "pick_down".into(),
             Command::PickUp => "pick_up".into(),
-            Command::ShowFiles => "show_files".into(),
+            Command::ShowFileTree => "show_file_tree".into(),
+            Command::ShowEditor => "show_editor".into(),
             Command::ToggleIgnored => "toggle_ignored".into(),
             Command::SaveFile => "save_file".into(),
             Command::FindInFile => "find_in_file".into(),
             Command::ReplaceInFile => "replace_in_file".into(),
             Command::CloseFileTab => "close_file_tab".into(),
+            Command::ToggleFilePreview => "toggle_file_preview".into(),
             Command::ShowGit => "show_git".into(),
             Command::GitToggleMode => "git_toggle_mode".into(),
             Command::GitToggleHistory => "git_toggle_history".into(),
@@ -511,12 +522,15 @@ impl Command {
             Command::SendComments => "ctrl-shift-s".into(),
             Command::PickDown => "shift-down".into(),
             Command::PickUp => "shift-up".into(),
-            Command::ShowFiles => "ctrl-shift-3".into(),
+            Command::ShowFileTree => "ctrl-shift-3".into(),
+            Command::ShowEditor => "ctrl-shift-6".into(),
             Command::ToggleIgnored => "ctrl-shift-h".into(),
             Command::SaveFile => "ctrl-s".into(),
             Command::FindInFile => "ctrl-f".into(),
             Command::ReplaceInFile => "ctrl-h".into(),
             Command::CloseFileTab => "ctrl-w".into(),
+            // Shares Ctrl+Shift+V with the terminal's Paste: no terminal has focus in the Editor.
+            Command::ToggleFilePreview => "ctrl-shift-v".into(),
             Command::ShowGit => "ctrl-shift-4".into(),
             Command::GitToggleMode => "b".into(),
             Command::GitToggleHistory => "h".into(),
@@ -594,12 +608,12 @@ impl Command {
             | Command::PreviousComment
             | Command::ReplyComment
             | Command::ResolveComment => Some(COMMENTS_CONTEXT),
-            Command::ToggleIgnored
-            | Command::OpenKept
-            | Command::SaveFile
+            Command::ToggleIgnored | Command::OpenKept => Some(FILE_TREE_CONTEXT),
+            Command::SaveFile
             | Command::FindInFile
             | Command::ReplaceInFile
-            | Command::CloseFileTab => Some(FILES_CONTEXT),
+            | Command::CloseFileTab
+            | Command::ToggleFilePreview => Some(EDITOR_CONTEXT),
             Command::GitToggleMode
             | Command::GitToggleHistory
             | Command::GitNextHunk
@@ -617,6 +631,16 @@ impl Command {
             | Command::GitFocusCommit => Some(GIT_CONTEXT),
             _ => None,
         }
+    }
+
+    /// Whether `self` and `other` can both be live at once, so they must not share keys. Only
+    /// a terminal and the Editor view are known apart: no terminal has focus in the Editor.
+    fn shares_context(self, other: Command) -> bool {
+        !matches!(
+            (self.context(), other.context()),
+            (Some(TERMINAL_CONTEXT), Some(EDITOR_CONTEXT))
+                | (Some(EDITOR_CONTEXT), Some(TERMINAL_CONTEXT))
+        )
     }
 }
 
@@ -753,7 +777,7 @@ pub fn folded_clash(
     keymap
         .bindings()
         .iter()
-        .filter(|(other, _)| *other != command)
+        .filter(|(other, _)| *other != command && command.shares_context(*other))
         .find(|(other, bound)| {
             fold(*other, &bound.unparse()).is_some_and(|folded| same_keys(&folded, &wanted))
         })
@@ -866,7 +890,7 @@ impl Keymap {
             let other = keymap
                 .bindings
                 .iter()
-                .find(|(o, k)| o != c && same_keys(k, keystroke))?;
+                .find(|(o, k)| o != c && same_keys(k, keystroke) && c.shares_context(*o))?;
             Some((i, other.0))
         }) {
             let (command, keys) = overrides.remove(index);
@@ -1054,8 +1078,28 @@ mod tests {
         let keymap = Keymap::defaults();
         assert_eq!(keymap.bindings().len(), Command::all().len());
         for (command, keys) in keymap.bindings() {
-            assert_eq!(keymap.command_for(keys), Some(*command), "{command:?}");
+            for (other, bound) in keymap.bindings() {
+                assert!(
+                    other == command || !same_keys(keys, bound) || !command.shares_context(*other),
+                    "{command:?} and {other:?} share {keys:?}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn ctrl_shift_v_pastes_in_a_terminal_and_toggles_the_preview_in_the_editor() {
+        let keymap = Keymap::defaults();
+        assert_eq!(keymap.label(Command::Paste), "Ctrl+Shift+V");
+        assert_eq!(keymap.label(Command::ToggleFilePreview), "Ctrl+Shift+V");
+        assert_eq!(Command::ToggleFilePreview.context(), Some(EDITOR_CONTEXT));
+        // The terminal keys stay one-of-a-kind everywhere else.
+        let (keymap, errors) = Keymap::parse("close_pane = \"ctrl-shift-v\"\n");
+        assert_eq!(keymap.label(Command::ClosePane), "Ctrl+Shift+X");
+        assert!(
+            matches!(&errors[..], [KeymapError::Duplicate { .. }]),
+            "{errors:?}"
+        );
     }
 
     #[test]
@@ -1107,15 +1151,16 @@ mod tests {
         assert_eq!(bound("ctrl-shift-e"), Some(Command::ToggleDocSource));
         assert_eq!(bound("ctrl-alt-m"), Some(Command::AddComment));
         assert_eq!(bound("ctrl-shift-s"), Some(Command::SendComments));
-        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowFiles));
+        assert_eq!(bound("ctrl-shift-3"), Some(Command::ShowFileTree));
+        assert_eq!(bound("ctrl-shift-6"), Some(Command::ShowEditor));
         assert_eq!(bound("ctrl-shift-h"), Some(Command::ToggleIgnored));
-        // Files only: plain Ctrl+S saves the opened file (the terminal never has focus there).
+        // Editor only: plain Ctrl+S saves the opened file (the terminal never has focus there).
         assert_eq!(bound("ctrl-s"), Some(Command::SaveFile));
-        assert_eq!(Command::SaveFile.context(), Some(FILES_CONTEXT));
+        assert_eq!(Command::SaveFile.context(), Some(EDITOR_CONTEXT));
         assert_eq!(bound("ctrl-f"), Some(Command::FindInFile));
         assert_eq!(bound("ctrl-h"), Some(Command::ReplaceInFile));
         for command in [Command::FindInFile, Command::ReplaceInFile] {
-            assert_eq!(command.context(), Some(FILES_CONTEXT), "{command:?}");
+            assert_eq!(command.context(), Some(EDITOR_CONTEXT), "{command:?}");
         }
         assert_eq!(bound("ctrl-shift-4"), Some(Command::ShowGit));
         assert_eq!(bound("ctrl-shift-o"), Some(Command::QuickOpen));
@@ -1185,14 +1230,14 @@ mod tests {
         ] {
             assert_eq!(command.context(), Some(COMMENTS_CONTEXT), "{command:?}");
             let predicate = gpui::KeyBindingContextPredicate::parse(COMMENTS_CONTEXT).unwrap();
-            for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Files", false)]
+            for (context, matches) in [(DOCS_CONTEXT, true), (GIT_CONTEXT, true), ("Editor", false)]
             {
                 let stack = [gpui::KeyContext::parse(context).unwrap()];
                 assert_eq!(predicate.eval(&stack), matches, "{context}");
             }
         }
-        // Ctrl+Shift+H only toggles ignored files while Files are shown.
-        assert_eq!(Command::ToggleIgnored.context(), Some(FILES_CONTEXT));
+        // Ctrl+Shift+H only toggles ignored files while the tree has the keyboard.
+        assert_eq!(Command::ToggleIgnored.context(), Some(FILE_TREE_CONTEXT));
         // SPEC §13 Git single keys, only while the Git list has focus.
         for (keys, command) in [
             ("b", Command::GitToggleMode),
@@ -1273,27 +1318,27 @@ mod tests {
             assert_eq!(keymap.command_for(&keystroke), None, "{keys} is bound");
             assert_eq!(key_to_bytes(&keystroke, mode), Some(bytes), "{keys}");
         }
-        // No default is a plain Ctrl+<letter>, except in the Files view (ADR 0028): no
+        // No default is a plain Ctrl+<letter>, except in the Editor view (ADR 0028): no
         // terminal has focus there (SPEC §13).
         for (command, keys) in keymap.bindings() {
             let m = keys.modifiers;
             let plain_ctrl = m.control && !m.shift && !m.alt && keys.key.len() == 1;
             let letter = keys.key.chars().all(|c| c.is_ascii_alphabetic());
             assert!(
-                !plain_ctrl || !letter || command.context() == Some(FILES_CONTEXT),
+                !plain_ctrl || !letter || command.context() == Some(EDITOR_CONTEXT),
                 "{command:?}"
             );
         }
     }
 
     #[test]
-    fn ctrl_w_closes_a_file_tab_in_files_only() {
+    fn ctrl_w_closes_a_file_tab_in_the_editor_only() {
         let keymap = Keymap::defaults();
         assert_eq!(
             keymap.command_for(&keystroke("ctrl-w")),
             Some(Command::CloseFileTab)
         );
-        assert_eq!(Command::CloseFileTab.context(), Some(FILES_CONTEXT));
+        assert_eq!(Command::CloseFileTab.context(), Some(EDITOR_CONTEXT));
         assert_eq!(keymap.label(Command::CloseFileTab), "Ctrl+W");
     }
 

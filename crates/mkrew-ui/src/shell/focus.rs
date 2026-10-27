@@ -18,6 +18,7 @@ impl Shell {
             || self.ask.is_some()
             || self.history.is_some()
             || self.doc_dialog.is_some()
+            || self.diagram_dialog.is_some()
             || self.quick_open.is_some()
             || self.palette.is_some()
             || self.prompt_picker.is_some()
@@ -115,6 +116,29 @@ impl Shell {
         if self.view() != View::Terminals {
             return None;
         }
+        let tabs = self.tabs.get(&self.workspace?)?;
+        tabs.active()?.focused()
+    }
+
+    /// The views the right panel is drawn next to.
+    pub(crate) fn panel_shown(&self) -> bool {
+        self.right_panel.open && matches!(self.view(), View::Terminals | View::Editor)
+    }
+
+    /// The right panel shows the file tree.
+    pub(crate) fn file_tree_shown(&self) -> bool {
+        self.panel_shown() && self.right_panel.tab == PanelTab::Files
+    }
+
+    /// Some of the active workspace's Editor view is drawn (the editor or the tree), so it
+    /// follows `git.changed` and refreshes when it comes back.
+    pub(crate) fn files_on_screen(&self) -> bool {
+        self.view() == View::Editor || self.file_tree_shown()
+    }
+
+    /// The pane the Session tab describes: the active tab's focused pane, also while the
+    /// Editor is shown (unlike `focused_session`, which is where keys go).
+    pub(crate) fn panel_session(&self) -> Option<Ulid> {
         let tabs = self.tabs.get(&self.workspace?)?;
         tabs.active()?.focused()
     }

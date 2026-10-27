@@ -10,6 +10,7 @@ fn context(view: View) -> Context {
         view,
         workspaces: 2,
         tabs: 2,
+        file_tabs: 1,
         terminal: false,
         discard: false,
         task_changes: false,
@@ -49,7 +50,7 @@ fn features_off_hide_docs_and_turns() {
         ..context(View::Terminals)
     };
     assert!(!commands(&off).contains(&Command::ShowDocs));
-    assert!(commands(&off).contains(&Command::ShowFiles));
+    assert!(commands(&off).contains(&Command::ShowFileTree));
     assert!(!Extra::Turns.available(&off));
     assert!(Extra::InsertPrompt.available(&off));
 }
@@ -219,7 +220,6 @@ fn availability_follows_the_view() {
         Command::ToggleDocSource,
         Command::AddComment,
         Command::PickDown,
-        Command::ToggleIgnored,
         Command::SaveFile,
         Command::FindInFile,
         Command::ReplaceInFile,
@@ -286,11 +286,17 @@ fn availability_follows_the_view() {
     assert!(docs.contains(&Command::ToggleDocSource));
     assert!(docs.contains(&Command::SendComments));
     assert!(docs.contains(&Command::PickDown));
-    assert!(commands(&context(View::Files)).contains(&Command::ToggleIgnored));
-    assert!(commands(&context(View::Files)).contains(&Command::SaveFile));
-    assert!(commands(&context(View::Files)).contains(&Command::ReplaceInFile));
-    assert!(commands(&context(View::Files)).contains(&Command::CloseFileTab));
+    assert!(commands(&context(View::Terminals)).contains(&Command::ToggleIgnored));
+    assert!(commands(&context(View::Editor)).contains(&Command::SaveFile));
+    assert!(commands(&context(View::Editor)).contains(&Command::ReplaceInFile));
+    assert!(commands(&context(View::Editor)).contains(&Command::CloseFileTab));
     assert!(!commands(&context(View::Terminals)).contains(&Command::CloseFileTab));
+    let no_files = Context {
+        file_tabs: 0,
+        ..context(View::Terminals)
+    };
+    assert!(!commands(&no_files).contains(&Command::ShowEditor));
+    assert!(commands(&context(View::Terminals)).contains(&Command::ShowEditor));
 
     let lone = commands(&Context {
         workspaces: 1,
@@ -342,7 +348,7 @@ fn phone_access_is_listed_in_every_view_and_without_a_workspace() {
         View::Terminals,
         View::Board,
         View::Docs,
-        View::Files,
+        View::Editor,
         View::Git,
     ] {
         assert!(Extra::PhoneAccess.available(&context(view)), "{view:?}");

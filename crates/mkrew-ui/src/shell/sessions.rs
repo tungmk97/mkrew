@@ -199,10 +199,10 @@ impl Shell {
             }
             window.focus(&self.git_focus, cx);
         }
-        // Same for the Files find / replace fields while they have the keyboard (Esc gives it
-        // back), except the Files commands (Ctrl+S, Ctrl+F, Ctrl+H act from there).
+        // Same for the Editor's find / replace fields while they have the keyboard (Esc gives it
+        // back), except the Editor commands (Ctrl+S, Ctrl+F, Ctrl+H act from there).
         if self.file_find_focus.is_focused(window) || self.file_replace_focus.is_focused(window) {
-            let open = self.view() == View::Files
+            let open = self.view() == View::Editor
                 && (self.workspace)
                     .and_then(|id| self.files.get(&id))
                     .is_some_and(|view| {
@@ -214,6 +214,7 @@ impl Shell {
                     | Command::FindInFile
                     | Command::ReplaceInFile
                     | Command::CloseFileTab
+                    | Command::ToggleFilePreview
             );
             if open && !files_command {
                 cx.propagate();
@@ -274,8 +275,8 @@ impl Shell {
         if *command != Command::Peek {
             self.close_peek(window, cx);
         }
-        // Tab keys act on the Files tabs while the Files view is shown (SPEC §12A, §13).
-        if self.view() == View::Files
+        // Tab keys act on the Editor's tabs while the Editor view is shown (SPEC §12A, §13).
+        if self.view() == View::Editor
             && let Some(project_id) = self.workspace
         {
             match *command {
@@ -412,7 +413,7 @@ impl Shell {
                 }
                 // Files open the opened file, at the selected line.
                 Some(project_id)
-                    if self.view() == View::Files
+                    if self.view() == View::Editor
                         && self
                             .files
                             .get(&project_id)
@@ -453,7 +454,12 @@ impl Shell {
             Command::ShowBoard => self.show_view(View::Board, window, cx),
             Command::ShowTerminals => self.show_view(View::Terminals, window, cx),
             Command::ShowDocs => self.show_view(View::Docs, window, cx),
-            Command::ShowFiles => self.show_view(View::Files, window, cx),
+            Command::ShowFileTree => self.show_file_tree(window, cx),
+            Command::ShowEditor => {
+                if self.workspace.is_some_and(|id| self.has_file_tabs(id)) {
+                    self.show_view(View::Editor, window, cx);
+                }
+            }
             Command::ShowGit => self.show_view(View::Git, window, cx),
             Command::QuickOpen => self.open_quick_open(window, cx),
             Command::CommandPalette => self.open_palette(window, cx),
@@ -501,7 +507,7 @@ impl Shell {
                 }
             }
             Command::SaveFile => {
-                // Only bound while Files are shown.
+                // Only bound while the Editor is shown.
                 let active = (self.workspace).and_then(|project_id| {
                     let path = self.files.get(&project_id)?.file()?.to_owned();
                     Some((project_id, path))
@@ -512,7 +518,7 @@ impl Shell {
             }
             Command::OpenKept => {
                 // Only the tree's cursor: in the editor or a find field Alt+Enter stays theirs.
-                if !self.files_focus.is_focused(window) {
+                if !(self.file_tree_shown() && self.files_focus.is_focused(window)) {
                     cx.propagate();
                     return;
                 }
@@ -524,7 +530,7 @@ impl Shell {
                 }
             }
             Command::ToggleIgnored => {
-                // Only bound while Files are shown.
+                // Only bound while the tree has the keyboard.
                 if let Some(project_id) = self.workspace {
                     let requests = self.files_view(project_id).toggle_ignored();
                     self.files_requests(project_id, requests, window, cx);
@@ -535,6 +541,12 @@ impl Shell {
                 if let Some(docs) = self.workspace.and_then(|id| self.docs.get_mut(&id)) {
                     docs.toggle_mode();
                     cx.notify();
+                }
+            }
+            Command::ToggleFilePreview => {
+                // Only bound while the Editor is shown.
+                if let Some(project_id) = self.workspace {
+                    self.toggle_file_preview(project_id, window, cx);
                 }
             }
             Command::AddComment => {
@@ -622,7 +634,7 @@ impl Shell {
             | Command::LinkHints => {}
             // A focused terminal pane handles it itself.
             Command::Find => match self.view() {
-                View::Files => self.open_file_find(false, window, cx),
+                View::Editor => self.open_file_find(false, window, cx),
                 View::Docs => {
                     window.focus(&self.docs_filter_focus, cx);
                     cx.notify();
@@ -631,7 +643,7 @@ impl Shell {
             },
             Command::FindInFile => self.open_file_find(false, window, cx),
             Command::ReplaceInFile => self.open_file_find(true, window, cx),
-            // Bound in the Files view only; handled above.
+            // Bound in the Editor view only; handled above.
             Command::CloseFileTab => {}
         }
     }

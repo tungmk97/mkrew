@@ -42,7 +42,7 @@ impl Shell {
         if switched && self.view() == View::Docs {
             self.load_docs(project_id, window, cx);
         }
-        if switched && self.view() == View::Files {
+        if switched && self.files_on_screen() {
             self.refresh_files(project_id, window, cx);
         }
         if switched && self.view() == View::Git {
@@ -329,17 +329,27 @@ impl Shell {
     }
 
     /// The view of the active workspace; Docs reads as Terminals while `[features] docs` is
-    /// off (ADR 0046).
+    /// off (ADR 0046), and the Editor while the workspace has no open file.
     pub(crate) fn view(&self) -> View {
         self.workspace
             .and_then(|id| self.views.get(&id).copied())
             .filter(|&view| view != View::Docs || self.features.docs)
+            .filter(|&view| {
+                view != View::Editor || self.workspace.is_some_and(|id| self.has_file_tabs(id))
+            })
             .unwrap_or_default()
     }
 
+    /// The workspace has open file tabs (the Editor view exists).
+    pub(crate) fn has_file_tabs(&self, project_id: Ulid) -> bool {
+        self.files
+            .get(&project_id)
+            .is_some_and(|view| !view.tabs().is_empty())
+    }
+
     /// Switches the active workspace to `view`; leaving Terminals detaches its panes. Showing
-    /// Docs re-lists its files (agents may have written new ones); showing Files refreshes the
-    /// tree and gives it the keyboard, likewise for Git and its changes.
+    /// Docs re-lists its files (agents may have written new ones); showing the Editor refreshes
+    /// the tree and gives the editor the keyboard, likewise for Git and its changes.
     pub(crate) fn show_view(
         &mut self,
         view: View,
@@ -353,19 +363,18 @@ impl Shell {
             return;
         }
         self.close_menus();
+        let tree_before = self.files_on_screen();
+        let tree_focused = self.files_focus.is_focused(window);
         let shown = self.views.insert(project_id, view).unwrap_or_default();
-        if view != View::Terminals {
-            // The panel (and its grip) leaves with Terminals: end a drag in progress.
+        if !matches!(view, View::Terminals | View::Editor) {
+            // The panel (and its grip) leaves with Terminals and Editor: end a drag in progress.
             self.end_inspector_drag(cx);
         }
         if view == View::Docs && shown != View::Docs {
             self.load_docs(project_id, window, cx);
         }
-        if view == View::Files {
-            if shown != View::Files {
-                self.refresh_files(project_id, window, cx);
-            }
-            window.focus(&self.files_focus, cx);
+        if self.files_on_screen() && !tree_before {
+            self.refresh_files(project_id, window, cx);
         }
         if view == View::Git {
             if shown != View::Git {
@@ -376,6 +385,16 @@ impl Shell {
         if shown != view {
             self.sync_panes(window, cx);
             cx.notify();
+        }
+        // After `sync_panes` (its focus would win). A tree click keeps the keyboard in the
+        // tree; any other way in types in the editor.
+        if view == View::Editor {
+            let target = if tree_focused {
+                &self.files_focus
+            } else {
+                &self.file_editor_focus
+            };
+            window.focus(target, cx);
         }
     }
 }

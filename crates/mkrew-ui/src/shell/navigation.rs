@@ -50,7 +50,7 @@ impl Shell {
             cx.notify();
             return;
         };
-        // Project-relative paths for the composer, whatever the Files view shows.
+        // Project-relative paths for the composer, whatever the tree shows.
         let mut open = QuickOpen::new(project_id, None);
         open.composer = Some(session);
         self.quick_open = Some(open);
@@ -77,9 +77,7 @@ impl Shell {
         }
     }
 
-    /// Files dropped from the OS on `session`'s pane (§20B.5): into its composer draft while
-    /// the composer is shown, else typed into the terminal. No Enter either way. A modal dialog
-    /// covers the panes, so a drop on it types nothing.
+    /// Files dropped from the OS on `session`'s pane (§20B.5): their absolute paths.
     pub(crate) fn drop_paths(
         &mut self,
         session: Ulid,
@@ -87,25 +85,55 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.modal_open() {
-            return;
-        }
         let paths: Vec<String> = paths
             .paths()
             .iter()
             .map(|path| path.to_string_lossy().into_owned())
             .collect();
         let text = composer::typed_paths(paths.iter().map(String::as_str));
-        if text.is_empty() {
+        self.type_into_pane(session, &text, window, cx);
+    }
+
+    /// A file tree row dropped on `session`'s pane (§20B.5, ADR 0081): `composer.file_ref`
+    /// on an agent, the bare relative path on a shell.
+    pub(crate) fn drop_tree_path(
+        &mut self,
+        session: Ulid,
+        dragged: &DraggedPath,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let agent = (self.sidebar.sessions().iter())
+            .any(|s| s.id == session && s.kind == SessionKind::Agent);
+        // A missing or broken settings file types the default form (the daemon reports it).
+        let template = mkrew_core::settings::load(&self.settings_file)
+            .unwrap_or_default()
+            .composer
+            .file_ref;
+        let text = composer::dropped_ref(&template, &dragged.path, dragged.is_dir, agent);
+        self.type_into_pane(session, &text, window, cx);
+    }
+
+    /// Types a drop into `session`'s pane: into its composer draft while the composer is
+    /// shown, else into the terminal; no Enter either way. A modal dialog covers the panes,
+    /// so a drop on it types nothing.
+    pub(crate) fn type_into_pane(
+        &mut self,
+        session: Ulid,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.modal_open() || text.is_empty() {
             return;
         }
         if let Some(tabs) = self.active_tabs_mut() {
             tabs.focus(session);
         }
         if self.composers.shown(session).is_some() {
-            self.composer_typed(session, &text, window, cx);
+            self.composer_typed(session, text, window, cx);
         } else if let Some(pane) = self.panes.get(&session).cloned() {
-            pane.update(cx, |pane, cx| pane.type_text(&text, cx));
+            pane.update(cx, |pane, cx| pane.type_text(text, cx));
             self.focus_pane(window, cx);
         }
         cx.notify();
@@ -184,7 +212,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Opens the picked file in the Files view (its folders open, the cursor lands on it).
+    /// Opens the picked file in the Editor view (its folders open, the cursor lands on it).
     pub(crate) fn open_quick_pick(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(open) = self.quick_open.take() else {
             return;
@@ -236,7 +264,7 @@ impl Shell {
         })
     }
 
-    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file in the Files view.
+    /// Ctrl+Click on a terminal link: a URL opens in the browser, a file in the Editor view.
     pub(crate) fn open_terminal_link(
         &mut self,
         session: Ulid,
@@ -255,7 +283,7 @@ impl Shell {
         }
     }
 
-    /// Shows `path` of the Files view on `target` (the project, or a task worktree) with the
+    /// Shows `path` of the files on `target` (the project, or a task worktree) with the
     /// caret on `line`. Another target starts the view over, so unsaved tabs are asked about
     /// first (as the chooser does).
     pub(crate) fn open_file_at(
@@ -291,7 +319,7 @@ impl Shell {
         }
     }
 
-    /// Shows `path` in the Files view of `project_id` (its folders open, the cursor lands on
+    /// Shows `path` in the Editor view of `project_id` (its folders open, the cursor lands on
     /// it, its tab shows).
     #[allow(clippy::too_many_arguments)] // The open's target, file, line and kind.
     pub(crate) fn reveal_file(
@@ -307,8 +335,7 @@ impl Shell {
         if self.workspace != Some(project_id) {
             self.activate_workspace(project_id, window, cx);
         }
-        self.show_view(View::Files, window, cx);
-        // Revealed only while the Files view still shows the folder that was searched.
+        // Revealed only while the tree still shows the folder that was searched.
         let Some(view) = self.files_at(project_id, target) else {
             return;
         };
@@ -322,6 +349,9 @@ impl Shell {
         }
         self.files_requests(project_id, requests, window, cx);
         self.file_tab_shown(project_id, None, window, cx);
+        // The tab exists now; also when the Editor was already stored, the editor gets the
+        // keyboard back from the closed dialog.
+        self.show_view(View::Editor, window, cx);
     }
 
     /// The command palette (Ctrl+Shift+P): the commands that can act where the keyboard is,
@@ -375,10 +405,13 @@ impl Shell {
             view: self.view(),
             workspaces: self.sidebar.projects().len(),
             tabs: match (workspace, self.view()) {
-                (Some(id), View::Files) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
+                (Some(id), View::Editor) => self.files.get(&id).map_or(0, |view| view.tabs().len()),
                 (Some(id), _) => self.tabs.get(&id).map_or(0, |tabs| tabs.tabs().len()),
                 (None, _) => 0,
             },
+            file_tabs: workspace.map_or(0, |id| {
+                self.files.get(&id).map_or(0, |view| view.tabs().len())
+            }),
             terminal: terminal.is_some(),
             discard,
             worktree_task,
@@ -820,7 +853,7 @@ impl Shell {
     }
 
     /// Quick open: the query field over the best matches (matched chars in the accent color,
-    /// the pick ringed); a click or Enter opens one in the Files view.
+    /// the pick ringed); a click or Enter opens one in the Editor view.
     pub(crate) fn render_quick_open(
         &self,
         open: &QuickOpen,

@@ -21,7 +21,7 @@ _Items that stop the loop until you answer._
 _Things the agent could not verify automatically (visual checks, real agents, Windows-only behavior).
 The loop keeps going; report problems by adding a task line to PROGRESS.md or writing them here._
 
-### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0081)
+### To verify - 2026-10-27 Keyboard wave 4: single actions (ADR 0084)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Alt+0 (dark + light):** from a terminal, then with the sidebar hidden, then with the compact rail: the sidebar shows (rail widens), the filter takes the keyboard, the active row is highlighted.
@@ -59,7 +59,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   The one ERROR line is the Windows DXGI debug-layer message (0x887A002D), unrelated to this wave.
   Dark and light both unseen.
 
-### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0081)
+### To verify - 2026-10-27 Keyboard wave 3: picking by keyboard (ADR 0084)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Pick lines in Docs (dark + light):** Docs → a `.md`, nothing picked.
@@ -89,7 +89,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   Not run (2026-10-27 smoke): needs a person at the keyboard and the microphone.
 - [ ] **Link hints (dark + light):** a pane showing a URL, a file path of the workspace and a path that does not exist.
   Alt+Shift+O shows accent labels over the first two only.
-  Typing a label opens the URL in the browser / the file in Files at its line.
+  Typing a label opens the URL in the browser / the file in the Editor at its line.
   Esc, another key, a wheel scroll, a click or moving focus to another pane ends the hints, and held output shows.
   With 30+ links two-letter labels appear and narrow as you type.
   With none the tab bar says "No links on screen." and clears after 3 s.
@@ -97,7 +97,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **AltGr layouts:** on a layout where Alt+Shift+C / O type a character, rebind `copy_mode` / `link_hints` in Settings → Keyboard and check the new keys.
   Not run (2026-10-27 smoke): needs an AltGr layout and a person at the keyboard.
 
-### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0081, wave 2)
+### To verify - 2026-10-27 Keyboard-only dialogs (ADR 0084, wave 2)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Focus ring (dark + light):** open the task dialog (palette: New task).
@@ -135,8 +135,11 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **A button that vanishes:** in the worktree dialog focus Discard, press Enter (the step changes).
   Esc still closes the dialog.
   Not run (2026-10-27 smoke): no key may be sent to the app and no worktree exists in the sandbox; only the launch was checked.
+- [ ] **Diagram dialog (merge with ADR 0083):** Expand a Mermaid diagram in a Markdown preview.
+  Tab reaches Close and shows the ring, Enter closes it, Esc closes it, and the keyboard returns to the pane.
+  Not run: needs a person at the keyboard.
 
-### To verify - 2026-10-27 Keyboard context menus (ADR 0081, wave 1)
+### To verify - 2026-10-27 Keyboard context menus (ADR 0084, wave 1)
 
 - Every check in this entry is done in both dark and light.
 - [ ] **Selected row:** open each menu (tab, layout, pane, share, workspace, file, file tab, Run, switcher, + New, Run with, fan-out, card, Git By:, ⋯, Repositories) and press ↓.
@@ -148,7 +151,7 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
   A letter selects the next row starting with it; a repeated letter goes on to the following one.
 - [ ] **Run menu by keyboard:** open the Run menu, select a command row and press Enter: it starts, or restarts when it already ran.
   While it runs, the "Stop <name>" row stops it.
-- [ ] **Shift+F10 per owner:** terminal pane (menu under the pane header), Files tree cursor row, Files editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher).
+- [ ] **Shift+F10 per owner:** terminal pane (menu under the pane header), file tree cursor row, Editor (active tab's menu), sidebar filter with a highlighted row, Board with a selected card (card menu), anything else (workspace menu under the title bar switcher).
   Each menu sits at the owner's bottom-left.
   Esc returns typing to where you were (the terminal types again).
 - [ ] **Shift+F10 toggles:** with any menu open, Shift+F10 closes it and the keyboard goes back to where it was.
@@ -170,6 +173,25 @@ The loop keeps going; report problems by adding a task line to PROGRESS.md or wr
 - [ ] **Not automated:** the smoke run (2026-10-27) could not drive the real window, so no menu was driven by keyboard and every item above is unticked.
   Synthetic input is not used any more; a human does these checks.
   The Shift+F10 toggle is confirmed in code only: the binding is global, not in the `Menu` NoAction shield, and `Shell::run` closes the menu and does not reopen it.
+
+### To verify - 2026-10-27 Drag a tab or pane onto a pane to split it (SPEC §10)
+
+- [ ] **Tab onto pane (dark + light):** with 2+ tabs, drag a tab off the strip onto a pane of the shown tab. The right half of the pane lights up when the pointer is right of the diagonal, the bottom half when it is below. Drop: the tab's panes (keeping their layout) sit right of / below that pane, the dragged tab is gone from the strip, and its sessions keep running (also after a UI restart).
+- [ ] **Pane onto pane:** with 3+ panes, drag a pane by its header onto another pane: it moves there; the pane headers' buttons, double-click rename and right-click menu still work.
+- [ ] **No-ops:** dragging a pane onto itself or a tab onto its own pane shows no overlay; dragging a tab along the strip still reorders it with the accent line.
+
+### To verify - 2026-10-27 Files tree in the right panel (ADR 0081)
+
+- [ ] **Panel (dark + light):** `◨` opens the right panel on `Files │ Session`; the tab row, tree rows, markers and search fit 240 px without clipping; dragging the edge resizes both tabs.
+- [ ] **Editor:** clicking a tree file shows `Editor` in the view bar and the file; closing every tab hides it and shows Terminals; the tree keeps the keyboard after a click.
+- [ ] **Drag:** dragging a file / folder onto a Claude pane types `@path ` / `@folder/ `; onto a shell the bare path; the pane shows an accent ring while hovered; a plain click still opens.
+- [ ] **Restart:** the panel comes back on the tab it was left on, or hidden.
+
+### To verify - 2026-10-27 Files Markdown preview: Ctrl+Shift+V, wider page, expand diagrams (ADR 0083)
+
+- [ ] **Toggle:** Files → a `.md` tab: Ctrl+Shift+V switches Preview ↔ Source (also with the find bar open, and from Source with the caret in the text); the Preview / Source tooltip shows Ctrl+Shift+V; the palette lists "Editor: Toggle preview / source". In a terminal pane Ctrl+Shift+V still pastes.
+- [ ] **Width (dark + light):** the preview column is up to 960 px (Files and Docs); at a narrow window it still fits with 24 px sides.
+- [ ] **Expand (dark + light):** hover a drawn Mermaid diagram → "⤢ Expand" at its bottom-right (clear of ✎ at the top-right); click → a dialog of 90% of the window with the diagram as wide as fits (at most 2x), sharp; a tall one scrolls; Esc or Close closes it. The click neither moves the text selection (Files) nor picks the block (Docs).
 
 ### To verify — 2026-10-27 Voice recording animation (SPEC §20G)
 
@@ -1428,10 +1450,10 @@ Structure-only refactor (main.rs → `crates/mkrew-ui/src/shell/`, daemon tests 
   lands on `fe/<file>`. Fetch / Push act on `fe` (its upstream shown).
 - [ ] **Terminal commit refreshes:** with `fe` shown, run `git -C fe commit --allow-empty -m x`
   in a terminal → the History / ahead count updates within ~1 s without clicking.
-- [ ] **Scrollback after a tab switch (ADR 0030):** in a pwsh pane run
-  `1..300 | % { "line $_" }`, then Ctrl+Tab to another tab and back. Also try opening the Board and
+- [ ] **Scrollback after a tab switch (ADR 0030, 0082):** in a pwsh pane run
+  `1..1300 | % { "line $_" }`, then Ctrl+Tab to another tab and back. Also try opening the Board and
   coming back, and minimizing and restoring. Each time, the mouse wheel and Shift+PgUp scroll back
-  about 200 lines above the screen (to around `line 100`), the screen looks the same as before the
+  about 1,000 lines above the screen (to around `line 300`), the screen looks the same as before the
   switch, and typing returns to the live prompt. Do the same in a claude pane after a long answer.
   `mk attach <session>` in Windows Terminal: its scrollbar shows the same lines above the screen.
 - [ ] **Alt+Shift+A / Alt+Shift+S:** with a terminal focused, Alt+Shift+A splits the focused pane to

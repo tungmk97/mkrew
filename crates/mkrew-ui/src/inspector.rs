@@ -1,6 +1,7 @@
-//! The session panel right of Terminals (SPEC §10, ADR 0038): its width, the Stop rule and
-//! the text of the Session card. Pure; `main.rs` draws it.
+//! The right panel next to Terminals / Editor (SPEC §10, ADR 0038, ADR 0081): its tabs, width,
+//! the Stop rule and the text of the Session card. Pure; `main.rs` draws it.
 
+use mkrew_core::settings::RightPanelMode;
 use mkrew_protocol::{Session, SessionKind, SessionUsageEvent};
 use ulid::Ulid;
 
@@ -21,6 +22,58 @@ pub fn width_from_pointer(window_width: f32, pointer_x: f32) -> f32 {
         .min(window_width / 2.0)
         .max(theme::INSPECTOR_MIN_WIDTH);
     (window_width - pointer_x).clamp(theme::INSPECTOR_MIN_WIDTH, max)
+}
+
+/// The right panel's tabs (SPEC §10, ADR 0081).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PanelTab {
+    #[default]
+    Files,
+    Session,
+}
+
+/// The right panel next to Terminals / Editor: open or not, and its tab (kept while hidden).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RightPanel {
+    pub open: bool,
+    pub tab: PanelTab,
+}
+
+impl RightPanel {
+    /// The panel `[ui] right_panel` asks for at start.
+    pub fn from_mode(mode: RightPanelMode) -> Self {
+        match mode {
+            RightPanelMode::Hidden => Self::default(),
+            RightPanelMode::Files => Self {
+                open: true,
+                tab: PanelTab::Files,
+            },
+            RightPanelMode::Session => Self {
+                open: true,
+                tab: PanelTab::Session,
+            },
+        }
+    }
+
+    /// What `[ui] right_panel` is saved as.
+    pub fn mode(self) -> RightPanelMode {
+        match (self.open, self.tab) {
+            (false, _) => RightPanelMode::Hidden,
+            (true, PanelTab::Files) => RightPanelMode::Files,
+            (true, PanelTab::Session) => RightPanelMode::Session,
+        }
+    }
+
+    /// Opens the panel on `tab`.
+    pub fn show(&mut self, tab: PanelTab) {
+        self.open = true;
+        self.tab = tab;
+    }
+
+    /// The panel is open on `tab`.
+    pub fn shows(self, tab: PanelTab) -> bool {
+        self.open && self.tab == tab
+    }
 }
 
 /// What the card's Stop does.
@@ -148,6 +201,29 @@ mod tests {
 
     use super::*;
     use crate::usage::ContextShare;
+
+    #[test]
+    fn the_right_panel_round_trips_through_its_saved_mode() {
+        use mkrew_core::settings::RightPanelMode;
+        for mode in [
+            RightPanelMode::Files,
+            RightPanelMode::Session,
+            RightPanelMode::Hidden,
+        ] {
+            assert_eq!(RightPanel::from_mode(mode).mode(), mode);
+        }
+        // Hidden at start: shown again on the file tree.
+        let mut panel = RightPanel::from_mode(RightPanelMode::Hidden);
+        assert!(!panel.shows(PanelTab::Files));
+        panel.open = true;
+        assert!(panel.shows(PanelTab::Files));
+        // Hiding keeps the tab for the next show.
+        panel.show(PanelTab::Session);
+        panel.open = false;
+        assert_eq!(panel.mode(), RightPanelMode::Hidden);
+        panel.open = true;
+        assert!(panel.shows(PanelTab::Session));
+    }
 
     fn session(kind: SessionKind, state: SessionState) -> Session {
         Session {

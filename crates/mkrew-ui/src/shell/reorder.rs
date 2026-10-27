@@ -193,7 +193,7 @@ impl Shell {
         );
     }
 
-    /// Ctrl+Shift+PgUp / PgDn (`by` -1 / 1): the active tab (the active file tab in the Files
+    /// Ctrl+Shift+PgUp / PgDn (`by` -1 / 1): the active tab (the active file tab in the Editor
     /// view) one place along its pin group, through the same functions a drag drop calls.
     pub(crate) fn move_active_tab(
         &mut self,
@@ -204,7 +204,7 @@ impl Shell {
         let Some(project_id) = self.workspace else {
             return;
         };
-        if self.view() == View::Files {
+        if self.view() == View::Editor {
             let view = self.files_view(project_id);
             let Some((pinned, from, len)) = view.active_place() else {
                 return;
@@ -281,11 +281,11 @@ impl Shell {
 /// What follows the pointer during a reorder drag: the item's title on a raised chip, starting
 /// just left of the pointer wherever the item was grabbed.
 pub(crate) struct DragChip {
-    style: PopupStyle,
-    accent: u32,
-    title: SharedString,
+    pub(crate) style: PopupStyle,
+    pub(crate) accent: u32,
+    pub(crate) title: SharedString,
     /// Where the pointer grabbed the item, from its top-left corner.
-    offset: Point<Pixels>,
+    pub(crate) offset: Point<Pixels>,
 }
 
 impl Render for DragChip {

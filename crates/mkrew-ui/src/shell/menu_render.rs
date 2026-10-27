@@ -1,5 +1,5 @@
 //! The one renderer of every popover menu, the key handler that goes with it and the focus
-//! rules (ADR 0081). Each menu builds `Rows`; a click and a key reach the same `action`.
+//! rules (ADR 0084). Each menu builds `Rows`; a click and a key reach the same `action`.
 
 use crate::*;
 
@@ -602,8 +602,9 @@ impl Shell {
                         .highlighted(&self.sidebar.view(&self.viewed).rows)
                 })
                 .flatten(),
-            // GPUI keeps focus on an element that is no longer painted: only a shown tree counts.
-            files_tree_focused: self.view() == View::Files && self.files_focus.is_focused(window),
+            // GPUI keeps focus on an element that is no longer painted: only a tree painted in
+            // the right panel counts.
+            files_tree_focused: self.file_tree_shown() && self.files_focus.is_focused(window),
             files_cursor: files.and_then(|view| {
                 let cursor = view.cursor.as_deref()?;
                 view.rows().iter().find_map(|row| match row {
