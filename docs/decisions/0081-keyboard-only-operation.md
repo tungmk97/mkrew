@@ -96,6 +96,10 @@ Compare Pick only opens Merge back, so it is a plain Tab stop and not part of th
   Sending the selection (`Ctrl+Shift+L`) ends copy mode in the source pane; losing focus alone keeps it.
   The emulator holds incoming output back while copy mode (or link labels) is on, so the view and the cursor stay on their text; leaving applies it and returns to the live screen.
   Held output is bounded (1 MiB); a flood above that is applied at once.
+  Copy mode survives the pane losing focus; link labels do not.
+  An empty selection (a plain click) counts as none for Esc, so Esc leaves copy mode.
+  With copy mode on, voice text goes to the clipboard, not the terminal.
+  Any key, a wheel scroll, a click or the pane losing focus ends link labels and releases the held output.
 - Link hints (`link_hints` = `alt-shift-o`) scan the visible rows with the same detection as Ctrl+Click and label each openable link: single letters first, then two letters, never a label that starts another.
   The picked link opens through the `OpenLink` event of Ctrl+Click.
   No link: a tab bar notice "No links on screen." that goes away after 3 seconds.

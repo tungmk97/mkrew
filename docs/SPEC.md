@@ -967,12 +967,15 @@ The session panel (below) is a third column right of Terminals while open.
   While it is on the keys go to the UI, not the program, and the pane header (the tab bar for a single pane) shows `Copy mode` with the key hints.
   `←↓↑→` / `h j k l` move the cursor; `w` / `b` / `e` by word, `0` / `$` line start / end, `g` / `G` top / bottom of the history, `PgUp` / `PgDn` a page.
   `v` / `Shift+V` start, switch or drop a character / line selection; entering copy mode clears a mouse selection.
-  `y` or `Enter` copy it (a trailing newline of a line selection is trimmed) and leave; `Ctrl+Shift+C` copies it too; `Ctrl+Shift+L` sends it to an agent's composer and leaves copy mode; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
-  `Esc` drops the selection, or leaves copy mode when there is none.
+  `y` or `Enter` copy it (a trailing newline of a line selection is trimmed) and leave; `Ctrl+Shift+C` copies it too and stays in copy mode; `Ctrl+Shift+L` sends it to an agent's composer and leaves copy mode; `Ctrl+Shift+F` opens the find bar, whose match moves the cursor.
+  `Esc` drops the selection, or leaves copy mode when there is none (an empty selection from a click counts as none).
+  Copy mode survives the pane losing focus.
+  With copy mode on, voice text goes to the clipboard, not the terminal.
   Output that arrives meanwhile is held back (up to 1 MiB) so the view and the cursor stay on their text; leaving copy mode applies it and returns to the live screen.
 - **Link hints** (`Alt+Shift+O`, ADR 0081): labels every link of the visible rows (the same detection as Ctrl+Click, so a path counts only when it names a file of the pane's folder) with `a`, `s`, `d`, `f`, … then two letters.
   Typing a label opens that link exactly like Ctrl+Click; `Esc` or any other key cancels.
-  Output is held back while the labels show.
+  Output is held back while the labels show (up to 1 MiB, like copy mode).
+  Any key, a wheel scroll, a click or the pane losing focus ends the hints and applies the held output.
   No link on screen: the tab bar says "No links on screen." for 3 seconds.
 - **Run pill** (ADR 0018, ADR 0054) in the title bar: while something runs a green pill
   `● 2 running :8080 :5180 ▾` (`run-pill-*` tokens; amber dot and `1/2 running` when some
