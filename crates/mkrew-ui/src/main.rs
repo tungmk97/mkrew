@@ -896,7 +896,7 @@ impl Render for Shell {
                     .children(
                         self.broadcast
                             .as_ref()
-                            .map(|dialog| self.render_broadcast(dialog, &theme, cx)),
+                            .map(|dialog| self.render_broadcast(dialog, window, &theme, cx)),
                     )
                     .children(
                         self.ask
