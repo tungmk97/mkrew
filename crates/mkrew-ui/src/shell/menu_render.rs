@@ -306,6 +306,15 @@ impl Shell {
     /// The rows of the open menu, rebuilt: the keyboard decides on the same rows the screen
     /// shows. One arm per menu.
     pub(crate) fn open_menu_rows(&self) -> Option<Rows> {
+        if let Some(menu) = &self.tab_menu {
+            return Some(self.tab_menu_rows(menu));
+        }
+        if let Some(menu) = &self.layout_menu {
+            return Some(self.layout_menu_rows(menu));
+        }
+        if let Some(menu) = &self.pane_menu {
+            return self.pane_menu_rows(menu);
+        }
         if let Some(menu) = &self.share_menu {
             return Some(self.share_menu_rows(menu));
         }

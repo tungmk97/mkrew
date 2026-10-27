@@ -263,8 +263,8 @@ impl Shell {
                         "Split or pick a layout",
                         self.keymap.label(Command::SplitRight),
                     ))
-                    .on_click(cx.listener(|shell, event: &gpui::ClickEvent, _, cx| {
-                        shell.open_layout_menu(event.position(), cx);
+                    .on_click(cx.listener(|shell, event: &gpui::ClickEvent, window, cx| {
+                        shell.open_layout_menu(event.position(), window, cx);
                     })),
             )
             .when_some(active, |bar, tab_id| {

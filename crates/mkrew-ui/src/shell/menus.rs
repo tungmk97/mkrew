@@ -280,15 +280,10 @@ impl Shell {
     }
 
     /// The tab menu (right-click a tab, or the tab bar's ⋯): Pin, Split right / down, Rename,
-    /// Close, Close others, Close tabs to the right (pinned tabs stay); on the active tab also the
-    /// focused pane's Rename pane, Close pane and, for an agent, Follow in Zed (✓ while on) and
-    /// Turns…. Floats at the click; a click outside closes it.
-    pub(crate) fn render_tab_menu(
-        &self,
-        menu: &TabMenu,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> gpui::AnyElement {
+    /// Close, Close others, Close tabs to the right (pinned tabs stay); on the active tab also
+    /// the focused pane's Rename pane, Close pane and, for an agent, Follow in Zed (✓ while on)
+    /// and Turns….
+    pub(crate) fn tab_menu_rows(&self, menu: &TabMenu) -> Rows {
         let tab_id = menu.tab_id;
         let pinned = (self.tabs.values())
             .find_map(|tabs| tabs.tab(tab_id))
@@ -304,272 +299,171 @@ impl Shell {
         let tabs = (self.workspace).and_then(|project_id| self.tabs.get(&project_id));
         let has_others = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, false).is_empty());
         let has_right = tabs.is_some_and(|tabs| !tabs.close_targets(tab_id, true).is_empty());
-        let close_some = |id: &'static str, label: &'static str, any: bool, right_only: bool| {
-            menu_item(id.into(), theme)
-                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-                .when(!any, |el| el.opacity(opacity::DISABLED))
-                .when(any, |el| {
-                    el.on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.close_other_tabs(tab_id, right_only, window, cx);
-                    }))
-                })
-        };
-        let separator = || {
-            div()
-                .h(px(theme::BORDER_WIDTH))
-                .my(px(space::XS))
-                .bg(rgb(theme.border))
-        };
-        let item = |id: &'static str, label: &'static str, command: Command| {
-            menu_item(id.into(), theme)
-                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-                .child(
-                    div()
-                        .text_size(font_size::META)
-                        .child(self.keymap.label(command)),
-                )
-        };
-        let panel = menu_panel("tab-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.tab_menu = None;
-                cx.notify();
-            }))
-            .child(
-                menu_item("pin-tab".into(), theme)
-                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
-                        "Unpin"
-                    } else {
-                        "Pin"
-                    }))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.pin_tab(tab_id, !pinned, window, cx);
-                    })),
+        let key = |command: Command| self.keymap.label(command);
+        let run =
+            |command: Command| act(move |shell, window, cx| shell.run(&Run(command), window, cx));
+        let mut rows: Rows = vec![
+            MenuItem::new(
+                if pinned { "Unpin" } else { "Pin" },
+                act(move |shell, window, cx| shell.pin_tab(tab_id, !pinned, window, cx)),
             )
-            .child(separator())
-            .child(
-                item("tab-menu-split-right", "Split right", Command::SplitRight).on_click(
-                    cx.listener(|shell, _, window, cx| {
-                        shell.tab_menu = None;
-                        shell.run(&Run(Command::SplitRight), window, cx);
-                    }),
-                ),
+            .row(),
+            MenuRow::Separator,
+            MenuItem::new("Split right", run(Command::SplitRight))
+                .keys(key(Command::SplitRight))
+                .row(),
+            MenuItem::new("Split down", run(Command::SplitDown))
+                .keys(key(Command::SplitDown))
+                .row(),
+            MenuItem::new(
+                "Rename",
+                act(|shell, window, cx| shell.start_rename(window, cx)),
             )
-            .child(
-                item("tab-menu-split-down", "Split down", Command::SplitDown).on_click(
-                    cx.listener(|shell, _, window, cx| {
-                        shell.tab_menu = None;
-                        shell.run(&Run(Command::SplitDown), window, cx);
-                    }),
-                ),
+            .keys(key(Command::RenameTab))
+            .row(),
+            MenuItem::new(
+                "Close",
+                act(move |shell, window, cx| shell.close_tab(tab_id, window, cx)),
             )
-            .child(
-                item("tab-menu-rename", "Rename", Command::RenameTab).on_click(cx.listener(
-                    |shell, _, window, cx| {
-                        shell.tab_menu = None;
-                        shell.start_rename(window, cx);
-                    },
-                )),
-            )
-            .child(
-                item("tab-menu-close", "Close", Command::CloseTab).on_click(cx.listener(
-                    move |shell, _, window, cx| {
-                        shell.tab_menu = None;
-                        shell.close_tab(tab_id, window, cx);
-                    },
-                )),
-            )
-            .child(close_some(
-                "tab-menu-close-others",
+            .keys(key(Command::CloseTab))
+            .row(),
+            MenuItem::new(
                 "Close others",
-                has_others,
-                false,
-            ))
-            .child(close_some(
-                "tab-menu-close-right",
+                act(move |shell, window, cx| shell.close_other_tabs(tab_id, false, window, cx)),
+            )
+            .enabled(has_others)
+            .row(),
+            MenuItem::new(
                 "Close tabs to the right",
-                has_right,
-                true,
-            ))
-            .when_some(pane, |panel, info| {
-                let session = info.id;
-                let agent = info.kind == SessionKind::Agent;
-                let renamable = mkrew_core::run::command_name(info).is_none();
-                let following = self.follow.is_on(session);
-                panel
-                    .child(separator())
-                    .when(renamable, |panel| {
-                        panel.child(
-                            item("tab-menu-rename-pane", "Rename pane", Command::RenamePane)
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.tab_menu = None;
-                                    shell.start_pane_rename(session, window, cx);
-                                })),
-                        )
-                    })
-                    .child(
-                        item("tab-menu-close-pane", "Close pane", Command::ClosePane).on_click(
-                            cx.listener(|shell, _, window, cx| {
-                                shell.tab_menu = None;
-                                shell.close_focused_pane(window, cx);
-                            }),
-                        ),
+                act(move |shell, window, cx| shell.close_other_tabs(tab_id, true, window, cx)),
+            )
+            .enabled(has_right)
+            .row(),
+        ];
+        if let Some(info) = pane {
+            let session = info.id;
+            let agent = info.kind == SessionKind::Agent;
+            let renamable = mkrew_core::run::command_name(info).is_none();
+            rows.push(MenuRow::Separator);
+            if renamable {
+                rows.push(
+                    MenuItem::new(
+                        "Rename pane",
+                        act(move |shell, window, cx| shell.start_pane_rename(session, window, cx)),
                     )
-                    .when(agent, |panel| {
-                        panel.child(
-                            menu_item("tab-menu-follow-zed".into(), theme)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_color(rgb(theme.text))
-                                        .child("Follow in Zed"),
-                                )
-                                .child(div().text_color(rgb(theme.text)).child(if following {
-                                    "✓"
-                                } else {
-                                    ""
-                                }))
-                                .on_click(cx.listener(move |shell, _, _, cx| {
-                                    shell.tab_menu = None;
-                                    shell.toggle_follow(session, cx);
-                                })),
-                        )
-                    })
-                    .when(agent && self.features.turns, |panel| {
-                        panel.child(
-                            menu_item("tab-menu-turns".into(), theme)
-                                .child(div().flex_1().text_color(rgb(theme.text)).child("Turns…"))
-                                .tooltip(tooltip(
-                                    theme,
-                                    "The agent's turns: restore the files to before one",
-                                    "",
-                                ))
-                                .on_click(cx.listener(move |shell, _, window, cx| {
-                                    shell.tab_menu = None;
-                                    shell.open_turns(session, window, cx);
-                                })),
-                        )
-                    })
-            });
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window_with_margin(px(space::S))
-                .child(panel),
-        )
-        .into_any_element()
+                    .keys(key(Command::RenamePane))
+                    .row(),
+                );
+            }
+            rows.push(
+                MenuItem::new(
+                    "Close pane",
+                    act(|shell, window, cx| shell.close_focused_pane(window, cx)),
+                )
+                .keys(key(Command::ClosePane))
+                .row(),
+            );
+            if agent {
+                rows.push(
+                    MenuItem::new(
+                        "Follow in Zed",
+                        act(move |shell, _, cx| shell.toggle_follow(session, cx)),
+                    )
+                    .checked(self.follow.is_on(session))
+                    .row(),
+                );
+            }
+            if agent && self.features.turns {
+                rows.push(
+                    MenuItem::new(
+                        "Turns…",
+                        act(move |shell, window, cx| shell.open_turns(session, window, cx)),
+                    )
+                    .tip("The agent's turns: restore the files to before one")
+                    .row(),
+                );
+            }
+        }
+        rows
     }
 
-    /// The split button's menu (SPEC §10): Split right, Split down, then the layouts, each
-    /// drawn small with its shortcut. A layout holding fewer panes than the tab has is greyed.
-    /// Floats at the click; a click outside closes it.
+    pub(crate) fn render_tab_menu(
+        &self,
+        menu: &TabMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> gpui::AnyElement {
+        render_menu(
+            self.menu_state(),
+            "tab-menu",
+            self.tab_menu_rows(menu),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
+        )
+    }
+
+    /// The split button's menu (SPEC §10): Split right, Split down, Equalize panes, then the
+    /// layouts, each with its thumbnail and shortcut. A layout holding fewer panes than the tab
+    /// has is greyed (its tooltip says why).
+    pub(crate) fn layout_menu_rows(&self, menu: &LayoutMenu) -> Rows {
+        let panes = (self.tabs.values())
+            .find_map(|tabs| tabs.tab(menu.tab_id))
+            .map_or(0, |tab| tab.sessions().len());
+        let key = |command: Command| self.keymap.label(command);
+        let run =
+            |command: Command| act(move |shell, window, cx| shell.run(&Run(command), window, cx));
+        let mut rows: Rows = vec![
+            MenuItem::new("Split right", run(Command::SplitRight))
+                .keys(key(Command::SplitRight))
+                .row(),
+            MenuItem::new("Split down", run(Command::SplitDown))
+                .keys(key(Command::SplitDown))
+                .row(),
+            MenuItem::new("Equalize panes", run(Command::EqualizePanes))
+                .keys(key(Command::EqualizePanes))
+                .row(),
+            MenuRow::Separator,
+            MenuRow::Heading("Layouts".into()),
+        ];
+        rows.extend(Preset::ALL.into_iter().map(|preset| {
+            let command = Command::Layout(preset);
+            let fits = panes <= preset.panes();
+            let item = MenuItem::new(preset.label(), run(command))
+                .lead(Lead::Layout(preset))
+                .keys(key(command))
+                .enabled(fits);
+            let item = if fits {
+                item
+            } else {
+                item.tip(format!("This tab has {panes} panes; close some first"))
+            };
+            item.row()
+        }));
+        rows
+    }
+
     pub(crate) fn render_layout_menu(
         &self,
         menu: &LayoutMenu,
         theme: &Theme,
         cx: &mut Context<'_, Self>,
     ) -> gpui::AnyElement {
-        let panes = (self.tabs.values())
-            .find_map(|tabs| tabs.tab(menu.tab_id))
-            .map_or(0, |tab| tab.sessions().len());
-        let shortcut = |command: Command| {
-            div()
-                .text_size(font_size::META)
-                .child(self.keymap.label(command))
-        };
-        let pick = |command: Command| {
-            cx.listener(move |shell: &mut Self, _: &gpui::ClickEvent, window, cx| {
-                shell.layout_menu = None;
-                shell.run(&Run(command), window, cx);
-            })
-        };
-        let split = |id: &'static str, label: &'static str, command: Command| {
-            menu_item(id.into(), theme)
-                .child(div().flex_1().text_color(rgb(theme.text)).child(label))
-                .child(shortcut(command))
-                .on_click(pick(command))
-        };
-        let mut panel = menu_panel("layout-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.layout_menu = None;
-                cx.notify();
-            }))
-            .child(split(
-                "layout-menu-split-right",
-                "Split right",
-                Command::SplitRight,
-            ))
-            .child(split(
-                "layout-menu-split-down",
-                "Split down",
-                Command::SplitDown,
-            ))
-            .child(split(
-                "layout-menu-equalize",
-                "Equalize panes",
-                Command::EqualizePanes,
-            ))
-            .child(
-                div()
-                    .h(px(theme::BORDER_WIDTH))
-                    .my(px(space::XS))
-                    .bg(rgb(theme.border)),
-            )
-            .child(
-                div()
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .text_size(font_size::META)
-                    .text_color(rgb(theme.text_muted))
-                    .child("Layouts"),
-            );
-        for preset in Preset::ALL {
-            let command = Command::Layout(preset);
-            let id = SharedString::from(format!("layout-menu-{}", preset.name()));
-            let row = if panes <= preset.panes() {
-                menu_item(id, theme).on_click(pick(command))
-            } else {
-                // The same box as a menu item, without its hover: it cannot be picked.
-                let why = format!("This tab has {panes} panes; close some first");
-                div()
-                    .id(id)
-                    .flex()
-                    .items_center()
-                    .gap(px(space::S))
-                    .px(px(space::S))
-                    .py(px(space::XS))
-                    .rounded(px(radius::SMALL))
-                    .text_size(font_size::BODY)
-                    .opacity(opacity::DISABLED)
-                    .tooltip(tooltip(theme, &why, ""))
-            };
-            panel = panel.child(
-                row.child(layout_thumb(preset, theme))
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child(preset.label()),
-                    )
-                    .child(shortcut(command)),
-            );
-        }
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window_with_margin(px(space::S))
-                .child(panel),
+        render_menu(
+            self.menu_state(),
+            "layout-menu",
+            self.layout_menu_rows(menu),
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
         )
-        .into_any_element()
     }
 
-    /// The pane menu: Pin, Rename (inline, like F2; greyed for a run pane, which is named by its
-    /// command) and the color swatches of the workspace palette. Floats at the click.
-    pub(crate) fn render_pane_menu(
-        &self,
-        menu: &PaneMenu,
-        theme: &Theme,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<gpui::AnyElement> {
+    /// The pane menu: Pin, Mark unread, Rename (greyed for a run pane, which is named by its
+    /// command) and the color swatches of the workspace palette. `None` when the pane is gone.
+    pub(crate) fn pane_menu_rows(&self, menu: &PaneMenu) -> Option<Rows> {
         let session_id = menu.session_id;
         let session = self
             .sidebar
@@ -577,106 +471,55 @@ impl Shell {
             .iter()
             .find(|s| s.id == session_id)?;
         let renamable = mkrew_core::run::command_name(session).is_none();
-        let current = session.color.as_deref();
         let pinned = session.pinned;
         let markable = inbox::can_mark_unread(session, &self.viewed);
-        let separator = || {
-            div()
-                .h(px(theme::BORDER_WIDTH))
-                .my(px(space::XS))
-                .bg(rgb(theme.border))
-        };
-        let panel = menu_panel("pane-menu", theme)
-            .on_mouse_down_out(cx.listener(|shell, _, _, cx| {
-                shell.pane_menu = None;
-                cx.notify();
-            }))
-            .child(
-                menu_item("pin-pane".into(), theme)
-                    .child(div().flex_1().text_color(rgb(theme.text)).child(if pinned {
-                        "Unpin"
-                    } else {
-                        "Pin"
-                    }))
-                    .on_click(cx.listener(move |shell, _, window, cx| {
-                        shell.pin_session(session_id, !pinned, window, cx);
-                    })),
+        Some(vec![
+            MenuItem::new(
+                if pinned { "Unpin" } else { "Pin" },
+                act(move |shell, window, cx| shell.pin_session(session_id, !pinned, window, cx)),
             )
-            .child(
-                menu_item("pane-menu-unread".into(), theme)
-                    .child(
-                        div()
-                            .flex_1()
-                            .text_color(rgb(theme.text))
-                            .child("Mark unread"),
-                    )
-                    .when(markable, |el| {
-                        el.on_click(cx.listener(move |shell, _, _, cx| {
-                            shell.mark_unread(session_id, cx);
-                        }))
-                    })
-                    .when(!markable, |el| el.opacity(opacity::DISABLED)),
+            .row(),
+            MenuItem::new(
+                "Mark unread",
+                act(move |shell, _, cx| shell.mark_unread(session_id, cx)),
             )
-            .child(separator())
-            .child(
-                menu_item("pane-menu-rename".into(), theme)
-                    .child(div().flex_1().text_color(rgb(theme.text)).child("Rename"))
-                    .child(
-                        div()
-                            .text_size(font_size::META)
-                            .child(self.keymap.label(Command::RenamePane)),
-                    )
-                    .when(renamable, |el| {
-                        el.on_click(cx.listener(move |shell, _, window, cx| {
-                            shell.pane_menu = None;
-                            shell.start_pane_rename(session_id, window, cx);
-                        }))
-                    })
-                    .when(!renamable, |el| el.opacity(opacity::DISABLED)),
+            .enabled(markable)
+            .row(),
+            MenuRow::Separator,
+            MenuItem::new(
+                "Rename",
+                act(move |shell, window, cx| shell.start_pane_rename(session_id, window, cx)),
             )
-            .child(separator())
-            .child(
-                div()
-                    .px(px(space::S))
-                    .pt(px(space::XS))
-                    .text_size(font_size::META)
-                    .font_weight(FontWeight(weight::MEDIUM))
-                    .text_color(rgb(theme.text_muted))
-                    .child("Change color"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(space::S))
-                    .p(px(space::S))
-                    .children(
-                        std::iter::once(None)
-                            .chain(WORKSPACE_COLORS.iter().map(|name| Some(*name)))
-                            .map(|color| {
-                                color_swatch(
-                                    "pane-color",
-                                    color,
-                                    current,
-                                    theme,
-                                    false,
-                                    cx,
-                                    move |shell, color, window, cx| {
-                                        shell.set_pane_color(session_id, color, window, cx);
-                                    },
-                                )
-                            }),
-                    ),
-            );
-        Some(
-            deferred(
-                anchored()
-                    .position(menu.position)
-                    .snap_to_window_with_margin(px(space::S))
-                    .child(panel),
-            )
-            .into_any_element(),
-        )
+            .keys(self.keymap.label(Command::RenamePane))
+            .enabled(renamable)
+            .row(),
+            MenuRow::Separator,
+            MenuRow::Heading("Change color".into()),
+            MenuRow::swatches(
+                session.color.as_deref(),
+                act_swatch(move |shell, color, window, cx| {
+                    shell.set_pane_color(session_id, color, window, cx);
+                }),
+            ),
+        ])
+    }
+
+    pub(crate) fn render_pane_menu(
+        &self,
+        menu: &PaneMenu,
+        theme: &Theme,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui::AnyElement> {
+        let rows = self.pane_menu_rows(menu)?;
+        Some(render_menu(
+            self.menu_state(),
+            "pane-menu",
+            rows,
+            None,
+            Place::At(menu.position),
+            theme,
+            cx,
+        ))
     }
 
     /// The Share menu of an agent pane: "Follow in Zed" (✓ while on).
